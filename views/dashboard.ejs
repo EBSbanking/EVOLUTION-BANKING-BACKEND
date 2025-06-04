@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    <style>
+        .dashboard-header {
+            background-color: #f4f4f4;
+            padding: 20px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .dashboard-header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .dashboard-header p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-header">
+        <h1>Dashboard</h1>
+        <p><strong>Bank Name:</strong> <%= dashboardData.bankName %></p>
+        <p><strong>Business Unit:</strong> <%= dashboardData.businessUnit %></p>
+        <p><strong>User ID:</strong> <%= dashboardData.userId %></p>
+        <p><strong>First Name:</strong> <%= dashboardData.firstName %></p>
+        <p><strong>Last Name:</strong> <%= dashboardData.lastName %></p>
+        <p><strong>Processing Date:</strong> <%= dashboardData.processingDate %></p>
+        <p><strong>User Role:</strong> <%= dashboardData.userRole %></p>
+        <p><strong>System Date:</strong> <%= dashboardData.systemDate %></p>
+    </div>
+</body>
+</html>
