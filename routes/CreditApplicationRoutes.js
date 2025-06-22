@@ -29,6 +29,9 @@ router.put('/credit-applications/:applId(*)', CreditApplicationController.update
 // Delete credit application by MongoDB ID
 router.delete('/:applId', CreditApplicationController.deleteCreditApplication);
 
+router.get('/customer/:custId', CreditApplicationController.getCreditApplicationByCustId);
+
+
 // Approve credit application and create loan contract
 router.put('/approve/:applId', CreditApplicationController.approveCreditApplication);
 

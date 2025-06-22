@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import User from '../models/User.js'; // Import the User model
 import auth from '../middlewares/auth.js';
 
+
 // Controller for registering a new user
 const registerUser = async (req, res) => {
   try {
@@ -181,6 +182,80 @@ const getAllUsers = async (req, res) => {
     res.status(500).json({ message: "Error fetching users", error: error.message });
   }
 };
+
+
+// Reset user password with password history check
+export const resetPassword = async (req, res) => {
+  try {
+    console.log("Received body:", req.body); // Debugging
+
+    const { user_name, newPassword, confirmPassword } = req.body;
+
+    // Validation
+    if (!user_name || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        message: "New password is required and should be at least 6 characters long"
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    // Find user (case-insensitive)
+    const user = await User.findOne({
+      user_name: { $regex: new RegExp(`^${user_name}$`, 'i') }
+    }).select('+password +passwordHistory');
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check against current password
+    const isSameAsCurrent = await bcrypt.compare(newPassword, user.password);
+    if (isSameAsCurrent) {
+      return res.status(400).json({ 
+        message: "New password cannot be the same as current password" 
+      });
+    }
+
+    // Check against previous passwords (last 5 passwords)
+    if (user.passwordHistory) {
+      const isPreviousPassword = await Promise.all(
+        user.passwordHistory.map(async oldHash => 
+          await bcrypt.compare(newPassword, oldHash)
+        )
+      );
+
+      if (isPreviousPassword.includes(true)) {
+        return res.status(400).json({ 
+          message: "Cannot reuse any of your last 5 passwords" 
+        });
+      }
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password history (keep last 5 passwords)
+    const updatedHistory = [
+      user.password, // Current password becomes first in history
+      ...(user.passwordHistory || []).slice(0, 4) // Keep only 4 most recent
+    ];
+
+    // Update user
+    user.password = hashedPassword;
+    user.passwordHistory = updatedHistory;
+    user.passwordChangedAt = Date.now();
+    await user.save();
+
+    return res.status(200).json({ message: "Password reset successfully" });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 
 // Export the controller functions
 export { registerUser, updateUser, deactivateUser, getUserByEmployerNumber, getAllUsers };

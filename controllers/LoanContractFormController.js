@@ -1,4 +1,5 @@
 import LoanContractForm from '../models/LoanContractForm.js';
+import LoanAccount from '../models/LoanAccount.js';
 import moment from 'moment';
 
 class LoanContractController {
@@ -121,6 +122,80 @@ class LoanContractController {
             });
         }
     }
+
+    // Add this method to your LoanContractController class
+static async getLoanContractsByCustomerId(req, res) {
+    try {
+        const { cust_id } = req.params;
+
+        // Validate the customer ID
+        if (!cust_id) {
+            return res.status(400).json({ message: 'Customer ID is required' });
+        }
+
+        // Find all loan contracts for this customer
+        const contracts = await LoanContractForm.find({ customer_id: cust_id });
+
+        if (!contracts || contracts.length === 0) {
+            return res.status(404).json({ 
+                message: 'No loan contracts found for this customer',
+                customer_id: cust_id
+            });
+        }
+
+        return res.status(200).json({
+            count: contracts.length,
+            contracts
+        });
+
+    } catch (error) {
+        console.error('Error fetching loan contracts by customer ID:', error);
+        return res.status(500).json({
+            message: 'Error fetching loan contracts',
+            error: error.message,
+        });
+    }
+}
+
+    // Get loan contract by account number
+static async getLoanContractByAcctNo(req, res) {
+    try {
+        const { acct_no } = req.params;
+
+        // Step 1: Find loan account using ACCT_NO
+        const loanAccount = await LoanAccount.findOne({ ACCT_NO: acct_no });
+
+        if (!loanAccount) {
+            return res.status(404).json({ message: 'Loan account not found' });
+        }
+
+        // Step 2: Extract customer_id or USER_ID (adjust based on your schema)
+        const customerId = loanAccount.CUST_ID || loanAccount.USER_ID;
+
+        if (!customerId) {
+            return res.status(400).json({ message: 'Loan account does not have a valid customer ID or USER ID' });
+        }
+
+        // Step 3: Find the contract using customer_id or USER_ID
+        const loanContract = await LoanContractForm.findOne({
+            $or: [
+                { customer_id: customerId },
+                { USER_ID: customerId }
+            ]
+        });
+
+        if (!loanContract) {
+            return res.status(404).json({ message: 'Loan contract not found for this account' });
+        }
+
+        return res.status(200).json({ contract: loanContract });
+
+    } catch (error) {
+        console.error('Error fetching contract by account number:', error);
+        return res.status(500).json({ message: 'Internal server error', error: error.message });
+    }
+}
+
 
     // Generate full contract text from contract data
     static generateContractText(data) {

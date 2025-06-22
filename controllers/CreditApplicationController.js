@@ -1,12 +1,14 @@
 import CreditApplication from '../models/CreditApplication.js';
 import LoanContractForm from '../models/LoanContractForm.js';
-import { generateAcctNo, getLoanCycleCount } from '../utils/counterUtil.js';
+import { generateAcctNo, getLoanCycleCount, generateNumber } from '../utils/counterUtil.js';
+import AuditTrail from '../models/AuditTrail.js';
+import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
+import NotificationService from '../services/NotificationService.js';
+import moment from 'moment';
+import generateWorkflowIdentifiers from '../utils/generateWorkflowIdentifiers.js';
 
 // Controller to manage loan contract logic
 class LoanContractController {
-  /**
-   * Creates a loan contract from a credit application.
-   */
   static async createLoanContractFromApplication(application, { bank_name, bank_short, originatorRole, targetRole }) {
     try {
       const loan_contract_no = `LC${Date.now()}`;
@@ -34,13 +36,9 @@ class LoanContractController {
     }
   }
 
-  /**
-   * Retrieves a loan contract by loan contract number.
-   */
   static async getLoanContract(loanContractNo) {
     try {
-      const contract = await LoanContractForm.findOne({ loan_contract_no: loanContractNo });
-      return contract;
+      return await LoanContractForm.findOne({ loan_contract_no: loanContractNo });
     } catch (error) {
       console.error('Error fetching loan contract:', error);
       throw error;
@@ -48,13 +46,11 @@ class LoanContractController {
   }
 }
 
-
 // Main Credit Application Controller
 class CreditApplicationController {
-  // In createCreditApplication - include BORROWER_ADDRESS from req.body into new CreditApplication
   static async createCreditApplication(req, res) {
     try {
-      if (!req.body || !req.body.CUST_ID) {
+      if (!req.body?.CUST_ID) {
         return res.status(400).json({
           message: 'Missing or invalid request body. Ensure required fields like CUST_ID are provided.',
         });
@@ -64,83 +60,212 @@ class CreditApplicationController {
       const loanCycleCount = await getLoanCycleCount(req.body.CUST_ID);
 
       const newApplication = new CreditApplication({
-        ...req.body, // includes BORROWER_ADDRESS if present
+        ...req.body,
         ACCT_NO: acctNo,
         LOAN_CYCLE: loanCycleCount,
-        STATUS: 'Pending', // or remove if schema default is used
+        STATUS: 'Pending',
       });
 
       await newApplication.save();
 
-      res.status(201).json({
-        message: 'Credit application created successfully and submitted for approval',
+      // ✅ Submit to Workflow for Approval
+      const {
+        WORK_ITEM_ID,
+        QUEUE_ID,
+        SUB_PROC_ID,
+        BUS_PROC_ID
+      } = generateWorkflowIdentifiers();
+
+      const workflowItem = new WF_WORK_ITEM({
+        WORK_ITEM_ID,
+        ITEM_VALUE: Buffer.from(newApplication.CUST_ID.toString()),
+        ITEM_DESC: `Credit Application for ${newApplication.CUST_NM || newApplication.FIRST_NAME}`,
+        ITEM_CLASS_NM: 'CreditApplication',
+        ITEM_TYPE: 'CreditApplication',
+        EVENT_ID: generateNumber(7),
+        CUST_ID: parseInt(newApplication.CUST_ID),
+        REC_ST: 'Active',
+        VERSION: 1,
+        USER_ID: req.user?.id || 'system',
+        BU_ID: newApplication.BU_ID || '0001',
+        CREATE_DT: moment().toISOString(),
+        WAIT_ST: 'Pending',
+        ITEM_ID: generateNumber(4),
+        ITEM_REF_NO: generateNumber(4),
+        ORIGINATOR_USER_ROLE_ID: req.user?.role || 'Creator',
+        QUEUE_ID,
+        SUB_PROC_ID,
+        BUS_PROC_ID,
+      });
+
+      await workflowItem.save();
+
+      return res.status(201).json({
+        message: 'Credit application created and submitted to workflow for approval',
         status: 'Pending',
         application: newApplication,
+        workflow: {
+          workItemId: WORK_ITEM_ID,
+          workflowStatusUrl: `/api/workflow/${WORK_ITEM_ID}`,
+        },
       });
     } catch (error) {
       console.error('Error creating credit application:', {
         requestData: req.body,
         error: error.message,
       });
-      res.status(500).json({
+      return res.status(500).json({
         message: 'Error creating credit application',
         error: error.message,
       });
     }
   }
 
-  // Approve a credit application and generate a loan contract using APPL_ID
-static async approveCreditApplication(req, res) {
-  let { applId } = req.params;
-  applId = decodeURIComponent(applId); // Decode %2F to /
+  static async approveCreditApplication(req, res) {
+    let { applId } = req.params;
+    applId = decodeURIComponent(applId);
 
-  console.log('Decoded applId:', applId); // Debug: Should log CRAPP/0045
+    const { status, reason } = req.body;
+    const userId = req.user?.id || 'system';
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+    const validStatuses = ['Pending', 'Approved', 'Rejected'];
 
-  try {
-    // Find by APPL_ID
-    const application = await CreditApplication.findOne({ APPL_ID: applId });
-
-    if (!application) {
-      console.log('Application not found with APPL_ID:', applId); // Extra debug
-      return res.status(404).json({ message: 'Credit application not found' });
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status value' });
     }
 
-    // Mark as approved
-    application.STATUS = 'Active';
-    await application.save();
+    if (status === 'Rejected' && !reason) {
+      return res.status(400).json({ message: 'Rejection reason is required when status is Rejected.' });
+    }
 
-    // Generate loan contract
-    const loanContractResult = await LoanContractController.createLoanContractFromApplication(application, {
-      bank_name: process.env.BANK_NAME || "Your Bank Ltd",
-      bank_short: process.env.BANK_SHORT || "YBL",
-      originatorRole: "Supervisor",
-      targetRole: "Manager",
-    });
+    try {
+      const application = await CreditApplication.findOne({ APPL_ID: applId });
+      if (!application) {
+        return res.status(404).json({ message: 'Credit application not found' });
+      }
 
-    if (!loanContractResult.success) {
-      console.error('Loan contract creation failed:', loanContractResult.error);
+      const oldStatus = application.STATUS;
+      application.STATUS = status;
+      if (status === 'Rejected') application.rejectionReason = reason;
+      await application.save();
+
+      // Handle rejection
+      if (status === 'Rejected') {
+        await AuditTrail.create({
+          event_id: Date.now(),
+          user_id: userId,
+          event_type: 'CreditApplication',
+          action: 'Reject Application',
+          old_value: { status: oldStatus },
+          new_value: { status: 'Rejected', reason },
+          ip_address: ipAddress,
+          timestamp: new Date(),
+        });
+
+        return res.status(200).json({
+          message: 'Credit application rejected successfully',
+          application,
+        });
+      }
+
+      // Handle approval
+      if (status === 'Approved') {
+        await AuditTrail.create({
+          event_id: Date.now(),
+          user_id: userId,
+          event_type: 'CreditApplication',
+          action: 'Approve Application',
+          old_value: { status: oldStatus },
+          new_value: { status: 'Approved' },
+          ip_address: ipAddress,
+          timestamp: new Date(),
+        });
+
+        const loanContractResult = await LoanContractController.createLoanContractFromApplication(application, {
+          bank_name: process.env.BANK_NAME || "Your Bank Ltd",
+          bank_short: process.env.BANK_SHORT || "YBL",
+          originatorRole: "Supervisor",
+          targetRole: "Manager",
+        });
+
+        if (!loanContractResult.success) {
+          console.error('Loan contract creation failed:', loanContractResult.error);
+          return res.status(500).json({
+            message: 'Application approved, but loan contract creation failed',
+            error: loanContractResult.error,
+          });
+        }
+
+        // Audit loan contract creation
+        await AuditTrail.create({
+          event_id: Date.now(),
+          user_id: userId,
+          event_type: 'LoanContract',
+          action: 'Loan Contract Created',
+          old_value: null,
+          new_value: { loan_contract_no: loanContractResult.contract.loan_contract_no },
+          ip_address: ipAddress,
+          timestamp: new Date(),
+        });
+
+        const { loan_contract_no, customer_id } = loanContractResult.contract;
+        const { WORK_ITEM_ID, QUEUE_ID, SUB_PROC_ID, BUS_PROC_ID } = generateWorkflowIdentifiers();
+        const workflowItemData = new WF_WORK_ITEM({
+          WORK_ITEM_ID,
+          ITEM_VALUE: Buffer.from(customer_id.toString()),
+          ITEM_DESC: `Loan Contract Approval for ${application.CUST_NM || application.FIRST_NAME}`,
+          ITEM_CLASS_NM: "LoanContract",
+          ITEM_TYPE: "LoanContract",
+          EVENT_ID: generateNumber(7),
+          CUST_ID: parseInt(customer_id),
+          REC_ST: "Active",
+          VERSION: 1,
+          USER_ID: userId,
+          BU_ID: application.BU_ID || "0001",
+          CREATE_DT: moment().toISOString(),
+          WAIT_ST: "Pending",
+          ITEM_ID: generateNumber(4),
+          ITEM_REF_NO: generateNumber(4),
+          ORIGINATOR_USER_ROLE_ID: userId,
+          QUEUE_ID,
+          SUB_PROC_ID,
+          BUS_PROC_ID,
+        });
+
+        await workflowItemData.save();
+
+        // Send notifications
+        const roles = ['Manager', 'Compliance Officer'];
+        const message = `New loan contract (ID: ${WORK_ITEM_ID}) requires your approval.`;
+        for (const role of roles) {
+          await NotificationService.send({
+            ROLE_ID: role,
+            message,
+            WORK_ITEM_ID,
+          });
+        }
+
+        return res.status(200).json({
+          message: 'Credit application approved, loan contract created and submitted for approval',
+          application,
+          loanContract: loanContractResult.contract,
+          workflowItem: workflowItemData,
+          workflowStatusUrl: `/api/workflow/${WORK_ITEM_ID}`,
+        });
+      }
+
+      return res.status(200).json({
+        message: 'Credit application status updated',
+        application,
+      });
+    } catch (error) {
+      console.error('Error approving credit application:', error);
       return res.status(500).json({
-        message: 'Application approved, but loan contract creation failed',
-        error: loanContractResult.error,
+        message: 'Error approving credit application',
+        error: error.message,
       });
     }
-
-    res.status(200).json({
-      message: 'Credit application approved, loan contract created and sent for approval',
-      application,
-      loanContract: loanContractResult.contract,
-      workflowStatusUrl: `/api/workflow/${loanContractResult.workflowItemId}`,
-    });
-
-  } catch (error) {
-    console.error('Error approving credit application:', error);
-    res.status(500).json({
-      message: 'Error approving credit application',
-      error: error.message,
-    });
   }
-}
-
 
   // Get all credit applications
   static async getAllCreditApplications(req, res) {
@@ -256,6 +381,25 @@ static async deleteCreditApplication(req, res) {
     });
   }
 }
+static async getCreditApplicationByCustId(req, res) {
+  const { custId } = req.params;
+
+  try {
+    const applications = await CreditApplication.find({ CUST_ID: custId });
+
+    if (!applications || applications.length === 0) {
+      return res.status(404).json({ message: 'No credit applications found for the given CUST_ID' });
+    }
+
+    res.status(200).json(applications);
+  } catch (error) {
+    res.status(500).json({
+      message: 'Error retrieving credit applications by CUST_ID',
+      error: error.message,
+    });
+  }
+}
+
 
 }
 

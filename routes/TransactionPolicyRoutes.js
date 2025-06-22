@@ -1,28 +1,22 @@
-// routes/transactionPolicyRoutes.js
 import express from 'express';
 import {
+  setTransactionPolicy,
   validateTransaction,
-  validateTransactionSimple,
-  getAllPolicies,
-  getPolicyByRole,
-  addOrUpdatePolicy, // Ensure this matches the exported name in the controller
+  getTransactionPolicies
 } from '../controllers/transactionPolicyController.js';
 
 const router = express.Router();
 
-// Route to add or update a transaction policy for a role
-router.post('/policy', addOrUpdatePolicy);
+// @route   POST /api/policy/set
+// @desc    Create or update a transaction policy
+router.post('/set', setTransactionPolicy);
 
-// Route to get all policies
-router.get('/policies', getAllPolicies);
-
-// Route to get a specific policy by role
-router.get('/policy/:role', getPolicyByRole);
-
-// Route to validate a transaction
+// @route   POST /api/policy/validate
+// @desc    Validate a transaction based on role and amount
 router.post('/validate', validateTransaction);
 
-// Route to validate a transaction (simple version)
-router.post('/validate/simple', validateTransactionSimple);
+// @route   GET /api/policy
+// @desc    Get all policies or filter by role (?role=ROLE_NAME)
+router.get('/', getTransactionPolicies);
 
 export default router;

@@ -6,6 +6,10 @@ const router = express.Router();
 // POST: Create a new loan contract
 router.post('/loan-contracts', LoanContractFormController.createLoanContract);
 
+// GET: Fetch a loan contract by account number
+router.get('/loan-contract/by-acct/:acct_no', LoanContractFormController.getLoanContractByAcctNo);
+
+
 // GET: Fetch all loan contracts (Optional - list view)
 router.get('/loan-contracts', async (req, res) => {
     try {
@@ -32,6 +36,9 @@ router.get('/loan-contracts/:id', async (req, res) => {
 });
 
 router.get('/loancontract/:id', LoanContractFormController.getLoanContract);
+
+// In your routes file (e.g., loanContractRoutes.js)
+router.get('/by-customer/:cust_id', LoanContractFormController.getLoanContractsByCustomerId);
 
 // PUT: Update a specific loan contract by ID
 router.put('/loan-contracts/:id', async (req, res) => {

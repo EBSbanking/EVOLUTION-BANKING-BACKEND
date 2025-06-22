@@ -73,8 +73,19 @@ const creditApplicationSchema = new mongoose.Schema({
   LOAN_CYCLE_START_DT: { type: Date },
   STATUS: {
     type: String,
+    enum: ['Pending', 'Approved', 'Rejected'],
     default: 'Pending',
-    required: true,
+  }
+});
+
+// JSON transformation for readable date fields
+creditApplicationSchema.set('toJSON', {
+  transform: function (doc, ret) {
+    ret.CREATE_DT = ret.CREATE_DT ? new Date(ret.CREATE_DT).toLocaleString() : null;
+    ret.APPL_DT = ret.APPL_DT ? new Date(ret.APPL_DT).toLocaleString() : null;
+    ret.SYS_CREATE_TS = ret.SYS_CREATE_TS ? new Date(ret.SYS_CREATE_TS).toLocaleString() : null;
+    // Add other fields as needed
+    return ret;
   }
 });
 
@@ -137,7 +148,7 @@ creditApplicationSchema.pre('save', async function (next) {
     if (!this.ACCT_NO || !this.ACCT_ID) {
       const acctNo = await this.constructor.generateAcctNo();
       this.ACCT_NO = acctNo;
-      this.ACCT_ID = acctNo; // You can separate logic if needed
+      this.ACCT_ID = acctNo;
     }
 
     if (!this.APPL_ID) {

@@ -4,7 +4,8 @@ import {
     getAllCustomerAccounts, 
     getCustomerAccountById, 
     updateCustomerAccount, 
-    deleteCustomerAccount 
+    deleteCustomerAccount,
+    getCustomerAccountByCUST_ID 
 } from '../controllers/CustomerAccountController.js';
 
 const router = express.Router();
@@ -15,5 +16,6 @@ router.get('/accounts', getAllCustomerAccounts); // Get all customer accounts
 router.get('/accounts/:ACCT_NO', getCustomerAccountById); // Get customer account by ACCT_NO
 router.put('/accounts/:ACCT_NO', updateCustomerAccount); // Update customer account by ACCT_NO
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount); // Delete customer account by ACCT_NO
+router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
 
 export default router;

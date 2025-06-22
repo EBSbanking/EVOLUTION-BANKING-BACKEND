@@ -1,28 +1,45 @@
 import express from 'express';
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
 
-
 const router = express.Router();
 
-// Route to submit a new transaction (created by Credit Officer)
-router.post('/transactions/submit', WF_WORK_ITEMController.submitTransaction);
+// ✅ Create a new work item
+router.post('/work-items', WF_WORK_ITEMController.submitTransaction);
 
-// Route to get pending transactions for authorization based on BU_ID
-// router.get('/transactions/authorization', WF_WORK_ITEMController.getTransactionsForAuthorization);
+// ✅ Get paginated & filtered work items (includes decoding)
+router.get('/work-items', WF_WORK_ITEMController.getWorkItems);
 
-// Route to approve a transaction (Branch Manager approval)
-router.put('/workflow/approve/:WORK_ITEM_ID', WF_WORK_ITEMController.approveWorkflow);
-// Route to get all work items (for general listing)
-router.get('/work-items', WF_WORK_ITEMController.getAllWorkItems);
+// ✅ Get filtered/paginated work items (with decoding and status flags)
+router.get('/work-items/filter', WF_WORK_ITEMController.getWorkItems);
 
-// Route to update a work item by ID
-router.put('/work-items/:id', WF_WORK_ITEMController. moveToCorrectTable);
 
-// Route to delete a work item by ID
-router.delete('/work-items/:id', WF_WORK_ITEMController.deleteWorkItem);
+// ✅ Get all active (Pending/Rejected) work items
+router.get('/work-items/all', WF_WORK_ITEMController.getAllWorkItems);
 
-router.get('/work-item/:workItemId', WF_WORK_ITEMController.getWorkItemById);
+// ✅ Get work item history (Approved items)
+router.get('/work-items/history', WF_WORK_ITEMController.getWorkItemHistory);
 
-router.get('/work-item/:workItemId', WF_WORK_ITEMController.calculateAge);
+// ✅ Get a specific work item by ID
+router.get('/work-items/:WORK_ITEM_ID', WF_WORK_ITEMController.getWorkItemById);
+
+// ✅ Delete a work item by WORK_ITEM_ID
+router.delete('/work-items/:WORK_ITEM_ID', WF_WORK_ITEMController.deleteWorkItem);
+
+// ✅ Update work item status after external approval
+router.put('/work-items/update-status', async (req, res) => {
+  const { itemType, itemId, approvedBy } = req.body;
+
+  if (!itemType || !itemId || !approvedBy) {
+    return res.status(400).json({ message: 'Missing required parameters: itemType, itemId, approvedBy' });
+  }
+
+  const result = await WF_WORK_ITEMController.updateWorkItemStatusOnApproval(itemType, itemId, approvedBy);
+
+  if (result) {
+    return res.status(200).json({ message: 'Work item status updated to Approved' });
+  } else {
+    return res.status(500).json({ message: 'Failed to update work item status' });
+  }
+});
 
 export default router;

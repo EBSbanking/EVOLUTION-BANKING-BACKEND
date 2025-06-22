@@ -2,7 +2,9 @@ import express from 'express';
 import { 
     applyForLoan, 
     disburseLoan, 
-    getLoanAccountByAcctNo, 
+    getLoanAccountByAcctNo,
+    getLoanAccountsByCustomerId  
+
      
     
 } from '../controllers/LoanAccountController.js';  // Adjust path as needed
@@ -18,6 +20,8 @@ router.post('/apply', applyForLoan);
 
 // Route for fetching a loan account by ACCT_NO
 router.get('/loanAccount/:ACCT_NO', getLoanAccountByAcctNo);
+
+router.get('/by-customer/:custId', getLoanAccountsByCustomerId);
 
 
 export default router;

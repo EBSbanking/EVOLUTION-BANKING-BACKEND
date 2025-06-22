@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Transaction from '../models/Transaction.js';
 import DepositAccountSummary from '../models/DepositAccountSummary.js';
-import CustomerAccount from '../models/customerAccount.js';
+import CustomerAccount from '../models/CustomerAccount.js';
 
 /* ---------- Helpers ---------- */
 const generateSerialNumber = (len) => {

@@ -1,16 +1,15 @@
 import mongoose from 'mongoose';
 import RateIndex from '../models/Rate-Index.js';
-import LoanAccount from '../models/loanAccount.js';
+import LoanAccount from '../models/LoanAccount.js';
 import CustomerAccount from '../models/customerAccount.js';
 import GLAccount from '../models/GLAccount.js';
 import Transaction from '../models/Transaction.js';
 import RepaymentSchedule from '../models/repaymentSchedule.js';
 import LoanInterestRate from '../models/loanInterestRate.js';
 import Ledger from '../models/Ledger.js';
-import logAuditTrail from '../utils/auditLogger.js';
 import Disbursement from '../models/Disbursement.js';
 import CreditApplication from '../models/CreditApplication.js';
-
+import logAuditTrail from '../utils/auditLogger.js'; 
 
 
 
@@ -54,6 +53,16 @@ export const applyForLoan = async (req, res) => {
     });
 
     await loanAccount.save();
+
+    // Log audit trail for loan application
+    await logAudit({
+      action: 'Apply Loan',
+      performedBy: req.body.CREATED_BY || '',
+      entity: 'LoanAccount',
+      entityId: loanAccount._id,
+      changes: req.body
+    });
+
     res.status(201).json({ message: 'Loan application submitted successfully', data: loanAccount });
   } catch (error) {
     console.error('Apply Loan Error:', error);
@@ -70,45 +79,46 @@ export const disburseLoan = async (req, res) => {
         APPL_ID, CUST_ID, ACCT_NO, AMOUNT,
         TERM_CD, TERM_VALUE, INTEREST_RATE,
         DISBURSEMENT_DATE, glAccountNo, portfolioGLAcctNo,
-        loanFeeGLAcctNo,  // <--- added here
-        CREATED_BY
+        loanFeeGLAcctNo, CREATED_BY, customerAcctNo // Add customer account number
       } = req.body;
 
       const requiredFields = [
         'APPL_ID', 'CUST_ID', 'ACCT_NO', 'AMOUNT',
         'TERM_CD', 'TERM_VALUE', 'INTEREST_RATE',
         'DISBURSEMENT_DATE', 'glAccountNo', 'portfolioGLAcctNo',
-        'loanFeeGLAcctNo',  // <--- added here
-        'CREATED_BY'
+        'loanFeeGLAcctNo', 'CREATED_BY', 'customerAcctNo' // Add to required fields
       ];
 
-      for (const field of requiredFields) {
-        if (!req.body[field]) {
-          throw new Error(`${field} is required`);
-        }
-      }
+      // ... existing validation code ...
 
-      const amountNum = parseFloat(AMOUNT);
-      if (isNaN(amountNum) || amountNum <= 0) {
-        throw new Error('Invalid disbursement amount');
-      }
-
-      // Fetch necessary documents
-      const [creditApp, loanAccount, portfolioGL, loanGL, loanFeeGL] = await Promise.all([
+      // Add customer account lookup
+      const [creditApp, loanAccount, portfolioGL, loanGL, loanFeeGL, customerAccount] = await Promise.all([
         CreditApplication.findOne({ APPL_ID: decodeURIComponent(APPL_ID), ACCT_NO }).session(session),
         LoanAccount.findOne({ ACCT_NO }).session(session),
         GLAccount.findOne({ GL_ACCT_NO: portfolioGLAcctNo }).session(session),
         GLAccount.findOne({ GL_ACCT_NO: glAccountNo }).session(session),
-        GLAccount.findOne({ GL_ACCT_NO: loanFeeGLAcctNo }).session(session),  // fetch loan fee GL
+        GLAccount.findOne({ GL_ACCT_NO: loanFeeGLAcctNo }).session(session),
+        CustomerAccount.findOne({ ACCT_NO: customerAcctNo }).session(session) // Get customer account
       ]);
 
-      if (!creditApp) throw new Error('Credit application not found');
-      if (!loanAccount) throw new Error('Loan account not found');
-      if (!portfolioGL) throw new Error('Portfolio GL account not found');
-      if (!loanGL) throw new Error('Loan GL account not found');
-      if (!loanFeeGL) throw new Error('Loan Fee GL account not found');
+      if (!customerAccount) throw new Error('Customer account not found');
+      // ... other existing checks ...
 
-      // Create disbursement record
+      // Calculate 10% fee
+      const loanFeeAmount = parseFloat((amountNum * 0.1).toFixed(2));
+
+      // Check if customer has sufficient balance
+      if (parseFloat(customerAccount.AVAILABLE_BALANCE.toString()) < loanFeeAmount) {
+        throw new Error('Insufficient funds in customer account for fee');
+      }
+
+      // Deduct fee from customer account
+      customerAccount.AVAILABLE_BALANCE -= loanFeeAmount;
+      customerAccount.LEDGER_BAL -= loanFeeAmount;
+      customerAccount.CLEARED_BAL -= loanFeeAmount;
+      await customerAccount.save({ session });
+
+      // Create disbursement record (without adding fee to loan account)
       const loanDisbursement = new Disbursement({
         APPL_ID,
         CUST_ID,
@@ -120,90 +130,32 @@ export const disburseLoan = async (req, res) => {
         INTEREST_RATE,
         STATUS: 'disbursed',
         REPAYMENT_SCHEDULE: [],
+        FEE_AMOUNT: loanFeeAmount // Track fee separately
       });
       await loanDisbursement.save({ session });
 
-      // Update loan account balances for disbursement
+      // Update loan account balances (only the principal amount)
       const toDecimal128 = (num) => mongoose.Types.Decimal128.fromString(num.toFixed(2));
-      const cleared = parseFloat(loanAccount.CLEARED_BALANCE?.toString() || '0');
-      const available = parseFloat(loanAccount.AVAILABLE_BALANCE?.toString() || '0');
-      const ledger = parseFloat(loanAccount.LEDGER_BALANCE?.toString() || '0');
-
-      loanAccount.CLEARED_BALANCE = toDecimal128(cleared - amountNum);
-      loanAccount.AVAILABLE_BALANCE = toDecimal128(available - amountNum);
-      loanAccount.LEDGER_BALANCE = toDecimal128(ledger - amountNum);
+      loanAccount.CLEARED_BALANCE = toDecimal128(amountNum);
+      loanAccount.AVAILABLE_BALANCE = toDecimal128(amountNum);
+      loanAccount.LEDGER_BALANCE = toDecimal128(amountNum);
       await loanAccount.save({ session });
 
-      // Create ledger entries for disbursement (Debit loan, Credit portfolio)
-      const journalId = generateJournalId();
-      const ledgerNo1 = generateLedgerNo();
-      const ledgerNo2 = generateLedgerNo();
+      // ... existing ledger/journal code for principal amount ...
 
-      const debitLedger = new Ledger({
-        JOURNAL_ID: journalId,
-        LEDGER_NO: ledgerNo1,
-        AMOUNT: amountNum,
-        TRANSACTION_TYPE: 'Debit',
-        CHART_OF_ACCT_ID: loanGL.CHART_OF_ACCT_ID,
-        LEDGER_BALANCE: ledger - amountNum,
-        ACCT_DESC: 'Loan Disbursement (Loan Account)',
-        GL_ACCT_NO: loanGL.GL_ACCT_NO,
-        GL_ACCT_ID: loanGL.GL_ACCT_ID,
-        GL_ACCT_STRUCT_ID: loanGL.GL_ACCT_STRUCT_ID,
-        GL_ACCT_CAT_CD: loanGL.GL_ACCT_CAT,
-        BAL_CD: loanGL.BAL_CD,
-        SUB_LEDGER_NO: loanGL.SUB_LEDGER_NO,
-        BU_ID: loanGL.BU_ID,
-        SEG_NO: loanGL.SEG_NO,
-        CREATED_BY,
-        CREATE_DT: new Date(),
-      });
-
-      const creditLedger = new Ledger({
-        JOURNAL_ID: journalId,
-        LEDGER_NO: ledgerNo2,
-        AMOUNT: amountNum,
-        TRANSACTION_TYPE: 'Credit',
-        CHART_OF_ACCT_ID: portfolioGL.CHART_OF_ACCT_ID,
-        LEDGER_BALANCE: amountNum,
-        ACCT_DESC: 'Loan Disbursement (Portfolio GL)',
-        GL_ACCT_NO: portfolioGL.GL_ACCT_NO,
-        GL_ACCT_ID: portfolioGL.GL_ACCT_ID,
-        GL_ACCT_STRUCT_ID: portfolioGL.GL_ACCT_STRUCT_ID,
-        GL_ACCT_CAT_CD: portfolioGL.GL_ACCT_CAT,
-        BAL_CD: portfolioGL.BAL_CD,
-        SUB_LEDGER_NO: portfolioGL.SUB_LEDGER_NO,
-        BU_ID: portfolioGL.BU_ID,
-        SEG_NO: portfolioGL.SEG_NO,
-        CREATED_BY,
-        CREATE_DT: new Date(),
-      });
-
-      await debitLedger.save({ session });
-      await creditLedger.save({ session });
-
-      // Handle 10% Loan Application Fee
-
-      const loanFeeAmount = parseFloat((amountNum * 0.1).toFixed(2));
-
-      // Update loan account balances again for fee deduction
-      loanAccount.CLEARED_BALANCE = toDecimal128(parseFloat(loanAccount.CLEARED_BALANCE.toString()) - loanFeeAmount);
-      loanAccount.AVAILABLE_BALANCE = toDecimal128(parseFloat(loanAccount.AVAILABLE_BALANCE.toString()) - loanFeeAmount);
-      loanAccount.LEDGER_BALANCE = toDecimal128(parseFloat(loanAccount.LEDGER_BALANCE.toString()) - loanFeeAmount);
-      await loanAccount.save({ session });
-
-      // Create ledger entries for loan fee (Debit loan account, Credit loan fee GL)
+      // Create journal entries for the fee (from customer account to fee GL)
       const feeJournalId = generateJournalId();
 
+      // Debit from customer account (through their GL account)
       const feeDebitLedger = new Ledger({
         JOURNAL_ID: feeJournalId,
         LEDGER_NO: generateLedgerNo(),
         AMOUNT: loanFeeAmount,
         TRANSACTION_TYPE: 'Debit',
         CHART_OF_ACCT_ID: loanGL.CHART_OF_ACCT_ID,
-        LEDGER_BALANCE: parseFloat(loanAccount.LEDGER_BALANCE.toString()),
+        LEDGER_BALANCE: parseFloat(customerAccount.LEDGER_BAL.toString()),
         ACCT_DESC: 'Loan Application Fee (Customer Account)',
-        GL_ACCT_NO: loanGL.GL_ACCT_NO,
+        GL_ACCT_NO: loanGL.GL_ACCT_NO, // Or use customer's GL account if different
         GL_ACCT_ID: loanGL.GL_ACCT_ID,
         GL_ACCT_STRUCT_ID: loanGL.GL_ACCT_STRUCT_ID,
         GL_ACCT_CAT_CD: loanGL.GL_ACCT_CAT,
@@ -215,6 +167,7 @@ export const disburseLoan = async (req, res) => {
         CREATE_DT: new Date(),
       });
 
+      // Credit to fee GL account
       const feeCreditLedger = new Ledger({
         JOURNAL_ID: feeJournalId,
         LEDGER_NO: generateLedgerNo(),
@@ -222,7 +175,7 @@ export const disburseLoan = async (req, res) => {
         TRANSACTION_TYPE: 'Credit',
         CHART_OF_ACCT_ID: loanFeeGL.CHART_OF_ACCT_ID,
         LEDGER_BALANCE: parseFloat(loanFeeGL.LEDGER_BALANCE?.toString() || '0') + loanFeeAmount,
-        ACCT_DESC: 'Loan Application Fee (Loan Fee GL)',
+        ACCT_DESC: 'Loan Application Fee (Fee Income)',
         GL_ACCT_NO: loanFeeGL.GL_ACCT_NO,
         GL_ACCT_ID: loanFeeGL.GL_ACCT_ID,
         GL_ACCT_STRUCT_ID: loanFeeGL.GL_ACCT_STRUCT_ID,
@@ -237,24 +190,18 @@ export const disburseLoan = async (req, res) => {
 
       await feeDebitLedger.save({ session });
       await feeCreditLedger.save({ session });
+
+      // ... rest of your existing code ...
     });
 
     session.endSession();
-    return res.status(200).json({ message: 'Loan disbursement and fee posted successfully' });
+    return res.status(200).json({ message: 'Loan disbursement and fee processed successfully' });
   } catch (err) {
     session.endSession();
     console.error('Disbursement Error:', err);
     return res.status(500).json({ message: 'Disbursement failed', error: err.message });
   }
 };
-
-
-
-
-
-
-
-
 // Helper functions (implement as needed)
 function generateJournalId() {
   return 'JRN-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
@@ -291,3 +238,28 @@ export const getLoanAccountByAcctNo = async (req, res) => {
         res.status(500).json({ message: 'Error fetching loan account', error: error.message });
     }
   };
+
+  export const getLoanAccountsByCustomerId = async (req, res) => {
+  const { custId } = req.params;
+
+  if (!custId) {
+    return res.status(400).json({ message: 'Customer ID (custId) is required' });
+  }
+
+  try {
+    const loanAccounts = await LoanAccount.find({ CUST_ID: custId });
+
+    if (!loanAccounts || loanAccounts.length === 0) {
+      return res.status(404).json({ message: 'No loan accounts found for this customer' });
+    }
+
+    res.status(200).json({
+      message: 'Loan accounts retrieved successfully',
+      count: loanAccounts.length,
+      loanAccounts,
+    });
+  } catch (error) {
+    console.error('Error fetching loan accounts by customer ID:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+};

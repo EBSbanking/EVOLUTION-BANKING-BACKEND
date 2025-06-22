@@ -1,5 +1,6 @@
-import CashWithdrawalTransaction from '../models/CashWithdrawalTransaction.js'; // Assuming this model exists
+import CashWithdrawalTransaction from '../models/CashWithdrawalTransaction.js';
 import { validationResult } from 'express-validator';
+import AuditTrail from '../models/AuditTrail.js';
 
 export const withdraw = async (req, res) => {
     const errors = validationResult(req);
@@ -10,7 +11,6 @@ export const withdraw = async (req, res) => {
     const { ACCT_NO, ACCT_NM, CUST_ID, amount, DESCRIPTION, SOURCE_OF_FUNDS } = req.body;
 
     try {
-        // Assume you have a model for cash withdrawals
         const withdrawal = new CashWithdrawalTransaction({
             ACCT_NO,
             ACCT_NM,
@@ -21,14 +21,39 @@ export const withdraw = async (req, res) => {
         });
 
         await withdrawal.save();
+
+        // 📝 Audit Logging
+        const userId = req.user?.id || 'system';
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+
+        await AuditTrail.create({
+            event_id: Date.now(), // or use uuidv4() for better uniqueness
+            user_id: userId,
+            event_type: 'CashWithdrawal',
+            action: 'Create Withdrawal',
+            old_value: null,
+            new_value: {
+                ACCT_NO,
+                ACCT_NM,
+                CUST_ID,
+                amount,
+                DESCRIPTION,
+                SOURCE_OF_FUNDS
+            },
+            ip_address: ipAddress,
+            timestamp: new Date()
+        });
+
         res.status(201).json({
             message: "Cash Withdrawal Transaction created successfully",
             transaction: withdrawal
         });
+
     } catch (error) {
         res.status(500).json({ message: "Failed to create withdrawal transaction", error: error.message });
     }
 };
+
 
 export const getHistory = async (req, res) => {
     try {

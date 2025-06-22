@@ -113,39 +113,39 @@ router.post('/request-password-reset', async (req, res) => {
     }
 });
 
-// Reset Password Route (actually updates the password)
-router.post('/reset-password', async (req, res) => {
-    const { reset_token, new_password } = req.body;
+// // Reset Password Route (actually updates the password)
+// router.post('/reset-password', async (req, res) => {
+//     const { reset_token, new_password } = req.body;
 
-    if (!new_password || new_password.length < 6) {
-        return res.status(400).json({ message: "New password is required and should be at least 6 characters long" });
-    }
+//     if (!new_password || new_password.length < 6) {
+//         return res.status(400).json({ message: "New password is required and should be at least 6 characters long" });
+//     }
 
-    try {
-        const user = await User.findOne({ reset_token });
+//     try {
+//         const user = await User.findOne({ reset_token });
 
-        if (!user) {
-            return res.status(400).json({ message: "Invalid reset token" });
-        }
+//         if (!user) {
+//             return res.status(400).json({ message: "Invalid reset token" });
+//         }
 
-        if (user.reset_token_expire < Date.now()) {
-            return res.status(400).json({ message: "Reset token has expired" });
-        }
+//         if (user.reset_token_expire < Date.now()) {
+//             return res.status(400).json({ message: "Reset token has expired" });
+//         }
 
-        // Hash the new password
-        const hashedPassword = await bcrypt.hash(new_password, 10);
+//         // Hash the new password
+//         const hashedPassword = await bcrypt.hash(new_password, 10);
         
-        user.password = hashedPassword;
-        user.reset_token = null;  
-        user.reset_token_expire = null; 
-        await user.save();
+//         user.password = hashedPassword;
+//         user.reset_token = null;  
+//         user.reset_token_expire = null; 
+//         await user.save();
 
-        res.status(200).json({ message: "Password reset successfully" });
-    } catch (error) {
-        console.error("Error resetting password:", error);
-        res.status(500).json({ message: "Error resetting password", error: error.message });
-    }
-});
+//         res.status(200).json({ message: "Password reset successfully" });
+//     } catch (error) {
+//         console.error("Error resetting password:", error);
+//         res.status(500).json({ message: "Error resetting password", error: error.message });
+//     }
+// });
 
 // Admin Controller: Reset a user's password directly
 router.put('/admin/reset-password', async (req, res) => {

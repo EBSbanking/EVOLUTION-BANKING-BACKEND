@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
+import mongoosePaginate from 'mongoose-paginate-v2'; // <-- Add this
 
-// Define the schema as you have it
+// Define the schema
 const WF_WORK_ITEMSchema = new mongoose.Schema({
   WORK_ITEM_ID: { type: Number, required: true, unique: true },
   BUS_PROC_ID: { type: Number, required: true },
@@ -18,7 +19,7 @@ const WF_WORK_ITEMSchema = new mongoose.Schema({
   BU_ID: { type: String, required: true },
   CREATE_DT: { type: Date, default: Date.now },
   SYS_CREATE_TS: { type: Date, default: Date.now },
-  WAIT_ST: { type: String, required: false },
+  WAIT_ST: { type: String, default: 'Pending' },
   MAX_DELAY_TM: { type: Number, required: false },
   DEADLINE_TM: { type: Date, required: false },
   ORIGINATOR_USER_ROLE_ID: { type: String, required: true },
@@ -27,28 +28,30 @@ const WF_WORK_ITEMSchema = new mongoose.Schema({
   TARGET_DUR_TM: { type: Number, required: false },
   ESCALATION_TM: { type: Number, required: false },
   ITEM_BU_ID: { type: String, required: false },
-  ITEM_TYPE: { type: String, required: false },
+  ITEM_TYPE: { type: String, required: true },
   ITEM_ID: { type: Number, required: true },
   TARGET_USER_ROLE_ID: { type: String, required: false },
+}, {
+  timestamps: true // Enables createdAt and updatedAt fields
 });
 
-// Schema validation hook (pre-update hook)
-WF_WORK_ITEMSchema.pre('findOneAndUpdate', function(next) {
+// ✅ Add pagination plugin
+WF_WORK_ITEMSchema.plugin(mongoosePaginate);
+
+// Auto-update REC_ST if WAIT_ST is Approved
+WF_WORK_ITEMSchema.pre('findOneAndUpdate', function (next) {
   const update = this.getUpdate();
 
-  // Check if WAIT_ST is being updated to "Approved" and REC_ST is not set
   if (update.WAIT_ST === 'Approved' && !update.REC_ST) {
-    // Automatically set REC_ST to "Completed" if not provided
-    this.set('REC_ST', 'Completed');
+    update.REC_ST = 'Completed';
   }
 
   next();
 });
 
-// Adding triggerNotification method to the schema
-WF_WORK_ITEMSchema.methods.triggerNotification = async function(options) {
+// Optional: Notification mock method
+WF_WORK_ITEMSchema.methods.triggerNotification = async function (options) {
   console.log('Triggering notification for workflow item:', this);
-
   return {
     success: true,
     message: 'Notification triggered successfully',

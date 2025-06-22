@@ -1,11 +1,18 @@
-// models/TransactionPolicy.js
 import mongoose from 'mongoose';
 
+// Define schema for each amount range
+const PolicyRangeSchema = new mongoose.Schema({
+  MIN_AMOUNT: { type: Number, default: 0 },
+  MAX_AMOUNT: { type: Number, required: true },
+  requiresApproval: { type: Boolean, default: false }, // NEW FLAG
+  AUTHORIZED_ROLES: { type: [String], required: true },
+}, { _id: false }); // prevents nested _id fields for each range
+
+// Main policy schema per role
 const TransactionPolicySchema = new mongoose.Schema({
   ROLE_NM: { type: String, required: true, unique: true },
-  MIN_AMOUNT: { type: Number, default: 0 }, // Minimum amount the role can post
-  MAX_AMOUNT: { type: Number, required: true }, // Maximum amount the role can post without authorization
-  AUTHORIZED_ROLES: { type: [String], required: true }, // Roles allowed to authorize transactions above MAX_AMOUNT
+  RANGES: { type: [PolicyRangeSchema], required: true }
 });
 
-export default mongoose.model('TransactionPolicy', TransactionPolicySchema);
+// Export the model
+export default mongoose.model('TransactionPolicy', TransactionPolicySchema, 'transactionpolicies');

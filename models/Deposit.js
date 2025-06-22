@@ -1,15 +1,16 @@
 import mongoose from 'mongoose';
 import AuditTrail from './AuditTrail.js';
-import CustomerAccount from './CustomerAccount.js'; // Import the CustomerAccount model
+import CustomerAccount from './CustomerAccount.js';
+import DepositAccountApplication from './DepositAccountApplication.js';
 
 // Helper function to generate a deposit account number
 const generateDepositAccountNumber = () => `10000000${Math.floor(Math.random() * 100)}`;
 
 // Helper function to generate deposit account details (ACCT_ID, ACCT_NO)
-const generateDepositAccountDetails = async () => {
+export const generateDepositAccountDetails = async () => {
     try {
-        const ACCT_ID = `00000${Math.floor(Math.random() * 1000)}`; // Generate random account ID
-        const ACCT_NO = generateDepositAccountNumber(); // Generate deposit account number
+        const ACCT_ID = `00000${Math.floor(Math.random() * 1000)}`;
+        const ACCT_NO = generateDepositAccountNumber();
 
         return {
             ACCT_ID,
@@ -23,10 +24,21 @@ const generateDepositAccountDetails = async () => {
 
 // Deposit Schema Definition
 const depositSchema = new mongoose.Schema({
-    CUST_ID: { type: String, required: true },
+    CUST_ID: { 
+        type: String, 
+        required: true,
+        validate: {
+            validator: async function(CUST_ID) {
+                const customerAccount = await CustomerAccount.findOne({ CUST_ID });
+                const application = await DepositAccountApplication.findOne({ CUST_ID });
+                return customerAccount || application;
+            },
+            message: 'Customer ID does not exist in either CustomerAccount or DepositAccountApplication'
+        }
+    },
     ACCT_ID: { type: String, required: false },
     ACCT_NM: { type: String, required: true },
-    ACCT_NO: { type: String, required: true }, // This should be linked to CustomerAccount
+    ACCT_NO: { type: String, required: true },
     BU_ID: { type: String, required: true },
     RSM_ID: { type: String, required: true },
     OPENED_DT: { type: Date, required: true },
@@ -34,33 +46,65 @@ const depositSchema = new mongoose.Schema({
     PROD_ID: { type: String, required: true },
 });
 
-// Middleware to auto-generate the deposit account details (ACCT_ID, ACCT_NO)
+// Middleware to auto-generate and validate deposit account details
 depositSchema.pre('save', async function (next) {
     if (this.isNew) {
         try {
-            // Fetch the customer account to get the ACCT_NO
-            const customerAccount = await CustomerAccount.findOne({ CUST_ID: this.CUST_ID });
+            let customerAccount = await CustomerAccount.findOne({ CUST_ID: this.CUST_ID });
+            
+            if (!customerAccount) {
+                const application = await DepositAccountApplication.findOne({ CUST_ID: this.CUST_ID });
+                if (application) {
+                    customerAccount = new CustomerAccount({
+                        CUST_ID: application.CUST_ID,
+                        ACCT_ID: application.ACCT_ID,
+                        ACCT_NO: application.ACCT_NO,
+                        ACCT_NM: application.ACCT_NM,
+                        BU_ID: application.BU_ID,
+                        LEDGER_BAL: 0.0,
+                        CLEARED_BAL: 0.0,
+                        AVAILABLE_BALANCE: 0.0,
+                        ACCOUNT_TYPE: 'SAVINGS',
+                        PRODUCT_DESC: 'Regular savings account',
+                        REC_ST: 'ACTIVE'
+                    });
+                    await customerAccount.save();
+                }
+            }
+
             if (customerAccount) {
-                this.ACCT_NO = customerAccount.ACCT_NO; // Use the same ACCT_NO as in the CustomerAccount
-                this.ACCT_ID = customerAccount.ACCT_ID; // You can also link ACCT_ID if needed
+                this.ACCT_NO = customerAccount.ACCT_NO;
+                this.ACCT_ID = customerAccount.ACCT_ID;
+                this.ACCT_NM = customerAccount.ACCT_NM;
+                this.BU_ID = customerAccount.BU_ID;
             } else {
-                // If no customer account is found, generate a random deposit account number
-                this.ACCT_NO = generateDepositAccountNumber(); // Generate a new account number for the deposit
-                this.ACCT_ID = `00000${Math.floor(Math.random() * 1000)}`; // Generate a random ACCT_ID for the deposit
+                const { ACCT_ID, ACCT_NO } = await generateDepositAccountDetails();
+                this.ACCT_NO = ACCT_NO;
+                this.ACCT_ID = ACCT_ID;
             }
         } catch (error) {
             console.error('Error generating account details:', error.message);
-            next(error); // Pass the error to next() to prevent saving
+            next(error);
             return;
         }
     }
     next();
 });
 
-// Define and export the Deposit model
-const Deposit = mongoose.models.Deposit || mongoose.model('Deposit', depositSchema);
+// Add post-save hook to update application status if it exists
+depositSchema.post('save', async function(doc, next) {
+    try {
+        await DepositAccountApplication.findOneAndUpdate(
+            { CUST_ID: doc.CUST_ID },
+            { STATUS: 'ACTIVE' },
+            { new: true }
+        );
+    } catch (error) {
+        console.error('Error updating application status:', error);
+    }
+    next();
+});
 
-// Export the function
-export { generateDepositAccountDetails };
+const Deposit = mongoose.models.Deposit || mongoose.model('Deposit', depositSchema);
 
 export default Deposit;

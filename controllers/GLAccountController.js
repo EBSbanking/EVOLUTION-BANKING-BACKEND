@@ -2,6 +2,7 @@ import GLAccount from '../models/GLAccount.js';
 import Subfolder from '../models/Subfolder.js';
 import { createRootSubfolder } from '../utils/subfolderUtils.js';
 
+
 export const createGLAccount = async (req, res) => {
     try {
         console.log('Request Body:', req.body);
@@ -65,7 +66,7 @@ export const createGLAccount = async (req, res) => {
         const glAcctNo = `${resolvedParentId}-${BAL_CD}-${LEDGER_NO}-${SUB_LEDGER_NO}-${BU_ID}-${SEG_NO}`;
         console.log(`Generated GL_ACCT_NO: ${glAcctNo}`);
 
-        // ✅ Step 4: Save the new GLAccount
+        // ✅ Step 4: Create the new GLAccount using the updated logic
         const newGLAccount = new GLAccount({
             GL_ACCT_NO: glAcctNo,
             GL_ACCT_ID: newGLAcctId,
@@ -77,26 +78,28 @@ export const createGLAccount = async (req, res) => {
             SUB_LEDGER_NO,
             BU_ID,
             SEG_NO,
-            CHART_OF_ACCT_ID,
-            ACCT_DESC,
-            GL_ACCT_CAT,
-            JOURNAL_ID,
-            TRANSACTION_TYPE,
-            CR_ALLOWED,
-            DR_ALLOWED,
-            REC_ST,
-            POST_ALLOW,
-            POST_FG,
-            CONTROL_ACCT_FG,
-            SUPENSE_ACCT_FG,
-            ALLOW_BAL_SWING_FG,
-            SEG_VALUE,
-            SEG_DESC,
-            SEG_TY_CD,
-            SEG_PLACEHLDR_ID,
-            PROMPT,
+            CHART_OF_ACCT_ID: CHART_OF_ACCT_ID || '10001',
+            ACCT_DESC: ACCT_DESC || 'GL Account',
+            GL_ACCT_CAT_CD: GL_ACCT_CAT || 'ASSET',
+            GL_ACCT_CAT: GL_ACCT_CAT || 'ASSET',
+            JOURNAL_ID: JOURNAL_ID || Math.floor(Math.random() * 1_000_000_000),
+            TRANSACTION_TYPE: TRANSACTION_TYPE || 'Deposit',
+            CR_ALLOWED: CR_ALLOWED !== undefined ? CR_ALLOWED : true,
+            DR_ALLOWED: DR_ALLOWED !== undefined ? DR_ALLOWED : true,
+            REC_ST: REC_ST || 'Active',
+            POST_ALLOW: POST_ALLOW !== undefined ? POST_ALLOW : true,
+            POST_FG: POST_FG !== undefined ? POST_FG : 'Y',
+            CONTROL_ACCT_FG: CONTROL_ACCT_FG !== undefined ? CONTROL_ACCT_FG : 'N',
+            SUPENSE_ACCT_FG: SUPENSE_ACCT_FG !== undefined ? SUPENSE_ACCT_FG : 'N',
+            ALLOW_BAL_SWING_FG: ALLOW_BAL_SWING_FG !== undefined ? ALLOW_BAL_SWING_FG : 'N',
+            SEG_VALUE: SEG_VALUE || '',
+            SEG_DESC: SEG_DESC || '',
+            SEG_TY_CD: SEG_TY_CD || '',
+            SEG_PLACEHLDR_ID: SEG_PLACEHLDR_ID || '',
+            PROMPT: PROMPT || '',
         });
 
+        // ✅ Step 5: Save the new GLAccount
         await newGLAccount.save();
 
         res.status(201).json({
@@ -111,6 +114,9 @@ export const createGLAccount = async (req, res) => {
         });
     }
 };
+
+// Other controllers remain unchanged...
+
 
 
 // Function to create a root subfolder

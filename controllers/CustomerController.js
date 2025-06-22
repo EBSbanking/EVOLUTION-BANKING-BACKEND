@@ -4,14 +4,13 @@ import moment from 'moment';
 import NotificationService from '../services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
-import { generateNumber } from '../utils/generateNumber.js'; // Keep this import, remove local function
+import { generateNumber } from '../utils/generateNumber.js';
+import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
 
 
-// Your existing generateCustomerNumber and generateWorkflowIdentifiers
-// (Assuming you have these implemented somewhere and imported here)
 const parseDate = (dateStr, format) => {
   if (!dateStr) return undefined;
-  const m = moment(dateStr, format, true); // strict parsing
+  const m = moment(dateStr, format, true);
   return m.isValid() ? m.toDate() : undefined;
 };
 
@@ -28,24 +27,28 @@ export const createCustomer = async (req, res) => {
       KYC_LEVEL, PHONE_NO, SMS
     } = req.body;
 
-    // Check if a customer already exists with the same CUST_NO or EMAIL_ADDRESS
+    // Check for existing customer
     const existingCustomer = await Customer.findOne({
       $or: [
-        { CUST_NO },
-        { EMAIL_ADDRESS },
+        { CUST_NO: CUST_NO || '' },
+        { EMAIL_ADDRESS: EMAIL_ADDRESS || '' },
       ]
     });
 
     if (existingCustomer) {
-      return res.status(400).json({ message: 'Customer with this CUST_NO or EMAIL_ADDRESS already exists' });
+      return res.status(400).json({ 
+        message: 'Customer with this CUST_NO or EMAIL_ADDRESS already exists' 
+      });
     }
 
-    // Generate customer numbers if not provided (example function assumed)
-    const { paddedCUST_ID, paddedCUST_NO } = (CUST_ID && CUST_NO) 
+    // Generate customer numbers if not provided
+    const { paddedCUST_ID, paddedCUST_NO } = (CUST_ID && CUST_NO)
       ? { paddedCUST_ID: CUST_ID, paddedCUST_NO: CUST_NO }
       : generateCustomerNumber();
 
-    // Construct new customer object
+    const userId = USER_ID || CREATED_BY || 'SYSTEM';
+
+    // Create customer with Pending status
     const newCustomer = new Customer({
       CUST_ID: paddedCUST_ID,
       CUST_NO: paddedCUST_NO,
@@ -53,7 +56,7 @@ export const createCustomer = async (req, res) => {
       FIRST_NAME,
       MIDDLE_NAME,
       LAST_NAME,
-      CUST_NM,
+      CUST_NM: CUST_NM || `${FIRST_NAME} ${LAST_NAME}`.trim(),
       HOME_ADDRESS,
       EMAIL_ADDRESS,
       BU_ID,
@@ -73,9 +76,9 @@ export const createCustomer = async (req, res) => {
       RISK_CLASS,
       STMNT_FREQ_CD,
       STMNT_FREQ_VALUE,
-      REC_ST: 'Pending', // Default status
+      REC_ST: 'Pending', // Initial status
       CREATED_BY,
-      USER_ID,
+      USER_ID: userId,
       CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : new Date(),
       INDUSTRY_ID,
       INDUSTRY_CD,
@@ -93,61 +96,118 @@ export const createCustomer = async (req, res) => {
       SMS
     });
 
-    // Save new customer
     await newCustomer.save();
 
-    // Generate workflow identifiers
+    // Create workflow item
     const { WORK_ITEM_ID, QUEUE_ID, SUB_PROC_ID, BUS_PROC_ID } = generateWorkflowIdentifiers();
 
-    // Create workflow item for approval process
-    const workflowItemData = new WF_WORK_ITEM({
+    const workflowItem = new WF_WORK_ITEM({
       WORK_ITEM_ID,
       ITEM_VALUE: paddedCUST_NO,
-      ITEM_DESC: `Customer Account Application for ${CUST_NM || FIRST_NAME}`,
+      ITEM_DESC: `Customer Account Application for ${newCustomer.CUST_NM}`,
       ITEM_CLASS_NM: "Customer",
+      ITEM_TYPE: "Customer",
       EVENT_ID: generateNumber(7),
       CUST_ID: paddedCUST_ID,
-      REC_ST: "Active",
+      REC_ST: "Pending", // Workflow status
       VERSION: 1,
-      USER_ID,
+      USER_ID: userId,
       BU_ID,
-      CREATE_DT: moment().toISOString(),
+      CREATE_DT: new Date(),
       WAIT_ST: "Pending",
       ITEM_ID: generateNumber(4),
       ITEM_REF_NO: generateNumber(4),
-      ORIGINATOR_USER_ROLE_ID: USER_ID,
+      ORIGINATOR_USER_ROLE_ID: userId,
       QUEUE_ID,
       SUB_PROC_ID,
       BUS_PROC_ID,
+      TARGET_USER_ROLE_ID: 'Manager' // Default approver role
     });
 
-    await workflowItemData.save();
+    await workflowItem.save();
 
-    // Notify roles
-    const roles = ['Manager', 'Branch Operation Supervisor'];
-    const message = `New customer application (ID: ${WORK_ITEM_ID}) requires your approval.`;
+    // Send notifications to approvers
+    const notificationMessage = `New customer ${newCustomer.CUST_NM} (ID: ${paddedCUST_ID}) requires approval`;
 
-    for (const role of roles) {
-      await NotificationService.send({
-        ROLE_ID: role,
-        message,
-        WORK_ITEM_ID,
+    await NotificationService.send({
+      ROLE_ID: workflowItem.TARGET_USER_ROLE_ID,
+      message: `New customer ${newCustomer.CUST_NM} (ID: ${paddedCUST_ID}) requires approval`,
+      WORK_ITEM_ID,
+      CUST_ID: paddedCUST_ID
+    });
+
+    return res.status(201).json({
+      message: 'Customer created and submitted for approval',
+      customer: newCustomer,
+      workflowItem,
+      approvalUrl: `/api/customer/approve/${paddedCUST_ID}`
+    });
+  } catch (error) {
+    console.error('Customer creation error:', error);
+    return res.status(500).json({
+      message: 'Failed to create customer',
+      error: error.message
+    });
+  }
+};
+
+// Updated Approval endpoint with complete status updates
+export const approveCustomer = async (req, res) => {
+  try {
+    const { custId } = req.params;
+    const { approvedBy } = req.body;
+
+    if (!custId || !approvedBy) {
+      return res.status(400).json({
+        message: 'Customer ID and approvedBy are required'
       });
     }
 
-    return res.status(201).json({
-      message: 'Customer Account Application created successfully and submitted for approval',
-      status: 'Pending',
-      customer: newCustomer,
-      workflowItem: workflowItemData,
-      workflowStatusUrl: `/api/workflow/${WORK_ITEM_ID}`,
+    const cleanCustId = String(custId).trim();
+    const customer = await Customer.findOne({ CUST_ID: cleanCustId });
+    
+    if (!customer) {
+      return res.status(404).json({ 
+        message: 'Customer not found',
+        searchedId: cleanCustId
+      });
+    }
+
+    // Update customer status
+    customer.REC_ST = 'Active';
+    customer.APPROVED_BY = approvedBy;
+    customer.APPROVED_DT = new Date();
+    await customer.save();
+
+    // Update work item status
+    const updateSuccess = await WF_WORK_ITEMController.updateWorkItemStatusOnApproval(
+      'Customer',
+      customer._id,
+      approvedBy
+    );
+
+    if (!updateSuccess) {
+      console.warn('Work item update failed for customer:', cleanCustId);
+    }
+
+    res.status(200).json({
+      message: 'Customer approved successfully',
+      customerId: customer.CUST_ID,
+      customerName: customer.CUST_NM,
+      status: customer.REC_ST,
+      approvedBy,
+      approvalDate: customer.APPROVED_DT
     });
 
   } catch (error) {
-    console.error('Error creating customer account application:', error);
-    return res.status(500).json({ message: 'Error creating customer account application', error: error.message });
+    console.error('Approval error:', error);
+    res.status(500).json({
+      message: 'Failed to approve customer',
+      error: error.message
+    });
   }
 };
+
 
 export const getAllCustomer = async (req, res) => {
   try {
@@ -159,7 +219,6 @@ export const getAllCustomer = async (req, res) => {
   }
 };
 
-// Get customer by CUST_ID
 export const getCustomerById = async (req, res) => {
   const { CUST_ID } = req.params;
   try {
@@ -174,34 +233,39 @@ export const getCustomerById = async (req, res) => {
   }
 };
 
-// Update customer by CUST_ID
+// Example: CustomerController.js
+export const getPendingCustomers = async (req, res) => {
+  try {
+    const pendingCustomers = await Customer.find({ REC_ST: 'Pending' });
+    res.status(200).json(pendingCustomers);
+  } catch (error) {
+    res.status(500).json({ message: 'Error retrieving pending customers', error: error.message });
+  }
+};
+
+
 export const updateWorkflowStatus = async (req, res) => {
   try {
     const { WORK_ITEM_ID, newStatus } = req.body;
 
-    // Validate the new status (ensure it's either 'Active' or 'Pending')
     if (!['Active', 'Pending'].includes(newStatus)) {
       return res.status(400).json({ message: 'Invalid status. Only "Active" or "Pending" are allowed.' });
     }
 
-    // Find the corresponding workflow item
     const workflowItem = await WF_WORK_ITEM.findById(WORK_ITEM_ID);
     if (!workflowItem) {
       return res.status(404).json({ message: 'Workflow item not found.' });
     }
 
-    // Update the workflow item status
     workflowItem.REC_ST = newStatus;
     await workflowItem.save();
 
-    // If the workflow item is approved (status is 'Active'), update the customer status as well
     if (newStatus === 'Active') {
       const customer = await Customer.findOne({ CUST_ID: workflowItem.CUST_ID });
       if (!customer) {
         return res.status(404).json({ message: 'Customer not found.' });
       }
 
-      // Update the customer status to 'Active'
       customer.REC_ST = 'Active';
       await customer.save();
     }
@@ -216,7 +280,38 @@ export const updateWorkflowStatus = async (req, res) => {
   }
 };
 
-// Deactivate customer account
+export const updateCustomer = async (req, res) => {
+  const { CUST_ID } = req.params;
+  const updateFields = req.body;
+
+  try {
+    const customer = await Customer.findOne({ CUST_ID });
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+
+    // Apply updates
+    Object.keys(updateFields).forEach(field => {
+      customer[field] = updateFields[field];
+    });
+
+    await customer.save();
+
+    res.status(200).json({
+      message: 'Customer updated successfully',
+      updatedCustomer: customer
+    });
+  } catch (error) {
+    console.error('Error updating customer:', error);
+    res.status(500).json({
+      message: 'Failed to update customer',
+      error: error.message
+    });
+  }
+};
+
+
 export const deactivateCustomer = async (req, res) => {
   const { CUST_ID } = req.params;
   try {
@@ -225,7 +320,7 @@ export const deactivateCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Customer Account Application not found' });
     }
 
-    application.REC_ST = 'Inactive';  // Soft delete or change status
+    application.REC_ST = 'Inactive';
     await application.save();
 
     res.status(200).json({ message: 'Customer Account Application deactivated successfully' });

@@ -1,5 +1,5 @@
 import express from 'express';
-import { registerUser, updateUser, deactivateUser, getAllUsers } from '../controllers/userController.js'; // Import the controllers
+import { registerUser, updateUser, resetPassword, deactivateUser, getAllUsers } from '../controllers/userController.js'; // Import the controllers
 
 const router = express.Router();
 
@@ -14,5 +14,7 @@ router.patch('/users/deactivate/:userId', deactivateUser);
 
 // GET route for fetching all users
 router.get('/users', getAllUsers);
+
+router.post('/reset-password', resetPassword);
 
 export default router;

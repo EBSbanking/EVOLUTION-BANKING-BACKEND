@@ -5,33 +5,41 @@ import {
   getCustomerById,
   updateWorkflowStatus,
   deactivateCustomer,
+  approveCustomer,
+  getPendingCustomers,
+  updateCustomer 
 } from '../controllers/CustomerController.js';
-import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';  // Import the function
+import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
 
 const router = express.Router();
 
-// POST: Create a new customer
-router.post('/customers', createCustomer); 
+// Customer Creation & Approval Routes
+router.post('/customers', createCustomer); // Create new customer (pending approval)
+router.put('/customer/approve/:custId', approveCustomer); // Approve customer creation
+router.put('/customers/:CUST_ID', updateCustomer);
 
-// GET: Get all customers
-router.get('/customers', getAllCustomer);
+// Customer Data Routes
+router.get('/customers', getAllCustomer); // Get all customers
+router.get('/customers/pending', getPendingCustomers); // Get only pending customers
+router.get('/customers/:CUST_ID', getCustomerById); // Get specific customer
 
-// GET: Get a customer by CUST_ID
-router.get('/customers/:CUST_ID', getCustomerById);
+// Customer Status Management Routes
+router.put('/customers/:CUST_ID/status', updateWorkflowStatus); // Update workflow status
+router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer); // Deactivate customer
 
-// PUT: Update a customer by CUST_ID
-router.put('/customers/:CUST_ID', updateWorkflowStatus);
-
-// PATCH: Deactivate a customer account by CUST_ID
-router.patch('/customers/:CUST_ID', deactivateCustomer);
-
-// GET: Generate customer number (for testing or preview)
+// Utility Routes
 router.get('/generateCustomerNumber', (req, res) => {
   try {
-    const { paddedCUST_ID, paddedCUST_NO } = generateCustomerNumber();  // Generate IDs
-    res.status(200).json({ CUST_ID: paddedCUST_ID, CUST_NO: paddedCUST_NO });  // Return the generated customer numbers
+    const { paddedCUST_ID, paddedCUST_NO } = generateCustomerNumber();
+    res.status(200).json({ 
+      CUST_ID: paddedCUST_ID, 
+      CUST_NO: paddedCUST_NO 
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Error generating customer number', error: error.message });
+    res.status(500).json({ 
+      message: 'Error generating customer number', 
+      error: error.message 
+    });
   }
 });
 

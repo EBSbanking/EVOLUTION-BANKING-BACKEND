@@ -11,3 +11,4 @@ export const generateAccountIdentifiers = () => {
     return { ACCT_NO, ACCT_ID };
   };
   
+  export default generateAccountIdentifiers;

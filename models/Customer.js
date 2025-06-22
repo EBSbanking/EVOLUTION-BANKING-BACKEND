@@ -52,6 +52,7 @@ const customerSchema = new mongoose.Schema({
   KYC_LEVEL: { type: String },
   PHONE_NO: { type: String }, // Changed to String to support numbers with leading zeros or international codes
   SMS: { type: String },
+  REC_ST: { type: String, enum: ['Pending', 'Active', 'Inactive', 'Closed', 'Suspended', 'Cancelled']},
 
   // Optional: Add EVENT_ID if still needed
   EVENT_ID: { type: Number }

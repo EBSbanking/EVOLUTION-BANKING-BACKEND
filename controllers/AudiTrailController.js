@@ -1,9 +1,9 @@
 import mongoose from 'mongoose'
 import AuditTrail from '../models/AuditTrail.js';
 import Users from '../models/User.js';
-import DepositTransaction from '../models/DepositTransaction.js';
-import CreditApplication from '../models/CreditApplication.js';
-import DepositAccountApplication from '../models/DepositAccountApplication.js';
+
+
+
 import Customer from '../models/Customer.js';
 
 

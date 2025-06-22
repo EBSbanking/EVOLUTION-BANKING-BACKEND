@@ -1,7 +1,5 @@
 import mongoose from 'mongoose'; 
 import GLAccount from '../models/GLAccount.js'; // Import GLAccount model
-import CustomerAccount from './CustomerAccount.js';
-import Deposit from '../models/Deposit.js';
 
 // Helper function to generate a random 18-digit transaction reference number
 const generateTransactionRefNo = () => {
@@ -14,8 +12,7 @@ const generateTransactionRefNo = () => {
 const DepositTransactionSchema = new mongoose.Schema({
     ACCT_ID: { type: Number },
     ACCT_NO: { type: Number, required: true },
-    RECIPIENT_PHONE_NUMBER: {type: Number},
-    RECIPIENT_PHONE_NUMBER: {type: Number},
+    RECIPIENT_PHONE_NUMBER: { type: Number },
     ACCT_NM: { type: String, required: true },
     GL_ACCT_NO: { type: String }, // Reference to GLAccount's ACCT_NO
     TRANSACTION_TYPE: { type: String, required: true },
@@ -25,7 +22,7 @@ const DepositTransactionSchema = new mongoose.Schema({
     DESCRIPTION: { type: String, default: '' },
     BALANCE_AFTER_TRANSACTION: { type: Number },
     VALUE_DATE: { type: Date, required: true },
-    TRANSACTION_REF_NO: { type: String, default: generateTransactionRefNo }, // Ensure correct default
+    TRANSACTION_REF_NO: { type: String, default: generateTransactionRefNo },
     DEPOSITOR_NAME: { type: String, required: true },
     BUSINESS_UNIT: { type: String, required: true },
     CURRENCY_COUNT: {
@@ -39,63 +36,20 @@ const DepositTransactionSchema = new mongoose.Schema({
         FiveNaira: { type: Number, default: 0 },
         TOTAL_CURRENCY_COUNT: { type: Number, default: 0 },
     },
+    REC_ST: {
+        type: String,
+        enum: [
+            'Active', 'Pending'
+        ],
+        default: 'Active',
+        required: true,
+        set: val => val.charAt(0).toUpperCase() + val.slice(1).toLowerCase() // ✅ Fix applied here
+    },
     TOTAL_CURRENCY_COUNT: { type: Number, default: 0 }
 }, {
-    timestamps: true // Automatically add `createdAt` and `updatedAt` fields
-});
-
-// Before saving, ensure that GL Account exists for the given ACCT_NO
-DepositTransactionSchema.pre('save', async function (next) {
-    try {
-        // Validate GL_ACCT_NO
-        const glAccount = await GLAccount.findOne({ ACCT_NO: this.GL_ACCT_NO });
-        if (!glAccount) {
-            return next(new Error('GL Account not found for the provided GL_ACCT_NO'));
-        }
-
-        // Ensure that ACCT_NO is linked to the CustomerAccount and matches
-        const customerAccount = await CustomerAccount.findOne({ ACCT_NO: this.ACCT_NO });
-        if (!customerAccount) {
-            // If no customer account is found, check the Deposit model
-            const depositAccount = await Deposit.findOne({ ACCT_NO: this.ACCT_NO });
-            if (!depositAccount) {
-                return next(new Error('Customer or Deposit account not found for the provided ACCT_NO'));
-            }
-            this.ACCT_NM = depositAccount.ACCT_NM; // Set the account name from Deposit
-        } else {
-            this.ACCT_NM = customerAccount.CUST_NM; // Set the account name from CustomerAccount
-        }
-
-        // Adjust AMOUNT based on TOTAL_CHARGES
-        if (this.TOTAL_CHARGES > 0) {
-            this.AMOUNT -= this.TOTAL_CHARGES; // Subtract charges from the AMOUNT
-        }
-
-        // Calculate the balance after transaction
-        const lastTransaction = await DepositTransaction.findOne({ ACCT_NO: this.ACCT_NO }).sort({ TRANSACTION_DATE: -1 });
-        let balanceBeforeTransaction = 0;
-
-        if (lastTransaction) {
-            balanceBeforeTransaction = lastTransaction.BALANCE_AFTER_TRANSACTION;
-        }
-
-        this.BALANCE_AFTER_TRANSACTION = balanceBeforeTransaction + this.AMOUNT;
-
-        // Update CustomerAccount balances after the deposit
-        if (customerAccount) {
-            customerAccount.LEDGER_BAL += this.AMOUNT;
-            customerAccount.CLEARED_BAL += this.AMOUNT;
-            customerAccount.AVAILABLE_BALANCE += this.AMOUNT;
-            await customerAccount.save(); // Save the updated CustomerAccount
-        }
-
-        next();
-    } catch (err) {
-        next(err);
-    }
+    timestamps: true // Automatically adds createdAt and updatedAt
 });
 
 // Create and export DepositTransaction model
 const DepositTransaction = mongoose.model('DepositTransaction', DepositTransactionSchema);
-
 export default DepositTransaction;
