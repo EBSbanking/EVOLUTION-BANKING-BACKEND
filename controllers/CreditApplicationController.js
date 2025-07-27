@@ -1,11 +1,12 @@
 import CreditApplication from '../models/CreditApplication.js';
-import LoanContractForm from '../models/LoanContractForm.js';
 import { generateAcctNo, getLoanCycleCount, generateNumber } from '../utils/counterUtil.js';
 import AuditTrail from '../models/AuditTrail.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import NotificationService from '../services/NotificationService.js';
 import moment from 'moment';
 import generateWorkflowIdentifiers from '../utils/generateWorkflowIdentifiers.js';
+import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
+import LoanContractForm from '../models/LoanContractForm.js';
 
 // Controller to manage loan contract logic
 class LoanContractController {
@@ -56,19 +57,22 @@ class CreditApplicationController {
         });
       }
 
+      // Generate account number and loan cycle count
       const acctNo = await generateAcctNo();
       const loanCycleCount = await getLoanCycleCount(req.body.CUST_ID);
 
+      // Create and save the credit application with default 'Pending' status
       const newApplication = new CreditApplication({
         ...req.body,
         ACCT_NO: acctNo,
         LOAN_CYCLE: loanCycleCount,
-        STATUS: 'Pending',
+        STATUS: 'Pending', // Set to valid enum value instead of empty string
+        REC_ST: 'Active'  // Ensure record status is also set properly
       });
 
       await newApplication.save();
 
-      // ✅ Submit to Workflow for Approval
+      // Generate workflow IDs
       const {
         WORK_ITEM_ID,
         QUEUE_ID,
@@ -76,6 +80,7 @@ class CreditApplicationController {
         BUS_PROC_ID
       } = generateWorkflowIdentifiers();
 
+      // Create the workflow item, referencing the MongoDB ObjectId
       const workflowItem = new WF_WORK_ITEM({
         WORK_ITEM_ID,
         ITEM_VALUE: Buffer.from(newApplication.CUST_ID.toString()),
@@ -84,13 +89,13 @@ class CreditApplicationController {
         ITEM_TYPE: 'CreditApplication',
         EVENT_ID: generateNumber(7),
         CUST_ID: parseInt(newApplication.CUST_ID),
-        REC_ST: 'Active',
+        REC_ST: 'Pending', // Workflow items should start as Pending
         VERSION: 1,
         USER_ID: req.user?.id || 'system',
         BU_ID: newApplication.BU_ID || '0001',
         CREATE_DT: moment().toISOString(),
         WAIT_ST: 'Pending',
-        ITEM_ID: generateNumber(4),
+        ITEM_ID: newApplication._id,
         ITEM_REF_NO: generateNumber(4),
         ORIGINATOR_USER_ROLE_ID: req.user?.role || 'Creator',
         QUEUE_ID,
@@ -122,160 +127,296 @@ class CreditApplicationController {
   }
 
   static async approveCreditApplication(req, res) {
-    let { applId } = req.params;
-    applId = decodeURIComponent(applId);
+    const { WORK_ITEM_ID, APPROVED_BY, CUST_ID, comments, APPL_ID } = req.body;
 
-    const { status, reason } = req.body;
-    const userId = req.user?.id || 'system';
-    const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    const validStatuses = ['Pending', 'Approved', 'Rejected'];
-
-    if (status && !validStatuses.includes(status)) {
-      return res.status(400).json({ message: 'Invalid status value' });
-    }
-
-    if (status === 'Rejected' && !reason) {
-      return res.status(400).json({ message: 'Rejection reason is required when status is Rejected.' });
+    if ((!WORK_ITEM_ID && !APPL_ID) || !APPROVED_BY || !CUST_ID) {
+      return res.status(400).json({
+        message: 'WORK_ITEM_ID or APPL_ID, and APPROVED_BY and CUST_ID are required'
+      });
     }
 
     try {
-      const application = await CreditApplication.findOne({ APPL_ID: applId });
-      if (!application) {
-        return res.status(404).json({ message: 'Credit application not found' });
+      const parsedCustId = parseInt(CUST_ID);
+      const parsedWorkItemId = WORK_ITEM_ID ? parseInt(WORK_ITEM_ID) : null;
+
+      let workItem = null;
+      let application = null;
+
+      // Step 1: Try to find work item by WORK_ITEM_ID (if provided)
+      if (WORK_ITEM_ID) {
+        workItem = await WF_WORK_ITEM.findOne({
+          WORK_ITEM_ID: parsedWorkItemId,
+          CUST_ID: parsedCustId
+        });
+
+        if (workItem) {
+          application = await CreditApplication.findById(workItem.ITEM_ID);
+          
+          // Check if already approved
+          if (application && application.STATUS === 'Approved') {
+            return res.status(400).json({
+              message: 'Credit application already approved',
+              APPL_ID: application.APPL_ID,
+              CUST_ID: parsedCustId,
+              approvedDate: application.APPROVED_DATE
+            });
+          }
+        }
       }
 
-      const oldStatus = application.STATUS;
-      application.STATUS = status;
-      if (status === 'Rejected') application.rejectionReason = reason;
+      // Step 2: If not found via WORK_ITEM_ID, try to find via APPL_ID
+      if (!workItem && APPL_ID) {
+        application = await CreditApplication.findOne({
+          APPL_ID: APPL_ID,
+          CUST_ID: parsedCustId
+        });
+
+        if (!application) {
+          return res.status(404).json({ 
+            message: 'Credit application not found for APPL_ID',
+            APPL_ID,
+            CUST_ID: parsedCustId
+          });
+        }
+
+        if (application.STATUS === 'Approved') {
+          return res.status(400).json({
+            message: 'Credit application already approved',
+            APPL_ID,
+            CUST_ID: parsedCustId,
+            approvedDate: application.APPROVED_DATE
+          });
+        }
+
+        workItem = await WF_WORK_ITEM.findOne({
+          ITEM_ID: application._id,
+          CUST_ID: parsedCustId
+        });
+
+        if (!workItem) {
+          return res.status(404).json({
+            message: 'No work item exists for this credit application',
+            APPL_ID,
+            CUST_ID: parsedCustId,
+            applicationId: application._id
+          });
+        }
+      }
+
+      // Final validation
+      if (!workItem || !application) {
+        return res.status(404).json({
+          message: 'Work item or application not found',
+          WORK_ITEM_ID: parsedWorkItemId,
+          CUST_ID: parsedCustId,
+          APPL_ID
+        });
+      }
+
+      // Update credit application
+      application.STATUS = 'Approved';
+      application.REC_ST = 'Active';
+      application.APPROVED_BY = APPROVED_BY;
+      application.APPROVED_DATE = new Date();
       await application.save();
 
-      // Handle rejection
-      if (status === 'Rejected') {
-        await AuditTrail.create({
-          event_id: Date.now(),
-          user_id: userId,
-          event_type: 'CreditApplication',
-          action: 'Reject Application',
-          old_value: { status: oldStatus },
-          new_value: { status: 'Rejected', reason },
-          ip_address: ipAddress,
-          timestamp: new Date(),
-        });
+      // Update work item
+      workItem.REC_ST = 'Active';
+      workItem.APPROVED_BY = APPROVED_BY;
+      workItem.APPROVED_DATE = new Date();
+      workItem.WAIT_ST = 'Completed';
+      workItem.COMMENTS = comments;
+      await workItem.save();
 
-        return res.status(200).json({
-          message: 'Credit application rejected successfully',
-          application,
-        });
-      }
+      // Complete the workflow item
+      await WF_WORK_ITEMController.completeWorkItem(workItem.WORK_ITEM_ID, 'Approved', APPROVED_BY);
 
-      // Handle approval
-      if (status === 'Approved') {
-        await AuditTrail.create({
-          event_id: Date.now(),
-          user_id: userId,
-          event_type: 'CreditApplication',
-          action: 'Approve Application',
-          old_value: { status: oldStatus },
-          new_value: { status: 'Approved' },
-          ip_address: ipAddress,
-          timestamp: new Date(),
-        });
+      // Create loan contract
+      const result = await LoanContractController.createLoanContractFromApplication(application, {
+        bank_name: process.env.BANK_NAME || 'Default Bank',
+        bank_short: process.env.BANK_SHORT || 'DBL',
+        originatorRole: 'Supervisor',
+        targetRole: 'Manager'
+      });
 
-        const loanContractResult = await LoanContractController.createLoanContractFromApplication(application, {
-          bank_name: process.env.BANK_NAME || "Your Bank Ltd",
-          bank_short: process.env.BANK_SHORT || "YBL",
-          originatorRole: "Supervisor",
-          targetRole: "Manager",
-        });
-
-        if (!loanContractResult.success) {
-          console.error('Loan contract creation failed:', loanContractResult.error);
-          return res.status(500).json({
-            message: 'Application approved, but loan contract creation failed',
-            error: loanContractResult.error,
-          });
-        }
-
-        // Audit loan contract creation
-        await AuditTrail.create({
-          event_id: Date.now(),
-          user_id: userId,
-          event_type: 'LoanContract',
-          action: 'Loan Contract Created',
-          old_value: null,
-          new_value: { loan_contract_no: loanContractResult.contract.loan_contract_no },
-          ip_address: ipAddress,
-          timestamp: new Date(),
-        });
-
-        const { loan_contract_no, customer_id } = loanContractResult.contract;
-        const { WORK_ITEM_ID, QUEUE_ID, SUB_PROC_ID, BUS_PROC_ID } = generateWorkflowIdentifiers();
-        const workflowItemData = new WF_WORK_ITEM({
-          WORK_ITEM_ID,
-          ITEM_VALUE: Buffer.from(customer_id.toString()),
-          ITEM_DESC: `Loan Contract Approval for ${application.CUST_NM || application.FIRST_NAME}`,
-          ITEM_CLASS_NM: "LoanContract",
-          ITEM_TYPE: "LoanContract",
-          EVENT_ID: generateNumber(7),
-          CUST_ID: parseInt(customer_id),
-          REC_ST: "Active",
-          VERSION: 1,
-          USER_ID: userId,
-          BU_ID: application.BU_ID || "0001",
-          CREATE_DT: moment().toISOString(),
-          WAIT_ST: "Pending",
-          ITEM_ID: generateNumber(4),
-          ITEM_REF_NO: generateNumber(4),
-          ORIGINATOR_USER_ROLE_ID: userId,
-          QUEUE_ID,
-          SUB_PROC_ID,
-          BUS_PROC_ID,
-        });
-
-        await workflowItemData.save();
-
-        // Send notifications
-        const roles = ['Manager', 'Compliance Officer'];
-        const message = `New loan contract (ID: ${WORK_ITEM_ID}) requires your approval.`;
-        for (const role of roles) {
-          await NotificationService.send({
-            ROLE_ID: role,
-            message,
-            WORK_ITEM_ID,
-          });
-        }
-
-        return res.status(200).json({
-          message: 'Credit application approved, loan contract created and submitted for approval',
-          application,
-          loanContract: loanContractResult.contract,
-          workflowItem: workflowItemData,
-          workflowStatusUrl: `/api/workflow/${WORK_ITEM_ID}`,
+      if (!result.success) {
+        return res.status(500).json({
+          message: 'Loan contract creation failed after approval',
+          error: result.error
         });
       }
+
+      // Send notification
+      await NotificationService.send({
+        ROLE_ID: 'Manager',
+        message: `Loan contract ${result.contract.loan_contract_no} created for ${application.CUST_NM}`,
+        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+        CUST_ID: parsedCustId
+      });
 
       return res.status(200).json({
-        message: 'Credit application status updated',
+        message: 'Credit application approved and loan contract created successfully',
         application,
+        loanContract: result.contract
       });
+
     } catch (error) {
-      console.error('Error approving credit application:', error);
+      console.error('Approval error:', error);
       return res.status(500).json({
         message: 'Error approving credit application',
         error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
   }
 
-  // Get all credit applications
-  static async getAllCreditApplications(req, res) {
+
+
+static async rejectCreditApplication(req, res) {
+  const { WORK_ITEM_ID, REJECTED_BY, CUST_ID, comments, APPL_ID } = req.body;
+
+  if ((!WORK_ITEM_ID && !APPL_ID) || !REJECTED_BY || !CUST_ID) {
+    return res.status(400).json({
+      message: 'WORK_ITEM_ID or APPL_ID, and REJECTED_BY and CUST_ID are required'
+    });
+  }
+
+  try {
+    const parsedCustId = parseInt(CUST_ID);
+    const parsedWorkItemId = WORK_ITEM_ID ? parseInt(WORK_ITEM_ID) : null;
+
+    let workItem = null;
+    let application = null;
+
+    // Step 1: Try to find work item by WORK_ITEM_ID (if provided)
+    if (WORK_ITEM_ID) {
+      workItem = await WF_WORK_ITEM.findOne({
+        WORK_ITEM_ID: parsedWorkItemId,
+        CUST_ID: parsedCustId,
+        REC_ST: 'Pending'
+      });
+
+      if (workItem) {
+        application = await CreditApplication.findById(workItem.ITEM_ID);
+
+        if (application && application.STATUS === 'Rejected') {
+          return res.status(400).json({
+            message: 'Credit application already rejected',
+            APPL_ID: application.APPL_ID,
+            CUST_ID: parsedCustId,
+            rejectedDate: application.REJECTED_DATE
+          });
+        }
+      }
+    }
+
+    // Step 2: If not found via WORK_ITEM_ID, try to find via APPL_ID
+    if (!workItem && APPL_ID) {
+      application = await CreditApplication.findOne({
+        APPL_ID: APPL_ID,
+        CUST_ID: parsedCustId,
+        STATUS: 'Pending'
+      });
+
+      if (!application) {
+        return res.status(404).json({
+          message: 'Credit application not found or already rejected',
+          APPL_ID,
+          CUST_ID: parsedCustId
+        });
+      }
+
+      workItem = await WF_WORK_ITEM.findOne({
+        ITEM_ID: application._id,
+        CUST_ID: parsedCustId,
+        REC_ST: 'Pending'
+      });
+
+      if (!workItem) {
+        return res.status(404).json({
+          message: 'No work item found for this credit application',
+          APPL_ID,
+          CUST_ID: parsedCustId
+        });
+      }
+    }
+
+    // Final check
+    if (!workItem || !application) {
+      return res.status(404).json({
+        message: 'Work item or application not found',
+        WORK_ITEM_ID: parsedWorkItemId,
+        CUST_ID: parsedCustId,
+        APPL_ID
+      });
+    }
+
+    // Update Credit Application
+    application.STATUS = 'Rejected';
+    application.REC_ST = 'Inactive';
+    application.REJECTED_BY = REJECTED_BY;
+    application.REJECTED_DATE = new Date();
+    application.REJECTION_REASON = comments || '';
+    await application.save();
+
+    // Update Workflow Item
+    workItem.REC_ST = 'Rejected';
+    workItem.REJECTED_BY = REJECTED_BY;
+    workItem.REJECTED_DATE = new Date();
+    workItem.WAIT_ST = 'Completed';
+    workItem.COMMENTS = comments || '';
+    await workItem.save();
+
+    // Complete the workflow item
+    await WF_WORK_ITEMController.completeWorkItem(workItem.WORK_ITEM_ID, 'Rejected', REJECTED_BY);
+
+    // Send notification
+    await NotificationService.send({
+      ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
+      message: `Credit application for ${application.CUST_NM || application.CUST_ID} was rejected`,
+      WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+      CUST_ID: parsedCustId
+    });
+
+    return res.status(200).json({
+      message: 'Credit application rejected successfully',
+      application
+    });
+
+  } catch (error) {
+    console.error('Rejection error:', error);
+    return res.status(500).json({
+      message: 'Error rejecting credit application',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+}
+
+
+
+  // ✅ NEW: Get all credit applications and map each to its WORK_ITEM_ID
+  static async getAllCreditApplicationsWithWorkItems(req, res) {
     try {
-      const applications = await CreditApplication.find();
-      res.status(200).json(applications);
+      const creditApplications = await CreditApplication.find().lean();
+
+      const workItems = await WF_WORK_ITEM.find({
+        ITEM_TYPE: 'CreditApplication',
+      }).select('WORK_ITEM_ID ITEM_ID').lean();
+
+      const workItemMap = new Map(workItems.map(w => [w.ITEM_ID.toString(), w.WORK_ITEM_ID]));
+
+      const enrichedApps = creditApplications.map(app => ({
+        ...app,
+        WORK_ITEM_ID: workItemMap.get(app._id.toString()) || null
+      }));
+
+      return res.status(200).json(enrichedApps);
     } catch (error) {
-      res.status(500).json({
-        message: 'Error retrieving credit applications',
-        error: error.message,
+      console.error('Error fetching credit applications with work items:', error);
+      return res.status(500).json({
+        message: 'Failed to retrieve credit applications',
+        error: error.message
       });
     }
   }

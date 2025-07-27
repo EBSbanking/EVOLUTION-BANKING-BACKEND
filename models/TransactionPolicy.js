@@ -4,14 +4,26 @@ import mongoose from 'mongoose';
 const PolicyRangeSchema = new mongoose.Schema({
   MIN_AMOUNT: { type: Number, default: 0 },
   MAX_AMOUNT: { type: Number, required: true },
-  requiresApproval: { type: Boolean, default: false }, // NEW FLAG
+  requiresApproval: { type: Boolean, default: false },
   AUTHORIZED_ROLES: { type: [String], required: true },
-}, { _id: false }); // prevents nested _id fields for each range
+}, { _id: false });
 
 // Main policy schema per role
 const TransactionPolicySchema = new mongoose.Schema({
-  ROLE_NM: { type: String, required: true, unique: true },
-  RANGES: { type: [PolicyRangeSchema], required: true }
+  POLICY_ID: {
+    type: String,
+    unique: true,
+    required: true
+  },
+  ROLE_NM: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  RANGES: {
+    type: [PolicyRangeSchema],
+    required: true
+  }
 });
 
 // Export the model

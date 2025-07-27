@@ -1,79 +1,99 @@
 // src/services/overdueLoanHandler.js
 import LoanAccount from '../models/LoanAccount.js';
-import RepaymentSchedule from '../models/RepaymentSchedule.js';
-import LoanRepayment from '../models/LoanRepayment.js';
-import moment from 'moment';
 
-
+/**
+ * Identify and update all overdue loans by using schema statics.
+ */
 export const checkOverdueLoans = async () => {
   try {
-    const repaymentSchedules = await RepaymentSchedule.find();
+    const overdueLoans = await LoanAccount.findOverdueLoans();
 
-    for (const repaymentSchedule of repaymentSchedules) {
-      const { ACCT_NO, dueDate, installmentNo, totalPayment } = repaymentSchedule;
-
-      if (moment(dueDate).isBefore(moment()) && totalPayment > 0) {
-        const loanAccount = await LoanAccount.findOne({ ACCT_NO });
-
-        if (loanAccount) {
-          const repaymentMade = await LoanRepayment.findOne({ ACCT_NO, installmentNo });
-
-          if (!repaymentMade) {
-            loanAccount.LOAN_STATUS = 'Overdue';
-            await loanAccount.save();
-
-            console.log(`Loan account ${ACCT_NO} marked as Overdue.`);
-          }
-        }
-      }
+    if (!overdueLoans.length) {
+      console.log('[Overdue Handler] No overdue loans found.');
+      return {
+        success: true,
+        count: 0,
+        message: 'No overdue loans found',
+        timestamp: new Date().toISOString()
+      };
     }
+
+    const result = await LoanAccount.markLoansAsOverdue();
+
+    console.log(`[Overdue Handler] ${result.modifiedCount} loans marked as overdue.`);
+
+    return {
+      success: true,
+      count: result.modifiedCount,
+      message: `${result.modifiedCount} loans marked as overdue`,
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
-    console.error('Error checking overdue loans:', error);
-    throw error;
+    console.error('[Overdue Handler] Error:', error.message);
+    return {
+      success: false,
+      message: 'Error occurred while processing overdue loans',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
   }
 };
 
-// Optional utility function (re-add if used elsewhere)
+/**
+ * Returns all loans currently marked as 'OVERDUE'
+ */
 export const getOverdueLoans = async () => {
   try {
-    const overdueLoans = await LoanAccount.find({ LOAN_STATUS: 'Overdue' });
-    return overdueLoans;
+    const loans = await LoanAccount.find({ LOAN_STATUS: 'OVERDUE' }).lean();
+    return loans;
   } catch (error) {
-    console.error('Error retrieving overdue loans:', error);
+    console.error('Error retrieving overdue loans:', error.message);
     throw error;
   }
 };
 
-
+/**
+ * Fallback processor to manually scan overdue loans without relying on statics.
+ */
 export const processOverdueLoans = async () => {
   try {
     const today = new Date();
 
-    const overdueLoans = await LoanAccount.find({
-      due_date: { $lt: today },
-      loan_status: 'Active',
+    const activeLoans = await LoanAccount.find({
+      LOAN_STATUS: 'ACTIVE',
+      NEXT_PAYMENT_DATE: { $lt: today }
     });
 
-    for (const loan of overdueLoans) {
-      try {
-        if (!loan || !loan.ACCT_NO) {
-          console.error(`Error updating loan status for account ${loan?.ACCT_NO}: Loan account ${loan?._id || 'unknown'} not found.`);
-          continue;
-        }
+    const updated = [];
 
-        loan.loan_status = 'Overdue';
+    for (const loan of activeLoans) {
+      if (loan.isOverdue()) {
+        loan.LOAN_STATUS = 'OVERDUE';
         await loan.save();
-
-        console.log(`Loan account ${loan.ACCT_NO} marked as overdue.`);
-      } catch (innerErr) {
-        console.error(`Error updating loan status for account ${loan?.ACCT_NO}:`, innerErr.message);
+        updated.push(loan.ACCT_NO);
       }
     }
 
-    console.log('[Service] Overdue loan check completed.');
+    console.log(`[Service] ${updated.length} loans marked as overdue manually.`);
+
+    return {
+      success: true,
+      count: updated.length,
+      updatedAccounts: updated,
+      message: 'Manual overdue processing completed',
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
-    console.error('Error checking overdue loans:', error.message);
+    console.error('Manual overdue loan processor error:', error.message);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
 
-export default {getOverdueLoans, checkOverdueLoans, processOverdueLoans};
+export default {
+  checkOverdueLoans,
+  getOverdueLoans,
+  processOverdueLoans
+};

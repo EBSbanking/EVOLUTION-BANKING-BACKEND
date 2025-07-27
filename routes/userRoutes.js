@@ -1,20 +1,42 @@
 import express from 'express';
-import { registerUser, updateUser, resetPassword, deactivateUser, getAllUsers } from '../controllers/userController.js'; // Import the controllers
+import {
+  registerUser,
+  updateUser,
+  deactivateUser,
+  getUserByEmployerNumber,
+  getAllUsers,
+  resetPassword,
+  // login
+} from '../controllers/userController.js';
+
+import verifyToken from '../middlewares/verifyToken.js'; // JWT auth middleware
 
 const router = express.Router();
 
-// POST route for user registration
-router.post('/users/register', registerUser);
+// 🔐 Protected route using JWT middleware
+router.get('/users/protected-route', verifyToken, (req, res) => {
+  const { userId, user_name, businessUnit, role } = req.user;
 
-// PUT route for updating user details
-router.put('/users/:userId', updateUser);
+  res.json({
+    message: 'Access granted to protected route',
+    user: {
+      userId,
+      user_name,
+      businessUnit,
+      role
+    }
+  });
+});
 
-// PATCH route for deactivating a user
-router.patch('/users/deactivate/:userId', deactivateUser);
+// 🔐 Authentication routes
+router.post('/users/register', registerUser);       // Register new user
+// router.post('/users/login', login);                 // Login & get token (changed from loginUser to login)
+router.post('/users/reset-password', resetPassword);// Reset password
 
-// GET route for fetching all users
-router.get('/users', getAllUsers);
-
-router.post('/reset-password', resetPassword);
+// 👤 User management
+router.put('/users/:userId', updateUser);           // Update user
+router.patch('/users/deactivate/:userId', deactivateUser); // Deactivate user
+router.get('/users/by-employer/:employer_number', getUserByEmployerNumber); // Get by employer #
+router.get('/users', getAllUsers);                  // Get all users
 
 export default router;

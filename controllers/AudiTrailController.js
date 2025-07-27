@@ -44,6 +44,46 @@ export const createAuditTrail = async (req, res) => {
     }
 };
 
+// ✅ Archive an Audit Trail Entry
+export const archiveAuditTrail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const auditTrail = await AuditTrail.findById(id);
+    if (!auditTrail) {
+      return res.status(404).json({ message: 'Audit trail not found' });
+    }
+
+    auditTrail.archived = true;
+    await auditTrail.save();
+
+    return res.status(200).json({ message: 'Audit trail entry archived' });
+  } catch (error) {
+    console.error('Error archiving audit trail:', error);
+    return res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
+export const restoreAuditTrail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const auditTrail = await AuditTrail.findById(id);
+    if (!auditTrail) {
+      return res.status(404).json({ message: 'Audit trail not found' });
+    }
+
+    auditTrail.archived = false;
+    await auditTrail.save();
+
+    return res.status(200).json({ message: 'Audit trail entry restored' });
+  } catch (error) {
+    console.error('Error restoring audit trail:', error);
+    return res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
+
 // ✅ Get all Audit Trail Entries
 export const getAllAuditTrails = async (req, res) => {
     try {

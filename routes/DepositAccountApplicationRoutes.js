@@ -1,16 +1,23 @@
 // routes/depositAccountApplicationRoutes.js
 import express from 'express';
 import DepositAccountApplicationController from '../controllers/DepositAccountApplicationController.js';
-import { generateAccountIdentifiers } from '../utils/generateAccountNumber.js';
+import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
 
 const router = express.Router();
 
-// Application Creation & Generation
+// Application Creation
 router.post('/create', DepositAccountApplicationController.createApplication);
-router.get('/generate-account-number', (req, res) => {
+
+// Generate Account Number by Product ID (Query Param: ?prodId=123)
+router.get('/generate-account-number', async (req, res) => {
   try {
-    const { ACCT_NO, ACCT_ID } = generateAccountIdentifiers();
-    res.status(200).json({ ACCT_NO, ACCT_ID });
+    const { prodId } = req.query;
+    if (!prodId) {
+      return res.status(400).json({ message: 'prodId query parameter is required.' });
+    }
+
+    const ACCT_NO = await generateLoanAccountNumberByProdId(prodId);
+    res.status(200).json({ ACCT_NO });
   } catch (error) {
     console.error('Error occurred:', error);
     res.status(500).json({ message: 'Internal Server Error', error: error.message });

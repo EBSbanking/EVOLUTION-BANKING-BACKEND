@@ -1,103 +1,188 @@
-// import express from 'express';
-// import bcrypt from 'bcryptjs';
-// import User from '../models/User.js';
-// import crypto from 'crypto';
-// import auth from '../middlewares/auth.js'; // Import the authentication middleware
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+import Login from '../models/Login.js';
+import UserRole from '../models/UserRole.js';
+import { ROLE_MAPPING } from '../constants/roleMapping.js';
+import { v4 as uuidv4 } from 'uuid'; // ✅ UUID import here
 
-// const router = express.Router();
+export const login = async (req, res) => {
+  const { user_name, password } = req.body;
 
-// // Middleware to generate and save reset token
-// const generateResetToken = async (user) => {
-//     const resetToken = crypto.randomBytes(32).toString('hex');
-//     const resetTokenExpire = Date.now() + 3600 * 1000; // 1 hour from now
+  try {
+    const user = await User.findOne({
+      $or: [
+        { user_name: { $regex: new RegExp(`^${user_name}$`, 'i') } },
+        { email: { $regex: new RegExp(`^${user_name}$`, 'i') } },
+        { employer_number: user_name }
+      ]
+    }).select('+user_name +password +status +failed_attempts +lock_until');
 
-//     user.reset_token = resetToken;
-//     user.reset_token_expire = resetTokenExpire;
-//     await user.save(); 
+    // ❌ User not found
+    if (!user) {
+      await Login.create({
+        attempt_identifier: uuidv4(),
+        user_id: null,
+        user_name,
+        login_time: new Date(),
+        ip_address: req.ip,
+        status: 'Failed',
+        error: 'User not found'
+      });
 
-//     return resetToken;
-// };
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials',
+        resolution: 'Check your username/email/employee number'
+      });
+    }
 
-// // Login Route
-// router.post('/login', async (req, res) => {
-//     const { user_name, password } = req.body;
+    // ❌ Inactive account
+    if (user.status !== 'Active') {
+      await Login.create({
+        attempt_identifier: uuidv4(),
+        user_id: user._id,
+        user_name: user.user_name,
+        login_time: new Date(),
+        ip_address: req.ip,
+        status: 'Failed',
+        error: `Account ${user.status}`
+      });
 
-//     try {
-//         const user = await User.findOne({ user_name });
+      return res.status(403).json({
+        success: false,
+        message: 'Account not active',
+        accountStatus: user.status,
+        resolution: 'Contact administrator'
+      });
+    }
 
-//         if (!user) {
-//             return res.status(400).json({ message: "User not found" });
-//         }
+    // ❌ Account locked
+    if (user.lock_until && user.lock_until > Date.now()) {
+      const remainingTime = Math.ceil((user.lock_until - Date.now()) / 60000);
+      return res.status(403).json({
+        success: false,
+        message: 'Account temporarily locked',
+        resolution: `Try again in ${remainingTime} minutes`,
+        failedAttempts: user.failed_attempts
+      });
+    }
 
-//         const isMatch = await bcrypt.compare(password, user.password);
+    // ❌ Incorrect password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      const newAttempts = user.failed_attempts + 1;
+      const updates = { $inc: { failed_attempts: 1 } };
 
-//         if (!isMatch) {
-//             return res.status(400).json({ message: "Invalid credentials" });
-//         }
+      if (newAttempts >= 5) {
+        updates.$set = { lock_until: Date.now() + 30 * 60 * 1000 };
+      }
 
-//         res.status(200).json({ message: "Login successful", user: user });
-//     } catch (error) {
-//         console.error("Error logging in:", error);
-//         res.status(500).json({ message: "Error logging in", error: error.message });
-//     }
-// });
+      await User.updateOne({ _id: user._id }, updates);
 
-// // Request Password Reset Route (sends reset token)
-// router.post('/request-password-reset', async (req, res) => {
-//     const { userId } = req.body;  // Using userId instead of user_name
+      await Login.create({
+        attempt_identifier: uuidv4(),
+        user_id: user._id,
+        user_name: user.user_name,
+        login_time: new Date(),
+        ip_address: req.ip,
+        status: 'Failed',
+        error: 'Incorrect password'
+      });
 
-//     try {
-//         const user = await User.findById(userId);  // Find user by userId
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials',
+        resolution: newAttempts >= 4 ? 'Last attempt before lock' : 'Check your password',
+        remainingAttempts: 5 - newAttempts
+      });
+    }
 
-//         if (!user) {
-//             return res.status(400).json({ message: "User not found" });
-//         }
+    // ✅ Successful login - reset lock counters
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { failed_attempts: 0, lock_until: null, last_login: Date.now() } }
+    );
 
-//         const resetToken = await generateResetToken(user);
-//         console.log(`Reset token for user ${userId}: ${resetToken}`);
+    const userRoles = await UserRole.find({ USER_ID: user.user_name });
+    const activeRoles = userRoles.filter(r =>
+      ['Y', 'Active'].includes(String(r.REC_ST).toUpperCase())
+    );
 
-//         res.status(200).json({
-//             message: 'Reset token generated and sent',
-//             resetToken: resetToken
-//         });
-//     } catch (error) {
-//         console.error("Error generating reset token:", error);
-//         res.status(500).json({ message: "Error generating reset token", error: error.message });
-//     }
-// });
+    const isSystemAdmin = user.primary_business_role === 'Administrator';
+    const hasAdminRole = activeRoles.some(r => r.ROLE_NM === 'Administrator');
+    const isAdmin = isSystemAdmin || hasAdminRole;
 
-// // Reset Password Route (actually updates the password)
-// router.post('/reset-password', async (req, res) => {
-//     const { reset_token, new_password } = req.body;
+    const permissions = isAdmin
+      ? ROLE_MAPPING['1'].permissions
+      : activeRoles.reduce((acc, role) => ({
+          ...acc,
+          ...(ROLE_MAPPING[role.ROLE_ID]?.permissions || {})
+        }), {});
 
-//     try {
-//         const user = await User.findOne({ reset_token });
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        user_name: user.user_name,
+        email: user.email,
+        role: isAdmin ? 'Administrator' : activeRoles[0]?.ROLE_NM || 'User',
+        roles: activeRoles.map(r => r.ROLE_NM),
+        isAdmin,
+        businessUnit: user.main_business_unit,
+        permissions,
+        accessibleBusinessUnits: isAdmin ? ['ALL'] : [user.main_business_unit]
+      },
+      process.env.JWT_SECRET || 'your_secret_key',
+      { expiresIn: '8h' }
+    );
 
-//         if (!user) {
-//             return res.status(400).json({ message: "Invalid reset token" });
-//         }
+    // ✅ Log successful login
+    await Login.create({
+      attempt_identifier: uuidv4(),
+      user_id: user._id,
+      user_name: user.user_name,
+      login_time: new Date(),
+      ip_address: req.ip,
+      status: 'Success'
+    });
 
-//         if (user.reset_token_expire < Date.now()) {
-//             return res.status(400).json({ message: "Reset token has expired" });
-//         }
+    const { password: _, ...userData } = user.toObject();
 
-//         const hashedPassword = await bcrypt.hash(new_password, 10);
-        
-//         user.password = hashedPassword;
-//         user.reset_token = null;  
-//         user.reset_token_expire = null; 
-//         await user.save();
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        ...userData,
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+        authLevel: isAdmin ? 'admin' : 'user'
+      },
+      systemInfo: {
+        serverTime: new Date(),
+        tokenExpiry: new Date(Date.now() + 8 * 60 * 60 * 1000)
+      }
+    });
 
-//         res.status(200).json({ message: "Password reset successfully" });
-//     } catch (error) {
-//         console.error("Error resetting password:", error);
-//         res.status(500).json({ message: "Error resetting password", error: error.message });
-//     }
-// });
+  } catch (error) {
+    console.error('Login error:', error);
 
-// // Protected Route Example (auth middleware in use)
-// router.get('/protected', auth, (req, res) => {
-//     res.status(200).json({ message: "This is a protected route.", user: req.user });
-// });
+    await Login.create({
+      attempt_identifier: uuidv4(),
+      user_id: null,
+      user_name,
+      login_time: new Date(),
+      ip_address: req.ip,
+      status: 'Failed',
+      error: error.message
+    });
 
-// export default router;
+    res.status(500).json({
+      success: false,
+      message: 'Authentication service unavailable',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      referenceId: `AUTH-${Date.now()}`
+    });
+  }
+};
+
+export default Login;

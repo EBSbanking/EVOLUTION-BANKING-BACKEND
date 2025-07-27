@@ -1,43 +1,55 @@
 import mongoose from 'mongoose';
 
-// Define the schema for the User model
-const UserSchema = new mongoose.Schema(
-    {
-        user_name: {
-            type: String,
-            required: true,
-            unique: true, // Ensures that the username is unique in the database
-        },
-        password: {
-            type: String,
-            required: true, // Password is required for user authentication
-        },
-        roleId: {
-            type: Number,
-            required: true,
-            ref: 'Permissions', // Reference to the Permissions model
-        },
-        resetToken: {
-            type: String,
-            default: null, // Reset token for password recovery
-        },
-        resetTokenExpire: {
-            type: Date,
-            default: null, // Expiry time for the reset token
-        },
-        loginAttempts: {
-            type: Number,
-            default: 0, // Tracks failed login attempts
-        },
-        lockUntil: {
-            type: Date,
-            default: null, // The time when the account is unlocked
-        },
+const LoginSchema = new mongoose.Schema(
+  {
+    user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
-    { timestamps: true } // Include timestamps (createdAt, updatedAt)
+    user_name: {
+      type: String,
+      required: false, // Changed from required: true
+      default: 'Unknown', // Default value for anonymous attempts
+      trim: true,
+      maxlength: 50
+    },
+    login_time: {
+      type: Date,
+      default: Date.now,
+    },
+    ip_address: {
+      type: String,
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: ['Success', 'Failed'],
+      required: true,
+    },
+    error: {
+      type: String,
+      default: null,
+    },
+    attempt_identifier: {  // New field to track what was entered
+      type: String,
+      required: true,
+      trim: true
+    }
+  },
+  { 
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
 );
 
-// Create and export the User model based on the schema
-const User = mongoose.model('User', UserSchema);
+// Add indexes for better query performance
+LoginSchema.index({ user_id: 1 });
+LoginSchema.index({ user_name: 1 });
+LoginSchema.index({ status: 1 });
+LoginSchema.index({ login_time: -1 });
+LoginSchema.index({ ip_address: 1 });
 
-export default User;
+const Login = mongoose.model('Login', LoginSchema);
+export default Login;

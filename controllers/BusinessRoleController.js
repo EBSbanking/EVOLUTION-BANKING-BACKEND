@@ -2,98 +2,146 @@ import express from 'express';
 import mongoose from 'mongoose';
 import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
-import { ROLE_MAPPING } from '../constants/roleMapping.js';
-import UserRole from '../models/UserRole.js';
 import BusinessUnit from '../models/BusinessUnit.js';
-import { populateBusinessUnitMapping } from '../constants/roleMapping.js';
+import UserRole from '../models/UserRole.js';
+import { ROLE_MAPPING, populateBusinessUnitMapping } from '../constants/roleMapping.js';
+import { isBUAccessible, getAccessibleBusinessUnits } from "../utils/businessUnitUtils.js";
 
-const router = express.Router();  // Initialize the router
+const router = express.Router();
 
 // Middleware to populate business unit mapping before proceeding with the route
 router.use(async (req, res, next) => {
   try {
-    await populateBusinessUnitMapping(); // Populate the business unit mapping before processing the request
-    next(); // Proceed with the next middleware/route handler
+    await populateBusinessUnitMapping();
+    next();
   } catch (error) {
     console.error("Error populating business unit mapping:", error);
-    res.status(500).json({ message: "Error populating business unit mapping", error: error.message });
+    res.status(500).json({ 
+      message: "Error populating business unit mapping", 
+      error: error.message 
+    });
   }
 });
 
-// Create a new BusinessRole
+// Create BusinessRole — full flow with authorization and validation
 export const createBusinessRole = async (req, res) => {
   try {
     const {
-      REC_ST,
-      VERSION_NO,
-      USER_ID,
-      CREATE_DT,
-      SYS_CREATE_TS,
-      CREATED_BY,
-      ALLOW_TXN_POSTING_FG,
-      ALLOW_EXCH_RATE_OVR_FG,
-      BU_ROLE_ID,
-      EFF_FROM_DT,
-      DEF_ROLE_FG,
-      SUPERVISOR_FG,
-      WF_ITEM_ACCESS_LEVEL,
-      Business_Unit,  // Ensure this field is passed correctly
-    } = req.body;
-
-    // Fetch ROLE_NM and Business_Unit from ROLE_MAPPING
-    const roleMapping = ROLE_MAPPING[BU_ROLE_ID];
-
-    if (!roleMapping) {
-      console.log(`Invalid ROLE_ID: ${BU_ROLE_ID}`);
-      return res.status(400).json({ message: 'Invalid ROLE_ID provided' });
-    }
-
-    const ROLE_NM = roleMapping; // Since ROLE_MAPPING only stores role names
-    const BUSINESS_UNIT = Business_Unit || roleMapping;  // Use passed Business_Unit or fallback
-
-    // Check if the BusinessUnit exists
-    const existingBusinessUnit = await BusinessUnit.findOne({ BUSINESS_UNIT });
-
-    // If BusinessUnit doesn't exist, create it
-    if (!existingBusinessUnit) {
-      const newBusinessUnit = new BusinessUnit({
-        BU_ID: new mongoose.Types.ObjectId(),
-        BUSINESS_UNIT,
-        DESCRIPTION: 'Description for ' + BUSINESS_UNIT,
-        ADDRESS: 'Address for ' + BUSINESS_UNIT,
-      });
-      await newBusinessUnit.save();
-    }
-
-    // Create the new BusinessRole
-    const newBusinessRole = new BusinessRole({
       ROLE_NM,
       REC_ST,
       VERSION_NO,
       USER_ID,
-      CREATE_DT,
-      SYS_CREATE_TS,
-      CREATED_BY,
-      ALLOW_TXN_POSTING_FG,
-      ALLOW_EXCH_RATE_OVR_FG,
-      ROLE_ID: BU_ROLE_ID,
-      BUSINESS_UNIT,  // Consistent use of BUSINESS_UNIT
-      EFF_FROM_DT,
-      DEF_ROLE_FG,
+      ROLE_ID,
+      BUSINESS_UNIT,
+      BU_ID,
       SUPERVISOR_FG,
-      WF_ITEM_ACCESS_LEVEL,
+      ALLOW_TXN_POSTING_FG = 'N'
+    } = req.body;
+
+    // 1. VERIFY ADMIN PRIVILEGES
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Administrator privileges required'
+      });
+    }
+
+    // 2. VALIDATE REQUIRED FIELDS
+    const requiredFields = {
+      ROLE_NM, ROLE_ID, USER_ID, BUSINESS_UNIT, BU_ID
+    };
+
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([field]) => field);
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields',
+        missingFields
+      });
+    }
+
+    // 3. VERIFY ROLE_ID AND ROLE_NM MATCH
+    const roleMapping = ROLE_MAPPING[ROLE_ID];
+    if (!roleMapping || roleMapping.ROLE_NM.toUpperCase() !== ROLE_NM.toUpperCase()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Role ID and Role Name mismatch',
+        expectedRoleName: roleMapping?.ROLE_NM || 'Unknown Role ID'
+      });
+    }
+
+    // 4. CHECK FOR DUPLICATES
+    const existingRole = await BusinessRole.findOne({
+      $or: [
+        { ROLE_ID, USER_ID },
+        { ROLE_NM, USER_ID, BUSINESS_UNIT }
+      ]
     });
 
-    // Save the BusinessRole
-    await newBusinessRole.save();
-    res.status(201).json({ message: 'BusinessRole created successfully', data: newBusinessRole });
+    if (existingRole) {
+      return res.status(409).json({
+        success: false,
+        message: 'Role assignment already exists'
+      });
+    }
+
+    // 5. CREATE NEW ROLE
+    const newRole = new BusinessRole({
+      ROLE_NM: roleMapping.ROLE_NM, // Use canonical name from mapping
+      ROLE_ID,
+      USER_ID,
+      BUSINESS_UNIT,
+      BU_ID,
+      REC_ST: REC_ST?.toUpperCase() === 'ACTIVE' ? 'Active' : 'Inactive',
+      VERSION_NO: VERSION_NO || 1,
+      SUPERVISOR_FG: SUPERVISOR_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
+      ALLOW_TXN_POSTING_FG: ALLOW_TXN_POSTING_FG.toUpperCase() === 'Y' ? 'Y' : 'N',
+      CREATED_BY: req.user.user_name,
+      CREATED_BY_ROLE: req.user.role,
+      CREATE_DT: new Date(),
+      ROW_TS: new Date()
+    });
+
+    await newRole.save();
+
+    // 6. SUCCESS RESPONSE
+    return res.status(201).json({
+      success: true,
+      data: {
+        id: newRole._id,
+        role: newRole.ROLE_NM,
+        user: newRole.USER_ID,
+        businessUnit: newRole.BUSINESS_UNIT,
+        permissions: {
+          isSupervisor: newRole.SUPERVISOR_FG,
+          canPostTransactions: newRole.ALLOW_TXN_POSTING_FG
+        }
+      }
+    });
+
   } catch (error) {
-    console.error('Error creating BusinessRole:', error);
-    res.status(500).json({ message: 'Error creating BusinessRole', error: error.message });
+    console.error('Role Creation Error:', error);
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: Object.values(error.errors).map(err => ({
+          field: err.path,
+          message: err.message
+        }))
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
   }
 };
-
-
 
 // Get BusinessRole by User ID
 export const getBusinessRoleByUserId = async (req, res) => {
@@ -103,45 +151,179 @@ export const getBusinessRoleByUserId = async (req, res) => {
     const businessRole = await BusinessRole.findOne({ USER_ID });
 
     if (!businessRole) {
-      return res.status(404).json({ message: 'BusinessRole not found for this USER_ID' });
+      return res.status(404).json({ 
+        message: 'BusinessRole not found for this USER_ID',
+        USER_ID 
+      });
     }
 
-    res.status(200).json({ message: 'BusinessRole retrieved successfully', data: businessRole });
+    res.status(200).json({ 
+      message: 'BusinessRole retrieved successfully', 
+      data: businessRole 
+    });
   } catch (error) {
     console.error('Error fetching BusinessRole:', error);
-    res.status(500).json({ message: 'Error fetching BusinessRole', error: error.message });
+    res.status(500).json({ 
+      message: 'Error fetching BusinessRole', 
+      error: error.message 
+    });
   }
 };
 
 // Update a BusinessRole by ID
 export const updateBusinessRole = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updatedBusinessRole = await BusinessRole.findByIdAndUpdate(id, req.body, { new: true });
+    const { USER_ID } = req.params;
+    const updateData = req.body;
 
-    if (!updatedBusinessRole) {
-      return res.status(404).json({ message: 'BusinessRole not found' });
+    // Verify admin privileges
+    if (!req.user.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Administrator privileges required',
+        solution: 'Contact your system administrator',
+        yourRole: req.user.role
+      });
     }
 
-    res.status(200).json({ message: 'BusinessRole updated successfully', data: updatedBusinessRole });
+    // Validate ROLE_ID if provided
+    if (updateData.ROLE_ID && !ROLE_MAPPING[updateData.ROLE_ID]) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Role ID',
+        validRoles: Object.entries(ROLE_MAPPING).map(([id, role]) => ({
+          id: Number(id),
+          name: role.ROLE_NM
+        }))
+      });
+    }
+
+    // If updating ROLE_ID without ROLE_NM, auto-fill ROLE_NM
+    if (updateData.ROLE_ID && !updateData.ROLE_NM) {
+      updateData.ROLE_NM = ROLE_MAPPING[updateData.ROLE_ID].ROLE_NM;
+    }
+
+    // If updating ROLE_NM without ROLE_ID, find matching ROLE_ID
+    if (updateData.ROLE_NM && !updateData.ROLE_ID) {
+      const roleEntry = Object.values(ROLE_MAPPING).find(r => r.ROLE_NM === updateData.ROLE_NM);
+      if (!roleEntry) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid Role Name',
+          validRoles: Object.values(ROLE_MAPPING).map(role => role.ROLE_NM)
+        });
+      }
+      updateData.ROLE_ID = roleEntry.id;
+    }
+
+    // Perform the update
+    const updatedRole = await BusinessRole.findOneAndUpdate(
+      { USER_ID },
+      {
+        ...updateData,
+        LAST_UPDATED_BY: req.user.user_name,
+        LAST_UPDATED_DT: new Date(),
+        ROW_TS: new Date()
+      },
+      { 
+        new: true,
+        runValidators: true,
+        context: 'query' // Important for update validations
+      }
+    );
+
+    if (!updatedRole) {
+      return res.status(404).json({
+        success: false,
+        message: 'Business role not found',
+        USER_ID
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Business role updated successfully',
+      data: {
+        roleId: updatedRole._id,
+        roleName: updatedRole.ROLE_NM,
+        businessUnit: updatedRole.BUSINESS_UNIT,
+        userId: updatedRole.USER_ID,
+        status: updatedRole.REC_ST
+      }
+    });
+
   } catch (error) {
-    res.status(500).json({ message: 'Error updating BusinessRole', error: error.message });
+    console.error('Business Role Update Error:', error);
+
+    if (error.name === 'ValidationError') {
+      const errors = {};
+      Object.keys(error.errors).forEach(key => {
+        errors[key] = {
+          message: error.errors[key].message,
+          value: error.errors[key].value
+        };
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      referenceId: `ERR-${Date.now()}`
+    });
   }
 };
+
+// Helper function for duplicate key messages
+function getDuplicateKeyMessage(error) {
+  if (error.keyPattern?.USER_ID) {
+    return 'User already has a business role assigned';
+  }
+  if (error.keyPattern?.ROLE_ID) {
+    return 'Role ID already exists';
+  }
+  if (error.keyPattern?.BUSINESS_UNIT) {
+    return 'Business unit already assigned';
+  }
+  return 'Duplicate key violation';
+}
+
 
 // Delete a BusinessRole by ID
 export const deleteBusinessRole = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Verify user has permission to delete
+    if (!req.user.isAdmin) {
+      return res.status(403).json({
+        message: 'Only Administrators can delete BusinessRoles'
+      });
+    }
+
     const deletedBusinessRole = await BusinessRole.findByIdAndDelete(id);
 
     if (!deletedBusinessRole) {
-      return res.status(404).json({ message: 'BusinessRole not found' });
+      return res.status(404).json({ 
+        message: 'BusinessRole not found',
+        id 
+      });
     }
 
-    res.status(200).json({ message: 'BusinessRole deleted successfully' });
+    res.status(200).json({ 
+      message: 'BusinessRole deleted successfully',
+      deletedRole: deletedBusinessRole.ROLE_NM
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Error deleting BusinessRole', error: error.message });
+    console.error('Error deleting BusinessRole:', error);
+    res.status(500).json({ 
+      message: 'Error deleting BusinessRole', 
+      error: error.message 
+    });
   }
 };
 
@@ -150,34 +332,91 @@ export const assignBusinessRoleToUser = async (req, res) => {
   try {
     const { USER_ID, ROLE_NM } = req.body;
 
-    const user = await User.findOne({ USER_ID });
-    const role = await BusinessRole.findOne({ ROLE_NM });
-
-    if (!user || !role) {
-      return res.status(404).json({ message: 'User or Business Role not found' });
+    // Verify user has permission to assign roles
+    if (!req.user.isAdmin) {
+      return res.status(403).json({
+        message: 'Only Administrators can assign roles'
+      });
     }
 
-    if (user.roles.includes(role._id)) {
-      return res.status(400).json({ message: 'Role is already assigned to this user' });
+    const [user, role] = await Promise.all([
+      User.findOne({ USER_ID }),
+      BusinessRole.findOne({ ROLE_NM })
+    ]);
+
+    if (!user) {
+      return res.status(404).json({ 
+        message: 'User not found',
+        USER_ID 
+      });
     }
 
-    user.roles.push(role._id);
+    if (!role) {
+      return res.status(404).json({ 
+        message: 'Business Role not found',
+        ROLE_NM 
+      });
+    }
+
+    if (user.roles && user.roles.includes(role._id)) {
+      return res.status(400).json({ 
+        message: 'Role is already assigned to this user',
+        USER_ID,
+        ROLE_NM
+      });
+    }
+
+    user.roles = [...(user.roles || []), role._id];
     await user.save();
 
-    res.status(200).json({ message: 'Business Role assigned to user successfully', data: { USER_ID, ROLE_NM } });
+    res.status(200).json({ 
+      message: 'Business Role assigned to user successfully', 
+      data: { 
+        USER_ID, 
+        ROLE_NM,
+        assignedBy: req.user.user_name,
+        assignmentDate: new Date()
+      } 
+    });
   } catch (error) {
     console.error('Error assigning role:', error);
-    res.status(500).json({ message: 'Error assigning role', error: error.message });
+    res.status(500).json({ 
+      message: 'Error assigning role', 
+      error: error.message 
+    });
   }
 };
 
+// Get all BusinessRoles
 export const getAllBusinessRoles = async (req, res) => {
   try {
-    const businessRoles = await BusinessRole.find();
-    res.status(200).json({ message: 'BusinessRoles retrieved successfully', data: businessRoles });
+    // Optional: Add pagination and filtering
+    const { page = 1, limit = 10, businessUnit } = req.query;
+    const query = businessUnit ? { BUSINESS_UNIT: businessUnit } : {};
+
+    const businessRoles = await BusinessRole.find(query)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .sort({ CREATE_DT: -1 });
+
+    const count = await BusinessRole.countDocuments(query);
+
+    res.status(200).json({ 
+      message: 'BusinessRoles retrieved successfully', 
+      data: businessRoles,
+      meta: {
+        total: count,
+        pages: Math.ceil(count / limit),
+        currentPage: page
+      }
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching BusinessRoles', error: error.message });
+    console.error('Error fetching BusinessRoles:', error);
+    res.status(500).json({ 
+      message: 'Error fetching BusinessRoles', 
+      error: error.message 
+    });
   }
 };
 
-export default router;  // Export the router
+export default router;

@@ -1,19 +1,12 @@
-import UserRole from "../models/UserRole.js";
-import Permissions from "../models/Permissions.js";
 import mongoose from "mongoose";
+import UserRole from "../models/UserRole.js";
 import BusinessUnit from "../models/BusinessUnit.js";
-import { ROLE_MAPPING } from '../constants/roleMapping.js'; // Import ROLE_MAPPING
+import Permissions from "../models/Permissions.js";
+import { ROLE_MAPPING } from "../constants/roleMapping.js";
+import { isBUAccessible, getAccessibleBusinessUnits } from "../utils/businessUnitUtils.js";
+import User from "../models/User.js";
 
-// Example usage of ROLE_MAPPING
-const assignUserRole = (roleId) => {
-  const roleData = ROLE_MAPPING[roleId];
-  if (!roleData) {
-    throw new Error('Invalid Role ID');
-  }
-  return roleData;
-};
-
-// Function to validate and fetch the business unit for a specific role
+// ✅ Validate BU_ID
 async function validateAndFetchBusinessUnit(BU_ID) {
   const businessUnit = await BusinessUnit.findOne({ BU_ID });
   if (!businessUnit) {
@@ -22,12 +15,33 @@ async function validateAndFetchBusinessUnit(BU_ID) {
   return businessUnit;
 }
 
-// Function to create Customer Service Officer Role
+// ✅ Generate SYSUSER_ID
+async function generateSysUserId() {
+  const lastEntry = await UserRole.findOne({})
+    .sort({ SYSUSER_ID: -1 })
+    .limit(1)
+    .lean();
+
+  let nextId = 1;
+  if (lastEntry && lastEntry.SYSUSER_ID) {
+    const parsed = parseInt(lastEntry.SYSUSER_ID, 10);
+    if (!isNaN(parsed)) {
+      nextId = parsed + 1;
+    }
+  }
+
+  if (nextId > 999) {
+    throw new Error("SYSUSER_ID limit reached (max 999).");
+  }
+
+  return String(nextId).padStart(3, "0");
+}
+
+// ✅ Create Customer Service Officer
 export const createCustomerServiceOfficer = async (req, res) => {
   try {
     const {
       USER_ID,
-      SYSUSER_ID,
       USER_ROLE_ID,
       EFF_FROM_DT,
       DEF_ROLE_FG,
@@ -38,20 +52,13 @@ export const createCustomerServiceOfficer = async (req, res) => {
       DRAWER_ACCESS_LEVEL,
       TXN_ENQUIRY_ACCESS_LVL,
       REPORT_ACCESS_LEVEL,
-      Business_Unit,
+      BU_ID,
+      CREATED_BY,
     } = req.body;
 
-    // Validate Business Unit
-    const businessUnit = await BusinessUnit.findOne({ BU_ID: Business_Unit });
-    if (!businessUnit) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid Business Unit provided.",
-      });
-    }
+    const normalizedRoleId = String(USER_ROLE_ID);
+    const roleData = ROLE_MAPPING[normalizedRoleId];
 
-    // Validate role ID and mapping
-    const roleData = ROLE_MAPPING[USER_ROLE_ID];
     if (!roleData || roleData.ROLE_NM !== "Customer Service Officer") {
       return res.status(400).json({
         success: false,
@@ -59,19 +66,28 @@ export const createCustomerServiceOfficer = async (req, res) => {
       });
     }
 
-    const businessUnitName = await roleData.getBusinessUnit();
-    if (!businessUnitName) {
+    // Validate Business Unit
+    const businessUnitDoc = await validateAndFetchBusinessUnit(BU_ID);
+    const Business_Unit = businessUnitDoc.BUSINESS_UNIT;
+
+    // Validate User exists by correct field (assuming user_name)
+    const userExists = await User.exists({ user_name: USER_ID });
+    if (!userExists) {
       return res.status(400).json({
         success: false,
-        message: "Business Unit not found.",
+        message: `USER_ID ${USER_ID} does not exist in Users collection.`,
       });
     }
 
-    // Create new UserRole
+    const SYSUSER_ID = await generateSysUserId();
+
+    const permissions = new Permissions(roleData.permissions);
+    await permissions.save();
+
     const newUserRole = new UserRole({
       USER_ID,
       SYSUSER_ID,
-      USER_ROLE_ID,
+      USER_ROLE_ID: normalizedRoleId,
       EFF_FROM_DT,
       DEF_ROLE_FG,
       SUPERVISOR_FG,
@@ -82,6 +98,9 @@ export const createCustomerServiceOfficer = async (req, res) => {
       TXN_ENQUIRY_ACCESS_LVL,
       REPORT_ACCESS_LEVEL,
       Business_Unit,
+      BU_ID,
+      CREATED_BY,
+      permissions: permissions._id,
     });
 
     await newUserRole.save();
@@ -89,73 +108,109 @@ export const createCustomerServiceOfficer = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Customer Service Officer role created successfully.",
+      SYSUSER_ID,
     });
   } catch (error) {
     console.error("Error creating Customer Service Officer role:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to create Customer Service Officer role.",
+      error: error.message,
     });
   }
 };
 
-
-// Function to create UserRole dynamically
+// ✅ Generic Role Creation
 export const createUserRole = async (req, res) => {
   try {
-    const { USER_ROLE_ID, Business_Unit, CREATED_BY, ...otherFields } = req.body;
+    const {
+      USER_ROLE_ID,
+      Business_Unit,
+      BU_ID,
+      CREATED_BY,
+      USER_ID,
+      SYSUSER_ID, // Ignore this from client, generate internally
+      ...otherFields
+    } = req.body;
 
-    // Validate the role ID using ROLE_MAPPING
-    const roleData = ROLE_MAPPING[USER_ROLE_ID];
-    if (!roleData) {
-      return res.status(400).json({ success: false, message: "Invalid ROLE_ID provided" });
+    // Validate user exists by the correct field (assuming user_name)
+    const userExists = await User.exists({ user_name: USER_ID });
+    if (!userExists) {
+      return res.status(400).json({
+        success: false,
+        message: `USER_ID ${USER_ID} does not exist in Users collection.`,
+      });
     }
 
-    // Check if the role name in ROLE_MAPPING corresponds to the expected role
-    if (!roleData.ROLE_NM) {
-      return res.status(400).json({ success: false, message: "Role name not found in ROLE_MAPPING" });
+    const normalizedRoleId = parseInt(USER_ROLE_ID);
+    const roleData = ROLE_MAPPING[normalizedRoleId];
+
+    if (!roleData) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid ROLE_ID provided: ${USER_ROLE_ID}`,
+      });
     }
 
     // Validate Business Unit
-    const businessUnit = await BusinessUnit.findOne({ BU_ID: Business_Unit });
-    if (!businessUnit) {
-      return res.status(400).json({ success: false, message: "Invalid Business Unit provided." });
-    }
+    await validateAndFetchBusinessUnit(BU_ID);
 
-    console.log("Role and Business Unit validated successfully.");
+    // Generate SYSUSER_ID internally
+    const generatedSysUserId = await generateSysUserId();
 
-    // Create a new UserRole document
+    // Save permissions
+    const permissions = new Permissions({ BU_ROLE_ID: normalizedRoleId });
+    await permissions.save();
+
+    // Create UserRole
     const userRole = new UserRole({
-      USER_ROLE_ID,
+      USER_ID,
+      SYSUSER_ID: generatedSysUserId,
+      USER_ROLE_ID: normalizedRoleId,
+      BU_ROLE_ID: normalizedRoleId,
+      ROLE_NM: roleData.ROLE_NM,
       Business_Unit,
+      BU_ID,
       CREATED_BY,
+      permissions: permissions._id,
       ...otherFields,
     });
 
-    // Save the UserRole document to the database
     await userRole.save();
 
-    // Return a success response
-    return res.status(200).json({ success: true, message: "User role created successfully." });
+    return res.status(200).json({
+      success: true,
+      message: "User role created successfully.",
+      data: {
+        ROLE_NM: roleData.ROLE_NM,
+        USER_ROLE_ID: normalizedRoleId,
+        SYSUSER_ID: generatedSysUserId,
+      },
+    });
   } catch (error) {
     console.error("Error creating user role:", error);
-    return res.status(500).json({ success: false, message: "Failed to create user role." });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create user role.",
+      error: error.message,
+    });
   }
 };
 
-// Function to fetch UserRoles
+// ✅ Fetch All Roles
 export const getAllUserRoles = async (req, res) => {
   const { page = 1, limit = 10 } = req.query;
 
   try {
     const userRoles = await UserRole.find()
+      .populate("permissions")
       .skip((page - 1) * limit)
       .limit(Number(limit))
-      .lean(); // Use lean for better performance
+      .lean();
 
     const updatedRoles = userRoles.map((role) => ({
       ...role,
-      BU_ROLE_ID: ROLE_MAPPING[role.USER_ROLE_ID]?.ROLE_NM || "Unknown Role",
+      ROLE_NAME: ROLE_MAPPING[String(role.USER_ROLE_ID)]?.ROLE_NM || "Unknown Role",
     }));
 
     const totalRoles = await UserRole.countDocuments();
@@ -163,7 +218,7 @@ export const getAllUserRoles = async (req, res) => {
     return res.status(200).json({
       success: true,
       total: totalRoles,
-      currentPage: page,
+      currentPage: Number(page),
       totalPages: Math.ceil(totalRoles / limit),
       userRoles: updatedRoles,
     });
@@ -177,12 +232,12 @@ export const getAllUserRoles = async (req, res) => {
   }
 };
 
-// Function to fetch UserRole by USER_ID
+// ✅ Get User Role by USER_ID
 export const getUserRoleByUserId = async (req, res) => {
   const { userId } = req.params;
 
   try {
-    const userRole = await UserRole.findOne({ USER_ID: userId });
+    const userRole = await UserRole.findOne({ USER_ID: userId }).populate("permissions");
 
     if (!userRole) {
       return res.status(404).json({
@@ -191,11 +246,14 @@ export const getUserRoleByUserId = async (req, res) => {
       });
     }
 
-    const roleName = ROLE_MAPPING[userRole.USER_ROLE_ID]?.ROLE_NM || "Unknown Role";
+    const roleName = ROLE_MAPPING[String(userRole.USER_ROLE_ID)]?.ROLE_NM || "Unknown Role";
 
     return res.status(200).json({
       success: true,
-      userRole: { ...userRole._doc, USER_ROLE_ID: roleName },
+      userRole: {
+        ...userRole._doc,
+        ROLE_NAME: roleName,
+      },
     });
   } catch (error) {
     console.error("Error fetching UserRole by USER_ID:", error);
@@ -207,7 +265,7 @@ export const getUserRoleByUserId = async (req, res) => {
   }
 };
 
-// Function to delete a UserRole by ID
+// ✅ Delete User Role by ID
 export const deleteUserRole = async (req, res) => {
   const { userRoleId } = req.params;
 
@@ -231,6 +289,34 @@ export const deleteUserRole = async (req, res) => {
       success: false,
       message: "Error deleting UserRole",
       error: error.message,
+    });
+  }
+};
+
+// ✅ Accessible BUs by User
+export const getAccessibleBUsForUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const userRole = await UserRole.findOne({ USER_ID: userId }).populate("permissions");
+
+    if (!userRole || !userRole.permissions) {
+      return res.status(404).json({ success: false, message: "User role or permissions not found." });
+    }
+
+    const userPermissions = Object.values(userRole.permissions).filter((value) =>
+      ["ALL BUSINESS UNIT", "PARENT BUSINESS UNIT STRUCTURE", "OWN BUSINESS UNIT"].includes(value)
+    );
+
+    const accessibleBUs = await getAccessibleBusinessUnits(userPermissions, userRole.Business_Unit);
+
+    return res.status(200).json({ success: true, businessUnits: accessibleBUs });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching accessible business units",
+      error: err.message,
     });
   }
 };

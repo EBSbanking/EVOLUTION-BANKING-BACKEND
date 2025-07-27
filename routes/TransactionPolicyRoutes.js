@@ -1,22 +1,35 @@
 import express from 'express';
 import {
   setTransactionPolicy,
+  updatePolicy,
   validateTransaction,
   getTransactionPolicies
-} from '../controllers/transactionPolicyController.js';
+} from '../controllers/TransactionPolicyController.js';
 
 const router = express.Router();
 
-// @route   POST /api/policy/set
-// @desc    Create or update a transaction policy
-router.post('/set', setTransactionPolicy);
+/**
+ * @route   POST /api/policy/set
+ * @desc    Create or update policy for a role (Supervisor or Manager only)
+ */
+router.post('/policy/set', setTransactionPolicy);
 
-// @route   POST /api/policy/validate
-// @desc    Validate a transaction based on role and amount
-router.post('/validate', validateTransaction);
+/**
+ * @route   PUT /api/policy/:id
+ * @desc    Update an existing policy by POLICY_ID
+ */
+router.put('/policy/:id', updatePolicy);
 
-// @route   GET /api/policy
-// @desc    Get all policies or filter by role (?role=ROLE_NAME)
-router.get('/', getTransactionPolicies);
+/**
+ * @route   POST /api/policy/validate
+ * @desc    Validate a transaction against the set policy
+ */
+router.post('/policy/validate', validateTransaction);
+
+/**
+ * @route   GET /api/policies?role=TELLER
+ * @desc    Get all policies or filter by role
+ */
+router.get('/policies', getTransactionPolicies);
 
 export default router;

@@ -4,10 +4,10 @@ import RoleMapping from '../models/RoleMapping.js';
 
 
 const userRoleSchema = new mongoose.Schema({
-  ROLE_NM: { type: Number, required: true },
+  ROLE_NM: { type: String, required: true },
   SYSUSER_ID: { type: String, required: true },
   Business_Unit: {type: String, required: true},
-  ROLE_ID: { 
+  USER_ROLE_ID: { 
     type: Number, 
     required: true,
     ref: 'RoleMapping', // Reference to RoleMapping model

@@ -1,11 +1,11 @@
 import Customer from '../models/Customer.js';
-import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
+import generateCustomerNumber from '../utils/generateCustomerNumber.js';
 import moment from 'moment';
-import NotificationService from '../services/NotificationService.js';
-import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
-import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
-import { generateNumber } from '../utils/generateNumber.js';
+import { submitWorkflowItem } from '../Services/workflowService.js'; // ✅ imported workflow service
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
+import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
+
+
 
 
 const parseDate = (dateStr, format) => {
@@ -17,17 +17,51 @@ const parseDate = (dateStr, format) => {
 export const createCustomer = async (req, res) => {
   try {
     const {
-      CUST_ID, CUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME, CUST_NM,
-      HOME_ADDRESS, EMAIL_ADDRESS, BU_ID, MAIDEN_NM, BIRTH_DT, CNTRY_OF_BIRTH_ID,
-      CUST_CAT, CAMPAIGN_ID, GENDER_TY, NATIONALITY_NO, COUNTRY_NM, STATE, LOCAL_GOV,
-      OPENING_RSN_ID, OPENED_DT, RESIDENT_CNTRY_ID, RISK_CLASS, STMNT_FREQ_CD,
-      STMNT_FREQ_VALUE, CREATED_BY, USER_ID, CREATE_DT, INDUSTRY_ID, INDUSTRY_CD,
-      TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, EMP_ST,
-      ORGANISATION_NM, REGISTRATION_ADDRESS, REGISTRATION_DT, ALERT_DELIVERY_METHOD,
-      KYC_LEVEL, PHONE_NO, SMS
+      CUST_ID,
+      CUST_NO,
+      TITLE_ID,
+      FIRST_NAME,
+      MIDDLE_NAME,
+      LAST_NAME,
+      CUST_NM,
+      HOME_ADDRESS,
+      EMAIL_ADDRESS,
+      BU_ID,
+      MAIDEN_NM,
+      BIRTH_DT,
+      CNTRY_OF_BIRTH_ID,
+      CUST_CAT,
+      CAMPAIGN_ID,
+      GENDER_TY,
+      NATIONALITY_NO,
+      COUNTRY_NM,
+      STATE,
+      LOCAL_GOV,
+      OPENING_RSN_ID,
+      OPENED_DT,
+      RESIDENT_CNTRY_ID,
+      RISK_CLASS,
+      STMNT_FREQ_CD,
+      STMNT_FREQ_VALUE,
+      CREATED_BY,
+      USER_ID,
+      CREATE_DT,
+      INDUSTRY_ID,
+      INDUSTRY_CD,
+      TAX_STATUS,
+      MARITAL_ST,
+      TAX_GRP_ID,
+      OPERATIONS_CRNCY_ID,
+      EMP_ST,
+      ORGANISATION_NM,
+      REGISTRATION_ADDRESS,
+      REGISTRATION_DT,
+      ALERT_DELIVERY_METHOD,
+      KYC_LEVEL,
+      PHONE_NO,
+      SMS
     } = req.body;
 
-    // Check for existing customer
     const existingCustomer = await Customer.findOne({
       $or: [
         { CUST_NO: CUST_NO || '' },
@@ -36,22 +70,27 @@ export const createCustomer = async (req, res) => {
     });
 
     if (existingCustomer) {
-      return res.status(400).json({ 
-        message: 'Customer with this CUST_NO or EMAIL_ADDRESS already exists' 
+      return res.status(400).json({
+        message: 'Customer with this CUST_NO or EMAIL_ADDRESS already exists'
       });
     }
 
-    // Generate customer numbers if not provided
-    const { paddedCUST_ID, paddedCUST_NO } = (CUST_ID && CUST_NO)
-      ? { paddedCUST_ID: CUST_ID, paddedCUST_NO: CUST_NO }
-      : generateCustomerNumber();
+    if (NATIONALITY_NO && !/^\d{11}$/.test(NATIONALITY_NO)) {
+      return res.status(400).json({
+        message: 'NATIONALITY_NO must be exactly 11 digits.'
+      });
+    }
 
+    // ✅ Call async generateCustomerNumber to get the latest from DB
+    const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } = await generateCustomerNumber();
+
+    const finalCUST_ID = CUST_ID || generatedCUST_ID;
+    const finalCUST_NO = CUST_NO || generatedCUST_NO;
     const userId = USER_ID || CREATED_BY || 'SYSTEM';
 
-    // Create customer with Pending status
     const newCustomer = new Customer({
-      CUST_ID: paddedCUST_ID,
-      CUST_NO: paddedCUST_NO,
+      CUST_ID: finalCUST_ID,
+      CUST_NO: finalCUST_NO,
       TITLE_ID,
       FIRST_NAME,
       MIDDLE_NAME,
@@ -76,7 +115,7 @@ export const createCustomer = async (req, res) => {
       RISK_CLASS,
       STMNT_FREQ_CD,
       STMNT_FREQ_VALUE,
-      REC_ST: 'Pending', // Initial status
+      REC_ST: 'Pending',
       CREATED_BY,
       USER_ID: userId,
       CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : new Date(),
@@ -98,50 +137,27 @@ export const createCustomer = async (req, res) => {
 
     await newCustomer.save();
 
-    // Create workflow item
-    const { WORK_ITEM_ID, QUEUE_ID, SUB_PROC_ID, BUS_PROC_ID } = generateWorkflowIdentifiers();
-
-    const workflowItem = new WF_WORK_ITEM({
-      WORK_ITEM_ID,
-      ITEM_VALUE: paddedCUST_NO,
-      ITEM_DESC: `Customer Account Application for ${newCustomer.CUST_NM}`,
-      ITEM_CLASS_NM: "Customer",
-      ITEM_TYPE: "Customer",
-      EVENT_ID: generateNumber(7),
-      CUST_ID: paddedCUST_ID,
-      REC_ST: "Pending", // Workflow status
-      VERSION: 1,
-      USER_ID: userId,
-      BU_ID,
-      CREATE_DT: new Date(),
-      WAIT_ST: "Pending",
-      ITEM_ID: generateNumber(4),
-      ITEM_REF_NO: generateNumber(4),
-      ORIGINATOR_USER_ROLE_ID: userId,
-      QUEUE_ID,
-      SUB_PROC_ID,
-      BUS_PROC_ID,
-      TARGET_USER_ROLE_ID: 'Manager' // Default approver role
-    });
-
-    await workflowItem.save();
-
-    // Send notifications to approvers
-    const notificationMessage = `New customer ${newCustomer.CUST_NM} (ID: ${paddedCUST_ID}) requires approval`;
-
-    await NotificationService.send({
-      ROLE_ID: workflowItem.TARGET_USER_ROLE_ID,
-      message: `New customer ${newCustomer.CUST_NM} (ID: ${paddedCUST_ID}) requires approval`,
-      WORK_ITEM_ID,
-      CUST_ID: paddedCUST_ID
+    const workflowItem = await submitWorkflowItem({
+      itemValue: finalCUST_NO,
+      itemDesc: `Customer Account Application for ${newCustomer.CUST_NM}`,
+      itemClass: 'Customer',
+      itemType: 'Customer',
+      itemId: newCustomer._id,
+      custId: finalCUST_ID,
+      buId: BU_ID,
+      userId,
+      homeAddress: HOME_ADDRESS,
+      targetRole: 'Manager'
     });
 
     return res.status(201).json({
       message: 'Customer created and submitted for approval',
       customer: newCustomer,
       workflowItem,
-      approvalUrl: `/api/customer/approve/${paddedCUST_ID}`
+      approvalUrl: `/api/customer/approve/${finalCUST_ID}`,
+      rejectionUrl: `/api/customer/reject/${finalCUST_ID}`
     });
+
   } catch (error) {
     console.error('Customer creation error:', error);
     return res.status(500).json({
@@ -151,7 +167,10 @@ export const createCustomer = async (req, res) => {
   }
 };
 
-// Updated Approval endpoint with complete status updates
+
+
+
+// ✅ Approve Customer Controller
 export const approveCustomer = async (req, res) => {
   try {
     const { custId } = req.params;
@@ -165,7 +184,7 @@ export const approveCustomer = async (req, res) => {
 
     const cleanCustId = String(custId).trim();
     const customer = await Customer.findOne({ CUST_ID: cleanCustId });
-    
+
     if (!customer) {
       return res.status(404).json({ 
         message: 'Customer not found',
@@ -173,22 +192,16 @@ export const approveCustomer = async (req, res) => {
       });
     }
 
-    // Update customer status
     customer.REC_ST = 'Active';
     customer.APPROVED_BY = approvedBy;
     customer.APPROVED_DT = new Date();
     await customer.save();
 
-    // Update work item status
-    const updateSuccess = await WF_WORK_ITEMController.updateWorkItemStatusOnApproval(
+    const updateResult = await WF_WORK_ITEMController.updateWorkItemStatusOnApproval(
       'Customer',
-      customer._id,
+      customer.CUST_ID,
       approvedBy
     );
-
-    if (!updateSuccess) {
-      console.warn('Work item update failed for customer:', cleanCustId);
-    }
 
     res.status(200).json({
       message: 'Customer approved successfully',
@@ -196,7 +209,9 @@ export const approveCustomer = async (req, res) => {
       customerName: customer.CUST_NM,
       status: customer.REC_ST,
       approvedBy,
-      approvalDate: customer.APPROVED_DT
+      approvalDate: customer.APPROVED_DT,
+      workItemStatus: updateResult.success ? 'Updated' : 'Not updated',
+      workItem: updateResult.data || null
     });
 
   } catch (error) {
@@ -207,6 +222,63 @@ export const approveCustomer = async (req, res) => {
     });
   }
 };
+
+// ✅ Reject Customer Controller
+export const rejectCustomer = async (req, res) => {
+  try {
+    const { custId } = req.params;
+    const { approvedBy, rejectionReason } = req.body;
+
+    if (!custId || !approvedBy || !rejectionReason) {
+      return res.status(400).json({
+        message: 'Customer ID, approvedBy, and rejectionReason are required'
+      });
+    }
+
+    const cleanCustId = String(custId).trim().padStart(10, '0');
+    const customer = await Customer.findOne({ CUST_ID: cleanCustId });
+
+    if (!customer) {
+      return res.status(404).json({ 
+        message: 'Customer not found',
+        searchedId: cleanCustId
+      });
+    }
+
+    customer.REC_ST = 'Rejected';
+    customer.REJECTED_BY = approvedBy;
+    customer.REJECTED_DT = new Date();
+    customer.REJECTION_REASON = rejectionReason;
+    await customer.save();
+
+    const updateResult = await WF_WORK_ITEMController.updateWorkItemStatusOnRejection(
+      'Customer',
+      customer.CUST_ID,
+      approvedBy,
+      rejectionReason
+    );
+
+    res.status(200).json({
+      message: 'Customer rejected successfully',
+      customerId: customer.CUST_ID,
+      customerName: customer.CUST_NM,
+      status: customer.REC_ST,
+      rejectedBy: approvedBy,
+      rejectionDate: customer.REJECTED_DT,
+      rejectionReason: customer.REJECTION_REASON,
+      workItemStatus: updateResult.success ? 'Updated' : 'Not updated',
+      workItem: updateResult.data || null
+    });
+
+  } catch (error) {
+    console.error('Rejection error:', error);
+    res.status(500).json({
+      message: 'Failed to reject customer',
+      error: error.message
+    });
+  }
+};
+
 
 
 export const getAllCustomer = async (req, res) => {
@@ -244,39 +316,50 @@ export const getPendingCustomers = async (req, res) => {
 };
 
 
-export const updateWorkflowStatus = async (req, res) => {
+
+
+// 🟢 Approve a work item
+export const updateWorkItemStatusOnApproval = async (itemClass, itemId, approvedBy) => {
   try {
-    const { WORK_ITEM_ID, newStatus } = req.body;
-
-    if (!['Active', 'Pending'].includes(newStatus)) {
-      return res.status(400).json({ message: 'Invalid status. Only "Active" or "Pending" are allowed.' });
-    }
-
-    const workflowItem = await WF_WORK_ITEM.findById(WORK_ITEM_ID);
-    if (!workflowItem) {
-      return res.status(404).json({ message: 'Workflow item not found.' });
-    }
-
-    workflowItem.REC_ST = newStatus;
-    await workflowItem.save();
-
-    if (newStatus === 'Active') {
-      const customer = await Customer.findOne({ CUST_ID: workflowItem.CUST_ID });
-      if (!customer) {
-        return res.status(404).json({ message: 'Customer not found.' });
-      }
-
-      customer.REC_ST = 'Active';
-      await customer.save();
-    }
-
-    res.status(200).json({
-      message: 'Workflow and customer status updated successfully.',
-      workflowItem,
-    });
+    const workItem = await WF_WORK_ITEM.findOneAndUpdate(
+      { ITEM_CLASS_NM: itemClass, ITEM_ID: itemId },
+      {
+        REC_ST: 'Completed',
+        WAIT_ST: 'Approved',
+        APPROVED_BY: approvedBy,
+        APPROVED_DT: new Date(),
+        COMPLETED_DT: new Date(),
+        ACTION_TAKEN: 'Approved',
+        UPDATED_AT: new Date()
+      },
+      { new: true }
+    );
+    return { success: !!workItem, data: workItem };
   } catch (error) {
-    console.error('Error updating workflow status:', error);
-    res.status(500).json({ message: 'Error updating workflow status', error: error.message });
+    console.error('❌ Error updating work item on approval:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// 🔴 Reject a work item
+export const updateWorkItemStatusOnRejection = async (itemClass, itemId, rejectedBy) => {
+  try {
+    const workItem = await WF_WORK_ITEM.findOneAndUpdate(
+      { ITEM_CLASS_NM: itemClass, ITEM_ID: itemId },
+      {
+        REC_ST: 'Rejected',
+        WAIT_ST: 'Rejected',
+        COMPLETED_BY: rejectedBy,
+        COMPLETED_DT: new Date(),
+        ACTION_TAKEN: 'Rejected',
+        UPDATED_AT: new Date()
+      },
+      { new: true }
+    );
+    return { success: !!workItem, data: workItem };
+  } catch (error) {
+    console.error('❌ Error updating work item on rejection:', error);
+    return { success: false, error: error.message };
   }
 };
 

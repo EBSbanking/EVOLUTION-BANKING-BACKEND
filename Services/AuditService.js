@@ -1,7 +1,7 @@
 // services/auditService.js
-import { AuditTrail } from '../models/AuditTrail.js';
+import AuditTrail from '../models/AuditTrail.js';
 
-export const logAuditEvent = async (eventType, eventId, userId, action, oldValue, newValue, ipAddress) => {
+export const logAuditTrail = async (eventType, eventId, userId, action, oldValue, newValue, ipAddress) => {
   try {
     await AuditTrail.create({
       EVENT_TYPE: eventType,
@@ -17,3 +17,4 @@ export const logAuditEvent = async (eventType, eventId, userId, action, oldValue
     console.error('Error logging audit event:', error);
   }
 };
+export default logAuditTrail;

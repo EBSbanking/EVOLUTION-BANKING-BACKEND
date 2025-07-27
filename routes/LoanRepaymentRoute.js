@@ -3,13 +3,14 @@ import {
     handleLoanRepayment as repayLoan, 
     getRepaymentHistory 
 } from '../controllers/LoanRepaymentController.js';
-import { validateRepaymentInput } from '../middlewares/loanRepaymentValidation.js';
+import { validateRepayment } from '../middlewares/loanRepaymentValidation.js';
 
 const router = express.Router();
 
+
 // Route for loan repayment
 router.post('/repay-loan', 
-    validateRepaymentInput,
+    validateRepayment,
     async (req, res, next) => {
         // Start Mongoose session
         const session = await mongoose.startSession();

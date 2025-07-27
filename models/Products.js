@@ -4,7 +4,8 @@ import mongoose from 'mongoose';
 const productSchema = new mongoose.Schema({
   PROD_ID: {
     type: Number,
-    required: true, // Make it required
+    required: true,
+    unique: true, // add this to enforce uniqueness
   },
   PROD_CD: {
     type: Number,

@@ -1,6 +1,6 @@
 // src/services/loanOverdueChecker.js
 import LoanAccount from '../models/LoanAccount.js';
-import RepaymentSchedule from '../models/RepaymentSchedule.js';
+import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import LoanRepayment from '../models/LoanRepayment.js';  // <-- Add this import
 import moment from 'moment';
 

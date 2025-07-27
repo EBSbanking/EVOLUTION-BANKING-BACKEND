@@ -6,11 +6,12 @@ const counterSchema = new mongoose.Schema({
   seq: { type: Number, default: 0 } // Sequence number
 });
 
-// Check if the Counter model already exists, if not, create it
 const Counter = mongoose.models.Counter || mongoose.model('Counter', counterSchema);
 
 // Credit Application schema
 const creditApplicationSchema = new mongoose.Schema({
+ creditApplicationId: { type: String, required: true },
+
   CUST_NM: { type: String, required: true },
   CUST_ID: { type: Number, required: true },
   PRODUCT: { type: String },
@@ -28,7 +29,6 @@ const creditApplicationSchema = new mongoose.Schema({
   APPROVED_TERM_VALUE: { type: Number },
   BANK_OFFICER_ID: { type: String },
   BU_ID: { type: String, required: true },
-
   Borrower_address: {
     street: { type: String },
     city: { type: String },
@@ -36,7 +36,6 @@ const creditApplicationSchema = new mongoose.Schema({
     zip: { type: String },
     country: { type: String }
   },
-
   COMMENTS: { type: String },
   CREATE_DT: { type: Date, default: Date.now },
   CREATED_BY: { type: String, required: true },
@@ -73,8 +72,8 @@ const creditApplicationSchema = new mongoose.Schema({
   LOAN_CYCLE_START_DT: { type: Date },
   STATUS: {
     type: String,
-    enum: ['Pending', 'Approved', 'Rejected'],
-    default: 'Pending',
+    enum: ['PENDING', 'APPROVED', 'REJECTED'],
+    default: 'PENDING',
   }
 });
 
@@ -84,63 +83,61 @@ creditApplicationSchema.set('toJSON', {
     ret.CREATE_DT = ret.CREATE_DT ? new Date(ret.CREATE_DT).toLocaleString() : null;
     ret.APPL_DT = ret.APPL_DT ? new Date(ret.APPL_DT).toLocaleString() : null;
     ret.SYS_CREATE_TS = ret.SYS_CREATE_TS ? new Date(ret.SYS_CREATE_TS).toLocaleString() : null;
-    // Add other fields as needed
     return ret;
   }
 });
 
-// Static method to generate ACCT_NO
+// Static methods
 creditApplicationSchema.statics.generateAcctNo = async function () {
   const prefix = 3000000000;
-  try {
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'acctNo' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
-    );
-    return prefix + counter.seq;
-  } catch (error) {
-    throw new Error('Error generating ACCT_NO: ' + error.message);
-  }
+  const counter = await Counter.findOneAndUpdate(
+    { _id: 'acctNo' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return prefix + counter.seq;
 };
 
-// Static method to generate APPL_ID
 creditApplicationSchema.statics.generateApplId = async function () {
-  try {
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'creditAppId' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
-    );
-    const serialNumber = counter.seq.toString().padStart(4, '0');
-    return `CRAPP/${serialNumber}`;
-  } catch (error) {
-    throw new Error('Error generating APPL_ID: ' + error.message);
-  }
+  const counter = await Counter.findOneAndUpdate(
+    { _id: 'creditAppId' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  const serialNumber = counter.seq.toString().padStart(4, '0');
+  return `CRAPP/${serialNumber}`;
 };
 
-// Static method to generate REF_NO
 creditApplicationSchema.statics.generateRefNo = async function () {
-  try {
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'refNo' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
-    );
-    return counter.seq.toString().padStart(8, '0');
-  } catch (error) {
-    throw new Error('Error generating REF_NO: ' + error.message);
-  }
+  const counter = await Counter.findOneAndUpdate(
+    { _id: 'refNo' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return counter.seq.toString().padStart(8, '0');
 };
 
-// Pre-save hook to auto-generate IDs if missing
+creditApplicationSchema.statics.generateCreditApplicationId = async function () {
+  const counter = await Counter.findOneAndUpdate(
+    { _id: 'creditApplicationId' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return counter.seq;
+};
+
+// Pre-save hook
 creditApplicationSchema.pre('save', async function (next) {
   try {
+    if (!this.creditApplicationId) {
+      this.creditApplicationId = await this.constructor.generateCreditApplicationId();
+    }
+
     if (!this.CUST_ID) {
       const custCounter = await Counter.findOneAndUpdate(
         { _id: 'custId' },
         { $inc: { seq: 1 } },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
+        { new: true, upsert: true }
       );
       this.CUST_ID = custCounter.seq;
     }

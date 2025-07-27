@@ -80,9 +80,10 @@ const userSchema = new mongoose.Schema({
         default: false, // Default to false
     },
     relationship_officer: {
-        type: Boolean,
-        default: false, // Default to false
-    },
+  type: String,
+  default: '', // Or null if you'd prefer
+},
+
     enable_multi_session: {
         type: Boolean,
         default: false, // Default to false

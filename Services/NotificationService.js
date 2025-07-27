@@ -1,64 +1,60 @@
-import NotificationModel from '../models/NotificationModel.js'; // For storing notifications in the database
+// ✅ Correctly import the Notification model
+import Notification from '../models/NotificationModel.js';
 
 class NotificationService {
-    /**
-     * Sends a notification through the core banking workflow system.
-     * @param {Object} options
-     * @param {String} options.ROLE_ID - The target role for the notification.
-     * @param {String} options.message - The content of the notification.
-     * @param {Number} options.WORK_ITEM_ID - The workflow item ID associated with the notification.
-     * @param {Number} [options.EVENT_ID] - Optional event ID for tracking.
-     * @param {String} [options.status="Pending"] - Optional status for the notification.
-     * @param {String} [options.notificationType="system"] - Type of notification (default is "system").
-     */
-    static async send(options) {
-        try {
-            const {
-                ROLE_ID,
-                message,
-                WORK_ITEM_ID,
-                EVENT_ID,
-                status = 'Pending',
-                notificationType = 'system',
-            } = options;
+  /**
+   * Sends a notification through the core banking workflow system.
+   * @param {Object} options
+   * @param {String} options.ROLE_ID - The target role for the notification.
+   * @param {String} options.message - The content of the notification.
+   * @param {Number} options.WORK_ITEM_ID - The workflow item ID associated with the notification.
+   * @param {String} [options.status] - Optional status (default: 'Pending')
+   * @param {String} [options.notificationType] - Optional type (default: 'system')
+   * @param {Number} [options.EVENT_ID] - Optional event ID
+   * @param {Object} [options.metadata] - Optional metadata
+   * @returns {Promise<{success: boolean, notification?: object, error?: string}>}
+   */
+  static async send(options) {
+    try {
+      const { ROLE_ID, message, WORK_ITEM_ID } = options;
 
-            // Validate required fields
-            if (!ROLE_ID || !message || !WORK_ITEM_ID) {
-                throw new Error('ROLE_ID, message, and WORK_ITEM_ID are required for sending notifications.');
-            }
+      // Validate required fields
+      if (!ROLE_ID || !message || !WORK_ITEM_ID) {
+        console.warn('Notification missing required fields', {
+          missingFields: {
+            ROLE_ID: !ROLE_ID,
+            message: !message,
+            WORK_ITEM_ID: !WORK_ITEM_ID
+          }
+        });
+        return { success: false, error: 'Missing required fields' };
+      }
 
-            // Step 1: Log the notification in the database
-            const notification = new NotificationModel({
-                ROLE_ID,
-                message,
-                WORK_ITEM_ID,
-                EVENT_ID,
-                status,
-                notificationType,
-                createdAt: new Date(),
-            });
+      // ✅ Construct new notification using imported Notification model
+      const notification = new Notification({
+        ROLE_ID,
+        message,
+        WORK_ITEM_ID,
+        status: options.status || 'Pending',
+        notificationType: options.notificationType || 'system',
+        createdAt: new Date(),
+        ...(options.EVENT_ID && { EVENT_ID: options.EVENT_ID }),
+        ...(options.metadata && { metadata: options.metadata })
+      });
 
-            await notification.save();
-            console.log('Notification logged to database:', notification);
+      await notification.save();
 
-            // Optionally: Trigger the workflow system here directly if necessary
-            // This could involve an API call or another service, but it doesn't need to be WF_WORK_ITEM
+      return { success: true, notification };
 
-            // Assuming you have a different method or service to trigger workflow notifications
-            // Example:
-            // await SomeOtherService.triggerWorkflowNotification({
-            //     ROLE_ID,
-            //     message,
-            //     WORK_ITEM_ID,
-            //     EVENT_ID,
-            // });
-
-            return notification;
-        } catch (error) {
-            console.error('Error sending notification:', error.message);
-            throw error; // Re-throw the error for controller-level handling
-        }
+    } catch (error) {
+      console.error('Notification processing error:', {
+        error: error.message,
+        stack: error.stack,
+        input: options
+      });
+      return { success: false, error: error.message };
     }
+  }
 }
 
 export default NotificationService;

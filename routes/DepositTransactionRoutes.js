@@ -1,16 +1,36 @@
+// controllers/DepositTransactionController.js
 import express from 'express';
-import { createDepositTransaction, getTransactionsByAcctNo, getTransactionRefNosByAcctNo } from '../controllers/DepositTransactionController.js';
+import {
+  createDepositTransaction,
+  approveDepositTransaction,
+  rejectDepositTransaction,
+  getPendingApprovalsByCustId,
+  getTransactionRefNosByAcctNo,
+  getTransactionsByAcctNo
+} from '../controllers/DepositTransactionController.js';
+
+// import decryptPayload from '../middlewares/decryptPayload.js'; // 👈 Import middleware
+
 
 const router = express.Router();
 
-// Route for creating a transaction (formerly a deposit)
+// 🏦 Create deposit transaction
 router.post('/create', createDepositTransaction);
 
+// ✅ Approve deposit transaction
+// ✅ Correct: avoid repeating /deposit-transaction in the route path
+router.post('/approve', approveDepositTransaction);
 
-// Route for fetching transactions by account number
-router.get('/:acctNo', getTransactionsByAcctNo);
+router.post('/reject', rejectDepositTransaction);
 
-// Route for fetching transaction reference numbers by account number
-router.get('/:acctNo/refs', getTransactionRefNosByAcctNo);  // Updated route to fetch transaction reference numbers
+
+// 📋 Get pending approvals for a customer
+router.get('/pending-approvals/:custId', getPendingApprovalsByCustId);
+
+// 🔗 Get TRANSACTION_REF_NO by Account Number
+router.get('/account/:acctNo/refs', getTransactionRefNosByAcctNo);
+
+// 📄 Get all transactions by Account Number
+router.get('/account/:acctNo/transactions', getTransactionsByAcctNo);
 
 export default router;

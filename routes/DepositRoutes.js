@@ -1,36 +1,38 @@
 // routes/DepositRoutes.js
 import express from 'express';
-import { 
-    generateDepositAccountDetails, 
-    createDeposit,
-    getAllDeposits,
-    getDepositByAcctNo,
-    updateDepositByAcctNo,
-    deleteDepositByAcctNo,
-    getDepositByCustId
-} from '../controllers/DepositController.js'; // Import the controller methods
+import {
+  generateDepositAccountDetails,
+  createDeposit,
+  getAllDeposits,
+  getDepositByAcctNo,
+  updateDepositByAcctNo,
+  deleteDepositByAcctNo,
+  getDepositByCustId
+} from '../controllers/DepositController.js';
+
+// import decryptPayload from '../middlewares/decryptPayload.js'; // 👈 Import middleware
 
 const router = express.Router();
 
-// Route for creating a deposit transaction
-router.post('/create', createDeposit);
+// Route for creating a deposit transaction (with decryption middleware)
+router.post('/create',  createDeposit);
 
 // Route for fetching all deposits
-router.get('/create', getAllDeposits);
+router.get('/', getAllDeposits);
 
 // Route for fetching a deposit by account number (ACCT_NO)
-router.get('/:acct_no', getDepositByAcctNo);
+router.get('/acct/:acct_no', getDepositByAcctNo);
 
 // Route for updating a deposit by account number (ACCT_NO)
-router.put('/:acct_no', updateDepositByAcctNo);
+router.put('/acct/:acct_no', updateDepositByAcctNo);
 
 // Route for deleting a deposit by account number (ACCT_NO)
-router.delete('/:acct_no', deleteDepositByAcctNo);
+router.delete('/acct/:acct_no', deleteDepositByAcctNo);
 
-// Correct the generate account details route to use GET
+// Generate account details
 router.get('/generate-deposit-account', generateDepositAccountDetails);
 
+// Get by customer ID
 router.get('/by-cust-id/:cust_id', getDepositByCustId);
 
-
-export default router;  // Default export
+export default router;

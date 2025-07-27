@@ -1,98 +1,104 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import { MongoClient } from 'mongodb';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+import cors from 'cors';
+import mongoose from 'mongoose';
+import connectDB from './config/db.js';
 import logger from './utils/logger.js';
-import app from './app.js';
-import initializeCounters from './scripts/initCounters.js';
-import fileUpload from 'express-fileupload';
+import { initializeCollections } from './utils/dbInitializer.js';
+import { createError } from './utils/errorUtils.js';
+import app from './app.js'; // Import the app from app.js
+import initializeApplication from './utils/initializeApplication.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
-const PORT = process.env.PORT || 5000;
+const configureLogging = () => {
+  const LOG_DIR = process.env.LOG_DIR || path.join(__dirname, 'logs');
+  const LOG_FILE = path.join(LOG_DIR, 'server.log');
 
-// Ensure MONGODB_URI is defined
-if (!process.env.MONGODB_URI) {
-  logger.error('Error: MONGODB_URI is not defined');
-  process.exit(1);
-}
-
-// MongoDB connection with retry logic
-const connectToDatabase = async () => {
   try {
-    const MONGO_URI = process.env.MONGODB_URI;
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+    fs.accessSync(LOG_DIR, fs.constants.W_OK | fs.constants.R_OK);
+  } catch (err) {
+    logger.error('Log directory setup failed', { error: err.message });
+    throw createError('Log directory initialization failed', 'INITIALIZATION_ERROR');
+  }
 
-    await mongoose.connect(MONGO_URI, {
-      useNewUrlParser: true,
-      // useUnifiedTopology: true, // Removed as requested
+  return {
+    logStream: fs.createWriteStream(LOG_FILE, { flags: 'a', encoding: 'utf8', mode: 0o666 }),
+    logFile: LOG_FILE
+  };
+};
+
+const { logStream, logFile } = configureLogging();
+
+const configureShutdown = () => {
+  const shutdown = async (signal) => {
+    logger.info(`Shutdown signal received: ${signal}`);
+    try {
+      await mongoose.connection.close();
+      logStream.end(() => {
+        logger.info('Shutdown completed');
+        process.exit(0);
+      });
+    } catch (err) {
+      logger.error('Error during shutdown', { error: err.message });
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('uncaughtException', (err) => {
+    logger.error('Uncaught Exception', { error: err.message, stack: err.stack });
+    shutdown('uncaughtException');
+  });
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled Rejection', {
+      reason: reason instanceof Error ? reason.message : reason
+    });
+  });
+};
+
+const startServer = async () => {
+  const PORT = process.env.PORT || 3001;
+
+  try {
+    await connectDB();
+    await initializeApplication();
+
+    const server = app.listen(PORT, () => {
+      logger.info(`✅ Server started on port ${PORT}`, {
+        environment: process.env.NODE_ENV || 'development',
+        logFile,
+        nodeVersion: process.version,
+        pid: process.pid,
+        clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+        buildPath: path.join(__dirname, 'build')
+      });
     });
 
-    logger.info('MongoDB connected successfully');
+    configureShutdown();
 
-    // Initialize counters
-    await initializeCounters();
-
-    // Create indexes
-    await createIndexes();
-
-    // Start Express server after DB is connected
-    app.listen(PORT, () => {
-      logger.info(`Server is running on port ${PORT}`);
+    server.on('error', (err) => {
+      logger.error('Server error', { error: err.message });
+      process.exit(1);
     });
-
   } catch (error) {
-    logger.error('MongoDB connection error:', error);
-    setTimeout(connectToDatabase, 5000); // Retry after 5 seconds
+    logger.error('❌ Server startup failed', {
+      error: error.message,
+      code: 'SERVER_STARTUP_ERROR',
+      stack: error.stack
+    });
+    process.exit(1);
   }
 };
 
-// Index creation function
-async function createIndexes() {
-  try {
-    const client = await MongoClient.connect(process.env.MONGODB_URI, {
-      
-      // useUnifiedTopology: true, // Removed for consistency
-    });
-
-    const db = client.db();
-    const collection = db.collection('yourCollection'); // Replace with your actual collection name
-
-    await collection.createIndexes([{ key: { field: 1 } }]);
-
-    logger.info('Index created successfully');
-    await client.close();
-  } catch (error) {
-    logger.error('Error creating index:', error);
-  }
-}
-
-// Server time utilities
-const getServerTimeAndDate = () => {
-  const now = new Date();
-  const serverDate = now.toLocaleDateString();
-  const serverTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return { serverDate, serverTime };
-};
-
-// Middleware to log server time
-app.use((req, res, next) => {
-  const { serverDate, serverTime } = getServerTimeAndDate();
-  logger.info(`Server Time: ${serverDate} ${serverTime}`);
-  next();
-});
-
-// Route to return server time
-app.get('/server-time', (req, res) => {
-  const { serverDate, serverTime } = getServerTimeAndDate();
-  res.json({ serverDate, serverTime });
-});
-
-// Initialize MongoDB connection
-connectToDatabase();
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await mongoose.connection.close();
-  logger.info('MongoDB connection closed');
-  process.exit(0);
-});
+startServer();

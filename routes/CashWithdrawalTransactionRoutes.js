@@ -1,12 +1,14 @@
+// routes/withdrawalRoutes.js
 import { Router } from 'express';
 import { withdraw, getHistory } from '../controllers/CashWithdrawalTransactionController.js';
+import decryptPayload from '../middlewares/decryptPayload.js'; // 🔐 Import decryption middleware
 
 const router = Router();
 
-// Route for creating a cash withdrawal transaction
-router.post('/withdraw', withdraw);
+// 🔐 Decrypt and verify before withdrawal
+router.post('/withdraw', decryptPayload, withdraw);
 
-// Route for fetching the withdrawal history
+// Fetch withdrawal history
 router.get('/history', getHistory);
 
 export default router;

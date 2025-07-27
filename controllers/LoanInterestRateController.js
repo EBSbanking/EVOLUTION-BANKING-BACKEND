@@ -1,114 +1,144 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import InterestRate from '../models/LoanInterestRate.js';
-import RateIndex from '../models/Rate-Index.js'; // Ensure correct path
+import InterestRate from '../models/loanInterestRate.js';
+import RateIndex from '../models/Rate-Index.js';
 
-export const calculateEMI = async (req, res) => {
+// Utility function for EMI calculation - always using 'reducing' method
+export const calculateEMI = ({
+  principal,
+  annualRate,
+  termMonths,
+  startDate
+}) => {
+  const method = 'reducing'; // force reducing
+  const monthlyRate = annualRate / 100 / 12;
+  const currentDate = startDate ? new Date(startDate) : new Date();
+  let installments = [], totalInterest = 0;
+
+  const reducingEMI = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths) /
+    (Math.pow(1 + monthlyRate, termMonths) - 1);
+  
+  let balance = principal;
+
+  for (let i = 1; i <= termMonths; i++) {
+    const interest = balance * monthlyRate;
+    const principalPayment = reducingEMI - interest;
+    totalInterest += interest;
+    balance -= principalPayment;
+
+    const dueDate = new Date(currentDate);
+    dueDate.setMonth(dueDate.getMonth() + i);
+
+    installments.push({
+      installmentNo: i,
+      dueDate,
+      principal: principalPayment,
+      interest,
+      totalPayment: reducingEMI,
+      remainingBalance: balance,
+      isFinalInstallment: i === termMonths
+    });
+  }
+
+  return {
+    emi: reducingEMI,
+    totalInterest,
+    totalRepayment: reducingEMI * termMonths,
+    installments
+  };
+};
+
+// Endpoint for EMI calculation - forcing 'reducing' method
+export const calculateEMIEndpoint = async (req, res) => {
   try {
-    // Destructure the required parameters: principal, time (months), PROD_ID, rateType, ABSOLUTE_RATE, FIXED_RATE
-    const { principal, time, PROD_ID, rateType, ABSOLUTE_RATE, FIXED_RATE } = req.body;
+    const {
+      principal,
+      time,
+      PROD_ID,
+      rateType,
+      ABSOLUTE_RATE,
+      FIXED_RATE,
+      disbursementDate
+    } = req.body;
 
-    // Validate input parameters
-    if (principal == null || time == null || (ABSOLUTE_RATE == null && FIXED_RATE == null)) {
-      return res.status(400).json({ message: 'Principal, time, and one of ABSOLUTE_RATE or FIXED_RATE are required.' });
+    if (principal == null || time == null) {
+      return res.status(400).json({ message: 'Principal and time are required.' });
     }
 
     if (principal <= 0 || time <= 0 || isNaN(principal) || isNaN(time)) {
       return res.status(400).json({ message: 'Principal and time must be positive numbers.' });
     }
 
-    let effectiveRate;
-
-    // Determine which rate to use based on the user's choice
-    if (rateType === 'absolute') {
-      effectiveRate = ABSOLUTE_RATE;
-    } else if (rateType === 'fixed') {
-      effectiveRate = FIXED_RATE;
-    } else {
-      return res.status(400).json({ message: 'Invalid rate type. Use either "absolute" or "fixed".' });
-    }
-
-    // If PROD_ID is provided, check for any overrides from database
+    let loanProduct;
     if (PROD_ID) {
-      const loanInterestRate = await InterestRate.findOne({ PROD_ID });
-      if (loanInterestRate) {
-        // Use the rate from the database if available
-        if (rateType === 'absolute' && loanInterestRate.ABSOLUTE_RATE) {
-          effectiveRate = loanInterestRate.ABSOLUTE_RATE;
-        } else if (rateType === 'fixed' && loanInterestRate.FIXED_RATE) {
-          effectiveRate = loanInterestRate.FIXED_RATE;
-        }
+      loanProduct = await InterestRate.findOne({ PROD_ID });
+      if (!loanProduct) {
+        return res.status(404).json({ message: 'Loan product not found' });
+      }
+      if (time < loanProduct.MIN_LOAN_TERM_MONTHS || time > loanProduct.MAX_LOAN_TERM_MONTHS) {
+        return res.status(400).json({ 
+          message: `Loan term must be between ${loanProduct.MIN_LOAN_TERM_MONTHS} and ${loanProduct.MAX_LOAN_TERM_MONTHS} months` 
+        });
       }
     }
 
-    if (!effectiveRate) {
-      return res.status(400).json({ message: 'No rate found to calculate EMI.' });
+    let annualRate;
+    if (rateType === 'absolute' && ABSOLUTE_RATE != null) {
+      annualRate = ABSOLUTE_RATE;
+    } else if (rateType === 'fixed' && FIXED_RATE != null) {
+      annualRate = FIXED_RATE;
+    } else if (loanProduct) {
+      annualRate = loanProduct.ABSOLUTE_RATE || loanProduct.FIXED_RATE;
     }
 
-    // Flat interest calculation: Fixed annual interest rate, converted to monthly rate
-    const monthlyRate = effectiveRate / 100 / 12;
-
-    // Number of months (time) should be in months
-    const numberOfMonths = time; // time is already in months
-
-    // Total interest over the loan tenure (flat rate calculation)
-    const totalInterest = principal * effectiveRate / 100;
-
-    // Total amount to repay (Principal + Total Interest)
-    const totalAmountToRepay = principal + totalInterest;
-
-    // EMI remains constant: Total Amount to Repay divided by the number of months
-    const emi = totalAmountToRepay / numberOfMonths;
-    const roundedEMI = Math.round(emi * 100) / 100; // Round to two decimal places
-
-    // Calculate repayment schedule based on flat interest
-    const repaymentSchedules = [];
-
-    // The interest for each month remains constant, based on the original principal
-    const interestForThisMonth = principal * monthlyRate;
-
-    let remainingPrincipal = principal;
-    for (let month = 1; month <= numberOfMonths; month++) {
-      // Principal for this month is the EMI minus the interest
-      const principalForThisMonth = roundedEMI - interestForThisMonth;
-
-      // Update remaining principal
-      remainingPrincipal -= principalForThisMonth;
-
-      // Ensure the final installment correctly clears the remaining principal
-      if (month === numberOfMonths) {
-        remainingPrincipal = 0;
-      }
-
-      // Push the repayment schedule for each month
-      repaymentSchedules.push({
-        ACCT_NO: "3000000002", // Use appropriate account number
-        installmentNo: month,
-        dueDate: new Date(new Date().setMonth(new Date().getMonth() + month - 1)), // Adjust due dates
-        principal: Math.round(principalForThisMonth * 100) / 100,
-        interest: Math.round(interestForThisMonth * 100) / 100,
-        totalPayment: roundedEMI
-      });
+    if (annualRate == null || isNaN(annualRate)) {
+      return res.status(400).json({ message: 'Could not determine valid interest rate.' });
     }
 
-    res.status(200).json({
-      message: 'EMI calculated successfully!',
-      data: {
-        principal,
-        time,
-        rateType,
-        effectiveRate,
-        totalInterest,
-        emi: roundedEMI,
-        repaymentSchedules
+    if (loanProduct) {
+      const maxRate = loanProduct.ABSOLUTE_RATE 
+        ? Math.max(loanProduct.ABSOLUTE_RATE, loanProduct.FIXED_RATE || 0)
+        : loanProduct.FIXED_RATE;
+      
+      if (annualRate > maxRate) {
+        return res.status(400).json({
+          message: `Requested rate exceeds maximum allowed rate of ${maxRate}% for this product`
+        });
       }
+    }
+
+    const emiResult = calculateEMI({
+      principal,
+      annualRate,
+      termMonths: time,
+      startDate: disbursementDate
     });
 
+    res.status(200).json({
+      message: 'EMI calculated successfully using REDUCING method',
+      data: {
+        principal,
+        termMonths: time,
+        annualInterestRate: annualRate,
+        monthlyInterestRate: annualRate / 12,
+        method: 'reducing',
+        emi: emiResult.emi,
+        totalInterest: emiResult.totalInterest,
+        totalRepayment: emiResult.totalRepayment,
+        installments: emiResult.installments
+      }
+    });
   } catch (error) {
     console.error('Error calculating EMI:', error);
-    res.status(500).json({ message: 'Failed to calculate EMI', error: error.message });
+    res.status(500).json({
+      message: 'Failed to calculate EMI',
+      error: error.message
+    });
   }
 };
+
+
+// Keep other exports unchanged below (unchanged content not shown here for brevity)
 
 
 export const createInterestRate = async (req, res) => {
@@ -133,7 +163,6 @@ export const createInterestRate = async (req, res) => {
   } = req.body;
 
   try {
-    // Check if required fields are present
     const missingFields = [];
 
     if (!PROD_ID) missingFields.push('PROD_ID');
@@ -152,7 +181,6 @@ export const createInterestRate = async (req, res) => {
     if (!MATURITY_INT_INDEX_ID) missingFields.push('MATURITY_INT_INDEX_ID');
     if (!ACCRUAL_BASIS_TY) missingFields.push('ACCRUAL_BASIS_TY');
 
-    // Ensure ABSOLUTE_RATE and FIXED_RATE are valid numbers
     if (isNaN(ABSOLUTE_RATE) || ABSOLUTE_RATE === 0) missingFields.push('ABSOLUTE_RATE');
     if (isNaN(FIXED_RATE) || FIXED_RATE === 0) missingFields.push('FIXED_RATE');
 
@@ -163,7 +191,6 @@ export const createInterestRate = async (req, res) => {
       });
     }
 
-    // If all fields are provided, create the interest rate
     const newInterestRate = new InterestRate({
       PROD_ID,
       INDEX_RATE_ID,
@@ -184,7 +211,6 @@ export const createInterestRate = async (req, res) => {
       ABSOLUTE_RATE,
     });
 
-    // Save the new interest rate
     await newInterestRate.save();
 
     res.status(201).json({
@@ -200,18 +226,14 @@ export const createInterestRate = async (req, res) => {
   }
 };
 
-
-
-// Function to get all interest rates
 export const getAllInterestRates = async (req, res) => {
   try {
-    console.log("Fetching all interest rates...");
-    const interestRates = await InterestRate.find(); // This should fetch all interest rates from your DB.
-    console.log("Fetched interest rates:", interestRates);
-
+    const interestRates = await InterestRate.find();
+    
     if (!interestRates || interestRates.length === 0) {
       return res.status(404).json({ message: 'No Interest Rates found' });
     }
+    
     res.status(200).json({
       message: 'Interest Rates retrieved successfully!',
       data: interestRates,
@@ -225,23 +247,17 @@ export const getAllInterestRates = async (req, res) => {
   }
 };
 
-
-
-
-// Function to delete an interest rate by PROD_ID and INDEX_RATE_ID
 export const deleteInterestRate = async (req, res) => {
-  const { PROD_ID } = req.params;  // Get PROD_ID and INDEX_RATE_ID from URL params
+  const { PROD_ID } = req.params;
 
   try {
-    // Find and delete the interest rate using PROD_ID and INDEX_RATE_ID
     const deletedInterestRate = await InterestRate.findOneAndDelete({
       PROD_ID
     });
 
-    // Check if the interest rate was found and deleted
     if (!deletedInterestRate) {
       return res.status(404).json({
-        message: 'Interest Rate not found for the given PROD_ID and INDEX_RATE_ID'
+        message: 'Interest Rate not found for the given PROD_ID'
       });
     }
 
@@ -258,10 +274,8 @@ export const deleteInterestRate = async (req, res) => {
   }
 };
 
-
-// Function to update an interest rate by PROD_ID and INDEX_RATE_ID
 export const updateInterestRate = async (req, res) => {
-  const { PROD_ID } = req.params;  // Get PROD_ID and INDEX_RATE_ID from URL params
+  const { PROD_ID } = req.params;
   const {
     ABSOLUTE_RATE,
     FIXED_RATE,
@@ -273,20 +287,17 @@ export const updateInterestRate = async (req, res) => {
     ACCRUAL_FREQ_VALUE,
     ACCRUAL_FREQ_CD,
     MATURITY_INT_INDEX_ID,
-  } = req.body;  // Get new data from the request body
+  } = req.body;
 
   try {
-    // Find the interest rate by PROD_ID and INDEX_RATE_ID
     const interestRate = await InterestRate.findOne({ PROD_ID });
 
-    // Check if the interest rate was found
     if (!interestRate) {
       return res.status(404).json({
-        message: 'Interest Rate not found for the given PROD_ID and INDEX_RATE_ID'
+        message: 'Interest Rate not found for the given PROD_ID'
       });
     }
 
-    // Update the fields with new values from the request body
     interestRate.ABSOLUTE_RATE = ABSOLUTE_RATE || interestRate.ABSOLUTE_RATE;
     interestRate.FIXED_RATE = FIXED_RATE || interestRate.FIXED_RATE;
     interestRate.RATE_CHANGE_ALLOWED = RATE_CHANGE_ALLOWED || interestRate.RATE_CHANGE_ALLOWED;
@@ -298,7 +309,6 @@ export const updateInterestRate = async (req, res) => {
     interestRate.ACCRUAL_FREQ_CD = ACCRUAL_FREQ_CD || interestRate.ACCRUAL_FREQ_CD;
     interestRate.MATURITY_INT_INDEX_ID = MATURITY_INT_INDEX_ID || interestRate.MATURITY_INT_INDEX_ID;
 
-    // Save the updated interest rate
     await interestRate.save();
 
     res.status(200).json({
@@ -314,22 +324,18 @@ export const updateInterestRate = async (req, res) => {
   }
 };
 
-
 export const getInterestRate = async (req, res) => {
-  const { PROD_ID } = req.params;  // Get PROD_ID and INDEX_RATE_ID from URL params
+  const { PROD_ID } = req.params;
 
   try {
-    // Find the interest rate by PROD_ID and INDEX_RATE_ID
     const interestRate = await InterestRate.findOne({ PROD_ID });
 
-    // Check if the interest rate was found
     if (!interestRate) {
       return res.status(404).json({
-        message: 'Interest Rate not found for the given PROD_ID and INDEX_RATE_ID'
+        message: 'Interest Rate not found for the given PROD_ID'
       });
     }
 
-    // Return the found interest rate
     res.status(200).json({
       message: 'Interest Rate retrieved successfully!',
       data: interestRate,
@@ -343,14 +349,83 @@ export const getInterestRate = async (req, res) => {
   }
 };
 
+export const calculateDailyInterest = (principal, annualRate, days) => {
+  return (principal * annualRate * days) / (100 * 360); // Common in loans
+};
 
-// controllers/Rate-IndexController.js
+export const updateCapitalizationStatus = async (req, res) => {
+  const { LOAN_PROUD_INT_ID } = req.params;
+  const { status, updatedBy } = req.body;
 
-// Function to calculate interest
-export const calculateInterest = (principal, time, rate) => {
-  if (principal <= 0 || time <= 0 || rate <= 0) {
-    throw new Error('Principal, time, and rate must be positive values.');
+  // Validate input
+  const validStatuses = ['CAPITALIZED', 'REJECTED'];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({
+      message: 'Invalid status. Must be either CAPITALIZED or REJECTED.'
+    });
   }
-  const interest = (principal * rate * time) / 100;
-  return interest;
+
+  try {
+    const interestRate = await InterestRate.findOne({ LOAN_PROUD_INT_ID });
+
+    if (!interestRate) {
+      return res.status(404).json({
+        message: 'Interest Rate record not found for the given LOAN_PROUD_INT_ID'
+      });
+    }
+
+    interestRate.CAPITALIZE_ACCT_ST = status;
+    if (updatedBy) interestRate.LAST_MODIFIED_BY = updatedBy;
+
+    await interestRate.save();
+
+    return res.status(200).json({
+      message: `Capitalization status updated to ${status}`,
+      data: interestRate
+    });
+  } catch (error) {
+    console.error('Error updating capitalization status:', error);
+    return res.status(500).json({
+      message: 'Failed to update capitalization status',
+      error: error.message
+    });
+  }
+};
+
+export const getCapitalizationStatus = async (req, res) => {
+  const { LOAN_PROUD_INT_ID } = req.params;
+
+  try {
+    const interestRate = await InterestRate.findOne({ LOAN_PROUD_INT_ID });
+
+    if (!interestRate) {
+      return res.status(404).json({
+        message: 'Interest Rate record not found for the given LOAN_PROUD_INT_ID'
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Capitalization status retrieved successfully',
+      LOAN_PROUD_INT_ID: interestRate.LOAN_PROUD_INT_ID,
+      status: interestRate.CAPITALIZE_ACCT_ST
+    });
+  } catch (error) {
+    console.error('Error retrieving capitalization status:', error);
+    return res.status(500).json({
+      message: 'Failed to retrieve capitalization status',
+      error: error.message
+    });
+  }
+};
+
+export default { 
+  calculateEMI,        // Utility function
+  calculateEMIEndpoint, // API endpoint
+  calculateDailyInterest, 
+  getInterestRate,
+  updateInterestRate,
+  createInterestRate,
+  getAllInterestRates,
+  updateCapitalizationStatus,
+  getCapitalizationStatus
 };

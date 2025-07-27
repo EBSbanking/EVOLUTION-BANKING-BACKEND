@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import crypto from 'crypto';
 
+
 // Function to generate and save reset token
 const generateResetToken = async (user) => {
     const resetToken = crypto.randomBytes(32).toString('hex');

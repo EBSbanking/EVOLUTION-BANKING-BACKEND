@@ -9,10 +9,10 @@ const router = express.Router();
 // Credit Application Routes
 
 // Create a new credit application
-router.post('/', CreditApplicationController.createCreditApplication);
+router.post('/credit-applications', CreditApplicationController.createCreditApplication);
 
 // Get all credit applications
-router.get('/credit-applications', CreditApplicationController.getAllCreditApplications);
+router.get('/credit-applications', CreditApplicationController.getAllCreditApplicationsWithWorkItems);
 
 // Get credit application by APPL_ID
 router.get('/applid/:applId', CreditApplicationController.getCreditApplicationByApplId);
@@ -32,8 +32,11 @@ router.delete('/:applId', CreditApplicationController.deleteCreditApplication);
 router.get('/customer/:custId', CreditApplicationController.getCreditApplicationByCustId);
 
 
-// Approve credit application and create loan contract
-router.put('/approve/:applId', CreditApplicationController.approveCreditApplication);
+// ✅ Approve a credit application
+router.put('/approve', CreditApplicationController.approveCreditApplication);
+
+// ✅ Reject a credit application
+router.put('/reject', CreditApplicationController.rejectCreditApplication);
 
 // Get identifier for a credit application (ACCT_NO | APPL_ID | REF_NO)
 

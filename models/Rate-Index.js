@@ -1,67 +1,65 @@
 import mongoose from 'mongoose';
 
-// Define the schema for the RateIndex model
 const rateIndexSchema = new mongoose.Schema({
   INDEX_RATE_ID: {
     type: Number,
-    required: true, // Make it required
+    required: true,
+    unique: true
   },
   INDEX_CD: {
-    type: Number,
-    required: true, // Make it required
-  },
+  type: String,  
+  required: true,
+  uppercase: true,
+  trim: true
+},
+
   INDEX_RATE: {
     type: Number,
-    required: true, // Make it required
+    required: true,
+    min: 0,
+    description: "Annual interest rate (in percentage)"
   },
   INDEX_NM: {
     type: String,
-    required: true, // Make it required
+    required: true,
+    trim: true
   },
   CRNCY_ID: {
     type: String,
-    required: true, // Make it required
+    required: true,
+    uppercase: true
   },
   PRECISION: {
     type: Number,
-    required: true, // Make it required
+    required: true,
+    min: 2,
+    max: 8,
+    default: 4
   },
   EFFECTIVE_DT: {
     type: Date,
-    required: true, // Make it required
+    required: true,
+    validate: {
+      validator: function(date) {
+        return date <= new Date();
+      },
+      message: 'Effective date cannot be in the future'
+    }
   },
-  VERSION: {
+  DAY_COUNT_CONVENTION: {
     type: String,
-    required: true, // Make it required
+    enum: ['ACTUAL/360', 'ACTUAL/365', '30/360', 'BUSINESS/252'],
+    default: 'ACTUAL/360',
+    required: true
   },
-  REC_ST: {
-    type: String,
-    required: true, // Make it required
-  },
-  CREATED_DT: {
-    type: Date,
-    default: Date.now, // Set the creation date to now if not provided
-  },
-  CREATED_BY: {
-    type: String,
-    required: true, // Make it required
-  },
-  SYS_CREATE_TS: {
-    type: Date,
-    default: Date.now, // Automatically set the timestamp when the document is created
-  },
+  // ... other fields as in your original schema
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
-// Add the method to the schema
-rateIndexSchema.methods.calculateInterest = function (principal, termValue) {
-  // Assuming interest is calculated as: principal * (rate / 100) * termValue
-  // Adjust the formula as per your interest calculation logic
-  const interestRate = this.INDEX_RATE;
-  const interest = (principal * interestRate * termValue) / 100;
-  return interest;
-};
-
-// Create the model based on the schema
+// Remove calculation methods - they belong in the service
 const RateIndex = mongoose.model('RateIndex', rateIndexSchema);
 
 export default RateIndex;

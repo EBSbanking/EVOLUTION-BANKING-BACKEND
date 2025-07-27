@@ -1,13 +1,7 @@
 import CustomerAccount from '../models/CustomerAccount.js';
 import AuditTrail from '../models/AuditTrail.js';
 import Customer from '../models/Customer.js';
-
-const VALID_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT', 'FIXED_DEPOSIT', 'CREDIT_CARD'];
-const VALID_REC_STATES_CAPITALIZED = [
-  'Active', 'Dormant', 'Suspended', 'Closed',
-  'Inactive', 'Locked', 'Cancelled', 'Blocked',
-  'Pending', 'Frozen', 'Overdue'
-];
+import logger from '../utils/logger.js';
 
 export const createCustomerAccount = async (req, res) => {
   const customerAccounts = req.body;
@@ -20,99 +14,132 @@ export const createCustomerAccount = async (req, res) => {
 
   try {
     const createdAccounts = [];
+    const now = new Date();
 
     for (const accountData of customerAccounts) {
       const {
-        ACCT_ID, ACCT_NO, ACCT_NM, BU_ID, GL_ACCT_NO,
+        ACCT_NO, ACCT_NM, BU_ID,
         LEDGER_BAL, CLEARED_BAL, AVAILABLE_BALANCE,
         ACCOUNT_TYPE, PRODUCT_DESC, REC_ST, CUST_ID
       } = accountData;
 
+      // Validate required fields
       if (!CUST_ID) {
-        return res.status(400).json({ message: 'CUST_ID is required and cannot be null' });
-      }
-
-      if (!VALID_ACCOUNT_TYPES.includes(ACCOUNT_TYPE)) {
-        return res.status(400).json({
-          message: `Invalid ACCOUNT_TYPE. Must be one of: ${VALID_ACCOUNT_TYPES.join(', ')}`
+        return res.status(400).json({ 
+          message: 'CUST_ID is required and cannot be null',
+          account: ACCT_NO || 'new account'
         });
       }
 
-      // Normalize REC_ST to match enum values in schema
-      const recStNormalized =
-        REC_ST && typeof REC_ST === 'string'
-          ? REC_ST.charAt(0).toUpperCase() + REC_ST.slice(1).toLowerCase()
-          : 'Active';
-
-      if (!VALID_REC_STATES_CAPITALIZED.includes(recStNormalized)) {
+      // Check if customer exists
+      const customerExists = await Customer.exists({ CUST_ID });
+      if (!customerExists) {
         return res.status(400).json({
-          message: `Invalid REC_ST. Must be one of: ${VALID_REC_STATES_CAPITALIZED.join(', ')}`
+          message: 'Customer does not exist',
+          CUST_ID,
+          account: ACCT_NO || 'new account'
         });
       }
 
-      const existingAccount = await CustomerAccount.findOne({ ACCT_NO });
-      if (existingAccount) {
+      // Validate financial fields
+      if (parseFloat(LEDGER_BAL) < 0 || parseFloat(CLEARED_BAL) < 0 || parseFloat(AVAILABLE_BALANCE) < 0) {
         return res.status(400).json({
-          message: 'Account already exists',
-          reason: `The account number ${ACCT_NO} already exists.`,
+          message: 'Balance values cannot be negative',
+          account: ACCT_NO || 'new account'
         });
       }
 
+      // Check available balance doesn't exceed ledger balance
+      if (parseFloat(AVAILABLE_BALANCE) > parseFloat(LEDGER_BAL)) {
+        return res.status(400).json({
+          message: 'Available balance cannot exceed ledger balance',
+          account: ACCT_NO || 'new account'
+        });
+      }
+
+      // Check for duplicate account number
+      if (ACCT_NO) {
+        const existingAccount = await CustomerAccount.findOne({ ACCT_NO });
+        if (existingAccount) {
+          return res.status(400).json({
+            message: 'Account already exists',
+            reason: `The account number ${ACCT_NO} already exists.`,
+          });
+        }
+      }
+
+      // Create the new account
       const newCustomerAccount = new CustomerAccount({
-        ACCT_ID,
-        ACCT_NO,
+        CUST_ID,
         ACCT_NM,
         BU_ID,
-        GL_ACCT_NO,
-        LEDGER_BAL,
-        CLEARED_BAL,
-        AVAILABLE_BALANCE,
-        ACCOUNT_TYPE,
+        LEDGER_BAL: parseFloat(LEDGER_BAL) || 0,
+        CLEARED_BAL: parseFloat(CLEARED_BAL) || 0,
+        AVAILABLE_BALANCE: parseFloat(AVAILABLE_BALANCE) || 0,
+        ACCOUNT_TYPE: ACCOUNT_TYPE?.toUpperCase(),
         PRODUCT_DESC,
-        REC_ST: recStNormalized,
-        CUST_ID,
+        REC_ST: REC_ST?.toUpperCase() || 'ACTIVE',
+        lastActivityDate: now
       });
 
+      // ACCT_NO and ACCT_ID will be auto-generated in pre-save hook
       const savedAccount = await newCustomerAccount.save();
       createdAccounts.push(savedAccount);
 
+      // Audit trail
       const userId = req.user?.id || 'system';
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
 
-      await AuditTrail.create({
-        event_id: Date.now(),
-        user_id: userId,
-        event_type: 'CustomerAccount',
-        action: 'Create Account',
-        old_value: null,
-        new_value: savedAccount,
-        ip_address: ipAddress,
-        timestamp: new Date()
-      });
+      try {
+        await AuditTrail.create({
+          event_id: Date.now(),
+          user_id: userId,
+          event_type: 'CUSTOMER_ACCOUNT_CREATE',
+          action: 'Create Account',
+          old_value: null,
+          new_value: savedAccount,
+          ip_address: ipAddress,
+          timestamp: now
+        });
+      } catch (auditError) {
+        logger.error('Failed to create audit trail for account creation', {
+          error: auditError.message,
+          account: savedAccount.ACCT_NO,
+          timestamp: now
+        });
+      }
     }
 
     return res.status(201).json({
+      success: true,
       message: 'Customer accounts created successfully',
+      count: createdAccounts.length,
       accounts: createdAccounts,
     });
 
   } catch (error) {
-    console.error('Error creating customer accounts:', error);
+    logger.error('Error creating customer accounts:', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body,
+      timestamp: new Date()
+    });
 
     if (error.code === 11000) {
       return res.status(400).json({
+        success: false,
         message: 'Duplicate key error',
         error: error.keyValue,
       });
     }
 
     return res.status(500).json({
+      success: false,
       message: 'An error occurred while creating the customer accounts',
       error: error.message,
     });
   }
 };
-
 
 
 // Get all customer accounts

@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  mongodb_exporter:
+    image: percona/mongodb_exporter:0.40.0
+    container_name: mongodb_exporter
+    restart: unless-stopped
+    ports:
+      - "${EXPORTER_PORT:-9216}:9216"  # Default to 9216 if not set
+    environment:
+      MONGODB_URI: "${MONGODB_ATLAS_URI}"  # Use full MongoDB Atlas URI here
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    restart: unless-stopped
+    ports:
+      - "${MONGO_EXPRESS_PORT:-8081}:8081"  # Default to 8081 if not set
+    environment:
+      ME_CONFIG_MONGODB_URL: "${MONGODB_ATLAS_URI}"
+      ME_CONFIG_BASICAUTH_USERNAME: "${MONGO_USER:-admin}"  # Default fallback
+      ME_CONFIG_BASICAUTH_PASSWORD: "${MONGO_PASS:-admin}"  # Default fallback
