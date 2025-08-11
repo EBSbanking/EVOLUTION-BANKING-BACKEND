@@ -1,5 +1,6 @@
 import Counter from '../models/Counter.js';
 
+// 🔢 Generate 10-digit Account Number
 export async function generateAccountNumber(accountType) {
   const prefixMap = {
     'ACCT_LOAN': '300',
@@ -18,6 +19,24 @@ export async function generateAccountNumber(accountType) {
   );
 
   const prefix = prefixMap[accountType];
-  const paddedSequence = String(counter.seq).padStart(9, '0');
-  return `${prefix}${paddedSequence}`;
+  const paddedSequence = String(counter.seq).padStart(7, '0'); // 7-digit suffix
+  return `${prefix}${paddedSequence}`; // e.g., 1000001234
 }
+
+// 🔐 Generate 6-digit ACCT_ID
+// utils/accountHelper.js
+export async function generateAccountId() {
+  const counter = await Counter.findByIdAndUpdate(
+    'ACCT_ID_SEQ',
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+
+  // 🔐 Ensure 6-digit number only
+  const rawSeq = counter.seq % 1000000; // Always max 6 digits
+  const padded = String(rawSeq).padStart(6, '0');
+
+  return parseInt(padded, 10);
+}
+
+

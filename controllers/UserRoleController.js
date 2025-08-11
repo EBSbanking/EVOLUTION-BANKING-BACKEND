@@ -129,11 +129,11 @@ export const createUserRole = async (req, res) => {
       BU_ID,
       CREATED_BY,
       USER_ID,
-      SYSUSER_ID, // Ignore this from client, generate internally
-      ...otherFields
+      SYSUSER_ID, // Ignored: system-generated below
+      ...otherFields // Includes EFF_FROM_DT, EFF_TO_DT, FLAGS, ACCESS_LEVELS, etc.
     } = req.body;
 
-    // Validate user exists by the correct field (assuming user_name)
+    // ✅ Validate user existence
     const userExists = await User.exists({ user_name: USER_ID });
     if (!userExists) {
       return res.status(400).json({
@@ -142,38 +142,42 @@ export const createUserRole = async (req, res) => {
       });
     }
 
+    // ✅ Validate and normalize role
     const normalizedRoleId = parseInt(USER_ROLE_ID);
     const roleData = ROLE_MAPPING[normalizedRoleId];
 
     if (!roleData) {
       return res.status(400).json({
         success: false,
-        message: `Invalid ROLE_ID provided: ${USER_ROLE_ID}`,
+        message: `Invalid USER_ROLE_ID provided: ${USER_ROLE_ID}`,
       });
     }
 
-    // Validate Business Unit
+    // ✅ Validate Business Unit ID
     await validateAndFetchBusinessUnit(BU_ID);
 
-    // Generate SYSUSER_ID internally
+    // ✅ Generate SYSUSER_ID internally
     const generatedSysUserId = await generateSysUserId();
 
-    // Save permissions
-    const permissions = new Permissions({ BU_ROLE_ID: normalizedRoleId });
+    // ✅ Create and save Permissions with ROLE_NAME
+    const permissions = new Permissions({
+      BU_ROLE_ID: normalizedRoleId,
+      ROLE_NAME: roleData.ROLE_NM, // ✅ Fix: Add ROLE_NAME
+    });
     await permissions.save();
 
-    // Create UserRole
+    // ✅ Create and save UserRole document
     const userRole = new UserRole({
       USER_ID,
       SYSUSER_ID: generatedSysUserId,
       USER_ROLE_ID: normalizedRoleId,
       BU_ROLE_ID: normalizedRoleId,
-      ROLE_NM: roleData.ROLE_NM,
+      ROLE_NM: roleData.ROLE_NM, // ✅ Matches schema definition
       Business_Unit,
       BU_ID,
       CREATED_BY,
       permissions: permissions._id,
-      ...otherFields,
+      ...otherFields, // ✅ includes EFF_FROM_DT, flags, access levels, etc.
     });
 
     await userRole.save();
@@ -196,6 +200,7 @@ export const createUserRole = async (req, res) => {
     });
   }
 };
+
 
 // ✅ Fetch All Roles
 export const getAllUserRoles = async (req, res) => {

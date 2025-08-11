@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { generateAccountNumber } from '../utils/accountHelper.js';
+import { generateAccountNumber, generateAccountId } from '../utils/accountHelper.js';
 import logger from '../utils/logger.js';
 
 const customerAccountSchema = new mongoose.Schema(
@@ -12,13 +12,17 @@ const customerAccountSchema = new mongoose.Schema(
     },
     ACCT_ID: {
       type: Number,
-      required: true,
-      unique: true
+      unique: true,
+      validate: {
+        validator: function(v) {
+          return v.toString().length === 6;
+        },
+        message: 'ACCT_ID must be exactly 6 digits'
+      }
     },
     ACCT_NO: {
       type: String,
-      required: true,
-      unique: true,
+      unique: true, 
       trim: true,
       validate: {
         validator: function(v) {
@@ -74,19 +78,13 @@ const customerAccountSchema = new mongoose.Schema(
       trim: true
     },
 
-    // Status Fields - Updated with validation
+    // Status Fields
     REC_ST: {
       type: String,
       enum: ['ACTIVE', 'DORMANT', 'SUSPENDED', 'CLOSED', 'INACTIVE'],
       default: 'ACTIVE',
       uppercase: true,
-      required: true,
-      validate: {
-        validator: function(v) {
-          return this.constructor.schema.path('REC_ST').enumValues.includes(v);
-        },
-        message: props => `${props.value} is not a valid status!`
-      }
+      required: true
     },
 
     // Activity Tracking
@@ -97,25 +95,18 @@ const customerAccountSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    toJSON: { 
-      getters: true, 
+    toJSON: {
+      getters: true,
       virtuals: true,
       transform: function(doc, ret) {
-        const decimalFields = [
-          'LEDGER_BAL',
-          'CLEARED_BAL',
-          'AVAILABLE_BALANCE'
-        ];
-        
+        const decimalFields = ['LEDGER_BAL', 'CLEARED_BAL', 'AVAILABLE_BALANCE'];
         decimalFields.forEach(field => {
           if (ret[field] && typeof ret[field] === 'object') {
             ret[field] = parseFloat(ret[field].toString());
           }
         });
-        
-        if (ret._id) {
-          ret._id = ret._id.toString();
-        }
+        if (ret._id) ret._id = ret._id.toString();
+        if (ret.ACCT_ID) ret.ACCT_ID = ret.ACCT_ID.toString().padStart(6, '0');
         return ret;
       }
     },
@@ -124,37 +115,77 @@ const customerAccountSchema = new mongoose.Schema(
   }
 );
 
-// ========== UPDATED PRE-SAVE HOOK ==========
-customerAccountSchema.pre('save', function(next) {
-  // Handle REC_ST conversion and validation
-  if (!this.REC_ST) {
-    this.REC_ST = 'ACTIVE';
+// ========== PRE-SAVE HOOK ==========
+customerAccountSchema.pre('save', async function(next) {
+  try {
+    // Normalize REC_ST
+    this.REC_ST = (this.REC_ST || 'ACTIVE').toUpperCase();
+    if (!this.constructor.schema.path('REC_ST').enumValues.includes(this.REC_ST)) {
+      logger.warn(`Invalid status ${this.REC_ST} for account ${this.ACCT_NO}, resetting to ACTIVE`);
+      this.REC_ST = 'ACTIVE';
+    }
+
+    // Generate ACCT_NO if not present
+    if (!this.ACCT_NO) {
+      this.ACCT_NO = await generateAccountNumber('ACCT_SAVINGS');
+    }
+
+    
+   // Generate independent 6-digit ACCT_ID if not present
+if (!this.ACCT_ID) {
+  this.ACCT_ID = await generateAccountId(); // Already 6-digit guaranteed
+}
+
+
+
+    // Ensure AVAILABLE_BALANCE ≤ LEDGER_BAL
+    if (this.isModified('AVAILABLE_BALANCE') || this.isModified('LEDGER_BAL')) {
+      const available = parseFloat(this.AVAILABLE_BALANCE.toString());
+      const ledger = parseFloat(this.LEDGER_BAL.toString());
+
+      if (available > ledger) {
+        throw new Error('Available balance cannot exceed ledger balance');
+      }
+    }
+
+    next();
+  } catch (err) {
+    logger.error('Error in pre-save hook:', {
+      error: err.message,
+      stack: err.stack,
+      account: this.ACCT_NO,
+      timestamp: new Date()
+    });
+    next(err);
   }
-  this.REC_ST = String(this.REC_ST).toUpperCase();
-  
-  // Validate against enum values
-  if (!this.constructor.schema.path('REC_ST').enumValues.includes(this.REC_ST)) {
-    logger.warn(`Invalid status ${this.REC_ST} for account ${this.ACCT_NO}, resetting to ACTIVE`);
-    this.REC_ST = 'ACTIVE';
-  }
+});
+
+// POST-SAVE LOGGING
+customerAccountSchema.post('save', function(doc, next) {
+  logger.info(`Account ${doc.ACCT_NO} was saved`, {
+    account: doc.ACCT_NO,
+    status: doc.REC_ST,
+    balance: parseFloat(doc.LEDGER_BAL.toString()),
+    timestamp: new Date()
+  });
   next();
 });
 
-// Virtual Fields
-customerAccountSchema.virtual('isOperational').get(function () {
+// VIRTUALS
+customerAccountSchema.virtual('isOperational').get(function() {
   return ['ACTIVE', 'PENDING'].includes(this.REC_ST);
 });
 
-customerAccountSchema.virtual('isBlocked').get(function () {
+customerAccountSchema.virtual('isBlocked').get(function() {
   return ['SUSPENDED', 'LOCKED', 'BLOCKED', 'FROZEN'].includes(this.REC_ST);
 });
 
-customerAccountSchema.virtual('daysSinceLastActivity').get(function () {
+customerAccountSchema.virtual('daysSinceLastActivity').get(function() {
   if (!this.lastActivityDate) return 0;
   return Math.floor((new Date() - this.lastActivityDate) / (1000 * 60 * 60 * 24));
 });
 
-// Instance Methods
+// INSTANCE METHODS
 customerAccountSchema.methods.hasSufficientBalance = function(amount) {
   return parseFloat(this.AVAILABLE_BALANCE.toString()) >= amount;
 };
@@ -163,12 +194,12 @@ customerAccountSchema.methods.canWithdraw = function(amount) {
   return this.isOperational && this.hasSufficientBalance(amount);
 };
 
-// Static Methods
+// STATIC METHODS
 customerAccountSchema.statics.findDormantAccounts = async function(daysThreshold = 90) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysThreshold);
-    
+
     return await this.find({
       REC_ST: 'ACTIVE',
       lastActivityDate: { $lt: cutoffDate }
@@ -187,7 +218,7 @@ customerAccountSchema.statics.markAccountsAsDormant = async function(daysThresho
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysThreshold);
-    
+
     const result = await this.updateMany(
       {
         REC_ST: 'ACTIVE',
@@ -206,52 +237,7 @@ customerAccountSchema.statics.markAccountsAsDormant = async function(daysThresho
   }
 };
 
-// Original pre-save hook (keep this for other validations)
-customerAccountSchema.pre('save', async function (next) {
-  try {
-    // Generate ACCT_NO if not provided
-    if (!this.ACCT_NO) {
-      this.ACCT_NO = await generateAccountNumber('ACCT_SAVINGS');
-    }
-
-    // Set ACCT_ID to be the numeric portion of ACCT_NO
-    if (!this.ACCT_ID) {
-      this.ACCT_ID = parseInt(this.ACCT_NO.substring(3));
-    }
-
-    // Ensure available balance doesn't exceed ledger balance
-    if (this.isModified('AVAILABLE_BALANCE') || this.isModified('LEDGER_BAL')) {
-      const available = parseFloat(this.AVAILABLE_BALANCE.toString());
-      const ledger = parseFloat(this.LEDGER_BAL.toString());
-      
-      if (available > ledger) {
-        throw new Error('Available balance cannot exceed ledger balance');
-      }
-    }
-
-    next();
-  } catch (err) {
-    logger.error('Error in pre-save hook:', {
-      error: err.message,
-      stack: err.stack,
-      account: this.ACCT_NO,
-      timestamp: new Date()
-    });
-    next(err);
-  }
-});
-
-// Post-save hook for logging
-customerAccountSchema.post('save', function(doc, next) {
-  logger.info(`Account ${doc.ACCT_NO} was saved`, {
-    account: doc.ACCT_NO,
-    status: doc.REC_ST,
-    timestamp: new Date()
-  });
-  next();
-});
-
-const CustomerAccount = mongoose.models.CustomerAccount ||
+const CustomerAccount = mongoose.models.CustomerAccount || 
   mongoose.model('CustomerAccount', customerAccountSchema);
 
 export default CustomerAccount;

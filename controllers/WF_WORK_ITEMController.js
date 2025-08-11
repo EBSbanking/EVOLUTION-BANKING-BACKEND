@@ -7,7 +7,8 @@ import DepositAccountApplication from '../models/DepositAccountApplication.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import CreditApplication from '../models/CreditApplication.js';
-import LoanAccount from '../models/LoanAccount.js'
+import LoanAccount from '../models/LoanAccount.js';
+import Transaction from '../models/Transaction.js';
 
 const MODEL_MAP = {
   DepositTransaction,
@@ -15,7 +16,8 @@ const MODEL_MAP = {
   DepositAccountApplication,
   CustomerAccount,
   CreditApplication,
-  LoanAccount
+  LoanAccount,
+  Transaction,
 };
 
 function normalizeItemType(type) {
@@ -28,9 +30,11 @@ function normalizeItemType(type) {
   if (lowerType.includes('withdrawal')) return 'CashWithdrawalTransaction';
   if (lowerType.includes('loan')) return 'LoanAccount';
   if (lowerType.includes('customer account')) return 'CustomerAccount';
-   if (lowerType.includes('loan account')) return 'LoanAccount';
+  if (lowerType.includes('loan account')) return 'LoanAccount';
+  if (lowerType.includes('transaction')) return 'Transaction';
   return type;
 }
+
 
 const WF_WORK_ITEMController = {
   submitTransaction: async (req) => {
@@ -61,7 +65,6 @@ const WF_WORK_ITEMController = {
         depositPayload
       } = req.body || {};
 
-      // ✅ Basic validation
       if (!ITEM_VALUE || !ITEM_DESC || !ITEM_CLASS_NM || !ITEM_TYPE || !CUST_ID || !USER_ID || !BU_ID || !TARGET_USER_ROLE_ID || !ORIGINATOR_USER_ROLE_ID) {
         throw new Error('Missing required workflow fields');
       }
@@ -70,7 +73,6 @@ const WF_WORK_ITEMController = {
         throw new Error('HOME_ADDRESS is required for customer workflow items.');
       }
 
-      // ✅ Optional: validate deposit if provided
       let deposit = null;
       if (depositPayload && depositPayload._id) {
         deposit = await DepositTransaction.findById(depositPayload._id);
@@ -78,12 +80,9 @@ const WF_WORK_ITEMController = {
       }
 
       const normalizedItemType = normalizeItemType(ITEM_TYPE || ITEM_CLASS_NM);
-
-      // ✅ Time calculations
       const TARGET_DUR_TM = TARGET_DUR_HOURS ? TARGET_DUR_HOURS * 3600 : 0;
       const ESCALATION_TM = ESCALATION_MINUTES ? ESCALATION_MINUTES * 60 : 0;
 
-      // ✅ Unique ID generation
       const WORK_ITEM_ID = generateNumber(6);
       const EVENT_ID = generateNumber(7);
       const BUS_PROC_ID = generateNumber(4);
@@ -92,13 +91,11 @@ const WF_WORK_ITEMController = {
       const WORK_ITEM_SESSION_ID = generateNumber(8);
       const ITEM_REF_NO = generateNumber(4);
 
-      // ✅ Prevent duplicate EVENT_IDs
       const existingEvent = await WF_WORK_ITEM.findOne({ EVENT_ID });
       if (existingEvent) {
         return { success: false, error: 'Event ID already exists. Please retry.' };
       }
 
-      // ✅ Create the work item
       const newWorkItem = new WF_WORK_ITEM({
         WORK_ITEM_ID,
         BUS_PROC_ID,
@@ -133,7 +130,6 @@ const WF_WORK_ITEMController = {
 
       await newWorkItem.save();
 
-      // ✅ Create notification
       await NotificationService.send({
         ROLE_ID: TARGET_USER_ROLE_ID,
         message: `New work item created: ${ITEM_DESC}`,
@@ -145,19 +141,32 @@ const WF_WORK_ITEMController = {
 
       console.log('✅ Workflow item created:', newWorkItem);
 
-      return {
-        success: true,
-        data: newWorkItem
-      };
+      return { success: true, data: newWorkItem };
 
     } catch (error) {
       console.error('❌ submitTransaction error:', error);
-      return {
-        success: false,
-        error: error.message || 'Unexpected error'
-      };
+      return { success: false, error: error.message || 'Unexpected error' };
     }
   },
+
+ findWorkItemById: async (workItemId, session) => {
+  const numericId = Number(workItemId);
+
+  if (isNaN(numericId)) {
+    throw new Error(`Invalid workItemId: ${workItemId}`);
+  }
+
+  const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: numericId }).session(session);
+
+  if (!workItem) {
+    const error = new Error('WORK_ITEM_NOT_FOUND');
+    error.code = 'WORK_ITEM_NOT_FOUND';
+    throw error;
+  }
+
+  return workItem;
+},
+
 
   calculateNewBalance: async (query, custId) => {
     const transaction = await DepositTransaction.findOne(query);
@@ -332,9 +341,6 @@ const WF_WORK_ITEMController = {
 
   updateWorkItemStatusOnApproval: async (itemClass, custId, approvedBy) => {
     try {
-      // Log input for debugging
-      console.log("Updating work item for:", { itemClass, custId });
-
       const workItem = await WF_WORK_ITEM.findOneAndUpdate(
         { ITEM_CLASS_NM: itemClass, CUST_ID: custId },
         {
@@ -356,54 +362,44 @@ const WF_WORK_ITEMController = {
     }
   },
 
- completeWorkItem: async (workItemId, status = 'Approved', userId = 'system', session = null) => {
+  completeWorkItem: async (workItemId, status = 'Approved', userId = 'system', session = null) => {
     try {
-        const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: Number(workItemId) }).session(session || null);
+      const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: Number(workItemId) }).session(session || null);
 
-        if (!workItem) {
-            console.warn(`⚠️ Workflow item ${workItemId} not found`);
-            return { success: false, message: 'Workflow item not found' };
-        }
+      if (!workItem) {
+        console.warn(`⚠️ Workflow item ${workItemId} not found`);
+        return { success: false, message: 'Workflow item not found' };
+      }
 
-        // Proper status mapping
-        workItem.REC_ST = 'Completed';  // Changed from 'Active'/'Rejected'
-        workItem.WAIT_ST = status;      // Should be 'Approved' or 'Rejected'
-        workItem.APPROVED_BY = userId;
-        workItem.APPROVAL_DATE = new Date();
-        workItem.COMPLETED_DT = new Date();
-        workItem.ACTION_TAKEN = status;
-        workItem.LAST_UPDATED = new Date();
+      workItem.REC_ST = 'Completed';
+      workItem.WAIT_ST = status;
+      workItem.APPROVED_BY = userId;
+      workItem.APPROVAL_DATE = new Date();
+      workItem.COMPLETED_DT = new Date();
+      workItem.ACTION_TAKEN = status;
+      workItem.LAST_UPDATED = new Date();
 
-        const options = session ? { session } : {};
-        await workItem.save(options);
+      const options = session ? { session } : {};
+      await workItem.save(options);
 
-        await NotificationService.send({
-            ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
-            message: `Workflow item ${workItem.WORK_ITEM_ID} has been ${status}`,
-            WORK_ITEM_ID: workItem.WORK_ITEM_ID,
-            CUST_ID: workItem.CUST_ID,
-            status
-        });
+      await NotificationService.send({
+        ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
+        message: `Workflow item ${workItem.WORK_ITEM_ID} has been ${status}`,
+        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+        CUST_ID: workItem.CUST_ID,
+        status
+      });
 
-        console.log(`✅ Workflow item ${workItemId} updated to ${status}`, {
-            REC_ST: workItem.REC_ST,
-            WAIT_ST: workItem.WAIT_ST
-        });
-        return { 
-            success: true,
-            updatedWorkItem: workItem
-        };
+      console.log(`✅ Workflow item ${workItemId} updated to ${status}`);
+      return { success: true, updatedWorkItem: workItem };
     } catch (error) {
-        console.error(`❌ Error completing workflow item ${workItemId}:`, error.message);
-        return { success: false, message: error.message };
+      console.error(`❌ Error completing workflow item ${workItemId}:`, error.message);
+      return { success: false, message: error.message };
     }
-},
+  },
 
   updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, rejectionReason) => {
     try {
-      // Log input for debugging
-      console.log("Updating work item for:", { itemClass, custId });
-
       const workItem = await WF_WORK_ITEM.findOneAndUpdate(
         { ITEM_CLASS_NM: itemClass, CUST_ID: custId },
         {
@@ -425,5 +421,6 @@ const WF_WORK_ITEMController = {
     }
   }
 };
+
 
 export default WF_WORK_ITEMController;

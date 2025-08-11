@@ -1,7 +1,7 @@
 import Counter from '../models/Counter.js';
 import Transaction from '../models/Transaction.js';
 import generateSerialNumber from './generateSerialNumber.js';
-import { getProductTypeOnly } from '../Services/productService.js'; // ✅ Corrected path
+import { getProductTypeOnly } from '../Services/productService.js';
 
 // ✅ Account prefix logic based on product type
 export function getPrefixForProductType(productType) {
@@ -26,8 +26,8 @@ export function getPrefixForProductType(productType) {
 
 // ✅ Generate 10-digit loan account number using product type
 export const generateLoanAccountNumberByProdId = async (PROD_ID) => {
-  const productType = await getProductTypeOnly(PROD_ID); // e.g., "SME_LOAN"
-  const prefix = getPrefixForProductType(productType);   // e.g., "301"
+  const productType = await getProductTypeOnly(PROD_ID);
+  const prefix = getPrefixForProductType(productType); // e.g. '301'
   const counterId = `ACCT_NO_${prefix}`;
 
   const result = await Counter.findOneAndUpdate(
@@ -46,15 +46,16 @@ export const generateLoanAccountNumberByProdId = async (PROD_ID) => {
   return accountNumber;
 };
 
-// Alias
+// ✅ Alias for clarity
 export const generateLoanAccountIdByProduct = generateLoanAccountNumberByProdId;
 
-// ✅ Fallback account number (based on timestamp)
+// ✅ Fallback account number (timestamp-based, guaranteed 10-digit string)
 export const generateAccountNumber = () => {
-  return Number(Date.now()).slice(-10); // e.g., "8723456789"
+  const now = Date.now().toString();
+  return now.slice(-10); // e.g. "8723456789"
 };
 
-// ✅ Generate unique 13-digit transaction ID
+// ✅ Generate unique 13-digit transaction ID (with session check)
 export const generateTransactionId = async (session) => {
   let TRANSACTION_ID = generateSerialNumber(13);
 
@@ -65,4 +66,11 @@ export const generateTransactionId = async (session) => {
   return TRANSACTION_ID;
 };
 
-export default {generateTransactionId};
+// ✅ Export all together
+export default {
+  getPrefixForProductType,
+  generateLoanAccountNumberByProdId,
+  generateLoanAccountIdByProduct,
+  generateAccountNumber,
+  generateTransactionId
+};

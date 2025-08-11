@@ -1,6 +1,52 @@
 // utils/dateUtils.js
 
 /**
+ * Checks if a value is a valid date
+ * @param {any} date - The value to check
+ * @returns {boolean} True if valid date
+ */
+export const isValidDate = (date) => {
+  if (date instanceof Date) return !isNaN(date);
+  if (typeof date === 'string') return !isNaN(new Date(date));
+  return false;
+};
+
+/**
+ * Checks if a date is in the future
+ * @param {Date|string} date - The date to check
+ * @returns {boolean} True if future date
+ */
+export const isFutureDate = (date) => {
+  const d = new Date(date);
+  return isValidDate(d) && d > new Date();
+};
+
+/**
+ * Checks if a date is in the past
+ * @param {Date|string} date - The date to check
+ * @returns {boolean} True if past date
+ */
+export const isPastDate = (date) => {
+  const d = new Date(date);
+  return isValidDate(d) && d < new Date();
+};
+
+/**
+ * Checks if a date falls between two other dates
+ * @param {Date|string} date - The date to check
+ * @param {Date|string} startDate - Range start date
+ * @param {Date|string} endDate - Range end date
+ * @returns {boolean} True if date is within range
+ */
+export const isDateBetween = (date, startDate, endDate) => {
+  const d = new Date(date);
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  return isValidDate(d) && d >= start && d <= end;
+};
+
+/**
  * Calculates the maturity date based on start date, term code and term value
  * @param {Date} startDate - The loan start date
  * @param {string} termCode - Term code (D, W, M, Q, Y)
@@ -8,9 +54,9 @@
  * @returns {Date} Maturity date
  * @throws {Error} If term code is invalid
  */
-function calculateMaturityDate(startDate, termCode, termValue) {
+export const calculateMaturityDate = (startDate, termCode, termValue) => {
   // Validate inputs
-  if (!(startDate instanceof Date) || isNaN(startDate.getTime())) {
+  if (!isValidDate(startDate)) {
     throw new Error('Invalid start date');
   }
   
@@ -39,7 +85,7 @@ function calculateMaturityDate(startDate, termCode, termValue) {
   }
 
   return result;
-}
+};
 
 /**
  * Determines payment frequency based on term code and term value
@@ -47,7 +93,7 @@ function calculateMaturityDate(startDate, termCode, termValue) {
  * @param {number} termValue - Number of terms
  * @returns {string} Payment frequency (DAILY, WEEKLY, MONTHLY, QUARTERLY, YEARLY)
  */
-function getPaymentFrequency(termCode, termValue) {
+export const getPaymentFrequency = (termCode, termValue) => {
   termCode = String(termCode).toUpperCase();
   
   // Validate termValue
@@ -67,9 +113,13 @@ function getPaymentFrequency(termCode, termValue) {
     default:
       return 'MONTHLY';
   }
-}
+};
 
 export default {
+  isValidDate,
+  isFutureDate,
+  isPastDate,
+  isDateBetween,
   calculateMaturityDate,
   getPaymentFrequency
 };

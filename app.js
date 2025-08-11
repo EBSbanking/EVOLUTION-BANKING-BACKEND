@@ -18,6 +18,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Import all route files
+import amlRoutes from './routes/amlRoutes.js'
+import AMLThresholdRoutes from './routes/AMLThresholdRoutes.js'
 import userRoutes from './routes/userRoutes.js';
 import LoginRoutes from './routes/LoginRoutes.js';
 import AuditTrailRoutes from './routes/AuditTrailRoutes.js';
@@ -93,6 +95,10 @@ import WF_SubProcessPolicy from './routes/WF_SubProcessPolicyRoutes.js';
 import WF_WORK_ITEMRoutes from './routes/WF_WORK_ITEMRoutes.js';
 import withdrawalRoutes from './routes/withdrawalRoutes.js';
 
+import systemRoutes from './routes/system.js';
+import configRoutes from './routes/config.js';
+
+
 const app = express();
 
 // ======================
@@ -120,16 +126,17 @@ app.use(fileUpload({
 }));
 
 app.use(expressSession({
-  secret: process.env.SESSION_SECRET,
+  secret: process.env.SESSION_SECRET || 'dev_secret_key',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production',
+  cookie: {
+    secure: false,            // Not using HTTPS in development
     httpOnly: true,
-    maxAge: 86400000,
-    sameSite: 'strict'
+    maxAge: 86400000,         // 1 day
+    sameSite: 'lax'           // Relaxed for local development (change to 'strict' in prod)
   }
 }));
+
 
 // Request logging middleware
 const requestLogger = (req, res, next) => {
@@ -199,6 +206,10 @@ app.use('/api/users', userRoutes);
 app.use('/api/login', LoginRoutes);
 app.use('/api/user-role', UserRoleRoutes);
 app.use('/api/permissions', PermissionRoutes);
+
+//1.1 AML 
+app.use('/api/aml', amlRoutes);
+app.use('/api/aml-threshold', AMLThresholdRoutes );
 
 // 2. Customer Management
 app.use('/api/customer', CustomerRoutes);
@@ -293,6 +304,13 @@ app.use('/api/event', eventRoutes);
 app.use('/api/reclassify', AutoReclassifyRoutes);
 app.use('/api/officers', RelationshipofficerRoutes);
 app.use('/api/policy', TransactionPolicyRoutes);
+
+
+
+// 14. Sytem Initializer
+app.use('/api/system', systemRoutes);
+app.use('/api/config', configRoutes);
+
 
 // ======================
 // Static Files & React Routing

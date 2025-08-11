@@ -1,16 +1,10 @@
 import mongoose from 'mongoose';
 
-// Function to generate a 7-digit number (you can keep or remove if you don't need it here)
-const generateNumber = (length) => {
-  const min = Math.pow(10, length - 1);
-  const max = Math.pow(10, length) - 1;
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-};
 
-// Updated schema including new fields and proper types
+// Schema definition
 const customerSchema = new mongoose.Schema({
-  CUST_ID: { type: String, required: true, unique: true },  // Changed to String as "" was empty string
-  CUST_NO: { type: String, required: true, unique: true },
+  CUST_ID: { type: String, required: true},
+  CUST_NO: { type: Number, required: true },
   TITLE_ID: { type: String },
   FIRST_NAME: { type: String },
   MIDDLE_NAME: { type: String },
@@ -25,7 +19,8 @@ const customerSchema = new mongoose.Schema({
   CUST_CAT: { type: String },
   CAMPAIGN_ID: { type: String },
   GENDER_TY: { type: String },
-  NATIONALITY_NO: { type: String },
+  NIN: { type: Number },
+  BVN: {type: Number},
   COUNTRY_NM: { type: String, default: "Nigeria" },
   STATE: { type: String },
   LOCAL_GOV: { type: String },
@@ -50,13 +45,29 @@ const customerSchema = new mongoose.Schema({
   REGISTRATION_DT: { type: Date },
   ALERT_DELIVERY_METHOD: { type: String },
   KYC_LEVEL: { type: String },
-  PHONE_NO: { type: String }, // Changed to String to support numbers with leading zeros or international codes
+  PHONE_NO: { type: String },
   SMS: { type: String },
-  REC_ST: { type: String, enum: ['Pending', 'Active', 'Inactive', 'Closed', 'Suspended', 'Cancelled','Rejected']},
+  REC_ST: { 
+  type: String, 
+  enum: ['Pending', 'Active', 'Approved', 'Inactive', 'Closed', 'Suspended', 'Cancelled', 'Rejected'], 
+  default: 'Pending' 
+},
+EVENT_ID: { type: Number }
 
-  // Optional: Add EVENT_ID if still needed
-  EVENT_ID: { type: Number }
+ 
 });
+
+// Add virtual for AML relationship
+customerSchema.virtual('aml', {
+  ref: 'AML',
+  localField: '_id',
+  foreignField: 'customer',
+  justOne: true
+});
+
+// Enable virtuals in output
+customerSchema.set('toObject', { virtuals: true });
+customerSchema.set('toJSON', { virtuals: true });
 
 // Create the Customer model
 const Customer = mongoose.model('Customer', customerSchema);

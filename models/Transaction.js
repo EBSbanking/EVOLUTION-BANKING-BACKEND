@@ -2,23 +2,31 @@
 import mongoose from 'mongoose';
 import { getAllTransactionTypes } from '../constants/transactionTypes.js';
 
-
 const TransactionSchema = new mongoose.Schema({
   ACCT_ID: {
     type: String,
-    required: true
+    required: [true, 'Account ID is required']
   },
   TRAN_JOURNAL_ID: { 
     type: String, 
-    required: true 
+    required: [true, 'Journal ID is required'],
+    default: function() {
+      return `JN-${Date.now().toString(36).toUpperCase()}`
+    }
   },
   EVENT_ID: { 
     type: String, 
-    required: true 
+    required: [true, 'Event ID is required'],
+    default: function() {
+      return `EV-${Date.now().toString(36).toUpperCase()}`
+    }
   },
   TRANSACTION_ID: { 
-    type: String, 
-    required: true 
+    type: Number, 
+    required: [true, 'Transaction ID is required'],
+    default: function() {
+      return `TX-${Date.now().toString(36).toUpperCase()}`
+    }
   },
   OPENED_DATE: { 
     type: Date, 
@@ -26,88 +34,104 @@ const TransactionSchema = new mongoose.Schema({
   },
   BU_ID: { 
     type: Number, 
-    required: true 
+    required: [true, 'Business Unit ID is required'] 
   },
   CUST_ID: { 
     type: String, 
-    required: true 
+    required: [true, 'Customer ID is required'] 
   },
   ACCT_NM: { 
     type: String, 
-    required: true 
+    required: [true, 'Account name is required'],
+    trim: true
   },
   AMOUNT: { 
     type: Number, 
-    required: true,
-    min: 0
+    required: [true, 'Amount is required'],
+    min: [0, 'Amount cannot be negative'],
+    set: v => parseFloat(v.toFixed(2)) // Ensure 2 decimal places
   },
   TRANSACTIONDATE: { 
     type: Date, 
-    default: Date.now 
+    default: Date.now,
+    index: true
   },
- TRANSACTION_TYPE: { 
-  type: String, 
-  enum: getAllTransactionTypes(), // ✅ This pulls in ALL valid types including 'LOAN_PROCESSING_FEE'
-  uppercase: true,
-  required: true,
-  index: true
-},
-
+  TRANSACTION_TYPE: { 
+    type: String, 
+    enum: {
+      values: getAllTransactionTypes(),
+      message: '{VALUE} is not a valid transaction type'
+    },
+    uppercase: true,
+    required: [true, 'Transaction type is required'],
+    index: true
+  },
   ACCT_NO: { 
     type: String,
-    index: true
-  },
-  debitAccount: { 
-    type: String,
-    index: true
-  },
-  creditAccount: { 
-    type: String,
-    index: true
+    required: [true, 'Account number is required'],
+    index: true,
+    trim: true
   },
   reference: { 
     type: String,
-    index: true
-  },
-  timestamp: { 
-    type: Date, 
-    default: Date.now 
+    index: true,
+    trim: true
   },
   createdBy: { 
     type: String,
-    required: true
+    required: [true, 'Creator ID is required'],
+    trim: true
   },
   status: { 
     type: String,
-    enum: ['PENDING', 'COMPLETED', 'FAILED', 'REVERSED'],
-    default: 'PENDING'
+    enum: {
+      values: ['PENDING', 'PENDING_APPROVAL', 'COMPLETED', 'FAILED', 'REVERSED'],
+      message: '{VALUE} is not a valid status'
+    },
+    default: 'PENDING',
+    index: true
   },
-  // Additional recommended fields
+  FLAGGED_FOR_AML: { 
+    type: Boolean, 
+    default: false 
+  },
+  AML_REASON: { 
+    type: String, 
+    default: '',
+    trim: true
+  },
+  AML_THRESHOLD_USED: {
+    type: Number,
+    default: 0
+  },
   currency: {
     type: String,
     default: 'NGN',
-    uppercase: true
+    uppercase: true,
+    enum: ['NGN', 'USD', 'GBP', 'EUR'] // Add more as needed
   },
   description: {
-    type: String
+    type: String,
+    trim: true
   },
   metadata: {
-    type: mongoose.Schema.Types.Mixed
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   }
 }, { 
   timestamps: true,
-  toJSON: { virtuals: true },
+  toJSON: { 
+    virtuals: true,
+    transform: function(doc, ret) {
+      delete ret.__v;
+      delete ret._id;
+      return ret;
+    }
+  },
   toObject: { virtuals: true }
 });
 
-// Indexes
-TransactionSchema.index({ TRANSACTION_ID: 1 });
-TransactionSchema.index({ ACCT_ID: 1 });
-TransactionSchema.index({ CUST_ID: 1 });
-TransactionSchema.index({ TRANSACTIONDATE: -1 });
-TransactionSchema.index({ status: 1 });
-
-// Virtual for formatted amount
+// Virtuals
 TransactionSchema.virtual('formattedAmount').get(function() {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -115,24 +139,25 @@ TransactionSchema.virtual('formattedAmount').get(function() {
   }).format(this.AMOUNT);
 });
 
-// Pre-save hook for validation
-TransactionSchema.pre('save', function(next) {
-  if (this.debitAccount && this.creditAccount && this.debitAccount === this.creditAccount) {
-    throw new Error('Debit and credit accounts cannot be the same');
-  }
-  next();
+TransactionSchema.virtual('formattedDate').get(function() {
+  return this.TRANSACTIONDATE.toLocaleString();
 });
+
 
 // Static methods
 TransactionSchema.statics.findByAccount = function(accountId) {
   return this.find({ 
     $or: [
       { ACCT_ID: accountId },
-      { ACCT_NO: accountId },
-      { debitAccount: accountId },
-      { creditAccount: accountId }
+      { ACCT_NO: accountId }
     ]
-  });
+  }).sort({ TRANSACTIONDATE: -1 });
+};
+
+TransactionSchema.statics.findRecentByCustomer = function(customerId, limit = 10) {
+  return this.find({ CUST_ID: customerId })
+    .sort({ TRANSACTIONDATE: -1 })
+    .limit(limit);
 };
 
 const Transaction = mongoose.model('Transaction', TransactionSchema);

@@ -6,82 +6,52 @@ import {
   deleteBusinessRole,
   assignBusinessRoleToUser,
   getAllBusinessRoles
-} from '../controllers/BusinessRoleController.js';
-import verifyToken from '../middlewares/verifyToken.js';
-import { ROLE_MAPPING } from '../constants/roleMapping.js';
-import { authorizeBusinessUnit } from '../middlewares/authorizeBusinessUnit.js';
+} from '../controllers/businessRoleController.js'; // adjust path if needed
+
+import { populateBusinessUnitMapping } from '../constants/roleMapping.js';
+import { authenticate, hasRole } from '../middlewares/authMiddleware.js'; // assuming you have auth middleware
 
 const router = express.Router();
 
-// ✅ Protected Business Role Routes
-router.post('/business-roles',
-  verifyToken,
-  (req, res, next) => {
-    // Explicit admin check using ROLE_MAPPING
-    if (req.user.role === ROLE_MAPPING[1].ROLE_NM || req.user.isAdmin) {
-      return next();
-    }
-    res.status(403).json({ 
-      success: false,
-      message: 'Administrator privileges required',
-      requiredRole: ROLE_MAPPING[1].ROLE_NM,
-      yourRole: req.user.role
+// Middleware: Populate Business Unit Mapping (called on all routes here)
+router.use(async (req, res, next) => {
+  try {
+    await populateBusinessUnitMapping();
+    next();
+  } catch (error) {
+    console.error("Error populating business unit mapping:", error);
+    res.status(500).json({ 
+      message: "Error populating business unit mapping", 
+      error: error.message 
     });
-  },
-  authorizeBusinessUnit({ 
-    accessType: 'ROLE_MANAGEMENT_ACCESS_LVL',
-    requireAllBusinessUnits: true 
-  }),
-  createBusinessRole
-);
+  }
+});
 
-// ✅ Get all business roles (admin-only)
-router.get('/business-roles',
-  verifyToken,
-  (req, res, next) => {
-    if (req.user.isAdmin) return next();
-    res.status(403).json({ 
-      success: false,
-      message: 'Admin access required'
-    });
-  },
-  getAllBusinessRoles
-);
+// Middleware: Authentication for all routes
+router.use(authenticate); // only if needed for all routes
 
-// ✅ Business role assignment
-router.post('/assign-role',
-  verifyToken,
-  authorizeBusinessUnit({ 
-    accessType: 'ROLE_ASSIGNMENT_ACCESS_LVL'
-  }),
-  assignBusinessRoleToUser
-);
+// @route   POST /api/business-roles
+// @desc    Create a new business role
+router.post('/create', createBusinessRole);
 
-// Other routes with appropriate protection
-router.get('/business-roles/:USER_ID', 
-  verifyToken,
-  authorizeBusinessUnit(),
-  getBusinessRoleByUserId
-);
+// @route   GET /api/business-roles
+// @desc    Get all business roles with pagination
+router.get('/', getAllBusinessRoles);
 
-router.put('/business-roles/:USER_ID',
-  verifyToken,
-  authorizeBusinessUnit({
-    accessType: 'ROLE_MANAGEMENT_ACCESS_LVL'
-  }),
-  updateBusinessRole
-);
+// @route   GET /api/business-roles/:USER_ID
+// @desc    Get a specific business role by USER_ID
+router.get('/:USER_ID', getBusinessRoleByUserId);
 
-router.delete('/business-roles/:id',
-  verifyToken,
-  (req, res, next) => {
-    if (req.user.isAdmin) return next();
-    res.status(403).json({
-      success: false,
-      message: 'Only administrators can delete roles'
-    });
-  },
-  deleteBusinessRole
-);
+// @route   PUT /api/business-roles/:USER_ID
+// @desc    Update a business role by USER_ID
+router.put('/:USER_ID', updateBusinessRole);
+
+// @route   DELETE /api/business-roles/:id
+// @desc    Delete a business role by _id
+router.delete('/:id', deleteBusinessRole);
+
+// @route   POST /api/business-roles/assign
+// @desc    Assign a business role to a user
+router.post('/assign', assignBusinessRoleToUser);
 
 export default router;

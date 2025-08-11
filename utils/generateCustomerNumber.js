@@ -2,72 +2,99 @@ import Counter from '../models/Counter.js';
 import Customer from '../models/Customer.js';
 
 // Constants
-const CUSTOMER_ID_LENGTH = 10; // 10-digit CUST_ID
-const CUSTOMER_NO_SERIAL_LENGTH = 8; // 8-digit serial portion of CUST_NO
+const CUST_ID_LENGTH = 10;               // CUST_ID will be 10 digits
+const CUST_NO_LENGTH = 7;                 // CUST_NO will be 7 digits
+const MAX_RETRIES = 3;                    // Maximum retries for transaction conflicts
+const RETRY_DELAY_MS = 100;               // Initial delay between retries in milliseconds
+const MULTIPLIER = 10;                    // Multiplier for CUST_NO generation
 
 /**
- * Generates synchronized customer numbers checking both Customer collection and Counter
- * @param {string} branchCode - Branch code (default: '01')
+ * Generates synchronized customer numbers with 10x pattern (7-digit CUST_NO)
  * @returns {Promise<{CUST_ID: string, CUST_NO: string}>}
  */
-export async function generateCustomerNumber(branchCode = '01') {
-  const session = await Customer.startSession();
-  session.startTransaction();
+export async function generateCustomerNumber() {
+  let retryCount = 0;
+  let lastError = null;
 
-  try {
-    // 1. Get the highest existing customer ID from both sources
-    const [lastCustomer, counter] = await Promise.all([
-      Customer.findOne().sort({ CUST_ID: -1 }).session(session),
-      Counter.findOne({ _id: 'CUSTOMER_NUMBER' }).session(session)
-    ]);
-
-    // 2. Determine last used numbers
-    const lastCustId = lastCustomer ? parseInt(lastCustomer.CUST_ID, 10) : 0;
-    const lastCustNoSerial = lastCustomer ? parseInt(lastCustomer.CUST_NO.slice(2), 10) : 0;
-    const lastCounterValue = counter?.seq || 0;
-
-    // 3. Calculate next values (using the highest + 1)
-    const nextId = Math.max(lastCustId, lastCounterValue) + 1;
-    const nextSerial = lastCustNoSerial + 1;
-
-    // 4. Update counter atomically
-    await Counter.findOneAndUpdate(
-      { _id: 'CUSTOMER_NUMBER' },
-      { $set: { seq: nextId } },
-      { upsert: true, session }
-    );
-
-    // 5. Generate the numbers
-    const CUST_ID = nextId.toString().padStart(CUSTOMER_ID_LENGTH, '0');
-    const CUST_NO = branchCode + nextSerial.toString().padStart(CUSTOMER_NO_SERIAL_LENGTH, '0');
-
-    await session.commitTransaction();
+  while (retryCount < MAX_RETRIES) {
+    const session = await Customer.startSession();
     
-    return { CUST_ID, CUST_NO };
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
+    try {
+      await session.startTransaction();
+
+      // Get the next base number atomically
+      const counter = await Counter.findOneAndUpdate(
+        { _id: 'customerId' },
+        { $inc: { seq: 1 } },
+        { 
+          new: true,
+          upsert: true,
+          session,
+          returnDocument: 'after'
+        }
+      );
+
+      const baseNumber = Number(counter?.seq);
+      if (isNaN(baseNumber)) {
+        throw new Error('Invalid counter value');
+      }
+
+      // Generate numbers with 10x pattern
+      const custId = baseNumber;
+      const custNo = baseNumber * MULTIPLIER;
+
+      const result = {
+        CUST_ID: String(custId).padStart(CUST_ID_LENGTH, '0'),      // 10-digit e.g. "0000000001"
+        CUST_NO: String(custNo).padStart(CUST_NO_LENGTH, '0')       // 7-digit e.g. "0000010"
+      };
+
+      // Verify CUST_NO doesn't exceed 7 digits
+      if (custNo.toString().length > CUST_NO_LENGTH) {
+        throw new Error('Customer number overflow - reached maximum possible values');
+      }
+
+      await session.commitTransaction();
+      return result;
+
+    } catch (error) {
+      await session.abortTransaction();
+      lastError = error;
+
+      // Retry only on transaction conflicts
+      if (error.message.includes('WriteConflict') && retryCount < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * Math.pow(2, retryCount);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        retryCount++;
+        continue;
+      }
+
+      throw new Error(error.message);
+
+    } finally {
+      await session.endSession();
+    }
   }
+
+  throw lastError || new Error('Failed to generate customer numbers after retries');
 }
 
-// Legacy stand-alone version (for backward compatibility)
-export const generateCustomerNumberLegacy = async (branchCode = '01') => {
-  const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 });
-
-  let lastCustId = 0;
-  let lastCustNoSerial = 0;
-
-  if (lastCustomer) {
-    lastCustId = parseInt(lastCustomer.CUST_ID, 10) || 0;
-    lastCustNoSerial = parseInt(lastCustomer.CUST_NO.slice(2), 10) || 0;
+/**
+ * Legacy generator without transactions
+ * @returns {Promise<{CUST_ID: string, CUST_NO: string}>}
+ */
+export const generateCustomerNumberLegacy = async () => {
+  try {
+    const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 }).lean();
+    const lastId = lastCustomer ? parseInt(lastCustomer.CUST_ID, 10) || 0 : 0;
+    const nextId = lastId + 1;
+    
+    return {
+      CUST_ID: String(nextId).padStart(CUST_ID_LENGTH, '0'),      // e.g. "0000000001"
+      CUST_NO: String(nextId * MULTIPLIER).padStart(CUST_NO_LENGTH, '0')  // e.g. "0000010"
+    };
+  } catch (error) {
+    throw new Error(`Failed to generate legacy customer numbers: ${error.message}`);
   }
-
-  const newCustId = (lastCustId + 1).toString().padStart(10, '0');
-  const newCustNo = branchCode + (lastCustNoSerial + 1).toString().padStart(8, '0');
-
-  return { CUST_ID: newCustId, CUST_NO: newCustNo };
 };
 
 export default generateCustomerNumber;
