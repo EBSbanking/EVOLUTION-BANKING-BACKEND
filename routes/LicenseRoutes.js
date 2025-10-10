@@ -4,7 +4,7 @@ import {
   generateLicense,
   validateLicenseFile,
   getLicenseDetails
-} from '../controllers/licenseController.js';
+} from '../controllers/LicenseController.js';
 
 const router = express.Router();
 

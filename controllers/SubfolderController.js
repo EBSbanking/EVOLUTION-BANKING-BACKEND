@@ -1,75 +1,65 @@
 import Subfolder from '../models/Subfolder.js';
-import { createRootSubfolder } from '../utils/subfolderUtils.js'; // Optional import
+import Ledger from '../models/Ledger.js';
 
-// Controller to create a subfolder
-export const createSubfolder = async (req, res) => {
-  const { parentId, createdBy, ledgerNo, isRoot, name } = req.body;
-
-  // Validation allowing 0/false but ensuring correct types
-  if (
-    typeof parentId !== 'number' ||
-    typeof ledgerNo !== 'number' ||
-    typeof isRoot !== 'boolean' ||
-    typeof createdBy !== 'string' ||
-    typeof name !== 'string' ||
-    !createdBy.trim() ||
-    !name.trim()
-  ) {
-    return res.status(400).json({ message: 'Required fields are missing or invalid.' });
-  }
-
+export const createRootSubfolder = async (transactionId, { GL_ACCT_NO, createdBy, description }, { session } = {}) => {
   try {
-    // Get the current max subfolderId as a plain object
-    const maxSubfolder = await Subfolder.findOne().sort({ subfolderId: -1 }).lean().exec();
+    if (!createdBy || !GL_ACCT_NO) {
+      throw new Error('createdBy and GL_ACCT_NO are required');
+    }
 
-    // Calculate the next subfolderId safely
+    // Fetch ledgerNo from Ledger or use SUB_LEDGER_NO from transaction
+    const ledger = await Ledger.findOne({ GL_ACCT_NO }).session(session).exec();
+    const ledgerNo = ledger?.LEDGER_NO || '0000'; // Fallback to default if not found
+
+    // Generate a unique numeric subfolderId
+    const maxSubfolder = await Subfolder.findOne()
+      .sort({ subfolderId: -1 })
+      .lean()
+      .session(session)
+      .exec();
+
     let subfolderId = 1;
     if (maxSubfolder && maxSubfolder.subfolderId !== undefined && !isNaN(Number(maxSubfolder.subfolderId))) {
       subfolderId = Number(maxSubfolder.subfolderId) + 1;
     }
 
+    const parentId = 1; // Root subfolders have a fixed parentId
+    const isRoot = true;
+    const name = description ? `${description} Subfolder ${ledgerNo}`.trim() : `Root Subfolder ${ledgerNo}`.trim();
+
     const newSubfolder = new Subfolder({
       subfolderId,
       parentId,
       createdBy: createdBy.trim(),
-      ledgerNo,
+      ledgerNo: ledgerNo.trim(),
       isRoot,
-      name: name.trim(),
+      name,
     });
 
-    await newSubfolder.save();
-
-    res.status(201).json({
-      message: 'Subfolder created successfully',
-      subfolder: newSubfolder,
-    });
+    await newSubfolder.save({ session });
+    return newSubfolder;
   } catch (error) {
-    console.error('Error creating subfolder:', error);
-    res.status(500).json({
-      message: 'Error creating subfolder',
+    console.error('Error creating root subfolder:', {
       error: error.message,
+      stack: error.stack,
     });
+    throw error;
   }
 };
 
-// Controller to fetch subfolders, optionally filtered by parentId
-export const fetchSubfolders = async (req, res) => {
+export const fetchSubfolders = async (parentId = null, { session } = {}) => {
   try {
-    const { parentId } = req.query;
-
-    const filter = parentId ? { parentId: Number(parentId) } : {};
-
-    const subfolders = await Subfolder.find(filter).sort({ createdAt: -1 }).exec();
-
-    res.status(200).json({
-      message: 'Subfolders fetched successfully',
-      subfolders,
-    });
+    const filter = parentId ? { parentId } : {};
+    const subfolders = await Subfolder.find(filter)
+      .sort({ subfolderId: 1 })
+      .session(session)
+      .exec();
+    return subfolders;
   } catch (error) {
-    console.error('Error fetching subfolders:', error);
-    res.status(500).json({
-      message: 'Error fetching subfolders',
+    console.error('Error fetching subfolders:', {
       error: error.message,
+      stack: error.stack,
     });
+    throw error;
   }
 };

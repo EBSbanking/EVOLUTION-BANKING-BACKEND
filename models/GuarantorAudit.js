@@ -2,40 +2,65 @@
 import mongoose from 'mongoose';
 import mongoosePaginate from 'mongoose-paginate-v2';
 
+const RelationshipOfficerSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: false, // set to true if always mandatory
+  },
+  name: {
+    type: String,
+    required: false, // set to true if always mandatory
+  }
+}, { _id: false }); // prevent creating an extra _id for nested schema
+
 const GuarantorAuditSchema = new mongoose.Schema({
   guarantorId: {
-    type: Number,  // Changed from ObjectId to Number
+    type: Number,  // Using Number as you specified
     required: true
   },
   action: {
     type: String,
-    enum: ["CREATE", "UPDATE", "DEACTIVATE", "REACTIVATE", "DELETE"],
+    enum: [
+      "CREATE",
+      "UPDATE",
+      "DEACTIVATE",
+      "REACTIVATE",
+      "DELETE",
+      "APPROVED",   // ✅ added
+      "REJECTED"    // ✅ added
+    ],
     required: true
   },
-  changedFields: [String],
-  previousValues: mongoose.Schema.Types.Mixed,
+  changedFields: {
+    type: [String],
+    default: []
+  },
+  previousValues: {
+    type: mongoose.Schema.Types.Mixed
+  },
   performedBy: {
     type: String,
     required: true
   },
-  timestamp: {
-    type: Date,
-    default: Date.now
+  notes: {
+    type: String
   },
-  notes: String,
-  ipAddress: String,
+  ipAddress: {
+    type: String
+  },
   relationshipOfficer: {
-    id: String,
-    name: String
+    type: RelationshipOfficerSchema,
+    default: {}
   }
 }, {
-  timestamps: true
+  timestamps: true // adds createdAt & updatedAt automatically
 });
 
 // Enable pagination
 GuarantorAuditSchema.plugin(mongoosePaginate);
 
-const GuarantorAudit = mongoose.models.GuarantorAudit || 
+const GuarantorAudit =
+  mongoose.models.GuarantorAudit ||
   mongoose.model('GuarantorAudit', GuarantorAuditSchema);
 
 export default GuarantorAudit;

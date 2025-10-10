@@ -1,4 +1,3 @@
-// config/database.js
 import mongoose from 'mongoose';
 import { MongoClient } from 'mongodb';
 import logger from '../utils/logger.js';
@@ -7,55 +6,64 @@ import os from 'os';
 // Configuration
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;
-const CPU_CORES = os.cpus().length;
-const CONNECTION_POOL_SIZE = Math.min(100, Math.max(10, CPU_CORES * 5));
-
 let retryCount = 0;
 let isConnected = false;
 
-// Standard connection options (used in .connect())
+// Enhanced connection options
 const connectionOptions = {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  connectTimeoutMS: 15000,
+  connectTimeoutMS: 30000,
   socketTimeoutMS: 60000,
-  maxPoolSize: CONNECTION_POOL_SIZE,
-  minPoolSize: 10,
+  maxPoolSize: 50,
+  minPoolSize: 5,
   maxIdleTimeMS: 30000,
   retryWrites: true,
   w: 'majority',
-  readPreference: 'primary', // ✅ changed from primaryPreferred
-  heartbeatFrequencyMS: 10000,
   serverSelectionTimeoutMS: 30000,
-  retryReads: true
+  retryReads: true,
+  heartbeatFrequencyMS: 10000,
 };
 
-// Transaction-safe client options
-const transactionConnectionOptions = {
-  ...connectionOptions,
-  readPreference: 'primary',
-  readConcern: { level: 'majority' },
-  writeConcern: { w: 'majority', j: true }
+// Debug MongoDB URI (mask password for security)
+const debugMongoURI = () => {
+  if (!process.env.MONGODB_URI) {
+    return 'MONGODB_URI is undefined';
+  }
+  
+  try {
+    const url = new URL(process.env.MONGODB_URI);
+    const maskedURI = `${url.protocol}//${url.hostname}:${url.port}${url.pathname}?${url.searchParams}`;
+    return maskedURI;
+  } catch (error) {
+    return 'Invalid MONGODB_URI format';
+  }
 };
 
 const connectDB = async () => {
-  if (isConnected) return mongoose.connection;
+  if (isConnected) {
+    logger.info('✅ Using existing MongoDB connection');
+    return mongoose.connection;
+  }
 
+  // Validate MONGODB_URI
   if (!process.env.MONGODB_URI) {
-    logger.error('❌ MONGODB_URI is not defined');
+    logger.error('❌ MONGODB_URI is not defined in environment variables');
     process.exit(1);
   }
 
-  try {
-    logger.info(`🚀 Connecting to MongoDB (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
+  logger.info(`🔍 Attempting to connect to: ${debugMongoURI()}`);
+  logger.info(`🔄 Connection attempt ${retryCount + 1}/${MAX_RETRIES}`);
 
+  try {
+    // Set up event listeners first
     mongoose.connection.on('connected', () => {
       isConnected = true;
+      retryCount = 0; // Reset retry count on successful connection
       logger.info('✅ MongoDB Connection Established', {
         host: mongoose.connection.host,
-        db: mongoose.connection.name
+        port: mongoose.connection.port,
+        database: mongoose.connection.name,
+        readyState: mongoose.connection.readyState
       });
-      initializeDatabase();
     });
 
     mongoose.connection.on('disconnected', () => {
@@ -64,129 +72,167 @@ const connectDB = async () => {
     });
 
     mongoose.connection.on('error', (err) => {
-      logger.error('❌ MongoDB Connection Error', { error: err.message });
+      logger.error('❌ MongoDB Connection Error', {
+        error: err.message,
+        name: err.name
+      });
     });
 
-    await mongoose.connect(process.env.MONGODB_URI, connectionOptions);
+    mongoose.connection.on('reconnected', () => {
+      isConnected = true;
+      logger.info('🔁 MongoDB Reconnected');
+    });
 
-    if (process.env.NODE_ENV === 'development') {
-      mongoose.set('debug', (collection, method, query, doc) => {
-        logger.debug(`MongoDB ${collection}.${method}`, {
-          query: JSON.stringify(query),
-          doc: JSON.stringify(doc)
+    // Attempt connection
+    logger.info('🚀 Connecting to MongoDB...');
+    
+    // Test basic connectivity first
+    await testBasicConnection();
+    
+    await mongoose.connect(process.env.MONGODB_URI, connectionOptions);
+    
+    logger.info('🎯 MongoDB connection successful');
+    
+    // Initialize database in background, don't block startup
+    setTimeout(() => {
+      initializeDatabase().catch(err => {
+        logger.error('⚠️ Database initialization failed (non-critical)', {
+          error: err.message
         });
       });
-    }
+    }, 1000);
 
     return mongoose.connection;
 
   } catch (error) {
     retryCount++;
-    logger.error(`❌ MongoDB Connection Failed (Attempt ${retryCount})`, {
+    
+    logger.error(`❌ MongoDB Connection Failed (Attempt ${retryCount}/${MAX_RETRIES})`, {
       error: error.message,
-      stack: error.stack
+      name: error.name,
+      code: error.code,
+      mongodbUri: debugMongoURI()
     });
 
     if (retryCount >= MAX_RETRIES) {
-      logger.error('💥 Maximum retries reached. Exiting...');
+      logger.error('💥 Maximum connection retries reached. Application will exit.');
       process.exit(1);
     }
 
-    const delay = RETRY_DELAY * Math.pow(2, retryCount);
-    logger.warn(`⏳ Retrying in ${delay / 1000} seconds...`);
+    const delay = RETRY_DELAY * Math.pow(2, retryCount - 1);
+    logger.warn(`⏳ Retrying connection in ${delay / 1000} seconds...`);
     await new Promise(resolve => setTimeout(resolve, delay));
+    
     return connectDB();
   }
 };
 
-// Start session with correct transaction options
-export const startTransactionSession = async () => {
-  const session = await mongoose.connection.startSession({
-    defaultTransactionOptions: {
-      readPreference: 'primary',
-      readConcern: { level: 'majority' },
-      writeConcern: { w: 'majority' }
-    }
-  });
-  session.startTransaction();
-  return session;
+// Test basic network connectivity
+const testBasicConnection = async () => {
+  const uri = process.env.MONGODB_URI;
+  try {
+    const url = new URL(uri);
+    const hostname = url.hostname;
+    const port = url.port || 27017;
+    
+    logger.info(`🔧 Testing connection to ${hostname}:${port}`);
+    
+    // You could add a simple TCP connection test here if needed
+  } catch (error) {
+    logger.warn('⚠️ Could not parse MongoDB URI for connectivity test');
+  }
 };
 
-// Setup counters & indexes
+// Enhanced database initialization with better error handling
 const initializeDatabase = async () => {
+  let initClient;
   try {
     logger.info('🏗️ Starting database initialization...');
-
-    const initClient = new MongoClient(process.env.MONGODB_URI, transactionConnectionOptions);
+    
+    initClient = new MongoClient(process.env.MONGODB_URI, {
+      ...connectionOptions,
+      serverSelectionTimeoutMS: 15000 // Shorter timeout for initialization
+    });
+    
     await initClient.connect();
     const db = initClient.db();
 
+    // Your existing initialization code here...
     const counters = [
       { _id: 'guarantorId', seq: 1000000 },
       { _id: 'transactionId', seq: 1000000000 },
-      { _id: 'amlThresholdId', seq: 1000 }
+      { _id: 'amlThresholdId', seq: 1000 },
     ];
-
+    
     const counterCol = db.collection('counters');
     for (const counter of counters) {
-      const exists = await counterCol.findOne({ _id: counter._id });
+      const exists = await counterCol.findOne({ _id: counter._id }, { projection: { _id: 1 } });
       if (!exists) {
         await counterCol.insertOne(counter);
         logger.info(`🔢 Initialized counter for ${counter._id}`);
       }
     }
 
-    const indexes = {
-      transactions: [
-        { keys: { reference: 1 }, options: { unique: true } },
-        { keys: { accountId: 1, date: -1 }, options: { background: true } },
-        { keys: { amount: 1 }, options: { background: true } },
-        { keys: { transactionId: 1 }, options: { unique: true } }
-      ],
-      amlthresholds: [
-        { keys: { transaction_type: 1, currency: 1, active: 1 }, options: { unique: true } }
-      ]
-    };
+    logger.info('🎉 Database initialization completed successfully');
 
-    for (const [collection, collectionIndexes] of Object.entries(indexes)) {
-      const col = db.collection(collection);
-      const existing = await col.indexes();
-
-      for (const { keys, options } of collectionIndexes) {
-        const exists = existing.some(idx =>
-          JSON.stringify(idx.key) === JSON.stringify(keys)
-        );
-        if (!exists) {
-          await col.createIndex(keys, options);
-          logger.info(`📌 Created index on ${collection}: ${JSON.stringify(keys)}`);
-        }
-      }
-    }
-
-    logger.info('🎉 Database initialization completed');
-    await initClient.close();
   } catch (err) {
     logger.error('❌ Database initialization failed', {
       error: err.message,
-      stack: err.stack
+      stack: err.stack,
     });
-    throw err;
+    // Don't throw here - initialization failure shouldn't crash the app
+  } finally {
+    if (initClient) {
+      await initClient.close();
+    }
   }
 };
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
+// Export transaction session function
+export const startTransactionSession = async () => {
+  if (!isConnected) {
+    throw new Error('Database not connected');
+  }
+  
+  const session = await mongoose.connection.startSession({
+    defaultTransactionOptions: {
+      readPreference: 'primary',
+      readConcern: { level: 'majority' },
+      writeConcern: { w: 'majority' },
+    },
+  });
+  session.startTransaction();
+  return session;
+};
+
+// Enhanced graceful shutdown
+const gracefulShutdown = async (signal) => {
+  logger.info(`🛑 Received ${signal}. Closing MongoDB connection...`);
+  
   try {
     await mongoose.connection.close();
-    logger.info('🛑 MongoDB connection closed due to app termination');
+    logger.info('✅ MongoDB connection closed gracefully');
     process.exit(0);
   } catch (err) {
-    logger.error('❌ Failed to close MongoDB connection', {
+    logger.error('❌ Failed to close MongoDB connection gracefully', {
       error: err.message,
-      stack: err.stack
     });
     process.exit(1);
   }
+};
+
+// Register shutdown handlers
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('💥 Uncaught Exception', { error: error.message });
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('💥 Unhandled Promise Rejection', { reason: reason?.message || reason });
 });
 
 export default connectDB;

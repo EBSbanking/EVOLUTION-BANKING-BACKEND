@@ -4,185 +4,307 @@ import User from '../models/User.js';
 import Login from '../models/Login.js';
 import UserRole from '../models/UserRole.js';
 import { ROLE_MAPPING } from '../constants/roleMapping.js';
-import { v4 as uuidv4 } from 'uuid'; // ✅ UUID import here
+import asyncHandler from 'express-async-handler';
+import logger from '../utils/logger.js';
+import { getSecretKey } from '../middlewares/authMiddleware.js';
+import { v4 as uuidv4 } from 'uuid';
 
-export const login = async (req, res) => {
+export const login = asyncHandler(async (req, res) => {
   const { user_name, password } = req.body;
 
-  try {
-    const user = await User.findOne({
-      $or: [
-        { user_name: { $regex: new RegExp(`^${user_name}$`, 'i') } },
-        { email: { $regex: new RegExp(`^${user_name}$`, 'i') } },
-        { employer_number: user_name }
-      ]
-    }).select('+user_name +password +status +failed_attempts +lock_until');
+  logger.info('Login attempt', { user_name, timestamp: new Date().toISOString() });
 
-    // ❌ User not found
-    if (!user) {
+  // Validate input
+  if (!user_name || !password) {
+    logger.warn('Missing required fields', { user_name });
+    return res.status(400).json({
+      success: false,
+      message: 'user_name and password are required',
+    });
+  }
+
+  // Find user with password selected
+  const user = await User.findByUsernameWithPassword(user_name);
+  if (!user) {
+    logger.warn('User not found', { user_name });
+    try {
       await Login.create({
-        attempt_identifier: uuidv4(),
         user_id: null,
         user_name,
         login_time: new Date(),
-        ip_address: req.ip,
-        status: 'Failed',
-        error: 'User not found'
-      });
-
-      return res.status(401).json({
         success: false,
-        message: 'Invalid credentials',
-        resolution: 'Check your username/email/employee number'
-      });
-    }
-
-    // ❌ Inactive account
-    if (user.status !== 'Active') {
-      await Login.create({
+        ip_address: req.ip,
+        session_id: req.sessionID || uuidv4(),
         attempt_identifier: uuidv4(),
-        user_id: user._id,
-        user_name: user.user_name,
-        login_time: new Date(),
-        ip_address: req.ip,
         status: 'Failed',
-        error: `Account ${user.status}`
+        error: 'User not found',
       });
-
-      return res.status(403).json({
-        success: false,
-        message: 'Account not active',
-        accountStatus: user.status,
-        resolution: 'Contact administrator'
-      });
+    } catch (error) {
+      logger.error('Failed to log failed login attempt', { error: error.message });
     }
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid credentials',
+    });
+  }
 
-    // ❌ Account locked
-    if (user.lock_until && user.lock_until > Date.now()) {
-      const remainingTime = Math.ceil((user.lock_until - Date.now()) / 60000);
-      return res.status(403).json({
-        success: false,
-        message: 'Account temporarily locked',
-        resolution: `Try again in ${remainingTime} minutes`,
-        failedAttempts: user.failed_attempts
-      });
-    }
+  logger.info('User found', {
+    user_name,
+    internal_employee_enabled: user.internal_employee_enabled,
+    start_date: user.start_date,
+    expiry_date: user.expiry_date,
+    earliest_login_time: user.earliest_login_time,
+    latest_login_time: user.latest_login_time,
+  });
 
-    // ❌ Incorrect password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      const newAttempts = user.failed_attempts + 1;
-      const updates = { $inc: { failed_attempts: 1 } };
-
-      if (newAttempts >= 5) {
-        updates.$set = { lock_until: Date.now() + 30 * 60 * 1000 };
-      }
-
-      await User.updateOne({ _id: user._id }, updates);
-
+  // Check if user is enabled
+  if (!user.internal_employee_enabled) {
+    logger.warn(`Login attempt failed: User ${user_name} is disabled`, {
+      internal_employee_enabled: user.internal_employee_enabled,
+    });
+    try {
       await Login.create({
-        attempt_identifier: uuidv4(),
         user_id: user._id,
-        user_name: user.user_name,
+        user_name,
         login_time: new Date(),
-        ip_address: req.ip,
-        status: 'Failed',
-        error: 'Incorrect password'
-      });
-
-      return res.status(401).json({
         success: false,
-        message: 'Invalid credentials',
-        resolution: newAttempts >= 4 ? 'Last attempt before lock' : 'Check your password',
-        remainingAttempts: 5 - newAttempts
+        ip_address: req.ip,
+        session_id: req.sessionID || uuidv4(),
+        attempt_identifier: uuidv4(),
+        status: 'Failed',
+        error: 'User account is disabled',
       });
+    } catch (error) {
+      logger.error('Failed to log failed login attempt', { error: error.message });
     }
+    return res.status(401).json({
+      success: false,
+      message: 'User account is disabled',
+    });
+  }
 
-    // ✅ Successful login - reset lock counters
-    await User.updateOne(
-      { _id: user._id },
-      { $set: { failed_attempts: 0, lock_until: null, last_login: Date.now() } }
+  // Check start and expiry dates
+  const now = new Date();
+  if (user.start_date > now || user.expiry_date < now) {
+    logger.warn(`Login attempt failed: User ${user_name} account is not active`, {
+      start_date: user.start_date,
+      expiry_date: user.expiry_date,
+      now,
+    });
+    try {
+      await Login.create({
+        user_id: user._id,
+        user_name,
+        login_time: new Date(),
+        success: false,
+        ip_address: req.ip,
+        session_id: req.sessionID || uuidv4(),
+        attempt_identifier: uuidv4(),
+        status: 'Failed',
+        error: 'User account is not active',
+      });
+    } catch (error) {
+      logger.error('Failed to log failed login attempt', { error: error.message });
+    }
+    return res.status(401).json({
+      success: false,
+      message: 'User account is not active',
+    });
+  }
+
+  // 🔹 NEW: Check login hours using the model method
+  if (!user.isWithinLoginHours()) {
+    logger.warn(`Login attempt failed: User ${user_name} login outside allowed hours`, {
+      earliest_login_time: user.earliest_login_time,
+      latest_login_time: user.latest_login_time,
+      currentTime: new Date().toTimeString().split(' ')[0].substring(0, 5),
+    });
+    try {
+      await Login.create({
+        user_id: user._id,
+        user_name,
+        login_time: new Date(),
+        success: false,
+        ip_address: req.ip,
+        session_id: req.sessionID || uuidv4(),
+        attempt_identifier: uuidv4(),
+        status: 'Failed',
+        error: `Login attempt outside allowed hours. Allowed: ${user.earliest_login_time} - ${user.latest_login_time}`,
+      });
+    } catch (error) {
+      logger.error('Failed to log failed login attempt', { error: error.message });
+    }
+    return res.status(403).json({
+      success: false,
+      message: `Login attempt outside allowed hours. Allowed: ${user.earliest_login_time} - ${user.latest_login_time}`,
+    });
+  }
+
+  // Debug password comparison
+  logger.info(`Comparing password for ${user_name}`, {
+    password,
+    hash: user.password ? '***' : 'null',
+  });
+  
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) {
+    logger.warn(`Invalid password for user ${user_name}`);
+    try {
+      await Login.create({
+        user_id: user._id,
+        user_name,
+        login_time: new Date(),
+        success: false,
+        ip_address: req.ip,
+        session_id: req.sessionID || uuidv4(),
+        attempt_identifier: uuidv4(),
+        status: 'Failed',
+        error: 'Invalid password',
+      });
+    } catch (error) {
+      logger.error('Failed to log failed login attempt', { error: error.message });
+    }
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid credentials',
+    });
+  }
+
+  // Fetch user role and permissions
+  const userRole = await UserRole.findOne({
+    USER_ID: user_name,
+    BU_ID: user.responsibility_centre,
+    USER_ROLE_ID: user.BU_ROLE_ID,
+  }).lean();
+
+  let permissions = [];
+  let roleName = user.primary_business_role || 'Unknown Role';
+  if (userRole) {
+    permissions = userRole.permissions || [];
+    roleName = userRole.ROLE_NM || roleName;
+  } else {
+    // Fallback to ROLE_MAPPING
+    const roleData = Object.values(ROLE_MAPPING).find(
+      role => role.id.toString() === user.BU_ROLE_ID.toString()
     );
+    if (roleData) {
+      permissions = roleData.permissions || [];
+      roleName = roleData.ROLE_NM;
+    }
+  }
 
-    const userRoles = await UserRole.find({ USER_ID: user.user_name });
-    const activeRoles = userRoles.filter(r =>
-      ['Y', 'Active'].includes(String(r.REC_ST).toUpperCase())
-    );
+  logger.info('User role fetched', { user_name, roleName, permissions });
 
-    const isSystemAdmin = user.primary_business_role === 'Administrator';
-    const hasAdminRole = activeRoles.some(r => r.ROLE_NM === 'Administrator');
-    const isAdmin = isSystemAdmin || hasAdminRole;
-
-    const permissions = isAdmin
-      ? ROLE_MAPPING['1'].permissions
-      : activeRoles.reduce((acc, role) => ({
-          ...acc,
-          ...(ROLE_MAPPING[role.ROLE_ID]?.permissions || {})
-        }), {});
-
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        user_name: user.user_name,
-        email: user.email,
-        role: isAdmin ? 'Administrator' : activeRoles[0]?.ROLE_NM || 'User',
-        roles: activeRoles.map(r => r.ROLE_NM),
-        isAdmin,
-        businessUnit: user.main_business_unit,
-        permissions,
-        accessibleBusinessUnits: isAdmin ? ['ALL'] : [user.main_business_unit]
-      },
-      process.env.JWT_SECRET || 'your_secret_key',
-      { expiresIn: '8h' }
-    );
-
-    // ✅ Log successful login
+  // Log successful login attempt
+  try {
     await Login.create({
-      attempt_identifier: uuidv4(),
       user_id: user._id,
-      user_name: user.user_name,
+      user_name,
       login_time: new Date(),
+      success: true,
       ip_address: req.ip,
-      status: 'Success'
+      session_id: req.sessionID || uuidv4(),
+      attempt_identifier: uuidv4(),
+      status: 'Success', // Fixed to match schema enum
+    });
+  } catch (error) {
+    logger.error('Failed to log successful login attempt', { error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+    });
+  }
+
+  // Generate JWT
+  const token = jwt.sign(
+    {
+      id: user._id,
+      user_name: user.user_name,
+      role: roleName,
+      roleId: user.BU_ROLE_ID,
+      isAdmin: user.BU_ROLE_ID === 1,
+      permissions,
+    },
+    getSecretKey(),
+    { expiresIn: '7d' }
+  );
+
+  logger.info(`User ${user_name} logged in successfully`, {
+    BU_ROLE_ID: user.BU_ROLE_ID,
+    roleName,
+    permissions,
+  });
+
+  res.json({
+    success: true,
+    token,
+    user: {
+      userId: user._id,
+      user_name: user.user_name,
+      email: user.email,
+      role: roleName,
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      primary_business_role: user.primary_business_role,
+      businessUnit: user.main_business_unit,
+      permissions,
+      isAdmin: user.BU_ROLE_ID === 1,
+      accessibleBusinessUnits: user.accessibleBusinessUnits || [user.main_business_unit],
+      tokenIssuedAt: new Date().toISOString(),
+      tokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+  });
+});
+
+export const emergencyPasswordReset = asyncHandler(async (req, res) => {
+  const { user_name, new_password } = req.body;
+
+  if (!user_name || !new_password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Username and new password are required',
+    });
+  }
+
+  try {
+    const user = await User.findOne({
+      user_name: { $regex: new RegExp(`^${user_name}$`, 'i') },
     });
 
-    const { password: _, ...userData } = user.toObject();
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(new_password, 10);
+
+    // Update user password
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          password: hashedPassword,
+          failed_attempts: 0,
+          lock_until: null,
+          passwordChangedAt: new Date(),
+        },
+      }
+    );
 
     res.status(200).json({
       success: true,
-      message: 'Login successful',
-      token,
-      user: {
-        ...userData,
-        name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-        authLevel: isAdmin ? 'admin' : 'user'
-      },
-      systemInfo: {
-        serverTime: new Date(),
-        tokenExpiry: new Date(Date.now() + 8 * 60 * 60 * 1000)
-      }
+      message: 'Password reset successfully',
     });
-
   } catch (error) {
-    console.error('Login error:', error);
-
-    await Login.create({
-      attempt_identifier: uuidv4(),
-      user_id: null,
-      user_name,
-      login_time: new Date(),
-      ip_address: req.ip,
-      status: 'Failed',
-      error: error.message
-    });
-
+    console.error('Emergency password reset error:', error);
     res.status(500).json({
       success: false,
-      message: 'Authentication service unavailable',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      referenceId: `AUTH-${Date.now()}`
+      message: 'Password reset failed',
     });
   }
-};
+});
 
-export default Login;
+export default { login, emergencyPasswordReset };

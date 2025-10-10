@@ -68,4 +68,4 @@ const authorize = (...roles) => {
   };
 };
 
-export { authenticate, authorize };
+export default { authenticate, authorize };

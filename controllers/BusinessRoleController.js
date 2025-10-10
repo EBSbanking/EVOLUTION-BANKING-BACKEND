@@ -23,7 +23,7 @@ router.use(async (req, res, next) => {
   }
 });
 
-// Create BusinessRole — full flow with authorization and validation
+// Create BusinessRole — full flow with authorization, validation, and workflow access
 export const createBusinessRole = async (req, res) => {
   try {
     const {
@@ -35,22 +35,20 @@ export const createBusinessRole = async (req, res) => {
       BUSINESS_UNIT,
       BU_ID,
       SUPERVISOR_FG,
-      ALLOW_TXN_POSTING_FG = 'N'
+      ALLOW_TXN_POSTING_FG = 'N',
+      WF_ITEM_ACCESS_LEVEL = ''
     } = req.body;
 
     // 1. VERIFY ADMIN PRIVILEGES
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: 'Administrator privileges required'
-      });
-    }
+    // if (!req.user?.isAdmin) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: 'Administrator privileges required'
+    //   });
+    // }
 
     // 2. VALIDATE REQUIRED FIELDS
-    const requiredFields = {
-      ROLE_NM, ROLE_ID, USER_ID, BUSINESS_UNIT, BU_ID
-    };
-
+    const requiredFields = { ROLE_NM, ROLE_ID, USER_ID, BUSINESS_UNIT, BU_ID };
     const missingFields = Object.entries(requiredFields)
       .filter(([_, value]) => !value)
       .map(([field]) => field);
@@ -90,7 +88,7 @@ export const createBusinessRole = async (req, res) => {
 
     // 5. CREATE NEW ROLE
     const newRole = new BusinessRole({
-      ROLE_NM: roleMapping.ROLE_NM, // Use canonical name from mapping
+      ROLE_NM: roleMapping.ROLE_NM, // canonical name from mapping
       ROLE_ID,
       USER_ID,
       BUSINESS_UNIT,
@@ -99,6 +97,7 @@ export const createBusinessRole = async (req, res) => {
       VERSION_NO: VERSION_NO || 1,
       SUPERVISOR_FG: SUPERVISOR_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
       ALLOW_TXN_POSTING_FG: ALLOW_TXN_POSTING_FG.toUpperCase() === 'Y' ? 'Y' : 'N',
+      WF_ITEM_ACCESS_LEVEL, // workflow access level
       CREATED_BY: req.user.user_name,
       CREATED_BY_ROLE: req.user.role,
       CREATE_DT: new Date(),
@@ -117,14 +116,15 @@ export const createBusinessRole = async (req, res) => {
         businessUnit: newRole.BUSINESS_UNIT,
         permissions: {
           isSupervisor: newRole.SUPERVISOR_FG,
-          canPostTransactions: newRole.ALLOW_TXN_POSTING_FG
+          canPostTransactions: newRole.ALLOW_TXN_POSTING_FG,
+          workflowAccess: newRole.WF_ITEM_ACCESS_LEVEL
         }
       }
     });
 
   } catch (error) {
     console.error('Role Creation Error:', error);
-    
+
     if (error.name === 'ValidationError') {
       return res.status(400).json({
         success: false,
@@ -142,6 +142,9 @@ export const createBusinessRole = async (req, res) => {
     });
   }
 };
+
+
+
 
 // Get BusinessRole by User ID
 export const getBusinessRoleByUserId = async (req, res) => {

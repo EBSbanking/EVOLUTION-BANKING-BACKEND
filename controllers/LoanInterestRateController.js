@@ -1,3 +1,4 @@
+
 import express from 'express';
 import mongoose from 'mongoose';
 import InterestRate from '../models/loanInterestRate.js';
@@ -10,7 +11,7 @@ export const calculateEMI = ({
   termMonths,
   startDate
 }) => {
-  const method = 'reducing'; // force reducing
+  const method = 'reducing';
   const monthlyRate = annualRate / 100 / 12;
   const currentDate = startDate ? new Date(startDate) : new Date();
   let installments = [], totalInterest = 0;
@@ -35,7 +36,7 @@ export const calculateEMI = ({
       principal: principalPayment,
       interest,
       totalPayment: reducingEMI,
-      remainingBalance: balance,
+      remainingBalance: balance > 0 ? balance : 0,
       isFinalInstallment: i === termMonths
     });
   }
@@ -48,13 +49,14 @@ export const calculateEMI = ({
   };
 };
 
-// Endpoint for EMI calculation - forcing 'reducing' method
+// Endpoint for EMI calculation
 export const calculateEMIEndpoint = async (req, res) => {
   try {
     const {
       principal,
       time,
       PROD_ID,
+      INDEX_RATE_ID,
       rateType,
       ABSOLUTE_RATE,
       FIXED_RATE,
@@ -73,7 +75,7 @@ export const calculateEMIEndpoint = async (req, res) => {
     if (PROD_ID) {
       loanProduct = await InterestRate.findOne({ PROD_ID });
       if (!loanProduct) {
-        return res.status(404).json({ message: 'Loan product not found' });
+        return res.status(404).json({ message: 'Loan product interest rate not found' });
       }
       if (time < loanProduct.MIN_LOAN_TERM_MONTHS || time > loanProduct.MAX_LOAN_TERM_MONTHS) {
         return res.status(400).json({ 
@@ -83,28 +85,26 @@ export const calculateEMIEndpoint = async (req, res) => {
     }
 
     let annualRate;
-    if (rateType === 'absolute' && ABSOLUTE_RATE != null) {
-      annualRate = ABSOLUTE_RATE;
-    } else if (rateType === 'fixed' && FIXED_RATE != null) {
-      annualRate = FIXED_RATE;
-    } else if (loanProduct) {
-      annualRate = loanProduct.ABSOLUTE_RATE || loanProduct.FIXED_RATE;
-    }
-
-    if (annualRate == null || isNaN(annualRate)) {
-      return res.status(400).json({ message: 'Could not determine valid interest rate.' });
-    }
-
-    if (loanProduct) {
-      const maxRate = loanProduct.ABSOLUTE_RATE 
-        ? Math.max(loanProduct.ABSOLUTE_RATE, loanProduct.FIXED_RATE || 0)
-        : loanProduct.FIXED_RATE;
-      
-      if (annualRate > maxRate) {
+    if (INDEX_RATE_ID) {
+      const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: parseInt(INDEX_RATE_ID) });
+      if (!rateIndex || !rateIndex.INDEX_RATE) {
         return res.status(400).json({
-          message: `Requested rate exceeds maximum allowed rate of ${maxRate}% for this product`
+          message: `Rate index with ID ${INDEX_RATE_ID} not found or missing INDEX_RATE`
         });
       }
+      annualRate = parseFloat(rateIndex.INDEX_RATE);
+      console.log(`Using RateIndex.INDEX_RATE: ${annualRate}% for INDEX_RATE_ID: ${INDEX_RATE_ID}`);
+    } else if (loanProduct) {
+      annualRate = parseFloat(loanProduct.ABSOLUTE_RATE || loanProduct.FIXED_RATE);
+      console.log(`Falling back to loan product rate: ${annualRate}%`);
+    } else if (rateType === 'absolute' && ABSOLUTE_RATE != null) {
+      annualRate = parseFloat(ABSOLUTE_RATE);
+    } else if (rateType === 'fixed' && FIXED_RATE != null) {
+      annualRate = parseFloat(FIXED_RATE);
+    }
+
+    if (annualRate == null || isNaN(annualRate) || annualRate <= 0) {
+      return res.status(400).json({ message: 'Could not determine valid interest rate.' });
     }
 
     const emiResult = calculateEMI({
@@ -137,16 +137,10 @@ export const calculateEMIEndpoint = async (req, res) => {
   }
 };
 
-
-// Keep other exports unchanged below (unchanged content not shown here for brevity)
-
-
 export const createInterestRate = async (req, res) => {
   const {
     PROD_ID,
     INDEX_RATE_ID,
-    ABSOLUTE_RATE,
-    FIXED_RATE,
     RATE_CHANGE_ALLOWED,
     TIME,
     EFFECTIVE_DT,
@@ -159,7 +153,9 @@ export const createInterestRate = async (req, res) => {
     LOAN_PROUD_INT_ID,
     RATE_TY,
     MATURITY_INT_INDEX_ID,
-    ACCRUAL_BASIS_TY
+    ACCRUAL_BASIS_TY,
+    MIN_LOAN_TERM_MONTHS,
+    MAX_LOAN_TERM_MONTHS
   } = req.body;
 
   try {
@@ -167,8 +163,6 @@ export const createInterestRate = async (req, res) => {
 
     if (!PROD_ID) missingFields.push('PROD_ID');
     if (!INDEX_RATE_ID) missingFields.push('INDEX_RATE_ID');
-    if (!ABSOLUTE_RATE) missingFields.push('ABSOLUTE_RATE');
-    if (!FIXED_RATE) missingFields.push('FIXED_RATE');
     if (!EFFECTIVE_DT) missingFields.push('EFFECTIVE_DT');
     if (!INT_TY) missingFields.push('INT_TY');
     if (!DR_CR_IND) missingFields.push('DR_CR_IND');
@@ -180,22 +174,37 @@ export const createInterestRate = async (req, res) => {
     if (!RATE_TY) missingFields.push('RATE_TY');
     if (!MATURITY_INT_INDEX_ID) missingFields.push('MATURITY_INT_INDEX_ID');
     if (!ACCRUAL_BASIS_TY) missingFields.push('ACCRUAL_BASIS_TY');
-
-    if (isNaN(ABSOLUTE_RATE) || ABSOLUTE_RATE === 0) missingFields.push('ABSOLUTE_RATE');
-    if (isNaN(FIXED_RATE) || FIXED_RATE === 0) missingFields.push('FIXED_RATE');
+    if (!MIN_LOAN_TERM_MONTHS) missingFields.push('MIN_LOAN_TERM_MONTHS');
+    if (!MAX_LOAN_TERM_MONTHS) missingFields.push('MAX_LOAN_TERM_MONTHS');
 
     if (missingFields.length > 0) {
       return res.status(400).json({
-        message: 'Missing required fields or invalid values',
-        missingFields: missingFields
+        message: 'Missing required fields',
+        missingFields
+      });
+    }
+
+    // Fetch INDEX_RATE from RateIndex
+    const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: parseInt(INDEX_RATE_ID) });
+    if (!rateIndex || !rateIndex.INDEX_RATE) {
+      return res.status(400).json({
+        message: `Rate index with ID ${INDEX_RATE_ID} not found or missing INDEX_RATE`
+      });
+    }
+    const indexRate = parseFloat(rateIndex.INDEX_RATE);
+    if (indexRate <= 0) {
+      return res.status(400).json({
+        message: 'INDEX_RATE must be a positive number'
       });
     }
 
     const newInterestRate = new InterestRate({
       PROD_ID,
       INDEX_RATE_ID,
-      RATE_CHANGE_ALLOWED,
-      TIME,
+      ABSOLUTE_RATE: indexRate,
+      FIXED_RATE: indexRate,
+      RATE_CHANGE_ALLOWED: RATE_CHANGE_ALLOWED || false,
+      TIME: TIME || 12,
       EFFECTIVE_DT,
       INT_TY,
       DR_CR_IND,
@@ -207,15 +216,15 @@ export const createInterestRate = async (req, res) => {
       RATE_TY,
       MATURITY_INT_INDEX_ID,
       ACCRUAL_BASIS_TY,
-      FIXED_RATE,
-      ABSOLUTE_RATE,
+      MIN_LOAN_TERM_MONTHS,
+      MAX_LOAN_TERM_MONTHS
     });
 
     await newInterestRate.save();
 
     res.status(201).json({
       message: 'Interest Rate created successfully!',
-      newInterestRate
+      data: newInterestRate
     });
   } catch (error) {
     console.error('Error creating Interest Rate:', error);
@@ -277,8 +286,7 @@ export const deleteInterestRate = async (req, res) => {
 export const updateInterestRate = async (req, res) => {
   const { PROD_ID } = req.params;
   const {
-    ABSOLUTE_RATE,
-    FIXED_RATE,
+    INDEX_RATE_ID,
     RATE_CHANGE_ALLOWED,
     TIME,
     EFFECTIVE_DT,
@@ -287,6 +295,8 @@ export const updateInterestRate = async (req, res) => {
     ACCRUAL_FREQ_VALUE,
     ACCRUAL_FREQ_CD,
     MATURITY_INT_INDEX_ID,
+    MIN_LOAN_TERM_MONTHS,
+    MAX_LOAN_TERM_MONTHS
   } = req.body;
 
   try {
@@ -298,16 +308,35 @@ export const updateInterestRate = async (req, res) => {
       });
     }
 
-    interestRate.ABSOLUTE_RATE = ABSOLUTE_RATE || interestRate.ABSOLUTE_RATE;
-    interestRate.FIXED_RATE = FIXED_RATE || interestRate.FIXED_RATE;
-    interestRate.RATE_CHANGE_ALLOWED = RATE_CHANGE_ALLOWED || interestRate.RATE_CHANGE_ALLOWED;
-    interestRate.TIME = TIME || interestRate.TIME;
-    interestRate.EFFECTIVE_DT = EFFECTIVE_DT || interestRate.EFFECTIVE_DT;
-    interestRate.INT_TY = INT_TY || interestRate.INT_TY;
-    interestRate.DR_CR_IND = DR_CR_IND || interestRate.DR_CR_IND;
-    interestRate.ACCRUAL_FREQ_VALUE = ACCRUAL_FREQ_VALUE || interestRate.ACCRUAL_FREQ_VALUE;
-    interestRate.ACCRUAL_FREQ_CD = ACCRUAL_FREQ_CD || interestRate.ACCRUAL_FREQ_CD;
-    interestRate.MATURITY_INT_INDEX_ID = MATURITY_INT_INDEX_ID || interestRate.MATURITY_INT_INDEX_ID;
+    // Update ABSOLUTE_RATE and FIXED_RATE if INDEX_RATE_ID changes
+    if (INDEX_RATE_ID) {
+      const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: parseInt(INDEX_RATE_ID) });
+      if (!rateIndex || !rateIndex.INDEX_RATE) {
+        return res.status(400).json({
+          message: `Rate index with ID ${INDEX_RATE_ID} not found or missing INDEX_RATE`
+        });
+      }
+      const indexRate = parseFloat(rateIndex.INDEX_RATE);
+      if (indexRate <= 0) {
+        return res.status(400).json({
+          message: 'INDEX_RATE must be a positive number'
+        });
+      }
+      interestRate.ABSOLUTE_RATE = indexRate;
+      interestRate.FIXED_RATE = indexRate;
+      interestRate.INDEX_RATE_ID = INDEX_RATE_ID;
+    }
+
+    interestRate.RATE_CHANGE_ALLOWED = RATE_CHANGE_ALLOWED ?? interestRate.RATE_CHANGE_ALLOWED;
+    interestRate.TIME = TIME ?? interestRate.TIME;
+    interestRate.EFFECTIVE_DT = EFFECTIVE_DT ?? interestRate.EFFECTIVE_DT;
+    interestRate.INT_TY = INT_TY ?? interestRate.INT_TY;
+    interestRate.DR_CR_IND = DR_CR_IND ?? interestRate.DR_CR_IND;
+    interestRate.ACCRUAL_FREQ_VALUE = ACCRUAL_FREQ_VALUE ?? interestRate.ACCRUAL_FREQ_VALUE;
+    interestRate.ACCRUAL_FREQ_CD = ACCRUAL_FREQ_CD ?? interestRate.ACCRUAL_FREQ_CD;
+    interestRate.MATURITY_INT_INDEX_ID = MATURITY_INT_INDEX_ID ?? interestRate.MATURITY_INT_INDEX_ID;
+    interestRate.MIN_LOAN_TERM_MONTHS = MIN_LOAN_TERM_MONTHS ?? interestRate.MIN_LOAN_TERM_MONTHS;
+    interestRate.MAX_LOAN_TERM_MONTHS = MAX_LOAN_TERM_MONTHS ?? interestRate.MAX_LOAN_TERM_MONTHS;
 
     await interestRate.save();
 
@@ -350,14 +379,13 @@ export const getInterestRate = async (req, res) => {
 };
 
 export const calculateDailyInterest = (principal, annualRate, days) => {
-  return (principal * annualRate * days) / (100 * 360); // Common in loans
+  return (principal * annualRate * days) / (100 * 360);
 };
 
 export const updateCapitalizationStatus = async (req, res) => {
   const { LOAN_PROUD_INT_ID } = req.params;
   const { status, updatedBy } = req.body;
 
-  // Validate input
   const validStatuses = ['CAPITALIZED', 'REJECTED'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({
@@ -391,6 +419,7 @@ export const updateCapitalizationStatus = async (req, res) => {
     });
   }
 };
+
 
 export const getCapitalizationStatus = async (req, res) => {
   const { LOAN_PROUD_INT_ID } = req.params;

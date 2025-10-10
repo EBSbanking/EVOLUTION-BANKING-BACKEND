@@ -1,4 +1,3 @@
-// models/WF_WORK_ITEM.js
 import mongoose from 'mongoose';
 import mongoosePaginate from 'mongoose-paginate-v2';
 
@@ -19,56 +18,66 @@ const PRIORITY = {
 const WFWorkItemSchema = new mongoose.Schema({
   WORK_ITEM_ID: {
     type: Number,
-    required: true,
-    unique: true
+    required: [true, 'Work Item ID is required'],
+    unique: true,
+    index: true
   },
   processId: {
-    type: Number,            // corresponds to BUS_PROC_ID
-    required: true,
-    alias: 'BUS_PROC_ID'
+    type: Number,
+    required: [true, 'Business Process ID is required'],
+    alias: 'BUS_PROC_ID',
+    index: true
   },
   entityId: {
     type: mongoose.Schema.Types.ObjectId,
-    required: true,
+    required: [true, 'Entity ID is required'],
     alias: 'ITEM_ID'
   },
   entityType: {
     type: String,
-    required: true,
+    required: [true, 'Entity Type is required'],
     alias: 'ITEM_CLASS_NM'
   },
   currentStep: {
-    type: Number,            // corresponds to SUB_PROC_ID
-    required: true,
+    type: Number,
+    required: [true, 'Sub Process ID is required'],
     alias: 'SUB_PROC_ID'
   },
   assignedTo: {
     type: String,
-    required: true,
-    alias: 'TARGET_USER_ROLE_ID'
+    required: [true, 'Assigned To is required'],
+    alias: 'TARGET_USER_ROLE_ID',
+    trim: true
   },
   dueDate: {
     type: Date,
-    required: true,
+    required: [true, 'Due Date is required'],
     alias: 'DEADLINE_TM',
     default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
   },
   status: {
     type: String,
-    required: true,
-    enum: Object.values(STATUS),
+    required: [true, 'Status is required'],
+    enum: {
+      values: Object.values(STATUS),
+      message: '{VALUE} is not a valid status'
+    },
     alias: 'WAIT_ST',
     default: STATUS.PENDING
   },
   createdBy: {
     type: String,
-    required: true,
-    alias: 'USER_ID'
+    required: [true, 'Creator ID is required'],
+    alias: 'USER_ID',
+    trim: true
   },
   priority: {
     type: String,
-    required: true,
-    enum: Object.values(PRIORITY),
+    required: [true, 'Priority is required'],
+    enum: {
+      values: Object.values(PRIORITY),
+      message: '{VALUE} is not a valid priority'
+    },
     default: PRIORITY.MEDIUM
   },
   metadata: {
@@ -76,21 +85,72 @@ const WFWorkItemSchema = new mongoose.Schema({
     default: {},
     alias: 'ITEM_VALUE'
   },
-
-  // Additional/legacy fields
-  QUEUE_ID: { type: Number, required: true },
-  ITEM_DESC: { type: String },
-  CUST_ID: { type: Number },
-  REC_ST: { type: String, default: 'Active' },
-  VERSION: { type: Number, default: 1 },
-  BU_ID: { type: String },
-  ITEM_TYPE: { type: String },
-  ITEM_REF_NO: { type: Number },
-  ESCALATION_TM: { type: Number },
-  ITEM_BU_ID: { type: String },
-  EVENT_ID: { type: Number, required: true }, // based on your generator
-  JOURNAL_ID: { type: Number },               // if you're storing it
-  TRANSACTION_ID: { type: Number }            // if you're storing it
+  QUEUE_ID: {
+    type: Number,
+    required: [true, 'Queue ID is required']
+  },
+  ITEM_DESC: {
+    type: String,
+    required: [true, 'Item Description is required'],
+    trim: true
+  },
+  CUST_ID: {
+    type: String,
+    required: [true, 'Customer ID is required'],
+    trim: true
+  },
+  REC_ST: {
+    type: String,
+    default: 'Active'
+  },
+  VERSION: {
+    type: Number,
+    default: 1
+  },
+  BU_ID: {
+    type: Number,
+    required: [true, 'Business Unit ID is required']
+  },
+  ITEM_TYPE: {
+    type: String,
+    required: [true, 'Item Type is required']
+  },
+  ITEM_REF_NO: {
+    type: Number,
+    required: [true, 'Item Reference Number is required'] // Matches TRANSACTION_ID
+  },
+  ESCALATION_TM: {
+    type: Number
+  },
+  ITEM_BU_ID: {
+    type: Number,
+    required: [true, 'Item Business Unit ID is required']
+  },
+  EVENT_ID: {
+    type: String,
+    required: [true, 'Event ID is required']
+  },
+  JOURNAL_ID: {
+    type: String
+  },
+  TRANSACTION_ID: {
+    type: Number // Matches Transaction schema
+  },
+  ROW_TS: {
+    type: Date,
+    required: [true, 'Row Timestamp is required'],
+    default: Date.now
+  },
+  CREATE_DT: {
+    type: Date,
+    required: [true, 'Create Date is required'],
+    default: Date.now
+  },
+  SYS_CREATE_TS: {
+    type: Date,
+    required: [true, 'System Create Timestamp is required'],
+    default: Date.now
+  }
 }, {
   timestamps: true,
   toJSON: {
@@ -111,6 +171,8 @@ const WFWorkItemSchema = new mongoose.Schema({
 // Pagination plugin
 WFWorkItemSchema.plugin(mongoosePaginate);
 
-// Export the model
+// Ensure unique index on WORK_ITEM_ID
+WFWorkItemSchema.index({ WORK_ITEM_ID: 1 }, { unique: true });
+
 const WFWorkItem = mongoose.model('WFWorkItem', WFWorkItemSchema);
 export default WFWorkItem;

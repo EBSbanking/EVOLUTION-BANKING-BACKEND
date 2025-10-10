@@ -1,9 +1,11 @@
 import jwt from 'jsonwebtoken';
 import Permissions from '../models/Permissions.js';
 import User from '../models/User.js';
+import { hasPermission, checkMultiplePermissions, hasAnyPermission } from '../utils/permissionHelpers.js';
+import { roleHasPermission } from '../utils/permissionSync.js';
 
 // Enhanced secret key handling
-const getSecretKey = () => {
+export const getSecretKey = () => {
   const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET;
   if (!secret) {
     throw new Error('JWT secret key not configured');
@@ -12,7 +14,7 @@ const getSecretKey = () => {
 };
 
 // =========================
-// 1. Unified Authentication Middleware (Fixed)
+// 1. Unified Authentication Middleware (Enhanced)
 // =========================
 export const authenticate = async (req, res, next) => {
   try {
@@ -48,15 +50,47 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    // 4. Enhanced user attachment
+    // 4. Get user permissions from database
+    let userPermissions = null;
+    const roleId = user.roleId || user.BU_ROLE_ID || decoded.roleId;
+    
+    if (roleId) {
+      userPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    }
+
+    // 5. Enhanced user attachment with new permission system
     req.user = user; // Full user document
     req.authUser = {
       id: user._id,
       user_name: user.user_name,
       role: user.role,
       roles: user.roles || [],
-      roleId: user.roleId || user.BU_ROLE_ID || decoded.roleId,
-      permissions: decoded.permissions // Preserve original permissions
+      roleId: roleId,
+      permissions: userPermissions, // Database permissions
+      // Backward compatibility
+      BU_ROLE_ID: roleId
+    };
+
+    // 6. Attach permission checking methods to request for easy access
+    req.hasPermission = (permission) => {
+      if (userPermissions) {
+        return hasPermission(userPermissions, permission);
+      }
+      return false;
+    };
+
+    req.checkMultiplePermissions = (permissions) => {
+      if (userPermissions) {
+        return checkMultiplePermissions(userPermissions, permissions);
+      }
+      return false;
+    };
+
+    req.hasAnyPermission = (permissions) => {
+      if (userPermissions) {
+        return hasAnyPermission(userPermissions, permissions);
+      }
+      return false;
     };
 
     next();
@@ -85,10 +119,8 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
-// Rest of your middleware remains the same...
-
 // =========================
-// 2. Enhanced Permission Middleware
+// 2. Enhanced Permission Middleware (Updated for new system)
 // =========================
 export const validatePermission = (requiredPermissions = {}) => {
   return async (req, res, next) => {
@@ -102,36 +134,69 @@ export const validatePermission = (requiredPermissions = {}) => {
       }
 
       const user = req.user || req.authUser;
+      const roleId = user.roleId || user.BU_ROLE_ID;
 
-      // Bypass permission checks for super admins
-      if (user.roles?.includes('SUPER_ADMIN') || user.role === 'SUPER_ADMIN') {
+      // Bypass permission checks for super admins (roleId 1)
+      if (parseInt(roleId) === 1) {
         return next();
       }
 
-      const userPermissions = await Permissions.findOne({
-        BU_ROLE_ID: user.roleId || user.BU_ROLE_ID
-      }).lean();
-
-      if (!userPermissions) {
-        return res.status(403).json({ 
-          success: false,
-          message: 'No permissions assigned to your role',
-          resolution: 'Contact your administrator to get permissions assigned'
-        });
-      }
-
-      // Check each required permission group
-      for (const [group, perms] of Object.entries(requiredPermissions)) {
-        const field = `${group}_ACCESS_LEVEL`;
-        const allowed = userPermissions[field] || [];
-
-        const missing = perms.filter(p => !allowed.includes(p));
-        if (missing.length > 0) {
+      // NEW: Support for string-based permissions (backward compatible)
+      if (typeof requiredPermissions === 'string') {
+        // Single permission check using new system
+        const hasPerm = await roleHasPermission(roleId, requiredPermissions);
+        if (!hasPerm) {
           return res.status(403).json({
             success: false,
-            message: `Missing ${group} permissions: ${missing.join(', ')}`,
-            resolution: 'Contact your administrator to request these permissions'
+            message: `Missing permission: ${requiredPermissions}`,
+            resolution: 'Contact your administrator to request this permission'
           });
+        }
+        return next();
+      }
+
+      // NEW: Support for array of permissions (all required)
+      if (Array.isArray(requiredPermissions)) {
+        for (const permission of requiredPermissions) {
+          const hasPerm = await roleHasPermission(roleId, permission);
+          if (!hasPerm) {
+            return res.status(403).json({
+              success: false,
+              message: `Missing permission: ${permission}`,
+              resolution: 'Contact your administrator to request this permission'
+            });
+          }
+        }
+        return next();
+      }
+
+      // OLD: Object-based permission structure (backward compatible)
+      if (Object.keys(requiredPermissions).length > 0) {
+        const userPermissions = await Permissions.findOne({
+          BU_ROLE_ID: roleId
+        }).lean();
+
+        if (!userPermissions) {
+          return res.status(403).json({ 
+            success: false,
+            message: 'No permissions assigned to your role',
+            resolution: 'Contact your administrator to get permissions assigned'
+          });
+        }
+
+        // Check each required permission group
+        for (const [group, perms] of Object.entries(requiredPermissions)) {
+          const field = `${group}_ACCESS_LEVEL`;
+          const allowed = userPermissions[field] || [];
+
+          const missing = perms.filter(p => !allowed.includes(p));
+          if (missing.length > 0) {
+            return res.status(403).json({
+              success: false,
+              message: `Missing ${group} permissions: ${missing.join(', ')}`,
+              resolution: 'Contact your administrator to request these permissions'
+            });
+          }
         }
       }
 
@@ -149,40 +214,176 @@ export const validatePermission = (requiredPermissions = {}) => {
 };
 
 // =========================
-// 3. Universal Role-based Middleware
+// 3. Universal Role-based Middleware (Enhanced)
 // =========================
 export const hasRole = (...roles) => {
-  return (req, res, next) => {
-    if (!req.user && !req.authUser) {
-      return res.status(401).json({ 
+  return async (req, res, next) => {
+    try {
+      if (!req.user && !req.authUser) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Authentication required',
+          resolution: 'This endpoint requires prior authentication'
+        });
+      }
+
+      const user = req.user || req.authUser;
+      const userRoles = user.roles || [];
+      const userRole = user.role;
+      const userRoleId = user.roleId || user.BU_ROLE_ID;
+      
+      // Check numeric role IDs
+      const hasRequiredById = roles.some(role => {
+        if (typeof role === 'number') {
+          return parseInt(userRoleId) === role;
+        }
+        return false;
+      });
+
+      // Check string role names
+      const hasRequiredByName = roles.some(role => {
+        if (typeof role === 'string') {
+          return userRoles.includes(role) || userRole === role;
+        }
+        return false;
+      });
+
+      if (!hasRequiredById && !hasRequiredByName) {
+        return res.status(403).json({
+          success: false,
+          message: 'Unauthorized access',
+          resolution: `Requires one of these roles: ${roles.join(', ')}`
+        });
+      }
+
+      next();
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: 'Authentication required',
-        resolution: 'This endpoint requires prior authentication'
+        message: 'Role validation failed',
+        error: error.message
       });
     }
-
-    const user = req.user || req.authUser;
-    const userRoles = user.roles || [];
-    const userRole = user.role;
-    
-    const hasRequired = roles.some(role => 
-      userRoles.includes(role) || userRole === role
-    );
-
-    if (!hasRequired) {
-      return res.status(403).json({
-        success: false,
-        message: 'Unauthorized access',
-        resolution: `Requires one of these roles: ${roles.join(', ')}`
-      });
-    }
-
-    next();
   };
 };
 
 // =========================
-// 4. Auth + Permissions Shortcut (Enhanced)
+// 4. New Permission Middleware (Simplified)
+// =========================
+export const requirePermission = (permission) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user && !req.authUser) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+
+      const user = req.user || req.authUser;
+      const roleId = user.roleId || user.BU_ROLE_ID;
+
+      // Super admin bypass
+      if (parseInt(roleId) === 1) {
+        return next();
+      }
+
+      const hasPerm = await roleHasPermission(roleId, permission);
+      if (!hasPerm) {
+        return res.status(403).json({
+          success: false,
+          message: `Insufficient permissions. Required: ${permission}`
+        });
+      }
+
+      next();
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Permission check failed'
+      });
+    }
+  };
+};
+
+export const requireAllPermissions = (permissions) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user && !req.authUser) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+
+      const user = req.user || req.authUser;
+      const roleId = user.roleId || user.BU_ROLE_ID;
+
+      // Super admin bypass
+      if (parseInt(roleId) === 1) {
+        return next();
+      }
+
+      for (const permission of permissions) {
+        const hasPerm = await roleHasPermission(roleId, permission);
+        if (!hasPerm) {
+          return res.status(403).json({
+            success: false,
+            message: `Insufficient permissions. Missing: ${permission}`
+          });
+        }
+      }
+
+      next();
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Permission check failed'
+      });
+    }
+  };
+};
+
+export const requireAnyPermission = (permissions) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user && !req.authUser) {
+        return res.status(401).json({ 
+          success: false,
+          message: 'Authentication required'
+        });
+      }
+
+      const user = req.user || req.authUser;
+      const roleId = user.roleId || user.BU_ROLE_ID;
+
+      // Super admin bypass
+      if (parseInt(roleId) === 1) {
+        return next();
+      }
+
+      for (const permission of permissions) {
+        const hasPerm = await roleHasPermission(roleId, permission);
+        if (hasPerm) {
+          return next();
+        }
+      }
+
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Requires one of: ${permissions.join(', ')}`
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Permission check failed'
+      });
+    }
+  };
+};
+
+// =========================
+// 5. Auth + Permissions Shortcut (Enhanced)
 // =========================
 export const authWithPermissions = (requiredPermissions = {}) => [
   authenticate,
@@ -190,7 +391,7 @@ export const authWithPermissions = (requiredPermissions = {}) => [
 ];
 
 // =========================
-// 5. JWT Generator (Enhanced)
+// 6. JWT Generator (Enhanced)
 // =========================
 export const generateToken = (user) => {
   if (!user || !user._id) {
@@ -205,13 +406,26 @@ export const generateToken = (user) => {
       roles: user.roles || [],
       roleId: user.BU_ROLE_ID || user.roleId || null
     },
-    secretKey,
+    getSecretKey(),
     { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
   );
 };
 
 // =========================
-// 6. Optional: Token Refresh Middleware
+// 7. Simple Auth Check Middleware
+// =========================
+export const requireAuth = (req, res, next) => {
+  if (!req.user && !req.authUser) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required'
+    });
+  }
+  next();
+};
+
+// =========================
+// 8. Optional: Token Refresh Middleware
 // =========================
 export const refreshTokenMiddleware = async (req, res, next) => {
   try {
@@ -224,7 +438,7 @@ export const refreshTokenMiddleware = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || getSecretKey());
     const user = await User.findById(decoded.id);
     
     if (!user) {
@@ -252,6 +466,10 @@ export default {
   authenticate,
   validatePermission,
   hasRole,
+  requirePermission,
+  requireAllPermissions,
+  requireAnyPermission,
+  requireAuth,
   authWithPermissions,
   generateToken,
   refreshTokenMiddleware

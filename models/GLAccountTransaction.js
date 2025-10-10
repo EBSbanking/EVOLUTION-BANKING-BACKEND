@@ -1,30 +1,47 @@
 import mongoose from 'mongoose';
-import express from 'express';
-import GLAccount from '../models/GLAccountTransaction.js';
 
-const { Schema } = mongoose;
+const generateTransactionId = () => {
+  const base = Date.now().toString();
+  const random = Math.floor(1000 + Math.random() * 9000);
+  return parseInt(base + random);
+};
 
-const GLAccountTransactionSchema = new Schema({
-  GL_ACCT_ID: { type: Number, required: true },
-  GL_ACCT_STRUCT_ID: { type: Number, required: true },
-  GL_ACCT_NO: { type: String, required: true, maxlength: 60 },
-  BAL_CD: { type: String, maxlength: 20 },
-  LEDGER_NO: { type: String, required: true, maxlength: 20 },
-  ACCT_DESC: { type: String, required: true, maxlength: 100 },
-  GL_ACCT_CAT_CD: { type: String, required: true, maxlength: 10 },
-  POST_FG: { type: String, maxlength: 1 },
-  CONTROL_ACCT_FG: { type: String, maxlength: 1 },
-  CRS_ALLOWED_FG: { type: String, maxlength: 1 },
-  DRS_ALLOWED_FG: { type: String, maxlength: 1 },
-  REC_ST: { type: String, required: true, maxlength: 1 },
-  VERSION_NO: { type: Number, required: true },
-  ROW_TS: { type: Date, required: true },
-  USER_ID: { type: String, required: true, maxlength: 24 },
-  CHART_OF_ACCT_ID: { type: Number },
-  BU_ID: { type: Number },
-  CREATE_DT: { type: Date, required: true },
-  SYS_CREATE_TS: { type: Date, required: true },
-  CREATED_BY: { type: String, required: true, maxlength: 24 }
+const GLAccountTransactionSchema = new mongoose.Schema({
+  GL_ACCT_NO: { type: String, required: true, index: true },
+  AMOUNT: { type: Number, required: true, min: 0 },
+  TRANSACTION_TYPE: { type: String, required: true, enum: ['DR', 'CR'] },
+  CURRENCY_CODE: { type: String, default: 'NGN' },
+  EXCHANGE_RATE: { type: Number, default: 1 },
+  CREATED_BY: { type: String, required: true },
+  CREATE_DT: { type: Date, default: Date.now },
+  ROW_TS: { type: Date, default: Date.now },
+  SYS_CREATE_TS: { type: Date, default: Date.now },
+  REC_ST: { type: String, default: 'A' },
+  VERSION_NO: { type: Number, default: 1 },
+  USER_ID: { type: String, required: true },
+  LEDGER_NO: { type: String },
+  SUB_LEDGER_NO: { type: String, default: '0000' },
+  SEG_NO: { type: Number, default: 1 },
+  BAL_CD: { type: String },
+  ACCT_DESC: { type: String },
+  GL_ACCT_CAT: { type: String },
+  GL_ACCT_ID: { type: String },
+  CHART_OF_ACCT_ID: { type: String },
+  BU_ID: { type: String },
+  POST_FG: { type: String, default: 'Y' },
+  CONTROL_ACCT_FG: { type: String, default: 'N' },
+  DESCRIPTION: { type: String },
+  TransactionId: {
+    type: Number,
+    unique: true,
+    default: generateTransactionId,
+  },
+  QueueTransactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'GLTransactionQueue',
+  },
+  JOURNAL_ID: { type: String, required: true }, // Link to original journal
+  REFERENCE_ID: { type: String }, // Link to source module
 });
 
 export default mongoose.model('GLAccountTransaction', GLAccountTransactionSchema);

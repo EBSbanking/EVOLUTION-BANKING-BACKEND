@@ -9,12 +9,80 @@ export default class InterestCalculationService {
     this.holidays = new Holidays('NG'); // Nigeria holiday calendar
   }
 
+  /**
+   * Calculate simple accrued interest for a given rateIndex
+   */
+  async calculateInterest({ rateIndexId, principal, startDate, endDate }) {
+    if (!rateIndexId || typeof rateIndexId !== 'number') {
+      throw new Error('rateIndexId must be a valid number');
+    }
+    if (!principal || principal <= 0) {
+      throw new Error('Principal must be greater than 0');
+    }
+    if (!startDate || !endDate) {
+      throw new Error('Both startDate and endDate are required');
+    }
+
+    const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: rateIndexId });
+    if (!rateIndex) {
+      throw new Error(`Rate Index ${rateIndexId} not found`);
+    }
+
+    const { INDEX_RATE, PRECISION = 2, DAY_COUNT_CONVENTION } = rateIndex;
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (end <= start) {
+      throw new Error('endDate must be after startDate');
+    }
+
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const daysBetween = Math.floor((end - start) / msPerDay);
+
+    
+        // Day-count convention handling
+    let yearBasis = 365;
+    if (DAY_COUNT_CONVENTION === 'ACTUAL/360') {
+      yearBasis = 360;
+    } else if (DAY_COUNT_CONVENTION === 'ACTUAL/365') {
+      // check if period falls in a leap year
+      const isLeap = (year) => (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+      if (isLeap(start.getFullYear()) || isLeap(end.getFullYear())) {
+        yearBasis = 366;
+      }
+    }
+
+
+    const annualRate = new Decimal(INDEX_RATE).div(100);
+    const interest = new Decimal(principal)
+      .times(annualRate)
+      .times(daysBetween)
+      .div(yearBasis)
+      .toDecimalPlaces(PRECISION)
+      .toNumber();
+
+    return {
+      principal,
+      annualRate: INDEX_RATE,
+      dayCountConvention: DAY_COUNT_CONVENTION,
+      daysBetween,
+      startDate: start,
+      endDate: end,
+      interest,
+      totalAmount: principal + interest,
+      calculationDate: new Date()
+    };
+  }
+
+  /**
+   * EMI calculation using reducing balance method
+   */
   calculateEMI(params) {
     this._validateEMIParams(params);
-    
+
     const { principal, annualRate, termMonths, startDate, precision = 2 } = params;
     const monthlyRate = new Decimal(annualRate).div(100).div(12);
-    
+
     const emi = new Decimal(principal)
       .times(monthlyRate)
       .times(Decimal.pow(Decimal.add(1, monthlyRate), termMonths))
@@ -49,7 +117,7 @@ export default class InterestCalculationService {
     for (let i = 1; i <= termMonths; i++) {
       const interest = balance.times(monthlyRate).toDecimalPlaces(precision).toNumber();
       const principalPayment = new Decimal(emi).minus(interest).toDecimalPlaces(precision).toNumber();
-      
+
       balance = balance.minus(principalPayment);
 
       const isFinalPayment = i === termMonths;
@@ -84,7 +152,7 @@ export default class InterestCalculationService {
 
   _validateEMIParams(params) {
     const { principal, annualRate, termMonths } = params;
-    
+
     if (typeof principal !== 'number' || principal <= 0) {
       throw new Error('Principal must be a positive number');
     }
@@ -99,4 +167,3 @@ export default class InterestCalculationService {
     }
   }
 }
-

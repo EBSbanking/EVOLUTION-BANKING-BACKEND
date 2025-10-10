@@ -147,7 +147,13 @@ const BusinessRoleSchema = new mongoose.Schema({
   ADMIN_OVERRIDE: {
     type: Boolean,
     default: false
-  }
+  },
+  WF_ITEM_ACCESS_LEVEL: {
+  type: String,
+  trim: true,
+  default: '' // e.g., could be 'VIEW_ONLY', 'APPROVER', etc.
+},
+
 }, {
   timestamps: true,
   toJSON: { 

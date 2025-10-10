@@ -1,36 +1,66 @@
+
 import mongoose from 'mongoose';
 
-// Define the schema for individual installment
-const InstallmentSchema = new mongoose.Schema({
+const RepaymentScheduleSchema = new mongoose.Schema({
+  ACCT_NO: { type: String, required: true },
+  LOAN_ACCOUNT_ID: { type: mongoose.Schema.Types.ObjectId, required: true },
+  CUST_ID: { type: Number, required: true },
   installmentNo: { type: Number, required: true },
   dueDate: { type: Date, required: true },
-  principal: { type: Number, required: true },
-  interest: { type: Number, required: true },
-  totalPayment: { type: Number, required: true },
-  amountPaid: { type: Number, default: 0 },
-  remainingBalance: { type: Number, default: 0 },
+  principal: {
+    type: mongoose.Schema.Types.Decimal128,
+    required: true,
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  interest: {
+    type: mongoose.Schema.Types.Decimal128,
+    required: true,
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  totalPayment: {
+    type: mongoose.Schema.Types.Decimal128,
+    required: true,
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  amountPaid: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  principalPaid: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  interestPaid: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  feesPaid: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  remainingBalance: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
   status: {
     type: String,
-    enum: ['PENDING', 'PAID', 'PARTIAL', 'OVERDUE'],
+    enum: ['PENDING', 'PARTIAL', 'PAID', 'OVERDUE'],
     default: 'PENDING'
   },
-  isFinalInstallment: { type: Boolean, default: false },
-  fees: { type: Number, default: 0 },
-  tax: { type: Number, default: 0 },
-  paymentDate: { type: Date }
-});
-
-// Define the overall repayment schedule schema
-const RepaymentScheduleSchema = new mongoose.Schema({
-  LOAN_ACCOUNT_ID: { type: String, required: true },
-  ACCT_NO: { type: String, required: true },
-  CUST_ID: { type: String, required: true },
-  START_DATE: { type: Date, required: true },
-  MATURITY_DATE: { type: Date, required: true },
-  PRINCIPAL_AMOUNT: { type: Number, required: true },
-  INTEREST_RATE: { type: Number, required: true },
-  TERM: { type: Number, required: true },
-  TERM_TYPE: {
+  termCode: {
     type: String,
     enum: ['D', 'W', 'M', 'Q', 'Y'],
     required: true
@@ -38,27 +68,23 @@ const RepaymentScheduleSchema = new mongoose.Schema({
   paymentFrequency: {
     type: String,
     enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'],
-    default: 'MONTHLY',
     required: true
   },
-  SCHEDULE: { type: [InstallmentSchema], required: true },
+  paymentDate: { type: Date },
+  paymentMethod: { type: String },
+  isEarlyPayment: { type: Boolean, default: false },
+  isOverduePayment: { type: Boolean, default: false },
+  lateFeeCharged: {
+    type: mongoose.Schema.Types.Decimal128,
+    default: '0.00',
+    get: v => parseFloat(v.toString()),
+    set: v => mongoose.Types.Decimal128.fromString(v.toString())
+  },
+  isFinalInstallment: { type: Boolean, default: false },
   TRANSACTION_ID: { type: String, required: true },
   EVENT_ID: { type: String, required: true },
-  CREATED_BY: { type: String, required: true },
-  STATUS: {
-  type: String,
-  enum: ['PENDING', 'ACTIVE', 'CLOSED', 'INACTIVE'], 
-  default: 'ACTIVE'
-},
-
-  SCHEDULE_TYPE: { type: String, default: 'STANDARD' },
-  GRACE_PERIOD_DAYS: { type: Number, default: 0 },
-  LATE_FEE_RATE: { type: Number, default: 0 },
-  EARLY_REPAYMENT_PENALTY: { type: Number, default: 0 },
-}, { timestamps: true });
-
-// Create model
-const RepaymentSchedule = mongoose.model('RepaymentSchedule', RepaymentScheduleSchema);
+  CREATED_BY: { type: String, required: true }
+}, { timestamps: true, toJSON: { getters: true } });
 
 // Helper: Convert term code to frequency
 const convertTermCodeToFrequency = (termCode) => {
@@ -84,9 +110,5 @@ const convertFrequencyToTermCode = (frequency) => {
   }
 };
 
-// Export
-export {
-  RepaymentSchedule as default,
-  convertTermCodeToFrequency,
-  convertFrequencyToTermCode
-};
+export default mongoose.model('RepaymentSchedule', RepaymentScheduleSchema);
+export { convertTermCodeToFrequency, convertFrequencyToTermCode };

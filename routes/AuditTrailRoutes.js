@@ -14,7 +14,7 @@ const router = express.Router();
 // ✅ Create a new audit trail entry
 router.post('/', createAuditTrail);
 
-// ✅ Get all audit trail entries (unarchived by default)
+// ✅ Get all audit trail entries (unarchived by default, supports dateFrom and dateTo query params)
 router.get('/', getAllAuditTrails);
 
 // ✅ Get a single audit trail entry by ID

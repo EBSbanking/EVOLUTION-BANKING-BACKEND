@@ -1,0 +1,56 @@
+
+% Setting up the document class and essential packages
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{pdflscape}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{xcolor}
+
+% Configuring page geometry for margins
+\geometry{left=1cm,right=1cm,top=2cm,bottom=2cm}
+
+% Defining colors for the table
+\definecolor{headerblue}{RGB}{0, 51, 102}
+\definecolor{rowgray}{RGB}{240, 240, 240}
+
+% Setting up fancyhdr for header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textbf{Evolution Banking} \\ \small{[Bank Logo]}}
+\fancyhead[R]{\today}
+\fancyfoot[C]{Page \thepage\ of \pageref{LastPage}}
+
+% Starting the document
+\begin{document}
+
+% Creating the title
+\begin{center}
+    \vspace*{1cm}
+    \textbf{\Large Deposit Report} \\
+    \vspace{0.5cm}
+    Generated on \today \\
+    \vspace{1cm}
+\end{center}
+
+% Starting landscape environment for the table
+\begin{landscape}
+
+\begin{longtable}{@{}p{2cm}p{2cm}p{2cm}p{2cm}p{2cm}@{}}
+    \toprule
+    \rowcolor{headerblue}
+    \color{white}\textbf{Account Number} & \color{white}\textbf{Customer ID} & \color{white}\textbf{Balance} & \color{white}\textbf{Deposit Date} & \color{white}\textbf{Status} \\
+    \midrule
+    \endhead
+    
+    \bottomrule
+\end{longtable}
+
+\end{landscape}
+
+\end{document}

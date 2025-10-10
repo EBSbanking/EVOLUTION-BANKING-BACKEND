@@ -56,6 +56,7 @@ export const upsertAML = async (req, res) => {
     });
 
     const newAMLData = {
+      fullName,
       BVN,
       NIN,
       IS_PEP,
@@ -510,6 +511,7 @@ export const getAllAMLRecords = async (req, res) => {
 export const updateAMLByCustId = async (req, res) => {
   try {
     const {
+      fullName,
       CUST_ID,
       BVN,
       NIN,

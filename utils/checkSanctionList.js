@@ -1,6 +1,5 @@
-// utils/checkSanctionList.js
 import axios from 'axios';
-import { logAuditTrail } from '../utils/AuditLogger.js';
+import { logAuditTrail } from './AuditLogger.js';
 
 // Cache for storing sanction check results (in-memory, consider Redis for production)
 const sanctionCache = new Map();
@@ -13,33 +12,47 @@ const testPatterns = {
   names: ['TEST SANCTION', 'JOHN DOE', 'JANE SMITH'] // Case insensitive
 };
 
-export const checkSanctionList = async (bvn, nin, customerName = null) => {
+// Fallback configuration
+const defaultConfig = {
+  sanctionCheck: {
+    enabled: process.env.SANCTION_CHECK_ENABLED === 'true' || false,
+    apiUrl: process.env.SANCTION_LIST_API_URL || 'https://api.sanctionlist.com'
+  }
+};
+
+export const checkSanctionList = async (bvn, nin, customerName = null, userId = 'system', ipAddress = '0.0.0.0', eventId = Date.now()) => {
   try {
     // Validate inputs
     if (!bvn && !nin && !customerName) {
-      throw new Error('Either BVN, NIN or customer name is required for sanction check');
+      throw new Error('Either BVN, NIN, or customer name is required for sanction check');
     }
 
     // Check cache first
     const cacheKey = `${bvn || ''}|${nin || ''}|${customerName || ''}`.toUpperCase();
     const cachedResult = sanctionCache.get(cacheKey);
-    
+
     if (cachedResult && (Date.now() - cachedResult.timestamp < CACHE_TTL)) {
       await logAuditTrail(
+        'SANCTION_CHECK',
+        null,
+        userId,
         'SANCTION_CHECK_CACHE_HIT',
-        { bvn, nin, customerName },
-        cachedResult
+        null,
+        { bvn, nin, customerName, result: cachedResult },
+        ipAddress,
+        'GENERAL',
+        { source: 'checkSanctionList', cacheHit: true }
       );
       return cachedResult;
     }
 
     let isSanctioned = false;
     let sanctionDetails = null;
-    
-    if (config.sanctionCheck.enabled) {
-      // If API is enabled (you can keep this for future integration)
+
+    // Check if sanction check API is enabled
+    if (defaultConfig.sanctionCheck.enabled) {
       try {
-        const response = await axios.post(config.sanctionCheck.apiUrl, { bvn, nin, customerName });
+        const response = await axios.post(defaultConfig.sanctionCheck.apiUrl, { bvn, nin, customerName });
         isSanctioned = response.data.isMatch;
         sanctionDetails = response.data.matches;
       } catch (apiError) {
@@ -51,23 +64,23 @@ export const checkSanctionList = async (bvn, nin, customerName = null) => {
     // Manual sanction check (always performed as fallback)
     const isBvnMatch = bvn && testPatterns.bvn.includes(bvn);
     const isNinMatch = nin && testPatterns.nin.includes(nin);
-    const isNameMatch = customerName && 
-      testPatterns.names.some(name => 
+    const isNameMatch = customerName &&
+      testPatterns.names.some(name =>
         customerName.toUpperCase().includes(name.toUpperCase())
       );
 
     if (!isSanctioned) {
       isSanctioned = isBvnMatch || isNinMatch || isNameMatch;
-      sanctionDetails = isBvnMatch ? { 
-        matchedField: 'BVN', 
+      sanctionDetails = isBvnMatch ? {
+        matchedField: 'BVN',
         matchedValue: bvn,
         list: 'Manual Sanction List'
-      } : isNinMatch ? { 
-        matchedField: 'NIN', 
+      } : isNinMatch ? {
+        matchedField: 'NIN',
         matchedValue: nin,
         list: 'Manual Sanction List'
-      } : isNameMatch ? { 
-        matchedField: 'NAME', 
+      } : isNameMatch ? {
+        matchedField: 'NAME',
         matchedValue: customerName,
         list: 'Manual PEP List'
       } : null;
@@ -80,20 +93,26 @@ export const checkSanctionList = async (bvn, nin, customerName = null) => {
       timestamp: Date.now(),
       checkedAt: new Date().toISOString()
     };
-    
+
     sanctionCache.set(cacheKey, result);
 
     // Log the sanction check
     await logAuditTrail(
       'SANCTION_CHECK',
-      { bvn, nin, customerName },
-      result
+      null,
+      userId,
+      isSanctioned ? 'SANCTION_MATCH' : 'SANCTION_CLEAR',
+      null,
+      { bvn, nin, customerName, result },
+      ipAddress,
+      'GENERAL',
+      { source: 'checkSanctionList' }
     );
 
     return result;
   } catch (error) {
     console.error('Sanction check error:', error);
-    
+
     // Fail-safe result
     const failSafeResult = {
       isSanctioned: false,
@@ -103,27 +122,28 @@ export const checkSanctionList = async (bvn, nin, customerName = null) => {
     };
 
     await logAuditTrail(
-      'SANCTION_CHECK_ERROR',
-      { bvn, nin, customerName },
-      failSafeResult
+      'SANCTION_CHECK',
+      null,
+      userId,
+      'SANCTION_CHECK_FAILED',
+      null,
+      { bvn, nin, customerName, error: error.message },
+      ipAddress,
+      'GENERAL',
+      { source: 'checkSanctionList', error: true }
     );
 
     return failSafeResult;
   }
 };
 
-// Helper function to clear cache (can be called periodically)
+// Helper function to clear cache
 export const clearSanctionCache = () => {
   sanctionCache.clear();
   console.log('Sanction check cache cleared');
 };
 
-/**
- * Adds test patterns to the manual sanction list
- * @param {'bvn'|'nin'|'names'} type - Identifier type
- * @param {string[]} values - Values to add
- * @returns {void}
- */
+// Adds test patterns to the manual sanction list
 export const addTestPatterns = (type, values) => {
   if (testPatterns[type]) {
     testPatterns[type].push(...values);
@@ -133,19 +153,4 @@ export const addTestPatterns = (type, values) => {
   }
 };
 
-// Example usage (documentation only, not part of the module)
-/*
-// Basic check (same as before)
-const result = await checkSanctionList('00000000000', '12345678901');
-
-// New: Check with name
-const result = await checkSanctionList(null, null, 'John Doe Test Sanction');
-
-// New: Add test patterns dynamically
-addTestPatterns('bvn', ['33333333333', '44444444444']);
-addTestPatterns('names', ['ALERT PERSON', 'BLOCKED CUSTOMER']);
-
-// Clear cache (same as before)
-clearSanctionCache();
-*/
 export default checkSanctionList;

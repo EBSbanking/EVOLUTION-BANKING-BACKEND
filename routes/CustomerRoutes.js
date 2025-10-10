@@ -80,11 +80,8 @@ router.get('/customers/:CUST_ID', getCustomerById);
 // UPDATE CUSTOMER DATA
 router.put('/customers/:CUST_ID', updateCustomer);
 
-// APPROVE CUSTOMER
-router.put('/approve/:CUST_ID', approveCustomer);
-
-// REJECT CUSTOMER
-router.put('/customer/reject/:CUST_ID', rejectCustomer);
+router.put('/approve/:customerId', approveCustomer); // ✅ This line
+router.put('/reject/:customerId', rejectCustomer);
 
 // DEACTIVATE CUSTOMER
 router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);

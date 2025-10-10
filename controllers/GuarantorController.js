@@ -1,31 +1,30 @@
-// controllers/guarantorController.js
 import mongoose from 'mongoose';
 import Guarantor from '../models/Guarantor.js';
 import LoanAccount from '../models/LoanAccount.js';
 import GuarantorAudit from '../models/GuarantorAudit.js';
-import { generateGuarantorId } from '../utils/generateGuarantorId.js'; // Adjust path as needed
-import { toDecimal } from '../utils/formatUtils.js'; // If you have this helper
+import { generateGuarantorId } from '../utils/generateGuarantorId.js';
+import { toDecimal } from '../utils/formatUtils.js';
 
 export const createGuarantor = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    // Destructure all fields from req.body
+    // Destructure fields from req.body, aligning with frontend payload
     const {
       fullName,
       phoneNumber,
       relationshipToBorrower,
       GUARANTEED_AMT,
       createdBy,
-      RELATIONSHIP_OFFICER_ID,
       relationshipOfficerName,
       loanId,
       status,
       email,
       address,
-      city,
       state,
+      localGovernment,
+      BU_ID,
       country = 'Nigeria',
       idType,
       idNumber,
@@ -34,22 +33,24 @@ export const createGuarantor = async (req, res) => {
       netWorth,
       annualIncome,
       occupation,
-      employmentType
+      employmentType,
     } = req.body;
 
-    // Validate required fields
-    if (!fullName || !phoneNumber || !relationshipToBorrower || !GUARANTEED_AMT || !createdBy) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Required fields are missing', 
+    // Validate required fields (aligned with Guarantor.jsx)
+    if (!fullName || !phoneNumber || !relationshipToBorrower || !GUARANTEED_AMT || !createdBy || !state || !BU_ID) {
+      return res.status(400).json({
+        success: false,
+        message: 'Required fields are missing',
         code: 'MISSING_FIELDS',
         missingFields: {
           fullName: !fullName,
           phoneNumber: !phoneNumber,
           relationshipToBorrower: !relationshipToBorrower,
           GUARANTEED_AMT: !GUARANTEED_AMT,
-          createdBy: !createdBy
-        }
+          createdBy: !createdBy,
+          state: !state,
+          BU_ID: !BU_ID,
+        },
       });
     }
 
@@ -58,7 +59,7 @@ export const createGuarantor = async (req, res) => {
     console.log('[ID GENERATION] Generated GUARANTOR_ID:', {
       value: GUARANTOR_ID,
       type: typeof GUARANTOR_ID,
-      length: GUARANTOR_ID.length
+      length: GUARANTOR_ID.length,
     });
 
     // Validate ID format
@@ -66,15 +67,27 @@ export const createGuarantor = async (req, res) => {
       throw new Error(`Invalid ID format generated: ${GUARANTOR_ID}`);
     }
 
-    // Check uniqueness
+    // Check uniqueness of GUARANTOR_ID
     const exists = await Guarantor.findOne({ GUARANTOR_ID }).session(session);
     if (exists) {
       await session.abortTransaction();
-      return res.status(409).json({ 
-        success: false, 
-        message: `Guarantor with ID ${GUARANTOR_ID} already exists`, 
+      return res.status(409).json({
+        success: false,
+        message: `Guarantor with ID ${GUARANTOR_ID} already exists`,
         code: 'DUPLICATE_GUARANTOR',
-        generatedId: GUARANTOR_ID
+        generatedId: GUARANTOR_ID,
+      });
+    }
+
+    // Validate BU_ID (ensure it exists in business units)
+    const BusinessUnit = mongoose.model('BusinessUnit');
+    const businessUnit = await BusinessUnit.findOne({ BU_ID: String(BU_ID) }).session(session);
+    if (!businessUnit) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: `Business Unit with ID ${BU_ID} not found`,
+        code: 'INVALID_BU_ID',
       });
     }
 
@@ -84,30 +97,30 @@ export const createGuarantor = async (req, res) => {
       linkedLoan = await LoanAccount.findOne({ loanAccountId: Number(loanId) }).session(session);
       if (!linkedLoan) {
         await session.abortTransaction();
-        return res.status(404).json({ 
-          success: false, 
-          message: 'Loan account not found', 
-          code: 'LOAN_NOT_FOUND' 
+        return res.status(404).json({
+          success: false,
+          message: 'Loan account not found',
+          code: 'LOAN_NOT_FOUND',
         });
       }
 
       const existingForLoan = await Guarantor.findOne({ loanId: Number(loanId) }).session(session);
       if (existingForLoan) {
         await session.abortTransaction();
-        return res.status(409).json({ 
-          success: false, 
-          message: 'Guarantor already exists for loan', 
-          code: 'GUARANTOR_EXISTS' 
+        return res.status(409).json({
+          success: false,
+          message: 'Guarantor already exists for loan',
+          code: 'GUARANTOR_EXISTS',
         });
       }
     }
 
     // Validate BVN
     if (bvn && !/^\d{11}$/.test(bvn)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'BVN must be 11 digits', 
-        code: 'INVALID_BVN' 
+      return res.status(400).json({
+        success: false,
+        message: 'BVN must be 11 digits',
+        code: 'INVALID_BVN',
       });
     }
 
@@ -115,46 +128,49 @@ export const createGuarantor = async (req, res) => {
       const bvnUsed = await Guarantor.findOne({ bvn }).session(session);
       if (bvnUsed) {
         await session.abortTransaction();
-        return res.status(409).json({ 
-          success: false, 
-          message: 'BVN already used', 
-          code: 'DUPLICATE_BVN' 
+        return res.status(409).json({
+          success: false,
+          message: 'BVN already used',
+          code: 'DUPLICATE_BVN',
         });
       }
     }
 
     // Create guarantor document
-    const newGuarantor = await Guarantor.create([{
-      GUARANTOR_ID,
-      fullName,
-      phoneNumber,
-      relationshipToBorrower,
-      GUARANTEED_AMT: toDecimal(GUARANTEED_AMT),
-      createdBy,
-      RELATIONSHIP_OFFICER_ID,
-      relationshipOfficerName,
-      loanId: loanId ? Number(loanId) : null,
-      status,
-      email,
-      address,
-      city,
-      state,
-      country,
-      idType,
-      idNumber,
-      bvn,
-      dateOfBirth,
-      netWorth: netWorth ? toDecimal(netWorth) : null,
-      annualIncome: annualIncome ? toDecimal(annualIncome) : null,
-      occupation,
-      employmentType,
-      verificationStatus: 'Pending'
-    }], { session });
+    const newGuarantor = await Guarantor.create(
+      [{
+        GUARANTOR_ID,
+        fullName,
+        phoneNumber,
+        relationshipToBorrower,
+        GUARANTEED_AMT: toDecimal(GUARANTEED_AMT),
+        createdBy,
+        relationshipOfficerName,
+        loanId: loanId ? Number(loanId) : null,
+        status: status || 'PENDING',
+        email,
+        address,
+        state,
+        localGovernment: localGovernment || null,
+        BU_ID: String(BU_ID),
+        country,
+        idType,
+        idNumber,
+        bvn,
+        dateOfBirth,
+        netWorth: netWorth ? toDecimal(netWorth) : null,
+        annualIncome: annualIncome ? toDecimal(annualIncome) : null,
+        occupation,
+        employmentType,
+        verificationStatus: 'Pending',
+      }],
+      { session }
+    );
 
     console.log('[CREATION SUCCESS] New guarantor:', {
       id: newGuarantor[0].GUARANTOR_ID,
       name: newGuarantor[0].fullName,
-      loan: newGuarantor[0].loanId || 'Not linked'
+      loan: newGuarantor[0].loanId || 'Not linked',
     });
 
     // Update related documents if loan was linked
@@ -165,9 +181,26 @@ export const createGuarantor = async (req, res) => {
         guarantor: newGuarantor[0],
         loanAccount: linkedLoan,
         user: req.user,
-        CREATED_BY: createdBy
+        CREATED_BY: createdBy,
       });
     }
+
+    // Create audit log - FIXED: Use the custom GUARANTOR_ID instead of ObjectID
+    const auditData = {
+      action: 'CREATE',
+      guarantorId: newGuarantor[0].GUARANTOR_ID, // Use the 7-digit custom ID
+      loanId: newGuarantor[0].loanId,
+      performedBy: req.user?.id || 'system',
+      relationshipOfficer: {
+        id: null,
+        name: relationshipOfficerName,
+      },
+      details: {
+        notes: 'Guarantor created',
+      },
+    };
+    
+    await new GuarantorAudit(auditData).save({ session });
 
     await session.commitTransaction();
 
@@ -179,176 +212,26 @@ export const createGuarantor = async (req, res) => {
         name: newGuarantor[0].fullName,
         loanId: newGuarantor[0].loanId,
         status: newGuarantor[0].verificationStatus,
-        createdAt: newGuarantor[0].createdAt
+        createdAt: newGuarantor[0].createdAt,
       },
       systemInfo: {
         idFormat: '7-digit string',
         idType: typeof newGuarantor[0].GUARANTOR_ID,
-        idGeneration: 'auto-incremented'
-      }
+        idGeneration: 'auto-incremented',
+      },
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error('[CREATION FAILED] Error:', {
       message: error.message,
-      stack: error.stack
+      stack: error.stack,
     });
-    return res.status(500).json({ 
-      success: false, 
+    return res.status(500).json({
+      success: false,
       message: 'Failed to create guarantor',
       error: error.message,
       code: 'INTERNAL_SERVER_ERROR',
-      ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
-    });
-  } finally {
-    session.endSession();
-  }
-};
-
-// Approve Guarantor
-export const approveGuarantor = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { guarantorId } = req.params;
-
-    // Find guarantor by GUARANTOR_ID
-    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
-    if (!guarantor) {
-      await session.abortTransaction();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Guarantor not found', 
-        code: 'NOT_FOUND' 
-      });
-    }
-
-    // Check if already verified
-    if (guarantor.verificationStatus === 'Verified') {
-      await session.abortTransaction();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Guarantor is already verified', 
-        code: 'ALREADY_VERIFIED' 
-      });
-    }
-
-    // Update both verificationStatus AND status fields
-    guarantor.verificationStatus = 'Verified';
-    guarantor.status = 'ACTIVE';  // This is the new line you need to add
-    guarantor.updatedBy = req.user?.id || 'system';
-    guarantor.verifiedBy = req.user?.name || 'Supervisor Approver';
-    guarantor.verifier = {
-      id: req.user?.id || 'system',
-      name: req.user?.name || 'Supervisor Approver'
-    };
-
-    // Set consentDate if missing
-    if (!guarantor.consentDate) {
-      guarantor.consentDate = new Date();
-    }
-
-    // Save update
-    await guarantor.save({ session });
-
-    await session.commitTransaction();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Guarantor approved successfully',
-      data: {
-        id: guarantor._id,
-        guarantorId: guarantor.GUARANTOR_ID,
-        name: guarantor.fullName,
-        verificationStatus: guarantor.verificationStatus,
-        status: guarantor.status,  // Include the new status in response
-        verifiedBy: guarantor.verifier,
-        updatedDate: guarantor.updatedAt
-      }
-    });
-  } catch (error) {
-    await session.abortTransaction();
-    console.error('Approve Guarantor Error:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to approve guarantor', 
-      error: error.message 
-    });
-  } finally {
-    session.endSession();
-  }
-};
-
-export const rejectGuarantor = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { guarantorId } = req.params;
-
-    // Find guarantor by GUARANTOR_ID
-    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
-    if (!guarantor) {
-      await session.abortTransaction();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Guarantor not found', 
-        code: 'NOT_FOUND' 
-      });
-    }
-
-    // Check if already rejected
-    if (guarantor.verificationStatus === 'Rejected') {
-      await session.abortTransaction();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Guarantor is already rejected', 
-        code: 'ALREADY_REJECTED' 
-      });
-    }
-
-    // Update status to REJECTED
-    guarantor.verificationStatus = 'Rejected';
-    guarantor.status = 'REJECTED';
-    guarantor.updatedBy = req.user?.id || 'system';
-    guarantor.rejectedBy = req.user?.name || 'Supervisor Approver';
-    guarantor.verifier = {
-      id: req.user?.id || 'system',
-      name: req.user?.name || 'Supervisor Approver'
-    };
-
-    // Optionally store reason or rejectionDate if needed
-    if (!guarantor.rejectionDate) {
-      guarantor.rejectionDate = new Date();
-    }
-
-    // Save changes
-    await guarantor.save({ session });
-
-    await session.commitTransaction();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Guarantor rejected successfully',
-      data: {
-        id: guarantor._id,
-        guarantorId: guarantor.GUARANTOR_ID,
-        name: guarantor.fullName,
-        verificationStatus: guarantor.verificationStatus,
-        status: guarantor.status,
-        rejectedBy: guarantor.verifier,
-        updatedDate: guarantor.updatedAt
-      }
-    });
-  } catch (error) {
-    await session.abortTransaction();
-    console.error('Reject Guarantor Error:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reject guarantor', 
-      error: error.message 
+      ...(process.env.NODE_ENV === 'development' && { stack: error.stack }),
     });
   } finally {
     session.endSession();
@@ -356,7 +239,6 @@ export const rejectGuarantor = async (req, res) => {
 };
 
 
-// Update Guarantor
 export const updateGuarantor = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -414,6 +296,7 @@ export const updateGuarantor = async (req, res) => {
       address,
       city,
       state,
+      localGovernment,
       country,
       idType,
       idNumber,
@@ -425,6 +308,16 @@ export const updateGuarantor = async (req, res) => {
       employmentType,
       verificationStatus
     } = req.body;
+
+    // Validate required fields
+    if (fullName === undefined && phoneNumber === undefined && relationshipToBorrower === undefined && 
+        GUARANTEED_AMT === undefined && state === undefined) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'At least one required field (fullName, phoneNumber, relationshipToBorrower, GUARANTEED_AMT, state) must be provided for update', 
+        code: 'MISSING_REQUIRED_FIELDS'
+      });
+    }
 
     // Validate loan if provided
     let linkedLoan = null;
@@ -495,6 +388,7 @@ export const updateGuarantor = async (req, res) => {
       address: address || existingGuarantor.address,
       city: city || existingGuarantor.city,
       state: state || existingGuarantor.state,
+      localGovernment: localGovernment !== undefined ? localGovernment : existingGuarantor.localGovernment,
       country: country || existingGuarantor.country,
       idType: idType || existingGuarantor.idType,
       idNumber: idNumber || existingGuarantor.idNumber,
@@ -510,12 +404,13 @@ export const updateGuarantor = async (req, res) => {
 
     // Perform the update
     const updatedGuarantor = await Guarantor.findOneAndUpdate(
-      { _id: existingGuarantor._id }, // More reliable than GUARANTOR_ID
+      { _id: existingGuarantor._id },
       updateData,
       { new: true, session }
     );
 
     // Update related documents if loan changed
+    // Note: updateRelatedDocuments is assumed to be defined elsewhere
     if (loanId && linkedLoan) {
       await updateRelatedDocuments({
         session,
@@ -526,6 +421,28 @@ export const updateGuarantor = async (req, res) => {
         CREATED_BY: existingGuarantor.createdBy
       });
     }
+
+    // Create audit log
+    const auditData = {
+      action: 'UPDATE',
+      guarantorId: updatedGuarantor.GUARANTOR_ID,
+      loanId: updatedGuarantor.loanId,
+      performedBy: req.user?.id || 'system',
+      relationshipOfficer: {
+        id: updatedGuarantor.RELATIONSHIP_OFFICER_ID,
+        name: updatedGuarantor.relationshipOfficerName
+      },
+      details: {
+        notes: 'Guarantor updated',
+        updatedFields: Object.keys(updateData).filter(key => updateData[key] !== existingGuarantor[key])
+      }
+    };
+    if (GuarantorAudit.schema.path('guarantorId').instance === 'Number') {
+      auditData.guarantorId = Number(updatedGuarantor.GUARANTOR_ID);
+    } else if (GuarantorAudit.schema.path('guarantorId').instance === 'ObjectID') {
+      auditData.guarantorId = updatedGuarantor._id;
+    }
+    await new GuarantorAudit(auditData).save({ session });
 
     await session.commitTransaction();
 
@@ -549,11 +466,146 @@ export const updateGuarantor = async (req, res) => {
   }
 };
 
-/**
- * @desc    Get all guarantors with optional filtering and pagination
- * @route   GET /api/guarantors
- * @access  Private (Admin/Authorized roles)
- */
+
+
+// Approve Guarantor with comments
+// Approve Guarantor with comments
+export const approveGuarantor = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { guarantorId } = req.params;
+    const { comments, BU_ID, state, relationshipOfficerName } = req.body;
+
+    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
+    if (!guarantor) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: 'Guarantor not found', code: 'NOT_FOUND' });
+    }
+
+    if (guarantor.verificationStatus === 'Verified') {
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: 'Guarantor is already verified', code: 'ALREADY_VERIFIED' });
+    }
+
+    // Ensure required fields
+    guarantor.BU_ID = guarantor.BU_ID || BU_ID || 'DEFAULT_BU_ID';
+    guarantor.state = guarantor.state || state || 'DEFAULT_STATE';
+    guarantor.relationshipOfficerName = guarantor.relationshipOfficerName || relationshipOfficerName || 'Supervisor Approver';
+
+    // Update guarantor
+    guarantor.verificationStatus = 'Verified';
+    guarantor.status = 'ACTIVE';
+    guarantor.verifiedBy = req.user?.name || 'Supervisor Approver';
+    guarantor.verificationDate = new Date();
+    guarantor.updatedBy = req.user?.id || 'system';
+    guarantor.email = guarantor.email || req.body.email || 'default@example.com';
+    if (!guarantor.consentDate) guarantor.consentDate = new Date();
+
+    await guarantor.save({ session });
+
+    // Audit log
+    const auditData = {
+      action: 'APPROVED',
+      guarantorId: guarantor.GUARANTOR_ID,
+      loanId: guarantor.loanId,
+      performedBy: req.user?.id || 'system',
+      relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
+      details: { notes: comments || 'Guarantor approved' },
+    };
+    await new GuarantorAudit(auditData).save({ session });
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      success: true,
+      message: `Guarantor with ID ${guarantor.GUARANTOR_ID} has been approved`,
+      data: {
+        id: guarantor._id,
+        guarantorId: guarantor.GUARANTOR_ID,
+        name: guarantor.fullName,
+        verificationStatus: guarantor.verificationStatus,
+        status: guarantor.status,
+        verifiedBy: guarantor.verifiedBy,
+        updatedDate: guarantor.updatedAt,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Approve Guarantor Error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to approve guarantor', error: error.message, code: 'APPROVE_ERROR' });
+  } finally {
+    session.endSession();
+  }
+};
+
+
+// Reject Guarantor with comments
+export const rejectGuarantor = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { guarantorId } = req.params;
+    const { comments } = req.body;
+
+    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
+    if (!guarantor) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: 'Guarantor not found', code: 'NOT_FOUND' });
+    }
+
+    if (guarantor.verificationStatus === 'Rejected') {
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: 'Guarantor is already rejected', code: 'ALREADY_REJECTED' });
+    }
+
+    // Update status
+    guarantor.verificationStatus = 'Rejected';
+    guarantor.status = 'REJECTED';
+    guarantor.verifiedBy = req.user?.name || 'Supervisor Approver';
+    guarantor.verificationDate = new Date();
+    guarantor.updatedBy = req.user?.id || 'system';
+
+    await guarantor.save({ session });
+
+    // Audit log
+    const auditData = {
+      action: 'REJECTED',
+      guarantorId: guarantor.GUARANTOR_ID,
+      loanId: guarantor.loanId,
+      performedBy: req.user?.id || 'system',
+      relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
+      details: { notes: comments || 'Guarantor rejected' },
+    };
+    await new GuarantorAudit(auditData).save({ session });
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      success: true,
+      message: `Guarantor with ID ${guarantor.GUARANTOR_ID} has been rejected`, // ✅ dynamic ID
+      data: {
+        id: guarantor._id,
+        guarantorId: guarantor.GUARANTOR_ID,
+        name: guarantor.fullName,
+        verificationStatus: guarantor.verificationStatus,
+        status: guarantor.status,
+        rejectedBy: guarantor.verifiedBy,
+        updatedDate: guarantor.updatedAt,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Reject Guarantor Error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reject guarantor', error: error.message, code: 'REJECT_ERROR' });
+  } finally {
+    session.endSession();
+  }
+};
+
+
 export const getAllGuarantors = async (req, res) => {
   try {
     // Pagination parameters
@@ -573,7 +625,9 @@ export const getAllGuarantors = async (req, res) => {
       filter.$or = [
         { fullName: { $regex: req.query.search, $options: 'i' } },
         { GUARANTOR_ID: req.query.search },
-        { phoneNumber: req.query.search }
+        { phoneNumber: req.query.search },
+        { state: { $regex: req.query.search, $options: 'i' } },
+        { localGovernment: { $regex: req.query.search, $options: 'i' } }
       ];
     }
 
@@ -596,6 +650,9 @@ export const getAllGuarantors = async (req, res) => {
       status: guarantor.verificationStatus,
       guaranteedAmount: guarantor.GUARANTEED_AMT,
       loanId: guarantor.loanId || null,
+      state: guarantor.state,
+      localGovernment: guarantor.localGovernment,
+      country: guarantor.country,
       createdAt: guarantor.createdAt,
       updatedAt: guarantor.updatedAt
     }));
@@ -628,17 +685,18 @@ export const getAllGuarantors = async (req, res) => {
   }
 };
 
-/**
- * @desc    Get a single guarantor by GUARANTOR_ID
- * @route   GET /api/guarantors/:id
- * @access  Private (Admin/Authorized roles)
- */
 export const getGuarantorById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find guarantor by GUARANTOR_ID
-    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: id }).lean();
+    // Find guarantor by GUARANTOR_ID with flexible type handling
+    const guarantor = await Guarantor.findOne({ 
+      $or: [
+        { GUARANTOR_ID: id },
+        { GUARANTOR_ID: Number(id) },
+        { GUARANTOR_ID: id.toString() }
+      ]
+    }).lean();
 
     if (!guarantor) {
       return res.status(404).json({
@@ -677,6 +735,7 @@ export const getGuarantorById = async (req, res) => {
         address: guarantor.address,
         city: guarantor.city,
         state: guarantor.state,
+        localGovernment: guarantor.localGovernment,
         country: guarantor.country
       },
       loanInfo: {
@@ -705,11 +764,6 @@ export const getGuarantorById = async (req, res) => {
   }
 };
 
-/**
- * @desc    Get guarantor(s) associated with a specific loan
- * @route   GET /api/guarantors/loan/:loanId
- * @access  Private (Admin/Relationship Officer)
- */
 export const getGuarantorByLoanId = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -758,6 +812,9 @@ export const getGuarantorByLoanId = async (req, res) => {
       relationship: guarantor.relationshipToBorrower,
       guaranteedAmount: guarantor.GUARANTEED_AMT,
       status: guarantor.verificationStatus,
+      state: guarantor.state,
+      localGovernment: guarantor.localGovernment,
+      country: guarantor.country,
       created: guarantor.createdAt,
       loanDetails: {
         accountName: loan?.ACCT_NM || 'Not found',
@@ -789,20 +846,6 @@ export const getGuarantorByLoanId = async (req, res) => {
   }
 };
 
-
-// Helper function for consistent error responses
-const handleError = (res, error, context) => {
-  console.error(`${context} Error:`, error);
-  return res.status(500).json({
-    success: false,
-    message: `Failed to ${context.toLowerCase()}`,
-    error: error.message,
-    code: `GUARANTOR_${context.toUpperCase()}_ERROR`,
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
-  });
-};
-
-// ✅ Delete guarantor by ID
 export const deleteGuarantor = async (req, res) => {
   const session = await mongoose.startSession();
   try {
@@ -818,7 +861,13 @@ export const deleteGuarantor = async (req, res) => {
       });
     }
 
-    const guarantor = await Guarantor.findOneAndDelete({ GUARANTOR_ID: id }).session(session);
+    const guarantor = await Guarantor.findOneAndDelete({ 
+      $or: [
+        { GUARANTOR_ID: id },
+        { GUARANTOR_ID: Number(id) },
+        { GUARANTOR_ID: id.toString() }
+      ]
+    }).session(session);
 
     if (!guarantor) {
       return res.status(404).json({
@@ -839,9 +888,9 @@ export const deleteGuarantor = async (req, res) => {
     }
 
     // Create audit log
-    await new GuarantorAudit({
+    const auditData = {
       action: 'DELETE',
-      guarantorId: guarantor._id,
+      guarantorId: guarantor.GUARANTOR_ID,
       loanId: guarantor.loanId,
       performedBy: req.user?.id || 'system',
       relationshipOfficer: {
@@ -849,9 +898,15 @@ export const deleteGuarantor = async (req, res) => {
         name: guarantor.relationshipOfficerName
       },
       details: {
-        notes: "Guarantor permanently deleted"
+        notes: 'Guarantor permanently deleted'
       }
-    }).save();
+    };
+    if (GuarantorAudit.schema.path('guarantorId').instance === 'Number') {
+      auditData.guarantorId = Number(guarantor.GUARANTOR_ID);
+    } else if (GuarantorAudit.schema.path('guarantorId').instance === 'ObjectID') {
+      auditData.guarantorId = guarantor._id;
+    }
+    await new GuarantorAudit(auditData).save({ session });
 
     await session.commitTransaction();
 
@@ -867,19 +922,24 @@ export const deleteGuarantor = async (req, res) => {
 
   } catch (error) {
     await session.abortTransaction();
-    return handleError(res, error, 'Delete Guarantor');
+    console.error('Delete Guarantor Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete guarantor',
+      error: error.message,
+      code: 'DELETE_ERROR'
+    });
   } finally {
     session.endSession();
   }
 };
 
-// ✅ Search guarantors by various criteria
 export const searchGuarantors = async (req, res) => {
   try {
-    const { name, bvn, idNumber, relationship, minAmount, maxAmount, officerId, status, page = 1, limit = 10 } = req.query;
+    const { name, bvn, idNumber, relationship, minAmount, maxAmount, officerId, status, state, localGovernment, page = 1, limit = 10 } = req.query;
 
     // Validate at least one search parameter exists
-    const hasSearchParams = name || bvn || idNumber || relationship || minAmount || maxAmount || officerId || status;
+    const hasSearchParams = name || bvn || idNumber || relationship || minAmount || maxAmount || officerId || status || state || localGovernment;
     if (!hasSearchParams) {
       return res.status(400).json({
         success: false,
@@ -892,7 +952,6 @@ export const searchGuarantors = async (req, res) => {
     const query = {};
     
     if (name) {
-      // Split the search term into words and search for each word separately
       const nameTerms = name.split(' ');
       query.$and = nameTerms.map(term => ({
         fullName: { $regex: new RegExp(term.trim(), 'i') }
@@ -903,6 +962,8 @@ export const searchGuarantors = async (req, res) => {
     if (relationship) query.relationshipToBorrower = relationship;
     if (officerId) query.RELATIONSHIP_OFFICER_ID = officerId;
     if (status) query.verificationStatus = status;
+    if (state) query.state = { $regex: new RegExp(state, 'i') };
+    if (localGovernment) query.localGovernment = { $regex: new RegExp(localGovernment, 'i') };
     
     if (minAmount || maxAmount) {
       query.GUARANTEED_AMT = {};
@@ -921,13 +982,27 @@ export const searchGuarantors = async (req, res) => {
 
     const total = await Guarantor.countDocuments(query);
 
-    // Return results (even if empty)
+    // Format response
+    const formattedGuarantors = guarantors.map(guarantor => ({
+      id: guarantor.GUARANTOR_ID,
+      name: guarantor.fullName,
+      phone: guarantor.phoneNumber,
+      status: guarantor.verificationStatus,
+      guaranteedAmount: guarantor.GUARANTEED_AMT,
+      loanId: guarantor.loanId || null,
+      state: guarantor.state,
+      localGovernment: guarantor.localGovernment,
+      country: guarantor.country,
+      createdAt: guarantor.createdAt,
+      updatedAt: guarantor.updatedAt
+    }));
+
     return res.status(200).json({
       success: true,
       message: guarantors.length > 0 
         ? `${guarantors.length} guarantor(s) found` 
         : 'No guarantors matched your search criteria',
-      data: guarantors,
+      data: formattedGuarantors,
       pagination: {
         total,
         pages: Math.ceil(total / limit),
@@ -949,226 +1024,119 @@ export const searchGuarantors = async (req, res) => {
   }
 };
 
-// ✅ Remove guarantor from loan (soft delete)
-export const uncheckGuarantor = async (req, res) => {
-  const session = await mongoose.startSession();
-  try {
-    await session.startTransaction();
-    const { guarantorId } = req.params;
+export const uncheckGuarantor = async (guarantorId, loanAccountNumber, reason, notes, userId, session) => {
+  let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
+    .session(session)
+    .populate('guaranteedLoans');
 
-    if (!guarantorId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Guarantor ID is required',
-        code: 'MISSING_GUARANTOR_ID'
-      });
-    }
-
-    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
-      .session(session)
-      .populate('loanId', 'ACCT_NM ACCT_NO');
-
-    if (!guarantor) {
-      return res.status(404).json({
-        success: false,
-        message: 'Guarantor not found',
-        code: 'GUARANTOR_NOT_FOUND'
-      });
-    }
-
-    // Update guarantor
-    guarantor.isActive = false;
-    guarantor.removedAt = new Date();
-    guarantor.removalReason = req.body.reason || 'Guarantor voluntarily withdrew';
-    guarantor.updatedBy = req.user?.id || 'system';
-    await guarantor.save({ session });
-
-    // Update loan account if exists
-    if (guarantor.loanId) {
-      await LoanAccount.findByIdAndUpdate(
-        guarantor.loanId._id,
-        { $set: { hasGuarantor: false } },
-        { session }
-      );
-    }
-
-    // Create audit log - ensure types match your schema
-    const auditData = {
-      action: 'DEACTIVATE',
-      guarantorId: guarantor.GUARANTOR_ID, // Use the numeric ID if your schema expects Number
-      loanId: guarantor.loanId?._id,
-      performedBy: req.user?.id || 'system',
-      relationshipOfficer: {
-        id: guarantor.RELATIONSHIP_OFFICER_ID,
-        name: guarantor.relationshipOfficerName
-      },
-      details: {
-        reason: req.body.reason,
-        notes: req.body.notes
-      }
-    };
-
-    // Handle different schema expectations
-    if (GuarantorAudit.schema.path('guarantorId').instance === 'Number') {
-      auditData.guarantorId = Number(guarantor.GUARANTOR_ID);
-    } else if (GuarantorAudit.schema.path('guarantorId').instance === 'ObjectID') {
-      auditData.guarantorId = guarantor._id;
-    }
-
-    await new GuarantorAudit(auditData).save({ session });
-
-    await session.commitTransaction();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Guarantor successfully removed from loan',
-      data: {
-        guarantorId: guarantor.GUARANTOR_ID,
-        name: guarantor.fullName,
-        loanDetails: guarantor.loanId ? {
-          accountName: guarantor.loanId.ACCT_NM,
-          accountNumber: guarantor.loanId.ACCT_NO
-        } : null,
-        removedAt: guarantor.removedAt,
-        removedBy: req.user?.id || 'system'
-      }
-    });
-
-  } catch (error) {
-    await session.abortTransaction();
-    console.error('Uncheck Guarantor Error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to uncheck guarantor',
-      error: error.message,
-      code: 'GUARANTOR_UNCHECK_ERROR'
-    });
-  } finally {
-    session.endSession();
+  if (!guarantor) {
+    throw new Error('Guarantor not found');
   }
+
+  let loanAccount = guarantor.guaranteedLoans.find(loan => loan.ACCT_NO === loanAccountNumber);
+  if (!loanAccount && loanAccountNumber) {
+    loanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
+    if (loanAccount && !guarantor.guaranteedLoans.includes(loanAccount._id)) {
+      guarantor.guaranteedLoans.push(loanAccount._id);
+      await guarantor.save({ session });
+    }
+  }
+
+  guarantor.isActive = false;
+  guarantor.removedAt = new Date();
+  guarantor.removalReason = reason || 'Guarantor voluntarily withdrew';
+  guarantor.updatedBy = userId;
+  await guarantor.save({ session });
+
+  if (loanAccount) {
+    loanAccount.HAS_GUARANTOR = false;
+    await loanAccount.save({ session });
+  }
+
+  await new GuarantorAudit({
+    action: 'DEACTIVATE',
+    guarantorId: guarantor.GUARANTOR_ID,
+    loanId: loanAccount?._id,
+    performedBy: userId,
+    relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
+    details: { reason, notes }
+  }).save({ session });
+
+  return {
+    guarantorId: guarantor.GUARANTOR_ID,
+    name: guarantor.fullName,
+    removedAt: guarantor.removedAt,
+    removedBy: userId,
+    loanDetails: loanAccount ? {
+      accountName: loanAccount.ACCT_NM,
+      accountNumber: loanAccount.ACCT_NO,
+      loanStatus: loanAccount.LOAN_STATUS,
+      disbursementLimit: loanAccount.DISBURSEMENT_LIMIT,
+      totalInterest: loanAccount.TOTAL_INTEREST,
+      maturityDate: loanAccount.MATURITY_DT
+    } : null
+  };
 };
 
-// ✅ Reactivate guarantor
-export const reactivateGuarantor = async (req, res) => {
-  const session = await mongoose.startSession();
-  try {
-    await session.startTransaction();
-    const { guarantorId } = req.params;
+export const reactivateGuarantor = async (guarantorId, loanAccountNumber, notes, userId, session) => {
+  let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
+    .session(session)
+    .populate('guaranteedLoans');
 
-    // Validate the numeric ID format
-    if (!guarantorId || isNaN(guarantorId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid guarantor ID format (must be a number)',
-        code: 'INVALID_ID_FORMAT'
-      });
-    }
-
-    // Find by GUARANTOR_ID instead of _id
-    const guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
-      .session(session)
-      .populate('loanId', 'ACCT_NM ACCT_NO LOAN_STATUS');
-
-    if (!guarantor) {
-      return res.status(404).json({
-        success: false,
-        message: 'Guarantor not found',
-        code: 'GUARANTOR_NOT_FOUND'
-      });
-    }
-
-    // Verify loan status if exists
-    if (guarantor.loanId) {
-      if (guarantor.loanId.LOAN_STATUS !== 'ACTIVE') {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot reactivate - associated loan is not active',
-          code: 'INACTIVE_LOAN',
-          loanStatus: guarantor.loanId.LOAN_STATUS
-        });
-      }
-    }
-
-    // Update guarantor
-    const updatedGuarantor = await Guarantor.findOneAndUpdate(
-      { GUARANTOR_ID: guarantorId },
-      {
-        $set: {
-          isActive: true,
-          updatedBy: req.user?.id || 'system'
-        },
-        $unset: {
-          removedAt: 1,
-          removalReason: 1
-        }
-      },
-      { new: true, session }
-    ).populate('loanId', 'ACCT_NM ACCT_NO');
-
-    // Update loan account if exists
-    if (updatedGuarantor.loanId) {
-      await LoanAccount.findByIdAndUpdate(
-        updatedGuarantor.loanId._id,
-        { $set: { hasGuarantor: true } },
-        { session }
-      );
-    }
-
-    // Create audit log - ensure this matches your GuarantorAudit schema
-    const auditData = {
-      action: 'REACTIVATE',
-      guarantorId: guarantor.GUARANTOR_ID, // Using numeric ID
-      loanId: updatedGuarantor.loanId?._id,
-      performedBy: req.user?.id || 'system',
-      relationshipOfficer: {
-        id: updatedGuarantor.RELATIONSHIP_OFFICER_ID,
-        name: updatedGuarantor.relationshipOfficerName
-      },
-      details: {
-        notes: req.body.notes || 'Guarantor reactivated'
-      }
-    };
-
-    // Handle schema type differences
-    if (GuarantorAudit.schema.path('guarantorId').instance === 'Number') {
-      auditData.guarantorId = Number(guarantor.GUARANTOR_ID);
-    } else if (GuarantorAudit.schema.path('guarantorId').instance === 'ObjectID') {
-      auditData.guarantorId = guarantor._id;
-    }
-
-    await new GuarantorAudit(auditData).save({ session });
-
-    await session.commitTransaction();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Guarantor successfully reactivated',
-      data: {
-        GUARANTOR_ID: updatedGuarantor.GUARANTOR_ID,
-        fullName: updatedGuarantor.fullName,
-        isActive: updatedGuarantor.isActive,
-        loanDetails: updatedGuarantor.loanId ? {
-          accountName: updatedGuarantor.loanId.ACCT_NM,
-          accountNumber: updatedGuarantor.loanId.ACCT_NO
-        } : null
-      }
-    });
-
-  } catch (error) {
-    await session.abortTransaction();
-    console.error('Reactivate Guarantor Error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to reactivate guarantor',
-      error: error.message,
-      code: 'GUARANTOR_REACTIVATE_ERROR'
-    });
-  } finally {
-    session.endSession();
+  if (!guarantor) {
+    throw new Error('Guarantor not found');
   }
+
+  let loanAccount = guarantor.guaranteedLoans.find(loan => loan.ACCT_NO === loanAccountNumber);
+  if (!loanAccount && loanAccountNumber) {
+    loanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
+    if (loanAccount && !guarantor.guaranteedLoans.includes(loanAccount._id)) {
+      guarantor.guaranteedLoans.push(loanAccount._id);
+      await guarantor.save({ session });
+    }
+  }
+
+  if (loanAccount && loanAccount.LOAN_STATUS !== 'ACTIVE') {
+    throw new Error('Cannot reactivate - loan not active');
+  }
+
+  guarantor.isActive = true;
+  guarantor.removedAt = undefined;
+  guarantor.removalReason = undefined;
+  guarantor.updatedBy = userId;
+  await guarantor.save({ session });
+
+  if (loanAccount) {
+    loanAccount.HAS_GUARANTOR = true;
+    await loanAccount.save({ session });
+  }
+
+  await new GuarantorAudit({
+    action: 'REACTIVATE',
+    guarantorId: guarantor.GUARANTOR_ID,
+    loanId: loanAccount?._id,
+    performedBy: userId,
+    relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
+    details: { notes: notes || 'Guarantor reactivated' }
+  }).save({ session });
+
+  return {
+    guarantorId: guarantor.GUARANTOR_ID,
+    name: guarantor.fullName,
+    isActive: guarantor.isActive,
+    loanDetails: loanAccount ? {
+      accountName: loanAccount.ACCT_NM,
+      accountNumber: loanAccount.ACCT_NO,
+      loanStatus: loanAccount.LOAN_STATUS,
+      disbursementLimit: loanAccount.DISBURSEMENT_LIMIT,
+      totalInterest: loanAccount.TOTAL_INTEREST,
+      maturityDate: loanAccount.MATURITY_DT
+    } : null
+  };
 };
 
-// ✅ Get guarantors by relationship officer
+
+
 export const getGuarantorsByOfficer = async (req, res) => {
   try {
     const { officerId } = req.params;
@@ -1205,9 +1173,24 @@ export const getGuarantorsByOfficer = async (req, res) => {
       });
     }
 
+    // Format response
+    const formattedDocs = result.docs.map(guarantor => ({
+      id: guarantor.GUARANTOR_ID,
+      name: guarantor.fullName,
+      phone: guarantor.phoneNumber,
+      status: guarantor.verificationStatus,
+      guaranteedAmount: guarantor.GUARANTEED_AMT,
+      loanId: guarantor.loanId || null,
+      state: guarantor.state,
+      localGovernment: guarantor.localGovernment,
+      country: guarantor.country,
+      createdAt: guarantor.createdAt,
+      updatedAt: guarantor.updatedAt
+    }));
+
     return res.status(200).json({
       success: true,
-      data: result.docs,
+      data: formattedDocs,
       pagination: {
         total: result.totalDocs,
         pages: result.totalPages,
@@ -1229,17 +1212,16 @@ export const getGuarantorsByOfficer = async (req, res) => {
   }
 };
 
-// ✅ Get guarantor audit logs
 export const getGuarantorAuditLogs = async (req, res) => {
   try {
     const { guarantorId } = req.params;
     const { page = 1, limit = 20 } = req.query;
 
-    // Validate that guarantorId is a number (not ObjectId)
-    if (isNaN(guarantorId)) {
+    // Validate ID format
+    if (!guarantorId) {
       return res.status(400).json({
         success: false,
-        message: 'Guarantor ID must be a number (e.g., 1000000)',
+        message: 'Guarantor ID is required',
         code: 'INVALID_ID_FORMAT'
       });
     }
@@ -1247,14 +1229,19 @@ export const getGuarantorAuditLogs = async (req, res) => {
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
-      sort: { timestamp: -1 } // Newest first
+      sort: { timestamp: -1 }
     };
 
-    // Query using the numeric guarantorId
-    const result = await GuarantorAudit.paginate(
-      { guarantorId: Number(guarantorId) }, // Ensure it's a number
-      options
-    );
+    // Query using flexible ID type handling
+    const query = {
+      $or: [
+        { guarantorId: guarantorId },
+        { guarantorId: Number(guarantorId) },
+        { guarantorId: mongoose.Types.ObjectId.isValid(guarantorId) ? mongoose.Types.ObjectId(guarantorId) : null }
+      ].filter(condition => condition.guarantorId !== null)
+    };
+
+    const result = await GuarantorAudit.paginate(query, options);
 
     return res.status(200).json({
       success: true,

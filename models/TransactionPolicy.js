@@ -1,30 +1,45 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-// Define schema for each amount range
-const PolicyRangeSchema = new mongoose.Schema({
-  MIN_AMOUNT: { type: Number, default: 0 },
-  MAX_AMOUNT: { type: Number, required: true },
-  requiresApproval: { type: Boolean, default: false },
-  AUTHORIZED_ROLES: { type: [String], required: true },
-}, { _id: false });
+// Sub-schema for amount ranges
+const rangeSchema = new mongoose.Schema(
+  {
+    MIN_AMOUNT: { type: Number, required: true, default: 0 },
+    MAX_AMOUNT: { type: Number, required: true },
+    requiresApproval: { type: Boolean, default: false },
+    AUTHORIZED_ROLES: { type: [String], default: [] }
+  },
+  { _id: false }
+);
 
-// Main policy schema per role
-const TransactionPolicySchema = new mongoose.Schema({
+// Main TransactionPolicy schema
+const transactionPolicySchema = new mongoose.Schema({
   POLICY_ID: {
     type: String,
     unique: true,
     required: true
   },
+  POLICY_TYPE: {
+    type: String,
+    enum: ["Deposit", "Withdrawal"],
+    required: true
+  },
   ROLE_NM: {
     type: String,
     required: true,
-    unique: true
+    uppercase: true
   },
   RANGES: {
-    type: [PolicyRangeSchema],
+    type: [rangeSchema],
     required: true
-  }
+  },
+  CREATED_AT: { type: Date, default: Date.now }
 });
 
-// Export the model
-export default mongoose.model('TransactionPolicy', TransactionPolicySchema, 'transactionpolicies');
+// Compound index ensures one policy per role per type
+transactionPolicySchema.index({ ROLE_NM: 1, POLICY_TYPE: 1 }, { unique: true });
+
+const TransactionPolicy =
+  mongoose.models.TransactionPolicy ||
+  mongoose.model("TransactionPolicy", transactionPolicySchema, "transactionpolicies");
+
+export default TransactionPolicy;

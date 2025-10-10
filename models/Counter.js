@@ -1,69 +1,71 @@
+// models/Counter.js
 import mongoose from 'mongoose';
 
 const counterSchema = new mongoose.Schema({
   _id: {
     type: String,
-    required: true,
-    validate: {
-      validator: v => /^(ACCT|TRANS|CUST)_[A-Z0-9_]+$/.test(v),
-      message: props => `${props.value} is not a valid counter ID! Must follow format: {PREFIX}_{TYPE}`
-    }
+    required: true
   },
+  // Primary sequence field for account generation
   seq: {
     type: Number,
-    required: true,
-    default: 0,
-    min: 0,
-    max: 999999999,
-    validate: {
-      validator: Number.isInteger,
-      message: props => `${props.value} is not an integer value!`
-    }
+    default: 100000, // Start from 6-digit for account IDs
+    min: 0
   },
-  lastGeneratedNumber: {
+  // Alternative field name for compatibility
+  sequence_value: {
     type: Number,
-    required: false,
-    min: 1000000000,
-    max: 9999999999
+    default: 1000000000, // Start from 10-digit for account numbers
+    min: 0
+  },
+  // Additional fields for enhanced functionality
+  lastGeneratedAt: {
+    type: Date,
+    default: Date.now
   },
   description: {
     type: String,
     required: false
   },
-  lastResetAt: {
-    type: Date,
-    required: false
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   }
 }, {
   timestamps: true
 });
 
-// Hook to update lastGeneratedNumber for ACCT_* only
-counterSchema.pre('save', function (next) {
-  if (this._id.startsWith('ACCT_') && this.isModified('seq')) {
-    const prefixMap = {
-      'ACCT_LOAN': 3,
-      'ACCT_TERM_DEPOSIT': 2,
-      'ACCT_SAVINGS': 1
-    };
-    const prefix = prefixMap[this._id] || 0;
-    this.lastGeneratedNumber = prefix * 1000000000 + this.seq;
+// Index for better performance
+counterSchema.index({ _id: 1 });
+
+// Pre-save hook to sync seq and sequence_value
+counterSchema.pre('save', function(next) {
+  // If seq is modified and sequence_value exists, keep them in sync for account types
+  if (this.isModified('seq') && this.sequence_value) {
+    // For account counters, maintain relationship between seq and sequence_value
+    if (this._id.includes('ACCT_') || this._id.includes('Account')) {
+      this.sequence_value = 1000000000 + this.seq;
+    }
   }
+  
+  // Update lastGeneratedAt when sequence changes
+  if (this.isModified('seq') || this.isModified('sequence_value')) {
+    this.lastGeneratedAt = new Date();
+  }
+  
   next();
 });
 
-// Static method for generating a new formatted account number
+// Static method for generating account numbers (compatible with your original logic)
 counterSchema.statics.generateAccountNumber = async function (productType) {
-  const prefixMap = {
-    'LOAN': 3,
-    'TERM_DEPOSIT': 2,
-    'SAVINGS': 1
+  const counterMap = {
+    'SAVINGS': 'savingsAccount',
+    'LOAN': 'loanAccount',
+    'TERM_DEPOSIT': 'termDepositAccount',
+    'CREDIT_CARD': 'creditCardAccount'
   };
 
-  const prefix = prefixMap[productType];
-  if (!prefix) throw new Error(`Invalid product type: ${productType}`);
-
-  const counterId = `ACCT_${productType}`;
+  const counterId = counterMap[productType] || 'savingsAccount';
 
   const counter = await this.findOneAndUpdate(
     { _id: counterId },
@@ -71,19 +73,50 @@ counterSchema.statics.generateAccountNumber = async function (productType) {
     { new: true, upsert: true, setDefaultsOnInsert: true }
   );
 
-  const numericValue = prefix * 1000000000 + counter.seq;
-
-  if (!/^\d{10}$/.test(String(numericValue))) {
-    throw new Error(`Generated account number (${numericValue}) is not a valid 10-digit number`);
-  }
-
-  counter.lastGeneratedNumber = numericValue;
-  await counter.save();
-
   return {
-    numericValue,
-    formattedString: `${prefix}${String(counter.seq).padStart(9, '0')}`
+    sequence: counter.seq,
+    sequence_value: counter.sequence_value
   };
+};
+
+// Static method for NUBAN account generation
+counterSchema.statics.generateNUBANSequence = async function (accountType) {
+  const counterMap = {
+    'SAVINGS': 'savingsAccount',
+    'LOAN': 'loanAccount', 
+    'TERM_DEPOSIT': 'termDepositAccount',
+    'CREDIT_CARD': 'creditCardAccount'
+  };
+
+  const counterId = counterMap[accountType] || 'savingsAccount';
+
+  const counter = await this.findOneAndUpdate(
+    { _id: counterId },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+
+  return counter.seq;
+};
+
+// Method to get current sequence without incrementing
+counterSchema.statics.getCurrentSequence = async function (counterId) {
+  const counter = await this.findOne({ _id: counterId });
+  return counter ? counter.seq : null;
+};
+
+// Method to reset sequence
+counterSchema.statics.resetSequence = async function (counterId, newValue = 100000) {
+  const counter = await this.findOneAndUpdate(
+    { _id: counterId },
+    { 
+      seq: newValue,
+      sequence_value: 1000000000 + newValue,
+      lastGeneratedAt: new Date()
+    },
+    { new: true, upsert: true }
+  );
+  return counter;
 };
 
 const Counter = mongoose.models.Counter || mongoose.model('Counter', counterSchema);

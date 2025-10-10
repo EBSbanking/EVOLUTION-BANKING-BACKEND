@@ -1,23 +1,23 @@
-// In TermDepositRoutes.js
 import express from 'express';
 import { 
   createTermDeposit,
   getAllTermDeposits,
   getTermDepositById,
   updateTermDeposit,
-  deleteTermDeposit
- 
-} from '../controllers/TermDepositController.js'; // Correct import for named exports
-
-
+  deleteTermDeposit,
+  settleMaturedTermDeposit,
+  earlyTerminateTermDeposit
+} from '../controllers/TermDepositController.js';
 
 const router = express.Router();
 
 // Define routes
-router.post('/', createTermDeposit); // Use the imported function directly
-router.get('/', getAllTermDeposits); // Use the imported function directly
-router.get('/:id', getTermDepositById); // Use the imported function directly
-router.put('/:id', updateTermDeposit); // Use the imported function directly
-router.delete('/:id', deleteTermDeposit); // Use the imported function directly
+router.post('/create', createTermDeposit);
+router.get('/create', getAllTermDeposits);
+router.get('/:id', getTermDepositById);
+router.put('/:id', updateTermDeposit);
+router.delete('/:id', deleteTermDeposit);
+router.post('/settle/:id', settleMaturedTermDeposit);
+router.post('/terminate/:id', earlyTerminateTermDeposit);
 
 export default router;

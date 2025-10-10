@@ -1,9 +1,10 @@
+// utils/generateLoanAccountId.js
 import Counter from '../models/Counter.js';
 import Transaction from '../models/Transaction.js';
 import generateSerialNumber from './generateSerialNumber.js';
-import { getProductTypeOnly } from '../Services/productService.js';
+import { getProductTypeByProdIdInternal } from '../services/productService.js'; // ✅ Correct import path
 
-// ✅ Account prefix logic based on product type
+// ✅ Account prefix logic based on product type - UPDATED
 export function getPrefixForProductType(productType) {
   const typeStr = String(productType).toUpperCase().trim();
 
@@ -11,14 +12,35 @@ export function getPrefixForProductType(productType) {
     case 'BUSINESS TERM LOAN':
     case 'BUSINESS_TERM_LOAN':
       return '300';
-    case 'SME LOAN':
-    case 'SME_LOAN':
+    case 'INDIVIDUAL LOAN':
+    case 'INDIVIDUAL_LOAN':
       return '301';
     case 'CONSUMER LOAN':
     case 'CONSUMER_LOAN':
-    case 'INDIVIDUAL LOAN':
-    case 'INDIVIDUAL_LOAN':
       return '302';
+    case 'MORTGAGE':
+      return '303';
+    case 'AUTO LOAN':
+    case 'AUTO_LOAN':
+      return '304';
+    case 'PERSONAL LOAN':
+    case 'PERSONAL_LOAN':
+      return '305';
+    case 'EDUCATION LOAN':
+    case 'EDUCATION_LOAN':
+      return '306';
+    case 'CREDIT CARD':
+    case 'CREDIT_CARD':
+      return '307';
+    case 'LINE OF CREDIT':
+    case 'LINE_OF_CREDIT':
+      return '308';
+    case 'SME LOAN':
+    case 'SME_LOAN':
+      return '309';
+    case 'GENERAL LOAN':
+    case 'GENERAL_LOAN':
+      return '399';
     default:
       return '399'; // fallback prefix
   }
@@ -26,8 +48,11 @@ export function getPrefixForProductType(productType) {
 
 // ✅ Generate 10-digit loan account number using product type
 export const generateLoanAccountNumberByProdId = async (PROD_ID) => {
-  const productType = await getProductTypeOnly(PROD_ID);
-  const prefix = getPrefixForProductType(productType); // e.g. '301'
+  // Use service to fetch product mapping
+  const productMapping = await getProductTypeByProdIdInternal(PROD_ID);
+  const productType = productMapping.PROD_CAT_TY || productMapping.PROD_DESC || '';
+  const prefix = getPrefixForProductType(productType);
+
   const counterId = `ACCT_NO_${prefix}`;
 
   const result = await Counter.findOneAndUpdate(

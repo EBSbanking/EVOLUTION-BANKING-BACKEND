@@ -1,59 +1,66 @@
 import mongoose from 'mongoose';
 import Transaction from '../models/Transaction.js';
-import DepositAccountSummary from '../models/DepositAccountSummary.js';
 import CustomerAccount from '../models/CustomerAccount.js';
-import { GENERAL_TX_TYPES, LOAN_TX_TYPES } from '../constants/transactionTypes.js';
+import { getAllTransactionTypes } from '../constants/transactionTypes.js';
 import AMLThreshold from '../models/AMLThreshold.js';
-import { startTransactionSession } from '../config/db.js';
 import { checkSanctionList } from '../utils/checkSanctionList.js';
-import AML from '../models/AML.js'; 
-import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
-import { logAuditTrail } from '../utils/AuditLogger.js';
+import AML from '../models/AML.js';
 import NotificationService from '../services/NotificationService.js';
-import generateWorkflowIdentifiers from '../utils/generateWorkflowIdentifiers.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
+import { logAuditTrail } from '../utils/AuditLogger.js';
+import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
+import { createRootSubfolder } from './SubfolderController.js';
 
+// Debug imports to verify they are defined
+console.log('Imports:', {
+  mongoose,
+  Transaction,
+  CustomerAccount,
+  getAllTransactionTypes,
+  AMLThreshold,
+  checkSanctionList,
+  AML,
+  NotificationService,
+  WF_WORK_ITEM,
+  logAuditTrail,
+  generateWorkflowIdentifiers,
+  createRootSubfolder
+});
 
-/* ---------- Helpers ---------- */
-const generateSerialNumber = (len) => {
-  const digits = '0123456789';
-  let out = '';
-  for (let i = 0; i < len; i++) out += digits[Math.floor(Math.random() * digits.length)];
-  return out;
-};
-
-// ✅ Helper: Check if transaction exceeds dynamic AML threshold
+// Helper: Check if transaction exceeds dynamic AML threshold
 const shouldFlagForAML = async (transactionType, amount) => {
   const rule = await AMLThreshold.findOne({ transaction_type: transactionType, active: true });
   return rule && amount >= rule.threshold_amount;
 };
 
-
 // AML Compliance Check Helper Function
-const checkAMLCompliance = async ({ 
-  transactionType, 
-  amount, 
-  currency, 
-  accountType, 
-  destinationCountry, 
-  restrictedCountries, 
-  custId 
-}, session, userId, ipAddress) => {
-  const { EVENT_ID } = generateWorkflowIdentifiers();
-
+export const checkAMLCompliance = async ({
+  transactionType,
+  amount,
+  currency,
+  accountType,
+  destinationCountry,
+  restrictedCountries,
+  custId
+}, session, userId, ipAddress, eventId) => {
   try {
-    // Get customer AML record
+    if (!eventId) {
+      throw new Error('EVENT_ID is not defined in checkAMLCompliance');
+    }
+    console.log(`checkAMLCompliance: EVENT_ID=${eventId}`);
     const amlRecord = await AML.findOne({ CUST_ID: custId }).session(session);
     
     if (!amlRecord) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'AML_RECORD_NOT_FOUND',
         null,
-        { custId, result: 'No AML record found' },
-        ipAddress
+        { custId, result: 'No AML record found', eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
       return {
         requiresManualReview: true,
@@ -68,29 +75,24 @@ const checkAMLCompliance = async ({
         }
       };
     }
-
-    // 1. First check if customer is PEP (regardless of amount)
     if (amlRecord.IS_PEP) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'PEP_CUSTOMER',
         null,
-        { 
-          custId, 
-          result: 'PEP customer',
-          pepDetails: amlRecord.PEP_DETAILS 
-        },
-        ipAddress
+        { custId, result: 'PEP customer', pepDetails: amlRecord.PEP_DETAILS, eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
-      
       return {
         requiresManualReview: true,
         reason: 'PEP customer',
         isFlagged: true,
         flags: ['PEP'],
-        threshold: 0,  // PEP flag is independent of amount
+        threshold: 0,
         sanctionDetails: null,
         amlDetails: {
           customerType: 'PEP',
@@ -100,23 +102,18 @@ const checkAMLCompliance = async ({
         }
       };
     }
-
-    // 2. Then check sanction match (more severe than PEP)
     if (amlRecord.SANCTION_MATCH) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'SANCTION_MATCH',
         null,
-        { 
-          custId, 
-          result: 'Sanction match found',
-          details: amlRecord.SANCTION_DETAILS 
-        },
-        ipAddress
+        { custId, result: 'Sanction match found', details: amlRecord.SANCTION_DETAILS, eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
-      
       return {
         requiresManualReview: true,
         reason: 'Sanction match found',
@@ -131,27 +128,21 @@ const checkAMLCompliance = async ({
         }
       };
     }
-
-    // 3. Check against restricted countries
-    const isRestrictedCountry = destinationCountry && 
+    const isRestrictedCountry = destinationCountry &&
       restrictedCountries.includes(destinationCountry.toUpperCase());
     
     if (isRestrictedCountry) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'RESTRICTED_COUNTRY',
         null,
-        { 
-          custId,
-          destinationCountry,
-          restrictedCountries,
-          result: `Restricted destination country: ${destinationCountry}`
-        },
-        ipAddress
+        { custId, destinationCountry, restrictedCountries, result: `Restricted destination country: ${destinationCountry}`, eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
-      
       return {
         requiresManualReview: true,
         reason: `Restricted destination country: ${destinationCountry}`,
@@ -165,8 +156,6 @@ const checkAMLCompliance = async ({
         }
       };
     }
-
-    // 4. Then check amount thresholds (only if not PEP or Sanctioned)
     const thresholds = await AMLThreshold.findOne().sort({ createdAt: -1 });
     const highRiskThreshold = thresholds?.highRisk || 5000000;
     const mediumRiskThreshold = thresholds?.mediumRisk || 1000000;
@@ -174,20 +163,15 @@ const checkAMLCompliance = async ({
     if (amount >= highRiskThreshold) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'HIGH_VALUE_TRANSACTION',
         null,
-        { 
-          custId,
-          amount,
-          currency,
-          threshold: highRiskThreshold,
-          result: `Amount exceeds high risk threshold (${currency}${highRiskThreshold})`
-        },
-        ipAddress
+        { custId, amount, currency, threshold: highRiskThreshold, result: `Amount exceeds high risk threshold (${currency}${highRiskThreshold})`, eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
-      
       return {
         requiresManualReview: true,
         reason: `Amount exceeds high risk threshold (${currency}${highRiskThreshold})`,
@@ -203,20 +187,15 @@ const checkAMLCompliance = async ({
     } else if (amount >= mediumRiskThreshold) {
       await logAuditTrail(
         'AML_CHECK',
-        EVENT_ID,
+        null,
         userId || 'system',
         'MEDIUM_VALUE_TRANSACTION',
         null,
-        { 
-          custId,
-          amount,
-          currency,
-          threshold: mediumRiskThreshold,
-          result: `Amount exceeds medium risk threshold (${currency}${mediumRiskThreshold})`
-        },
-        ipAddress
+        { custId, amount, currency, threshold: mediumRiskThreshold, result: `Amount exceeds medium risk threshold (${currency}${mediumRiskThreshold})`, eventId },
+        ipAddress || '0.0.0.0',
+        'GENERAL',
+        { source: 'checkAMLCompliance' }
       );
-      
       return {
         requiresManualReview: false,
         reason: `Amount exceeds medium risk threshold (${currency}${mediumRiskThreshold})`,
@@ -230,23 +209,17 @@ const checkAMLCompliance = async ({
         }
       };
     }
-
-    // Clean transaction
     await logAuditTrail(
       'AML_CHECK',
-      EVENT_ID,
+      null,
       userId || 'system',
       'AML_CLEAR',
       null,
-      { 
-        custId,
-        amount,
-        currency,
-        result: 'Transaction cleared AML checks'
-      },
-      ipAddress
+      { custId, amount, currency, result: 'Transaction cleared AML checks', eventId },
+      ipAddress || '0.0.0.0',
+      'GENERAL',
+      { source: 'checkAMLCompliance' }
     );
-    
     return {
       requiresManualReview: false,
       isFlagged: false,
@@ -257,486 +230,896 @@ const checkAMLCompliance = async ({
         lastVerified: amlRecord.lastVerifiedDate
       }
     };
-
   } catch (error) {
-    console.error('AML Compliance Check Error:', error);
     await logAuditTrail(
       'AML_CHECK',
-      EVENT_ID,
+      null,
       userId || 'system',
       'AML_CHECK_FAILED',
       null,
-      { 
-        custId,
-        error: error.message,
-        result: 'AML check failed'
-      },
-      ipAddress
+      { custId, error: error.message, result: 'AML check failed', eventId: eventId || 'UNKNOWN' },
+      ipAddress || '0.0.0.0',
+      'GENERAL',
+      { source: 'checkAMLCompliance' }
     );
     throw error;
   }
 };
 
-export const createTransaction = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction({ readPreference: 'primary' });
-
-  let account, amlCheck;
-
+const createTransaction = async (req, res) => {
+  const results = { successful: [], failed: [] };
   try {
-    const {
-      ACCT_NO,
-      ACCT_ID,
-      BU_ID,
-      CUST_ID,
-      ACCT_NM,
-      AMOUNT,
-      TRANSACTIONDATE,
-      TRANSACTION_TYPE,
-      reference = '',
-      description = '',
-      AML_RESTRICTED_COUNTRIES = [],
-      DESTINATION_COUNTRY = null,
-      ACCOUNT_TYPE = 'INDIVIDUAL',
-      isBulkTransaction = false
-    } = req.body;
+    // Accept either a single transaction or an array of transactions
+    const transactions = Array.isArray(req.body.transactions) ? req.body.transactions : [req.body];
 
-    // Remove AML_THRESHOLD if present in request
-    if ('AML_THRESHOLD' in req.body) {
-      delete req.body.AML_THRESHOLD;
-    }
-
-    // Normalize input data
-    const normalizedType = TRANSACTION_TYPE ? String(TRANSACTION_TYPE).toUpperCase() : null;
-    const normalizedBU_ID = BU_ID !== undefined ? (typeof BU_ID === 'number' ? BU_ID.toString() : BU_ID) : null;
-
-    // Validate and parse amount
-    let normalizedAmount;
-    try {
-      normalizedAmount = parseFloat(AMOUNT);
-      if (isNaN(normalizedAmount)) throw new Error('Invalid amount');
-    } catch (error) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        code: 'INVALID_AMOUNT', 
-        message: 'Amount must be a valid number', 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Validate required fields
-    const requiredFields = {
-      ACCT_NO: ACCT_NO ? String(ACCT_NO).trim() : null,
-      ACCT_ID: ACCT_ID ? String(ACCT_ID).trim() : null,
-      BU_ID: normalizedBU_ID,
-      CUST_ID: CUST_ID ? String(CUST_ID).trim() : null,
-      ACCT_NM: ACCT_NM ? String(ACCT_NM).trim() : null,
-      AMOUNT: normalizedAmount,
-      TRANSACTION_TYPE: normalizedType
-    };
-
-    const missingFields = Object.entries(requiredFields).filter(([_, value]) => !value).map(([key]) => key);
-    if (missingFields.length > 0) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        code: 'INVALID_INPUT', 
-        message: `Missing required fields: ${missingFields.join(', ')}`, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Validate transaction type
-    if (!normalizedType || !GENERAL_TX_TYPES.includes(normalizedType)) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        code: 'INVALID_TRANSACTION_TYPE', 
-        message: `Invalid transaction type. Valid types: ${GENERAL_TX_TYPES.join(', ')}`, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Validate amount range
-    if (normalizedAmount <= 0 || normalizedAmount > 1000000000) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({ 
-        success: false, 
-        code: 'INVALID_AMOUNT', 
-        message: 'Amount must be between ₦0.01 and ₦1,000,000,000', 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Find and validate account
-    try {
-      account = await CustomerAccount.findOne({ ACCT_NO: requiredFields.ACCT_NO })
-        .select('LEDGER_BAL AVAILABLE_BALANCE REC_ST CURRENCY ACCT_TYPE DAILY_TRANSACTION_COUNT DAILY_TRANSACTION_LIMIT')
-        .session(session);
-
-      if (!account) throw new Error('Account not found');
-    } catch (error) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({ 
-        success: false, 
-        code: 'ACCOUNT_NOT_FOUND', 
-        message: `Account ${requiredFields.ACCT_NO} not found or error occurred`, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Check account status
-    if (account.REC_ST && account.REC_ST !== 'ACTIVE') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({ 
-        success: false, 
-        code: 'ACCOUNT_INACTIVE', 
-        message: `Account ${requiredFields.ACCT_NO} is ${account.REC_ST}`, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Generate all workflow identifiers
-    const {
-      TRANSACTION_ID,
-      EVENT_ID,
-      JOURNAL_ID,
-      WORK_ITEM_ID,
-      BUS_PROC_ID,
-      SUB_PROC_ID,
-      QUEUE_ID
-    } = generateWorkflowIdentifiers();
-
-    // Log transaction initiation
+    // Log the number of transactions being processed
     await logAuditTrail(
-      'TRANSACTION_INIT', 
-      EVENT_ID, 
-      req.user?.id || 'system', 
-      'TRANSACTION_STARTED', 
-      null, 
-      {
-        account: requiredFields.ACCT_NO,
-        amount: normalizedAmount,
-        type: normalizedType,
-        isBulk: isBulkTransaction,
-        transactionId: TRANSACTION_ID
-      }, 
-      req.ip
+      'TRANSACTION_BATCH',
+      null,
+      req.user?.id || userId,
+      'BATCH_PROCESS_START',
+      null,
+      { transactionCount: transactions.length, timestamp: new Date().toISOString() },
+      req.ip || '0.0.0.0',
+      'GENERAL',
+      { source: 'createTransaction' }
     );
 
-    // Perform sanction check
-    try {
-      const sanctionCheck = await checkSanctionList(null, null, requiredFields.ACCT_NM);
+    // Process transactions in chunks to handle large batches
+    const CHUNK_SIZE = 1000;
+    const chunks = [];
+    for (let i = 0; i < transactions.length; i += CHUNK_SIZE) {
+      chunks.push(transactions.slice(i, i + CHUNK_SIZE));
+    }
 
-      if (sanctionCheck.isSanctioned) {
+    for (const chunk of chunks) {
+      const session = await mongoose.startSession();
+      let sessionCommitted = false;
+      try {
+        await session.startTransaction({ readPreference: 'primary' });
+
+        for (const tx of chunk) {
+          const {
+            ACCT_NO,
+            ACCT_ID,
+            BU_ID,
+            CUST_ID,
+            ACCT_NM,
+            AMOUNT,
+            TRANSACTIONDATE,
+            TRANSACTION_TYPE,
+            reference = '',
+            description = '',
+            AML_RESTRICTED_COUNTRIES = [],
+            DESTINATION_COUNTRY = null,
+            ACCOUNT_TYPE = 'INDIVIDUAL',
+            isBulkTransaction = transactions.length > 1
+          } = tx;
+
+          // Generate unique identifiers for each transaction
+          let identifiers;
+          try {
+            identifiers = await generateWorkflowIdentifiers();
+            console.log(`createTransaction: Generated identifiers for ACCT_NO=${ACCT_NO}:`, identifiers);
+          } catch (idError) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'IDENTIFIER_GENERATION_FAILED',
+              null,
+              { error: idError.message, account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Failed to generate identifiers: ${idError.message}`,
+              code: 'IDENTIFIER_GENERATION_FAILED'
+            });
+            continue;
+          }
+          const {
+            TRANSACTION_ID,
+            WORK_ITEM_ID,
+            BUS_PROC_ID,
+            SUB_PROC_ID,
+            QUEUE_ID,
+            EVENT_ID,
+            JOURNAL_ID
+          } = identifiers;
+
+          // Validate TRANSACTION_ID
+          if (TRANSACTION_ID === null || TRANSACTION_ID === undefined || !Number.isInteger(TRANSACTION_ID) || TRANSACTION_ID <= 0) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_TRANSACTION_ID',
+              null,
+              { error: `Generated TRANSACTION_ID is invalid: ${TRANSACTION_ID}`, eventId: EVENT_ID || 'UNKNOWN', account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Generated TRANSACTION_ID is invalid: ${TRANSACTION_ID}`,
+              code: 'INVALID_TRANSACTION_ID'
+            });
+            continue;
+          }
+
+          // Remove AML_THRESHOLD if present
+          if ('AML_THRESHOLD' in tx) {
+            delete tx.AML_THRESHOLD;
+          }
+
+          // Normalize input data
+          const normalizedType = TRANSACTION_TYPE ? String(TRANSACTION_TYPE).toUpperCase() : null;
+          const normalizedBU_ID = BU_ID !== undefined ? Number(BU_ID) : null;
+          let normalizedAmount;
+          try {
+            normalizedAmount = parseFloat(AMOUNT);
+            if (isNaN(normalizedAmount)) throw new Error('Invalid amount');
+          } catch (error) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_AMOUNT',
+              null,
+              { error: error.message, eventId: EVENT_ID, account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: 'Invalid amount',
+              code: 'INVALID_AMOUNT'
+            });
+            continue;
+          }
+
+          // Validate required fields
+          const requiredFields = {
+            ACCT_NO: ACCT_NO ? String(ACCT_NO).trim() : null,
+            ACCT_ID: ACCT_ID ? String(ACCT_ID).trim() : null,
+            BU_ID: normalizedBU_ID,
+            CUST_ID: CUST_ID ? String(CUST_ID).trim() : null,
+            ACCT_NM: ACCT_NM ? String(ACCT_NM).trim() : null,
+            AMOUNT: normalizedAmount,
+            TRANSACTION_TYPE: normalizedType
+          };
+          const missingFields = Object.entries(requiredFields).filter(([_, value]) => !value).map(([key]) => key);
+          if (missingFields.length > 0) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_INPUT',
+              null,
+              { missingFields, eventId: EVENT_ID, account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Missing required fields: ${missingFields.join(', ')}`,
+              code: 'INVALID_INPUT'
+            });
+            continue;
+          }
+
+          // Validate transaction type
+          if (!normalizedType || !getAllTransactionTypes().includes(normalizedType)) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_TRANSACTION_TYPE',
+              null,
+              { transactionType: normalizedType, eventId: EVENT_ID, account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Invalid transaction type. Valid types: ${getAllTransactionTypes().join(', ')}`,
+              code: 'INVALID_TRANSACTION_TYPE'
+            });
+            continue;
+          }
+
+          // Validate amount range
+          if (normalizedAmount <= 0 || normalizedAmount > 1000000000) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_AMOUNT',
+              null,
+              { amount: normalizedAmount, eventId: EVENT_ID, account: ACCT_NO },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: 'Amount must be between ₦0.01 and ₦1,000,000,000',
+              code: 'INVALID_AMOUNT'
+            });
+            continue;
+          }
+
+          // Find and validate account
+          let account;
+          try {
+            account = await CustomerAccount.findOne({ ACCT_NO: requiredFields.ACCT_NO })
+              .select('LEDGER_BAL AVAILABLE_BALANCE REC_ST CURRENCY ACCT_TYPE')
+              .session(session);
+            if (!account) throw new Error('Account not found');
+          } catch (error) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'ACCOUNT_NOT_FOUND',
+              null,
+              { account: requiredFields.ACCT_NO, error: error.message, eventId: EVENT_ID },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Account ${requiredFields.ACCT_NO} not found or error occurred`,
+              code: 'ACCOUNT_NOT_FOUND'
+            });
+            continue;
+          }
+
+          // Check account status
+          if (account.REC_ST && account.REC_ST !== 'ACTIVE') {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'ACCOUNT_INACTIVE',
+              null,
+              { account: requiredFields.ACCT_NO, status: account.REC_ST, eventId: EVENT_ID },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Account ${requiredFields.ACCT_NO} is ${account.REC_ST}`,
+              code: 'ACCOUNT_INACTIVE'
+            });
+            continue;
+          }
+
+          // Log transaction initiation
+          await logAuditTrail(
+            'TRANSACTION',
+            null,
+            req.user?.id || 'system',
+            'TRANSACTION_STARTED',
+            null,
+            {
+              account: requiredFields.ACCT_NO,
+              amount: normalizedAmount,
+              type: normalizedType,
+              isBulkTransaction,
+              transactionId: TRANSACTION_ID,
+              eventId: EVENT_ID
+            },
+            req.ip || '0.0.0.0',
+            'GENERAL',
+            { source: 'createTransaction' }
+          );
+
+          // Perform sanction check
+          let sanctionCheck;
+          try {
+            console.log(`checkSanctionList: EVENT_ID=${EVENT_ID}`);
+            sanctionCheck = await checkSanctionList(
+              null,
+              null,
+              requiredFields.ACCT_NM,
+              req.user?.id || 'system',
+              req.ip || '0.0.0.0',
+              EVENT_ID
+            );
+            if (!sanctionCheck || typeof sanctionCheck !== 'object') {
+              throw new Error('Invalid sanction check response');
+            }
+            if (sanctionCheck.isSanctioned) {
+              await logAuditTrail(
+                'SANCTION_CHECK',
+                null,
+                req.user?.id || 'system',
+                'SANCTION_MATCH',
+                null,
+                {
+                  account: requiredFields.ACCT_NO,
+                  customerName: requiredFields.ACCT_NM,
+                  details: sanctionCheck.sanctionDetails,
+                  transactionId: TRANSACTION_ID,
+                  eventId: EVENT_ID
+                },
+                req.ip || '0.0.0.0',
+                'GENERAL',
+                { source: 'createTransaction' }
+              );
+              results.failed.push({
+                account: ACCT_NO,
+                error: 'Customer appears on sanction list',
+                code: 'SANCTIONED_CUSTOMER',
+                sanctionDetails: sanctionCheck.sanctionDetails
+              });
+              continue;
+            }
+            await logAuditTrail(
+              'SANCTION_CHECK',
+              null,
+              req.user?.id || 'system',
+              'SANCTION_CLEAR',
+              null,
+              {
+                account: requiredFields.ACCT_NO,
+                customerName: requiredFields.ACCT_NM,
+                transactionId: TRANSACTION_ID,
+                result: 'No sanction match found',
+                eventId: EVENT_ID
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+          } catch (sanctionError) {
+            await logAuditTrail(
+              'SANCTION_CHECK',
+              null,
+              req.user?.id || 'system',
+              'SANCTION_CHECK_FAILED',
+              null,
+              {
+                account: requiredFields.ACCT_NO,
+                customerName: requiredFields.ACCT_NM,
+                error: sanctionError.message,
+                transactionId: TRANSACTION_ID,
+                eventId: EVENT_ID
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: 'Failed to perform sanction check',
+              code: 'SANCTION_CHECK_FAILED',
+              details: sanctionError.message
+            });
+            continue;
+          }
+
+          // Perform AML compliance check
+          let amlCheck;
+          try {
+            amlCheck = await checkAMLCompliance({
+              transactionType: normalizedType,
+              amount: normalizedAmount,
+              currency: account.CURRENCY || 'NGN',
+              accountType: account.ACCT_TYPE || ACCOUNT_TYPE,
+              destinationCountry: DESTINATION_COUNTRY,
+              restrictedCountries: AML_RESTRICTED_COUNTRIES,
+              custId: requiredFields.CUST_ID
+            }, session, req.user?.id, req.ip, EVENT_ID);
+          } catch (amlError) {
+            await logAuditTrail(
+              'AML_CHECK',
+              null,
+              req.user?.id || 'system',
+              'AML_CHECK_FAILED',
+              null,
+              {
+                custId: requiredFields.CUST_ID,
+                error: amlError.message,
+                transactionId: TRANSACTION_ID,
+                eventId: EVENT_ID
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: 'Failed to perform AML compliance check',
+              code: 'AML_CHECK_FAILED',
+              details: amlError.message
+            });
+            continue;
+          }
+
+          // Create and save transaction record
+          let transaction;
+          try {
+            console.log(`Saving transaction: TRANSACTION_ID=${TRANSACTION_ID}, ACCT_NO=${requiredFields.ACCT_NO}`);
+            transaction = new Transaction({
+              ACCT_NO: requiredFields.ACCT_NO,
+              ACCT_ID: requiredFields.ACCT_ID,
+              BU_ID: requiredFields.BU_ID,
+              CUST_ID: requiredFields.CUST_ID,
+              ACCT_NM: requiredFields.ACCT_NM,
+              AMOUNT: normalizedAmount,
+              TRANSACTIONDATE: TRANSACTIONDATE ? new Date(TRANSACTIONDATE) : new Date(),
+              TRANSACTION_TYPE: normalizedType,
+              TRANSACTION_ID: TRANSACTION_ID,
+              EVENT_ID: EVENT_ID,
+              TRAN_JOURNAL_ID: JOURNAL_ID,
+              reference,
+              description,
+              currency: account.CURRENCY || 'NGN',
+              createdBy: req.user?.id || 'system',
+              status: 'PENDING',
+              FLAGGED_FOR_AML: amlCheck.isFlagged || false,
+              AML_REASON: amlCheck.reason || null,
+              AML_THRESHOLD_USED: amlCheck.threshold || 0,
+              metadata: {
+                ip: req.ip,
+                userAgent: req.headers['user-agent'],
+                channel: req.headers['x-channel'] || 'API',
+                amlCheck: {
+                  flags: amlCheck.flags || [],
+                  restrictedCountriesChecked: AML_RESTRICTED_COUNTRIES || [],
+                  destinationCountry: DESTINATION_COUNTRY || null
+                },
+                sanctionCheck: {
+                  checkedAt: new Date().toISOString(),
+                  isSanctioned: false
+                },
+                isBulkTransaction
+              }
+            });
+            await transaction.save({ session });
+          } catch (saveError) {
+            console.error(`Transaction save failed for ACCT_NO=${requiredFields.ACCT_NO}:`, saveError);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'TRANSACTION_SAVE_FAILED',
+              null,
+              {
+                account: requiredFields.ACCT_NO,
+                error: saveError.message,
+                transactionId: TRANSACTION_ID || 'UNKNOWN',
+                eventId: EVENT_ID || 'UNKNOWN'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Failed to save transaction: ${saveError.message}`,
+              code: 'TRANSACTION_SAVE_FAILED'
+            });
+            continue;
+          }
+
+          // Create subfolder for the transaction
+          try {
+            const subfolder = await createRootSubfolder(TRANSACTION_ID, {
+              GL_ACCT_NO: requiredFields.ACCT_NO,
+              createdBy: req.user?.id || 'system',
+              description: description || `${normalizedType} Subfolder`
+            }, { session });
+            console.log(`Created subfolder for transaction ${TRANSACTION_ID}:`, subfolder);
+          } catch (subfolderError) {
+            await logAuditTrail(
+              'SUBFOLDER_CREATION',
+              null,
+              req.user?.id || 'system',
+              'SUBFOLDER_CREATION_FAILED',
+              null,
+              {
+                account: requiredFields.ACCT_NO,
+                error: subfolderError.message,
+                transactionId: TRANSACTION_ID,
+                eventId: EVENT_ID
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Failed to create subfolder: ${subfolderError.message}`,
+              code: 'SUBFOLDER_CREATION_FAILED'
+            });
+            continue;
+          }
+
+          // Validate WF_WORK_ITEM model
+          if (!WF_WORK_ITEM) {
+            throw new Error('WF_WORK_ITEM model is not defined');
+          }
+
+          // Check for existing EVENT_ID
+          const existingEvent = await WF_WORK_ITEM.findOne({ EVENT_ID }).session(session);
+          if (existingEvent) {
+            await logAuditTrail(
+              'WORKFLOW',
+              null,
+              req.user?.id || 'system',
+              'DUPLICATE_EVENT_ID',
+              null,
+              {
+                transactionId: TRANSACTION_ID,
+                eventId: EVENT_ID,
+                account: ACCT_NO
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Event ID ${EVENT_ID} already exists`,
+              code: 'DUPLICATE_EVENT_ID'
+            });
+            continue;
+          }
+
+          // Create workflow item
+          try {
+            const newWorkItem = new WF_WORK_ITEM({
+              WORK_ITEM_ID,
+              processId: BUS_PROC_ID,
+              currentStep: SUB_PROC_ID,
+              QUEUE_ID,
+              entityId: transaction._id,
+              entityType: 'TRANSACTION',
+              assignedTo: 'COMPLIANCE_OFFICER',
+              ITEM_DESC: `${normalizedType} Transaction for ${requiredFields.ACCT_NM}`,
+              CUST_ID: requiredFields.CUST_ID,
+              REC_ST: 'Active',
+              VERSION: 1,
+              ROW_TS: new Date(),
+              createdBy: req.user?.id || 'system',
+              BU_ID: requiredFields.BU_ID,
+              CREATE_DT: new Date(),
+              SYS_CREATE_TS: new Date(),
+              status: 'PENDING',
+              ITEM_REF_NO: TRANSACTION_ID,
+              ITEM_BU_ID: requiredFields.BU_ID,
+              ITEM_TYPE: 'TRANSACTION',
+              EVENT_ID,
+              JOURNAL_ID,
+              TRANSACTION_ID,
+              metadata: {
+                transactionType: normalizedType,
+                amount: normalizedAmount,
+                accountNumber: requiredFields.ACCT_NO,
+                customerName: requiredFields.ACCT_NM,
+                flaggedForAML: amlCheck.isFlagged || false
+              }
+            });
+            await newWorkItem.save({ session });
+            await NotificationService.send({
+              ROLE_ID: 'COMPLIANCE_OFFICER',
+              message: `New transaction requires approval: ${normalizedType} of ${normalizedAmount} for ${requiredFields.ACCT_NM}`,
+              WORK_ITEM_ID,
+              EVENT_ID,
+              CUST_ID: requiredFields.CUST_ID,
+              status: 'pending',
+              notificationType: 'system',
+              metadata: {
+                transactionId: TRANSACTION_ID,
+                amount: normalizedAmount,
+                account: requiredFields.ACCT_NO
+              }
+            }, { session });
+          } catch (workItemError) {
+            await logAuditTrail(
+              'WORKFLOW',
+              null,
+              req.user?.id || 'system',
+              'WORKFLOW_ITEM_CREATION_FAILED',
+              null,
+              {
+                transactionId: TRANSACTION_ID,
+                error: workItemError.message,
+                eventId: EVENT_ID,
+                requestBody: tx
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Failed to create workflow item: ${workItemError.message}`,
+              code: 'WORKFLOW_ITEM_CREATION_FAILED'
+            });
+            continue;
+          }
+
+          // Prepare balance update
+          const amountMultiplier = {
+            CREDIT: 1,
+            DEBIT: -1,
+            REVERSAL: -1,
+            ADJUSTMENT: 1
+          }[normalizedType.toUpperCase()] || -1;
+          const balanceUpdate = {
+            $inc: {
+              LEDGER_BAL: normalizedAmount * amountMultiplier,
+              AVAILABLE_BALANCE: normalizedAmount * amountMultiplier,
+              CLEARED_BAL: normalizedAmount * amountMultiplier
+            },
+            $set: {
+              LAST_TRANSACTION_DATE: new Date(),
+              UPDATED_AT: new Date()
+            }
+          };
+
+          // Update account balances
+          try {
+            await CustomerAccount.updateOne({ ACCT_NO: requiredFields.ACCT_NO }, balanceUpdate, { session });
+          } catch (updateError) {
+            await logAuditTrail(
+              'BALANCE_UPDATE',
+              null,
+              req.user?.id || 'system',
+              'BALANCE_UPDATE_FAILED',
+              null,
+              {
+                account: requiredFields.ACCT_NO,
+                error: updateError.message,
+                transactionId: TRANSACTION_ID,
+                eventId: EVENT_ID
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: ACCT_NO,
+              error: `Failed to update account balances: ${updateError.message}`,
+              code: 'BALANCE_UPDATE_FAILED'
+            });
+            continue;
+          }
+
+          // Record successful transaction
+          results.successful.push({
+            transactionId: TRANSACTION_ID,
+            workItemId: WORK_ITEM_ID,
+            account: ACCT_NO,
+            amount: normalizedAmount,
+            status: 'PENDING',
+            amlDetails: {
+              flagged: amlCheck?.isFlagged || false,
+              reason: amlCheck?.reason || null,
+              thresholdUsed: amlCheck?.threshold || 0,
+              flags: amlCheck?.flags || []
+            }
+          });
+        }
+
+        // Commit transaction for this chunk if there are successful transactions
+        if (results.successful.length > 0) {
+          await session.commitTransaction();
+          sessionCommitted = true;
+        } else {
+          await session.abortTransaction();
+        }
+      } catch (chunkError) {
+        // Only attempt to abort if not committed
+        if (!sessionCommitted) {
+          try {
+            await session.abortTransaction();
+          } catch (abortError) {
+            console.error('Failed to abort transaction:', abortError);
+          }
+        }
         await logAuditTrail(
-          'SANCTION_CHECK', 
-          EVENT_ID, 
-          req.user?.id || 'system', 
-          'SANCTION_MATCH', 
-          null, 
+          'TRANSACTION',
+          null,
+          req.user?.id || 'system',
+          'CHUNK_PROCESS_FAILED',
+          null,
           {
-            account: requiredFields.ACCT_NO,
-            customerName: requiredFields.ACCT_NM,
-            details: sanctionCheck.sanctionDetails,
-            transactionId: TRANSACTION_ID
-          }, 
-          req.ip
+            error: chunkError.message,
+            transactionId: 'UNKNOWN',
+            eventId: 'UNKNOWN',
+            stack: chunkError.stack
+          },
+          req.ip || '0.0.0.0',
+          'GENERAL',
+          { source: 'createTransaction' }
         );
-
-        await session.abortTransaction();
-        await session.endSession();
-        return res.status(403).json({ 
-          success: false, 
-          code: 'SANCTIONED_CUSTOMER', 
-          message: 'Customer appears on sanction list', 
-          sanctionDetails: sanctionCheck.sanctionDetails, 
-          timestamp: new Date().toISOString() 
+        results.failed.push({
+          account: 'UNKNOWN',
+          error: `Failed to process transaction chunk: ${chunkError.message}`,
+          code: 'CHUNK_PROCESS_FAILED'
         });
+      } finally {
+        await session.endSession();
       }
+    }
 
-      // Perform AML compliance check
-      amlCheck = await checkAMLCompliance({
-        transactionType: normalizedType,
-        amount: normalizedAmount,
-        currency: account.CURRENCY || 'NGN',
-        accountType: account.ACCT_TYPE || ACCOUNT_TYPE,
-        destinationCountry: DESTINATION_COUNTRY,
-        restrictedCountries: AML_RESTRICTED_COUNTRIES,
-        custId: requiredFields.CUST_ID
-      }, session, req.user?.id, req.ip);
-    } catch (amlError) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(500).json({ 
-        success: false, 
-        code: 'AML_CHECK_FAILED', 
-        message: 'Failed to perform AML compliance check', 
-        error: amlError.message, 
-        timestamp: new Date().toISOString() 
+    // If no transactions succeeded, return failure
+    if (results.successful.length === 0) {
+      return res.status(400).json({
+        success: false,
+        code: 'NO_TRANSACTIONS_PROCESSED',
+        message: 'No transactions were processed successfully',
+        results: results.failed,
+        timestamp: new Date().toISOString()
       });
     }
 
-    // Create and save transaction record
-    let transaction;
-    try {
-      transaction = new Transaction({
-        ACCT_NO: requiredFields.ACCT_NO,
-        ACCT_ID: requiredFields.ACCT_ID,
-        BU_ID: requiredFields.BU_ID,
-        CUST_ID: requiredFields.CUST_ID,
-        ACCT_NM: requiredFields.ACCT_NM,
-        AMOUNT: normalizedAmount,
-        TRANSACTIONDATE: TRANSACTIONDATE ? new Date(TRANSACTIONDATE) : new Date(),
-        TRANSACTION_TYPE: normalizedType,
-        TRANSACTION_ID: TRANSACTION_ID,
-        EVENT_ID: EVENT_ID,
-        TRAN_JOURNAL_ID: JOURNAL_ID,
-        reference,
-        description,
-        currency: account.CURRENCY || 'NGN',
-        createdBy: req.user?.id || 'system',
-        status: 'PENDING',
-        FLAGGED_FOR_AML: amlCheck.isFlagged || false,
-        AML_REASON: amlCheck.reason || null,
-        AML_THRESHOLD_USED: amlCheck.threshold || 0,
-        metadata: {
-          ip: req.ip,
-          userAgent: req.headers['user-agent'],
-          channel: req.headers['x-channel'] || 'API',
-          amlCheck: {
-            flags: amlCheck.flags || [],
-            restrictedCountriesChecked: AML_RESTRICTED_COUNTRIES || [],
-            destinationCountry: DESTINATION_COUNTRY || null
-          },
-          sanctionCheck: {
-            checkedAt: new Date().toISOString(),
-            isSanctioned: false
-          },
-          isBulkTransaction
-        }
-      });
-
-      await transaction.save({ session });
-    } catch (saveError) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(500).json({ 
-        success: false, 
-        code: 'TRANSACTION_SAVE_FAILED', 
-        message: 'Failed to save transaction record', 
-        error: saveError.message, 
-        timestamp: new Date().toISOString() 
-      });
+    // Log successful transactions
+    for (const success of results.successful) {
+      await logAuditTrail(
+        'TRANSACTION',
+        null,
+        req.user?.id || 'system',
+        'TRANSACTION_SUCCESS',
+        null,
+        {
+          account: success.account,
+          amount: success.amount,
+          transactionId: success.transactionId,
+          eventId: success.eventId || 'UNKNOWN'
+        },
+        req.ip || '0.0.0.0',
+        'GENERAL',
+        { source: 'createTransaction' }
+      );
     }
 
-    // Create workflow item
-    try {
-      const newWorkItem = new WF_WORK_ITEM({
-        WORK_ITEM_ID,
-        BUS_PROC_ID,
-        SUB_PROC_ID,
-        QUEUE_ID,
-        ITEM_VALUE: Buffer.from(String(normalizedAmount)).toString('base64'),
-        ITEM_DESC: `${normalizedType} Transaction for ${requiredFields.ACCT_NM}`,
-        ITEM_CLASS_NM: 'TRANSACTION',
-        EVENT_ID,
-        CUST_ID: requiredFields.CUST_ID,
-        REC_ST: 'PENDING',
-        VERSION: 1,
-        ROW_TS: new Date(),
-        USER_ID: req.user?.id || 'system',
-        BU_ID: requiredFields.BU_ID,
-        CREATE_DT: new Date(),
-        SYS_CREATE_TS: new Date(),
-        WAIT_ST: 'PENDING',
-        ITEM_REF_NO: TRANSACTION_ID,
-        ITEM_BU_ID: requiredFields.BU_ID,
-        ITEM_TYPE: 'TRANSACTION',
-        ITEM_ID: transaction._id,
-        TARGET_USER_ROLE_ID: 'COMPLIANCE_OFFICER',
-        metadata: {
-          transactionType: normalizedType,
-          amount: normalizedAmount,
-          accountNumber: requiredFields.ACCT_NO,
-          customerName: requiredFields.ACCT_NM,
-          flaggedForAML: amlCheck.isFlagged || false
-        }
-      });
-
-      await newWorkItem.save({ session });
-
-      await NotificationService.send({
-        ROLE_ID: 'COMPLIANCE_OFFICER',
-        message: `New transaction requires approval: ${normalizedType} of ${normalizedAmount} for ${requiredFields.ACCT_NM}`,
-        WORK_ITEM_ID,
-        EVENT_ID,
-        CUST_ID: requiredFields.CUST_ID,
-        metadata: {
-          transactionId: TRANSACTION_ID,
-          amount: normalizedAmount,
-          account: requiredFields.ACCT_NO
-        }
-      });
-
-    } catch (workItemError) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(500).json({ 
-        success: false, 
-        code: 'WORKFLOW_ITEM_CREATION_FAILED', 
-        message: 'Failed to create workflow item', 
-        error: workItemError.message, 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Prepare balance update
-    const amountMultiplier = {
-  CREDIT: 1,
-  DEBIT: -1,
-  REVERSAL: -1,  // Example of future-proofing
-  ADJUSTMENT: 1   // (hypothetical)
-}[normalizedType.toUpperCase()] || -1; // Default to debit-like behavior
-
-const balanceUpdate = {
-  $inc: {
-    LEDGER_BAL: normalizedAmount * amountMultiplier,
-    AVAILABLE_BALANCE: normalizedAmount * amountMultiplier,
-    CLEARED_BAL: normalizedAmount * amountMultiplier,
-    DAILY_TRANSACTION_COUNT: 1
-  },
-  $set: {
-    LAST_TRANSACTION_DATE: new Date(),
-    UPDATED_AT: new Date()
-  }
-};
-    // Update account balances
-    try {
-      await CustomerAccount.updateOne({ ACCT_NO: requiredFields.ACCT_NO }, balanceUpdate, { session });
-    } catch (updateError) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(500).json({ 
-        success: false, 
-        code: 'BALANCE_UPDATE_FAILED', 
-        message: 'Failed to update account balances', 
-        timestamp: new Date().toISOString() 
-      });
-    }
-
-    // Commit transaction
-    await session.commitTransaction();
-    await session.endSession();
-
-    // Return success response
-    return res.status(201).json({
+    // Return response with successful and failed transactions
+    return res.status(207).json({
       success: true,
-      code: 'TRANSACTION_SUCCESS',
-      message: 'Transaction processed successfully',
+      code: 'TRANSACTIONS_PROCESSED',
+      message: `Processed ${results.successful.length} successful and ${results.failed.length} failed transactions`,
       data: {
-        transactionId: TRANSACTION_ID,
-        workItemId: WORK_ITEM_ID,
-        amount: normalizedAmount,
-        status: 'PENDING',
-        amlDetails: {
-          flagged: amlCheck?.isFlagged || false,
-          reason: amlCheck?.reason || null,
-          thresholdUsed: amlCheck?.threshold || 0,
-          flags: amlCheck?.flags || []
-        }
+        successful: results.successful,
+        failed: results.failed
       },
       timestamp: new Date().toISOString()
     });
-
   } catch (error) {
-    // Error handling
-    try {
-      if (session.inTransaction()) {
-        await session.abortTransaction();
-      }
-    } catch (abortError) {
-      console.error('Failed to abort transaction:', abortError);
-    }
-
+    // Log unexpected errors
+    await logAuditTrail(
+      'TRANSACTION',
+      null,
+      req.user?.id || 'system',
+      'TRANSACTION_FAILED',
+      null,
+      {
+        error: error.message,
+        transactionId: 'UNKNOWN',
+        eventId: 'UNKNOWN',
+        stack: error.stack,
+        requestBody: req.body
+      },
+      req.ip || '0.0.0.0',
+      'GENERAL',
+      { source: 'createTransaction' }
+    );
     console.error('Transaction Error:', error.message, error.stack);
-    return res.status(500).json({ 
-      success: false, 
-      code: 'TRANSACTION_FAILED', 
-      message: 'Failed to process transaction', 
-      error: error.message, 
-      timestamp: new Date().toISOString() 
+    return res.status(500).json({
+      success: false,
+      code: 'TRANSACTION_FAILED',
+      message: 'Failed to process transactions',
+      error: error.message,
+      results: results,
+      timestamp: new Date().toISOString()
     });
-  } finally {
-    try {
-      await session.endSession();
-    } catch (endSessionError) {
-      console.error('Failed to end session:', endSessionError);
-    }
   }
 };
 
+export { createTransaction };
 
-// New function to approve pending transactions
+
+
+
+
+
+
+
+// Debug imports to verify they are defined
+console.log('approveTransaction Imports:', {
+  mongoose,
+  Transaction,
+  WF_WORK_ITEM,
+  logAuditTrail,
+  generateWorkflowIdentifiers,
+  NotificationService
+});
+
 export const approveTransaction = async (req, res) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
-  const { EVENT_ID, JOURNAL_ID } = generateWorkflowIdentifiers();
+  let sessionCommitted = false;
+  let EVENT_ID = 'UNKNOWN';
+  let JOURNAL_ID = 'UNKNOWN';
 
   try {
+    // Validate req.body
+    if (!req.body || typeof req.body !== 'object') {
+      throw new Error('Request body is missing or invalid');
+    }
+
+    // Generate identifiers early to ensure EVENT_ID is available
+    const identifiers = await generateWorkflowIdentifiers();
+    EVENT_ID = identifiers.EVENT_ID || 'UNKNOWN';
+    JOURNAL_ID = identifiers.JOURNAL_ID || 'UNKNOWN';
+    console.log('Generated identifiers:', { EVENT_ID, JOURNAL_ID });
+
+    // Validate generated EVENT_ID
+    if (!EVENT_ID || EVENT_ID === 'UNKNOWN') {
+      throw new Error('Failed to generate valid EVENT_ID');
+    }
+
     const { workItemId, transactionId, approvalStatus, approvalNotes = '' } = req.body;
     const approverId = req.user?.id || 'system';
 
+    // Validate input
+    if (!workItemId || !transactionId || !approvalStatus) {
+      throw new Error('Transaction ID, Work Item ID, and approval status are required');
+    }
+
     // Convert transactionId to number if it's a string
-    const numericTransactionId = typeof transactionId === 'string' 
+    const numericTransactionId = typeof transactionId === 'string'
       ? parseInt(transactionId, 10)
       : transactionId;
 
-    // Validate input
-    if (!numericTransactionId || !workItemId || !approvalStatus) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        code: 'MISSING_REQUIRED_FIELDS',
-        message: 'Transaction ID, Work Item ID and approval status are required',
-        timestamp: new Date().toISOString()
-      });
+    if (isNaN(numericTransactionId) || numericTransactionId <= 0) {
+      throw new Error('Invalid Transaction ID');
     }
 
     if (!['APPROVED', 'REJECTED'].includes(approvalStatus)) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        code: 'INVALID_APPROVAL_STATUS',
-        message: 'Approval status must be either APPROVED or REJECTED',
-        timestamp: new Date().toISOString()
-      });
+      throw new Error('Approval status must be either APPROVED or REJECTED');
     }
 
-    // Find work item
-    const workItem = await WF_WORK_ITEM.findOne({
-      WORK_ITEM_ID: workItemId
-    }).session(session);
+    await session.startTransaction({ readPreference: 'primary' });
 
-    if (!workItem) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        code: 'WORK_ITEM_NOT_FOUND',
-        message: `Work item with ID ${workItemId} not found`,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Log approval attempt
+    await logAuditTrail(
+      'TRANSACTION_APPROVAL',
+      null,
+      approverId,
+      'APPROVAL_ATTEMPT',
+      null,
+      {
+        workItemId,
+        transactionId: numericTransactionId,
+        approvalStatus,
+        eventId: EVENT_ID,
+        journalId: JOURNAL_ID,
+        requestBody: req.body
+      },
+      req.ip || '::1',
+      'GENERAL',
+      { source: 'approveTransaction' }
+    );
+
+    // Debug Transaction.findOne query
+    console.log('Finding transaction with:', {
+      TRANSACTION_ID: numericTransactionId,
+      status: ['PENDING', 'PENDING_APPROVAL']
+    });
 
     // Find transaction by numeric TRANSACTION_ID
     const transaction = await Transaction.findOne({
@@ -745,65 +1128,131 @@ export const approveTransaction = async (req, res) => {
     }).session(session);
 
     if (!transaction) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        code: 'TRANSACTION_NOT_FOUND',
-        message: `Pending transaction not found for ID ${numericTransactionId}`,
-        timestamp: new Date().toISOString()
-      });
+      throw new Error(`Pending transaction not found for ID ${numericTransactionId}`);
+    }
+
+    // Debug work item query
+    console.log('Finding work item with:', { WORK_ITEM_ID: workItemId });
+
+    // Find work item
+    const workItem = await WF_WORK_ITEM.findOne({
+      WORK_ITEM_ID: workItemId
+    }).session(session);
+
+    if (!workItem) {
+      throw new Error(`Work item with ID ${workItemId} not found`);
     }
 
     // Verify work item matches transaction (using ObjectId)
     if (workItem.ITEM_ID?.toString() !== transaction._id.toString()) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        code: 'WORK_ITEM_MISMATCH',
-        message: 'Work item does not match the transaction',
-        details: {
-          workItemEntityId: workItem.ITEM_ID?.toString(),
-          transactionObjectId: transaction._id.toString(),
-          transactionNumericId: transaction.TRANSACTION_ID
-        },
-        timestamp: new Date().toISOString()
-      });
+      throw new Error('Work item does not match the transaction');
     }
 
     // Update transaction and work item based on approval status
     if (approvalStatus === 'APPROVED') {
-      // Update transaction to ACTIVE and COMPLETED
       transaction.REC_ST = 'ACTIVE';
       transaction.status = 'COMPLETED';
       transaction.APPROVAL_NOTES = approvalNotes;
       transaction.APPROVED_BY = approverId;
       transaction.APPROVAL_DATE = new Date();
-      
-      // Update work item
+
       workItem.status = 'COMPLETED';
       workItem.REC_ST = 'ACTIVE';
       workItem.updatedAt = new Date();
     } else {
-      // REJECTED case
       transaction.status = 'REJECTED';
       transaction.REJECTION_NOTES = approvalNotes;
       transaction.REJECTED_BY = approverId;
       transaction.REJECTION_DATE = new Date();
-      
-      // Update work item
+
       workItem.status = 'REJECTED';
       workItem.REC_ST = 'REJECTED';
       workItem.updatedAt = new Date();
     }
 
+    // Debug saving documents
+    console.log('Saving transaction:', transaction);
+    console.log('Saving work item:', workItem);
+
     // Save both transaction and work item
     await transaction.save({ session });
     await workItem.save({ session });
 
+    // Send notification
+    try {
+      console.log('Sending notification with:', {
+        ROLE_ID: workItem.assignedTo || 'COMPLIANCE_OFFICER',
+        WORK_ITEM_ID: workItemId,
+        EVENT_ID,
+        CUST_ID: transaction.CUST_ID
+      });
+      await NotificationService.send({
+        ROLE_ID: workItem.assignedTo || 'COMPLIANCE_OFFICER',
+        message: `Transaction ${approvalStatus.toLowerCase()}: ${transaction.TRANSACTION_TYPE} of ${transaction.AMOUNT} for ${transaction.ACCT_NM}`,
+        WORK_ITEM_ID: workItemId,
+        EVENT_ID,
+        CUST_ID: transaction.CUST_ID,
+        status: approvalStatus.toLowerCase(),
+        notificationType: 'system',
+        metadata: {
+          transactionId: numericTransactionId,
+          amount: transaction.AMOUNT,
+          account: transaction.ACCT_NO,
+          approvalStatus,
+          approvalNotes,
+          eventId: EVENT_ID
+        }
+      }, { session });
+    } catch (notificationError) {
+      console.error('Notification failed:', {
+        error: notificationError.message,
+        stack: notificationError.stack,
+        workItemId,
+        transactionId: numericTransactionId,
+        eventId: EVENT_ID
+      });
+      await logAuditTrail(
+        'NOTIFICATION',
+        null,
+        approverId,
+        'NOTIFICATION_FAILED',
+        null,
+        {
+          workItemId,
+          transactionId: numericTransactionId,
+          error: notificationError.message,
+          eventId: EVENT_ID,
+          journalId: JOURNAL_ID
+        },
+        req.ip || '::1',
+        'GENERAL',
+        { source: 'approveTransaction' }
+      );
+    }
+
+    // Log successful approval
+    await logAuditTrail(
+      'TRANSACTION_APPROVAL',
+      null,
+      approverId,
+      `TRANSACTION_${approvalStatus}`,
+      null,
+      {
+        workItemId,
+        transactionId: numericTransactionId,
+        approvalStatus,
+        eventId: EVENT_ID,
+        journalId: JOURNAL_ID,
+        amount: transaction.AMOUNT,
+        account: transaction.ACCT_NO
+      },
+      req.ip || '::1',
+      'GENERAL',
+      { source: 'approveTransaction' }
+    );
+
     await session.commitTransaction();
-    await session.endSession();
+    sessionCommitted = true;
 
     return res.status(200).json({
       success: true,
@@ -819,24 +1268,54 @@ export const approveTransaction = async (req, res) => {
         amount: transaction.AMOUNT,
         approvalDate: new Date().toISOString(),
         approvedBy: approverId,
-        journalId: transaction.TRAN_JOURNAL_ID
+        journalId: JOURNAL_ID
       },
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    try {
-      if (session.inTransaction()) await session.abortTransaction();
-    } catch (abortError) {
-      console.error('Failed to abort transaction:', abortError);
-    } finally {
-      await session.endSession();
+    if (!sessionCommitted && session.inTransaction()) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error('Failed to abort transaction:', {
+          error: abortError.message,
+          stack: abortError.stack,
+          eventId: EVENT_ID,
+          journalId: JOURNAL_ID
+        });
+      }
     }
+
+    const safeBody = req.body || {};
+    await logAuditTrail(
+      'TRANSACTION_APPROVAL',
+      null,
+      req.user?.id || 'system',
+      'APPROVAL_PROCESS_FAILED',
+      null,
+      {
+        workItemId: safeBody.workItemId || 'UNKNOWN',
+        transactionId: safeBody.transactionId || 'UNKNOWN',
+        error: error.message,
+        eventId: EVENT_ID,
+        journalId: JOURNAL_ID,
+        requestBody: safeBody,
+        stack: error.stack,
+        bodyDefined: !!req.body
+      },
+      req.ip || '::1',
+      'GENERAL',
+      { source: 'approveTransaction' }
+    );
 
     console.error('Transaction approval error:', {
       error: error.message,
       stack: error.stack,
-      body: req.body,
+      body: safeBody,
+      bodyDefined: !!req.body,
+      eventId: EVENT_ID,
+      journalId: JOURNAL_ID,
       timestamp: new Date().toISOString()
     });
 
@@ -847,6 +1326,8 @@ export const approveTransaction = async (req, res) => {
       error: error.message,
       timestamp: new Date().toISOString()
     });
+  } finally {
+    await session.endSession();
   }
 };
 

@@ -26,35 +26,36 @@ const HolidaySchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Indexes
-HolidaySchema.index({ date: 1 });
-HolidaySchema.index({ country: 1 });
-HolidaySchema.index({ recurring: 1 });
 
-// Static method to check if a given date is a holiday
+// ✅ Single static method to check if a given date is a holiday
 HolidaySchema.statics.isHoliday = async function (date) {
   try {
-    // Normalize input date to midnight
     const inputDate = new Date(date);
-    inputDate.setHours(0, 0, 0, 0);
+    if (isNaN(inputDate)) return null;
 
-    // 1. Check for exact date match (non-recurring or exact recurring date)
-    const exact = await this.findOne({ date: inputDate });
-    if (exact) return true;
+    // Normalize to start & end of day
+    const startOfDay = new Date(inputDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(inputDate.setHours(23, 59, 59, 999));
 
-    // 2. Check for recurring holidays (ignores year, matches only month & day)
+    // 1. Check for exact match
+    const exact = await this.findOne({
+      date: { $gte: startOfDay, $lte: endOfDay }
+    });
+    if (exact) return exact;
+
+    // 2. Check recurring holidays (month/day match)
     const recurring = await this.find({ recurring: true });
     for (const holiday of recurring) {
       const hDate = new Date(holiday.date);
       if (
-        hDate.getMonth() === inputDate.getMonth() &&
-        hDate.getDate() === inputDate.getDate()
+        hDate.getMonth() === startOfDay.getMonth() &&
+        hDate.getDate() === startOfDay.getDate()
       ) {
-        return true;
+        return holiday;
       }
     }
 
-    return false;
+    return null;
   } catch (error) {
     console.error('Error checking holiday:', error);
     throw error;

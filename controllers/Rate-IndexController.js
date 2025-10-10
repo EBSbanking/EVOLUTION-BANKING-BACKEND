@@ -178,6 +178,7 @@ export const deleteRateIndex = async (req, res) => {
   }
 };
 
+
 // Calculate interest using the centralized service
 export const calculateInterest = async (req, res) => {
   try {
@@ -192,11 +193,20 @@ export const calculateInterest = async (req, res) => {
       });
     }
 
+    // Ensure numeric rateIndexId
+    const numericRateIndexId = Number(rateIndexId);
+    if (isNaN(numericRateIndexId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'rateIndexId must be a valid number'
+      });
+    }
+
     // Get the rate index
-    const rateIndex = await RateIndex.findOne({ 
-      INDEX_RATE_ID: rateIndexId 
+    const rateIndex = await RateIndex.findOne({
+      INDEX_RATE_ID: numericRateIndexId
     });
-    
+
     if (!rateIndex) {
       return res.status(404).json({
         success: false,
@@ -204,15 +214,12 @@ export const calculateInterest = async (req, res) => {
       });
     }
 
-    // Use the centralized service
+    // Use the centralized service (pass the correct shape)
     const result = await interestService.calculateInterest({
+      rateIndexId: numericRateIndexId,
       principal: parseFloat(principal),
-      annualRate: rateIndex.INDEX_RATE,
       startDate: new Date(startDate),
-      endDate: endDate ? new Date(endDate) : new Date(),
-      dayCountConvention: rateIndex.DAY_COUNT_CONVENTION,
-      interestType: 'SIMPLE', // Default for rate indices
-      precision: rateIndex.PRECISION || 4
+      endDate: endDate ? new Date(endDate) : new Date()
     });
 
     res.status(200).json({
@@ -221,10 +228,10 @@ export const calculateInterest = async (req, res) => {
     });
   } catch (error) {
     console.error('Error calculating interest:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to calculate interest', 
-      error: error.message 
+      message: 'Failed to calculate interest',
+      error: error.message
     });
   }
 };

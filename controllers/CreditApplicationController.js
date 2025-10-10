@@ -22,7 +22,7 @@ class LoanContractController {
         loan_purpose: application.Purpose_of_Credit || '',
         loan_amount: application.APPROVED_LIMIT_AMT?.toString() || '0',
         loan_term: application.TERM_VALUE || '',
-        interest_rate: 5.0,
+        interest_rate: "",
         bank_name,
         bank_short,
         status: 'active',
@@ -91,7 +91,7 @@ class CreditApplicationController {
         CUST_ID: parseInt(newApplication.CUST_ID),
         REC_ST: 'Pending', // Workflow items should start as Pending
         VERSION: 1,
-        USER_ID: req.user?.id || 'system',
+        USER_ID: req.user?.id || userId,
         BU_ID: newApplication.BU_ID || '0001',
         CREATE_DT: moment().toISOString(),
         WAIT_ST: 'Pending',

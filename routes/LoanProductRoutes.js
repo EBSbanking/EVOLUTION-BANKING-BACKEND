@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-  createLoanProduct,
+  ProductsController,
   getAllLoanProducts,
   getLoanProduct,
   updateLoanProduct,
@@ -9,7 +9,8 @@ import {
 
 const router = express.Router();
 
-router.post('/products', createLoanProduct);
+// Use the createProduct method from the ProductsController object
+router.post('/products', ProductsController.createProduct);
 router.get('/products', getAllLoanProducts);
 router.get('/:id', getLoanProduct);
 router.put('/:id', updateLoanProduct);

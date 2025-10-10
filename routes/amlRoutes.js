@@ -1,5 +1,7 @@
-// routes/amlRoutes.js
 import express from 'express';
+import asyncHandler from 'express-async-handler';
+import rateLimit from 'express-rate-limit';
+import { restrictToPermission } from '../middlewares/rbac.js';
 import {
   upsertAML,
   updateAMLByCustId,
@@ -11,41 +13,53 @@ import {
 
 const router = express.Router();
 
-/**
- * @route   POST /api/aml/upsert
- * @desc    Create or update AML by CUST_ID with workflow
- */
-router.post('/upsert', upsertAML);
+const amlLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // 50 requests per IP
+});
+
+router.use(amlLimiter);
 
 /**
- * @route   PUT /api/aml/update/:custId
+ * @route   POST /api/banking/aml/upsert
+ * @desc    Create or update AML record by CUST_ID with workflow
+ * @access  CONFIGURE_AML
+ */
+router.post('/upsert', restrictToPermission('configureAML'), asyncHandler(upsertAML));
+
+/**
+ * @route   PUT /api/banking/aml/update/:custId
  * @desc    Update AML record by CUST_ID only (no insert)
+ * @access  CONFIGURE_AML
  */
-router.put('/update/:custId', updateAMLByCustId);
+router.put('/update/:custId', restrictToPermission('configureAML'), asyncHandler(updateAMLByCustId));
 
 /**
- * @route   POST /api/aml/approve
+ * @route   POST /api/banking/aml/approve
  * @desc    Approve AML record by CUST_ID
+ * @access  APPROVE_AML
  */
-router.post('/approve', approveAML);
-
+router.post('/approve', restrictToPermission('amlApproval'), asyncHandler(approveAML));
 
 /**
- * @route   GET /api/aml/:custId
+ * @route   GET /api/banking/aml/:custId
  * @desc    Get AML record by CUST_ID
+ * @access  VIEW_AML_THRESHOLD
  */
-router.get('/:custId', getAMLByCustId);
+router.get('/:custId', restrictToPermission('amlThreshold'), asyncHandler(getAMLByCustId));
 
 /**
- * @route   GET /api/aml
+ * @route   GET /api/banking/aml
  * @desc    Get all AML records
+ * @access  VIEW_AML_THRESHOLD
  */
-router.get('/', getAllAMLRecords);
+router.get('/', restrictToPermission('amlThreshold'), asyncHandler(getAllAMLRecords));
 
 /**
- * @route   DELETE /api/aml/:custId
+ * @route   DELETE /api/banking/aml/:custId
  * @desc    Delete AML record by CUST_ID
+ * @access  CONFIGURE_AML
  */
-router.delete('/:custId', deleteAMLByCustId);
+router.delete('/:custId', restrictToPermission('configureAML'), asyncHandler(deleteAMLByCustId));
 
 export default router;

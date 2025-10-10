@@ -1,4 +1,5 @@
-// utils/dateUtils.js
+import Holiday from '../models/Holiday.js';
+import logger from './logger.js';
 
 /**
  * Checks if a value is a valid date
@@ -115,11 +116,47 @@ export const getPaymentFrequency = (termCode, termValue) => {
   }
 };
 
+/**
+ * Calculates the next business date, skipping weekends and holidays
+ * @param {Date} currentDate - The starting date
+ * @returns {Promise<Date>} The next valid business date
+ * @throws {Error} If holiday check or date calculation fails
+ */
+export const calculateNextBusinessDate = async (currentDate) => {
+  try {
+    let nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    // Fetch holidays for the next year to reduce queries
+    const holidays = await Holiday.find({
+      date: {
+        $gte: new Date(nextDate.setHours(0, 0, 0, 0)),
+        $lt: new Date(new Date(nextDate).setFullYear(nextDate.getFullYear() + 1)),
+      },
+    });
+    const holidayDates = holidays.map(h => new Date(h.date).setHours(0, 0, 0, 0));
+    let isHolidayOrWeekend = true;
+    while (isHolidayOrWeekend) {
+      const normalizedDate = new Date(nextDate.setHours(0, 0, 0, 0));
+      const isWeekend = nextDate.getDay() === 0 || nextDate.getDay() === 6;
+      const isHoliday = holidayDates.includes(normalizedDate.getTime());
+      isHolidayOrWeekend = isHoliday || isWeekend;
+      if (isHolidayOrWeekend) {
+        nextDate.setDate(nextDate.getDate() + 1);
+      }
+    }
+    return nextDate;
+  } catch (error) {
+    logger.error('Failed to calculate next business date', { error: error.message, stack: error.stack });
+    throw error;
+  }
+};
+
 export default {
   isValidDate,
   isFutureDate,
   isPastDate,
   isDateBetween,
   calculateMaturityDate,
-  getPaymentFrequency
+  getPaymentFrequency,
+  calculateNextBusinessDate
 };

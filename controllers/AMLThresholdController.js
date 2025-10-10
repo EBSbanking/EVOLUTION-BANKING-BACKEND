@@ -7,15 +7,18 @@ export const createThreshold = async (req, res) => {
   try {
     const { transaction_type, threshold_amount, currency, active, USER_ID } = req.body;
 
+    // Validate transaction type
     if (!GENERAL_TX_TYPES.includes(transaction_type)) {
       return res.status(400).json({ message: 'Invalid transaction type.' });
     }
 
+    // Check if threshold already exists
     const existing = await AMLThreshold.findOne({ transaction_type });
     if (existing) {
       return res.status(400).json({ message: 'Threshold rule already exists for this transaction type.' });
     }
 
+    // Create new threshold rule
     const rule = new AMLThreshold({
       transaction_type,
       threshold_amount,
@@ -26,25 +29,34 @@ export const createThreshold = async (req, res) => {
 
     await rule.save();
 
+    // Generate an event ID (for metadata)
     const EVENT_ID = await generateEventID();
 
+    // Log audit trail using the MongoDB ObjectId as entity_id
     await logAuditTrail(
-      'THRESHOLD_RULE',
-      EVENT_ID,
+      'THRESHOLD_RULE',      // entity type
+      rule._id,              // MongoDB ObjectId
       USER_ID,
       'CREATE',
       null,
-      rule.toObject(),
+      { ...rule.toObject(), event_id: EVENT_ID }, // include EVENT_ID in metadata
       req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress
     );
 
-    return res.status(201).json({ message: 'Threshold rule created successfully', data: rule });
+    return res.status(201).json({
+      message: 'Threshold rule created successfully',
+      data: rule
+    });
 
   } catch (err) {
     console.error('Error in createThreshold:', err);
-    return res.status(500).json({ message: 'Failed to create threshold rule', error: err.message });
+    return res.status(500).json({
+      message: 'Failed to create threshold rule',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 };
+
 
 
 // Get all threshold rules (optionally filter by active status)

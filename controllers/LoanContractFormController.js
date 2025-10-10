@@ -4,7 +4,8 @@ import NotificationService from '../services/NotificationService.js';
 import moment from 'moment';
 
 class LoanContractController {
-  static generateId(length) {
+  // Make generateId a regular function (not static)
+  generateId(length) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
     for (let i = 0; i < length; i++) {
@@ -38,7 +39,9 @@ class LoanContractController {
         }
       }
 
-      const loanContractNo = `LCN-${LoanContractController.generateId(8)}`;
+      // Create instance to access generateId method
+      const controllerInstance = new LoanContractController();
+      const loanContractNo = `LCN-${controllerInstance.generateId(8)}`;
 
       const newContract = new LoanContractForm({
         applicationId: application.APPL_ID.trim(),
@@ -53,8 +56,8 @@ class LoanContractController {
         loan_amount: application.AMOUNT,
         loan_term: application.TERM_VALUE,
         interest_rate: application.INTEREST_RATE,
-        loanAccountNo: application.ACCT_NO || `LA-${LoanContractController.generateId(6)}`,
-        fundingAccountNo: application.FUNDING_ACCT || `FA-${LoanContractController.generateId(6)}`,
+        loanAccountNo: application.ACCT_NO || `LA-${controllerInstance.generateId(6)}`,
+        fundingAccountNo: application.FUNDING_ACCT || `FA-${controllerInstance.generateId(6)}`,
         fees: {
           processingFee: application.PROCESSING_FEE,
           latePaymentFee: application.LATE_FEE || 0,
@@ -109,7 +112,9 @@ class LoanContractController {
 
   static async createLoanContract(req, res) {
     try {
-      const loanContractNo = `LCN-${LoanContractController.generateId(8)}`;
+      // Create instance to access generateId method
+      const controllerInstance = new LoanContractController();
+      const loanContractNo = `LCN-${controllerInstance.generateId(8)}`;
 
       const newContract = new LoanContractForm({
         ...req.body,

@@ -1,5 +1,5 @@
-import { ROLE_MAPPING } from "../constants/roleMapping";
-import RoleMapping from "../models/RoleMapping";
+import { ROLE_MAPPING } from "../constants/roleMapping.js";
+import RoleMapping from "../models/RoleMapping.js";
 import authorizeRoles from "../middlewares/roleMiddleware.js";
 import Permission from "../models/Permissions.js";
 

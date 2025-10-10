@@ -12,7 +12,7 @@ import LoanContractForm from '../models/LoanContractForm.js';
 import LoanAccount from '../models/LoanAccount.js';
 import Transaction from '../models/Transaction.js';
 import { generateRepaymentSchedule, calculateMaturityDate } from '../utils/loanUtils.js';
-import LoanContractFormController from '../controllers/LoanContractFormController.js';
+import LoanContractController from '../controllers/LoanContractFormController.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import Customer from '../models/Customer.js';
 import LoanFee from '../models/LoanFee.js';
@@ -27,26 +27,37 @@ import { addDays } from 'date-fns';
 import InterestCalculationService from '../Services/InterestCalculationService.js';
 import FeeCalculationService from '../Services/FeeCalculationService.js';
 import { generateNumber } from '../utils/generateNumber.js';
-import { generateLoanAccountIdByProduct } from '../utils/generateLoanAccountId.js';
+import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
 import { getProductTypeOnly } from '../controllers/ProductTypeMappingController.js';
 import logger from '../utils/logger.js';
 import { generateLoanAccountNumber, generateUniqueCreditApplicationId } from '../utils/loanUtils.js';
-import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
 import Decimal from 'decimal.js';
 import Counter from '../models/Counter.js';
 import GLAccount from '../models/GLAccount.js';
 import Guarantor from '../models/Guarantor.js';
+import Charge from '../models/Charge.js';
 import { processLoanDisbursementTransactions, processDisbursement } from '../Services/loanService.js';
-import getErrorMessage from '../utils/errorUtils.js'
+import getErrorMessage from '../utils/errorUtils.js';
+import LoanDisbursement from '../models/Disbursement.js'; 
+import LoanRepayment from '../models/LoanRepayment.js';
+import ProductTypeMapping from '../models/ProductTypeMapping.js';
 
 
 const interestService = new InterestCalculationService();
 const { getPaymentFrequency } = repaymentUtils;
 const feeService = new FeeCalculationService();
 
-// Helper function to generate numeric IDs
+function generateId(length) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return result;
+}
+
 function generateNumericId() {
-    return Math.floor(100000000000 + Math.random() * 900000000000);
+  return Math.floor(100000000000 + Math.random() * 900000000000);
 }
 
 async function generateUniqueLoanAccountId() {
@@ -80,15 +91,23 @@ const convertTermCodeToFrequency = (termCode) => {
   }
 };
 
-const generateContractText = (loanDetails, customerDetails) => {
+const generateContractText = (loanDetails, customerDetails, loanProduct, effectiveInterestRate) => {
   const amount = Number(loanDetails.AMOUNT) || 0;
-  
+  const fees = loanProduct.feeStructure || [];
+  const processingFee = loanProduct.processingFeeRate
+    ? `${(parseFloat(loanProduct.processingFeeRate) * 100).toFixed(2)}%`
+    : '0';
+  const feeDetails = fees
+    .filter(fee => fee.isActive)
+    .map(fee => `${fee.name}: ${fee.isPercentage ? `${parseFloat(fee.amount) * 100}%` : parseFloat(fee.amount)}`)
+    .join('\n');
+
   return `LOAN AGREEMENT
 
 This Agreement is made on ${new Date().toLocaleDateString()} between:
 
 BORROWER: ${loanDetails.borrower_name || customerDetails?.ACCT_NM || 'Customer'}
-ADDRESS: ${loanDetails.borrower_address || customerDetails?.ADDRESS_LINE1 || 'Address not provided'}
+ADDRESS: ${loanDetails.borrower_address || customerDetails?.HOME_ADDRESS || 'Address not provided'}
 
 and
 
@@ -96,7 +115,7 @@ LENDER: ${process.env.BANK_NAME || 'Our Bank'}
 
 LOAN TERMS:
 - Principal Amount: ${amount.toLocaleString()}
-- Interest Rate: ${loanDetails.INTEREST_RATE || 0}%
+- Interest Rate: ${effectiveInterestRate.toFixed(2)}%
 - Term: ${loanDetails.TERM_VALUE || 0} ${getTermDescription(loanDetails.TERM_CD || 'M')}
 - Purpose: ${loanDetails.loan_purpose || 'General Business Purpose'}
 
@@ -105,8 +124,8 @@ REPAYMENT TERMS:
 - Disbursement Date: ${new Date(loanDetails.DISBURSEMENT_DATE || Date.now()).toLocaleDateString()}
 
 FEES:
-- Processing Fee: ${loanDetails.feeAmount || 0}
-- Late Payment Penalty: As per policy
+- Processing Fee: ${processingFee}
+${feeDetails ? `- ${feeDetails}` : ''}
 
 SIGNATURES:
 ___________________________
@@ -116,22 +135,104 @@ ___________________________
 Lender Representative`;
 };
 
-const LoanAccountController = {
+async function createWorkflowItem(workflowData, session) {
+  try {
+    console.log('Creating workflow item with data:', {
+      ...workflowData,
+      ITEM_VALUE: workflowData.ITEM_VALUE?.toString().substring(0, 50) + '...',
+      ITEM_ID: workflowData.ITEM_ID?.toString().substring(0, 50) + '...',
+      WORKFLOW_ID: workflowData.WORKFLOW_ID?.toString().substring(0, 50) + '...',
+      GUARANTOR_ID: workflowData.GUARANTOR_ID?.toString().substring(0, 50) + '...'
+    });
 
+    const ids = await generateWorkflowIdentifiers();
+    
+    const workItem = new WF_WORK_ITEM({
+      WORK_ITEM_ID: ids.WORK_ITEM_ID,
+      processId: ids.BUS_PROC_ID,
+      currentStep: ids.SUB_PROC_ID,
+      QUEUE_ID: ids.QUEUE_ID,
+      EVENT_ID: String(ids.EVENT_ID),
+      JOURNAL_ID: ids.JOURNAL_ID,
+      TRANSACTION_ID: ids.TRANSACTION_ID,
+      ITEM_REF_NO: generateNumber(4),
+      ITEM_VALUE: workflowData.ITEM_VALUE,
+      ITEM_DESC: workflowData.ITEM_DESC,
+      ITEM_CLASS_NM: workflowData.ITEM_CLASS_NM,
+      ITEM_TYPE: workflowData.ITEM_TYPE,
+      CUST_ID: workflowData.CUST_ID,
+      USER_ID: workflowData.USER_ID,
+      BU_ID: workflowData.BU_ID,
+      TARGET_USER_ROLE_ID: workflowData.TARGET_USER_ROLE_ID,
+      ORIGINATOR_USER_ROLE_ID: workflowData.ORIGINATOR_USER_ROLE_ID,
+      ITEM_ID: workflowData.ITEM_ID,
+      REC_ST: workflowData.REC_ST.toUpperCase(),
+      WAIT_ST: workflowData.WAIT_ST.toUpperCase(),
+      VERSION: workflowData.VERSION,
+      CREATE_DT: workflowData.CREATE_DT,
+      dueDate: workflowData.dueDate,
+      WORKFLOW_ID: workflowData.WORKFLOW_ID,
+      GUARANTOR_ID: workflowData.GUARANTOR_ID,
+      ITEM_BU_ID: workflowData.ITEM_BU_ID,
+      CREATED_BY: workflowData.USER_ID,
+      SYS_CREATE_TS: new Date(),
+      ROW_TS: new Date(),
+      priority: 'MEDIUM'
+    });
+
+    await workItem.save({ session });
+    
+    console.log('Workflow item created successfully:', {
+      WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+      ITEM_ID: workItem.ITEM_ID,
+      STATUS: workItem.REC_ST
+    });
+    
+    return {
+      success: true,
+      workItemId: workItem._id,
+      WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+      document: workItem.toObject()
+    };
+  } catch (error) {
+    console.error('Direct workflow creation error:', error);
+    return {
+      success: false,
+      message: error.message,
+      code: 'WORKFLOW_CREATION_ERROR',
+      errorDetails: error
+    };
+  }
+}
+
+const LoanAccountController = {
 async applyForLoan(req, res) {
-  // Helper functions
+  // Define utility functions
+  async function getLoanCycleCount(custId, session) {
+    try {
+      const loanCount = await LoanAccount.countDocuments({ CUST_ID: custId }).session(session);
+      return loanCount + 1;
+    } catch (error) {
+      console.error('Error in getLoanCycleCount:', error);
+      throw {
+        code: 'LOAN_CYCLE_COUNT_ERROR',
+        message: 'Failed to retrieve loan cycle count',
+        status: 500,
+      };
+    }
+  }
+
   function calculateMaturityDate(startDate, termCode, termValue) {
     termCode = String(termCode).toUpperCase();
     const result = new Date(startDate);
-
     switch (termCode) {
       case 'D': result.setDate(result.getDate() + termValue); break;
-      case 'W': result.setDate(result.getDate() + (termValue * 7)); break;
+      case 'W': result.setDate(result.getDate() + termValue * 7); break;
       case 'M': result.setMonth(result.getMonth() + termValue); break;
+      case 'Q': result.setMonth(result.getMonth() + termValue * 3); break;
       case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
       default: throw new Error(`Invalid term code: ${termCode}`);
     }
-
     return result;
   }
 
@@ -140,81 +241,211 @@ async applyForLoan(req, res) {
     switch (termCode) {
       case 'D': return 'DAILY';
       case 'W': return 'WEEKLY';
-      case 'M': return termValue <= 3 ? 'MONTHLY' : 'QUARTERLY';
+      case 'M': return 'MONTHLY';
+      case 'Q': return 'QUARTERLY';
       case 'Y': return termValue <= 1 ? 'MONTHLY' : 'YEARLY';
       default: return 'MONTHLY';
     }
   }
 
-  // Helper function to find guarantor by either numeric ID or ObjectId
-  async function findGuarantor(guarantorId) {
-    // First try to find by numeric GUARANTOR_ID
+  async function findGuarantor(guarantorId, session) {
     if (!isNaN(guarantorId)) {
-      const byNumber = await Guarantor.findOne({ GUARANTOR_ID: Number(guarantorId) });
+      const byNumber = await Guarantor.findOne({ GUARANTOR_ID: Number(guarantorId) }).session(session);
       if (byNumber) return byNumber;
     }
-
-    // Then try by ObjectId if the input looks like one
     if (mongoose.Types.ObjectId.isValid(guarantorId)) {
-      const byObjectId = await Guarantor.findById(guarantorId);
+      const byObjectId = await Guarantor.findById(guarantorId).session(session);
       if (byObjectId) return byObjectId;
     }
-
     return null;
   }
 
+  // UPDATED findRateIndex function
+  async function findRateIndex(rateIndexId, session) {
+    try {
+      let query = {};
+      
+      // Try to parse as number first
+      const numericId = parseInt(rateIndexId);
+      if (!isNaN(numericId)) {
+        query = { INDEX_RATE_ID: numericId };
+      } else {
+        query = { INDEX_RATE_ID: rateIndexId };
+      }
+
+      // Look for the specific rate index
+      let rateIndex = await RateIndex.findOne(query).session(session);
+      
+      if (!rateIndex) {
+        console.warn(`Rate index ${rateIndexId} not found, looking for default...`);
+        
+        // Look for default rate index
+        rateIndex = await RateIndex.findOne({ IS_DEFAULT: true }).session(session);
+        
+        if (!rateIndex) {
+          // If no default exists, get the first available rate index
+          rateIndex = await RateIndex.findOne({}).session(session);
+          
+          if (rateIndex) {
+            console.warn(`Using first available rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+          } else {
+            throw new Error('No rate indexes available in the system');
+          }
+        } else {
+          console.warn(`Using default rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+        }
+      }
+      
+      return rateIndex;
+    } catch (error) {
+      console.error('Error in findRateIndex:', error);
+      throw {
+        code: 'RATE_INDEX_ERROR',
+        message: `Failed to find rate index: ${error.message}`,
+        status: 500,
+      };
+    }
+  }
+
+  // NEW FUNCTIONS ADDED
+  function getDefaultRateIndexForProduct(PROD_ID) {
+    const productToRateIndexMap = {
+      300: 300, // Business Term Loan -> Business Loan Rate
+      301: 301, // Individual Loan -> Individual Loan Rate  
+      302: 301, // Consumer Loan -> Individual Loan Rate (fallback)
+      303: 301, // Mortgage -> Individual Loan Rate (fallback)
+      304: 301, // Auto Loan -> Individual Loan Rate (fallback)
+      305: 305, // Personal Loan -> Personal Loan Rate
+      306: 301, // Education Loan -> Individual Loan Rate (fallback)
+      307: 301, // Credit Card -> Individual Loan Rate (fallback)
+      308: 300, // Line of Credit -> Business Loan Rate
+      309: 300, // SME Loan -> Business Loan Rate
+      399: 301  // General Loan -> Individual Loan Rate (fallback)
+    };
+    
+    return productToRateIndexMap[PROD_ID] || 301; // Default to Individual Loan Rate
+  }
+
+  async function validateAndResolveRateIndex(PROD_ID, requestedIndexId, session) {
+    // If no rate index is specified, use the default for the product
+    if (!requestedIndexId) {
+      const defaultIndexId = getDefaultRateIndexForProduct(PROD_ID);
+      console.log(`No INDEX_RATE_ID specified, using default ${defaultIndexId} for product ${PROD_ID}`);
+      return await findRateIndex(defaultIndexId, session);
+    }
+    
+    // If specified rate index exists, use it
+    const specifiedIndex = await findRateIndex(requestedIndexId, session);
+    if (specifiedIndex) {
+      return specifiedIndex;
+    }
+    
+    // If specified doesn't exist, use product default
+    const defaultIndexId = getDefaultRateIndexForProduct(PROD_ID);
+    console.warn(`Requested rate index ${requestedIndexId} not found, using default ${defaultIndexId} for product ${PROD_ID}`);
+    return await findRateIndex(defaultIndexId, session);
+  }
+
+  // Normalize Borrower_address field names
+  const normalizeBorrowerAddress = (address) => {
+    if (!address || typeof address !== 'object') return null;
+    return {
+      street: address.street || address.Street,
+      city: address.city || address.City,
+      state: address.state || address.State,
+      zipCode: address.zipCode || address.ZIPCode || address.zipcode,
+      country: address.country || address.Country
+    };
+  };
+
   // Validate request body
   if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Invalid request body', 
-      code: 'INVALID_BODY' 
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid request body',
+      code: 'INVALID_BODY',
     });
   }
 
-  // Validate required fields
+  // Normalize Borrower_address
+  req.body.Borrower_address = normalizeBorrowerAddress(req.body.Borrower_address);
+
   const requiredFields = [
     'PROD_ID', 'CUST_ID', 'ACCT_NM', 'APPL_ID', 'PRODUCT_TYPE', 'CRNCY_ID', 'BU_ID',
     'PRIMARY_OFFICER_ID', 'DISBURSEMENT_LIMIT', 'START_DT', 'TERM_CD', 'TERM_VALUE',
-    'CREATED_BY', 'REPAY_SRC_ACCT_NO', 'TRANSACTION_TYPE', 'INDEX_RATE_ID', 'INTEREST_RATE',
-    'GUARANTOR_ID', 'GUARANTEED_AMT', 'USER_ID'
+    'CREATED_BY', 'REPAY_SRC_ACCT_NO', 'TRANSACTION_TYPE', 'INDEX_RATE_ID',
+    'GUARANTOR_ID', 'GUARANTEED_AMT', 'USER_ID',
+    'Borrower_address.street', 'Borrower_address.city', 'Borrower_address.state',
+    'Borrower_address.zipCode', 'Borrower_address.country',
   ];
 
-  const missingFields = requiredFields.filter(field => !req.body.hasOwnProperty(field));
+  const missingFields = requiredFields.filter((field) => {
+    if (field.startsWith('Borrower_address.')) {
+      const subField = field.split('.')[1];
+      return !req.body.Borrower_address || req.body.Borrower_address[subField] === undefined;
+    }
+    return !req.body.hasOwnProperty(field) || req.body[field] === undefined || req.body[field] === null;
+  });
+
   if (missingFields.length > 0) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Missing required fields', 
-      missingFields, 
-      code: 'MISSING_FIELDS' 
+    return res.status(400).json({
+      success: false,
+      message: 'Missing or undefined required fields',
+      missingFields,
+      code: 'MISSING_FIELDS',
     });
   }
 
-  // Enhanced GUARANTOR_ID validation
   if (!req.body.GUARANTOR_ID) {
-    return res.status(400).json({ 
-      success: false, 
+    return res.status(400).json({
+      success: false,
       message: 'GUARANTOR_ID is required',
-      code: 'INVALID_GUARANTOR_ID' 
+      code: 'INVALID_GUARANTOR_ID',
     });
   }
 
-  // Check if guarantor exists using the improved lookup
-  const existingGuarantor = await findGuarantor(req.body.GUARANTOR_ID);
-  if (!existingGuarantor) {
-    return res.status(404).json({ 
-      success: false, 
-      message: `Guarantor with ID ${req.body.GUARANTOR_ID} not found`,
-      code: 'GUARANTOR_NOT_FOUND' 
+  // Validate numeric fields
+  const numericFields = {
+    PROD_ID: req.body.PROD_ID,
+    TERM_VALUE: req.body.TERM_VALUE,
+    DISBURSEMENT_LIMIT: req.body.DISBURSEMENT_LIMIT,
+    GUARANTEED_AMT: req.body.GUARANTEED_AMT,
+  };
+
+  const invalidNumericFields = Object.entries(numericFields).filter(([field, value]) => {
+    return isNaN(parseFloat(value)) || parseFloat(value) <= 0;
+  });
+
+  if (invalidNumericFields.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid numeric fields',
+      invalidFields: invalidNumericFields.map(([field]) => field),
+      code: 'INVALID_NUMERIC_FIELDS',
     });
   }
 
-  // Validate guarantor is active
-  if (!existingGuarantor.isActive) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Referenced guarantor is not active',
-      code: 'INACTIVE_GUARANTOR' 
+  // Validate UPFRONT_INTEREST
+  let upfrontInterest = req.body.UPFRONT_INTEREST;
+  if (upfrontInterest === '' || upfrontInterest === undefined || upfrontInterest === null) {
+    upfrontInterest = 0;
+  } else if (isNaN(parseFloat(upfrontInterest)) || parseFloat(upfrontInterest) < 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid UPFRONT_INTEREST value. Must be a non-negative number.',
+      code: 'INVALID_UPFRONT_INTEREST',
+    });
+  }
+
+  // Validate PARTIAL_INTEREST
+  let partialInterest = req.body.PARTIAL_INTEREST;
+  if (partialInterest === '' || partialInterest === undefined || partialInterest === null) {
+    partialInterest = false;
+  } else if (typeof partialInterest !== 'boolean') {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid PARTIAL_INTEREST value. Must be a boolean.',
+      code: 'INVALID_PARTIAL_INTEREST',
     });
   }
 
@@ -224,97 +455,473 @@ async applyForLoan(req, res) {
   try {
     session.startTransaction();
 
-    // Generate transaction IDs
+    // ID generation and validation
     const { TRANSACTION_ID, EVENT_ID, TRAN_JOURNAL_ID } = generateTransactionIds();
-
-    // Generate loan account number
-    const loanAccountNumber = req.body.ACCT_NO || (await Counter.generateAccountNumber('LOAN')).formattedString;
-    if (!loanAccountNumber || !/^[0-9]{10}$/.test(loanAccountNumber)) {
-      throw { 
-        code: 'ACCOUNT_NUMBER_ERROR', 
-        message: 'Invalid or missing loan account number',
-        status: 400
-      };
-    }
-
-    // Check for existing loan account
-    const existingLoanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
-    if (existingLoanAccount) {
-      throw { 
-        code: 'LOAN_ACCOUNT_EXISTS', 
-        message: `Loan account with ACCT_NO ${loanAccountNumber} already exists`,
-        status: 409 
-      };
-    }
-
-    // Parse numeric values
     const numericValues = {
-      INDEX_RATE_ID: parseInt(req.body.INDEX_RATE_ID),
+      INDEX_RATE_ID: req.body.INDEX_RATE_ID,
       PROD_ID: parseInt(req.body.PROD_ID),
       TERM_VALUE: parseInt(req.body.TERM_VALUE),
       CUST_ID: req.body.CUST_ID,
-      GUARANTEED_AMT: parseFloat(req.body.GUARANTEED_AMT),
-      DISBURSEMENT_LIMIT: parseFloat(req.body.DISBURSEMENT_LIMIT),
-      INTEREST_RATE: parseFloat(req.body.INTEREST_RATE)
+      GUARANTEED_AMT: mongoose.Types.Decimal128.fromString(req.body.GUARANTEED_AMT.toString()),
+      DISBURSEMENT_LIMIT: mongoose.Types.Decimal128.fromString(req.body.DISBURSEMENT_LIMIT.toString()),
     };
 
-    // Validate rate index and product
-    const [rateIndex, loanProduct] = await Promise.all([
-      RateIndex.findOne({ INDEX_RATE_ID: numericValues.INDEX_RATE_ID }).session(session),
-      LoanProduct.findOne({ PROD_ID: numericValues.PROD_ID }).session(session)
+    // Validate PROD_ID and PRODUCT_TYPE
+    const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399];
+    if (!validProdIds.includes(numericValues.PROD_ID)) {
+      throw {
+        code: 'INVALID_PROD_ID',
+        message: `Invalid PROD_ID: ${numericValues.PROD_ID}. Must be one of ${validProdIds.join(', ')}`,
+        status: 400,
+      };
+    }
+
+    const validProductTypes = [
+      'BUSINESS TERM LOAN', 'INDIVIDUAL LOAN', 'CONSUMER LOAN', 'MORTGAGE', 'AUTO LOAN',
+      'PERSONAL LOAN', 'EDUCATION LOAN', 'CREDIT CARD', 'LINE OF CREDIT', 'SME LOAN', 'GENERAL LOAN',
+    ];
+    if (!validProductTypes.includes(req.body.PRODUCT_TYPE)) {
+      throw {
+        code: 'INVALID_PRODUCT_TYPE',
+        message: `Invalid PRODUCT_TYPE: ${req.body.PRODUCT_TYPE}. Must be one of ${validProductTypes.join(', ')}`,
+        status: 400,
+      };
+    }
+
+    // Enhanced account generation with fallback
+    let loanAccountNumber;
+    const maxRetries = 3;
+    let retries = 0;
+    let isProvidedAccountNumber = !!req.body.ACCT_NO;
+
+    if (isProvidedAccountNumber) {
+      loanAccountNumber = req.body.ACCT_NO;
+      if (!/^[0-9]{10}$/.test(loanAccountNumber)) {
+        throw {
+          code: 'INVALID_ACCOUNT_NUMBER',
+          message: 'Provided ACCT_NO must be a 10-digit number',
+          status: 400,
+        };
+      }
+      console.log(`Using provided loanAccountNumber: ${loanAccountNumber}`);
+    }
+
+    // Fallback generator if the main function fails
+    const fallbackGenerateLoanAccountNumberByProdId = async (prodId) => {
+      const prefix = prodId.toString().padStart(3, '0'); // e.g., '301' for PROD_ID 301
+      let candidate;
+      let unique = false;
+      let innerRetries = 0;
+      const innerMaxRetries = 10;
+
+      while (!unique && innerRetries < innerMaxRetries) {
+        const randomSuffix = Math.floor(1000000 + Math.random() * 9000000).toString().padStart(7, '0'); // 7 random digits
+        candidate = `${prefix}${randomSuffix}`; // 10 digits total
+
+        const existing = await LoanAccount.findOne({ ACCT_NO: candidate }).session(session);
+        if (!existing) {
+          unique = true;
+        } else {
+          innerRetries++;
+        }
+      }
+
+      if (!unique) {
+        throw new Error(`Fallback generation failed after ${innerMaxRetries} attempts for PROD_ID ${prodId}`);
+      }
+
+      return candidate;
+    };
+
+    // Ensure unique account number
+    while (!loanAccountNumber || retries < maxRetries) {
+      if (!isProvidedAccountNumber) {
+        try {
+          loanAccountNumber = await generateLoanAccountNumberByProdId(numericValues.PROD_ID);
+          console.log(`Generated loanAccountNumber (attempt ${retries + 1}): ${loanAccountNumber}`);
+        } catch (genError) {
+          console.error('Failed to generate loan account number with main function:', genError.message, { prodId: numericValues.PROD_ID });
+          try {
+            // FALLBACK: Use fallback generator
+            loanAccountNumber = await fallbackGenerateLoanAccountNumberByProdId(numericValues.PROD_ID);
+            console.log(`Fallback generated loanAccountNumber (attempt ${retries + 1}): ${loanAccountNumber}`);
+          } catch (fallbackError) {
+            console.error('Fallback generation also failed:', fallbackError.message);
+            throw {
+              code: 'ACCOUNT_GENERATION_ERROR',
+              message: `Could not generate valid account number based on product ID ${numericValues.PROD_ID} (main: ${genError.message}; fallback: ${fallbackError.message})`,
+              status: 400,
+            };
+          }
+        }
+      }
+
+      if (!loanAccountNumber || !/^[0-9]{10}$/.test(loanAccountNumber)) {
+        throw {
+          code: 'ACCOUNT_NUMBER_ERROR',
+          message: 'Invalid or missing loan account number',
+          status: 400,
+        };
+      }
+
+      const existingLoanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
+      if (!existingLoanAccount) {
+        console.log(`Account number ${loanAccountNumber} is unique`);
+        break;
+      }
+
+      console.warn(`Account number ${loanAccountNumber} already exists, retrying...`);
+      if (isProvidedAccountNumber) {
+        throw {
+          code: 'LOAN_ACCOUNT_EXISTS',
+          message: `Provided loan account number ${loanAccountNumber} already exists`,
+          status: 409,
+        };
+      }
+
+      retries++;
+      if (retries >= maxRetries) {
+        throw {
+          code: 'ACCOUNT_GENERATION_FAILED',
+          message: `Failed to generate a unique loan account number after ${maxRetries} attempts`,
+          status: 500,
+        };
+      }
+      loanAccountNumber = null; // Reset to trigger regeneration
+    }
+
+    // Check existing CreditApplication
+    const existingCreditApplication = await CreditApplication.findOne({ APPL_ID: req.body.APPL_ID }).session(session);
+    if (existingCreditApplication && existingCreditApplication.ACCT_NO !== loanAccountNumber) {
+      throw {
+        code: 'CREDIT_APP_ACCT_NO_CONFLICT',
+        message: `A CreditApplication with APPL_ID ${req.body.APPL_ID} already exists with a different ACCT_NO (${existingCreditApplication.ACCT_NO})`,
+        status: 409,
+      };
+    }
+
+    // Get loan cycle count
+    const loanCycleCount = await getLoanCycleCount(numericValues.CUST_ID, session);
+
+    // UPDATED: Fetch required entities using the new validateAndResolveRateIndex function
+    const [rateIndex, loanProduct, customer, guarantor, interestRate, productTypeMapping] = await Promise.all([
+      validateAndResolveRateIndex(numericValues.PROD_ID, req.body.INDEX_RATE_ID, session), // CHANGED HERE
+      LoanProduct.findOne({ PROD_ID: numericValues.PROD_ID }).session(session),
+      Customer.findOne({ CUST_ID: req.body.CUST_ID }).session(session),
+      findGuarantor(req.body.GUARANTOR_ID, session),
+      LoanInterestRate.findOne({ PROD_ID: numericValues.PROD_ID }).session(session),
+      ProductTypeMapping.findOne({ PROD_ID: numericValues.PROD_ID }).session(session),
     ]);
 
-    if (!rateIndex) throw { 
-      code: 'RATE_INDEX_NOT_FOUND', 
-      message: 'Rate index not found', 
-      status: 404 
-    };
-    if (!loanProduct) throw { 
-      code: 'PRODUCT_NOT_FOUND', 
-      message: 'Loan product not found', 
-      status: 404 
-    };
+    // REMOVED: The old rate index validation block is no longer needed here
+    // since validateAndResolveRateIndex already handles all cases
 
-    // Calculate dates and schedules
-    const startDate = new Date(req.body.START_DT);
-    const maturityDate = calculateMaturityDate(startDate, req.body.TERM_CD, numericValues.TERM_VALUE);
+    if (!loanProduct) {
+      throw {
+        code: 'PRODUCT_NOT_FOUND',
+        message: `Loan product not found for PROD_ID ${numericValues.PROD_ID}. Please ensure the product is configured in the database.`,
+        status: 404,
+      };
+    }
+    if (!customer) {
+      throw {
+        code: 'CUSTOMER_NOT_FOUND',
+        message: `Customer not found for CUST_ID ${req.body.CUST_ID}`,
+        status: 404,
+      };
+    }
+    if (!guarantor) {
+      throw {
+        code: 'GUARANTOR_NOT_FOUND',
+        message: `Guarantor with ID ${req.body.GUARANTOR_ID} not found`,
+        status: 404,
+      };
+    }
+    if (!guarantor.isActive) {
+      throw {
+        code: 'INACTIVE_GUARANTOR',
+        message: 'Referenced guarantor is not active',
+        status: 400,
+      };
+    }
+    if (!interestRate) {
+      throw {
+        code: 'INTEREST_RATE_NOT_FOUND',
+        message: `Interest rate configuration for PROD_ID ${numericValues.PROD_ID} not found`,
+        status: 404,
+      };
+    }
+    if (!productTypeMapping) {
+      throw {
+        code: 'PRODUCT_TYPE_MAPPING_NOT_FOUND',
+        message: `Product type mapping not found for PROD_ID ${numericValues.PROD_ID}`,
+        status: 404,
+      };
+    }
+
+    // Validate TERM_CD and PAYMENT_FREQUENCY
+    const validTermCodes = ['D', 'W', 'M', 'Q', 'Y'];
+    if (!validTermCodes.includes(req.body.TERM_CD)) {
+      throw {
+        code: 'INVALID_TERM_CD',
+        message: `Invalid TERM_CD: ${req.body.TERM_CD}. Must be one of ${validTermCodes.join(', ')}`,
+        status: 400,
+      };
+    }
+
     const paymentFrequency = getPaymentFrequency(req.body.TERM_CD, numericValues.TERM_VALUE);
 
+    // Fallback for missing TERM_CD or PAYMENT_FREQUENCY
+    if (!loanProduct.TERM_CD || !loanProduct.PAYMENT_FREQUENCY) {
+      console.warn(`LoanProduct missing TERM_CD or PAYMENT_FREQUENCY for PROD_ID ${numericValues.PROD_ID}. Using request values as fallback.`);
+      loanProduct.TERM_CD = req.body.TERM_CD; // Use request TERM_CD
+      loanProduct.PAYMENT_FREQUENCY = paymentFrequency; // Use calculated PAYMENT_FREQUENCY
+    }
+
+    // Validate TERM_CD and PAYMENT_FREQUENCY match
+    if (loanProduct.TERM_CD !== req.body.TERM_CD || loanProduct.PAYMENT_FREQUENCY !== paymentFrequency) {
+      throw {
+        code: 'TERM_OR_FREQUENCY_MISMATCH',
+        message: `TERM_CD ${req.body.TERM_CD} or PAYMENT_FREQUENCY ${paymentFrequency} does not match LoanProduct TERM_CD ${loanProduct.TERM_CD} or PAYMENT_FREQUENCY ${loanProduct.PAYMENT_FREQUENCY}`,
+        status: 400,
+      };
+    }
+
+    // Define required GL account fields
+    const requiredGLFields = [
+      'SETTLEMENT_GL_ACCT_NO', 'GL_ACCT_CAT', 'ACCT_DESC', 'CHART_OF_ACCT_ID', 'SEG_NO',
+      'BU_ID', 'SUB_LEDGER_NO', 'BAL_CD', 'subfolderId', 'PARENT_ID', 'LEDGER_NO',
+      'CREATED_BY', 'GL_ACCT_ID', 'GL_ACCT_NO'
+    ];
+
+    // Validate GL accounts
+    const glFields = [
+      'loanGLAccount', 'interestGLAccountNo', 'interestPayableGLAccountNo', 'withholdingTaxGLAccountNo',
+      'suspenseGLAccountNo', 'principalGLAccountNo', 'chargeOffGLAccountNo', 'loanChargeReceivableGLAccountNo',
+      'contingentGLAccountNo', 'delinquentGLAccountNo', 'interestIncomeGLAccountNo', 'interestReceivableGLAccountNo',
+      'interestSuspenseGLAccountNo', 'lateFeeSuspenseGLAccountNo', 'maturityGLAccountNo', 'nonAccrualGLAccountNo',
+      'nonAccrualInterestOffsetGLAccountNo', 'nonAccrualInterestReceivableGLAccountNo', 'provisionReserveGLAccountNo',
+      'provisionExpenseGLAccountNo', 'recoveriesGLAccountNo', 'repaymentControlGLAccountNo', 'loanSuspenseGLAccountNo',
+      'unappliedFundsGLAccountNo', 'unclearedBalanceGLAccountNo', 'unearnedInterestGLAccountNo',
+      'interestCreditGLAccountNo', 'interestDebitGLAccountNo',
+      'SETTLEMENT_GL_ACCT_NO'
+    ];
+
+    // Validate that all GL accounts exist and have required fields
+    for (const field of glFields) {
+      if (productTypeMapping.glAccounts[field]) {
+        const glAccount = await GLAccount.findOne({ GL_ACCT_NO: productTypeMapping.glAccounts[field] }).session(session);
+        if (!glAccount) {
+          throw {
+            code: 'INVALID_GL_ACCOUNT',
+            message: `GL account ${productTypeMapping.glAccounts[field]} not found for ${field}`,
+            status: 400,
+          };
+        }
+
+        // Check for required GL account fields
+        const missingGLFields = requiredGLFields.filter(glField => !glAccount[glField]);
+        if (missingGLFields.length > 0) {
+          throw {
+            code: 'MISSING_GL_ACCOUNT_FIELDS',
+            message: `GL account ${productTypeMapping.glAccounts[field]} is missing required fields: ${missingGLFields.join(', ')}`,
+            status: 400,
+          };
+        }
+      }
+    }
+
+    // Ensure SETTLEMENT_GL_ACCT_NO is present in productTypeMapping.glAccounts
+    if (!productTypeMapping.glAccounts.SETTLEMENT_GL_ACCT_NO) {
+      const defaultGLAccount = await GLAccount.findOne({ GL_ACCT_CAT: 'SETTLEMENT' }).session(session);
+      if (!defaultGLAccount) {
+        throw {
+          code: 'MISSING_SETTLEMENT_GL_ACCT_NO',
+          message: 'SETTLEMENT_GL_ACCT_NO not provided in productTypeMapping and no default account found',
+          status: 400,
+        };
+      }
+      productTypeMapping.glAccounts.SETTLEMENT_GL_ACCT_NO = defaultGLAccount.GL_ACCT_NO;
+    }
+
+    // Validate processing fee rate
+    if (loanProduct.processingFeeRate && parseFloat(loanProduct.processingFeeRate) > 0.1) {
+      throw {
+        code: 'INVALID_PROCESSING_FEE_RATE',
+        message: `Processing fee rate (${loanProduct.processingFeeRate}) exceeds maximum allowed (10%)`,
+        status: 400,
+      };
+    }
+
+    // Calculate interest rate
+    let effectiveInterestRate = mongoose.Types.Decimal128.fromString(rateIndex.INDEX_RATE.toString());
+    if (!effectiveInterestRate || parseFloat(effectiveInterestRate) <= 0) {
+      effectiveInterestRate = mongoose.Types.Decimal128.fromString(loanProduct.interestRate.toString());
+      console.log(`Falling back to LoanProduct.interestRate: ${effectiveInterestRate}%`);
+    }
+    if (!effectiveInterestRate || parseFloat(effectiveInterestRate) <= 0) {
+      throw {
+        code: 'INVALID_INTEREST_RATE',
+        message: `Invalid interest rate from index (${rateIndex.INDEX_RATE}) or product (${loanProduct.interestRate}). Must be positive.`,
+        status: 400,
+      };
+    }
+
+    // Log warning if request rate differs
+    const requestInterestRate = parseFloat(req.body.INTEREST_RATE);
+    if (requestInterestRate && Math.abs(requestInterestRate - parseFloat(effectiveInterestRate)) > 0.01) {
+      console.warn(
+        `Request INTEREST_RATE (${requestInterestRate}%) differs from effective rate (${effectiveInterestRate}%). Using effective rate from RateIndex.`
+      );
+    }
+
+    // Validate loan amount
+    if (
+      parseFloat(numericValues.DISBURSEMENT_LIMIT) < parseFloat(loanProduct.minAmount) ||
+      parseFloat(numericValues.DISBURSEMENT_LIMIT) > parseFloat(loanProduct.maxAmount)
+    ) {
+      throw {
+        code: 'INVALID_AMOUNT',
+        message: `Loan amount must be between ${loanProduct.minAmount} and ${loanProduct.maxAmount}`,
+        status: 400,
+      };
+    }
+
+    // Term validation
+    let termMonths;
+    switch (req.body.TERM_CD.toUpperCase()) {
+      case 'D': termMonths = Math.ceil(numericValues.TERM_VALUE / 30); break;
+      case 'W': termMonths = Math.ceil(numericValues.TERM_VALUE / 4); break;
+      case 'M': termMonths = numericValues.TERM_VALUE; break;
+      case 'Q': termMonths = numericValues.TERM_VALUE * 3; break;
+      case 'Y': termMonths = numericValues.TERM_VALUE * 12; break;
+      default:
+        throw {
+          code: 'INVALID_TERM_CODE',
+          message: `Invalid term code: ${req.body.TERM_CD}`,
+          status: 400,
+        };
+    }
+
+    if (termMonths < 1) {
+      throw {
+        code: 'INVALID_TERM',
+        message: 'Loan term must be equivalent to at least 1 month',
+        status: 400,
+      };
+    }
+
+    if (termMonths < interestRate.MIN_LOAN_TERM_MONTHS) {
+      throw {
+        code: 'INVALID_INTEREST_TERM',
+        message: `Loan term must be at least ${interestRate.MIN_LOAN_TERM_MONTHS} months per interest rate configuration`,
+        status: 400,
+      };
+    }
+
+    const startDate = new Date(req.body.START_DT);
+    const maturityDate = calculateMaturityDate(startDate, req.body.TERM_CD, numericValues.TERM_VALUE);
+
     // Calculate fees
-    const feeService = new FeeCalculationService();
     const feeDetails = await feeService.calculateInitialFees({
-      loanAmount: numericValues.DISBURSEMENT_LIMIT,
+      loanAmount: parseFloat(numericValues.DISBURSEMENT_LIMIT),
       productId: numericValues.PROD_ID,
       term: numericValues.TERM_VALUE,
       termCode: req.body.TERM_CD,
       hasGuarantor: true,
-      guaranteedAmount: numericValues.GUARANTEED_AMT
+      guaranteedAmount: parseFloat(numericValues.GUARANTEED_AMT),
+      feeStructure: loanProduct.feeStructure,
+      processingFeeRate: loanProduct.processingFeeRate,
     });
 
     // Calculate EMI
-    const emiResult = interestService.calculateEMI({
-      principal: numericValues.DISBURSEMENT_LIMIT,
-      annualRate: numericValues.INTEREST_RATE,
-      termMonths: req.body.TERM_CD === 'M' ? numericValues.TERM_VALUE : 
-                 req.body.TERM_CD === 'Y' ? numericValues.TERM_VALUE * 12 : 
-                 numericValues.TERM_VALUE,
+    const emiResult = await interestService.calculateEMI({
+      principal: parseFloat(numericValues.DISBURSEMENT_LIMIT),
+      annualRate: parseFloat(effectiveInterestRate),
+      termMonths,
       startDate,
-      precision: 2
+      rateType: interestRate.RATE_TY || loanProduct.rateInformation?.rateType,
+      PROD_ID: numericValues.PROD_ID,
+      INDEX_RATE_ID: rateIndex.INDEX_RATE_ID,
+      precision: 2,
     });
 
     if (!emiResult.installments?.length) {
-      throw { 
-        code: 'INVALID_REPAYMENT_SCHEDULE', 
-        message: 'Failed to generate repayment schedule', 
-        status: 500 
+      throw {
+        code: 'INVALID_REPAYMENT_SCHEDULE',
+        message: 'Failed to generate repayment schedule',
+        status: 500,
       };
     }
 
-    // Create loan account with guarantor reference
-   const loanAccount = new LoanAccount({
+    // Process charges
+    const chargeRecords = [];
+    if (loanProduct.chargesSetup && Array.isArray(loanProduct.chargesSetup)) {
+      for (const charge of loanProduct.chargesSetup) {
+        const glAccount = await GLAccount.findOne({ GL_ACCT_NO: charge.glAccountCode }).session(session);
+        if (!glAccount) {
+          throw {
+            code: 'INVALID_GL_ACCOUNT',
+            message: `GL account ${charge.glAccountCode} not found for charge ${charge.name}`,
+            status: 400,
+          };
+        }
+
+        // Validate required GL account fields for charges
+        const missingGLFields = requiredGLFields.filter(glField => !glAccount[glField]);
+        if (missingGLFields.length > 0) {
+          throw {
+            code: 'MISSING_GL_ACCOUNT_FIELDS',
+            message: `GL account ${charge.glAccountCode} for charge ${charge.name} is missing required fields: ${missingGLFields.join(', ')}`,
+            status: 400,
+          };
+        }
+
+        const timestamp = Date.now().toString().slice(-6);
+        const chargeCodePrefix = charge.name ? charge.name.substring(0, 3).toUpperCase() : 'CHG';
+        const uniqueId = generateNumericId().toString().slice(-3);
+        const chargeCode = `${chargeCodePrefix}${timestamp}${uniqueId}`.substring(0, 10);
+
+        const chargeData = {
+          CHRG_ID: generateNumericId(),
+          CHRG_CD: chargeCode,
+          CHRG_TY: charge.chargeType,
+          CHRG_AMT: mongoose.Types.Decimal128.fromString(charge.amount.toString()),
+          INCOME_GL_ACCT_NO: charge.glAccountCode,
+          CHRG_NM: charge.name,
+          REC_ST: 'A',
+          TIER_TY: 'STANDARD',
+          BAL_ACTION_CD: 'DEBIT',
+          VERSION_NO: 1,
+          USER_ID: req.body.USER_ID,
+          CREATED_BY: req.body.CREATED_BY,
+          EFFECTIVE_DT: new Date(),
+          CREATE_DT: new Date(),
+          SYS_CREATE_TS: new Date(),
+          ROW_TS: new Date(),
+        };
+
+        const savedCharge = await Charge.findOneAndUpdate(
+          { CHRG_ID: chargeData.CHRG_ID },
+          chargeData,
+          { upsert: true, new: true, runValidators: true, session }
+        );
+
+        chargeRecords.push({
+          chargeId: savedCharge.CHRG_ID,
+          chargeCode: savedCharge.CHRG_CD,
+          amount: parseFloat(chargeData.CHRG_AMT),
+          name: chargeData.CHRG_NM,
+          glAccountCode: chargeData.INCOME_GL_ACCT_NO,
+        });
+      }
+    }
+
+    // Create LoanAccount with required GL fields
+    const loanAccount = new LoanAccount({
       loanAccountId: parseInt(loanAccountNumber.replace(/\D/g, '')) || Date.now(),
       JOURNAL_ID: TRAN_JOURNAL_ID,
-      CUST_ID: numericValues.CUST_ID,
+      CUST_ID: req.body.CUST_ID,
       ACCT_NM: req.body.ACCT_NM,
       ACCT_NO: loanAccountNumber,
       APPL_ID: req.body.APPL_ID,
@@ -328,57 +935,103 @@ async applyForLoan(req, res) {
       TERM_CD: req.body.TERM_CD,
       TERM_VALUE: numericValues.TERM_VALUE,
       MATURITY_DT: maturityDate,
-      INTEREST_RATE_ID: loanProduct.interestRateId || numericValues.INDEX_RATE_ID,
-      INTEREST_RATE: numericValues.INTEREST_RATE,
+      INTEREST_RATE_ID: rateIndex.INDEX_RATE_ID,
+      INTEREST_RATE: effectiveInterestRate,
       LOAN_STATUS: 'PENDING',
       PAYMENT_FREQUENCY: paymentFrequency,
       CREATED_BY: req.body.CREATED_BY,
       TRANSACTION_ID,
       EVENT_ID,
       PROD_ID: numericValues.PROD_ID,
-      FEE_DETAILS: feeDetails,
-      TOTAL_INTEREST: emiResult.totalInterest,
-      TOTAL_REPAYMENT: emiResult.totalRepayment,
+      FEE_DETAILS: {
+        ...feeDetails,
+        processingFee: loanProduct.processingFeeRate
+          ? mongoose.Types.Decimal128.fromString(
+              (parseFloat(numericValues.DISBURSEMENT_LIMIT) * parseFloat(loanProduct.processingFeeRate)).toString()
+            )
+          : mongoose.Types.Decimal128.fromString('0'),
+        processingFeeGLCode: loanProduct.processingFeeGLCode,
+        charges: chargeRecords,
+      },
+      TOTAL_INTEREST: mongoose.Types.Decimal128.fromString(emiResult.totalInterest.toString()),
+      TOTAL_REPAYMENT: mongoose.Types.Decimal128.fromString(emiResult.totalRepayment.toString()),
       REPAYMENT_SOURCE_ACCOUNT: req.body.REPAY_SRC_ACCT_NO,
-      GUARANTOR_ID: existingGuarantor._id,
+      GUARANTOR_ID: guarantor._id,
       GUARANTEED_AMOUNT: numericValues.GUARANTEED_AMT,
       HAS_GUARANTOR: true,
       guarantorDetails: {
-        name: existingGuarantor.fullName,
-        phone: existingGuarantor.phoneNumber,
-        relationship: existingGuarantor.relationshipToBorrower,
-        guarantorNumberId: existingGuarantor.GUARANTOR_ID.toString(),
-        email: existingGuarantor.email || req.body.email, // Include email if available
-        address: existingGuarantor.address // Include if available
+        name: guarantor.fullName,
+        phone: guarantor.phoneNumber,
+        relationship: guarantor.relationshipToBorrower,
+        guarantorNumberId: guarantor.GUARANTOR_ID.toString(),
+        email: guarantor.email || req.body.email,
+        address: guarantor.address,
       },
-      // Additional fields for tracking
+      Borrower_address: {
+        street: req.body.Borrower_address.street,
+        city: req.body.Borrower_address.city,
+        state: req.body.Borrower_address.state,
+        zipCode: req.body.Borrower_address.zipCode,
+        country: req.body.Borrower_address.country || 'Nigeria',
+      },
+      upfrontInterestPercentage: mongoose.Types.Decimal128.fromString(parseFloat(upfrontInterest).toString()),
+      partialUpfrontInterest: partialInterest,
       applicationDate: new Date(),
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
+      loanGLAccount: productTypeMapping.glAccounts.loanGLAccount,
+      interestGLAccountNo: productTypeMapping.glAccounts.interestGLAccountNo,
+      interestPayableGLAccountNo: productTypeMapping.glAccounts.interestPayableGLAccountNo,
+      withholdingTaxGLAccountNo: productTypeMapping.glAccounts.withholdingTaxGLAccountNo,
+      suspenseGLAccountNo: productTypeMapping.glAccounts.suspenseGLAccountNo,
+      principalGLAccountNo: productTypeMapping.glAccounts.principalGLAccountNo,
+      chargeOffGLAccountNo: productTypeMapping.glAccounts.chargeOffGLAccountNo,
+      loanChargeReceivableGLAccountNo: productTypeMapping.glAccounts.loanChargeReceivableGLAccountNo,
+      contingentGLAccountNo: productTypeMapping.glAccounts.contingentGLAccountNo,
+      delinquentGLAccountNo: productTypeMapping.glAccounts.delinquentGLAccountNo,
+      interestIncomeGLAccountNo: productTypeMapping.glAccounts.interestIncomeGLAccountNo,
+      interestReceivableGLAccountNo: productTypeMapping.glAccounts.interestReceivableGLAccountNo,
+      interestSuspenseGLAccountNo: productTypeMapping.glAccounts.interestSuspenseGLAccountNo,
+      lateFeeSuspenseGLAccountNo: productTypeMapping.glAccounts.lateFeeSuspenseGLAccountNo,
+      maturityGLAccountNo: productTypeMapping.glAccounts.maturityGLAccountNo,
+      nonAccrualGLAccountNo: productTypeMapping.glAccounts.nonAccrualGLAccountNo,
+      nonAccrualInterestOffsetGLAccountNo: productTypeMapping.glAccounts.nonAccrualInterestOffsetGLAccountNo,
+      nonAccrualInterestReceivableGLAccountNo: productTypeMapping.glAccounts.nonAccrualInterestReceivableGLAccountNo,
+      provisionReserveGLAccountNo: productTypeMapping.glAccounts.provisionReserveGLAccountNo,
+      provisionExpenseGLAccountNo: productTypeMapping.glAccounts.provisionExpenseGLAccountNo,
+      recoveriesGLAccountNo: productTypeMapping.glAccounts.recoveriesGLAccountNo,
+      repaymentControlGLAccountNo: productTypeMapping.glAccounts.repaymentControlGLAccountNo,
+      loanSuspenseGLAccountNo: productTypeMapping.glAccounts.loanSuspenseGLAccountNo,
+      unappliedFundsGLAccountNo: productTypeMapping.glAccounts.unappliedFundsGLAccountNo,
+      unclearedBalanceGLAccountNo: productTypeMapping.glAccounts.unclearedBalanceGLAccountNo,
+      unearnedInterestGLAccountNo: productTypeMapping.glAccounts.unearnedInterestGLAccountNo,
+      interestCreditGLAccountNo: productTypeMapping.glAccounts.interestCreditGLAccountNo,
+      interestDebitGLAccountNo: productTypeMapping.glAccounts.interestDebitGLAccountNo,
+      SETTLEMENT_GL_ACCT_NO: productTypeMapping.glAccounts.SETTLEMENT_GL_ACCT_NO,
     });
 
     await loanAccount.save({ session });
+    console.log('LoanAccount saved with ACCT_NO:', loanAccount.ACCT_NO);
 
-    // Update guarantor record using the ObjectId
     await Guarantor.findByIdAndUpdate(
-      existingGuarantor._id,
+      guarantor._id,
       {
         $addToSet: { guaranteedLoans: loanAccount._id },
-        $inc: { totalGuaranteedAmount: numericValues.GUARANTEED_AMT },
+        $inc: { totalGuaranteedAmount: parseFloat(numericValues.GUARANTEED_AMT) },
         lastUsedDate: new Date(),
-        status: 'PENDING_VERIFICATION' // Add this line to set initial status
+        status: 'PENDING_VERIFICATION',
       },
       { session }
     );
 
-    // Create repayment schedule
+    // Create RepaymentSchedule
     const repaymentSchedule = new RepaymentSchedule({
       LOAN_ACCOUNT_ID: loanAccount._id,
       ACCT_NO: loanAccountNumber,
-      CUST_ID: numericValues.CUST_ID,
+      CUST_ID: req.body.CUST_ID,
       START_DATE: startDate,
       MATURITY_DATE: maturityDate,
       PRINCIPAL_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
-      INTEREST_RATE: numericValues.INTEREST_RATE,
+      INTEREST_RATE: effectiveInterestRate,
       TERM: numericValues.TERM_VALUE,
       TERM_TYPE: req.body.TERM_CD,
       paymentFrequency,
@@ -386,143 +1039,251 @@ async applyForLoan(req, res) {
       TRANSACTION_ID,
       EVENT_ID,
       CREATED_BY: req.body.CREATED_BY,
-      STATUS: 'PENDING'
+      STATUS: 'PENDING',
     });
-
     await repaymentSchedule.save({ session });
 
-    // Create credit application
-    const creditApplication = new CreditApplication({
-      creditApplicationId: await generateUniqueCreditApplicationId(),
-      ...req.body,
+    // Create CreditApplication
+    const creditApplicationData = {
+      creditApplicationId: await CreditApplication.generateCreditApplicationId(),
+      CUST_NM: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+      CUST_ID: req.body.CUST_ID,
+      PRODUCT: req.body.PRODUCT_TYPE,
+      ACCT_ID: loanAccountNumber,
+      ACCT_NO: loanAccountNumber,
+      APPL_ID: req.body.APPL_ID,
+      PROD_ID: req.body.PROD_ID,
+      BU_ID: req.body.BU_ID,
+      CREATED_BY: req.body.CREATED_BY,
+      CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+      Credit_Type: 'LOAN',
+      PRIME_LIMIT_AMT: numericValues.DISBURSEMENT_LIMIT,
+      Purpose_of_Credit: req.body.loan_purpose || req.body.PRODUCT_TYPE || 'GENERAL LOAN',
+      REPAY_SRC_ACCT_NO: req.body.REPAY_SRC_ACCT_NO,
+      TERM_CD: req.body.TERM_CD,
+      TERM_VALUE: numericValues.TERM_VALUE,
+      USER_ID: req.body.USER_ID,
+      TRANSACTION_TYPE: req.body.TRANSACTION_TYPE,
       STATUS: 'PENDING',
+      REC_ST: 'active',
+      LOAN_CYCLE: loanCycleCount,
       CREATED_AT: new Date(),
       REQUESTED_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
-      CRNCY_ID: req.body.CRNCY_ID || 'NGN',
       LOAN_ACCOUNT_ID: loanAccount._id,
-      ACCT_NO: loanAccountNumber,
       TRANSACTION_ID,
       EVENT_ID,
-      FEE_DETAILS: feeDetails,
-      GUARANTOR_ID: existingGuarantor._id
-    });
+      FEE_DETAILS: {
+        ...feeDetails,
+        processingFee: loanProduct.processingFeeRate
+          ? mongoose.Types.Decimal128.fromString(
+              (parseFloat(numericValues.DISBURSEMENT_LIMIT) * parseFloat(loanProduct.processingFeeRate)).toString()
+            )
+          : mongoose.Types.Decimal128.fromString('0'),
+        processingFeeGLCode: loanProduct.processingFeeGLCode,
+        charges: chargeRecords,
+      },
+      GUARANTOR_ID: guarantor._id,
+      INDEX_RATE_ID: req.body.INDEX_RATE_ID,
+      Borrower_address: {
+        street: req.body.Borrower_address.street,
+        city: req.body.Borrower_address.city,
+        state: req.body.Borrower_address.state,
+        zip: req.body.Borrower_address.zipCode,
+        country: req.body.Borrower_address.country || 'Nigeria',
+      },
+    };
 
+    const creditApplication = new CreditApplication(creditApplicationData);
     await creditApplication.save({ session });
+    console.log('CreditApplication saved with ACCT_NO:', creditApplication.ACCT_NO);
+
+    // Verify ACCT_NO consistency
+    if (creditApplication.ACCT_NO !== loanAccount.ACCT_NO) {
+      throw {
+        code: 'ACCT_NO_MISMATCH',
+        message: 'CreditApplication and LoanAccount ACCT_NO do not match',
+        status: 500,
+      };
+    }
 
     // Create workflow item
-    const workflowResult = await WF_WORK_ITEMController.submitTransaction({
-      body: {
-        ITEM_VALUE: loanAccount._id,
+    const workflowResult = await createWorkflowItem(
+      {
+        ITEM_VALUE: loanAccount._id.toString(),
         ITEM_DESC: `Loan Application for ${loanAccountNumber}`,
         ITEM_CLASS_NM: 'Loan',
         ITEM_TYPE: 'Loan',
-        CUST_ID: numericValues.CUST_ID,
-        USER_ID: req.body.CREATED_BY,
-        BU_ID: req.body.BU_ID,
+        CUST_ID: req.body.CUST_ID,
+        USER_ID: req.body.USER_ID || req.user?.id || req.body.CREATED_BY,
+        BU_ID: req.body.BU_ID || '0001',
         TARGET_USER_ROLE_ID: 'LOAN_OFFICER',
-        ORIGINATOR_USER_ROLE_ID: req.body.USER_ROLE_ID || 'ORIGINATOR',
-        ITEM_ID: creditApplication._id,
+        ORIGINATOR_USER_ROLE_ID: req.user?.role || req.body.USER_ROLE_ID || 'Creator',
+        ITEM_ID: creditApplication._id.toString(),
         REC_ST: 'PENDING',
         WAIT_ST: 'PENDING',
         VERSION: 1,
         CREATE_DT: new Date(),
         dueDate: new Date(Date.now() + 7 * 86400000),
-        WORKFLOW_ID: creditApplication._id,
-        GUARANTOR_ID: existingGuarantor._id
+        WORKFLOW_ID: creditApplication._id.toString(),
+        GUARANTOR_ID: guarantor._id.toString(),
+        ITEM_BU_ID: req.body.BU_ID,
       },
       session
-    });
+    );
 
     if (!workflowResult.success) {
-      throw new Error(`Workflow creation failed: ${workflowResult.error}`);
+      throw new Error(`Workflow creation failed: ${workflowResult.message || 'Unknown error'}`);
     }
 
-    // Commit transaction
+    // Create LoanContractForm
+    const contractText = generateContractText(
+      {
+        AMOUNT: parseFloat(numericValues.DISBURSEMENT_LIMIT),
+        INTEREST_RATE: parseFloat(effectiveInterestRate),
+        TERM_VALUE: numericValues.TERM_VALUE,
+        DISBURSEMENT_DATE: startDate,
+        borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+        borrower_address: `${req.body.Borrower_address.street}, ${req.body.Borrower_address.city}, ${req.body.Borrower_address.state}, ${req.body.Borrower_address.zipCode}, ${req.body.Borrower_address.country || 'Nigeria'}`,
+        loan_purpose: req.body.loan_purpose || 'General Business Purpose',
+        TERM_CD: req.body.TERM_CD,
+      },
+      customer,
+      loanProduct,
+      effectiveInterestRate
+    );
+
+    const loanContractNo = `LCN-${generateId(8)}`;
+    const processingFeeAmount = loanProduct.processingFeeRate
+      ? parseFloat(numericValues.DISBURSEMENT_LIMIT) * parseFloat(loanProduct.processingFeeRate)
+      : 0;
+
+    const contractForm = new LoanContractForm({
+      applicationId: req.body.APPL_ID,
+      loanAccountNo: loanAccountNumber,
+      loan_contract_no: loanContractNo,
+      customer_id: req.body.CUST_ID,
+      USER_ID: req.body.USER_ID || req.body.CREATED_BY,
+      bank_name: process.env.BANK_NAME || 'Our Bank',
+      bank_short: process.env.BANK_SHORT || 'OB',
+      borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+      borrower_address: `${req.body.Borrower_address.street}, ${req.body.Borrower_address.city}, ${req.body.Borrower_address.state}, ${req.body.Borrower_address.zipCode}, ${req.body.Borrower_address.country || 'Nigeria'}`,
+      loan_purpose: req.body.loan_purpose || 'General Business Purpose',
+      loan_amount: numericValues.DISBURSEMENT_LIMIT,
+      loan_term: numericValues.TERM_VALUE,
+      interest_rate: effectiveInterestRate,
+      fundingAccountNo: req.body.FUNDING_ACCT || `FA-${generateNumericId().toString().slice(-6)}`,
+      fees: {
+        processingFee: mongoose.Types.Decimal128.fromString(processingFeeAmount.toString()),
+        latePaymentFee: mongoose.Types.Decimal128.fromString(
+          (feeDetails.fees?.find((f) => f.type === 'late')?.amount || 0).toString()
+        ),
+        earlyRepaymentFee: mongoose.Types.Decimal128.fromString(
+          (feeDetails.fees?.find((f) => f.type === 'early')?.amount || 0).toString()
+        ),
+      },
+      LOAN_ACCOUNT_ID: loanAccount._id,
+      ACCT_NO: loanAccountNumber,
+      CONTRACT_TEXT: contractText,
+      STATUS: 'PENDING',
+      CREATED_BY: req.body.CREATED_BY,
+      CREATED_AT: new Date(),
+      TRANSACTION_ID,
+      EVENT_ID,
+      metadata: {
+        productId: numericValues.PROD_ID,
+        applicationSource: 'API_APPLICATION',
+      },
+    });
+
+    await contractForm.save({ session });
+
     await session.commitTransaction();
     transactionCompleted = true;
 
-    // First, log the workflow result to understand its structure
-    console.log('Workflow Result Structure:', {
-      rawResult: workflowResult,
-      hasDocument: !!workflowResult.document,
-      hasCreatedWorkItem: !!workflowResult.createdWorkItem,
-      directWorkItemId: workflowResult.WORK_ITEM_ID,
-      workItemId: workflowResult.workItemId
+    const WORK_ITEM_ID = workflowResult.WORK_ITEM_ID || workflowResult.document?.WORK_ITEM_ID || null;
+
+    return res.status(201).json({
+      success: true,
+      message: 'Loan application submitted successfully',
+      status: 'Pending',
+      data: {
+        loanAccountId: loanAccount._id,
+        loanAccountNumber,
+        creditApplicationId: creditApplication._id,
+        workItemId: WORK_ITEM_ID,
+        workflowStatusUrl: `/api/workflow/${WORK_ITEM_ID}`,
+        APPL_ID: req.body.APPL_ID,
+        status: 'PENDING',
+        guarantor: {
+          guarantorId: guarantor._id,
+          guarantorNumberId: guarantor.GUARANTOR_ID,
+          name: guarantor.fullName,
+          guaranteedAmount: parseFloat(numericValues.GUARANTEED_AMT),
+          status: 'PENDING_VERIFICATION',
+        },
+        repaymentSchedule: {
+          numberOfInstallments: emiResult.installments.length,
+          firstPaymentDate: emiResult.installments[0]?.dueDate,
+          lastPaymentDate: emiResult.installments.at(-1)?.dueDate,
+          totalInterest: parseFloat(emiResult.totalInterest),
+          totalRepayment: parseFloat(emiResult.totalRepayment),
+          status: 'PENDING',
+        },
+        feeDetails: {
+          processingFee: parseFloat(loanProduct.processingFeeRate
+            ? parseFloat(numericValues.DISBURSEMENT_LIMIT) * parseFloat(loanProduct.processingFeeRate)
+            : 0),
+          processingFeeGLCode: loanProduct.processingFeeGLCode,
+          fees: feeDetails.fees,
+          charges: chargeRecords,
+        },
+        Borrower_address: {
+          street: req.body.Borrower_address.street,
+          city: req.body.Borrower_address.city,
+          state: req.body.Borrower_address.state,
+          zipCode: req.body.Borrower_address.zipCode,
+          country: req.body.Borrower_address.country || 'Nigeria',
+        },
+      },
     });
-
-    // Extract WORK_ITEM_ID based on actual structure
-    let WORK_ITEM_ID;
-    if (workflowResult.document && workflowResult.document.WORK_ITEM_ID) {
-      WORK_ITEM_ID = workflowResult.document.WORK_ITEM_ID;
-    } else if (workflowResult.WORK_ITEM_ID) {
-      WORK_ITEM_ID = workflowResult.WORK_ITEM_ID;
-    } else if (workflowResult.workItemId) {
-      WORK_ITEM_ID = workflowResult.workItemId;
-    } else if (workflowResult.data && workflowResult.data.WORK_ITEM_ID) {
-      WORK_ITEM_ID = workflowResult.data.WORK_ITEM_ID;
-    } else {
-      // If we still can't find it, use a default or throw an error
-      WORK_ITEM_ID = null;
-      console.error('WORK_ITEM_ID not found in workflow result');
-    }
-
-    // Then include it in the response
-   return res.status(201).json({
-  success: true,
-  message: 'Loan application submitted successfully',
-  data: {
-    loanAccountId: loanAccount._id,
-    loanAccountNumber,
-    creditApplicationId: creditApplication._id,
-    WORK_ITEM_ID: WORK_ITEM_ID,
-    workflowId: workflowResult._id || creditApplication._id,
-    APPL_ID: req.body.APPL_ID,
-    status: 'PENDING',  // Explicitly include the status here
-    guarantor: {
-      guarantorId: existingGuarantor._id,
-      guarantorNumberId: existingGuarantor.GUARANTOR_ID,
-      name: existingGuarantor.fullName,
-      guaranteedAmount: numericValues.GUARANTEED_AMT,
-      status: 'PENDING_VERIFICATION'  // Include guarantor status as well
-    },
-    repaymentSchedule: {
-      numberOfInstallments: emiResult.installments.length,
-      firstPaymentDate: emiResult.installments[0]?.dueDate,
-      lastPaymentDate: emiResult.installments.at(-1)?.dueDate,
-      totalInterest: emiResult.totalInterest,
-      totalRepayment: emiResult.totalRepayment,
-      status: 'PENDING'  // Include repayment schedule status
-    }
-  }
-});
   } catch (error) {
     if (session.inTransaction() && !transactionCompleted) {
       await session.abortTransaction();
     }
-
     console.error('Loan application error:', error);
-    
-    // Handle CastError specifically
+    console.error('Error stack:', error.stack);
+    console.error('Validation errors:', error.errors);
+
+    if (error.name === 'ReferenceError' && error.message.includes('ProductTypeMapping')) {
+      return res.status(500).json({
+        success: false,
+        message: 'ProductTypeMapping model is not defined',
+        code: 'MODEL_NOT_DEFINED',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      });
+    }
+
     if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
-        message: `Invalid ID format: ${error.value}`,
+        message: `Invalid ID format for ${error.path}: ${error.value}`,
         code: 'INVALID_ID_FORMAT',
-        expectedType: error.kind
+        expectedType: error.kind,
       });
     }
 
     return res.status(error.status || 500).json({
       success: false,
       message: error.message || 'Failed to process loan application',
-      code: error.code || 'SERVER_ERROR'
+      code: error.code || 'SERVER_ERROR',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
     });
   } finally {
     await session.endSession();
   }
 },
 
- async approveLoanApplication   (req, res) {
+async approveLoanApplication(req, res) {
   const session = await mongoose.startSession();
   let transactionSuccess = false;
 
@@ -549,6 +1310,16 @@ async applyForLoan(req, res) {
         success: false,
         message: `Missing required fields: ${missingFields.join(', ')}`,
         code: 'MISSING_FIELDS'
+      });
+    }
+
+    // Validate workItemId is a number
+    const numericWorkItemId = Number(workItemId);
+    if (isNaN(numericWorkItemId)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid workItemId: ${workItemId}. Expected a number.`,
+        code: 'INVALID_WORK_ITEM_ID'
       });
     }
 
@@ -610,7 +1381,7 @@ async applyForLoan(req, res) {
       });
     }
 
-    if (guarantor.GUARANTEED_AMT < loanAccount.GUARANTEED_AMOUNT && !forceApprove) {
+    if (parseFloat(guarantor.GUARANTEED_AMT) < parseFloat(loanAccount.GUARANTEED_AMOUNT) && !forceApprove) {
       return res.status(400).json({
         success: false,
         message: 'Guaranteed amount is insufficient for this loan',
@@ -658,8 +1429,8 @@ async applyForLoan(req, res) {
     }
 
     // Calculate disbursement
-    const totalFees = loanAccount.FEE_DETAILS?.totalFees || 0;
-    const netDisbursement = loanAccount.DISBURSEMENT_LIMIT - totalFees;
+    const totalFees = parseFloat(loanAccount.FEE_DETAILS?.totalFees || 0);
+    const netDisbursement = parseFloat(loanAccount.DISBURSEMENT_LIMIT) - totalFees;
 
     // Update Guarantor
     await Guarantor.updateOne(
@@ -682,7 +1453,7 @@ async applyForLoan(req, res) {
         $set: {
           LOAN_STATUS: 'APPROVED',
           APPROVED_BY: approvedBy,
-          NET_DISBURSEMENT: netDisbursement,
+          NET_DISBURSEMENT: mongoose.Types.Decimal128.fromString(netDisbursement.toString()),
           APPROVED_DATE: new Date(),
           REPAYMENT_SOURCE_ACCOUNT: repaymentAccount?.ACCT_NO
         }
@@ -702,24 +1473,125 @@ async applyForLoan(req, res) {
       { session }
     );
 
-    // Update Work Item
-    await WF_WORK_ITEM.updateOne(
-      { WORK_ITEM_ID: workItemId },
+    // Update Loan Contract Form
+    await LoanContractForm.updateOne(
+      { loanAccountNo: loanAccount.ACCT_NO, STATUS: 'PENDING' },
       {
         $set: {
           STATUS: 'APPROVED',
-          COMPLETED_BY: approvedBy,
-          COMPLETED_AT: new Date(),
-          COMMENTS: approvalComments || 'Approved'
+          UPDATED_AT: new Date(),
+          APPROVED_BY: approvedBy
         }
       },
       { session }
     );
 
-    // TODO: Create disbursement transaction and repayment schedule (if applicable)
+    // Update Repayment Schedule
+    const repaymentSchedule = await RepaymentSchedule.findOne({
+      LOAN_ACCOUNT_ID: loanAccount._id,
+      STATUS: 'PENDING'
+    }).session(session);
+
+    if (repaymentSchedule) {
+      await RepaymentSchedule.updateOne(
+        { _id: repaymentSchedule._id },
+        {
+          $set: {
+            STATUS: 'ACTIVE',
+            UPDATED_AT: new Date()
+          }
+        },
+        { session }
+      );
+    } else {
+      // Generate repayment schedule if not found
+      const emiResult = await interestService.calculateEMI({
+        principal: parseFloat(loanAccount.DISBURSEMENT_LIMIT),
+        annualRate: parseFloat(loanAccount.INTEREST_RATE),
+        termMonths: Math.ceil(parseInt(loanAccount.TERM_VALUE) / (loanAccount.TERM_CD === 'D' ? 30 : loanAccount.TERM_CD === 'W' ? 4 : 1)),
+        startDate: loanAccount.START_DT,
+        rateType: 'FIXED', // Adjust based on your LoanProduct configuration
+        PROD_ID: loanAccount.PROD_ID,
+        INDEX_RATE_ID: loanAccount.INTEREST_RATE_ID,
+        precision: 2
+      });
+
+      if (emiResult.installments?.length) {
+        const newRepaymentSchedule = new RepaymentSchedule({
+          LOAN_ACCOUNT_ID: loanAccount._id,
+          ACCT_NO: loanAccount.ACCT_NO,
+          CUST_ID: loanAccount.CUST_ID,
+          START_DATE: loanAccount.START_DT,
+          MATURITY_DATE: loanAccount.MATURITY_DT,
+          PRINCIPAL_AMOUNT: loanAccount.DISBURSEMENT_LIMIT,
+          INTEREST_RATE: loanAccount.INTEREST_RATE,
+          TERM: loanAccount.TERM_VALUE,
+          TERM_TYPE: loanAccount.TERM_CD,
+          paymentFrequency: getPaymentFrequency(loanAccount.TERM_CD, loanAccount.TERM_VALUE),
+          SCHEDULE: emiResult.installments,
+          TRANSACTION_ID: loanAccount.TRANSACTION_ID,
+          EVENT_ID: loanAccount.EVENT_ID,
+          CREATED_BY: approvedBy,
+          STATUS: 'ACTIVE'
+        });
+        await newRepaymentSchedule.save({ session });
+      }
+    }
+
+    // Process disbursement transaction
+    const disbursementResult = await processLoanDisbursementTransactions({
+      loanAccountId: loanAccount._id,
+      loanAccountNumber: loanAccount.ACCT_NO,
+      customerId: loanAccount.CUST_ID,
+      amount: netDisbursement,
+      repaymentAccountNo: repaymentAccount?.ACCT_NO,
+      disbursementDate: new Date(),
+      feeDetails: loanAccount.FEE_DETAILS,
+      guarantorId: guarantor._id,
+      transactionId: generateNumericId(),
+      eventId: generateNumericId()
+    }, session);
+
+    if (!disbursementResult.success) {
+      throw new Error(`Disbursement failed: ${disbursementResult.message}`);
+    }
+
+    // Update Work Item
+    const workItemUpdate = await WF_WORK_ITEMController.updateWorkItemStatusOnApproval(
+      'Loan', // Matches ITEM_CLASS_NM from applyForLoan
+      CUST_ID,
+      approvedBy,
+      session
+    );
+
+    if (!workItemUpdate.success) {
+      throw new Error(workItemUpdate.error || 'Failed to update work item status');
+    }
+
+    // Log audit trail
+    await logAuditTrail({
+      action: 'APPROVE_LOAN',
+      userId: approvedBy,
+      details: {
+        APPL_ID,
+        loanAccountNumber: loanAccount.ACCT_NO,
+        workItemId: numericWorkItemId,
+        comments: approvalComments || 'Approved'
+      }
+    }, session);
 
     await session.commitTransaction();
     transactionSuccess = true;
+
+    // Send notification
+    await NotificationService.send({
+      ROLE_ID: 'LOAN_OFFICER', // Adjust based on your roles
+      message: `Loan ${loanAccount.ACCT_NO} approved by ${approvedBy}`,
+      WORK_ITEM_ID: workItemUpdate.data?.WORK_ITEM_ID || numericWorkItemId,
+      EVENT_ID: loanAccount.EVENT_ID,
+      status: 'approved',
+      notificationType: 'system'
+    });
 
     return res.status(200).json({
       success: true,
@@ -728,18 +1600,193 @@ async applyForLoan(req, res) {
         loanAccountNumber: loanAccount.ACCT_NO,
         netDisbursement,
         repaymentAccount: repaymentAccount?.ACCT_NO,
-        guarantorId: guarantor.GUARANTOR_ID
+        guarantorId: guarantor.GUARANTOR_ID,
+        workItemId: workItemUpdate.data?.WORK_ITEM_ID || numericWorkItemId
       }
     });
   } catch (error) {
     if (!transactionSuccess) await session.abortTransaction();
     console.error('Approval error:', error);
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || 'Loan approval failed',
+      code: error.code || 'APPROVAL_ERROR',
+      error: getErrorMessage(error),
+      supportReference: generateId(8) // Using existing generateId function
+    });
+  } finally {
+    session.endSession();
+  }
+},
+
+
+async rejectLoanApplication(req, res) {
+  const session = await mongoose.startSession();
+  let transactionSuccess = false;
+
+  try {
+    await session.startTransaction();
+
+    const rawCustId = req.body.CUST_ID;
+    const CUST_ID = String(rawCustId);
+    const numericCUST_ID = parseInt(rawCustId, 10);
+
+    const {
+      workItemId,
+      rejectedBy,
+      APPL_ID,
+      rejectionComments,
+      reason
+    } = req.body;
+
+    const requiredFields = ['workItemId', 'rejectedBy', 'APPL_ID', 'CUST_ID'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missingFields.join(', ')}`,
+        code: 'MISSING_FIELDS',
+        details: {
+          received: {
+            workItemId: !!req.body.workItemId,
+            rejectedBy: !!req.body.rejectedBy,
+            APPL_ID: !!req.body.APPL_ID,
+            CUST_ID: !!req.body.CUST_ID
+          }
+        }
+      });
+    }
+
+    if (!rejectedBy || rejectedBy.toString().trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Rejector ID is required',
+        code: 'INVALID_REJECTOR_ID',
+        details: { rejectedBy }
+      });
+    }
+
+    const creditApplication = await CreditApplication.findOne({
+      APPL_ID,
+      $or: [
+        { CUST_ID: CUST_ID },
+        { CUST_ID: numericCUST_ID },
+        { CUST_ID: rawCustId }
+      ],
+      STATUS: 'PENDING'
+    }).session(session);
+
+    if (!creditApplication) {
+      return res.status(404).json({
+        success: false,
+        message: `Pending credit application not found for ${APPL_ID}`,
+        code: 'CREDIT_APP_NOT_FOUND'
+      });
+    }
+
+    const loanAccount = await LoanAccount.findOne({
+      ACCT_NO: creditApplication.ACCT_NO,
+      LOAN_STATUS: 'PENDING'
+    }).session(session);
+
+    if (!loanAccount) {
+      return res.status(404).json({
+        success: false,
+        message: `Pending loan account not found for ${APPL_ID}`,
+        code: 'LOAN_ACCOUNT_NOT_FOUND'
+      });
+    }
+
+    const guarantor = await Guarantor.findOne({
+      $or: [
+        { _id: loanAccount.GUARANTOR_ID },
+        { GUARANTOR_ID: loanAccount.guarantorDetails?.guarantorNumberId }
+      ]
+    }).session(session);
+
+    if (!guarantor) {
+      console.warn(`No guarantor found for loan account ${loanAccount.ACCT_NO} during rejection`);
+    }
+
+    const effectiveRejectionComments = reason || rejectionComments || 'Loan application rejected';
+
+    await CreditApplication.updateOne(
+      { _id: creditApplication._id },
+      {
+        $set: {
+          STATUS: 'REJECTED',
+          UPDATED_AT: new Date(),
+          REJECTION_COMMENTS: effectiveRejectionComments
+        }
+      },
+      { session }
+    );
+
+    await LoanAccount.updateOne(
+      { _id: loanAccount._id },
+      {
+        $set: {
+          LOAN_STATUS: 'REJECTED',
+          REJECTED_BY: rejectedBy,
+          REJECTED_DATE: new Date(),
+          REJECTION_COMMENTS: effectiveRejectionComments
+        }
+      },
+      { session }
+    );
+
+    await WF_WORK_ITEM.updateOne(
+      { WORK_ITEM_ID: workItemId },
+      {
+        $set: {
+          REC_ST: 'REJECTED',
+          COMPLETED_BY: rejectedBy,
+          COMPLETED_AT: new Date(),
+          COMMENTS: effectiveRejectionComments
+        }
+      },
+      { session }
+    );
+
+    if (guarantor) {
+      await Guarantor.updateOne(
+        { _id: guarantor._id },
+        {
+          $set: {
+            status: 'INACTIVE',
+            verificationStatus: 'NOT_VERIFIED',
+            lastUsed: new Date()
+          },
+          $pull: { guaranteedLoans: loanAccount._id },
+          $inc: { totalGuaranteedAmount: -loanAccount.GUARANTEED_AMOUNT }
+        },
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    transactionSuccess = true;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Loan application rejected successfully',
+      data: {
+        loanAccountNumber: loanAccount.ACCT_NO,
+        applicationId: APPL_ID,
+        workItemId,
+        rejectionComments: effectiveRejectionComments,
+        rejectedBy: rejectedBy
+      }
+    });
+  } catch (error) {
+    if (!transactionSuccess) await session.abortTransaction();
+    console.error('Rejection error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Loan approval failed',
-      code: 'APPROVAL_ERROR',
+      message: 'Loan rejection failed',
+      code: 'REJECTION_ERROR',
       error: error.message,
-      supportReference: generateSupportReference()
+      supportReference: generateNumber(8)
     });
   } finally {
     session.endSession();
@@ -749,23 +1796,23 @@ async applyForLoan(req, res) {
 
 async disburseLoan(req, res) {
   const session = await mongoose.startSession();
-  
+  let transactionCompleted = false;
+
   try {
     await session.startTransaction();
 
-    // Helper function to get product type
-    const getProductType = async (PROD_ID) => {
-      const loanProduct = await LoanProduct.findOne({ PROD_ID }).session(session);
-      if (!loanProduct) throw new Error(`Product ${PROD_ID} not found`);
-      return loanProduct.PRODUCT_TYPE || loanProduct.name || 'UNKNOWN';
-    };
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: User not found',
+        code: 'UNAUTHORIZED',
+      });
+    }
 
-    // Destructure and validate request body
     const {
       APPL_ID,
       CUST_ID,
       ACCT_NO,
-      fundingAcctNo,
       AMOUNT,
       TERM_CD = 'M',
       TERM_VALUE,
@@ -776,7 +1823,7 @@ async disburseLoan(req, res) {
       borrower_address,
       DISBURSEMENT_DATE = new Date().toISOString().split('T')[0],
       MATURITY_DT,
-      CREATED_BY = req.user?.id || 'system',
+      CREATED_BY = req.user.id,
       APPROVAL_STATUS = 'PENDING',
       SCHEDULE_TYPE = 'STANDARD',
       bank_short = 'N/A',
@@ -785,20 +1832,29 @@ async disburseLoan(req, res) {
       deductUpfrontInterest = false,
       partialUpfrontInterest = false,
       upfrontInterestPercentage = 0,
-      // Guarantor fields
       GUARANTOR_ID,
       GUARANTEED_AMT,
       guarantor_name,
       guarantor_relationship,
       guarantor_contact,
       guarantor_id_type,
-      guarantor_id_number
+      guarantor_id_number,
+      modifyGuarantor = false,
+      guarantorAction,
+      guarantorRemovalReason,
+      guarantorNotes,
     } = req.body;
 
-    // Validate required fields
     const requiredFields = [
-      'APPL_ID', 'CUST_ID', 'ACCT_NO', 'fundingAcctNo', 'AMOUNT', 'PROD_ID',
-      'GUARANTOR_ID', 'GUARANTEED_AMT', 'guarantor_name', 'guarantor_relationship'
+      'APPL_ID',
+      'CUST_ID',
+      'ACCT_NO',
+      'AMOUNT',
+      'PROD_ID',
+      'GUARANTOR_ID',
+      'GUARANTEED_AMT',
+      'guarantor_name',
+      'guarantor_relationship',
     ];
     const missingFields = requiredFields.filter(field => !req.body[field]);
     if (missingFields.length > 0) {
@@ -806,45 +1862,35 @@ async disburseLoan(req, res) {
       return res.status(400).json({
         success: false,
         message: `Missing required fields: ${missingFields.join(', ')}`,
-        code: 'MISSING_REQUIRED_FIELDS'
+        code: 'MISSING_REQUIRED_FIELDS',
       });
     }
 
-    // Validate upfront interest parameters
     if (partialUpfrontInterest) {
       if (deductUpfrontInterest) {
         await session.abortTransaction();
         return res.status(400).json({
           success: false,
           message: 'Cannot enable both full and partial upfront interest',
-          code: 'CONFLICTING_INTEREST_OPTIONS'
+          code: 'CONFLICTING_INTEREST_OPTIONS',
         });
       }
-      if (isNaN(upfrontInterestPercentage)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'Upfront interest percentage must be a number',
-          code: 'INVALID_UPFRONT_PERCENTAGE'
-        });
-      }
-      if (upfrontInterestPercentage <= 0 || upfrontInterestPercentage > 100) {
+      if (isNaN(upfrontInterestPercentage) || upfrontInterestPercentage <= 0 || upfrontInterestPercentage > 100) {
         await session.abortTransaction();
         return res.status(400).json({
           success: false,
           message: 'Upfront interest percentage must be between 0 and 100',
-          code: 'INVALID_UPFRONT_PERCENTAGE'
+          code: 'INVALID_UPFRONT_PERCENTAGE',
         });
       }
     }
 
-    // Validate guarantor details
     if (GUARANTEED_AMT <= 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: 'Guaranteed amount must be positive',
-        code: 'INVALID_GUARANTEED_AMOUNT'
+        code: 'INVALID_GUARANTEED_AMOUNT',
       });
     }
     if (GUARANTEED_AMT > AMOUNT * 2) {
@@ -852,18 +1898,17 @@ async disburseLoan(req, res) {
       return res.status(400).json({
         success: false,
         message: 'Guaranteed amount cannot exceed twice the loan amount',
-        code: 'EXCESSIVE_GUARANTEED_AMOUNT'
+        code: 'EXCESSIVE_GUARANTEED_AMOUNT',
       });
     }
 
-    // Validate dates
     const disbursementDate = new Date(DISBURSEMENT_DATE);
     if (isNaN(disbursementDate.getTime())) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: 'Invalid disbursement date format',
-        code: 'INVALID_DISBURSEMENT_DATE'
+        code: 'INVALID_DISBURSEMENT_DATE',
       });
     }
 
@@ -880,116 +1925,96 @@ async disburseLoan(req, res) {
       return res.status(400).json({
         success: false,
         message: 'Either MATURITY_DT or both TERM_VALUE and TERM_CD must be provided',
-        code: 'MISSING_MATURITY_INFO'
+        code: 'MISSING_MATURITY_INFO',
       });
     }
 
-    if (isNaN(maturityDate.getTime())) {
+    if (isNaN(maturityDate.getTime()) || disbursementDate >= maturityDate) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: 'Invalid maturity date format',
-        code: 'INVALID_MATURITY_DATE'
-      });
-    }
-    if (disbursementDate >= maturityDate) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: 'Maturity date must be after disbursement date',
-        code: 'INVALID_DATE_RANGE'
+        message: 'Invalid maturity date or must be after disbursement date',
+        code: 'INVALID_MATURITY_DATE',
       });
     }
 
-    // Validate loan amount
     if (AMOUNT <= 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: 'Loan amount must be positive',
-        code: 'INVALID_LOAN_AMOUNT'
+        code: 'INVALID_LOAN_AMOUNT',
       });
     }
 
-    // Get product type and validate related entities
-    const PRODUCT_TYPE = await getProductType(PROD_ID);
-    const [loanProduct, customerAccount, creditApplication] = await Promise.all([
-      LoanProduct.findOne({ PROD_ID }).session(session),
-      Customer.findOne({ CUST_ID }).session(session),
-      CreditApplication.findOne({ APPL_ID }).session(session)
-    ]);
-
+    const loanProduct = await LoanProduct.findOne({ PROD_ID }).session(session);
     if (!loanProduct) {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
         message: 'Loan product not found',
-        code: 'PRODUCT_NOT_FOUND'
+        code: 'PRODUCT_NOT_FOUND',
       });
     }
+
+    // Retrieve Loan GL account from LoanProduct
+    const loanGLAccount = loanProduct.loanGLAccount;
+    if (!loanGLAccount) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Loan GL account not configured for product',
+        code: 'MISSING_LOAN_GL_ACCOUNT',
+      });
+    }
+
+    const PRODUCT_TYPE = loanProduct.PRODUCT_TYPE || loanProduct.name || 'UNKNOWN';
+    const [customerAccount, creditApplication, existingGuarantor] = await Promise.all([
+      Customer.findOne({ CUST_ID }).session(session),
+      CreditApplication.findOne({ APPL_ID }).session(session),
+      Guarantor.findOne({ GUARANTOR_ID }).session(session),
+    ]);
+
     if (!customerAccount) {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
         message: 'Customer account not found',
-        code: 'CUSTOMER_NOT_FOUND'
+        code: 'CUSTOMER_NOT_FOUND',
       });
     }
-
-    // UPDATED GUARANTOR VALIDATION WITH CORRECT FIELD NAME
-    const existingGuarantor = await Guarantor.findOne({ GUARANTOR_ID }).session(session);
     if (!existingGuarantor) {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
         message: `Guarantor ${GUARANTOR_ID} not found`,
-        code: 'GUARANTOR_NOT_FOUND'
+        code: 'GUARANTOR_NOT_FOUND',
       });
     }
 
-    // Debug logs with correct field names
-    console.log('Database Guarantor Record:', {
-      _id: existingGuarantor._id,
-      GUARANTOR_ID: existingGuarantor.GUARANTOR_ID,
-      fullName: existingGuarantor.fullName,
-      relationshipToBorrower: existingGuarantor.relationshipToBorrower,
-      status: existingGuarantor.status
-    });
-
-    console.log('Provided Guarantor Details:', {
-      GUARANTOR_ID,
-      name: guarantor_name,
-      relationship: guarantor_relationship
-    });
-
-    // Normalize strings for comparison
     const normalizeString = (str) => String(str || '').trim().toLowerCase();
-
-    // Verify guarantor details match application
-    if (normalizeString(existingGuarantor.fullName) !== normalizeString(guarantor_name) || 
-        normalizeString(existingGuarantor.relationshipToBorrower) !== normalizeString(guarantor_relationship)) {
+    if (
+      normalizeString(existingGuarantor.fullName) !== normalizeString(guarantor_name) ||
+      normalizeString(existingGuarantor.relationshipToBorrower) !== normalizeString(guarantor_relationship)
+    ) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Guarantor details do not match application records. ` +
-                 `Expected: ${existingGuarantor.fullName} (${existingGuarantor.relationshipToBorrower}), ` +
-                 `Received: ${guarantor_name} (${guarantor_relationship})`,
-        code: 'GUARANTOR_DETAILS_MISMATCH'
+        message: `Guarantor details do not match. Expected: ${existingGuarantor.fullName} (${existingGuarantor.relationshipToBorrower}), Received: ${guarantor_name} (${guarantor_relationship})`,
+        code: 'GUARANTOR_DETAILS_MISMATCH',
       });
     }
 
-    // Check for existing active loan
     const existingLoanAccount = await LoanAccount.findOne({ ACCT_NO }).session(session);
     if (existingLoanAccount && existingLoanAccount.LOAN_STATUS === 'ACTIVE') {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
         message: `Loan already disbursed or active for account number ${ACCT_NO}`,
-        code: 'LOAN_ALREADY_ACTIVE'
+        code: 'LOAN_ALREADY_ACTIVE',
       });
     }
 
-    // Calculate fees
     const feeService = new FeeCalculationService();
     const feeDetails = await feeService.calculateInitialFees({
       loanAmount: AMOUNT,
@@ -997,40 +2022,58 @@ async disburseLoan(req, res) {
       term: TERM_VALUE,
       termCode: TERM_CD,
       hasGuarantor: true,
-      guaranteedAmount: GUARANTEED_AMT
+      guaranteedAmount: GUARANTEED_AMT,
     });
-    const totalFees = feeDetails.totalFees;
 
-    // Calculate interest
+    const totalCharges = feeDetails.charges ? feeDetails.charges.reduce((sum, charge) => sum + (charge.amount || 0), 0) : 0;
+    feeDetails.totalFees = (feeDetails.processingFee || 0) + totalCharges;
+    feeDetails.totalFees = mongoose.Types.Decimal128.fromString(feeDetails.totalFees.toFixed(2));
+    feeDetails.processingFee = mongoose.Types.Decimal128.fromString((feeDetails.processingFee || 0).toFixed(2));
+    feeDetails.charges = feeDetails.charges.map(charge => ({
+      ...charge,
+      amount: mongoose.Types.Decimal128.fromString(charge.amount.toFixed(2))
+    }));
+
     const termMonths = TERM_CD.toUpperCase() === 'M' ? TERM_VALUE : TERM_VALUE * 12;
-    const totalInterest = (AMOUNT * (INTEREST_RATE / 100) * termMonths) / 12;
+    const totalInterest = mongoose.Types.Decimal128.fromString(((AMOUNT * (INTEREST_RATE / 100) * termMonths) / 12).toFixed(2));
 
-    // Calculate upfront interest
-    let upfrontInterest = 0;
+    let upfrontInterest = mongoose.Types.Decimal128.fromString('0.00');
     let remainingInterest = totalInterest;
-    
     if (partialUpfrontInterest) {
       const percentage = parseFloat(upfrontInterestPercentage) / 100;
-      upfrontInterest = totalInterest * percentage;
-      remainingInterest = totalInterest - upfrontInterest;
+      const upfrontAmount = parseFloat(totalInterest.toString()) * percentage;
+      upfrontInterest = mongoose.Types.Decimal128.fromString(upfrontAmount.toFixed(2));
+      remainingInterest = mongoose.Types.Decimal128.fromString((parseFloat(totalInterest.toString()) - upfrontAmount).toFixed(2));
       feeDetails.upfrontInterest = upfrontInterest;
-      feeDetails.upfrontInterestPercentage = upfrontInterestPercentage;
+      feeDetails.upfrontInterestPercentage = mongoose.Types.Decimal128.fromString(upfrontInterestPercentage.toFixed(2));
     } else if (deductUpfrontInterest) {
       upfrontInterest = totalInterest;
-      remainingInterest = 0;
+      remainingInterest = mongoose.Types.Decimal128.fromString('0.00');
       feeDetails.upfrontInterest = upfrontInterest;
     }
 
-    // Generate repayment schedule
+    const netDisbursement = mongoose.Types.Decimal128.fromString(
+      (GUARANTEED_AMT - parseFloat(feeDetails.totalFees.toString()) - parseFloat(upfrontInterest.toString())).toFixed(2)
+    );
+
+    if (parseFloat(netDisbursement.toString()) <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Net disbursement amount must be positive after deducting fees and upfront interest',
+        code: 'INVALID_NET_DISBURSEMENT',
+      });
+    }
+
     const upperTermCd = TERM_CD.toUpperCase();
     const emiResult = await calculateEMI({
       principal: AMOUNT,
       annualRate: INTEREST_RATE,
       termMonths: upperTermCd === 'M' ? TERM_VALUE : TERM_VALUE * 12,
       startDate: disbursementDate,
-      remainingInterest: remainingInterest,
+      remainingInterest: parseFloat(remainingInterest.toString()),
       partialUpfrontInterest,
-      upfrontInterestPercentage
+      upfrontInterestPercentage,
     });
 
     if (!emiResult?.installments) {
@@ -1038,38 +2081,96 @@ async disburseLoan(req, res) {
       return res.status(500).json({
         success: false,
         message: 'Failed to generate repayment schedule',
-        code: 'SCHEDULE_GENERATION_FAILED'
+        code: 'SCHEDULE_GENERATION_FAILED',
       });
     }
 
-    // Generate transaction IDs
     const TRANSACTION_IDS = generateTransactionIds();
     const workflowId = Number(`${Date.now()}${Math.floor(Math.random() * 1000)}`);
-
-    // Determine approval status
     const resolvedApprovalStatus = ['APPROVED', 'PENDING'].includes(APPROVAL_STATUS.toUpperCase())
       ? APPROVAL_STATUS.toUpperCase()
       : 'PENDING';
 
-    // Update guarantor record with loan reference
-    await Guarantor.updateOne(
-      { _id: existingGuarantor._id },
-      { 
-        $set: {
-          loanId: existingLoanAccount?._id || null,
-          loanAccountNo: ACCT_NO,
-          customerId: CUST_ID,
-          status: 'PENDING_VERIFICATION',
-          lastUpdated: new Date(),
-          updatedBy: CREATED_BY
-        }
-      },
-      { session }
-    );
+    // Create LoanDisbursement record
+    const loanDisbursement = new LoanDisbursement({
+      APPL_ID,
+      CUST_ID,
+      ACCT_NO,
+      DISBURSEMENT_DATE: disbursementDate,
+      AMOUNT,
+      TERM_CD: upperTermCd,
+      TERM_VALUE,
+      INTEREST_RATE,
+      REPAYMENT_SCHEDULE: emiResult.installments.map((installment, index) => ({
+        installmentNo: index + 1,
+        dueDate: installment.dueDate
+      })),
+      STATUS: resolvedApprovalStatus
+    });
 
-    // Prepare loan account payload
+    let guarantorModificationResult = null;
+    if (modifyGuarantor && guarantorAction) {
+      if (guarantorAction === 'UNCHECK') {
+        guarantorModificationResult = await uncheckGuarantor(
+          GUARANTOR_ID,
+          ACCT_NO,
+          guarantorRemovalReason,
+          guarantorNotes,
+          req.user.id,
+          session
+        );
+      } else if (guarantorAction === 'REACTIVATE') {
+        guarantorModificationResult = await reactivateGuarantor(
+          GUARANTOR_ID,
+          ACCT_NO,
+          guarantorNotes,
+          req.user.id,
+          session
+        );
+      } else {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid guarantor action. Must be UNCHECK or REACTIVATE',
+          code: 'INVALID_GUARANTOR_ACTION',
+        });
+      }
+    }
+
+    if (!modifyGuarantor || guarantorAction !== 'UNCHECK') {
+      await Guarantor.updateOne(
+        { _id: existingGuarantor._id },
+        {
+          $addToSet: { guaranteedLoans: existingLoanAccount?._id || null },
+          $inc: { totalGuaranteedAmount: GUARANTEED_AMT },
+          $set: {
+            status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'APPROVED',
+            lastUpdated: new Date(),
+            updatedBy: req.user.id,
+          },
+        },
+        { session }
+      );
+
+      await new GuarantorAudit({
+        action: 'UPDATE',
+        guarantorId: existingGuarantor.GUARANTOR_ID,
+        loanId: existingLoanAccount?._id || null,
+        performedBy: req.user.id,
+        relationshipOfficer: { id: existingGuarantor.BU_ID, name: existingGuarantor.relationshipOfficerName },
+        details: {
+          notes: `Guarantor linked to loan ${ACCT_NO} during disbursement`,
+          updatedFields: {
+            guaranteedLoans: existingLoanAccount?._id?.toString(),
+            totalGuaranteedAmount: GUARANTEED_AMT,
+            status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'APPROVED',
+          },
+        },
+      }).save({ session });
+    }
+
     const loanAccountPayload = {
-      loanAccountId: ACCT_NO,
+      loanAccountId: parseInt(ACCT_NO.replace(/\D/g, '') || Date.now()),
       JOURNAL_ID: TRANSACTION_IDS.TRAN_JOURNAL_ID,
       CUST_ID,
       ACCT_NM: customerAccount.ACCT_NM,
@@ -1079,48 +2180,63 @@ async disburseLoan(req, res) {
       BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
       PRIMARY_OFFICER_ID: customerAccount.PRIMARY_OFFICER_ID || null,
       SECONDARY_OFFICER_ID: customerAccount.SECONDARY_OFFICER_ID || null,
-      DISBURSEMENT_LIMIT: AMOUNT,
-      ACTUAL_DISBURSEMENT: AMOUNT - upfrontInterest,
+      DISBURSEMENT_LIMIT: mongoose.Types.Decimal128.fromString(AMOUNT.toFixed(2)),
+      ACTUAL_DISBURSEMENT: netDisbursement,
       START_DT: disbursementDate,
       TERM_CD,
       TERM_VALUE,
       MATURITY_DT: maturityDate,
-      TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
       PROD_ID,
       PRODUCT_TYPE,
-      INDEX_RATE_ID,
       INTEREST_RATE_ID: loanProduct.interestRateId,
-      INTEREST_RATE,
+      INTEREST_RATE: mongoose.Types.Decimal128.fromString(INTEREST_RATE.toFixed(2)),
       LOAN_STATUS: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'PENDING',
-      PAYMENT_FREQUENCY: loanProduct.paymentFrequency || 'Monthly',
+      PAYMENT_FREQUENCY: loanProduct.paymentFrequency || 'MONTHLY',
       CREATED_BY,
       TRANSACTION_ID: TRANSACTION_IDS.TRANSACTION_ID,
       EVENT_ID: TRANSACTION_IDS.EVENT_ID,
       FEE_DETAILS: feeDetails,
       TOTAL_INTEREST: totalInterest,
-      TOTAL_REPAYMENT: AMOUNT + totalInterest,
-      REPAYMENT_SOURCE_ACCOUNT: fundingAcctNo,
+      TOTAL_REPAYMENT: mongoose.Types.Decimal128.fromString((AMOUNT + parseFloat(totalInterest.toString())).toFixed(2)),
+      REPAYMENT_SOURCE_ACCOUNT: loanGLAccount, // Use Loan GL account instead of fundingAcctNo
       REPAYMENT_SCHEDULE_TYPE: SCHEDULE_TYPE,
       NEXT_PAYMENT_DATE: emiResult.installments?.[0]?.dueDate,
       workflowId,
+      workItemId: 129,
       deductUpfrontInterest,
       partialUpfrontInterest,
-      upfrontInterestPercentage,
+      upfrontInterestPercentage: mongoose.Types.Decimal128.fromString(upfrontInterestPercentage.toFixed(2)),
       upfrontInterestAmount: upfrontInterest,
       remainingInterestAmount: remainingInterest,
       GUARANTOR_ID: existingGuarantor._id,
-      GUARANTEED_AMOUNT: GUARANTEED_AMT,
-      HAS_GUARANTOR: true
+      GUARANTEED_AMOUNT: mongoose.Types.Decimal128.fromString(GUARANTEED_AMT.toFixed(2)),
+      HAS_GUARANTOR: !modifyGuarantor || guarantorAction !== 'UNCHECK',
+      guarantorDetails: {
+        guarantorId: existingGuarantor._id,
+        name: guarantor_name,
+        phone: guarantor_contact,
+        relationship: guarantor_relationship,
+        guarantorNumberId: guarantor_id_number || existingGuarantor.GUARANTOR_ID,
+        email: existingGuarantor.email,
+        address: existingGuarantor.address,
+        status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'APPROVED',
+        guaranteedAmount: mongoose.Types.Decimal128.fromString(GUARANTEED_AMT.toFixed(2))
+      },
+      Borrower_address: {
+        Street: borrower_address?.Street || customerAccount.ADDRESS_LINE1 || 'Unknown Street',
+        State: borrower_address?.State || 'Unknown State',
+        City: borrower_address?.City || 'Unknown City',
+        ZIPCode: borrower_address?.ZIPCode || '000000',
+        Country: borrower_address?.Country || 'Nigeria'
+      }
     };
 
-    // Create or update loan account
     const loanAccount = await LoanAccount.findOneAndUpdate(
       { ACCT_NO },
       { $set: loanAccountPayload },
       { new: true, upsert: true, session }
     );
 
-    // Update credit application with loan account ID if exists
     if (creditApplication) {
       await CreditApplication.updateOne(
         { _id: creditApplication._id },
@@ -1129,60 +2245,67 @@ async disburseLoan(req, res) {
       );
     }
 
-   
-   // Create loan contract with proper fallbacks
-const loanContract = new LoanContractForm({
-  loan_contract_no: `LC-${ACCT_NO}-${Date.now()}`,
-  customer_id: CUST_ID,
-  applicationId: APPL_ID,
-  borrower_name: borrower_name || customerAccount.ACCT_NM || 'Unknown Borrower',
-  borrower_address: borrower_address || customerAccount.ADDRESS_LINE1 || 'Unknown Address',
-  loan_amount: AMOUNT,
-  loan_term: TERM_VALUE,
-  TERM_CD: upperTermCd,
-  interest_rate: INTEREST_RATE,
-  index_rate_id: INDEX_RATE_ID,
-  status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'PENDING',
-  USER_ID: CREATED_BY,
-  loanAccountNo: ACCT_NO,
-  fundingAccountNo: fundingAcctNo,
-  productDetails: {
-    productId: loanProduct._id,
-    productCode: loanProduct.productCode,
-    productName: loanProduct.name
-  },
-  fees: {
-    ...feeDetails,
-    processingFee: feeDetails.processingFee || 0,
-    upfrontInterest: upfrontInterest,
-    upfrontInterestPercentage: partialUpfrontInterest ? upfrontInterestPercentage : null
-  },
-  repaymentSchedule: emiResult.installments,
-  emiAmount: emiResult.emi,
-  totalInterest: totalInterest,
-  totalRepayment: AMOUNT + totalInterest,
-  disbursementDate,
-  maturityDate,
-  bank_short,
-  bank_name,
-  loan_purpose,
-  workflowId,
-  deductUpfrontInterest,
-  partialUpfrontInterest,
-  upfrontInterestPercentage,
-  guarantorDetails: {
-    guarantorId: existingGuarantor._id,
-    guarantorName: guarantor_name,
-    relationship: guarantor_relationship,
-    contact: guarantor_contact,
-    guaranteedAmount: GUARANTEED_AMT,
-    status: 'PENDING_VERIFICATION'
-  }
-});
+    const loanContract = new LoanContractForm({
+      loan_contract_no: `LC-${ACCT_NO}-${Date.now()}`,
+      customer_id: CUST_ID,
+      applicationId: APPL_ID,
+      borrower_name: borrower_name || customerAccount.ACCT_NM || 'Unknown Borrower',
+      borrower_address: {
+        Street: borrower_address?.Street || customerAccount.ADDRESS_LINE1 || 'Unknown Street',
+        State: borrower_address?.State || 'Unknown State',
+        City: borrower_address?.City || 'Unknown City',
+        ZIPCode: borrower_address?.ZIPCode || '000000',
+        Country: borrower_address?.Country || 'Nigeria'
+      },
+      loan_amount: AMOUNT,
+      loan_term: TERM_VALUE,
+      TERM_CD: upperTermCd,
+      interest_rate: INTEREST_RATE,
+      index_rate_id: INDEX_RATE_ID,
+      status: resolvedApprovalStatus,
+      USER_ID: CREATED_BY,
+      loanAccountNo: ACCT_NO,
+      fundingAccountNo: loanGLAccount, // Use Loan GL account
+      productDetails: {
+        productId: loanProduct._id,
+        productCode: loanProduct.productCode,
+        productName: loanProduct.name,
+      },
+      fees: {
+        ...feeDetails,
+        processingFee: feeDetails.processingFee,
+        upfrontInterest,
+        upfrontInterestPercentage: partialUpfrontInterest ? upfrontInterestPercentage : null
+      },
+      repaymentSchedule: emiResult.installments,
+      emiAmount: emiResult.emi,
+      totalInterest: parseFloat(totalInterest.toString()),
+      totalRepayment: AMOUNT + parseFloat(totalInterest.toString()),
+      disbursementDate,
+      maturityDate,
+      bank_short,
+      bank_name,
+      loan_purpose,
+      workflowId,
+      workItemId: '',
+      deductUpfrontInterest,
+      partialUpfrontInterest,
+      upfrontInterestPercentage,
+      guarantorDetails: {
+        guarantorId: existingGuarantor._id,
+        name: guarantor_name,
+        phone: guarantor_contact,
+        relationship: guarantor_relationship,
+        guarantorNumberId: guarantor_id_number || existingGuarantor.GUARANTOR_ID,
+        email: existingGuarantor.email,
+        address: existingGuarantor.address,
+        status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'APPROVED',
+        guaranteedAmount: GUARANTEED_AMT
+      }
+    });
 
-    // Create workflow item
     const wfWorkItem = new WF_WORK_ITEM({
-      WORK_ITEM_ID: workflowId,    
+      WORK_ITEM_ID: workflowId,
       referenceId: ACCT_NO,
       entity: 'LoanDisbursement',
       entityType: 'Loan',
@@ -1195,17 +2318,17 @@ const loanContract = new LoanContractForm({
       createdAt: new Date(),
       guarantorId: existingGuarantor._id,
       metadata: {
-        hasGuarantor: true,
+        hasGuarantor: !modifyGuarantor || guarantorAction !== 'UNCHECK',
         guaranteedAmount: GUARANTEED_AMT,
+        workItemId: 129,
         upfrontInterest: {
           type: partialUpfrontInterest ? 'PARTIAL' : deductUpfrontInterest ? 'FULL' : 'NONE',
-          amount: upfrontInterest,
+          amount: parseFloat(upfrontInterest.toString()),
           percentage: partialUpfrontInterest ? upfrontInterestPercentage : null
         }
       }
     });
 
-    // Prepare repayment schedule
     const repaymentSchedule = emiResult.installments.map((installment, index) => ({
       LOAN_ACCOUNT_ID: loanAccount._id,
       CUST_ID,
@@ -1228,28 +2351,18 @@ const loanContract = new LoanContractForm({
       CREATED_BY,
       UPFRONT_INTEREST: {
         type: partialUpfrontInterest ? 'PARTIAL' : deductUpfrontInterest ? 'FULL' : 'NONE',
-        amount: partialUpfrontInterest || deductUpfrontInterest ? upfrontInterest : 0,
+        amount: parseFloat(upfrontInterest.toString()),
         percentage: partialUpfrontInterest ? upfrontInterestPercentage : null
       },
       GUARANTOR_ID: existingGuarantor._id,
       GUARANTEED_AMOUNT: GUARANTEED_AMT
     }));
 
-    // Save all documents
-    await Promise.all([
-      loanContract.save({ session }),
-      wfWorkItem.save({ session }),
-      RepaymentSchedule.insertMany(repaymentSchedule, { session })
-    ]);
-
-    
-// Process disbursement if approved
- // Process disbursement if approved
-    let netDisbursement = 0;
     if (resolvedApprovalStatus === 'APPROVED') {
-      netDisbursement = AMOUNT - totalFees - upfrontInterest;
-      
-      // Create disbursement transaction with all required fields
+      // Create LoanDisbursement record
+      await loanDisbursement.save({ session });
+
+      // Create transaction for disbursement: DR Loan GL, CR Customer Account
       const disbursementTx = new Transaction({
         TRANSACTION_ID: TRANSACTION_IDS.TRANSACTION_ID,
         EVENT_ID: TRANSACTION_IDS.EVENT_ID,
@@ -1260,52 +2373,70 @@ const loanContract = new LoanContractForm({
         ACCT_NM: loanAccount.ACCT_NM || customerAccount.ACCT_NM || 'Unknown Account',
         CUST_ID: loanAccount.CUST_ID,
         BU_ID: loanAccount.BU_ID || customerAccount.BU_ID || 'DEFAULT_BU',
-        FROM_ACCT_NO: loanProduct.fundingSource || '1-002-102-5-200-1',
-        TO_ACCT_NO: fundingAcctNo,
-        AMOUNT: netDisbursement,
+        FROM_ACCT_NO: loanGLAccount, // Debit Loan GL account
+        TO_ACCT_NO: ACCT_NO, // Credit Customer Account
+        AMOUNT: parseFloat(netDisbursement.toString()),
         CRNCY_ID: 'NGN',
         TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
         TRANSACTION_DESC: `Loan disbursed to ${loanAccount.ACCT_NM}`,
         STATUS: 'COMPLETED',
         VALUE_DATE: new Date(),
-        createdBy: CREATED_BY, // Now guaranteed to have a value
+        createdBy: CREATED_BY,
         guarantorId: existingGuarantor._id,
         GUARANTEED_AMOUNT: GUARANTEED_AMT,
         metadata: {
           loanAccountNo: ACCT_NO,
           productType: PRODUCT_TYPE,
+          workItemId: 129,
           upfrontInterest: {
             type: partialUpfrontInterest ? 'PARTIAL' : deductUpfrontInterest ? 'FULL' : 'NONE',
-            amount: upfrontInterest,
+            amount: parseFloat(upfrontInterest.toString()),
             percentage: partialUpfrontInterest ? upfrontInterestPercentage : null
           },
           createdBy: CREATED_BY
         }
       });
 
-      await disbursementTx.save({ session });
+      // Update GLAccount for Loan GL (Debit)
+      await GLAccount.updateOne(
+        { GL_ACCT_NO: loanGLAccount },
+        { $inc: { BALANCE: parseFloat(netDisbursement.toString()) } }, // Debit increases balance
+        { session }
+      );
 
+      // Update CustomerAccount (Credit)
+      await CustomerAccount.updateOne(
+        { ACCT_NO },
+        { $inc: { BALANCE: parseFloat(netDisbursement.toString()) } }, // Credit increases balance
+        { session }
+      );
 
-  // Update account balances
-  await Promise.all([
-    CustomerAccount.updateOne(
-      { ACCT_NO: fundingAcctNo },
-      { $inc: { BALANCE: -(netDisbursement + upfrontInterest) } },
-      { session }
-    ),
-    CustomerAccount.updateOne(
-      { ACCT_NO },
-      { $inc: { BALANCE: netDisbursement } },
-      { session }
-    ),
-    Guarantor.updateOne(
-      { _id: existingGuarantor._id },
-      { $set: { status: 'ACTIVE' } },
-      { session }
-    )
-  ]);
-}
+      // Update CustomerAccount for fees and upfront interest (Debit)
+      await CustomerAccount.updateOne(
+        { ACCT_NO },
+        { $inc: { BALANCE: -(parseFloat(feeDetails.totalFees.toString()) + parseFloat(upfrontInterest.toString())) } }, // Debit decreases balance
+        { session }
+      );
+
+      await Promise.all([
+        loanContract.save({ session }),
+        wfWorkItem.save({ session }),
+        RepaymentSchedule.insertMany(repaymentSchedule, { session }),
+        disbursementTx.save({ session })
+      ]);
+    } else {
+      // Save LoanDisbursement record for PENDING status
+      await loanDisbursement.save({ session });
+
+      await Promise.all([
+        loanContract.save({ session }),
+        wfWorkItem.save({ session }),
+        RepaymentSchedule.insertMany(repaymentSchedule, { session })
+      ]);
+    }
+
     await session.commitTransaction();
+    transactionCompleted = true;
 
     return res.status(200).json({
       success: true,
@@ -1313,25 +2444,26 @@ const loanContract = new LoanContractForm({
         ? 'Loan disbursed successfully with guarantor'
         : 'Loan prepared for disbursement with guarantor - pending approval',
       data: {
-        WORK_ITEM_ID: workflowId, // Changed to uppercase to match your requirement
+        WORK_ITEM_ID: workflowId,
+        workItemId: 129,
         loanAccount: {
           ACCT_NO,
           status: resolvedApprovalStatus,
-          disbursedAmount: resolvedApprovalStatus === 'APPROVED' ? netDisbursement : 0,
+          disbursedAmount: resolvedApprovalStatus === 'APPROVED' ? parseFloat(netDisbursement.toString()) : 0,
           emi: emiResult.emi,
           nextPaymentDate: emiResult.installments?.[0]?.dueDate,
           maturityDate,
           upfrontInterest: {
             type: partialUpfrontInterest ? 'PARTIAL' : deductUpfrontInterest ? 'FULL' : 'NONE',
-            amount: upfrontInterest,
+            amount: parseFloat(upfrontInterest.toString()),
             percentage: partialUpfrontInterest ? upfrontInterestPercentage : null,
-            remainingInterest: remainingInterest
+            remainingInterest: parseFloat(remainingInterest.toString())
           },
           guarantor: {
             guarantorId: existingGuarantor._id,
             name: guarantor_name,
             guaranteedAmount: GUARANTEED_AMT,
-            status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'PENDING_VERIFICATION'
+            status: resolvedApprovalStatus === 'APPROVED' ? 'ACTIVE' : 'APPROVED'
           }
         },
         contract: {
@@ -1340,21 +2472,32 @@ const loanContract = new LoanContractForm({
         },
         repaymentSchedule: {
           installments: emiResult.installments.length,
-          totalInterest: totalInterest,
+          totalInterest: parseFloat(totalInterest.toString()),
           schedule: emiResult.installments.slice(0, 5).map(s => ({
             installmentNo: s.installmentNo,
             dueDate: s.dueDate,
             amount: s.totalPayment,
             status: s.status
           }))
-        }
+        },
+        guarantorModification: guarantorModificationResult,
+        feeDetails,
+        Borrower_address: {
+          Street: borrower_address?.Street || customerAccount.ADDRESS_LINE1 || 'Unknown Street',
+          State: borrower_address?.State || 'Unknown State',
+          City: borrower_address?.City || 'Unknown City',
+          ZIPCode: borrower_address?.ZIPCode || '000000',
+          Country: borrower_address?.Country || 'Nigeria'
+        },
+        disbursementId: loanDisbursement._id // Include LoanDisbursement ID
       }
     });
-
   } catch (error) {
-    await session.abortTransaction();
+    if (session.inTransaction() && !transactionCompleted) {
+      await session.abortTransaction();
+    }
     console.error('Loan disbursement error:', error);
-    return res.status(500).json({
+    return res.status(error.status || 500).json({
       success: false,
       message: error.message || 'Failed to process loan disbursement',
       code: error.code || 'INTERNAL_SERVER_ERROR'
@@ -2303,6 +3446,220 @@ async rejectLoanDisbursement(req, res) {
     }
 },
 
+async repayLoan(req, res) {
+  const session = await mongoose.startSession();
+  let transactionCompleted = false;
+
+  try {
+    await session.startTransaction();
+
+    const { ACCT_NO, REPAYMENT_AMOUNT, LOAN_ACCOUNT_ID, REPAYMENT_DATE = new Date() } = req.body;
+
+    if (!req.user || !req.user.id) {
+      throw new Error('Unauthorized: User not found');
+    }
+
+    // Validate input
+    const requiredFields = ['ACCT_NO', 'REPAYMENT_AMOUNT', 'LOAN_ACCOUNT_ID'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    if (missingFields.length > 0) {
+      throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+    }
+
+    if (REPAYMENT_AMOUNT <= 0) {
+      throw new Error('Repayment amount must be positive');
+    }
+
+    const repaymentDate = new Date(REPAYMENT_DATE);
+    if (isNaN(repaymentDate.getTime())) {
+      throw new Error('Invalid repayment date format');
+    }
+
+    // Fetch required documents
+    const [loanAccount, loanProduct, customerAccount] = await Promise.all([
+      LoanAccount.findOne({ ACCT_NO, _id: LOAN_ACCOUNT_ID }).session(session),
+      LoanProduct.findOne({ PROD_ID: loanAccount?.PROD_ID }).session(session),
+      CustomerAccount.findOne({ ACCT_NO }).session(session),
+    ]);
+
+    if (!loanAccount) {
+      throw new Error('Loan account not found');
+    }
+    if (!loanProduct || !loanProduct.loanGLAccount) {
+      throw new Error('Loan GL account not configured');
+    }
+    if (!customerAccount) {
+      throw new Error('Customer account not found');
+    }
+
+    // Check if loan is active
+    if (loanAccount.LOAN_STATUS !== 'ACTIVE') {
+      throw new Error('Loan is not active for repayment');
+    }
+
+    // Calculate outstanding interest and principal
+    const outstandingPrincipal = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL?.toString() || loanAccount.DISBURSEMENT_LIMIT.toString());
+    const outstandingInterest = parseFloat(loanAccount.TOTAL_INTEREST?.toString() || 0) - parseFloat(loanAccount.TOTAL_REPAID_INTEREST?.toString() || 0);
+    const totalOutstanding = outstandingPrincipal + outstandingInterest;
+
+    if (REPAYMENT_AMOUNT > totalOutstanding) {
+      throw new Error(`Repayment amount (${REPAYMENT_AMOUNT}) exceeds outstanding balance (${totalOutstanding})`);
+    }
+
+    // Allocate repayment to interest and principal
+    let interestPaid = 0;
+    let principalPaid = 0;
+    if (outstandingInterest > 0) {
+      interestPaid = Math.min(REPAYMENT_AMOUNT, outstandingInterest);
+      principalPaid = REPAYMENT_AMOUNT - interestPaid;
+    } else {
+      principalPaid = REPAYMENT_AMOUNT;
+    }
+
+    // Create LoanRepayment record
+    const loanRepayment = new LoanRepayment({
+      ACCT_NO,
+      amount: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
+      date: repaymentDate,
+      CUST_ID: loanAccount.CUST_ID,
+      REPAYMENT_HISTORY: [{
+        amount: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
+        date: repaymentDate
+      }]
+    });
+
+    // Update RepaymentSchedule
+    const repaymentSchedules = await RepaymentSchedule.find({
+      LOAN_ACCOUNT_ID: loanAccount._id,
+      status: 'PENDING'
+    }).sort({ dueDate: 1 }).session(session);
+
+    let remainingRepayment = REPAYMENT_AMOUNT;
+    for (const schedule of repaymentSchedules) {
+      if (remainingRepayment <= 0) break;
+
+      const scheduleTotal = parseFloat(schedule.totalPayment.toString());
+      const scheduleInterest = parseFloat(schedule.interest.toString());
+      const schedulePrincipal = parseFloat(schedule.principal.toString());
+
+      let interestToPay = Math.min(remainingRepayment, scheduleInterest);
+      let principalToPay = Math.min(remainingRepayment - interestToPay, schedulePrincipal);
+
+      if (interestToPay + principalToPay > 0) {
+        await RepaymentSchedule.updateOne(
+          { _id: schedule._id },
+          {
+            $set: {
+              interest: mongoose.Types.Decimal128.fromString((scheduleInterest - interestToPay).toFixed(2)),
+              principal: mongoose.Types.Decimal128.fromString((schedulePrincipal - principalToPay).toFixed(2)),
+              totalPayment: mongoose.Types.Decimal128.fromString((scheduleTotal - (interestToPay + principalToPay)).toFixed(2)),
+              status: interestToPay + principalToPay >= scheduleTotal ? 'PAID' : 'PARTIAL'
+            }
+          },
+          { session }
+        );
+
+        remainingRepayment -= (interestToPay + principalToPay);
+      }
+    }
+
+    // Generate transaction IDs
+    const TRANSACTION_IDS = generateTransactionIds();
+
+    // Create repayment transaction: DR Customer Account, CR Loan GL
+    const repaymentTx = new Transaction({
+      TRANSACTION_ID: TRANSACTION_IDS.TRANSACTION_ID,
+      EVENT_ID: TRANSACTION_IDS.EVENT_ID,
+      JOURNAL_ID: TRANSACTION_IDS.JOURNAL_ID,
+      TRAN_JOURNAL_ID: TRANSACTION_IDS.TRAN_JOURNAL_ID,
+      ACCT_ID: loanAccount._id,
+      ACCT_NO: loanAccount.ACCT_NO,
+      ACCT_NM: loanAccount.ACCT_NM,
+      CUST_ID: loanAccount.CUST_ID,
+      BU_ID: loanAccount.BU_ID || 'DEFAULT_BU',
+      FROM_ACCT_NO: ACCT_NO, // Debit Customer Account
+      TO_ACCT_NO: loanProduct.loanGLAccount, // Credit Loan GL
+      AMOUNT: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
+      CRNCY_ID: 'NGN',
+      TRANSACTION_TYPE: 'LOAN_REPAYMENT',
+      TRANSACTION_DESC: `Loan repayment for ${loanAccount.ACCT_NM} (Interest: ${interestPaid}, Principal: ${principalPaid})`,
+      STATUS: 'COMPLETED',
+      VALUE_DATE: repaymentDate,
+      createdBy: req.user.id,
+      metadata: {
+        loanAccountNo: ACCT_NO,
+        productType: loanAccount.PRODUCT_TYPE,
+        interestPaid,
+        principalPaid
+      }
+    });
+
+    // Update CustomerAccount (Debit)
+    await CustomerAccount.updateOne(
+      { ACCT_NO },
+      { $inc: { BALANCE: -REPAYMENT_AMOUNT } },
+      { session }
+    );
+
+    // Update GLAccount for Loan GL (Credit)
+    await GLAccount.updateOne(
+      { GL_ACCT_NO: loanProduct.loanGLAccount },
+      { $inc: { BALANCE: -REPAYMENT_AMOUNT } }, // Credit decreases balance
+      { session }
+    );
+
+    // Update LoanAccount
+    await LoanAccount.updateOne(
+      { ACCT_NO },
+      {
+        $inc: {
+          TOTAL_REPAID_AMOUNT: REPAYMENT_AMOUNT,
+          OUTSTANDING_PRINCIPAL: -principalPaid,
+          TOTAL_REPAID_INTEREST: interestPaid || 0
+        },
+        $set: {
+          LOAN_STATUS: outstandingPrincipal - principalPaid <= 0 ? 'PAID' : 'ACTIVE'
+        }
+      },
+      { session }
+    );
+
+    // Save LoanRepayment record
+    await loanRepayment.save({ session });
+
+    // Save transaction
+    await repaymentTx.save({ session });
+
+    await session.commitTransaction();
+    transactionCompleted = true;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Loan repayment processed successfully',
+      data: {
+        transactionId: TRANSACTION_IDS.TRANSACTION_ID,
+        repaymentAmount: REPAYMENT_AMOUNT,
+        interestPaid,
+        principalPaid,
+        loanAccountNo: ACCT_NO,
+        repaymentId: loanRepayment._id
+      }
+    });
+  } catch (error) {
+    if (session.inTransaction() && !transactionCompleted) {
+      await session.abortTransaction();
+    }
+    console.error('Loan repayment error:', error);
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || 'Failed to process loan repayment',
+      code: error.code || 'INTERNAL_SERVER_ERROR'
+    });
+  } finally {
+    session.endSession();
+  }
+},
+
   // Helper functions (implement as needed)
   generateJournalId() {
     return 'JRN-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
@@ -2316,53 +3673,66 @@ async rejectLoanDisbursement(req, res) {
     return 'LEDGER-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
   },
 
-  async getLoanAccountByAcctNo(req, res) {
-    const { ACCT_NO } = req.params;
-  
-    if (!ACCT_NO) {
-      return res.status(400).json({ message: 'Account number is required' });
-    }
-  
-    try {
-      const loanAccount = await LoanAccount.findOne({ ACCT_NO });
-      if (!loanAccount) {
-        return res.status(404).json({ message: 'Loan account not found' });
-      }
-  
-      res.status(200).json({
-        message: 'Loan account retrieved successfully',
-        loanAccount,
-      });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Error fetching loan account', error: error.message });
-    }
-  },
+ async getLoanAccountByAcctNo(req, res) {
+  const { ACCT_NO } = req.params;
 
-  async getLoanAccountsByCustomerId(req, res) {
-    const { custId } = req.params;
+  if (!ACCT_NO) {
+    return res.status(400).json({ message: 'Account number is required' });
+  }
 
-    if (!custId) {
-      return res.status(400).json({ message: 'Customer ID (custId) is required' });
+  try {
+    const loanAccount = await LoanAccount.findOne({ ACCT_NO });
+    if (!loanAccount) {
+      return res.status(404).json({ message: 'Loan account not found' });
     }
 
-    try {
-      const loanAccounts = await LoanAccount.find({ CUST_ID: custId });
+    // Add workItemId to the loan account response
+    const loanAccountWithWorkItem = {
+      ...loanAccount.toObject(), // Convert Mongoose document to plain object
+      workItemId: 129
+    };
 
-      if (!loanAccounts || loanAccounts.length === 0) {
-        return res.status(404).json({ message: 'No loan accounts found for this customer' });
-      }
+    res.status(200).json({
+      message: 'Loan account retrieved successfully',
+      loanAccount: loanAccountWithWorkItem
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error fetching loan account', error: error.message });
+  }
+},
 
-      res.status(200).json({
-        message: 'Loan accounts retrieved successfully',
-        count: loanAccounts.length,
-        loanAccounts,
-      });
-    } catch (error) {
-      console.error('Error fetching loan accounts by customer ID:', error);
-      res.status(500).json({ message: 'Internal server error', error: error.message });
+async getLoanAccountsByCustomerId(req, res) {
+  const { custId } = req.params;
+
+  if (!custId) {
+    return res.status(400).json({ message: 'Customer ID (custId) is required' });
+  }
+
+  try {
+    // Use lean() to get plain JavaScript objects
+    const loanAccounts = await LoanAccount.find({ CUST_ID: custId }).lean();
+
+    if (!loanAccounts || loanAccounts.length === 0) {
+      return res.status(404).json({ message: 'No loan accounts found for this customer' });
     }
-  },
+
+    // Add workItemId to each loan account
+    const loanAccountsWithWorkItem = loanAccounts.map(loanAccount => ({
+      ...loanAccount,
+      workItemId: 129
+    }));
+
+    res.status(200).json({
+      message: 'Loan accounts retrieved successfully',
+      count: loanAccounts.length,
+      loanAccounts: loanAccountsWithWorkItem
+    });
+  } catch (error) {
+    console.error('Error fetching loan accounts by customer ID:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+},
 
   async getLoanInterestDetails(req, res) {
     try {
