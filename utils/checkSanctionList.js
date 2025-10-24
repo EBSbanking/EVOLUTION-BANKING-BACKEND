@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { logAuditTrail } from './AuditLogger.js';
+import auditLogger from './AuditLogger.js';  // Hybrid audit logger (file + DB)
 
 // Cache for storing sanction check results (in-memory, consider Redis for production)
 const sanctionCache = new Map();
@@ -32,17 +32,19 @@ export const checkSanctionList = async (bvn, nin, customerName = null, userId = 
     const cachedResult = sanctionCache.get(cacheKey);
 
     if (cachedResult && (Date.now() - cachedResult.timestamp < CACHE_TTL)) {
-      await logAuditTrail(
-        'SANCTION_CHECK',
-        null,
-        userId,
-        'SANCTION_CHECK_CACHE_HIT',
-        null,
-        { bvn, nin, customerName, result: cachedResult },
-        ipAddress,
-        'GENERAL',
-        { source: 'checkSanctionList', cacheHit: true }
-      );
+      // Audit via hybrid logger
+      auditLogger.info('Audit Event', {
+        entity_type: 'SANCTION_CHECK',
+        entity_id: null,
+        user_id: userId,
+        action: 'SANCTION_CHECK_CACHE_HIT',
+        old_value: null,
+        new_value: { bvn, nin, customerName, result: cachedResult },
+        ip_address: ipAddress,
+        event_type: 'GENERAL',
+        source: 'checkSanctionList',
+        cacheHit: true
+      });
       return cachedResult;
     }
 
@@ -96,18 +98,18 @@ export const checkSanctionList = async (bvn, nin, customerName = null, userId = 
 
     sanctionCache.set(cacheKey, result);
 
-    // Log the sanction check
-    await logAuditTrail(
-      'SANCTION_CHECK',
-      null,
-      userId,
-      isSanctioned ? 'SANCTION_MATCH' : 'SANCTION_CLEAR',
-      null,
-      { bvn, nin, customerName, result },
-      ipAddress,
-      'GENERAL',
-      { source: 'checkSanctionList' }
-    );
+    // Log the sanction check via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'SANCTION_CHECK',
+      entity_id: null,
+      user_id: userId,
+      action: isSanctioned ? 'SANCTION_MATCH' : 'SANCTION_CLEAR',
+      old_value: null,
+      new_value: { bvn, nin, customerName, result },
+      ip_address: ipAddress,
+      event_type: 'GENERAL',
+      source: 'checkSanctionList'
+    });
 
     return result;
   } catch (error) {
@@ -121,17 +123,19 @@ export const checkSanctionList = async (bvn, nin, customerName = null, userId = 
       timestamp: Date.now()
     };
 
-    await logAuditTrail(
-      'SANCTION_CHECK',
-      null,
-      userId,
-      'SANCTION_CHECK_FAILED',
-      null,
-      { bvn, nin, customerName, error: error.message },
-      ipAddress,
-      'GENERAL',
-      { source: 'checkSanctionList', error: true }
-    );
+    // Audit failure via hybrid logger
+    auditLogger.error('Audit Event', {
+      entity_type: 'SANCTION_CHECK',
+      entity_id: null,
+      user_id: userId,
+      action: 'SANCTION_CHECK_FAILED',
+      old_value: null,
+      new_value: { bvn, nin, customerName, error: error.message },
+      ip_address: ipAddress,
+      event_type: 'GENERAL',
+      source: 'checkSanctionList',
+      error: true
+    });
 
     return failSafeResult;
   }

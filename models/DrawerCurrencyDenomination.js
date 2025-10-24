@@ -49,9 +49,9 @@ drawerCurrencyDenominationSchema.pre('save', function(next) {
   next();
 });
 
-// Adding indexes for performance
-drawerCurrencyDenominationSchema.index({ drawerCrncyDenomId: 1 });
-drawerCurrencyDenominationSchema.index({ drawerCrncyId: 1 });
+// // Adding indexes for performance
+// drawerCurrencyDenominationSchema.index({ drawerCrncyDenomId: 1 });
+// drawerCurrencyDenominationSchema.index({ drawerCrncyId: 1 });
 
 // Create and export the model
 const DrawerCurrencyDenomination = mongoose.model('DrawerCurrencyDenomination', drawerCurrencyDenominationSchema);

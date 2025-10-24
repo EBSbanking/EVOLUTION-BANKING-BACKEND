@@ -1,4 +1,3 @@
-
 import { getServerTime, getBusinessDate, setServerTimeOffset } from '../utils/serverTime.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -16,6 +15,9 @@ import Reconciliation from '../models/Reconciliation.js';
 import { createAuditTrail } from '../controllers/AudiTrailController.js';
 import logger from '../utils/logger.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
+import Thrift from '../models/Thrift.js';
+import Customer from '../models/Customer.js';
+import ThriftController from '../controllers/ThriftController.js'; // Import ThriftController for collection processing
 
 // Placeholder for fetching bank statement data
 const fetchBankStatementData = async () => {
@@ -28,6 +30,143 @@ const generateTransactionId = () => {
   const base = Date.now().toString();
   const random = Math.floor(1000 + Math.random() * 9000);
   return parseInt(base + random);
+};
+
+// Process Overdue Thrift Collections
+export const processOverdueThriftCollections = async (session = null) => {
+  const localSession = session || await mongoose.startSession();
+  let transactionCompleted = false;
+
+  try {
+    const result = await localSession.withTransaction(async () => {
+      // Fetch all active thrift accounts
+      const thriftAccounts = await Thrift.find({ status: 'active' }).session(localSession);
+      if (!thriftAccounts.length) {
+        logger.info('No active thrift accounts to process for overdue collections');
+        return { success: true, message: 'No active thrift accounts to process', processed: [], failed: [], skipped: [] };
+      }
+
+      const processedCollections = [];
+      const failedCollections = [];
+      const skippedCollections = [];
+
+      const today = getBusinessDate(); // Use business date
+
+      for (const account of thriftAccounts) {
+        try {
+          const customer = await Customer.findOne({ CUST_ID: account.CUST_ID }).session(localSession);
+          if (!customer) {
+            logger.warn(`Customer not found for thrift account ${account.ACCT_NO}`);
+            skippedCollections.push({ ACCT_NO: account.ACCT_NO, reason: 'Customer not found' });
+            continue;
+          }
+
+          // Determine if collection is overdue based on type and lastCollectionDate
+          let isOverdue = false;
+          let expectedAmount = 0; // Default or from account settings
+
+          if (account.COLLECTION_TYPE === 'DAILY') {
+            isOverdue = !account.lastCollectionDate || account.lastCollectionDate < today;
+            expectedAmount = 500; // Default daily amount - adjust as needed
+          } else if (account.COLLECTION_TYPE === 'WEEKLY') {
+            const lastCollection = account.lastCollectionDate || new Date(0);
+            const daysSinceLast = (today - lastCollection) / (1000 * 60 * 60 * 24);
+            isOverdue = daysSinceLast >= 7;
+            expectedAmount = 2000; // Default weekly amount
+          } else if (account.COLLECTION_TYPE === 'MONTHLY') {
+            const lastCollectionMonth = account.lastCollectionDate ? account.lastCollectionDate.getMonth() : -1;
+            const currentMonth = today.getMonth();
+            isOverdue = lastCollectionMonth < currentMonth;
+            expectedAmount = await ThriftController.calculateExpectedMonthlyAmount(account.ACCT_NO);
+          }
+
+          if (!isOverdue || customer.accountBalance < expectedAmount) {
+            logger.info(`Thrift account ${account.ACCT_NO} not overdue or insufficient balance, skipping`);
+            skippedCollections.push({ ACCT_NO: account.ACCT_NO, reason: 'Not overdue or insufficient balance' });
+            continue;
+          }
+
+          // Process the overdue collection based on type
+          let collectionResponse;
+          const collectionData = { CUST_ID: account.CUST_ID, ACCT_NO: account.ACCT_NO, amount: expectedAmount };
+
+          if (account.COLLECTION_TYPE === 'DAILY') {
+            collectionResponse = await ThriftController.processDailyCollection({ body: collectionData }, { locals: { session: localSession } });
+          } else if (account.COLLECTION_TYPE === 'WEEKLY') {
+            collectionResponse = await ThriftController.processWeeklyCollection({ body: collectionData }, { locals: { session: localSession } });
+          } else if (account.COLLECTION_TYPE === 'MONTHLY') {
+            collectionResponse = await ThriftController.processMonthlyCollection({ body: collectionData }, { locals: { session: localSession } });
+          }
+
+          if (collectionResponse && collectionResponse.data && collectionResponse.data.success !== false) {
+            processedCollections.push({
+              ACCT_NO: account.ACCT_NO,
+              CUST_ID: account.CUST_ID,
+              amount: expectedAmount,
+              type: account.COLLECTION_TYPE,
+              status: 'PROCESSED'
+            });
+            logger.info(`Overdue collection processed for account ${account.ACCT_NO}`);
+          } else {
+            failedCollections.push({ ACCT_NO: account.ACCT_NO, reason: collectionResponse?.data?.message || 'Processing failed' });
+          }
+        } catch (accountError) {
+          logger.error(`Error processing overdue collection for account ${account.ACCT_NO}:`, accountError);
+          failedCollections.push({ ACCT_NO: account.ACCT_NO, reason: accountError.message });
+        }
+      }
+
+      logger.info('Overdue thrift collections processed', {
+        processedCount: processedCollections.length,
+        failedCount: failedCollections.length,
+        skippedCount: skippedCollections.length,
+      });
+
+      return {
+        success: true,
+        message: 'Overdue thrift collections processed successfully',
+        processed: processedCollections,
+        failed: failedCollections,
+        skipped: skippedCollections,
+      };
+    });
+
+    transactionCompleted = true;
+    await localSession.commitTransaction();
+    systemStatus.services.overdueThriftCollections = {
+      healthy: result.failed.length === 0,
+      lastError: result.failed.length > 0 ? result.failed[0].reason : null,
+      lastRun: new Date(),
+      executionTime: null, // Set in executeService
+      processed: result.processed,
+      failed: result.failed,
+      skipped: result.skipped,
+    };
+    return result;
+  } catch (error) {
+    if (localSession.inTransaction() && !transactionCompleted) {
+      await localSession.abortTransaction();
+    }
+    logger.error('Error in processOverdueThriftCollections:', { error: error.message, stack: error.stack });
+    systemStatus.services.overdueThriftCollections = {
+      healthy: false,
+      lastError: error.message,
+      lastRun: new Date(),
+      executionTime: null,
+      processed: [],
+      failed: [{ reason: error.message }],
+      skipped: [],
+    };
+    return {
+      success: false,
+      message: `Overdue thrift collections processing failed: ${error.message}`,
+      processed: [],
+      failed: [{ reason: error.message }],
+      skipped: [],
+    };
+  } finally {
+    if (!session) localSession.endSession();
+  }
 };
 
 const systemStatus = {
@@ -50,6 +189,7 @@ const systemStatus = {
     glTransactions: { healthy: true, lastError: null, lastRun: null, executionTime: null, processed: [], failed: [], skipped: [] },
     termDepositInterest: { healthy: true, lastError: null, lastRun: null, executionTime: null },
     reconciliation: { healthy: true, lastError: null, lastRun: null, executionTime: null, updated: 0, processed: [], failed: [], skipped: [] },
+    overdueThriftCollections: { healthy: true, lastError: null, lastRun: null, executionTime: null, processed: [], failed: [], skipped: [] }, // New service status
   },
 };
 
@@ -457,6 +597,7 @@ const eodServices = [
   { name: 'overdueLoans', fn: checkOverdueLoans },
   { name: 'pendingRepayments', fn: processPendingRepayments },
   { name: 'dormantAccounts', fn: updateDormantAccounts },
+  { name: 'overdueThriftCollections', fn: processOverdueThriftCollections }, // New service for thrift overdue collections
 ];
 
 // Service Executor
@@ -501,6 +642,16 @@ const executeService = async (serviceName, serviceFn) => {
         skipped: serviceDetails.skipped.length,
         executionTime,
       });
+    } else if (serviceName === 'overdueThriftCollections') {
+      serviceDetails.processed = serviceResult.processed || [];
+      serviceDetails.failed = serviceResult.failed || [];
+      serviceDetails.skipped = serviceResult.skipped || [];
+      logger.info(`overdueThriftCollections service completed`, {
+        processed: serviceDetails.processed.length,
+        failed: serviceDetails.failed.length,
+        skipped: serviceDetails.skipped.length,
+        executionTime,
+      });
     } else {
       logger.info(`${serviceName} completed in ${executionTime}ms`, { executionTime });
     }
@@ -522,7 +673,7 @@ const executeService = async (serviceName, serviceFn) => {
       executionTime,
     };
 
-    if (serviceName === 'glTransactions' || serviceName === 'reconciliation') {
+    if (serviceName === 'glTransactions' || serviceName === 'reconciliation' || serviceName === 'overdueThriftCollections') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
@@ -533,7 +684,7 @@ const executeService = async (serviceName, serviceFn) => {
 
     systemStatus.services[serviceName] = serviceDetails;
 
-    const isCritical = ['loanStatusUpdates', 'interestPosting', 'glTransactions', 'termDepositInterest', 'reconciliation'].includes(serviceName);
+    const isCritical = ['loanStatusUpdates', 'interestPosting', 'glTransactions', 'termDepositInterest', 'reconciliation', 'overdueThriftCollections'].includes(serviceName);
     logger.error(`${serviceName} failed`, errorDetails);
     return {
       success: false,
@@ -628,6 +779,7 @@ export const triggerEndOfDayProcess = async (req, res) => {
     logger.info('EOD completed successfully', {
       processedTransactions: results.glTransactions?.result?.processed?.length || 0,
       reconciledRecords: results.reconciliation?.result?.processed?.length || 0,
+      thriftCollectionsProcessed: results.overdueThriftCollections?.result?.processed?.length || 0,
       skippedServices,
     });
     return res.status(200).json({
@@ -693,9 +845,9 @@ export const getServiceErrors = async (req, res) => {
       service: name,
       lastError: status.lastError,
       lastRun: status.lastRun,
-      processed: name === 'glTransactions' || name === 'reconciliation' ? status.processed : undefined,
-      failed: name === 'glTransactions' || name === 'reconciliation' ? status.failed : undefined,
-      skipped: name === 'glTransactions' || name == 'reconciliation' ? status.skipped : undefined,
+      processed: name === 'glTransactions' || name === 'reconciliation' || name === 'overdueThriftCollections' ? status.processed : undefined,
+      failed: name === 'glTransactions' || name === 'reconciliation' || name === 'overdueThriftCollections' ? status.failed : undefined,
+      skipped: name === 'glTransactions' || name == 'reconciliation' || name === 'overdueThriftCollections' ? status.skipped : undefined,
       updated: name === 'reconciliation' ? status.updated : undefined,
     }));
 

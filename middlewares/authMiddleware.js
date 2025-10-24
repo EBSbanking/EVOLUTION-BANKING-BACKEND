@@ -67,8 +67,16 @@ export const authenticate = async (req, res, next) => {
       roles: user.roles || [],
       roleId: roleId,
       permissions: userPermissions, // Database permissions
-      // Backward compatibility
-      BU_ROLE_ID: roleId
+      // ✅ ADDED: Critical fields for teller routes
+      businessUnit: user.businessUnit,
+      accessibleBusinessUnits: user.accessibleBusinessUnits || [],
+      BU_ROLE_ID: roleId,
+      isAdmin: user.isAdmin,
+      userId: user._id.toString(), // For backward compatibility
+      // Additional fields for compatibility
+      bu_id: user.businessUnit, // Alias for businessUnit
+      primary_business_role: user.primary_business_role,
+      email: user.email
     };
 
     // 6. Attach permission checking methods to request for easy access
@@ -391,7 +399,7 @@ export const authWithPermissions = (requiredPermissions = {}) => [
 ];
 
 // =========================
-// 6. JWT Generator (Enhanced)
+// 6. JWT Generator (Enhanced - CRITICAL UPDATE)
 // =========================
 export const generateToken = (user) => {
   if (!user || !user._id) {
@@ -404,10 +412,21 @@ export const generateToken = (user) => {
       user_name: user.user_name,
       role: user.role,
       roles: user.roles || [],
-      roleId: user.BU_ROLE_ID || user.roleId || null
+      roleId: user.BU_ROLE_ID || user.roleId || null,
+      // ✅ CRITICAL: Added all fields needed for teller routes
+      businessUnit: user.businessUnit,
+      accessibleBusinessUnits: user.accessibleBusinessUnits || [],
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      permissions: user.permissions,
+      isAdmin: user.isAdmin,
+      primary_business_role: user.primary_business_role,
+      email: user.email,
+      // Backward compatibility aliases
+      userId: user._id.toString(),
+      bu_id: user.businessUnit
     },
     getSecretKey(),
-    { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' } // Extended for development
   );
 };
 
@@ -462,6 +481,86 @@ export const refreshTokenMiddleware = async (req, res, next) => {
   }
 };
 
+// Add this to your authMiddleware.js or create a debug route
+export const debugToken = async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'No token' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, getSecretKey());
+    
+    console.log('🔍 JWT Token Contents:', JSON.stringify(decoded, null, 2));
+    
+    res.json({
+      success: true,
+      tokenContents: decoded,
+      missingFields: {
+        businessUnit: !decoded.businessUnit,
+        BU_ROLE_ID: !decoded.BU_ROLE_ID,
+        accessibleBusinessUnits: !decoded.accessibleBusinessUnits
+      }
+    });
+  } catch (error) {
+    res.status(401).json({ 
+      success: false, 
+      message: 'Invalid token',
+      error: error.message 
+    });
+  }
+};
+
+// =========================
+// 9. Teller-specific Authentication (Enhanced Compatibility) - FIXED VERSION
+// =========================
+export const tellerAuthenticate = async (req, res, next) => {
+  try {
+    await authenticate(req, res, () => {
+      // Ensure all required fields for teller routes are available
+      const user = req.user; // This is the full user document from database
+      const authUser = req.authUser; // This is the auth user object
+      
+      console.log('🔍 tellerAuthenticate - Database User:', {
+        businessUnit: user?.businessUnit,
+        BU_ROLE_ID: user?.BU_ROLE_ID
+      });
+      
+      console.log('🔍 tellerAuthenticate - Auth User:', {
+        businessUnit: authUser?.businessUnit,
+        BU_ROLE_ID: authUser?.BU_ROLE_ID
+      });
+
+      // ✅ SET req.user WITH FALLBACK VALUES
+      req.user = {
+        userId: authUser?.id || user?._id?.toString(),
+        user_name: authUser?.user_name || user?.user_name,
+        BU_ROLE_ID: authUser?.BU_ROLE_ID || user?.BU_ROLE_ID || 29,
+        businessUnit: user?.businessUnit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
+        bu_id: user?.businessUnit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
+        permissions: authUser?.permissions || user?.permissions,
+        accessibleBusinessUnits: user?.accessibleBusinessUnits || authUser?.accessibleBusinessUnits || ['RELIEF BRANCH'],
+        isAdmin: authUser?.isAdmin || user?.isAdmin,
+        role: authUser?.role || user?.role,
+        email: user?.email,
+        primary_business_role: user?.primary_business_role
+      };
+      
+      console.log('🔍 Final req.user for teller routes:', {
+        businessUnit: req.user.businessUnit,
+        bu_id: req.user.bu_id,
+        BU_ROLE_ID: req.user.BU_ROLE_ID
+      });
+      
+      next();
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   authenticate,
   validatePermission,
@@ -472,5 +571,6 @@ export default {
   requireAuth,
   authWithPermissions,
   generateToken,
-  refreshTokenMiddleware
+  refreshTokenMiddleware,
+  tellerAuthenticate // ✅ Added for teller routes
 };

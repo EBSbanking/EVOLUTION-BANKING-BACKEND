@@ -5,14 +5,29 @@
  * @param {number} length - Number of digits for the random number (minimum 1).
  * @returns {number} A random number of the given length.
  */
-export const generateNumber = (length) => {
-  if (!Number.isInteger(length) || length <= 0) {
-    throw new Error('Length must be a positive integer.');
-  }
-
-  const min = 10 ** (length - 1);
-  const max = 10 ** length - 1;
-
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+// In your utils/generateNumber.js file
+export const generateNumber = async (length = 6, collectionName = 'default') => {
+  // ... existing code ...
+  
+  const sequence = await Sequences.findOneAndUpdate(
+    { 
+      targetCollection: collectionName || 'default' // Change to targetCollection
+    },
+    { 
+      $inc: { value: 1 },
+      $setOnInsert: { 
+        targetCollection: collectionName || 'default', // Change to targetCollection
+        createdAt: new Date()
+      }
+    },
+    { 
+      upsert: true, 
+      new: true, 
+      session,
+      hint: { targetCollection: 1 } // Update hint
+    }
+  );
+  
+  // ... rest of function ...
 };
 export default generateNumber;

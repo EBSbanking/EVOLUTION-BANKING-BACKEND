@@ -7,7 +7,8 @@ export function hasPermission(userPermissions, requiredPermission) {
   }
   
   if (typeof userPermissions === 'object' && userPermissions !== null) {
-    const allPermissions = Object.values(userPermissions).flat();
+    // Handle nested permissions (e.g., PERMISSIONS object) by flattening
+    const allPermissions = flattenPermissions(userPermissions);
     return allPermissions.includes(requiredPermission);
   }
   
@@ -22,7 +23,18 @@ export function hasPermission(userPermissions, requiredPermission) {
 export function flattenPermissions(permissions) {
   if (Array.isArray(permissions)) return permissions;
   if (typeof permissions === 'object' && permissions !== null) {
-    return Object.values(permissions).flat();
+    // Recursively flatten nested objects/arrays
+    const flattened = [];
+    for (const value of Object.values(permissions)) {
+      if (Array.isArray(value)) {
+        flattened.push(...value);
+      } else if (typeof value === 'object' && value !== null) {
+        flattened.push(...flattenPermissions(value));
+      } else if (typeof value === 'string') {
+        flattened.push(value);
+      }
+    }
+    return flattened;
   }
   if (typeof permissions === 'string') {
     return permissions.split(',').map(p => p.trim());
@@ -72,6 +84,7 @@ export const requirePermission = (permission) => {
       
       next();
     } catch (error) {
+      console.error('Permission middleware error:', error);
       res.status(500).json({
         success: false,
         message: 'Permission check failed'
@@ -102,6 +115,7 @@ export const requireAllPermissions = (permissions) => {
       
       next();
     } catch (error) {
+      console.error('Require all permissions error:', error);
       res.status(500).json({
         success: false,
         message: 'Permission check failed'
@@ -132,6 +146,7 @@ export const requireAnyPermission = (permissions) => {
       
       next();
     } catch (error) {
+      console.error('Require any permission error:', error);
       res.status(500).json({
         success: false,
         message: 'Permission check failed'

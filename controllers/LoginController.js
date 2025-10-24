@@ -257,19 +257,36 @@ export const login = asyncHandler(async (req, res) => {
 });
 
 export const emergencyPasswordReset = asyncHandler(async (req, res) => {
-  const { user_name, new_password } = req.body;
+  const { user_name, new_password, confirm_password } = req.body;
 
-  if (!user_name || !new_password) {
+  if (!user_name || !new_password || !confirm_password) {
     return res.status(400).json({
       success: false,
-      message: 'Username and new password are required',
+      message: 'Username, new password and confirm password are required',
+    });
+  }
+
+  // Check if passwords match
+  if (new_password !== confirm_password) {
+    return res.status(400).json({
+      success: false,
+      message: 'New password and confirm password do not match',
+    });
+  }
+
+  // Password strength validation
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  if (!passwordRegex.test(new_password)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character',
     });
   }
 
   try {
     const user = await User.findOne({
       user_name: { $regex: new RegExp(`^${user_name}$`, 'i') },
-    });
+    }).select('+password +passwordHistory');
 
     if (!user) {
       return res.status(404).json({
@@ -278,21 +295,49 @@ export const emergencyPasswordReset = asyncHandler(async (req, res) => {
       });
     }
 
+    // Check if new password is same as current
+    const isSameAsCurrent = await bcrypt.compare(new_password, user.password);
+    if (isSameAsCurrent) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password cannot be the same as the current password',
+      });
+    }
+
+    // Check password history for reuse
+    if (user.passwordHistory && user.passwordHistory.length > 0) {
+      for (const oldHash of user.passwordHistory) {
+        const isPrevious = await bcrypt.compare(new_password, oldHash);
+        if (isPrevious) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cannot reuse previous passwords',
+          });
+        }
+      }
+    }
+
     // Hash new password
     const hashedPassword = await bcrypt.hash(new_password, 10);
 
-    // Update user password
+    // Update password history (keep last 5, including current before update)
+    const updatedHistory = [user.password, ...(user.passwordHistory || []).slice(0, 4)];
+
+    // Update user
     await User.updateOne(
       { _id: user._id },
       {
         $set: {
           password: hashedPassword,
+          passwordHistory: updatedHistory,
           failed_attempts: 0,
           lock_until: null,
           passwordChangedAt: new Date(),
         },
       }
     );
+
+    logger.info(`Emergency password reset completed for user ${user.user_name}`);
 
     res.status(200).json({
       success: true,

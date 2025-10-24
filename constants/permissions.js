@@ -80,7 +80,9 @@ export const PERMISSIONS = {
     TRIAL_BALANCE: 'VIEW_TRIAL_BALANCE_REPORT', // For trialBalanceReport module
     INCOME_EXPENSE: 'VIEW_INCOME_EXPENSE_REPORT', // For incomeExpenseReport module
     ALL_REPORTS: 'VIEW_ALL_REPORTS', // For reports module
-    TELLER_SUMMARY: 'VIEW_TELLER_SUMMARY_REPORT' // For tellerSummaryReport module
+    TELLER_SUMMARY: 'VIEW_TELLER_SUMMARY_REPORT', // For tellerSummaryReport module
+    GUARANTOR: 'VIEW_GUARANTOR_REPORT', // Added for guarantor reports
+    PERFORMANCE_METRICS: 'VIEW_PERFORMANCE_METRICS' // ✅ NEW: For teller performance metrics
   },
 
   // System Administration
@@ -119,7 +121,10 @@ export const PERMISSIONS = {
     QUICK_ACTIONS: 'ACCESS_QUICK_ACTIONS',
     REAL_TIME_STATS: 'VIEW_REAL_TIME_STATS',
     CREDIT_OFFICER_DASHBOARD: 'VIEW_CREDIT_OFFICER_DASHBOARD', // For creditOfficerDashboard module
-    MANAGER_DASHBOARD: 'VIEW_MANAGER_DASHBOARD'
+    MANAGER_DASHBOARD: 'VIEW_MANAGER_DASHBOARD',
+    GUARANTOR_DASHBOARD: 'VIEW_GUARANTOR_DASHBOARD', // Added for guarantor dashboard
+    BU_PERFORMANCE: 'VIEW_BU_PERFORMANCE', // ✅ NEW: For business unit performance summary
+     DASHBOARDSTATS: 'DASHBOARD_REAL_TIME_STATS'
   },
 
   // Credit Application
@@ -181,7 +186,8 @@ export const PERMISSIONS = {
     CREDIT_GL: 'PROCESS_CREDIT_GL', // For creditGlTransaction module
     DEBIT_GL: 'PROCESS_DEBIT_GL', // For debitGlTransaction module
     REPRINT_RECEIPT: 'REPRINT_TRANSACTION_RECEIPT',
-    VIEW_RECENT: 'VIEW_RECENT_TRANSACTIONS'
+    VIEW_RECENT: 'VIEW_RECENT_TRANSACTIONS', // ✅ ENHANCED: For recent transactions in dashboard
+    VIEW_STATS: 'VIEW_TRANSACTION_STATS' // ✅ NEW: For transaction statistics
   },
 
   // Workflow Management
@@ -221,13 +227,46 @@ export const PERMISSIONS = {
   DEPOSIT: {
     CREATE: 'CREATE_DEPOSIT', // For depositModule module
     APPLICATION: 'CREATE_DEPOSIT_APPLICATION', // For depositApplication module
-    VIEW_DETAILS: 'VIEW_DEPOSIT_DETAILS' // For depositApplicationDetails module
+    VIEW_DETAILS: 'VIEW_DEPOSIT_DETAILS', // For depositApplicationDetails module
+    APPROVAL: 'DEPOSIT_APPLICATION_APPROVAL' // For depositApplicationApproval module
   },
 
-  // Guarantor Management
+  // Guarantor Management - COMPREHENSIVE PERMISSIONS
   GUARANTOR: {
+    // Basic CRUD Operations
     CREATE: 'CREATE_GUARANTOR', // For createGuarantor module
-    APPROVE: 'APPROVE_GUARANTOR' // For approvedGuarantor module
+    VIEW: 'VIEW_GUARANTOR', // For viewing guarantor lists
+    VIEW_DETAILS: 'VIEW_GUARANTOR_DETAILS', // For detailed guarantor view
+    UPDATE: 'UPDATE_GUARANTOR', // For modifying guarantor information
+    DELETE: 'DELETE_GUARANTOR', // For removing guarantors
+    
+    // Search and Access
+    SEARCH: 'SEARCH_GUARANTOR', // For searching guarantors by ID/name
+    
+    // Approval Workflow
+    APPROVE: 'APPROVE_GUARANTOR', // For approvedGuarantor module
+    REJECT: 'REJECT_GUARANTOR', // For rejecting guarantor applications
+    VERIFY: 'VERIFY_GUARANTOR', // For verification process
+    
+    // Removal Process
+    REMOVAL_REQUEST: 'REQUEST_GUARANTOR_REMOVAL', // For submitting removal requests
+    APPROVE_REMOVAL: 'APPROVE_GUARANTOR_REMOVAL', // For approving removal requests
+    REJECT_REMOVAL: 'REJECT_GUARANTOR_REMOVAL', // For rejecting removal requests
+    
+    // Status Management
+    REACTIVATE: 'REACTIVATE_GUARANTOR', // For reactivating guarantors
+    DEACTIVATE: 'DEACTIVATE_GUARANTOR', // For deactivating guarantors
+    
+    // Bulk Operations
+    BULK_ACTIONS: 'PERFORM_GUARANTOR_BULK_ACTIONS', // For bulk updates/actions
+    
+    // Reporting and Analytics
+    REPORTS: 'VIEW_GUARANTOR_REPORTS', // For guarantor reporting
+    DASHBOARD: 'VIEW_GUARANTOR_DASHBOARD', // For guarantor dashboard
+    AUDIT_LOG: 'VIEW_GUARANTOR_AUDIT_LOG', // For guarantor audit trail
+    
+    // Export Capabilities
+    EXPORT: 'EXPORT_GUARANTOR_DATA' // For exporting guarantor data
   },
 
   // Rate Management
@@ -265,7 +304,8 @@ export const PERMISSIONS = {
   // Analytics
   ANALYTICS: {
     VIEW_BUSINESS_ANALYTICS: 'VIEW_BUSINESS_ANALYTICS',
-    EXPORT_ANALYTICS: 'EXPORT_ANALYTICS_DATA'
+    EXPORT_ANALYTICS: 'EXPORT_ANALYTICS_DATA',
+    VIEW_TELLER_ANALYTICS: 'VIEW_TELLER_ANALYTICS' // ✅ NEW: For teller-specific analytics
   },
 
   // Risk Management
@@ -278,6 +318,29 @@ export const PERMISSIONS = {
   RECONCILIATION: {
     PROCESS_RECONCILIATION: 'PROCESS_RECONCILIATION',
     VIEW_RECONCILIATION_REPORT: 'VIEW_RECONCILIATION_REPORT'
+  },
+
+  // Thrift Management (Added for CSO fallback consistency)
+  THRIFT: {
+    CREATE: 'CREATE_THRIFT',
+    COLLECTION: 'COLLECT_THRIFT',
+    WITHDRAWAL: 'WITHDRAWAL_THRIFT'
+  },
+
+  // ✅ NEW: Performance & Monitoring Permissions
+  PERFORMANCE: {
+    VIEW_METRICS: 'VIEW_PERFORMANCE_METRICS',
+    VIEW_TELLER_PERFORMANCE: 'VIEW_TELLER_PERFORMANCE',
+    VIEW_BRANCH_PERFORMANCE: 'VIEW_BRANCH_PERFORMANCE',
+    EXPORT_PERFORMANCE_DATA: 'EXPORT_PERFORMANCE_DATA'
+  },
+
+  // ✅ NEW: Dashboard Statistics Permissions
+  STATISTICS: {
+    VIEW_REAL_TIME: 'VIEW_REAL_TIME_STATISTICS',
+    VIEW_HISTORICAL: 'VIEW_HISTORICAL_STATISTICS',
+    VIEW_FINANCIAL: 'VIEW_FINANCIAL_STATISTICS',
+    VIEW_OPERATIONAL: 'VIEW_OPERATIONAL_STATISTICS'
   }
 };
 

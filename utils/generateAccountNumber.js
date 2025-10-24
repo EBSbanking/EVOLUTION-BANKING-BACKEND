@@ -33,7 +33,7 @@ function generateAcctNo(accountType, seq) {
 }
 
 // 🔢 Generate 10-digit Account Number
-const generateAccountNumber = async (accountType) => {
+export const generateAccountNumber = async (accountType) => {
   const prefixMap = {
     'ACCT_SAVINGS': USE_NUBAN ? '2' : '100',
     'ACCT_CURRENT': USE_NUBAN ? '3' : '310',
@@ -82,7 +82,7 @@ const generateAccountNumber = async (accountType) => {
 };
 
 // 🔢 Generate 10-digit Account Number by PROD_ID
-const generateAccountNumberByProdId = async (prodId) => {
+export const generateAccountNumberByProdId = async (prodId) => {
   const product = await retry(
     async () => await getProductTypeByProdIdInternal(prodId),
     { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 5000 }
@@ -103,7 +103,7 @@ const generateAccountNumberByProdId = async (prodId) => {
 };
 
 // 🔢 Generate Account Identifiers (ACCT_NO and ACCT_ID)
-const generateAccountIdentifiersFromCounter = async (prefix) => {
+export const generateAccountIdentifiersFromCounter = async (prefix) => {
   return retry(
     async () => {
       const counter = await Counter.findByIdAndUpdate(
@@ -143,7 +143,7 @@ const generateAccountIdentifiersFromCounter = async (prefix) => {
 };
 
 // 🔐 Generate 6-digit ACCT_ID
-const generateAccountId = async () => {
+export const generateAccountId = async () => {
   return retry(
     async () => {
       const counter = await Counter.findByIdAndUpdate(
@@ -172,7 +172,7 @@ const calculateNUBANCheckDigit = (accountNumber) => {
 };
 
 // 🔢 Generate Loan Contract Form ID
-const GenerateLoanContractFormId = async () => {
+export const GenerateLoanContractFormId = async () => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -203,7 +203,7 @@ const GenerateLoanContractFormId = async () => {
 };
 
 // 🔢 Generate Customer Numbers
-const generateCustomerNumber = async (branchCode = '01') => {
+export const generateCustomerNumber = async (branchCode = '01') => {
   const session = await Customer.startSession();
   session.startTransaction();
 
@@ -262,7 +262,7 @@ const generateCustomerNumber = async (branchCode = '01') => {
 
 
 // 🔢 Generate Transaction IDs
-const generateTransactionIds = () => {
+export const generateTransactionIds = () => {
   const generateSerial = (length) => Array.from({ length }, () => Math.floor(Math.random() * 10)).join('');
   return {
     TRANSACTION_ID: generateSerial(13),
@@ -272,7 +272,7 @@ const generateTransactionIds = () => {
 };
 
 // 🔢 NUBAN-compliant generator (alt)
-const generateNUBAN = (bankCode = BANK_CODE, serial = null) => {
+export const generateNUBAN = (bankCode = BANK_CODE, serial = null) => {
   const serialNumber = serial || Math.floor(100000 + Math.random() * 900000);
   const nubanSerial = serialNumber.toString().padStart(NUBAN_SERIAL_LENGTH, '0');
   const fullNumber = bankCode + nubanSerial;
@@ -283,12 +283,12 @@ const generateNUBAN = (bankCode = BANK_CODE, serial = null) => {
 };
 
 // 🔢 Legacy loan account generator
-const generateLoanAccountNumberByProdId = async (prodId) => {
+export const generateLoanAccountNumberByProdId = async (prodId) => {
   const { formattedString } = await generateAccountNumberByProdId(prodId);
   return formattedString;
 };
 
-export {
+export default {
   generateAccountNumber,
   generateAccountNumberByProdId,
   generateAccountIdentifiersFromCounter,

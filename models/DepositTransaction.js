@@ -193,24 +193,24 @@ DepositTransactionSchema.pre('validate', function (next) {
   next();
 });
 
-// ✅ Ensure indexes are created for better query performance
-DepositTransactionSchema.index({ ACCT_NO: 1 });
-DepositTransactionSchema.index({ TRANSACTION_REF_NO: 1 });
-DepositTransactionSchema.index({ CUST_ID: 1 });
-DepositTransactionSchema.index({ tellerId: 1 });
-DepositTransactionSchema.index({ responsibility_centre: 1 });
-DepositTransactionSchema.index({ transactionDate: 1 });
-DepositTransactionSchema.index({ type: 1 });
-DepositTransactionSchema.index({ 
-  tellerId: 1, 
-  responsibility_centre: 1, 
-  transactionDate: 1 
-});
-DepositTransactionSchema.index({ 
-  responsibility_centre: 1, 
-  transactionDate: 1,
-  type: 1 
-});
+// // ✅ Ensure indexes are created for better query performance
+// DepositTransactionSchema.index({ ACCT_NO: 1 });
+// DepositTransactionSchema.index({ TRANSACTION_REF_NO: 1 });
+// DepositTransactionSchema.index({ CUST_ID: 1 });
+// DepositTransactionSchema.index({ tellerId: 1 });
+// DepositTransactionSchema.index({ responsibility_centre: 1 });
+// DepositTransactionSchema.index({ transactionDate: 1 });
+// DepositTransactionSchema.index({ type: 1 });
+// DepositTransactionSchema.index({ 
+//   tellerId: 1, 
+//   responsibility_centre: 1, 
+//   transactionDate: 1 
+// });
+// DepositTransactionSchema.index({ 
+//   responsibility_centre: 1, 
+//   transactionDate: 1,
+//   type: 1 
+// });
 
 // ✅ Method to get transaction stats for teller dashboard
 DepositTransactionSchema.statics.getTellerStats = async function(tellerId, responsibilityCentre, startDate, endDate) {

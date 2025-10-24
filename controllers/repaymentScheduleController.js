@@ -3,18 +3,20 @@ import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import LoanAccount from '../models/LoanAccount.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
-import LoanProduct from '../models/LoanProduct.js'; // Added for Loan GL
-import LoanRepayment from '../models/LoanRepayment.js'; // Added for repayment tracking
-import { generateTransactionIds } from '../utils/generateAccountNumber.js'; // Added for transaction IDs
+import LoanProduct from '../models/LoanProduct.js';
+import LoanRepayment from '../models/LoanRepayment.js';
+import GLAccount from '../models/GLAccount.js'; // Added missing import
+import { generateTransactionIds } from '../utils/generateAccountNumber.js';
 
-// Helper function to validate installment data
+// Helper function to validate installment data - UPDATED for new schema structure
 const validateInstallment = (installment) => {
   const requiredFields = [
-    'ACCT_NO', 'dueDate', 'principal', 'interest', 
-    'totalPayment', 'installmentNo', 'termCode', 'paymentFrequency'
+    'dueDate', 'principal', 'interest', 
+    'totalPayment', 'installmentNumber', 'remainingBalance'
   ];
   
-  const missingFields = requiredFields.filter(field => !installment[field]);
+  // FIXED: Use == null to allow 0 / Decimal128('0')
+  const missingFields = requiredFields.filter(field => installment[field] == null);
   
   if (missingFields.length > 0) {
     throw {
@@ -25,7 +27,7 @@ const validateInstallment = (installment) => {
     };
   }
 
-  if (installment.status === 'PAID' && installment.amountPaid < installment.totalPayment) {
+  if (installment.status === 'PAID' && parseFloat(installment.amountPaid?.toString() || '0') < parseFloat(installment.totalPayment.toString())) {
     throw {
       code: 'INVALID_PAYMENT_STATUS',
       message: 'Installment marked as PAID but amount paid is less than total payment',
@@ -88,20 +90,8 @@ export const recordPayment = async (req, res) => {
       };
     }
 
-    // Find accounts and installment
-    const [loanAccount, customerAccount, loanProduct, installment] = await Promise.all([
-      LoanAccount.findOne({ ACCT_NO: String(ACCT_NO) }).session(session),
-      CustomerAccount.findOne({ ACCT_NO: customerAccountNo }).session(session),
-      LoanProduct.findOne({ PROD_ID: { $exists: true } }).session(session), // Assumes PROD_ID from loanAccount
-      RepaymentSchedule.findOne({
-        ACCT_NO: String(ACCT_NO),
-        status: { $in: ['PENDING', 'PARTIAL', 'OVERDUE'] },
-        dueDate: { $lte: paymentDateTime }
-      })
-        .sort({ dueDate: 1, installmentNo: 1 })
-        .session(session)
-    ]);
-
+    // FIXED: Fetch loanAccount first, then others to avoid undefined PROD_ID
+    const loanAccount = await LoanAccount.findOne({ ACCT_NO: String(ACCT_NO) }).session(session);
     if (!loanAccount) {
       throw {
         code: 'LOAN_NOT_FOUND',
@@ -109,6 +99,12 @@ export const recordPayment = async (req, res) => {
         status: 404
       };
     }
+
+    const [customerAccount, loanProduct, repaymentSchedule] = await Promise.all([
+      CustomerAccount.findOne({ ACCT_NO: customerAccountNo }).session(session),
+      LoanProduct.findOne({ PROD_ID: loanAccount.PROD_ID }).session(session),
+      RepaymentSchedule.findOne({ ACCT_NO: String(ACCT_NO) }).session(session)
+    ]);
 
     if (!customerAccount) {
       throw {
@@ -126,7 +122,20 @@ export const recordPayment = async (req, res) => {
       };
     }
 
-    if (!installment) {
+    if (!repaymentSchedule || !repaymentSchedule.SCHEDULE || repaymentSchedule.SCHEDULE.length === 0) {
+      throw {
+        code: 'NO_REPAYMENT_SCHEDULE',
+        message: 'No repayment schedule found for this loan',
+        status: 404
+      };
+    }
+
+    // Find the next due installment - UPDATED for new schema structure
+    const pendingInstallments = repaymentSchedule.SCHEDULE.filter(inst => 
+      inst.status === 'PENDING' || inst.status === 'PARTIAL' || inst.status === 'OVERDUE'
+    );
+
+    if (pendingInstallments.length === 0) {
       throw {
         code: 'NO_DUE_INSTALLMENTS',
         message: 'No due installments found for payment',
@@ -134,20 +143,23 @@ export const recordPayment = async (req, res) => {
       };
     }
 
-    // Validate installment structure
+    // Get the earliest due installment
+    const installment = pendingInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))[0];
+
+    // Validate installment structure - UPDATED for new schema structure
     validateInstallment({
-      ACCT_NO: installment.ACCT_NO,
       dueDate: installment.dueDate,
       principal: installment.principal,
       interest: installment.interest,
       totalPayment: installment.totalPayment,
-      installmentNo: installment.installmentNo,
-      termCode: installment.termCode,
-      paymentFrequency: installment.paymentFrequency
+      installmentNumber: installment.installmentNumber,
+      remainingBalance: installment.remainingBalance,
+      status: installment.status,
+      amountPaid: installment.amountPaid
     });
 
     // Validate payment frequency
-    if (loanAccount.PAYMENT_FREQUENCY !== installment.paymentFrequency) {
+    if (loanAccount.PAYMENT_FREQUENCY !== repaymentSchedule.paymentFrequency) {
       throw {
         code: 'FREQUENCY_MISMATCH',
         message: 'Payment frequency does not match loan account frequency',
@@ -182,22 +194,18 @@ export const recordPayment = async (req, res) => {
       const daysLate = Math.max(0, Math.ceil(
         (paymentDateTime - new Date(installment.dueDate)) / (1000 * 60 * 60 * 24)
       ));
-      lateFee = daysLate * (loanAccount.lateFeePerDay || 0);
-      if (loanAccount.maxLateFee && lateFee > loanAccount.maxLateFee) {
-        lateFee = loanAccount.maxLateFee;
+      lateFee = daysLate * (parseFloat(loanAccount.lateFeePerDay?.toString()) || 0);
+      if (loanAccount.maxLateFee && lateFee > parseFloat(loanAccount.maxLateFee.toString())) {
+        lateFee = parseFloat(loanAccount.maxLateFee.toString());
       }
     }
 
     // Calculate new remaining balance
-    const newRemainingBalance = Math.max(0, parseFloat(installment.remainingBalance?.toString() || loanAccount.outstandingBalance.toString()) - principalPayment);
+    const newRemainingBalance = Math.max(0, parseFloat(installment.remainingBalance?.toString()) - principalPayment);
 
     // Check if this is the final payment
-    const pendingInstallments = await RepaymentSchedule.countDocuments({
-      ACCT_NO: String(ACCT_NO),
-      status: { $in: ['PENDING', 'PARTIAL', 'OVERDUE'] }
-    }).session(session);
-
-    const isFinalPayment = pendingInstallments === 1 && newStatus === 'PAID' && newRemainingBalance <= 0;
+    const remainingPendingInstallments = pendingInstallments.length - (newStatus === 'PAID' ? 1 : 0);
+    const isFinalPayment = remainingPendingInstallments === 0 && newStatus === 'PAID' && newRemainingBalance <= 0;
 
     // Create LoanRepayment record
     const loanRepayment = new LoanRepayment({
@@ -211,29 +219,40 @@ export const recordPayment = async (req, res) => {
       }]
     });
 
-    // Update installment
-    const updatedInstallment = await RepaymentSchedule.findOneAndUpdate(
-      { _id: installment._id },
+    // Update installment in the SCHEDULE array - UPDATED for new schema structure
+    const updatedRepaymentSchedule = await RepaymentSchedule.findOneAndUpdate(
+      { 
+        _id: repaymentSchedule._id,
+        'SCHEDULE.installmentNumber': installment.installmentNumber 
+      },
       {
         $inc: {
-          amountPaid: paymentAmount,
-          principalPaid: principalPayment,
-          interestPaid: interestPayment,
-          feesPaid: lateFee
+          'SCHEDULE.$.amountPaid': paymentAmount,
+          'SCHEDULE.$.principalPaid': principalPayment,
+          'SCHEDULE.$.interestPaid': interestPayment,
+          'SCHEDULE.$.feesPaid': lateFee
         },
         $set: {
-          status: newStatus,
-          paymentDate: paymentDateTime,
-          paymentMethod,
-          isEarlyPayment,
-          isOverduePayment,
-          lateFeeCharged: lateFee,
-          remainingBalance: mongoose.Types.Decimal128.fromString(newRemainingBalance.toFixed(2)),
-          ...(isFinalPayment ? { isFinalInstallment: true } : {})
+          'SCHEDULE.$.status': newStatus,
+          'SCHEDULE.$.paymentDate': paymentDateTime,
+          'SCHEDULE.$.paymentMethod': paymentMethod,
+          'SCHEDULE.$.isEarlyPayment': isEarlyPayment,
+          'SCHEDULE.$.isOverduePayment': isOverduePayment,
+          'SCHEDULE.$.lateFeeCharged': mongoose.Types.Decimal128.fromString(lateFee.toFixed(2)),
+          'SCHEDULE.$.remainingBalance': mongoose.Types.Decimal128.fromString(newRemainingBalance.toFixed(2)),
+          ...(isFinalPayment ? { 'SCHEDULE.$.isFinalInstallment': true } : {})
         }
       },
       { new: true, session }
     );
+
+    if (!updatedRepaymentSchedule) {
+      throw {
+        code: 'INSTALLMENT_UPDATE_FAILED',
+        message: 'Failed to update installment',
+        status: 500
+      };
+    }
 
     // Update CustomerAccount (debit)
     await CustomerAccount.updateOne(
@@ -245,12 +264,12 @@ export const recordPayment = async (req, res) => {
         $push: {
           transactionHistory: {
             type: 'LOAN_REPAYMENT',
-            amount: paymentAmount,
+            amount: mongoose.Types.Decimal128.fromString(paymentAmount.toFixed(2)),
             date: paymentDateTime,
             reference: `Loan payment for ${ACCT_NO}`,
-            relatedInstallment: installment.installmentNo,
+            relatedInstallment: installment.installmentNumber,
             paymentMethod,
-            lateFee
+            lateFee: mongoose.Types.Decimal128.fromString(lateFee.toFixed(2))
           }
         }
       },
@@ -265,9 +284,8 @@ export const recordPayment = async (req, res) => {
           principalPaid: principalPayment,
           interestPaid: interestPayment,
           feesPaid: lateFee,
-          outstandingBalance: -(paymentAmount + lateFee),
-          TOTAL_REPAID_AMOUNT: paymentAmount,
-          TOTAL_REPAID_INTEREST: interestPayment
+          outstandingBalance: -(principalPayment + lateFee),
+          TOTAL_REPAID_AMOUNT: paymentAmount
         },
         $set: {
           LAST_PAYMENT_DATE: paymentDateTime,
@@ -282,8 +300,8 @@ export const recordPayment = async (req, res) => {
           paymentHistory: {
             date: paymentDateTime,
             amount: mongoose.Types.Decimal128.fromString(paymentAmount.toFixed(2)),
-            installmentNo: installment.installmentNo,
-            lateFee,
+            installmentNo: installment.installmentNumber,
+            lateFee: mongoose.Types.Decimal128.fromString(lateFee.toFixed(2)),
             paymentMethod,
             isEarlyPayment,
             isOverduePayment
@@ -293,12 +311,14 @@ export const recordPayment = async (req, res) => {
       { session }
     );
 
-    // Update GLAccount (credit)
-    await GLAccount.updateOne(
-      { GL_ACCT_NO: loanProduct.loanGLAccount },
-      { $inc: { BALANCE: -(paymentAmount + lateFee) } }, // Credit decreases balance
-      { session }
-    );
+    // Update GLAccount (credit) - Fixed GL account update
+    if (loanProduct.loanGLAccount) {
+      await GLAccount.updateOne(
+        { GL_ACCT_NO: loanProduct.loanGLAccount },
+        { $inc: { BALANCE: paymentAmount + lateFee } }, // Credit increases liability account
+        { session }
+      );
+    }
 
     // Record transaction
     const TRANSACTION_IDS = generateTransactionIds();
@@ -312,7 +332,7 @@ export const recordPayment = async (req, res) => {
       debitAccount: customerAccountNo,
       creditAccount: loanProduct.loanGLAccount,
       reference: referenceNumber || `PYMT-${Date.now()}`,
-      description: description || `Payment for ${installment.paymentFrequency.toLowerCase()} installment #${installment.installmentNo}`,
+      description: description || `Payment for ${repaymentSchedule.paymentFrequency.toLowerCase()} installment #${installment.installmentNumber}`,
       timestamp: paymentDateTime,
       status: 'COMPLETED',
       createdBy,
@@ -326,8 +346,8 @@ export const recordPayment = async (req, res) => {
         paymentMethod,
         isEarlyPayment,
         isOverduePayment,
-        paymentFrequency: installment.paymentFrequency,
-        termCode: installment.termCode,
+        paymentFrequency: repaymentSchedule.paymentFrequency,
+        termCode: repaymentSchedule.TERM_TYPE,
         remainingBalance: newRemainingBalance,
         isFinalPayment
       }
@@ -369,12 +389,12 @@ export const recordPayment = async (req, res) => {
         paymentAmount,
         lateFee,
         remainingAmount: amount - paymentAmount,
-        nextInstallmentDue: pendingInstallments > 1,
+        nextInstallmentDue: remainingPendingInstallments > 0,
         loanStatus: isFinalPayment ? 'CLOSED' : loanAccount.LOAN_STATUS,
         transactionId: transaction[0]._id,
         repaymentId: loanRepayment._id,
         installmentDetails: {
-          number: installment.installmentNo,
+          number: installment.installmentNumber,
           status: newStatus,
           principalPaid: principalPayment,
           interestPaid: interestPayment,
@@ -417,7 +437,7 @@ export const getRepaymentSchedule = async (req, res) => {
       };
     }
 
-    // Check if the loan account exists
+    // FIXED: Fetch loanAccount first
     const loanAccount = await LoanAccount.findOne({ ACCT_NO: String(ACCT_NO) }).session(session);
     if (!loanAccount) {
       throw {
@@ -429,26 +449,66 @@ export const getRepaymentSchedule = async (req, res) => {
 
     const now = new Date();
 
-    // Mark overdue repayments
-    const overdueUpdates = await RepaymentSchedule.updateMany(
-      {
-        ACCT_NO: String(ACCT_NO),
-        dueDate: { $lt: now },
-        status: 'PENDING'
-      },
-      { $set: { status: 'OVERDUE' } },
-      { session }
-    );
+    // Fetch repayment schedule - UPDATED for new schema structure
+    const repaymentSchedule = await RepaymentSchedule.findOne({ ACCT_NO: String(ACCT_NO) }).session(session);
 
-    // Fetch repayment schedules
-    const repaymentSchedules = await RepaymentSchedule.find({ ACCT_NO: String(ACCT_NO) }).session(session);
-
-    if (repaymentSchedules.length === 0) {
+    if (!repaymentSchedule) {
       throw {
         code: 'NO_SCHEDULE_FOUND',
         message: 'No repayment schedule found',
         status: 404
       };
+    }
+
+    // Mark overdue repayments in the SCHEDULE array - UPDATED for new schema structure
+    let overdueUpdates = 0;
+    if (repaymentSchedule.SCHEDULE && repaymentSchedule.SCHEDULE.length > 0) {
+      const overdueInstallments = repaymentSchedule.SCHEDULE.filter(inst => 
+        new Date(inst.dueDate) < now && inst.status === 'PENDING'
+      );
+
+      if (overdueInstallments.length > 0) {
+        const updatePromises = overdueInstallments.map(installment =>
+          RepaymentSchedule.updateOne(
+            {
+              _id: repaymentSchedule._id,
+              'SCHEDULE.installmentNumber': installment.installmentNumber
+            },
+            {
+              $set: { 'SCHEDULE.$.status': 'OVERDUE' }
+            },
+            { session }
+          )
+        );
+
+        const results = await Promise.all(updatePromises);
+        overdueUpdates = results.reduce((total, result) => total + result.modifiedCount, 0);
+      }
+    }
+
+    // NEW: Update loan status to OVERDUE if there are overdue installments, and set NEXT_PAYMENT_DATE
+    const updatedSchedule = await RepaymentSchedule.findOne({ ACCT_NO: String(ACCT_NO) }).session(session);
+    const overdueOrPendingInstallments = updatedSchedule.SCHEDULE.filter(inst => 
+      inst.status === 'PENDING' || inst.status === 'OVERDUE'
+    );
+    if (overdueOrPendingInstallments.length > 0) {
+      // Set NEXT_PAYMENT_DATE to the earliest due date
+      const nextDueDate = overdueOrPendingInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))[0].dueDate;
+      await LoanAccount.updateOne(
+        { _id: loanAccount._id },
+        {
+          NEXT_PAYMENT_DATE: nextDueDate,
+          ...(overdueOrPendingInstallments.some(inst => inst.status === 'OVERDUE') ? { LOAN_STATUS: 'OVERDUE' } : {})
+        },
+        { session }
+      );
+    } else {
+      // If all paid, set to CLOSED if not already
+      await LoanAccount.updateOne(
+        { _id: loanAccount._id },
+        { LOAN_STATUS: 'CLOSED', NEXT_PAYMENT_DATE: null },
+        { session }
+      );
     }
 
     await session.commitTransaction();
@@ -458,8 +518,9 @@ export const getRepaymentSchedule = async (req, res) => {
       success: true,
       message: 'Repayment schedule retrieved successfully',
       data: {
-        overdueUpdates: overdueUpdates.modifiedCount,
-        repaymentSchedules
+        overdueUpdates,
+        repaymentSchedule: updatedSchedule,
+        loanStatus: overdueOrPendingInstallments.length > 0 && overdueOrPendingInstallments.some(inst => inst.status === 'OVERDUE') ? 'OVERDUE' : 'ACTIVE'
       }
     });
   } catch (error) {

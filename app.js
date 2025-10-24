@@ -248,9 +248,7 @@ import Deposit_Account_INTEREST$AUDRoutes from './routes/Deposit_Account_INTERES
 import DirectDebitRequestRoutes from './routes/DirectDebitRequestRoute.js';
 import DirectDebitRoutes from './routes/DirectDebitRoutes.js';
 import DirectDebitSchedulerRoutes from './routes/DirectDebitSchedulerRoutes.js';
-import DrawerCloseOutRoutes from './routes/DrawerCloseOutRoutes.js';
 import DrawerCurrencyDenominationRoutes from './routes/DrawerCurrencyDenominationRoutes.js';
-import DrawerCurrencyRoutes from './routes/DrawerCurrencyRoutes.js';
 import DrawerRoutes from './routes/DrawerRoutes.js';
 import DrawerUserRoleRoutes from './routes/DrawerUserRoleRoutes.js';
 import drawerReassignmentRoutes from './routes/DrawerReassignmentRoutes.js';
@@ -306,6 +304,11 @@ import BranchRoutes from './routes/BranchRoutes.js';
 import OrganizationRoutes from './routes/OrganizationRoutes.js';
 import bankingRoutes from './routes/bankingRoutes.js';
 import tellerStatsRoutes from './routes/tellerStatsRoutes.js';
+import ThriftRoutes from './routes/ThriftRoutes.js';
+import creditOfficerRoutes from './routes/creditOfficerRoutes.js';
+import TriftReportRoutes from './routes/TriftReportRoutes.js';
+import CleanupDB from './routes/CleanupDB.js';
+
 
 // ----------------------------
 // Mount API Routes
@@ -375,9 +378,7 @@ app.use('/api/ledgers', ledgerRoutes);
 app.use('/api/interest-rates', InterestCalculationServiceRoutes);
 
 app.use('/api/drawer', DrawerRoutes);
-app.use('/api/drawer-currency', DrawerCurrencyRoutes);
 app.use('/api/drawer-currency-denomination', DrawerCurrencyDenominationRoutes);
-app.use('/api/drawer-close-out', DrawerCloseOutRoutes);
 app.use('/api/drawer-reassignments', drawerReassignmentRoutes);
 app.use('/api/drawer-user-role', DrawerUserRoleRoutes);
 
@@ -417,7 +418,16 @@ app.use('/api/branchs', BranchRoutes);
 app.use('/api/organization', OrganizationRoutes);
 
 app.use('/api/banking', bankingRoutes);
-app.use('/api/teller-stat', tellerStatsRoutes);
+app.use('/api/teller', tellerStatsRoutes);
+app.use('/api/thrift-banking', ThriftRoutes);
+
+app.use('/api/users/credit-officer', creditOfficerRoutes);
+app.use('/api/thrift-report', TriftReportRoutes);
+
+app.use('/api/cleandb', CleanupDB );
+
+
+
 
 // ----------------------------
 // Static Files & React Build
@@ -429,6 +439,8 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(staticPath, 'index.html'));
   });
 }
+
+
 
 // ----------------------------
 // Error Handling

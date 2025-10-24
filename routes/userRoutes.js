@@ -23,6 +23,9 @@ import {
   getUserLockStatus,
   forceLockUser,
   unlockForceLockedUser,
+  resetUser, // ✅ Added new function
+  clearUserCaches, // ✅ Added new function
+  getUserSessionInfo, // ✅ Added new function
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { restrictToPermission } from '../middlewares/rbac.js';
@@ -33,6 +36,12 @@ import DepositTransaction from '../models/DepositTransaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
+import { checkPermissions } from '../constants/roleMapping.js';
+
+
+
+
+
 
 const router = express.Router();
 
@@ -100,6 +109,21 @@ const PERMISSION_GROUPS = [
   },
 ];
 
+// Helper function to safely get permissions from a group (flattens if array, returns as-is if object)
+const safeGetPermissions = (permissionGroup) => {
+  if (Array.isArray(permissionGroup)) {
+    return permissionGroup;
+  }
+  return Object.values(permissionGroup).flat();
+};
+
+// ===================================
+// Teller Dashboard Statistic
+//=======================================
+
+
+
+
 // 🔐 Public routes (no authentication required)
 router.post('/users/login', login);
 router.post('/users/register', registerUser);
@@ -111,6 +135,11 @@ router.get('/user/permissions', verifyToken, getUserPermissions);
 router.get('/user/profile', verifyToken, getUserProfile);
 router.post('/user/validate-permission', verifyToken, validatePermission);
 router.post('/user/validate-permissions', verifyToken, validatePermissions);
+
+// 🔐 Session Management Routes (new)
+router.post('/user/reset-session', verifyToken, resetUser); // ✅ Reset user session and clear caches
+router.get('/user/session-info', verifyToken, getUserSessionInfo); // ✅ Get user session information
+router.post('/admin/clear-user-caches/:user_name?', verifyToken, restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), clearUserCaches); // ✅ Admin: Clear user caches
 
 // 🔐 Administrator permission verification route
 router.get(
@@ -183,6 +212,8 @@ router.get(
             validateSingle: '/user/validate-permission',
             validateMultiple: '/user/validate-permissions',
             verifyAdmin: '/user/verify-admin-permissions',
+            resetSession: '/user/reset-session', // ✅ Added new endpoint
+            sessionInfo: '/user/session-info', // ✅ Added new endpoint
           },
         },
       });
@@ -210,6 +241,11 @@ router.get(
         status: 'Operational',
         adminUser: req.user.user_name,
         timestamp: new Date().toISOString(),
+        sessionEndpoints: { // ✅ Added session management info
+          resetSession: '/user/reset-session',
+          sessionInfo: '/user/session-info',
+          clearCaches: '/admin/clear-user-caches/:user_name?',
+        },
       },
     });
   })
@@ -355,10 +391,16 @@ router.get(
     try {
       const { roleId } = req.params;
 
-      // Special handling for admin role (1) - grant all permissions
+      // Special handling for admin role (1) - grant all permissions grouped by category
       if (roleId === '1') {
-        const allPermissions = Object.values(PERMISSIONS).flatMap(category => Object.values(category));
-        return res.json({ success: true, data: allPermissions });
+        const adminPermissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
+          const permissionGroup = PERMISSIONS[key];
+          if (typeof permissionGroup === 'object') {
+            acc[`${key}_ACCESS_LEVEL`] = safeGetPermissions(permissionGroup);
+          }
+          return acc;
+        }, {});
+        return res.json({ success: true, data: adminPermissions });
       }
 
       const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
@@ -403,7 +445,7 @@ router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
 // Update user's login hours (user can update their own)
 router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) => { // Added verifyToken
   try {
-    const { earliest_login_time, latest_login_time } = req.body;
+    const { earliest_login_time, latest_login_time } = req.body; // Fixed variable names
     
     // Validate time format
     const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
@@ -795,105 +837,6 @@ router.get(
   })
 );
 
-// 🔐 Teller statistics route (existing)
-router.get(
-  '/teller/today-stats',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.DASHBOARD.TELLER_DASHBOARD),
-  asyncHandler(async (req, res) => {
-    try {
-      logger.info('Teller stats endpoint hit', {
-        userId: req.user.userId,
-        user_name: req.user.user_name,
-        BU_ROLE_ID: req.user.BU_ROLE_ID,
-      });
-
-      let responsibilityCentre = req.user.main_business_unit || req.user.businessUnit || 'Wethral';
-      if (!responsibilityCentre) {
-        logger.warn('No responsibility centre found', {
-          userId: req.user.userId,
-          user_name: req.user.user_name,
-          availableFields: Object.keys(req.user),
-        });
-        return res.status(400).json({
-          success: false,
-          error: 'Responsibility centre not found for user',
-          debug: {
-            userId: req.user.userId,
-            user_name: req.user.user_name,
-            BU_ROLE_ID: req.user.BU_ROLE_ID,
-            role: req.user.role,
-            isAdmin: req.user.isAdmin,
-            availableFields: Object.keys(req.user),
-          },
-        });
-      }
-
-      logger.info('Using responsibility centre', { responsibilityCentre });
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      logger.info('Querying transactions', {
-        tellerId: req.user.userId,
-        responsibilityCentre,
-        dateRange: { today, tomorrow },
-      });
-
-      const transactionStats = await DepositTransaction.getTellerStats(
-        req.user.userId,
-        responsibilityCentre,
-        today,
-        tomorrow
-      );
-
-      const dailySummary = await DepositTransaction.getDailySummary(
-        req.user.userId,
-        responsibilityCentre,
-        today
-      );
-
-      logger.info('Query results', {
-        transactionStats,
-        dailySummary,
-      });
-
-      const stats = {
-        transactions: dailySummary[0]?.totalTransactions || 0,
-        deposits: dailySummary[0]?.totalDeposits || 0,
-        withdrawals: dailySummary[0]?.totalWithdrawals || 0,
-        transfers: dailySummary[0]?.totalTransfers || 0,
-        customers: 0, // Implement customer counting if needed
-      };
-
-      res.status(200).json({
-        success: true,
-        data: stats,
-        message: 'Teller statistics retrieved successfully',
-        debug: {
-          user: req.user.user_name,
-          responsibility_centre: responsibilityCentre,
-          fieldSource: 'main_business_unit',
-        },
-      });
-    } catch (error) {
-      logger.error('Error in teller stats endpoint', {
-        message: error.message,
-        stack: error.stack,
-        userId: req.user?.userId,
-        user_name: req.user?.user_name,
-      });
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch statistics',
-        message: error.message,
-      });
-    }
-  })
-);
-
 // 🔐 Account balances route
 router.get(
   '/accounts/balances',
@@ -975,14 +918,19 @@ router.get(
       );
       let BU_ROLE_ID = user.BU_ROLE_ID || roleToIdMap[user.role] || req.user.roleId || '29'; // Default to Teller
 
-      // Special handling for admin role (1) - grant all permissions
+      // Special handling for admin role (1) - grant all permissions grouped by category
       let permissions = user.permissions || {};
       let roleName = user.role || 'Unknown Role';
       if (BU_ROLE_ID === '1') {
-        const allPermissions = Object.values(PERMISSIONS).flatMap(category => Object.values(category));
-        permissions = { ADMIN_ACCESS_LEVEL: allPermissions };
+        permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
+          const permissionGroup = PERMISSIONS[key];
+          if (typeof permissionGroup === 'object') {
+            acc[`${key}_ACCESS_LEVEL`] = safeGetPermissions(permissionGroup);
+          }
+          return acc;
+        }, {});
         roleName = 'Administrator';
-      } else if (Object.keys(permissions).length === 0 && BU_ROLE_ID !== '0') {
+      } else if (Object.keys(permissions).length === 1 && BU_ROLE_ID !== '0') {
         const permissionsDoc = await Permissions.findOne({ BU_ROLE_ID }).lean();
         if (permissionsDoc) {
           permissions = permissionsDoc.permissions;
@@ -1118,6 +1066,10 @@ router.get(
           accessibleBusinessUnits,
           tokenIssuedAt,
           tokenExpiresAt,
+        },
+        sessionEndpoints: { // ✅ Added session management endpoints info
+          resetSession: '/user/reset-session',
+          sessionInfo: '/user/session-info',
         },
       });
     } catch (error) {

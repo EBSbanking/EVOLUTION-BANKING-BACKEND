@@ -5,7 +5,7 @@ import GLAccount from '../models/GLAccount.js';
 import GLTransactionQueue from '../models/GLTransactionQueue.js';
 import Reconciliation from '../models/Reconciliation.js'; // Added Reconciliation import
 import Branch from '../models/Branch.js'; // Added Branch import for validation
-import { logAuditTrail } from '../utils/AuditLogger.js';
+import auditLogger from '../utils/AuditLogger.js';  // Fixed: Default import for hybrid logger
 import { queueGLTransaction } from '../utils/GLQueueUtils.js';
 import { createRootSubfolder } from '../utils/subfolderUtils.js';
 
@@ -165,21 +165,19 @@ export const createGLAccountTransaction = async (req, res, session = null) => {
           }
         }
 
-        // Log audit trail only for new ledger creation
-        if (isNewLedger) {
-          await logAuditTrail(
-            'LEDGER_CREATION',
-            ledger._id,
-            CREATED_BY,
-            'CREATE',
-            null,
-            ledger.toObject(),
-            req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-            'LEDGER_CREATION',
-            { description: `Created Ledger for GL_ACCT_NO ${GL_ACCT_NO} in ${organizationName}/${branchName}` },
-            session
-          );
-        }
+        // Audit ledger creation via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'LEDGER_CREATION',
+          entity_id: ledger._id,
+          user_id: CREATED_BY,
+          action: 'CREATE',
+          old_value: null,
+          new_value: ledger.toObject(),
+          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
+          event_type: 'LEDGER_CREATION',
+          outcome: 'success',
+          description: `Created Ledger for GL_ACCT_NO ${GL_ACCT_NO} in ${organizationName}/${branchName}`
+        });
       } else {
         console.log(`Ledger found for GL_ACCT_NO: ${GL_ACCT_NO}, proceeding with transaction`);
       }
@@ -229,18 +227,19 @@ export const createGLAccountTransaction = async (req, res, session = null) => {
         });
         await reconciliation.save({ session });
 
-        await logAuditTrail(
-          'QUEUE_GL_TRANSACTION',
-          queued.transaction?._id,
-          CREATED_BY,
-          'CREATE',
-          null,
-          { ...queued.transaction, reconciliationId: reconciliation._id },
-          req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          'QUEUE_GL_TRANSACTION',
-          { description: `Queued transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}` },
-          session
-        );
+        // Audit queued transaction via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'QUEUE_GL_TRANSACTION',
+          entity_id: queued.transaction?._id,
+          user_id: CREATED_BY,
+          action: 'CREATE',
+          old_value: null,
+          new_value: { ...queued.transaction, reconciliationId: reconciliation._id },
+          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
+          event_type: 'QUEUE_GL_TRANSACTION',
+          outcome: 'success',
+          description: `Queued transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}`
+        });
 
         return {
           message: 'Transaction queued successfully with reconciliation entry',
@@ -284,18 +283,19 @@ export const createGLAccountTransaction = async (req, res, session = null) => {
       });
       await reconciliation.save({ session });
 
-      await logAuditTrail(
-        'GL_ACCOUNT_TRANSACTION',
-        processedTransaction._id,
-        CREATED_BY,
-        'CREATE',
-        null,
-        { ...processedTransaction.toObject(), reconciliationId: reconciliation._id },
-        req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-        'GL_ACCOUNT_TRANSACTION',
-        { description: `Processed transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}` },
-        session
-      );
+      // Audit immediate transaction via hybrid logger
+      auditLogger.info('Audit Event', {
+        entity_type: 'GL_ACCOUNT_TRANSACTION',
+        entity_id: processedTransaction._id,
+        user_id: CREATED_BY,
+        action: 'CREATE',
+        old_value: null,
+        new_value: { ...processedTransaction.toObject(), reconciliationId: reconciliation._id },
+        ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
+        event_type: 'GL_ACCOUNT_TRANSACTION',
+        outcome: 'success',
+        description: `Processed transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}`
+      });
 
       return {
         message: 'Transaction processed successfully with reconciliation entry',
@@ -313,6 +313,19 @@ export const createGLAccountTransaction = async (req, res, session = null) => {
       await session.abortTransaction();
     }
     console.error('❌ GL Transaction Error:', err.message, { transactionData: req.body });
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'GL_ACCOUNT_TRANSACTION',
+      entity_id: null,
+      user_id: req.body.CREATED_BY || 'system',
+      action: 'create_gl_account_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'GL_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(err.message.includes('required') || err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
       message: 'Transaction processing failed',
       error: err.message,
@@ -435,18 +448,19 @@ const postSingleGLTransaction = async (entry, req, session) => {
   await GLAccount.updateOne({ GL_ACCT_NO, organizationName, branchName }, { LEDGER_BALANCE: newBalance }, { session });
 
   const ip = req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN';
-  await logAuditTrail(
-    'GL_ACCOUNT_TRANSACTION',
-    newTxn._id,
-    req?.user?.id || CREATED_BY,
-    'CREATE',
-    null,
-    newTxn.toObject(),
-    ip,
-    'GL_TRANSACTION',
-    { description: DESCRIPTION },
-    session
-  );
+  // Audit via hybrid logger
+  auditLogger.info('Audit Event', {
+    entity_type: 'GL_ACCOUNT_TRANSACTION',
+    entity_id: newTxn._id,
+    user_id: req?.user?.id || CREATED_BY,
+    action: 'CREATE',
+    old_value: null,
+    new_value: newTxn.toObject(),
+    ip_address: ip,
+    event_type: 'GL_TRANSACTION',
+    outcome: 'success',
+    description: DESCRIPTION
+  });
 
   try {
     await createRootSubfolder(newTxn._id, { GL_ACCT_NO, createdBy: CREATED_BY, description: DESCRIPTION });
@@ -530,18 +544,19 @@ export const createDoubleEntryTransaction = async (req, res) => {
         });
         await creditReconciliation.save({ session });
 
-        await logAuditTrail(
-          'DOUBLE_ENTRY_TRANSACTION',
-          debitTxn._id,
-          req?.user?.id || debitEntry.CREATED_BY,
-          'CREATE',
-          null,
-          { debit: debitTxn.toObject(), credit: creditTxn.toObject(), debitReconciliationId: debitReconciliation._id, creditReconciliationId: creditReconciliation._id },
-          req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          'DOUBLE_ENTRY_TRANSACTION',
-          { description: `Created double-entry transaction for ${debitTxn.GL_ACCT_NO} and ${creditTxn.GL_ACCT_NO}` },
-          session
-        );
+        // Audit double-entry via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'DOUBLE_ENTRY_TRANSACTION',
+          entity_id: debitTxn._id,
+          user_id: req?.user?.id || debitEntry.CREATED_BY,
+          action: 'CREATE',
+          old_value: null,
+          new_value: { debit: debitTxn.toObject(), credit: creditTxn.toObject(), debitReconciliationId: debitReconciliation._id, creditReconciliationId: creditReconciliation._id },
+          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
+          event_type: 'DOUBLE_ENTRY_TRANSACTION',
+          outcome: 'success',
+          description: `Created double-entry transaction for ${debitTxn.GL_ACCT_NO} and ${creditTxn.GL_ACCT_NO}`
+        });
 
         return res.status(201).json({
           message: 'Double-entry transaction processed successfully with reconciliation entries',
@@ -559,6 +574,19 @@ export const createDoubleEntryTransaction = async (req, res) => {
     }
   } catch (err) {
     console.error('❌ Double Entry Transaction Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'DOUBLE_ENTRY_TRANSACTION',
+      entity_id: null,
+      user_id: req.body.debitEntry?.CREATED_BY || 'system',
+      action: 'create_double_entry_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'DOUBLE_ENTRY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(err.message.includes('required') || err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
       message: 'Double-entry transaction failed',
       error: err.message,
@@ -571,6 +599,9 @@ export const createDoubleEntryTransaction = async (req, res) => {
 export const getGLAccountTransactions = async (req, res) => {
   try {
     const { organizationName, branchName } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
     const query = {};
     if (organizationName) query.organizationName = { $regex: `^${organizationName}$`, $options: 'i' };
     if (branchName) query.branchName = { $regex: `^${branchName}$`, $options: 'i' };
@@ -592,12 +623,38 @@ export const getGLAccountTransactions = async (req, res) => {
       reconciliation: reconciliationMap[txn.TransactionId] || null
     }));
 
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'gl_transactions_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_gl_account_transactions',
+      old_value: null,
+      new_value: { count: transactionsWithReconciliation.length, filters: { organizationName, branchName } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.status(200).json({
       message: 'GL Account Transactions retrieved successfully',
       data: transactionsWithReconciliation
     });
   } catch (err) {
     console.error('❌ Fetch GL Transactions Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'gl_transactions_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_gl_account_transactions',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({
       message: 'Failed to fetch GL transactions',
       error: err.message,
@@ -610,8 +667,23 @@ export const getGLAccountTransactions = async (req, res) => {
 export const getGLAccountTransactionById = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+
     const transaction = await GLAccountTransaction.findById(id).lean();
     if (!transaction) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_query',
+        entity_id: id,
+        user_id: userId,
+        action: 'get_gl_account_transaction_by_id',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'GL Account Transaction not found' });
     }
 
@@ -621,12 +693,38 @@ export const getGLAccountTransactionById = async (req, res) => {
       branchName: transaction.branchName
     }).lean();
 
+    // Self-audit success (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'gl_transaction_query',
+      entity_id: id,
+      user_id: userId,
+      action: 'get_gl_account_transaction_by_id',
+      old_value: null,
+      new_value: { event_id: transaction.event_id },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.status(200).json({
       message: 'GL Account Transaction retrieved successfully',
       data: { ...transaction, reconciliation }
     });
   } catch (err) {
     console.error('❌ Fetch GL Transaction By ID Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'gl_transaction_query',
+      entity_id: req.params.id || null,
+      user_id: req.user_id || 'system',
+      action: 'get_gl_account_transaction_by_id',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({
       message: 'Failed to fetch GL transaction',
       error: err.message,
@@ -639,6 +737,9 @@ export const getGLAccountTransactionById = async (req, res) => {
 export const getGLAccountTransactionByAcctNo = async (req, res) => {
   try {
     const { glAcctNo, organizationName, branchName } = req.params;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+
     if (!organizationName || !branchName) {
       return res.status(400).json({ message: 'organizationName and branchName are required' });
     }
@@ -650,6 +751,18 @@ export const getGLAccountTransactionByAcctNo = async (req, res) => {
     }).lean();
 
     if (!transactions || transactions.length === 0) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_by_acct_query',
+        entity_id: glAcctNo,
+        user_id: userId,
+        action: 'get_gl_account_transaction_by_acct_no',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'No transactions found for GL Account' });
     }
 
@@ -669,12 +782,38 @@ export const getGLAccountTransactionByAcctNo = async (req, res) => {
       reconciliation: reconciliationMap[txn.TransactionId] || null
     }));
 
+    // Self-audit success (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'gl_transaction_by_acct_query',
+      entity_id: glAcctNo,
+      user_id: userId,
+      action: 'get_gl_account_transaction_by_acct_no',
+      old_value: null,
+      new_value: { count: transactionsWithReconciliation.length },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.status(200).json({
       message: 'GL Account transactions retrieved successfully',
       data: transactionsWithReconciliation
     });
   } catch (err) {
     console.error('❌ Fetch GL Transactions By Acct No Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'gl_transaction_by_acct_query',
+      entity_id: req.params.glAcctNo || null,
+      user_id: req.user_id || 'system',
+      action: 'get_gl_account_transaction_by_acct_no',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({
       message: 'Failed to fetch GL transactions',
       error: err.message,
@@ -688,6 +827,8 @@ export const updateGLAccountTransaction = async (req, res) => {
   try {
     const { id } = req.params;
     const updatedData = req.body;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
 
     if (updatedData.GL_ACCT_NO && !isValidGLAcctNo(updatedData.GL_ACCT_NO)) {
       return res.status(400).json({
@@ -697,6 +838,18 @@ export const updateGLAccountTransaction = async (req, res) => {
 
     const original = await GLAccountTransaction.findById(id);
     if (!original) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_update',
+        entity_id: id,
+        user_id: userId,
+        action: 'update_gl_account_transaction',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'UPDATE_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'GL Account Transaction not found' });
     }
 
@@ -722,20 +875,22 @@ export const updateGLAccountTransaction = async (req, res) => {
           JOURNAL_ID: updatedData.JOURNAL_ID || original.JOURNAL_ID,
           GL_ACCT_NO: updatedData.GL_ACCT_NO || original.GL_ACCT_NO,
           AMOUNT: updatedData.AMOUNT || original.AMOUNT
-        },
-        { session }
+        }
       );
     }
 
-    await logAuditTrail(
-      'GL_ACCOUNT_TRANSACTION',
-      id,
-      req.user?.id || 'UNKNOWN',
-      'UPDATE',
-      original.toObject(),
-      updated.toObject(),
-      req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'UNKNOWN'
-    );
+    // Audit update via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'GL_ACCOUNT_TRANSACTION',
+      entity_id: id,
+      user_id: userId,
+      action: 'UPDATE',
+      old_value: original.toObject(),
+      new_value: updated.toObject(),
+      ip_address: ipAddress,
+      event_type: 'GL_TRANSACTION_UPDATE',
+      outcome: 'success'
+    });
 
     return res.status(200).json({
       message: 'GL Account Transaction updated successfully',
@@ -743,6 +898,19 @@ export const updateGLAccountTransaction = async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Update GL Transaction Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'GL_ACCOUNT_TRANSACTION',
+      entity_id: req.params.id || null,
+      user_id: req.user_id || 'system',
+      action: 'update_gl_account_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'GL_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
       message: 'Failed to update GL transaction',
       error: err.message,
@@ -756,6 +924,9 @@ export const getPendingTransactions = async (req, res) => {
   try {
     console.log("📌 Fetching pending transactions...");
     const { organizationName, branchName } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
     const query = { QUEUE_STATUS: 'Pending' };
     if (organizationName) query.organizationName = { $regex: `^${organizationName}$`, $options: 'i' };
     if (branchName) query.branchName = { $regex: `^${branchName}$`, $options: 'i' };
@@ -763,6 +934,19 @@ export const getPendingTransactions = async (req, res) => {
     const pendingTransactions = await GLTransactionQueue.find(query).lean();
 
     console.log('✅ Found transactions:', pendingTransactions.length);
+
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'pending_gl_queue_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_pending_transactions',
+      old_value: null,
+      new_value: { count: pendingTransactions.length, filters: { organizationName, branchName } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
 
     return res.status(200).json({
       success: true,
@@ -772,6 +956,19 @@ export const getPendingTransactions = async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Fetch Pending Transactions Error:', err);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'pending_gl_queue_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_pending_transactions',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch pending transactions',
@@ -785,6 +982,8 @@ export const approveGLTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { approverId, organizationName, branchName } = req.body;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
 
     if (!transactionId || !approverId || !organizationName || !branchName) {
       return res.status(400).json({
@@ -816,6 +1015,18 @@ export const approveGLTransaction = async (req, res) => {
     }
 
     if (!transaction) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_approval',
+        entity_id: transactionId,
+        user_id: userId,
+        action: 'approve_gl_transaction',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'APPROVAL_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Queued transaction not found' });
     }
 
@@ -888,19 +1099,19 @@ export const approveGLTransaction = async (req, res) => {
         transaction.PROCESSED_AT = new Date();
         await transaction.save({ session });
 
-        // Step 5: Audit log
-        await logAuditTrail(
-          'GL_TRANSACTION_APPROVAL',
-          transaction._id,
-          approverId,
-          'APPROVE',
-          null,
-          { ...transaction.toObject(), reconciliationId: reconciliation._id },
-          req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          'GL_TRANSACTION_APPROVAL',
-          { description: `Approved transaction ${transaction.JOURNAL_ID}, TransactionId: ${transactionIdNumber} in ${organizationName}/${branchName}` },
-          session
-        );
+        // Step 5: Audit log via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'GL_TRANSACTION_APPROVAL',
+          entity_id: transaction._id,
+          user_id: approverId,
+          action: 'APPROVE',
+          old_value: null,
+          new_value: { ...transaction.toObject(), reconciliationId: reconciliation._id },
+          ip_address: ipAddress,
+          event_type: 'GL_TRANSACTION_APPROVAL',
+          outcome: 'success',
+          description: `Approved transaction ${transaction.JOURNAL_ID}, TransactionId: ${transactionIdNumber} in ${organizationName}/${branchName}`
+        });
 
         // Step 6: Fetch updated balance
         const updatedBalance = (await Ledger.findOne({ GL_ACCT_NO: transaction.GL_ACCT_NO, organizationName, branchName }, null, { session })).LEDGER_BALANCE;
@@ -920,6 +1131,19 @@ export const approveGLTransaction = async (req, res) => {
     }
   } catch (err) {
     console.error('❌ Approve GL Transaction Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'GL_TRANSACTION_APPROVAL',
+      entity_id: req.params.transactionId || null,
+      user_id: req.body.approverId || 'system',
+      action: 'approve_gl_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'APPROVAL_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(err.message.includes('Missing') || err.message.includes('not found') || err.message.includes('already') ? 400 : 500).json({
       message: 'Transaction approval failed',
       error: err.message,
@@ -933,6 +1157,8 @@ export const rejectGLTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { approverId, reason, organizationName, branchName } = req.body;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
 
     if (!transactionId || !approverId || !organizationName || !branchName) {
       return res.status(400).json({
@@ -964,6 +1190,18 @@ export const rejectGLTransaction = async (req, res) => {
     }
 
     if (!transaction) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_rejection',
+        entity_id: transactionId,
+        user_id: userId,
+        action: 'reject_gl_transaction',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'REJECTION_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Queued transaction not found' });
     }
 
@@ -1002,19 +1240,20 @@ export const rejectGLTransaction = async (req, res) => {
           await reconciliation.save({ session });
         }
 
-        // Step 4: Audit log
-        await logAuditTrail(
-          'GL_TRANSACTION_APPROVAL',
-          transaction._id,
-          approverId,
-          'REJECT',
-          null,
-          { ...transaction.toObject(), reconciliationId: reconciliation?._id },
-          req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          'GL_TRANSACTION_APPROVAL',
-          { description: `Rejected transaction ${transaction.JOURNAL_ID} in ${organizationName}/${branchName}` },
-          session
-        );
+        // Step 4: Audit log via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'GL_TRANSACTION_APPROVAL',
+          entity_id: transaction._id,
+          user_id: approverId,
+          action: 'REJECT',
+          old_value: null,
+          new_value: { ...transaction.toObject(), reconciliationId: reconciliation?._id },
+          ip_address: ipAddress,
+          event_type: 'GL_TRANSACTION_APPROVAL',
+          outcome: 'success',
+          description: `Rejected transaction ${transaction.JOURNAL_ID} in ${organizationName}/${branchName}`,
+          rejection_reason: reason
+        });
 
         return res.status(200).json({
           message: 'Transaction rejected successfully',
@@ -1030,6 +1269,20 @@ export const rejectGLTransaction = async (req, res) => {
     }
   } catch (err) {
     console.error('❌ Reject GL Transaction Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'GL_TRANSACTION_APPROVAL',
+      entity_id: req.params.transactionId || null,
+      user_id: req.body.approverId || 'system',
+      action: 'reject_gl_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'REJECTION_ERROR',
+      outcome: 'failure',
+      error: err.message,
+      reason: req.body.reason || null
+    });
     return res.status(err.message.includes('Missing') || err.message.includes('not found') || err.message.includes('already') ? 400 : 500).json({
       message: 'Transaction rejection failed',
       error: err.message,
@@ -1184,17 +1437,47 @@ export const processEODGLTransactionsService = async (session = null) => {
 export const getGLAccounts = async (req, res) => {
   try {
     const { organizationName, branchName } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
     const query = {};
     if (organizationName) query.organizationName = { $regex: `^${organizationName}$`, $options: 'i' };
     if (branchName) query.branchName = { $regex: `^${branchName}$`, $options: 'i' };
 
     const glAccounts = await GLAccount.find(query);
+    
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'gl_accounts_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_gl_accounts',
+      old_value: null,
+      new_value: { count: glAccounts.length, filters: { organizationName, branchName } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.status(200).json({
       message: 'GL Accounts retrieved successfully',
       data: glAccounts
     });
   } catch (err) {
     console.error('❌ Fetch GL Accounts Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'gl_accounts_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_gl_accounts',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({
       message: 'Failed to fetch GL accounts',
       error: err.message,

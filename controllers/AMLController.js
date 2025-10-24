@@ -1,6 +1,6 @@
 import AML from '../models/AML.js';
 import Customer from '../models/Customer.js';
-import { logAuditTrail } from '../utils/AuditLogger.js';
+import auditLogger from '../utils/AuditLogger.js';  // Fixed: Default import for hybrid logger
 import { checkSanctionList } from '../utils/checkSanctionList.js';
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
 import { validateAMLInput } from '../utils/amlValidator.js';
@@ -88,29 +88,35 @@ export const upsertAML = async (req, res) => {
         { new: true, runValidators: true }
       );
 
-      await logAuditTrail(
-        'AML_UPDATE',
-        amlRecord._id,
-        USER_ID,
-        'Updated AML record',
-        oldValue,
-        JSON.stringify(amlRecord),
-        ipAddress
-      );
+      // Audit via hybrid logger
+      auditLogger.info('Audit Event', {
+        entity_type: 'AML_UPDATE',
+        entity_id: amlRecord._id,
+        user_id: USER_ID,
+        action: 'Updated AML record',
+        old_value: oldValue,
+        new_value: JSON.stringify(amlRecord),
+        ip_address: ipAddress,
+        event_type: 'AML_UPDATE',
+        outcome: 'success'
+      });
 
       action = 'updated';
     } else {
       amlRecord = await AML.create({ CUST_ID, ...newAMLData });
 
-      await logAuditTrail(
-        'AML_CREATE',
-        amlRecord._id,
-        USER_ID,
-        'Created AML record',
-        null,
-        JSON.stringify(amlRecord),
-        ipAddress
-      );
+      // Audit via hybrid logger
+      auditLogger.info('Audit Event', {
+        entity_type: 'AML_CREATE',
+        entity_id: amlRecord._id,
+        user_id: USER_ID,
+        action: 'Created AML record',
+        old_value: null,
+        new_value: JSON.stringify(amlRecord),
+        ip_address: ipAddress,
+        event_type: 'AML_CREATE',
+        outcome: 'success'
+      });
 
       // Submit Workflow Item
       try {
@@ -163,6 +169,19 @@ export const upsertAML = async (req, res) => {
 
   } catch (error) {
     console.error('❌ AML Upsert Error:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'AML_UPSERT',
+      entity_id: null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'upsert_aml',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'AML_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Failed to process AML record',
@@ -276,16 +295,18 @@ export const approveAML = async (req, res) => {
       console.error('⚠️ Workflow submission failed:', workflowError.message || workflowError);
     }
 
-    // Audit log
-    await logAuditTrail(
-      'AML_APPROVAL',
-      aml._id,
-      USER_ID,
-      'Approved AML record',
-      oldValue,
-      JSON.stringify(aml),
-      ipAddress
-    );
+    // Audit log via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'AML_APPROVAL',
+      entity_id: aml._id,
+      user_id: USER_ID,
+      action: 'Approved AML record',
+      old_value: oldValue,
+      new_value: JSON.stringify(aml),
+      ip_address: ipAddress,
+      event_type: 'AML_APPROVAL',
+      outcome: 'success'
+    });
 
     return res.status(200).json({
       success: true,
@@ -294,6 +315,19 @@ export const approveAML = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ AML Approval Error:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'AML_APPROVAL',
+      entity_id: null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'approve_aml',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'AML_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Failed to approve AML record',
@@ -348,16 +382,19 @@ export const rejectAML = async (req, res) => {
       }
     );
 
-    // Log audit trail
-    await logAuditTrail(
-      'AML_REJECTION',
-      existingAML._id,
-      USER_ID,
-      `Rejected AML record for ${fullName}`,
-      oldValue,
-      JSON.stringify(existingAML),
-      ipAddress
-    );
+    // Log audit trail via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'AML_REJECTION',
+      entity_id: existingAML._id,
+      user_id: USER_ID,
+      action: `Rejected AML record for ${fullName}`,
+      old_value: oldValue,
+      new_value: JSON.stringify(existingAML),
+      ip_address: ipAddress,
+      event_type: 'AML_REJECTION',
+      outcome: 'success',
+      rejection_reason: rejectionReason
+    });
 
     return res.status(200).json({
       success: true,
@@ -366,6 +403,19 @@ export const rejectAML = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ AML Rejection Error:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'AML_REJECTION',
+      entity_id: null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'reject_aml',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'AML_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Failed to reject AML record',
@@ -378,6 +428,8 @@ export const rejectAML = async (req, res) => {
 export const getAMLByCustomer = async (req, res) => {
   try {
     const { custId } = req.params;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
 
     if (!custId) {
       return res.status(400).json({ 
@@ -394,17 +446,56 @@ export const getAMLByCustomer = async (req, res) => {
       .populate('REJECTED_BY', 'username email');
 
     if (!aml) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'aml_query',
+        entity_id: custId,
+        user_id: userId,
+        action: 'get_aml_by_customer',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'AML record not found.' 
       });
     }
 
+    // Self-audit success (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'aml_query',
+      entity_id: custId,
+      user_id: userId,
+      action: 'get_aml_by_customer',
+      old_value: null,
+      new_value: { event_id: aml.event_id },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     res.status(200).json({ 
       success: true, 
       data: aml 
     });
   } catch (error) {
+    console.error('Error fetching AML by customer:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'aml_query',
+      entity_id: req.params.custId || null,
+      user_id: req.user_id || 'system',
+      action: 'get_aml_by_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({ 
       success: false, 
       message: 'Failed to retrieve AML record',
@@ -434,17 +525,21 @@ export const deleteAMLByCustId = async (req, res) => {
       });
     }
 
-    // Log before deletion
-    await logAuditTrail(
-      'AML_DELETION',
-      existing._id,
-      USER_ID,
-      `Deleted AML record for customer ${custId}`,
-      JSON.stringify(existing),
-      null,
-      ipAddress,
-      reason
-    );
+    const oldValue = JSON.stringify(existing);
+
+    // Log before deletion via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'AML_DELETION',
+      entity_id: existing._id,
+      user_id: USER_ID,
+      action: `Deleted AML record for customer ${custId}`,
+      old_value: oldValue,
+      new_value: null,
+      ip_address: ipAddress,
+      event_type: 'AML_DELETION',
+      outcome: 'success',
+      reason: reason
+    });
 
     await AML.findOneAndDelete({ CUST_ID: custId });
 
@@ -462,6 +557,21 @@ export const deleteAMLByCustId = async (req, res) => {
       message: 'AML record deleted successfully.' 
     });
   } catch (err) {
+    console.error('Error deleting AML by CustId:', err);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'AML_DELETION',
+      entity_id: req.params.custId || null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'delete_aml_by_cust_id',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'AML_ERROR',
+      outcome: 'failure',
+      error: err.message,
+      reason: req.body.reason || null
+    });
     return res.status(500).json({ 
       success: false, 
       message: 'Failed to delete AML record',
@@ -473,6 +583,8 @@ export const deleteAMLByCustId = async (req, res) => {
 export const getAllAMLRecords = async (req, res) => {
   try {
     const { status, riskRating, page = 1, limit = 20 } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
     
     const filter = {};
     if (status) filter.AML_STATUS = status;
@@ -489,6 +601,19 @@ export const getAllAMLRecords = async (req, res) => {
       AML.countDocuments(filter)
     ]);
 
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'aml_list_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_all_aml_records',
+      old_value: null,
+      new_value: { count: records.length, filters: { status, riskRating }, pagination: { page, limit, total } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.json({ 
       success: true, 
       data: records,
@@ -500,6 +625,20 @@ export const getAllAMLRecords = async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('Error fetching all AML records:', err);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'aml_list_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_all_aml_records',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({ 
       success: false, 
       message: 'Failed to retrieve AML records',
@@ -587,15 +726,18 @@ export const updateAMLByCustId = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    await logAuditTrail(
-      'AML_UPDATE',
-      updated._id,
-      USER_ID,
-      'Updated AML by CUST_ID',
-      oldValue,
-      JSON.stringify(updated),
-      ipAddress
-    );
+    // Audit via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'AML_UPDATE',
+      entity_id: updated._id,
+      user_id: USER_ID,
+      action: 'Updated AML by CUST_ID',
+      old_value: oldValue,
+      new_value: JSON.stringify(updated),
+      ip_address: ipAddress,
+      event_type: 'AML_UPDATE',
+      outcome: 'success'
+    });
 
     // Update customer record if risk rating changed
     if (existing.CUSTOMER_RISK_RATING !== updated.CUSTOMER_RISK_RATING) {
@@ -612,6 +754,19 @@ export const updateAMLByCustId = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ updateAMLByCustId Error:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'AML_UPDATE',
+      entity_id: null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'update_aml_by_cust_id',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'AML_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Failed to update AML record',
@@ -623,6 +778,8 @@ export const updateAMLByCustId = async (req, res) => {
 export const getAMLByCustId = async (req, res) => {
   try {
     const { custId } = req.params;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
     
     if (!custId) {
       return res.status(400).json({ 
@@ -638,17 +795,56 @@ export const getAMLByCustId = async (req, res) => {
       .populate('REJECTED_BY', 'username email');
 
     if (!aml) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'aml_query',
+        entity_id: custId,
+        user_id: userId,
+        action: 'get_aml_by_cust_id',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ 
         success: false, 
         message: 'AML record not found.' 
       });
     }
 
+    // Self-audit success (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'aml_query',
+      entity_id: custId,
+      user_id: userId,
+      action: 'get_aml_by_cust_id',
+      old_value: null,
+      new_value: { event_id: aml.event_id },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.json({ 
       success: true, 
       data: aml 
     });
   } catch (err) {
+    console.error('Error fetching AML by CustId:', err);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'aml_query',
+      entity_id: req.params.custId || null,
+      user_id: req.user_id || 'system',
+      action: 'get_aml_by_cust_id',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({ 
       success: false, 
       message: 'Failed to retrieve AML record',
@@ -660,6 +856,9 @@ export const getAMLByCustId = async (req, res) => {
 // New function to get AML risk statistics
 export const getAMLRiskStats = async (req, res) => {
   try {
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+
     const stats = await AML.aggregate([
       {
         $group: {
@@ -674,6 +873,19 @@ export const getAMLRiskStats = async (req, res) => {
       }
     ]);
 
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'aml_stats_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_aml_risk_stats',
+      old_value: null,
+      new_value: stats[0] || { total: 0, highRisk: 0, mediumRisk: 0, lowRisk: 0, pepCount: 0, sanctionedCount: 0 },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     return res.json({ 
       success: true, 
       data: stats[0] || {
@@ -686,6 +898,20 @@ export const getAMLRiskStats = async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('Error fetching AML risk stats:', err);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'aml_stats_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_aml_risk_stats',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
     return res.status(500).json({ 
       success: false, 
       message: 'Failed to retrieve AML statistics',

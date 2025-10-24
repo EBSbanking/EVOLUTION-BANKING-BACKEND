@@ -14,7 +14,7 @@ const BusinessUnitSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now }
 });
 
-BusinessUnitSchema.index({ BU_ID: 1 }, { unique: true });
+// BusinessUnitSchema.index({ BU_ID: 1 }, { unique: true });
 
 const BusinessUnit = mongoose.model('BusinessUnit', BusinessUnitSchema);
 

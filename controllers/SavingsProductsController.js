@@ -11,24 +11,15 @@ export const ProductsController = {
   createProduct: async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-    
+
     try {
-      // Step 1: Clean the request body
+      // Step 1: Clean request body
       const requestBody = { ...req.body };
       delete requestBody['PROD_CD '];
-      
-      // Step 2: Extract and validate required fields
-      const { 
-        PROD_ID, 
-        productName, 
-        PROD_DESC, 
-        PROD_CD, 
-        PRODUCT_TYPE,
-        productCode,
-        ...restOfBody 
-      } = requestBody;
 
-      // Validate required fields
+      // Step 2: Extract key fields
+      const { PROD_ID, productName, PROD_DESC, PROD_CD, PRODUCT_TYPE, productCode, ...restOfBody } = requestBody;
+
       if (!PROD_ID || !productName || !PROD_CD) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -37,7 +28,7 @@ export const ProductsController = {
         });
       }
 
-      // Step 3: Determine final product type
+      // Step 3: Determine product type
       let finalProductType = PRODUCT_TYPE || restOfBody.PROD_CAT_TY;
       if (!finalProductType) {
         switch (String(PROD_CD)) {
@@ -47,20 +38,18 @@ export const ProductsController = {
         }
       }
 
-      // Step 4: Prepare base product data
+      // Step 4: Base product
       const productData = {
         PROD_ID: Number(PROD_ID),
         PROD_CD: PROD_CD.toString(),
         PROD_DESC: PROD_DESC || productName,
         PRODUCT_TYPE: finalProductType,
-        productName: productName,
+        productName,
         productCode: productCode || PROD_CD.toString(),
-        
         CRNCY_ID: restOfBody.CRNCY_ID || 'NGN',
         START_DT: restOfBody.START_DT ? new Date(restOfBody.START_DT) : new Date(),
-        REC_ST: restOfBody.REC_ST || 'A',
+        REC_ST: restOfBody.REC_ST || 'Active',
         CREATED_BY: restOfBody.CREATED_BY || 'system',
-        
         VERSION_NO: restOfBody.VERSION_NO,
         PROD_CAT_TY: restOfBody.PROD_CAT_TY,
         PROD_DESIGN_ID: restOfBody.PROD_DESIGN_ID ? Number(restOfBody.PROD_DESIGN_ID) : undefined,
@@ -74,99 +63,37 @@ export const ProductsController = {
         ACCT_AUTH_BUS_PROD_ID: restOfBody.ACCT_AUTH_BUS_PROD_ID ? Number(restOfBody.ACCT_AUTH_BUS_PROD_ID) : undefined
       };
 
-      // Step 5: Prepare savings product data (ALIGNED WITH YOUR SCHEMA)
+      // Step 5: Prepare SavingsProduct data
       let savingsProductData = null;
-      if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
+      if (['SAVINGS', 'TERM_DEPOSIT'].includes(finalProductType)) {
         savingsProductData = {
-          // Required fields from your schema
-          PROD_ID: Number(PROD_ID),
-          PROD_CD: PROD_CD.toString(),
-          PROD_DESC: PROD_DESC || productName,
-          PRODUCT_TYPE: finalProductType,
-          productCode: productCode || PROD_CD.toString(),
-          productName: productName,
+          ...productData,
           productType: finalProductType,
-          CRNCY_ID: restOfBody.CRNCY_ID || 'NGN',
-          BU_ID: restOfBody.BU_ID || '001', // Default to 001 if not provided
-          START_DT: restOfBody.START_DT ? new Date(restOfBody.START_DT) : new Date(),
-          REC_ST: restOfBody.REC_ST || 'A',
-          CREATED_BY: restOfBody.CREATED_BY || 'system',
-
-          // Additional fields from your schema
-          VERSION_NO: restOfBody.VERSION_NO,
-          PROD_CAT_TY: restOfBody.PROD_CAT_TY,
-          PROD_DESIGN_ID: restOfBody.PROD_DESIGN_ID ? Number(restOfBody.PROD_DESIGN_ID) : undefined,
-          MIN_AGE_YEAR: restOfBody.MIN_AGE_YEAR ? Number(restOfBody.MIN_AGE_YEAR) : undefined,
-          USER_ID: restOfBody.USER_ID,
-          STMNT_FREQ_CD: restOfBody.STMNT_FREQ_CD,
-          STMNT_FREQ_VALUE: restOfBody.STMNT_FREQ_VALUE ? Number(restOfBody.STMNT_FREQ_VALUE) : undefined,
-          ACCT_CYCLE_CD: restOfBody.ACCT_CYCLE_CD,
-          ACCT_CYCLE_VALUE: restOfBody.ACCT_CYCLE_VALUE ? Number(restOfBody.ACCT_CYCLE_VALUE) : undefined,
-          ACCT_AUTH_BUS_PROD_ID: restOfBody.ACCT_AUTH_BUS_PROD_ID ? Number(restOfBody.ACCT_AUTH_BUS_PROD_ID) : undefined
+          BU_ID: restOfBody.BU_ID || '001'
         };
 
-        // Step 5a: Add rateInformation (ALIGNED WITH YOUR SCHEMA)
+        // Add nested info
         if (restOfBody.rateInformation) {
           const { rateType, fixedRate, marginRate, effectiveRate, effectiveDate } = restOfBody.rateInformation;
-          
           savingsProductData.rateInformation = {
             rateType: rateType || 'FIXED',
-            effectiveRate: mongoose.Types.Decimal128.fromString(
-              (effectiveRate || '0.00').toString()
-            ),
+            effectiveRate: mongoose.Types.Decimal128.fromString((effectiveRate || '0').toString()),
             effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date()
           };
-
-          if (rateType === 'FIXED' && fixedRate !== undefined) {
+          if (rateType === 'FIXED' && fixedRate)
             savingsProductData.rateInformation.fixedRate = mongoose.Types.Decimal128.fromString(fixedRate.toString());
-          }
-          
-          if (rateType === 'FLOATING' && marginRate !== undefined) {
+          if (rateType === 'FLOATING' && marginRate)
             savingsProductData.rateInformation.marginRate = mongoose.Types.Decimal128.fromString(marginRate.toString());
-          }
         }
 
-        // Step 5b: Add settlementInformation (ALIGNED WITH YOUR SCHEMA)
-        if (restOfBody.settlementInformation) {
-          savingsProductData.settlementInformation = {
-            settlementFrequency: restOfBody.settlementInformation.settlementFrequency || 'MONTHLY',
-            principalSettlementMethod: restOfBody.settlementInformation.principalSettlementMethod || 'ACCOUNT',
-            interestSettlementMethod: restOfBody.settlementInformation.interestSettlementMethod || 'ACCOUNT',
-            settlementGLAccountNo: restOfBody.settlementInformation.settlementGLAccountNo
-          };
-        }
+        if (restOfBody.settlementInformation)
+          savingsProductData.settlementInformation = { ...restOfBody.settlementInformation };
+        if (restOfBody.accrualInformation)
+          savingsProductData.accrualInformation = { ...restOfBody.accrualInformation };
+        if (restOfBody.chargesSetup)
+          savingsProductData.chargesSetup = { ...restOfBody.chargesSetup };
 
-        // Step 5c: Add accrualInformation (ALIGNED WITH YOUR SCHEMA)
-        if (restOfBody.accrualInformation) {
-          savingsProductData.accrualInformation = {
-            accrualBasis: restOfBody.accrualInformation.accrualBasis || 'ACT/360',
-            accrualStartDate: restOfBody.accrualInformation.accrualStartDate ? 
-              new Date(restOfBody.accrualInformation.accrualStartDate) : new Date(),
-            accrualFrequency: restOfBody.accrualInformation.accrualFrequency || 'DAILY'
-          };
-        }
-
-        // Step 5d: Add chargesSetup (ALIGNED WITH YOUR SCHEMA)
-        if (restOfBody.chargesSetup) {
-          savingsProductData.chargesSetup = {
-            CHRG_ID: restOfBody.chargesSetup.CHRG_ID ? Number(restOfBody.chargesSetup.CHRG_ID) : undefined,
-            CHRG_CD: restOfBody.chargesSetup.CHRG_CD,
-            chargeType: restOfBody.chargesSetup.chargeType || 'FLAT',
-            chargeAmount: mongoose.Types.Decimal128.fromString(
-              (restOfBody.chargesSetup.chargeAmount || '0').toString()
-            ),
-            chargeGLAccountNo: restOfBody.chargesSetup.chargeGLAccountNo,
-            chargeName: restOfBody.chargesSetup.chargeName,
-            status: restOfBody.chargesSetup.status,
-            TIER_TY: restOfBody.chargesSetup.TIER_TY,
-            BAL_ACTION_CD: restOfBody.chargesSetup.BAL_ACTION_CD,
-            VERSION_NO: restOfBody.chargesSetup.VERSION_NO ? Number(restOfBody.chargesSetup.VERSION_NO) : undefined,
-            USER_ID: restOfBody.chargesSetup.USER_ID,
-            CREATED_BY: restOfBody.chargesSetup.CREATED_BY || 'system'
-          };
-        }
-
-        // Step 5e: Add individual GL account fields (ALIGNED WITH YOUR SCHEMA)
+        // Validate GL accounts
         const glFields = [
           'principalBalanceGLAccountNo',
           'interestGLAccountNo',
@@ -199,7 +126,7 @@ export const ProductsController = {
           'interestDebitGLAccountNo'
         ];
 
-        // Validate and add GL accounts
+
         for (const field of glFields) {
           if (restOfBody[field]) {
             const glAccount = await GLAccount.findOne({ GL_ACCT_NO: restOfBody[field] }).session(session);
@@ -215,132 +142,85 @@ export const ProductsController = {
         }
       }
 
-      // Step 6: Add rateInformation to base product if provided
-      if (restOfBody.rateInformation) {
-        const { rateType, fixedRate, marginRate, effectiveRate, effectiveDate } = restOfBody.rateInformation;
-        
-        if (rateType && effectiveRate !== undefined) {
-          productData.rateInformation = {
-            rateType,
-            effectiveRate: mongoose.Types.Decimal128.fromString(effectiveRate.toString()),
-            effectiveDate: effectiveDate ? new Date(effectiveDate) : new Date()
-          };
-
-          if (rateType === 'FIXED' && fixedRate !== undefined) {
-            productData.rateInformation.fixedRate = mongoose.Types.Decimal128.fromString(fixedRate.toString());
-          }
-          
-          if (rateType === 'FLOATING' && marginRate !== undefined) {
-            productData.rateInformation.marginRate = mongoose.Types.Decimal128.fromString(marginRate.toString());
-          }
-        }
-      }
-
-      // Step 7: Log the final product data for debugging
-      logger.info('Final product data prepared', { 
-        PROD_ID, 
-        productType: finalProductType 
-      });
-
-      // Step 8: Create base product
+      // Step 6: Save base Product
       const newProduct = new Product(productData);
       await newProduct.save({ session });
-      logger.info('Base product created successfully', { PROD_ID });
 
-      // Step 9: Create product type mapping
+      // Step 7: Product mapping
       const accountPrefix = getPrefixForProductType(finalProductType);
-      
-      const mappingData = {
-        PROD_ID: PROD_ID.toString(),
-        PRODUCT_TYPE: finalProductType,
-        productName: productName,
-        PROD_DESC: productData.PROD_DESC,
-        PROD_CD: PROD_CD.toString(),
-        accountPrefix: accountPrefix
-      };
-
       await ProductTypeMapping.findOneAndUpdate(
         { PROD_ID: PROD_ID.toString() },
-        mappingData,
+        {
+          PROD_ID: PROD_ID.toString(),
+          PRODUCT_TYPE: finalProductType,
+          productName,
+          PROD_DESC: productData.PROD_DESC,
+          PROD_CD: PROD_CD.toString(),
+          accountPrefix
+        },
         { upsert: true, new: true, session }
       );
 
-      logger.info('Product type mapping created', { PROD_ID });
-
-      // Step 10: Create savings product if applicable (ALIGNED WITH YOUR SCHEMA)
+      // Step 8: Save SavingsProduct / LoanProduct
       if (savingsProductData) {
         await SavingsProduct.findOneAndUpdate(
           { PROD_ID: Number(PROD_ID) },
           savingsProductData,
           { upsert: true, new: true, session }
         );
-        logger.info('Savings product created with aligned schema', { 
-          PROD_ID, 
-          productCode: savingsProductData.productCode 
-        });
       }
 
-      // Step 11: Create loan product if applicable
-      if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
+      if (['LOAN', 'MORTGAGE', 'CREDIT CARD'].includes(finalProductType)) {
         await LoanProduct.findOneAndUpdate(
           { PROD_ID: PROD_ID },
           productData,
           { upsert: true, new: true, session }
         );
-        logger.info('Loan product created', { PROD_ID });
       }
 
-      // Step 12: Commit transaction
+      // Step 9: Verify that the SavingsProduct can be found (your lookup code)
+      const productCodeString = (productCode || PROD_CD)?.toString();
+      const product = await SavingsProduct.findOne({
+        $or: [
+          { productCode: productCodeString },
+          { PROD_CD: productCodeString },
+          { PROD_ID: parseInt(productCodeString) }
+        ],
+        REC_ST: { $in: [/^active$/i, /^a$/i] }
+      }).session(session);
+
+      if (!product) {
+        const found = await SavingsProduct.find({
+          $or: [
+            { productCode: productCodeString },
+            { PROD_CD: productCodeString },
+            { PROD_ID: parseInt(productCodeString) }
+          ]
+        }).session(session);
+        logger.error(`❌ No active SavingsProduct found for productCode: ${productCodeString}`);
+        logger.info(`Found ${found.length} total products for that code:`, found);
+        throw new Error(`Invalid productCode: ${productCodeString}. No active SavingsProduct found.`);
+      }
+
+      // Step 10: Commit
       await session.commitTransaction();
 
-      // Step 13: Return success response
       return res.status(201).json({
         success: true,
         message: 'Product created successfully',
         data: {
           product: productData,
-          savingsProduct: savingsProductData ? {
-            PROD_ID: savingsProductData.PROD_ID,
-            productCode: savingsProductData.productCode,
-            productType: savingsProductData.productType
-          } : null,
-          mapping: {
-            PROD_ID: PROD_ID.toString(),
-            PRODUCT_TYPE: finalProductType,
-            accountPrefix
-          }
+          savingsProduct: savingsProductData || null,
+          mapping: { PROD_ID, PRODUCT_TYPE: finalProductType, accountPrefix }
         }
       });
-
     } catch (error) {
       await session.abortTransaction();
-      
-      logger.error('Product creation failed', { 
-        error: error.message,
-        stack: error.stack
-      });
-
-      if (error.name === 'ValidationError') {
-        const errors = Object.values(error.errors).map(err => err.message);
-        return res.status(400).json({
-          success: false,
-          message: 'Schema validation failed',
-          errors,
-          receivedFields: Object.keys(req.body)
-        });
-      }
-
-      if (error.code === 11000) {
-        return res.status(400).json({
-          success: false,
-          message: `Product with PROD_ID ${req.body.PROD_ID} already exists`
-        });
-      }
-
+      logger.error('Product creation failed', { error: error.message, stack: error.stack });
       return res.status(500).json({
         success: false,
         message: 'Failed to create product',
-        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        error: error.message
       });
     } finally {
       session.endSession();

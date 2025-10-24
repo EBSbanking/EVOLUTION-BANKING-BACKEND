@@ -5,7 +5,8 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import { generateTransactionId } from '../utils/generateLoanAccountId.js';
 
 /**
- * Internal utility: Handles disbursement transaction logic.
+ * Internal utility: Handles disbursement transaction logic with proper double-entry accounting
+ * Banking Standard: Debit Loan Account (Asset), Credit Customer Account (Liability)
  */
 async function processLoanDisbursementTransactions({
   session,
@@ -15,25 +16,22 @@ async function processLoanDisbursementTransactions({
   loanFeeAmount = 0,
   fundingAcctNo,
   ACCT_NO,
-  glAccountNo = '1-02-100-105-103-1',
-  portfolioGLAcctNo = '1-002-102-5-200-1',
   CREATED_BY,
   DISBURSEMENT_DATE = new Date(),
   INTEREST_RATE,
   FEE_TYPE = 'PROCESSING_FEE',
-  PAYMENT_SOURCE = 'LOAN_FUNDING_SOURCE',
   PRODUCT_TYPE,
   deductUpfrontInterest = false,
   partialUpfrontInterest = false,
   upfrontInterestAmount = 0,
   upfrontInterestPercentage = 0,
-  interestIncomeAccount = '1-01-400-100-100-1',
   guarantorId,
   guaranteedAmount = 0,
   guarantorName,
   TRANSACTION_ID,
   EVENT_ID,
-  JOURNAL_ID
+  JOURNAL_ID,
+  transactionReferences = {}
 }) {
   if (!session) throw new Error('Database session is required');
   if (!loanAccount || !customerAccount) throw new Error('Loan and customer accounts are required');
@@ -52,16 +50,36 @@ async function processLoanDisbursementTransactions({
   upfrontInterestAmount = Number(upfrontInterestAmount);
   const interestRate = Number(INTEREST_RATE);
   const transactionDate = new Date(DISBURSEMENT_DATE);
+  
+  // Calculate net amount customer receives
   const netDisbursement = disbursementAmount - feeAmount - upfrontInterestAmount;
 
+  if (netDisbursement <= 0) {
+    throw new Error('Net disbursement amount must be greater than zero after fees and upfront interest');
+  }
+
+  // Generate unique transaction references
+  const timestamp = Date.now();
+  const uniqueSuffix = Math.random().toString(36).substring(2, 8);
+  
+  const refs = { ...transactionReferences };
+  
+  // If no references provided, generate unique ones
+  if (!refs.main) refs.main = `LOAN-${ACCT_NO}-${timestamp}-${uniqueSuffix}`;
+  if (!refs.fee) refs.fee = `FEE-${ACCT_NO}-${timestamp}-${uniqueSuffix}`;
+  if (!refs.interest) refs.interest = `INT-${ACCT_NO}-${timestamp}-${uniqueSuffix}`;
+
+  console.log('Using transaction references:', refs);
+
+  // Update loan account status and balances
   Object.assign(loanAccount, {
     PRIMARY_OFFICER_ID: loanAccount.PRIMARY_OFFICER_ID || CREATED_BY || 'system',
     JOURNAL_ID,
     TRANSACTION_ID,
     EVENT_ID,
-    LEDGER_BALANCE: netDisbursement,
-    CLEARED_BALANCE: netDisbursement,
-    AVAILABLE_BALANCE: netDisbursement,
+    LEDGER_BALANCE: disbursementAmount, // Full loan amount
+    CLEARED_BALANCE: disbursementAmount,
+    AVAILABLE_BALANCE: disbursementAmount,
     OUTSTANDING_BALANCE: disbursementAmount,
     OUTSTANDING_PRINCIPAL: disbursementAmount,
     DEDUCT_UPFRONT_INTEREST: deductUpfrontInterest,
@@ -71,14 +89,50 @@ async function processLoanDisbursementTransactions({
     GUARANTOR_ID: guarantorId,
     GUARANTEED_AMOUNT: guaranteedAmount,
     HAS_GUARANTOR: !!guarantorId,
-    LOAN_STATUS: 'ACTIVE'
+    LOAN_STATUS: 'ACTIVE',
+    DISBURSEMENT_DATE: transactionDate,
+    LAST_UPDATED: new Date()
   });
 
   await loanAccount.save({ session });
 
   const transactionsToCreate = [];
 
-  // 1. Fee transaction
+  // ===== MAIN DISBURSEMENT TRANSACTION =====
+  // BANKING STANDARD: Debit Loan Account (Asset), Credit Customer Account (Liability)
+  transactionsToCreate.push({
+    TRANSACTION_ID,
+    EVENT_ID,
+    TRAN_JOURNAL_ID: JOURNAL_ID,
+    ACCT_ID: loanAccount._id,
+    ACCT_NO,
+    ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
+    CUST_ID: loanAccount.CUST_ID,
+    BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
+    debitAccount: ACCT_NO, // DEBIT: Loan Account (Asset increases)
+    creditAccount: fundingAcctNo, // CREDIT: Customer Account (Liability increases)
+    AMOUNT: disbursementAmount, // Full loan amount
+    TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
+    TRANSACTIONDATE: transactionDate,
+    createdBy: CREATED_BY,
+    status: 'COMPLETED',
+    description: `Loan disbursement - ${PRODUCT_TYPE}`,
+    reference: refs.main,
+    metadata: {
+      disbursementDate: transactionDate.toISOString(),
+      interestRate,
+      PRODUCT_TYPE,
+      totalLoanAmount: disbursementAmount,
+      netAmountToCustomer: netDisbursement,
+      fees: feeAmount,
+      upfrontInterest: upfrontInterestAmount,
+      guarantorId,
+      guarantorName,
+      guaranteedAmount
+    }
+  });
+
+  // ===== FEE TRANSACTION =====
   if (feeAmount > 0) {
     transactionsToCreate.push({
       TRANSACTION_ID: `${TRANSACTION_ID}-FEE`,
@@ -89,14 +143,15 @@ async function processLoanDisbursementTransactions({
       ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
       CUST_ID: loanAccount.CUST_ID,
       BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
-      debitAccount: fundingAcctNo,
-      creditAccount: glAccountNo,
+      debitAccount: fundingAcctNo, // DEBIT: Customer Account (reduce liability)
+      creditAccount: `${ACCT_NO}-FEES`, // CREDIT: Fee Income Account
       AMOUNT: feeAmount,
       TRANSACTION_TYPE: 'LOAN_FEE',
       TRANSACTIONDATE: transactionDate,
       createdBy: CREATED_BY,
       status: 'COMPLETED',
       description: `${FEE_TYPE} charged for loan disbursement`,
+      reference: refs.fee,
       metadata: {
         loanAccountNo: ACCT_NO,
         feeType: FEE_TYPE,
@@ -108,7 +163,7 @@ async function processLoanDisbursementTransactions({
     });
   }
 
-  // 2. Upfront interest transaction
+  // ===== UPFRONT INTEREST TRANSACTION =====
   if (upfrontInterestAmount > 0) {
     transactionsToCreate.push({
       TRANSACTION_ID: `${TRANSACTION_ID}-INT`,
@@ -119,14 +174,15 @@ async function processLoanDisbursementTransactions({
       ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
       CUST_ID: loanAccount.CUST_ID,
       BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
-      debitAccount: fundingAcctNo,
-      creditAccount: interestIncomeAccount,
+      debitAccount: fundingAcctNo, // DEBIT: Customer Account (reduce liability)
+      creditAccount: `${ACCT_NO}-INTEREST`, // CREDIT: Interest Income Account
       AMOUNT: upfrontInterestAmount,
       TRANSACTION_TYPE: 'LOAN_INTEREST',
       TRANSACTIONDATE: transactionDate,
       createdBy: CREATED_BY,
       status: 'COMPLETED',
       description: `${partialUpfrontInterest ? 'Partial' : 'Full'} upfront interest`,
+      reference: refs.interest,
       metadata: {
         interestType: partialUpfrontInterest ? 'PARTIAL_UPFRONT' : 'FULL_UPFRONT',
         percentage: partialUpfrontInterest ? upfrontInterestPercentage : null,
@@ -135,136 +191,53 @@ async function processLoanDisbursementTransactions({
         guaranteedAmount
       }
     });
-
-    const insurancePayableGL = '1-02-400-200-100-1';
-    transactionsToCreate.push({
-      TRANSACTION_ID: `${TRANSACTION_ID}-INSURANCE`,
-      EVENT_ID,
-      TRAN_JOURNAL_ID: JOURNAL_ID,
-      ACCT_ID: loanAccount._id,
-      ACCT_NO,
-      ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
-      CUST_ID: loanAccount.CUST_ID,
-      BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
-      debitAccount: fundingAcctNo,
-      creditAccount: insurancePayableGL,
-      AMOUNT: upfrontInterestAmount,
-      TRANSACTION_TYPE: 'INSURANCE_PREMIUM',
-      TRANSACTIONDATE: transactionDate,
-      createdBy: CREATED_BY,
-      status: 'COMPLETED',
-      description: 'Insurance premium charged',
-      metadata: {
-        guarantorId,
-        PRODUCT_TYPE
-      }
-    });
   }
 
-  // 3. Loan disbursement transaction
-  transactionsToCreate.push({
-    TRANSACTION_ID,
-    EVENT_ID,
-    TRAN_JOURNAL_ID: JOURNAL_ID,
-    ACCT_ID: loanAccount._id,
-    ACCT_NO,
-    ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
-    CUST_ID: loanAccount.CUST_ID,
-    BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
-    debitAccount: portfolioGLAcctNo,
-    creditAccount: fundingAcctNo,
-    AMOUNT: netDisbursement,
-    TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
-    TRANSACTIONDATE: transactionDate,
-    createdBy: CREATED_BY,
-    status: 'COMPLETED',
-    description: 'Loan amount disbursed',
-    metadata: {
-      disbursementDate: transactionDate,
-      interestRate,
-      PRODUCT_TYPE,
-      netDisbursementAmount: netDisbursement,
-      upfrontInterestAmount,
-      guarantorId,
-      guarantorName,
-      guaranteedAmount
-    }
-  });
-
-  // 4. Loan liability transaction
-  transactionsToCreate.push({
-    TRANSACTION_ID: `${TRANSACTION_ID}-LIAB`,
-    EVENT_ID,
-    TRAN_JOURNAL_ID: JOURNAL_ID,
-    ACCT_ID: loanAccount._id,
-    ACCT_NO,
-    ACCT_NM: customerAccount.ACCT_NM || 'UNKNOWN',
-    CUST_ID: loanAccount.CUST_ID,
-    BU_ID: customerAccount.BU_ID || 'DEFAULT_BU',
-    debitAccount: ACCT_NO,
-    creditAccount: portfolioGLAcctNo,
-    AMOUNT: netDisbursement,
-    TRANSACTION_TYPE: 'LOAN_LIABILITY',
-    TRANSACTIONDATE: transactionDate,
-    createdBy: CREATED_BY,
-    status: 'COMPLETED',
-    description: 'Loan liability recorded',
-    metadata: {
-      interestRate,
-      PRODUCT_TYPE,
-      netDisbursementAmount: netDisbursement,
-      upfrontInterestAmount,
-      upfrontInterestPercentage: partialUpfrontInterest ? upfrontInterestPercentage : null,
-      guarantorId,
-      guarantorName,
-      guaranteedAmount
-    }
-  });
+  console.log('Creating transactions with proper double-entry accounting:', transactionsToCreate.map(t => ({
+    type: t.TRANSACTION_TYPE,
+    debit: t.debitAccount,
+    credit: t.creditAccount,
+    amount: t.AMOUNT
+  })));
 
   // Save all transactions
-  const createdTransactions = await Transaction.insertMany(transactionsToCreate, { session });
-
-  // 2. Update CustomerAccount - fund gross amount
-  await CustomerAccount.updateOne(
-    { ACCT_NO: fundingAcctNo },
-    {
-      $inc: {
-        LEDGER_BALANCE: disbursementAmount,
-        CLEARED_BALANCE: disbursementAmount,
-        AVAILABLE_BALANCE: disbursementAmount
-      }
-    },
-    { session }
-  );
-
-  // 3. Deduct fee from CustomerAccount
-  if (feeAmount > 0) {
-    await CustomerAccount.updateOne(
-      { ACCT_NO: fundingAcctNo },
-      {
-        $inc: {
-          LEDGER_BALANCE: -feeAmount,
-          CLEARED_BALANCE: -feeAmount,
-          AVAILABLE_BALANCE: -feeAmount
-        }
-      },
-      { session }
-    );
+  try {
+    const createdTransactions = await Transaction.insertMany(transactionsToCreate, { session });
+    console.log('Transactions created successfully:', createdTransactions.length);
+  } catch (error) {
+    console.error('Error creating transactions:', error);
+    if (error.code === 11000) {
+      console.error('Duplicate key error details:', {
+        transactions: transactionsToCreate.map(t => ({
+          TRANSACTION_TYPE: t.TRANSACTION_TYPE,
+          reference: t.reference
+        }))
+      });
+    }
+    throw error;
   }
 
-  // 4. Deduct upfront interest or insurance
-  if (upfrontInterestAmount > 0) {
+  // ===== UPDATE CUSTOMER ACCOUNT BALANCES =====
+  try {
+    // Customer receives NET amount (after fees and upfront interest)
     await CustomerAccount.updateOne(
       { ACCT_NO: fundingAcctNo },
       {
         $inc: {
-          LEDGER_BALANCE: -upfrontInterestAmount,
-          CLEARED_BALANCE: -upfrontInterestAmount,
-          AVAILABLE_BALANCE: -upfrontInterestAmount
+          LEDGER_BALANCE: netDisbursement,
+          CLEARED_BALANCE: netDisbursement,
+          AVAILABLE_BALANCE: netDisbursement
+        },
+        $set: {
+          LAST_UPDATED: new Date()
         }
       },
       { session }
     );
+    console.log(`Customer account ${fundingAcctNo} credited with net amount: ${netDisbursement}`);
+  } catch (error) {
+    console.error('Error updating customer account balances:', error);
+    throw new Error(`Failed to update customer account balances: ${error.message}`);
   }
 
   return {
@@ -278,16 +251,23 @@ async function processLoanDisbursementTransactions({
     },
     interestRate,
     PRODUCT_TYPE,
-    transactions: createdTransactions,
+    transactions: transactionsToCreate,
+    transactionReferences: refs,
     guarantorDetails: { guarantorId, guarantorName, guaranteedAmount },
     transactionIds: {
       TRANSACTION_ID,
       EVENT_ID,
       JOURNAL_ID
+    },
+    accountingSummary: {
+      totalLoanAmount: disbursementAmount,
+      feesDeducted: feeAmount,
+      upfrontInterestDeducted: upfrontInterestAmount,
+      netToCustomer: netDisbursement,
+      principle: 'Debit Loan Account (Asset), Credit Customer Account (Liability)'
     }
   };
-};
-
+}
 
 /**
  * Public wrapper function for complete disbursement flow
@@ -309,22 +289,41 @@ async function processDisbursement({
   TRANSACTION_ID,
   EVENT_ID,
   JOURNAL_ID,
-  workflowId
+  workflowId,
+  transactionReferences = {}
 }) {
   if (!session) throw new Error('Database session is required');
   if (!loanContract?.loanAccountNo || !loanContract?.customer_id) {
-    throw new Error('Invalid loan contract data');
+    throw new Error('Invalid loan contract data: loanAccountNo and customer_id are required');
   }
 
-  if (guarantorDetails && !(
-    guarantorDetails.name &&
-    guarantorDetails.phone &&
-    guarantorDetails.relationship &&
-    guarantorDetails.guarantorNumberId
-  )) {
-    throw new Error('Guarantor details are incomplete');
+  if (!loanContract.loan_amount || loanContract.loan_amount <= 0) {
+    throw new Error('Invalid loan amount');
   }
 
+  if (!repaymentSchedule || !Array.isArray(repaymentSchedule) || repaymentSchedule.length === 0) {
+    throw new Error('Valid repayment schedule is required');
+  }
+
+  // Validate guarantor details if provided
+  if (guarantorDetails) {
+    const requiredFields = ['name', 'phone', 'relationship', 'guarantorNumberId'];
+    const missingFields = requiredFields.filter(field => !guarantorDetails[field]);
+    
+    if (missingFields.length > 0) {
+      throw new Error(`Guarantor details are incomplete. Missing: ${missingFields.join(', ')}`);
+    }
+  }
+
+  // Generate IDs if not provided
+  if (!TRANSACTION_ID || !EVENT_ID || !JOURNAL_ID) {
+    const ids = generateTransactionId();
+    TRANSACTION_ID = ids.TRANSACTION_ID;
+    EVENT_ID = ids.EVENT_ID;
+    JOURNAL_ID = ids.JOURNAL_ID;
+  }
+
+  // Create loan account
   const loan = new LoanAccount({
     JOURNAL_ID,
     CUST_ID: loanContract.customer_id,
@@ -364,11 +363,15 @@ async function processDisbursement({
     } : undefined,
     TRANSACTION_ID,
     EVENT_ID,
-    workflowId
+    workflowId,
+    CREATED_BY: loanContract.USER_ID || 'system',
+    CREATED_DATE: new Date(),
+    LAST_UPDATED: new Date()
   });
 
   await loan.save({ session });
 
+  // Create repayment schedule
   const scheduleData = repaymentSchedule.map((item, index) => ({
     LOAN_ACCOUNT_ID: loan._id,
     CUST_ID: loan.CUST_ID,
@@ -395,17 +398,22 @@ async function processDisbursement({
       percentage: partialUpfrontInterest ? upfrontInterestPercentage : null
     },
     GUARANTOR_ID: guarantorDetails?.guarantorId,
-    GUARANTEED_AMOUNT: guaranteedAmount
+    GUARANTEED_AMOUNT: guaranteedAmount,
+    CREATED_DATE: new Date()
   }));
 
   await RepaymentSchedule.insertMany(scheduleData, { session });
 
+  // Find customer account for funding
   const customerAccount = await CustomerAccount.findOne({
     ACCT_NO: loanContract.fundingAccountNo
   }).session(session);
 
-  if (!customerAccount) throw new Error('Customer account not found');
+  if (!customerAccount) {
+    throw new Error(`Customer account not found: ${loanContract.fundingAccountNo}`);
+  }
 
+  // Process transactions - NO GL PARAMETERS NEEDED (handled by product mapping)
   const transactionResult = await processLoanDisbursementTransactions({
     session,
     loanAccount: loan,
@@ -414,35 +422,35 @@ async function processDisbursement({
     loanFeeAmount: totalFees,
     fundingAcctNo: loanContract.fundingAccountNo,
     ACCT_NO: loan.ACCT_NO,
-    glAccountNo: loanProduct.feeIncomeAccount,
-    portfolioGLAcctNo: loanProduct.fundingSource,
     CREATED_BY: loanContract.USER_ID || 'system',
     DISBURSEMENT_DATE: new Date(loanContract.disbursementDate),
     INTEREST_RATE: interestRate,
     FEE_TYPE: 'PROCESSING_FEE',
-    PAYMENT_SOURCE: 'LOAN_FUNDING_SOURCE',
     PRODUCT_TYPE,
     deductUpfrontInterest,
     partialUpfrontInterest,
     upfrontInterestAmount,
     upfrontInterestPercentage,
-    interestIncomeAccount: loanProduct.interestIncomeAccount,
     guarantorId: guarantorDetails?.guarantorId,
     guaranteedAmount,
     guarantorName: guarantorDetails?.name,
     TRANSACTION_ID,
     EVENT_ID,
-    JOURNAL_ID
+    JOURNAL_ID,
+    transactionReferences
   });
 
   return {
     success: true,
     loanAccount: loan,
     transactions: transactionResult.transactions,
+    transactionReferences: transactionResult.transactionReferences,
     upfrontInterest: transactionResult.upfrontInterest,
     guarantorDetails: transactionResult.guarantorDetails,
     transactionIds: transactionResult.transactionIds,
-    workflowId
+    workflowId,
+    repaymentSchedule: scheduleData.length,
+    accountingSummary: transactionResult.accountingSummary
   };
 }
 

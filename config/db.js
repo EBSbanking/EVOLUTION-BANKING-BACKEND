@@ -1,7 +1,12 @@
+// config/db.js
 import mongoose from 'mongoose';
-import { MongoClient } from 'mongodb';
 import logger from '../utils/logger.js';
 import os from 'os';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 // Configuration
 const MAX_RETRIES = 5;
@@ -21,6 +26,7 @@ const connectionOptions = {
   serverSelectionTimeoutMS: 30000,
   retryReads: true,
   heartbeatFrequencyMS: 10000,
+  bufferCommands: false,
 };
 
 // Debug MongoDB URI (mask password for security)
@@ -28,11 +34,9 @@ const debugMongoURI = () => {
   if (!process.env.MONGODB_URI) {
     return 'MONGODB_URI is undefined';
   }
-  
   try {
     const url = new URL(process.env.MONGODB_URI);
-    const maskedURI = `${url.protocol}//${url.hostname}:${url.port}${url.pathname}?${url.searchParams}`;
-    return maskedURI;
+    return `${url.protocol}//${url.hostname}:${url.port}${url.pathname}?${url.searchParams}`;
   } catch (error) {
     return 'Invalid MONGODB_URI format';
   }
@@ -47,144 +51,144 @@ const connectDB = async () => {
   // Validate MONGODB_URI
   if (!process.env.MONGODB_URI) {
     logger.error('❌ MONGODB_URI is not defined in environment variables');
-    process.exit(1);
+    throw new Error('MONGODB_URI missing');
   }
 
   logger.info(`🔍 Attempting to connect to: ${debugMongoURI()}`);
   logger.info(`🔄 Connection attempt ${retryCount + 1}/${MAX_RETRIES}`);
 
+  // Wrap connect in timeout
+  const connectWithTimeout = () => Promise.race([
+    mongoose.connect(process.env.MONGODB_URI, connectionOptions),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Connect timeout: 30s exceeded')), 30000)
+    ),
+  ]);
+
   try {
-    // Set up event listeners first
-    mongoose.connection.on('connected', () => {
-      isConnected = true;
-      retryCount = 0; // Reset retry count on successful connection
-      logger.info('✅ MongoDB Connection Established', {
-        host: mongoose.connection.host,
-        port: mongoose.connection.port,
-        database: mongoose.connection.name,
-        readyState: mongoose.connection.readyState
+    // Set up event listeners
+    const setupListeners = () => {
+      mongoose.connection.once('connected', () => {
+        isConnected = true;
+        retryCount = 0;
+        logger.info('✅ MongoDB Connection Established', {
+          host: mongoose.connection.host,
+          port: mongoose.connection.port,
+          database: mongoose.connection.name,
+          readyState: mongoose.connection.readyState,
+        });
       });
-    });
 
-    mongoose.connection.on('disconnected', () => {
-      isConnected = false;
-      logger.warn('⚠️ MongoDB Disconnected');
-    });
-
-    mongoose.connection.on('error', (err) => {
-      logger.error('❌ MongoDB Connection Error', {
-        error: err.message,
-        name: err.name
+      mongoose.connection.once('disconnected', () => {
+        isConnected = false;
+        logger.warn('⚠️ MongoDB Disconnected');
       });
-    });
 
-    mongoose.connection.on('reconnected', () => {
-      isConnected = true;
-      logger.info('🔁 MongoDB Reconnected');
-    });
+      mongoose.connection.on('error', (err) => {
+        logger.error('❌ MongoDB Connection Error', {
+          error: err.message,
+          name: err.name,
+        });
+      });
+
+      mongoose.connection.once('reconnected', () => {
+        isConnected = true;
+        logger.info('🔁 MongoDB Reconnected');
+      });
+    };
+    setupListeners();
 
     // Attempt connection
     logger.info('🚀 Connecting to MongoDB...');
-    
-    // Test basic connectivity first
-    await testBasicConnection();
-    
-    await mongoose.connect(process.env.MONGODB_URI, connectionOptions);
-    
+    await connectWithTimeout();
+
+    // Wait for connection to be ready before initializing
+    await new Promise((resolve, reject) => {
+      if (mongoose.connection.readyState === 1) {
+        return resolve();
+      }
+      mongoose.connection.once('connected', resolve);
+      mongoose.connection.once('error', reject);
+      setTimeout(() => reject(new Error('Connection not ready after 30s')), 30000);
+    });
+
     logger.info('🎯 MongoDB connection successful');
-    
-    // Initialize database in background, don't block startup
-    setTimeout(() => {
-      initializeDatabase().catch(err => {
-        logger.error('⚠️ Database initialization failed (non-critical)', {
-          error: err.message
-        });
-      });
-    }, 1000);
+
+    // Initialize database
+    await initializeDatabase();
 
     return mongoose.connection;
-
   } catch (error) {
     retryCount++;
-    
     logger.error(`❌ MongoDB Connection Failed (Attempt ${retryCount}/${MAX_RETRIES})`, {
       error: error.message,
       name: error.name,
       code: error.code,
-      mongodbUri: debugMongoURI()
+      mongodbUri: debugMongoURI(),
     });
 
     if (retryCount >= MAX_RETRIES) {
-      logger.error('💥 Maximum connection retries reached. Application will exit.');
-      process.exit(1);
+      logger.error('💥 Maximum connection retries reached—failing open.');
+      throw error;
     }
 
     const delay = RETRY_DELAY * Math.pow(2, retryCount - 1);
     logger.warn(`⏳ Retrying connection in ${delay / 1000} seconds...`);
     await new Promise(resolve => setTimeout(resolve, delay));
-    
+
     return connectDB();
   }
 };
 
-// Test basic network connectivity
-const testBasicConnection = async () => {
-  const uri = process.env.MONGODB_URI;
-  try {
-    const url = new URL(uri);
-    const hostname = url.hostname;
-    const port = url.port || 27017;
-    
-    logger.info(`🔧 Testing connection to ${hostname}:${port}`);
-    
-    // You could add a simple TCP connection test here if needed
-  } catch (error) {
-    logger.warn('⚠️ Could not parse MongoDB URI for connectivity test');
-  }
-};
-
-// Enhanced database initialization with better error handling
+// Enhanced database initialization
 const initializeDatabase = async () => {
-  let initClient;
   try {
-    logger.info('🏗️ Starting database initialization...');
-    
-    initClient = new MongoClient(process.env.MONGODB_URI, {
-      ...connectionOptions,
-      serverSelectionTimeoutMS: 15000 // Shorter timeout for initialization
-    });
-    
-    await initClient.connect();
-    const db = initClient.db();
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('Connection not ready for init');
+    }
 
-    // Your existing initialization code here...
+    logger.info('🏗️ Starting database initialization...');
+    const db = mongoose.connection.db;
+
+    // Counters with upsert
     const counters = [
       { _id: 'guarantorId', seq: 1000000 },
       { _id: 'transactionId', seq: 1000000000 },
       { _id: 'amlThresholdId', seq: 1000 },
     ];
-    
+
     const counterCol = db.collection('counters');
-    for (const counter of counters) {
-      const exists = await counterCol.findOne({ _id: counter._id }, { projection: { _id: 1 } });
-      if (!exists) {
-        await counterCol.insertOne(counter);
-        logger.info(`🔢 Initialized counter for ${counter._id}`);
+
+    // Ensure unique index on _id
+    try {
+      await counterCol.createIndex({ _id: 1 }, { unique: true });
+      logger.debug('✅ Counters unique index ensured');
+    } catch (idxErr) {
+      if (idxErr.codeName !== 'IndexAlreadyExists') {
+        logger.warn('⚠️ Could not ensure counters index:', idxErr.message);
       }
     }
 
-    logger.info('🎉 Database initialization completed successfully');
+    let initCount = 0;
+    for (const counter of counters) {
+      const result = await counterCol.updateOne(
+        { _id: counter._id },
+        { $setOnInsert: { seq: counter.seq } },
+        { upsert: true }
+      );
+      if (result.upsertedCount > 0) {
+        logger.info(`🔢 Initialized counter for ${counter._id}`);
+        initCount++;
+      }
+    }
 
+    logger.info(`🎉 Database initialization completed: ${initCount} new counters`);
   } catch (err) {
     logger.error('❌ Database initialization failed', {
       error: err.message,
       stack: err.stack,
     });
-    // Don't throw here - initialization failure shouldn't crash the app
-  } finally {
-    if (initClient) {
-      await initClient.close();
-    }
+    throw err;
   }
 };
 
@@ -193,7 +197,7 @@ export const startTransactionSession = async () => {
   if (!isConnected) {
     throw new Error('Database not connected');
   }
-  
+
   const session = await mongoose.connection.startSession({
     defaultTransactionOptions: {
       readPreference: 'primary',
@@ -208,15 +212,12 @@ export const startTransactionSession = async () => {
 // Enhanced graceful shutdown
 const gracefulShutdown = async (signal) => {
   logger.info(`🛑 Received ${signal}. Closing MongoDB connection...`);
-  
   try {
-    await mongoose.connection.close();
+    await mongoose.connection.close({ force: false });
     logger.info('✅ MongoDB connection closed gracefully');
     process.exit(0);
   } catch (err) {
-    logger.error('❌ Failed to close MongoDB connection gracefully', {
-      error: err.message,
-    });
+    logger.error('❌ Failed to close MongoDB connection gracefully', { error: err.message });
     process.exit(1);
   }
 };
@@ -225,7 +226,6 @@ const gracefulShutdown = async (signal) => {
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   logger.error('💥 Uncaught Exception', { error: error.message });
   gracefulShutdown('uncaughtException');

@@ -1,3 +1,4 @@
+import mongoose from 'mongoose'; // Add this line
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -8,8 +9,8 @@ import asyncHandler from 'express-async-handler';
 import logger from '../utils/logger.js';
 import { getSecretKey } from '../middlewares/authMiddleware.js';
 import { v4 as uuidv4 } from 'uuid';
-
-
+import Permissions from '../models/Permissions.js';
+import PERMISSIONS from '../constants/permissions.js';
 
 // Simple IP validation function
 const validateIpAddress = (ip) => {
@@ -929,6 +930,7 @@ export const login = asyncHandler(async (req, res) => {
       userId: user._id,
       user_name: user.user_name,
       email: user.email,
+      preferred_name: user.preferred_name,
       role: roleName,
       BU_ROLE_ID: user.BU_ROLE_ID,
       primary_business_role: user.primary_business_role,
@@ -1649,6 +1651,325 @@ export const getUserLockStatus = asyncHandler(async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching user lock status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ✅ Reset User Session and Clear Caches (Fixed for employer_number/user_name tokens)
+export const resetUser = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User ID not found in token'
+      });
+    }
+
+    console.log('🔄 Resetting user session for identifier:', userId);
+
+    // Determine the type of identifier and search accordingly
+    let user;
+    
+    if (mongoose.isValidObjectId(userId)) {
+      // Search by MongoDB _id
+      user = await User.findById(userId)
+        .select('-password -passwordHistory')
+        .lean();
+    } else {
+      // Search by employer_number, user_name, or email
+      user = await User.findOne({
+        $or: [
+          { employer_number: userId },
+          { user_name: userId },
+          { email: userId }
+        ]
+      })
+      .select('-password -passwordHistory')
+      .lean();
+      
+      console.log('🔍 User search by identifier:', {
+        identifier: userId,
+        found: !!user,
+        user: user ? user.user_name : 'Not found'
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    console.log('✅ User found:', {
+      id: user._id,
+      user_name: user.user_name,
+      employer_number: user.employer_number,
+      BU_ROLE_ID: user.BU_ROLE_ID
+    });
+
+    // Get fresh permissions
+    let permissions = {};
+    let roleName = 'Unknown Role';
+    let flattenedPermissions = [];
+
+    // Check if user is Administrator
+    if (parseInt(user.BU_ROLE_ID) === 1) {
+      console.log('🔄 Administrator detected - granting full permissions');
+      
+      // Generate all permissions for administrator
+      permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
+        const permissionGroup = PERMISSIONS[key];
+        if (typeof permissionGroup === 'object') {
+          const groupPermissions = Object.values(permissionGroup);
+          acc[`${key}_ACCESS_LEVEL`] = groupPermissions;
+          flattenedPermissions = flattenedPermissions.concat(groupPermissions);
+        }
+        return acc;
+      }, {});
+      
+      roleName = 'Administrator';
+    } else {
+      // Non-admin logic
+      const permissionsDoc = await Permissions.findOne({ 
+        BU_ROLE_ID: user.BU_ROLE_ID 
+      }).select('permissions ROLE_NAME').lean();
+
+      if (permissionsDoc) {
+        permissions = permissionsDoc.permissions;
+        roleName = permissionsDoc.ROLE_NAME;
+        flattenedPermissions = Object.values(permissions).flat();
+      } else {
+        const roleDetails = getRoleWithPermissions(user.BU_ROLE_ID);
+        if (roleDetails) {
+          permissions = roleDetails.permissions;
+          roleName = roleDetails.ROLE_NM;
+          flattenedPermissions = Object.values(permissions).flat();
+        } else {
+          // Fallback permissions
+          permissions = {
+            DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
+            CUSTOMER_ACCESS_LEVEL: [PERMISSIONS.CUSTOMER.VIEW]
+          };
+          roleName = user.primary_business_role || 'User';
+          flattenedPermissions = Object.values(permissions).flat();
+        }
+      }
+    }
+
+    // Construct fresh user response
+    const freshUserData = {
+      id: user._id,
+      user_name: user.user_name,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      employer_number: user.employer_number,
+      main_business_unit: user.main_business_unit,
+      primary_business_role: user.primary_business_role,
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      status: user.status,
+      enable_multi_session: user.enable_multi_session,
+      validate_ip_address: user.validate_ip_address,
+      ip_address: user.ip_address,
+      is_supervisor: user.is_supervisor,
+      last_login: user.last_login,
+      created_at: user.created_at,
+      updated_at: user.updated_at
+    };
+
+    // Generate new token with fresh data - use MongoDB _id for consistency
+    const newToken = jwt.sign(
+      {
+        userId: user._id, // Always use MongoDB _id in new tokens
+        user_name: user.user_name,
+        role: roleName,
+        roleId: user.BU_ROLE_ID,
+        isAdmin: user.BU_ROLE_ID === 1,
+        permissions: flattenedPermissions,
+        iat: Math.floor(Date.now() / 1000),
+      },
+      getSecretKey(),
+      { expiresIn: '7d' }
+    );
+
+    console.log('✅ User session reset successfully:', {
+      user_name: user.user_name,
+      role: roleName,
+      permissions_count: flattenedPermissions.length,
+      new_token_generated: true,
+      token_uses_id: true
+    });
+
+    res.json({
+      success: true,
+      message: 'User session refreshed successfully',
+      token: newToken,
+      user: {
+        ...freshUserData,
+        permissions: permissions,
+        flattenedPermissions: flattenedPermissions,
+        roleName: roleName,
+        roleId: user.BU_ROLE_ID,
+        isAdministrator: parseInt(user.BU_ROLE_ID) === 1,
+        tokenIssuedAt: new Date().toISOString(),
+        tokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      cacheCleared: true,
+      timestamp: new Date().toISOString(),
+      debug: {
+        original_identifier: userId,
+        new_token_uses: 'mongodb_id'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Reset user session error:', {
+      message: error.message,
+      userId: req.user?.userId,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error resetting user session',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ✅ Clear User Caches (Admin function)
+export const clearUserCaches = asyncHandler(async (req, res) => {
+  try {
+    const { user_name } = req.params;
+    const { clearAll = false } = req.body;
+
+    let result;
+    
+    if (clearAll) {
+      // Clear all user-related caches (simulated - in production you might use Redis)
+      console.log('🗑️ Clearing all user caches requested by:', req.user.user_name);
+      result = {
+        cleared: 'all_user_caches',
+        message: 'All user caches cleared (simulated)'
+      };
+    } else if (user_name) {
+      // Clear specific user cache
+      console.log('🗑️ Clearing cache for user:', user_name, 'requested by:', req.user.user_name);
+      
+      // Find user to verify existence
+      const user = await User.findOne({ 
+        user_name: { $regex: new RegExp(`^${user_name}$`, 'i') } 
+      });
+      
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      result = {
+        cleared: `cache_for_${user_name}`,
+        user_id: user._id,
+        message: `Cache cleared for user: ${user_name}`
+      };
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Either user_name or clearAll parameter is required'
+      });
+    }
+
+    res.json({
+      success: true,
+      ...result,
+      timestamp: new Date().toISOString(),
+      performedBy: req.user.user_name
+    });
+
+  } catch (error) {
+    console.error('❌ Clear user caches error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error clearing user caches',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ✅ Get User Session Info
+export const getUserSessionInfo = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User ID not found in token'
+      });
+    }
+
+    const user = await User.findById(userId)
+      .select('user_name email first_name last_name BU_ROLE_ID primary_business_role status last_login created_at')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Decode token to get issued and expiry info
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    let tokenInfo = {};
+    
+    if (token) {
+      try {
+        const decoded = jwt.decode(token);
+        if (decoded) {
+          tokenInfo = {
+            issuedAt: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
+            expiresAt: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null,
+            issuedAgo: decoded.iat ? Math.floor((Date.now() - decoded.iat * 1000) / 60000) + ' minutes ago' : null,
+            expiresIn: decoded.exp ? Math.floor((decoded.exp * 1000 - Date.now()) / 60000) + ' minutes' : null
+          };
+        }
+      } catch (error) {
+        console.warn('Could not decode token for session info');
+      }
+    }
+
+    res.json({
+      success: true,
+      session: {
+        user: {
+          id: user._id,
+          user_name: user.user_name,
+          name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+          role: user.primary_business_role,
+          roleId: user.BU_ROLE_ID,
+          status: user.status,
+          lastLogin: user.last_login,
+          accountCreated: user.created_at
+        },
+        token: tokenInfo,
+        currentTime: new Date().toISOString(),
+        sessionDuration: user.last_login ? 
+          Math.floor((Date.now() - new Date(user.last_login).getTime()) / 60000) + ' minutes' : 
+          'Unknown'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Get user session info error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user session info',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

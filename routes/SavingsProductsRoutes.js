@@ -1,18 +1,25 @@
 import express from 'express';
-import { createSavingsProduct, getSavingsProduct, getAllSavingsProducts, updateSavingsProduct } from '../controllers/SavingsProductController.js';
+import { 
+  createSavingsProduct, 
+  getSavingsProduct, 
+  getAllSavingsProducts, 
+  updateSavingsProduct, 
+  getProductsByBU 
+} from '../controllers/SavingsProductController.js';
 
 const router = express.Router();
 
-// Get all savings products
-router.get('/savings-products', getAllSavingsProducts);
+// Base routes for savings products
+router.route('/savings-products')
+  .get(getAllSavingsProducts)        // GET /api/products/savings-products
+  .post(createSavingsProduct);       // POST /api/products/savings-products
 
-// Create a new savings product
-router.post('/savings-products', createSavingsProduct);
+// Routes with productCode
+router.route('/savings-products/:productCode')
+  .get(getSavingsProduct)            // GET /api/products/savings-products/:productCode
+  .put(updateSavingsProduct);        // PUT /api/products/savings-products/:productCode
 
-// Get a savings product by productCode
-router.get('/savings-products/:productCode', getSavingsProduct);
-
-// Update a savings product by productCode
-router.put('/savings-products/:productCode', updateSavingsProduct);
+// Business Unit specific routes
+router.get('/savings-products/bu/:bu_id', getProductsByBU); // GET /api/products/savings-products/bu/:bu_id
 
 export default router;

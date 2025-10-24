@@ -1093,11 +1093,384 @@ export function cleanupReportFiles(filePath) {
   }
 }
 
+/**
+ * Generate Thrift Accounts Report (PDF)
+ * @param {Array<Object>} thriftAccounts - Array of thrift account objects
+ * @param {Object} filters - Filter criteria used for the report
+ * @param {Response} res - Express response object
+ * @returns {Promise<void>} Resolves when PDF is generated, rejects on error
+ */
+
+export function generateThriftAccountsReport(thriftAccounts, filters, res) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (res.headersSent) {
+        logger.warn('Headers already sent for thrift-accounts report');
+        return reject(new Error('Response already sent'));
+      }
+
+      if (!Array.isArray(thriftAccounts)) {
+        throw new Error('thriftAccounts must be an array');
+      }
+
+      const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename=thrift_accounts_report.pdf');
+
+      doc.pipe(res);
+
+      // Path to bank logo
+      const logoPath = path.join(__dirname, '../image for test/logo.PNG');
+      if (fs.existsSync(logoPath)) {
+        doc.image(logoPath, 40, 20, { width: 80 });
+      } else {
+        logger.warn(`Bank logo image not found at: ${logoPath}`);
+      }
+
+      // Header
+      doc.fontSize(16).font('Helvetica-Bold')
+         .text('THRIFT ACCOUNTS REPORT', 130, 30, { align: 'center', underline: true });
+      
+      // Report date and filters
+      doc.fontSize(10).font('Helvetica')
+         .text(`Generated on: ${new Date().toLocaleDateString('en-NG', {
+           year: 'numeric',
+           month: 'long',
+           day: 'numeric',
+           hour: '2-digit',
+           minute: '2-digit'
+         })}`, 40, 60);
+      
+      // Filters information
+      let filterInfo = 'All Accounts';
+      if (filters) {
+        const filterParts = [];
+        if (filters.COLLECTION_TYPE) filterParts.push(`Type: ${filters.COLLECTION_TYPE}`);
+        if (filters.status) filterParts.push(`Status: ${filters.status}`);
+        if (filters.RELATIONSHIP_MANAGER) filterParts.push(`Manager: ${filters.RELATIONSHIP_MANAGER}`);
+        if (filters.startDate && filters.endDate) {
+          filterParts.push(`Period: ${new Date(filters.startDate).toLocaleDateString()} - ${new Date(filters.endDate).toLocaleDateString()}`);
+        }
+        if (filterParts.length > 0) {
+          filterInfo = filterParts.join(' | ');
+        }
+      }
+      
+      doc.text(`Filters: ${filterInfo}`, 40, 75);
+      doc.text(`Total Accounts: ${thriftAccounts.length}`, 40, 90);
+
+      // Summary Statistics
+      const totalAmount = thriftAccounts.reduce((sum, account) => sum + (account.AMOUNT || 0), 0);
+      const activeAccounts = thriftAccounts.filter(acc => acc.status === 'active').length;
+      const collectionTypeCounts = thriftAccounts.reduce((acc, account) => {
+        const type = account.COLLECTION_TYPE || 'UNKNOWN';
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {});
+
+      doc.text(`Total Balance: ₦${totalAmount.toLocaleString('en-NG')}`, 400, 60);
+      doc.text(`Active Accounts: ${activeAccounts}`, 400, 75);
+      doc.text(`Inactive Accounts: ${thriftAccounts.length - activeAccounts}`, 400, 90);
+
+      // Table headers
+      const headers = [
+        { label: 'Cust ID', x: 40, width: 60 },
+        { label: 'Account No', x: 100, width: 70 },
+        { label: 'Full Name', x: 170, width: 90 },
+        { label: 'Collection Type', x: 260, width: 60 },
+        { label: 'Balance (₦)', x: 320, width: 70 },
+        { label: 'Opened Date', x: 390, width: 70 },
+        { label: 'Relationship Manager', x: 460, width: 90 },
+        { label: 'Status', x: 550, width: 50 },
+        { label: 'Created Date', x: 600, width: 70 }
+      ];
+
+      let currentY = 120;
+
+      // Draw table headers
+      doc.fontSize(9).font('Helvetica-Bold');
+      headers.forEach(header => {
+        doc.text(header.label, header.x, currentY, { width: header.width });
+      });
+
+      // Draw line under headers
+      doc.moveTo(40, currentY + 15).lineTo(670, currentY + 15).stroke();
+      currentY += 25;
+
+      // Table rows
+      doc.fontSize(8).font('Helvetica');
+      
+      thriftAccounts.forEach((account, index) => {
+        // Check if we need a new page
+        if (currentY > 500) {
+          doc.addPage();
+          currentY = 40;
+          
+          // Redraw headers on new page
+          doc.fontSize(9).font('Helvetica-Bold');
+          headers.forEach(header => {
+            doc.text(header.label, header.x, currentY, { width: header.width });
+          });
+          doc.moveTo(40, currentY + 15).lineTo(670, currentY + 15).stroke();
+          currentY += 25;
+          doc.fontSize(8).font('Helvetica');
+        }
+
+        // Alternate row background
+        if (index % 2 === 0) {
+          doc.rect(40, currentY - 5, 630, 20).fillAndStroke('#f8f9fa', '#e9ecef');
+        }
+
+        // Customer ID
+        doc.text(account.CUST_ID || 'N/A', headers[0].x, currentY, { 
+          width: headers[0].width 
+        });
+
+        // Account Number
+        doc.text(account.ACCT_NO || 'N/A', headers[1].x, currentY, { 
+          width: headers[1].width 
+        });
+
+        // Full Name
+        const fullName = account.FULL_NAME || `${account.FIRST_NAME || ''} ${account.LASTNAME || ''}`.trim() || 'N/A';
+        doc.text(fullName, headers[2].x, currentY, { 
+          width: headers[2].width,
+          ellipsis: true
+        });
+
+        // Collection Type with color coding
+        const collectionType = account.COLLECTION_TYPE || 'N/A';
+        if (collectionType === 'DAILY') {
+          doc.fillColor('#1890ff');
+        } else if (collectionType === 'WEEKLY') {
+          doc.fillColor('#52c41a');
+        } else if (collectionType === 'MONTHLY') {
+          doc.fillColor('#fa8c16');
+        } else {
+          doc.fillColor('#722ed1');
+        }
+        doc.text(collectionType, headers[3].x, currentY, { 
+          width: headers[3].width 
+        });
+        doc.fillColor('#000000');
+
+        // Balance
+        const balance = account.AMOUNT || 0;
+        doc.text(balance.toLocaleString('en-NG', { 
+          minimumFractionDigits: 2, 
+          maximumFractionDigits: 2 
+        }), headers[4].x, currentY, { 
+          width: headers[4].width,
+          align: 'right'
+        });
+
+        // Opened Date
+        const openedDate = account.OPENED_DT ? 
+          new Date(account.OPENED_DT).toLocaleDateString('en-NG', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+          }) : 'N/A';
+        doc.text(openedDate, headers[5].x, currentY, { 
+          width: headers[5].width 
+        });
+
+        // Relationship Manager
+        const manager = account.RELATIONSHIP_MANAGER || 'N/A';
+        doc.text(manager, headers[6].x, currentY, { 
+          width: headers[6].width,
+          ellipsis: true
+        });
+
+        // Status with color coding
+        const status = account.status || 'active';
+        if (status === 'active') {
+          doc.fillColor('#52c41a');
+        } else if (status === 'inactive') {
+          doc.fillColor('#faad14');
+        } else if (status === 'suspended') {
+          doc.fillColor('#f5222d');
+        } else {
+          doc.fillColor('#666666');
+        }
+        doc.text(status.toUpperCase(), headers[7].x, currentY, { 
+          width: headers[7].width,
+          align: 'center'
+        });
+        doc.fillColor('#000000');
+
+        // Created Date
+        const createdDate = account.createdAt ? 
+          new Date(account.createdAt).toLocaleDateString('en-NG', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+          }) : 'N/A';
+        doc.text(createdDate, headers[8].x, currentY, { 
+          width: headers[8].width 
+        });
+
+        currentY += 20;
+      });
+
+      // Summary section on last page
+      if (currentY > 400) {
+        doc.addPage();
+        currentY = 40;
+      }
+
+      doc.fontSize(12).font('Helvetica-Bold')
+         .text('SUMMARY STATISTICS', 40, currentY, { underline: true });
+      currentY += 25;
+
+      doc.fontSize(10).font('Helvetica');
+      
+      // Collection Type Breakdown
+      doc.text('Collection Type Breakdown:', 40, currentY);
+      currentY += 15;
+      
+      Object.entries(collectionTypeCounts).forEach(([type, count]) => {
+        const percentage = ((count / thriftAccounts.length) * 100).toFixed(1);
+        doc.text(`• ${type}: ${count} accounts (${percentage}%)`, 60, currentY);
+        currentY += 12;
+      });
+
+      currentY += 10;
+
+      // Balance Summary
+      const avgBalance = totalAmount / thriftAccounts.length;
+      const maxBalance = Math.max(...thriftAccounts.map(acc => acc.AMOUNT || 0));
+      const minBalance = Math.min(...thriftAccounts.map(acc => acc.AMOUNT || 0));
+
+      doc.text('Balance Summary:', 40, currentY);
+      currentY += 15;
+      doc.text(`• Total Balance: ₦${totalAmount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 60, currentY);
+      currentY += 12;
+      doc.text(`• Average Balance: ₦${avgBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 60, currentY);
+      currentY += 12;
+      doc.text(`• Highest Balance: ₦${maxBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 60, currentY);
+      currentY += 12;
+      doc.text(`• Lowest Balance: ₦${minBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 60, currentY);
+
+      // Footer on each page
+      try {
+        const pageRange = doc.bufferedPageRange();
+        if (pageRange && pageRange.count > 0) {
+          for (let i = 0; i < pageRange.count; i++) {
+            doc.switchToPage(i);
+            doc.fontSize(8)
+               .text(`Page ${i + 1} of ${pageRange.count}`, 40, doc.page.height - 20, { align: 'center' })
+               .text('Confidential: For internal use only', 40, doc.page.height - 10, { align: 'center' });
+          }
+        }
+      } catch (error) {
+        logger.warn('Error adding footer to pages', { error: error.message });
+      }
+
+      doc.on('end', () => resolve());
+      doc.on('error', (err) => {
+        logger.error('Error generating thrift accounts PDF', { error: err.message });
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            success: false, 
+            message: 'Error generating thrift accounts report PDF' 
+          });
+        }
+        reject(err);
+      });
+
+      doc.end();
+    } catch (err) {
+      logger.error('Error in generateThriftAccountsReport', { error: err.message });
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: 'Error generating thrift accounts report PDF' 
+        });
+      }
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Generate Thrift Accounts Excel Report
+ * @param {Array<Object>} thriftAccounts - Array of thrift account objects
+ * @param {Object} filters - Filter criteria used for the report
+ * @returns {string} Path to generated Excel file
+ */
+export function generateThriftAccountsExcelReport(thriftAccounts, filters) {
+  const reportsDir = path.join(__dirname, '../reports');
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir, { recursive: true });
+  }
+
+  const uniqueId = uuidv4();
+  const excelPath = path.join(reportsDir, `thrift_accounts_report_${uniqueId}.xlsx`);
+
+  // Prepare data for Excel
+  const excelData = thriftAccounts.map(account => ({
+    'Customer ID': account.CUST_ID || 'N/A',
+    'Account Number': account.ACCT_NO || 'N/A',
+    'Full Name': account.FULL_NAME || `${account.FIRST_NAME || ''} ${account.LASTNAME || ''}`.trim() || 'N/A',
+    'Collection Type': account.COLLECTION_TYPE || 'N/A',
+    'Balance (₦)': account.AMOUNT || 0,
+    'Opened Date': account.OPENED_DT ? new Date(account.OPENED_DT).toLocaleDateString() : 'N/A',
+    'Relationship Manager': account.RELATIONSHIP_MANAGER || 'N/A',
+    'Status': account.status || 'active',
+    'Created Date': account.createdAt ? new Date(account.createdAt).toLocaleDateString() : 'N/A',
+    'Last Collection Date': account.lastCollectionDate ? new Date(account.lastCollectionDate).toLocaleDateString() : 'N/A',
+    'Account Type': account.accountType || 'N/A',
+    'Total Contributions': account.totalContributions || 0,
+    'Total Withdrawals': account.totalWithdrawals || 0
+  }));
+
+  // Create workbook and worksheet
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(excelData);
+
+  // Add summary sheet
+  const summaryData = [
+    ['THRIFT ACCOUNTS REPORT SUMMARY'],
+    [''],
+    ['Generated on:', new Date().toLocaleDateString()],
+    ['Total Accounts:', thriftAccounts.length],
+    ['Total Balance:', thriftAccounts.reduce((sum, acc) => sum + (acc.AMOUNT || 0), 0)],
+    ['Active Accounts:', thriftAccounts.filter(acc => acc.status === 'active').length],
+    [''],
+    ['Collection Type Breakdown:']
+  ];
+
+  // Add collection type breakdown
+  const typeCounts = thriftAccounts.reduce((acc, account) => {
+    const type = account.COLLECTION_TYPE || 'UNKNOWN';
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {});
+
+  Object.entries(typeCounts).forEach(([type, count]) => {
+    summaryData.push([`${type}:`, count]);
+  });
+
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+  
+  // Add worksheets to workbook
+  XLSX.utils.book_append_sheet(wb, ws, 'Thrift Accounts');
+  XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+
+  // Write file
+  XLSX.writeFile(wb, excelPath);
+
+  return excelPath;
+}
+
 export default {
   generateTermDepositContractLetter,
   generateCustomerAccountStatement,
   generateReport,
   generateTrialBalanceReport,
   generateExcelReport,
-  cleanupReportFiles
+  cleanupReportFiles,
+   generateThriftAccountsReport,
+  generateThriftAccountsExcelReport
 };

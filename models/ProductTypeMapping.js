@@ -423,8 +423,8 @@ const ProductTypeMappingSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-ProductTypeMappingSchema.index({ PROD_ID: 1 }, { unique: true });
+// // Indexes
+// ProductTypeMappingSchema.index({ PROD_ID: 1 }, { unique: true });
 
 // Pre-save Hook - REMOVED the restrictive PROD_ID validation
 ProductTypeMappingSchema.pre('save', async function (next) {

@@ -83,13 +83,8 @@ customerSchema.virtual('aml', {
 customerSchema.set('toObject', { virtuals: true });
 customerSchema.set('toJSON', { virtuals: true });
 
-// Remove any explicit index definitions to avoid duplicates
-// Example of what to remove:
-// customerSchema.index({ CUST_ID: 1 }); // Removed
-// customerSchema.index({ BVN: 1 }); // Removed
-// customerSchema.index({ NIN: 1 }); // Removed
-// customerSchema.index({ EVENT_ID: 1 }); // Removed
-// customerSchema.index({ USER_ID: 1 }); // Removed
+// ✅ NO explicit schema.index() calls - all indexes handled via unique: true or index: true in schema fields
+// This eliminates duplicate index warnings for CUST_ID, CUST_NO, BVN, NIN, EVENT_ID, USER_ID
 
 // Create the Customer model
 const Customer = mongoose.model('Customer', customerSchema);

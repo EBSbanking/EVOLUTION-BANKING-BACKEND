@@ -1,14 +1,15 @@
 import mongoose from 'mongoose';
 import AuditTrail from '../models/AuditTrail.js';
-import logger from '../utils/logger.js';
+import logger from '../utils/logger.js';  // General ops logger
+import auditLogger from '../utils/AuditLogger.js';  // Hybrid audit logger (file + DB)
 
-// 🔹 Generate a sequential event_id
+// 🔹 Generate a sequential event_id (kept for backward compat, but now internal to logAuditTrail)
 const generateEventID = async () => {
   const lastEvent = await AuditTrail.findOne().sort({ event_id: -1 });
   return lastEvent ? lastEvent.event_id + 1 : 1;
 };
 
-/** * 🔹 Service function for internal use (no req/res) */
+/** 🔹 Service function for internal use (no req/res) – Now hybrid via auditLogger */
 export const addAuditTrail = async ({
   EVENT_TYPE,
   USER_ID,
@@ -18,7 +19,8 @@ export const addAuditTrail = async ({
   IP_ADDRESS,
   ENTITY_ID,
   ENTITY_TYPE,
-  session,
+  session,  // Optional: For transactions
+  additional_info = {},  // New: For extras like outcome, details
 }) => {
   try {
     if (!EVENT_TYPE || !USER_ID) {
@@ -29,61 +31,80 @@ export const addAuditTrail = async ({
       return null;
     }
 
-    const event_id = await generateEventID();
-
-    const auditEntry = new AuditTrail({
-      event_id,
-      user_id: USER_ID,
-      event_type: EVENT_TYPE,
-      action: ACTION,
-      old_value: OLD_VALUE,
-      new_value: NEW_VALUE,
-      ip_address: IP_ADDRESS,
-      entity_id: ENTITY_ID,
-      entity_type: ENTITY_TYPE,
-      created_at: new Date(),
+    // Log via hybrid (triggers DB save + file)
+    const auditLogResult = await new Promise((resolve, reject) => {
+      auditLogger.info('Audit Event', {
+        entity_type: ENTITY_TYPE || 'general',
+        entity_id: ENTITY_ID || null,
+        user_id: USER_ID,
+        action: ACTION,
+        old_value: OLD_VALUE,
+        new_value: NEW_VALUE,
+        ip_address: IP_ADDRESS,
+        event_type: EVENT_TYPE,
+        ...additional_info  // e.g., { outcome: 'success', details: {...} }
+      }, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);  // Returns enriched info with audit_db_id, event_id
+      });
     });
 
-    await auditEntry.save({ session });
+    // Extract DB entry (from transport's enrichment)
+    const event_id = auditLogResult.event_id;
+    const auditEntry = await AuditTrail.findOne({ event_id }).session(session);  // Fetch for return (if needed)
 
     logger.info('Audit trail entry created', { event_id, EVENT_TYPE, USER_ID });
-    return auditEntry;
+    return auditEntry || { event_id, ...auditLogResult };  // Fallback to log info if fetch fails
   } catch (error) {
     logger.error('Error creating audit trail', { error: error.message });
+    // Self-audit the failure
+    auditLogger.error('Audit Event', {
+      entity_type: 'audit_system',
+      entity_id: null,
+      user_id: USER_ID || 'system',
+      action: 'add_audit_trail',
+      old_value: null,
+      new_value: null,
+      ip_address: IP_ADDRESS || 'unknown',
+      event_type: 'ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     throw error;
   }
 };
 
-/** * 🔹 API route handler for creating audit trails manually */
+/** 🔹 API route handler for creating audit trails manually – Now uses addAuditTrail */
 export const createAuditTrail = async (req, res) => {
   try {
-    const { EVENT_TYPE, USER_ID, ACTION, OLD_VALUE, NEW_VALUE, IP_ADDRESS } =
-      req.body;
+    const { 
+      EVENT_TYPE, 
+      USER_ID, 
+      ACTION, 
+      OLD_VALUE, 
+      NEW_VALUE, 
+      IP_ADDRESS, 
+      ENTITY_ID, 
+      ENTITY_TYPE 
+    } = req.body;
+    const user_id = req.user_id || USER_ID;  // From middleware or body
+    const ip_address = req.ip_address || IP_ADDRESS;
 
-    if (
-      !EVENT_TYPE ||
-      !USER_ID ||
-      !ACTION ||
-      !NEW_VALUE ||
-      !IP_ADDRESS
-    ) {
+    if (!EVENT_TYPE || !user_id || !ACTION || !NEW_VALUE || !ip_address) {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const event_id = await generateEventID();
-
-    const auditEntry = new AuditTrail({
-      event_id,
-      user_id: USER_ID,
-      event_type: EVENT_TYPE,
-      action: ACTION,
-      old_value: OLD_VALUE,
-      new_value: NEW_VALUE,
-      ip_address: IP_ADDRESS,
-      created_at: new Date(),
+    const auditEntry = await addAuditTrail({
+      EVENT_TYPE,
+      USER_ID: user_id,
+      ACTION,
+      OLD_VALUE,
+      NEW_VALUE,
+      IP_ADDRESS: ip_address,
+      ENTITY_ID,
+      ENTITY_TYPE,
+      additional_info: { outcome: 'success', source: 'manual_api' }
     });
-
-    await auditEntry.save();
 
     return res.status(201).json({
       message: 'Audit trail entry created',
@@ -98,19 +119,47 @@ export const createAuditTrail = async (req, res) => {
   }
 };
 
-/** * 🔹 Archive an Audit Trail Entry */
+/** 🔹 Archive an Audit Trail Entry – With self-audit */
 export const archiveAuditTrail = async (req, res) => {
   try {
     const { id } = req.params;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     const auditTrail = await AuditTrail.findById(id);
 
     if (!auditTrail) {
+      // Self-audit the not-found
+      auditLogger.info('Audit Event', {
+        entity_type: 'audit_trail',
+        entity_id: id,
+        user_id,
+        action: 'archive_audit_trail',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address,
+        event_type: 'NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Audit trail not found' });
     }
 
+    const old_value = { archived: auditTrail.archived };
     auditTrail.archived = true;
     await auditTrail.save();
+
+    // Self-audit success
+    await addAuditTrail({
+      EVENT_TYPE: 'ARCHIVE',
+      USER_ID: user_id,
+      ACTION: 'archive_audit_trail',
+      OLD_VALUE: old_value,
+      NEW_VALUE: { archived: true },
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: id,
+      ENTITY_TYPE: 'audit_trail',
+      additional_info: { outcome: 'success' }
+    });
 
     return res.status(200).json({ message: 'Audit trail entry archived' });
   } catch (error) {
@@ -119,19 +168,45 @@ export const archiveAuditTrail = async (req, res) => {
   }
 };
 
-/** * 🔹 Restore an Audit Trail Entry */
+/** 🔹 Restore an Audit Trail Entry – With self-audit */
 export const restoreAuditTrail = async (req, res) => {
   try {
     const { id } = req.params;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     const auditTrail = await AuditTrail.findById(id);
 
     if (!auditTrail) {
+      auditLogger.info('Audit Event', {
+        entity_type: 'audit_trail',
+        entity_id: id,
+        user_id,
+        action: 'restore_audit_trail',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address,
+        event_type: 'NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Audit trail not found' });
     }
 
+    const old_value = { archived: auditTrail.archived };
     auditTrail.archived = false;
     await auditTrail.save();
+
+    await addAuditTrail({
+      EVENT_TYPE: 'RESTORE',
+      USER_ID: user_id,
+      ACTION: 'restore_audit_trail',
+      OLD_VALUE: old_value,
+      NEW_VALUE: { archived: false },
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: id,
+      ENTITY_TYPE: 'audit_trail',
+      additional_info: { outcome: 'success' }
+    });
 
     return res.status(200).json({ message: 'Audit trail entry restored' });
   } catch (error) {
@@ -140,10 +215,12 @@ export const restoreAuditTrail = async (req, res) => {
   }
 };
 
-/** * 🔹 Get all Audit Trail Entries with optional date filtering */
+/** 🔹 Get all Audit Trail Entries with optional date filtering – With self-audit */
 export const getAllAuditTrails = async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     // Build query object
     const query = {};
@@ -178,6 +255,19 @@ export const getAllAuditTrails = async (req, res) => {
 
     const auditTrails = await AuditTrail.find(query).sort({ created_at: -1 });
 
+    // Self-audit the query (e.g., for access logs)
+    await addAuditTrail({
+      EVENT_TYPE: 'QUERY',
+      USER_ID: user_id,
+      ACTION: 'get_all_audit_trails',
+      OLD_VALUE: null,
+      NEW_VALUE: { count: auditTrails.length, filters: { dateFrom, dateTo } },
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: null,
+      ENTITY_TYPE: 'audit_trail_list',
+      additional_info: { outcome: 'success' }
+    });
+
     return res.status(200).json(auditTrails);
   } catch (error) {
     console.error('Error fetching audit trails:', error);
@@ -185,16 +275,41 @@ export const getAllAuditTrails = async (req, res) => {
   }
 };
 
-/** * 🔹 Get Audit Trail Entry by ID */
+/** 🔹 Get Audit Trail Entry by ID – With self-audit */
 export const getAuditTrailById = async (req, res) => {
   try {
     const { id } = req.params;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     const auditTrail = await AuditTrail.findById(id);
 
     if (!auditTrail) {
+      auditLogger.info('Audit Event', {
+        entity_type: 'audit_trail',
+        entity_id: id,
+        user_id,
+        action: 'get_audit_trail_by_id',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address,
+        event_type: 'NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Audit trail not found' });
     }
+
+    await addAuditTrail({
+      EVENT_TYPE: 'QUERY',
+      USER_ID: user_id,
+      ACTION: 'get_audit_trail_by_id',
+      OLD_VALUE: null,
+      NEW_VALUE: { event_id: auditTrail.event_id },
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: id,
+      ENTITY_TYPE: 'audit_trail',
+      additional_info: { outcome: 'success' }
+    });
 
     return res.status(200).json(auditTrail);
   } catch (error) {
@@ -203,22 +318,47 @@ export const getAuditTrailById = async (req, res) => {
   }
 };
 
-/** * 🔹 Update an Audit Trail Entry */
+/** 🔹 Update an Audit Trail Entry – With self-audit */
 export const updateAuditTrail = async (req, res) => {
   try {
     const { id } = req.params;
     const { ACTION, NEW_VALUE } = req.body;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     const auditTrail = await AuditTrail.findById(id);
 
     if (!auditTrail) {
+      auditLogger.info('Audit Event', {
+        entity_type: 'audit_trail',
+        entity_id: id,
+        user_id,
+        action: 'update_audit_trail',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address,
+        event_type: 'NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Audit trail not found' });
     }
 
+    const old_value = { action: auditTrail.action, new_value: auditTrail.new_value };
     auditTrail.action = ACTION || auditTrail.action;
     auditTrail.new_value = NEW_VALUE || auditTrail.new_value;
-
     await auditTrail.save();
+
+    await addAuditTrail({
+      EVENT_TYPE: 'UPDATE',
+      USER_ID: user_id,
+      ACTION: 'update_audit_trail',
+      OLD_VALUE: old_value,
+      NEW_VALUE: { action: auditTrail.action, new_value: auditTrail.new_value },
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: id,
+      ENTITY_TYPE: 'audit_trail',
+      additional_info: { outcome: 'success' }
+    });
 
     return res.status(200).json({ message: 'Audit trail entry updated' });
   } catch (error) {
@@ -227,18 +367,44 @@ export const updateAuditTrail = async (req, res) => {
   }
 };
 
-/** * 🔹 Delete an Audit Trail Entry */
+/** 🔹 Delete an Audit Trail Entry – With self-audit */
 export const deleteAuditTrail = async (req, res) => {
   try {
     const { id } = req.params;
+    const user_id = req.user_id || 'system';
+    const ip_address = req.ip_address || 'unknown';
 
     const auditTrail = await AuditTrail.findById(id);
 
     if (!auditTrail) {
+      auditLogger.info('Audit Event', {
+        entity_type: 'audit_trail',
+        entity_id: id,
+        user_id,
+        action: 'delete_audit_trail',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address,
+        event_type: 'NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Audit trail not found' });
     }
 
+    const old_value = { event_id: auditTrail.event_id };
     await auditTrail.deleteOne();
+
+    await addAuditTrail({
+      EVENT_TYPE: 'DELETE',
+      USER_ID: user_id,
+      ACTION: 'delete_audit_trail',
+      OLD_VALUE: old_value,
+      NEW_VALUE: null,
+      IP_ADDRESS: ip_address,
+      ENTITY_ID: id,
+      ENTITY_TYPE: 'audit_trail',
+      additional_info: { outcome: 'success' }
+    });
 
     return res.status(200).json({ message: 'Audit trail entry deleted' });
   } catch (error) {

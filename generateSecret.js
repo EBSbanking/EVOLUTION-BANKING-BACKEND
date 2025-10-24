@@ -1,5 +1,5 @@
 // generateSecret.js
-const crypto = require('crypto');
+import crypto from 'crypto';
 
 // Generate a random session secret
 const sessionSecret = crypto.randomBytes(32).toString('hex');

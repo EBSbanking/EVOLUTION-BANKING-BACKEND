@@ -234,11 +234,11 @@ LoanAccountDetailsSchema.pre('save', function(next) {
 });
 
 // Indexes
-LoanAccountDetailsSchema.index({ CUST_ID: 1, STATUS: 1 });
-LoanAccountDetailsSchema.index({ PROD_ID: 1, STATUS: 1 });
-LoanAccountDetailsSchema.index({ MATURITY_DT: 1 });
-LoanAccountDetailsSchema.index({ nextSettlementDate: 1 });
-LoanAccountDetailsSchema.index({ APPL_ID: 1 }, { unique: true });
+// LoanAccountDetailsSchema.index({ CUST_ID: 1, STATUS: 1 });
+// LoanAccountDetailsSchema.index({ PROD_ID: 1, STATUS: 1 });
+// LoanAccountDetailsSchema.index({ MATURITY_DT: 1 });
+// LoanAccountDetailsSchema.index({ nextSettlementDate: 1 });
+// LoanAccountDetailsSchema.index({ APPL_ID: 1 }, { unique: true });
 
 // Static Methods
 LoanAccountDetailsSchema.statics.findByStatus = function(status) {

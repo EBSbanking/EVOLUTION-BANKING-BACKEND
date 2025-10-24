@@ -5,17 +5,17 @@ import mongoosePaginate from 'mongoose-paginate-v2';
 const RelationshipOfficerSchema = new mongoose.Schema({
   id: {
     type: String,
-    required: false, // set to true if always mandatory
+    required: false,
   },
   name: {
     type: String,
-    required: false, // set to true if always mandatory
+    required: false,
   }
-}, { _id: false }); // prevent creating an extra _id for nested schema
+}, { _id: false });
 
 const GuarantorAuditSchema = new mongoose.Schema({
   guarantorId: {
-    type: Number,  // Using Number as you specified
+    type: Number,
     required: true
   },
   action: {
@@ -26,8 +26,12 @@ const GuarantorAuditSchema = new mongoose.Schema({
       "DEACTIVATE",
       "REACTIVATE",
       "DELETE",
-      "APPROVED",   // ✅ added
-      "REJECTED"    // ✅ added
+      "APPROVED",
+      "REJECTED",
+      "REMOVAL_REQUESTED", // ✅ ADD THIS
+      "REMOVAL_APPROVED",  // ✅ ADD THIS  
+      "REMOVAL_REJECTED",  // ✅ ADD THIS
+      "REMOVAL_CANCELLED"  // ✅ ADD THIS
     ],
     required: true
   },
@@ -53,10 +57,9 @@ const GuarantorAuditSchema = new mongoose.Schema({
     default: {}
   }
 }, {
-  timestamps: true // adds createdAt & updatedAt automatically
+  timestamps: true
 });
 
-// Enable pagination
 GuarantorAuditSchema.plugin(mongoosePaginate);
 
 const GuarantorAudit =

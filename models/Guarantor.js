@@ -4,13 +4,12 @@ import mongoosePaginate from 'mongoose-paginate-v2';
 const GuarantorSchema = new mongoose.Schema(
   {
     GUARANTOR_ID: {
-  type: String,
-  required: [true, 'Guarantor ID is required'],
-  unique: true,
-  match: [/^\d{7}$/, 'Guarantor ID must be a 7-digit string'],
-  immutable: true,
-},
-
+      type: String,
+      required: [true, 'Guarantor ID is required'],
+      unique: true,
+      match: [/^\d{7}$/, 'Guarantor ID must be a 7-digit string'],
+      immutable: true,
+    },
     fullName: {
       type: String,
       required: [true, 'Full name is required'],
@@ -64,13 +63,73 @@ const GuarantorSchema = new mongoose.Schema(
         'Loan ID is required unless created by system',
       ],
     },
-       status: {
+    
+    // EXISTING FIELDS:
+    guaranteedLoans: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'LoanAccount'
+    }],
+    
+    removedAt: {
+      type: Date,
+      default: null
+    },
+    
+    removalReason: {
+      type: String,
+      default: null
+    },
+    
+    updatedBy: {
+      type: String,
+      default: null
+    },
+
+    // UPDATED STATUS FIELD - ADD 'DEACTIVATED'
+    status: {
       type: String,
       enum: {
-        values: ['ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'],
+        values: ['ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'DEACTIVATED'],
         message: '{VALUE} is not a valid status',
       },
       default: 'PENDING',
+    },
+
+    // ADD APPROVAL WORKFLOW FIELDS:
+    removalRequest: {
+      requestedAt: {
+        type: Date,
+        default: null
+      },
+      requestedBy: {
+        type: String,
+        default: null
+      },
+      reason: {
+        type: String,
+        default: null
+      },
+      notes: {
+        type: String,
+        default: null
+      },
+      loanAccountNumber: {
+        type: String,
+        default: null
+      },
+      status: {
+        type: String,
+        enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+        default: 'PENDING'
+      },
+      approvedBy: {
+        type: String,
+        default: null
+      },
+      approvedAt: {
+        type: Date,
+        default: null
+      }
     },
 
     email: {
@@ -181,6 +240,13 @@ GuarantorSchema.pre('save', function (next) {
       this.consentDate = new Date();
     }
   }
+  
+  // Auto-set removal request status based on main status
+  if (this.removalRequest && this.removalRequest.status === 'PENDING' && this.status === 'DEACTIVATED') {
+    this.removalRequest.status = 'APPROVED';
+    this.removalRequest.approvedAt = new Date();
+  }
+  
   next();
 });
 
@@ -191,10 +257,24 @@ GuarantorSchema.plugin(mongoosePaginate);
 GuarantorSchema.index({ fullName: 'text', idNumber: 'text' });
 GuarantorSchema.index({ loanId: 1, isActive: 1 });
 GuarantorSchema.index({ BU_ID: 1 });
+GuarantorSchema.index({ 'removalRequest.status': 1 }); // New index for approval workflow
 
-// Static method
+// Static methods for approval workflow
 GuarantorSchema.statics.findActiveByLoan = function (loanId) {
   return this.find({ loanId, isActive: true });
+};
+
+// Find pending removal requests
+GuarantorSchema.statics.findPendingRemovals = function () {
+  return this.find({ 
+    'removalRequest.status': 'PENDING',
+    isActive: true 
+  });
+};
+
+// Find by removal request status
+GuarantorSchema.statics.findByRemovalStatus = function (status) {
+  return this.find({ 'removalRequest.status': status });
 };
 
 const Guarantor = mongoose.models.Guarantor || mongoose.model('Guarantor', GuarantorSchema);

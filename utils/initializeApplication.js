@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import logger from './logger.js';
 
 /**
- * Safely creates indexes for a collection
+ * Safely creates indexes for a collection with enhanced error handling and idempotency
  */
 const createCollectionIndexes = async (db, collectionName, indexes) => {
   try {
@@ -15,29 +15,155 @@ const createCollectionIndexes = async (db, collectionName, indexes) => {
 
     const collection = db.collection(collectionName);
     
-    // Create each index with error handling
+    // Check existing indexes for idempotency
+    const existingIndexes = await collection.indexes();
+    const existingKeys = existingIndexes.map(idx => 
+      JSON.stringify(idx.key || { _id: 1 }) // Normalize for comparison
+    );
+    
+    let createdCount = 0;
+    
+    // Create each index only if it doesn't exist
     for (const index of indexes) {
+      const indexKeyStr = JSON.stringify(index.key);
+      if (existingKeys.includes(indexKeyStr)) {
+        logger.debug(`Index already exists for ${collectionName}: ${indexKeyStr}`);
+        continue;
+      }
+      
       try {
         await collection.createIndex(index.key, index.options || {});
-        logger.debug(`Created index for ${collectionName}: ${JSON.stringify(index.key)}`);
+        logger.debug(`Created index for ${collectionName}: ${indexKeyStr}`);
+        createdCount++;
       } catch (indexError) {
-        if (indexError.codeName === 'IndexOptionsConflict') {
-          logger.warn(`Index already exists: ${collectionName}.${Object.keys(index.key).join('_')}`);
+        // Handle different types of index errors
+        if (indexError.codeName === 'IndexOptionsConflict' || indexError.codeName === 'IndexAlreadyExists') {
+          logger.warn(`Index already exists (race?): ${collectionName}.${Object.keys(index.key).join('_')}`);
+        } else if (indexError.code === 11000 || indexError.codeName === 'DuplicateKey') {
+          logger.warn(`Duplicate key error creating index for ${collectionName}, attempting to fix...`);
+          
+          // For unique index errors, try to create sparse index instead
+          if (index.options?.unique) {
+            const indexName = index.options.name || Object.keys(index.key).map(k => `${k}_${index.key[k]}`).join('_');
+            try {
+              // First, drop the problematic index if it exists
+              await collection.dropIndex(indexName);
+              logger.debug(`Dropped problematic index: ${indexName}`);
+            } catch (dropError) {
+              if (dropError.codeName !== 'IndexNotFound') {
+                logger.debug(`Could not drop index ${indexName}: ${dropError.message}`);
+              }
+            }
+            
+            // Create sparse unique index
+            await collection.createIndex(index.key, { 
+              ...index.options, 
+              sparse: true,
+              name: indexName
+            });
+            logger.debug(`Created sparse unique index for ${collectionName}: ${indexKeyStr}`);
+            createdCount++;
+          } else {
+            throw indexError;
+          }
         } else {
           logger.error(`Failed to create index for ${collectionName}`, {
-            index,
-            error: indexError.message
+            index: indexKeyStr,
+            error: indexError.message,
+            code: indexError.code,
+            codeName: indexError.codeName
           });
-          throw indexError;
+          throw indexError; // Critical—bubble up
         }
       }
     }
+    
+    logger.info(`✅ Initialized ${collectionName}: Created ${createdCount} new indexes`);
   } catch (error) {
     logger.error(`Failed to initialize collection: ${collectionName}`, {
       error: error.message,
       stack: error.stack
     });
-    throw error;
+    throw error; // Re-throw for collection-level failures
+  }
+};
+
+/**
+ * Clean up duplicate null values in collections using batched updates
+ */
+const cleanupDuplicateNulls = async (db) => {
+  try {
+    logger.info('🧹 Starting duplicate null values cleanup...');
+    
+    const collectionsToClean = [
+      {
+        name: 'transactions',
+        field: 'transactionId',
+        uniqueField: '_id'
+      },
+      {
+        name: 'users', 
+        field: 'email',
+        uniqueField: '_id'
+      },
+      {
+        name: 'accounts',
+        field: 'accountNumber',
+        uniqueField: '_id'
+      }
+    ];
+
+    let totalUpdated = 0;
+
+    for (const { name, field, uniqueField } of collectionsToClean) {
+      try {
+        const collection = db.collection(name);
+        
+        // Count documents with null field values
+        const nullCount = await collection.countDocuments({ [field]: null });
+        
+        if (nullCount === 0) {
+          logger.debug(`No null ${field} values in ${name}`);
+          continue;
+        }
+        
+        logger.warn(`Found ${nullCount} documents with null ${field} in ${name}`);
+        
+        // Batch fetch null docs (limit 1000 per batch for perf)
+        const nullDocs = await collection.find({ [field]: null }).limit(1000).toArray();
+        
+        if (nullDocs.length === 0) continue;
+        
+        // Prepare bulk operations
+        const bulkOps = nullDocs.map(doc => ({
+          updateOne: {
+            filter: { [uniqueField]: doc[uniqueField] },
+            update: { $set: { [field]: `temp_${doc[uniqueField]}_${Date.now()}` } }
+          }
+        }));
+        
+        const result = await collection.bulkWrite(bulkOps, { ordered: false });
+        const updatedCount = result.modifiedCount || 0;
+        
+        logger.info(`Updated ${updatedCount} documents in ${name} with temporary ${field} values`);
+        totalUpdated += updatedCount;
+        
+        // If more than 1000, log warning (manual cleanup needed for very large sets)
+        if (nullCount > 1000) {
+          logger.warn(`Large null set in ${name} (${nullCount - updatedCount} remaining)—consider manual cleanup`);
+        }
+      } catch (cleanupError) {
+        logger.warn(`Could not cleanup ${name}.${field}: ${cleanupError.message}`);
+        // Continue with other collections
+      }
+    }
+    
+    logger.info(`✅ Null values cleanup completed: ${totalUpdated} total updates`);
+  } catch (error) {
+    logger.error('❌ Failed to cleanup duplicate null values', {
+      error: error.message
+    });
+    // Don't throw, continue with initialization
   }
 };
 
@@ -48,19 +174,55 @@ const initializeCollections = async () => {
   try {
     const db = mongoose.connection.db;
 
+    // Clean up duplicate null values before creating indexes
+    await cleanupDuplicateNulls(db);
+
     const collectionsConfig = {
       transactions: [
-        { key: { transactionId: 1 }, options: { unique: true } },
-        { key: { userId: 1, date: -1 } },
-        { key: { accountId: 1 } }
+        { 
+          key: { transactionId: 1 }, 
+          options: { 
+            unique: true, 
+            sparse: true,
+            name: "transactionId_unique"
+          } 
+        },
+        { 
+          key: { userId: 1, date: -1 }, 
+          options: { name: "userId_date_desc" } 
+        },
+        { 
+          key: { accountId: 1 }, 
+          options: { name: "accountId_index" } 
+        }
       ],
       users: [
-        { key: { email: 1 }, options: { unique: true } },
-        { key: { status: 1 } }
+        { 
+          key: { email: 1 }, 
+          options: { 
+            unique: true, 
+            sparse: true,
+            name: "email_unique" 
+          } 
+        },
+        { 
+          key: { status: 1 }, 
+          options: { name: "status_index" } 
+        }
       ],
       accounts: [
-        { key: { accountNumber: 1 }, options: { unique: true } },
-        { key: { userId: 1 } }
+        { 
+          key: { accountNumber: 1 }, 
+          options: { 
+            unique: true, 
+            sparse: true,
+            name: "accountNumber_unique" 
+          } 
+        },
+        { 
+          key: { userId: 1 }, 
+          options: { name: "userId_index" } 
+        }
       ]
     };
 
@@ -86,8 +248,13 @@ const initializeApplication = async () => {
   try {
     logger.info('🚀 Starting application initialization');
     
-    // Wait for MongoDB connection to be ready
-    await mongoose.connection.asPromise();
+    // Wait for MongoDB connection to be ready (with timeout)
+    await Promise.race([
+      mongoose.connection.asPromise(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('DB connection timeout in init')), 10000)
+      )
+    ]);
     
     await initializeCollections();
     
@@ -97,7 +264,11 @@ const initializeApplication = async () => {
       error: error.message,
       stack: error.stack
     });
-    throw error;
+    
+    // Don't throw the error to allow server to continue running
+    // but log it as a warning for monitoring
+    logger.warn('⚠️ Application initialization failed, but server will continue running');
+    logger.warn('   Database queries may fail until initialization completes');
   }
 };
 

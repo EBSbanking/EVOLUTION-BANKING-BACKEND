@@ -35,8 +35,7 @@ const transactionPolicySchema = new mongoose.Schema({
   CREATED_AT: { type: Date, default: Date.now }
 });
 
-// Compound index ensures one policy per role per type
-transactionPolicySchema.index({ ROLE_NM: 1, POLICY_TYPE: 1 }, { unique: true });
+
 
 const TransactionPolicy =
   mongoose.models.TransactionPolicy ||

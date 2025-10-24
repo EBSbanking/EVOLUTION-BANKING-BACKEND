@@ -161,14 +161,14 @@ LoanContractFormSchema.pre('save', function(next) {
   next();
 });
 
-// Add indexes for frequently queried fields
-LoanContractFormSchema.index({ loan_contract_no: 1 });
-LoanContractFormSchema.index({ customer_id: 1 });
-LoanContractFormSchema.index({ status: 1 });
-LoanContractFormSchema.index({ applicationId: 1 });
-LoanContractFormSchema.index({ workflowId: 1 });
-LoanContractFormSchema.index({ loanAccountNo: 1 });
-LoanContractFormSchema.index({ TERM_CD: 1 }); // Added index for TERM_CD
+// // Add indexes for frequently queried fields
+// LoanContractFormSchema.index({ loan_contract_no: 1 });
+// LoanContractFormSchema.index({ customer_id: 1 });
+// LoanContractFormSchema.index({ status: 1 });
+// LoanContractFormSchema.index({ applicationId: 1 });
+// LoanContractFormSchema.index({ workflowId: 1 });
+// LoanContractFormSchema.index({ loanAccountNo: 1 });
+// LoanContractFormSchema.index({ TERM_CD: 1 }); // Added index for TERM_CD
 
 const LoanContractForm = mongoose.model('LoanContractForm', LoanContractFormSchema);
 

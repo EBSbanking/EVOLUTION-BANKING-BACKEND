@@ -1024,49 +1024,133 @@ export const searchGuarantors = async (req, res) => {
   }
 };
 
-export const uncheckGuarantor = async (guarantorId, loanAccountNumber, reason, notes, userId, session) => {
-  let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
-    .session(session)
-    .populate('guaranteedLoans');
+// Function to REQUEST removal (sets status to PENDING)
+export const requestGuarantorRemoval = async (guarantorId, loanAccountNumber, reason, notes, userId, session) => {
+  // Find guarantor
+  let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
 
   if (!guarantor) {
     throw new Error('Guarantor not found');
   }
 
-  let loanAccount = guarantor.guaranteedLoans.find(loan => loan.ACCT_NO === loanAccountNumber);
-  if (!loanAccount && loanAccountNumber) {
-    loanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
-    if (loanAccount && !guarantor.guaranteedLoans.includes(loanAccount._id)) {
-      guarantor.guaranteedLoans.push(loanAccount._id);
-      await guarantor.save({ session });
+  // Check if already has pending removal request
+  if (guarantor.removalRequest && guarantor.removalRequest.status === 'PENDING') {
+    throw new Error('Guarantor already has a pending removal request');
+  }
+
+  // Store previous values for audit
+  const previousValues = {
+    status: guarantor.status,
+    removalRequest: guarantor.removalRequest ? { ...guarantor.removalRequest } : null
+  };
+
+  // Update guarantor with removal request (but don't deactivate yet)
+  guarantor.removalRequest = {
+    requestedAt: new Date(),
+    requestedBy: userId,
+    reason: reason || 'Guarantor removal requested',
+    notes: notes || '',
+    loanAccountNumber: loanAccountNumber,
+    status: 'PENDING'
+  };
+  
+  // Update main status to show pending removal
+  guarantor.status = 'PENDING';
+  
+  await guarantor.save({ session });
+
+  // Create audit trail for removal request - USE EXISTING ENUM VALUE
+  await new GuarantorAudit({
+    action: 'UPDATE', // ✅ Use 'UPDATE' instead of 'REMOVAL_REQUESTED'
+    guarantorId: parseInt(guarantor.GUARANTOR_ID),
+    performedBy: userId,
+    relationshipOfficer: { 
+      id: guarantor.BU_ID, 
+      name: guarantor.relationshipOfficerName 
+    },
+    notes: `Removal requested: ${reason}`,
+    previousValues: previousValues,
+    changedFields: ['removalRequest', 'status']
+  }).save({ session });
+
+  return {
+    guarantorId: guarantor.GUARANTOR_ID,
+    name: guarantor.fullName,
+    removalRequest: guarantor.removalRequest,
+    currentStatus: guarantor.status
+  };
+};
+
+// Function to APPROVE removal (sets status to DEACTIVATED)
+export const approveGuarantorRemoval = async (guarantorId, approverId, session) => {
+  // Find guarantor
+  let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId }).session(session);
+
+  if (!guarantor) {
+    throw new Error('Guarantor not found');
+  }
+
+  // Check if there's a pending removal request
+  if (!guarantor.removalRequest || guarantor.removalRequest.status !== 'PENDING') {
+    throw new Error('No pending removal request found for this guarantor');
+  }
+
+  let loanAccount = null;
+  
+  // Find and update loan account if loanAccountNumber was provided
+  if (guarantor.removalRequest.loanAccountNumber) {
+    loanAccount = await LoanAccount.findOne({ 
+      ACCT_NO: guarantor.removalRequest.loanAccountNumber 
+    }).session(session);
+    
+    if (loanAccount) {
+      // Update loan account to remove guarantor
+      loanAccount.HAS_GUARANTOR = false;
+      await loanAccount.save({ session });
     }
   }
 
+  // Store previous values for audit
+  const previousValues = {
+    status: guarantor.status,
+    isActive: guarantor.isActive,
+    removalRequest: guarantor.removalRequest ? { ...guarantor.removalRequest } : null
+  };
+
+  // Update guarantor status to DEACTIVATED
+  guarantor.removalRequest.status = 'APPROVED';
+  guarantor.removalRequest.approvedBy = approverId;
+  guarantor.removalRequest.approvedAt = new Date();
   guarantor.isActive = false;
+  guarantor.status = 'DEACTIVATED';
   guarantor.removedAt = new Date();
-  guarantor.removalReason = reason || 'Guarantor voluntarily withdrew';
-  guarantor.updatedBy = userId;
+  guarantor.updatedBy = approverId;
+  
   await guarantor.save({ session });
 
-  if (loanAccount) {
-    loanAccount.HAS_GUARANTOR = false;
-    await loanAccount.save({ session });
-  }
-
+  // Create audit trail for approval - Use existing enum values
   await new GuarantorAudit({
-    action: 'DEACTIVATE',
-    guarantorId: guarantor.GUARANTOR_ID,
+    action: 'APPROVED', // ✅ Use 'APPROVED' instead of 'REMOVAL_APPROVED'
+    guarantorId: parseInt(guarantor.GUARANTOR_ID),
     loanId: loanAccount?._id,
-    performedBy: userId,
-    relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
-    details: { reason, notes }
+    performedBy: approverId,
+    relationshipOfficer: { 
+      id: guarantor.BU_ID, 
+      name: guarantor.relationshipOfficerName 
+    },
+    notes: `Guarantor removal approved: ${guarantor.removalRequest.reason}`,
+    previousValues: previousValues,
+    changedFields: ['status', 'isActive', 'removalRequest', 'removedAt']
   }).save({ session });
 
   return {
     guarantorId: guarantor.GUARANTOR_ID,
     name: guarantor.fullName,
     removedAt: guarantor.removedAt,
-    removedBy: userId,
+    removedBy: approverId,
+    removalReason: guarantor.removalRequest.reason,
+    approvedBy: guarantor.removalRequest.approvedBy,
+    approvedAt: guarantor.removalRequest.approvedAt,
     loanDetails: loanAccount ? {
       accountName: loanAccount.ACCT_NM,
       accountNumber: loanAccount.ACCT_NO,
@@ -1078,63 +1162,83 @@ export const uncheckGuarantor = async (guarantorId, loanAccountNumber, reason, n
   };
 };
 
-export const reactivateGuarantor = async (guarantorId, loanAccountNumber, notes, userId, session) => {
+export const reactivateGuarantor = async (guarantorId, reactivationData, session) => {
+  const { reactivatedBy, reason, notes, loanAccountNumber } = reactivationData;
+
+  // Find guarantor
   let guarantor = await Guarantor.findOne({ GUARANTOR_ID: guarantorId })
-    .session(session)
-    .populate('guaranteedLoans');
+    .session(session);
 
   if (!guarantor) {
     throw new Error('Guarantor not found');
   }
 
-  let loanAccount = guarantor.guaranteedLoans.find(loan => loan.ACCT_NO === loanAccountNumber);
-  if (!loanAccount && loanAccountNumber) {
+  // Check if guarantor is already active
+  if (guarantor.isActive && guarantor.status === 'ACTIVE') {
+    throw new Error('Guarantor is already active');
+  }
+
+  let loanAccount = null;
+  
+  // Re-link with loan account if provided
+  if (loanAccountNumber) {
     loanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber }).session(session);
-    if (loanAccount && !guarantor.guaranteedLoans.includes(loanAccount._id)) {
-      guarantor.guaranteedLoans.push(loanAccount._id);
-      await guarantor.save({ session });
+    
+    if (loanAccount) {
+      // Update loan account to add guarantor back
+      loanAccount.HAS_GUARANTOR = true;
+      await loanAccount.save({ session });
     }
   }
 
-  if (loanAccount && loanAccount.LOAN_STATUS !== 'ACTIVE') {
-    throw new Error('Cannot reactivate - loan not active');
+  // Store previous values for audit
+  const previousValues = {
+    status: guarantor.status,
+    isActive: guarantor.isActive,
+    removalRequest: guarantor.removalRequest ? { ...guarantor.removalRequest } : null
+  };
+
+  // Reactivate guarantor
+  guarantor.isActive = true;
+  guarantor.status = 'ACTIVE';
+  guarantor.updatedBy = reactivatedBy;
+  
+  // Clear removal request if it exists
+  if (guarantor.removalRequest) {
+    guarantor.removalRequest.status = 'CANCELLED';
+    guarantor.removalRequest.notes = `Cancelled due to reactivation by ${reactivatedBy}`;
   }
 
-  guarantor.isActive = true;
-  guarantor.removedAt = undefined;
-  guarantor.removalReason = undefined;
-  guarantor.updatedBy = userId;
   await guarantor.save({ session });
 
-  if (loanAccount) {
-    loanAccount.HAS_GUARANTOR = true;
-    await loanAccount.save({ session });
-  }
-
+  // Create audit trail for reactivation - FIXED: Use 'REACTIVATE' not 'REACTIVATED'
   await new GuarantorAudit({
-    action: 'REACTIVATE',
-    guarantorId: guarantor.GUARANTOR_ID,
+    action: 'REACTIVATE', // ✅ FIXED: Changed from 'REACTIVATED' to 'REACTIVATE'
+    guarantorId: parseInt(guarantor.GUARANTOR_ID), // Convert to number as per your schema
     loanId: loanAccount?._id,
-    performedBy: userId,
-    relationshipOfficer: { id: guarantor.BU_ID, name: guarantor.relationshipOfficerName },
-    details: { notes: notes || 'Guarantor reactivated' }
+    performedBy: reactivatedBy,
+    relationshipOfficer: { 
+      id: guarantor.BU_ID, 
+      name: guarantor.relationshipOfficerName 
+    },
+    notes: notes || 'Guarantor reactivated',
+    previousValues: previousValues,
+    changedFields: ['status', 'isActive', 'removalRequest']
   }).save({ session });
 
   return {
     guarantorId: guarantor.GUARANTOR_ID,
     name: guarantor.fullName,
-    isActive: guarantor.isActive,
+    reactivatedAt: new Date(),
+    reactivatedBy: reactivatedBy,
+    status: guarantor.status,
     loanDetails: loanAccount ? {
       accountName: loanAccount.ACCT_NM,
       accountNumber: loanAccount.ACCT_NO,
-      loanStatus: loanAccount.LOAN_STATUS,
-      disbursementLimit: loanAccount.DISBURSEMENT_LIMIT,
-      totalInterest: loanAccount.TOTAL_INTEREST,
-      maturityDate: loanAccount.MATURITY_DT
+      loanStatus: loanAccount.LOAN_STATUS
     } : null
   };
 };
-
 
 
 export const getGuarantorsByOfficer = async (req, res) => {
@@ -1266,12 +1370,21 @@ export const getGuarantorAuditLogs = async (req, res) => {
     });
   }
 };
+
 // Export all controller methods
 export default {
+  createGuarantor,
+  updateGuarantor,
+  approveGuarantor,
+  rejectGuarantor,
+  getAllGuarantors,
+  getGuarantorById,
+  getGuarantorByLoanId,
   deleteGuarantor,
   searchGuarantors,
-  uncheckGuarantor,
-  reactivateGuarantor,
+  requestGuarantorRemoval,
+    approveGuarantorRemoval,
+    reactivateGuarantor,
   getGuarantorsByOfficer,
   getGuarantorAuditLogs
 };

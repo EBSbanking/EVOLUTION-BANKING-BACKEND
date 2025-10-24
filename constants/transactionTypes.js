@@ -40,6 +40,11 @@ export const SPECIAL_TX_TYPES = [
   'NOSTRO', 'VOSTRO'
 ];
 
+// Thrift Transactions
+export const THRIFT_TX_TYPES = [
+  'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'BANK_PAYMENT'
+];
+
 // Investment Account Transactions
 export const INVESTMENT_ACCOUNT_TX_TYPES = [
   ...INVESTMENT_TX_TYPES,
@@ -59,7 +64,8 @@ export const getAllTransactionTypes = () => [
     ...INVESTMENT_TX_TYPES,
     ...CARD_TX_TYPES,
     ...DIGITAL_TX_TYPES,
-    ...SPECIAL_TX_TYPES
+    ...SPECIAL_TX_TYPES,
+    ...THRIFT_TX_TYPES
   ])
 ];
 
@@ -77,6 +83,7 @@ const allTransactionTypes = {
   CARD_TX_TYPES,
   DIGITAL_TX_TYPES,
   SPECIAL_TX_TYPES,
+  THRIFT_TX_TYPES,
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,

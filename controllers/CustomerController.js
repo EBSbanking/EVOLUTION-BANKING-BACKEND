@@ -1,7 +1,7 @@
 import Customer from '../models/Customer.js';
 import AML from '../models/AML.js';
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
-import { generateEventID, logAuditTrail } from '../utils/AuditLogger.js';
+import auditLogger from '../utils/AuditLogger.js';  // Fixed: Default import for hybrid logger
 import { checkSanctionList } from '../utils/checkSanctionList.js';
 import { validateAMLInput } from '../utils/amlValidator.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
@@ -155,7 +155,6 @@ export const createCustomer = async (req, res) => {
 
     const userId = USER_ID || CREATED_BY || 'SYSTEM';
     const fullName = CUST_NM || `${FIRST_NAME ?? ''} ${MIDDLE_NAME ?? ''} ${LAST_NAME ?? ''}`.trim();
-    const EVENT_ID = generateEventID();
 
     // ===== Prepare Customer Data (includes nextOfKin array matching model) =====
     const customerData = {
@@ -208,22 +207,23 @@ export const createCustomer = async (req, res) => {
       DOCUMENT_VERIFICATION_STATUS,
       nextOfKin: nextOfKin || [], // ✅ Next of Kin array (directly from req.body, validated above)
       REC_ST,
-      EVENT_ID
     };
 
     // ===== Insert Customer =====
     const [newCustomer] = await Customer.create([customerData], { session });
 
-    // ===== Audit Log =====
-    await logAuditTrail(
-      'CUSTOMER_CREATE',
-      newCustomer._id,
-      userId,
-      `Created customer ${fullName}${nextOfKin && nextOfKin.length > 0 ? ` with ${nextOfKin.length} next of kin` : ''}`,
-      null,
-      JSON.stringify(newCustomer),
-      ipAddress
-    );
+    // ===== Audit Log via hybrid logger =====
+    auditLogger.info('Audit Event', {
+      entity_type: 'CUSTOMER_CREATE',
+      entity_id: newCustomer._id,
+      user_id: userId,
+      action: `Created customer ${fullName}${nextOfKin && nextOfKin.length > 0 ? ` with ${nextOfKin.length} next of kin` : ''}`,
+      old_value: null,
+      new_value: JSON.stringify(newCustomer),
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_CREATE',
+      outcome: 'success'
+    });
 
     // ===== AML & Sanction List Check for PEP =====
     let amlWorkItemId = null;
@@ -272,15 +272,18 @@ export const createCustomer = async (req, res) => {
         UPDATED_BY: userId || 'system'
       }], { session });
 
-      await logAuditTrail(
-        'AML_CREATE',
-        amlRecord[0]._id,
-        userId,
-        'Created AML record (Auto due to PEP)',
-        null,
-        JSON.stringify(amlRecord[0]),
-        ipAddress
-      );
+      // Audit AML creation via hybrid logger
+      auditLogger.info('Audit Event', {
+        entity_type: 'AML_CREATE',
+        entity_id: amlRecord[0]._id,
+        user_id: userId,
+        action: 'Created AML record (Auto due to PEP)',
+        old_value: null,
+        new_value: JSON.stringify(amlRecord[0]),
+        ip_address: ipAddress,
+        event_type: 'AML_CREATE',
+        outcome: 'success'
+      });
 
       // ===== Workflow Submission for AML =====
       const amlWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
@@ -360,6 +363,19 @@ export const createCustomer = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     console.error('❌ Create Customer Error:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'CUSTOMER_CREATE',
+      entity_id: null,
+      user_id: req.body.USER_ID || 'system',
+      action: 'create_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'CUSTOMER_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       message: 'Failed to create customer',
       error: error.message
@@ -511,20 +527,20 @@ export const approveCustomer = async (req, res) => {
       console.warn('⚠ Workflow update failed:', wfError.message);
     }
 
-    // --- Audit trail ---
-    try {
-      await logAuditTrail(
-        'CUSTOMER_APPROVE',
-        customer._id,
-        APPROVED_BY,
-        `Customer ${paddedCustomerId} approved by ${APPROVED_BY}. Status changed from Pending to Active`,
-        'Pending',
-        'Active',
-        req.ip || 'unknown'
-      );
-    } catch (auditError) {
-      console.warn('⚠ Audit trail failed:', auditError.message);
-    }
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
+    // --- Audit trail via hybrid logger ---
+    auditLogger.info('Audit Event', {
+      entity_type: 'CUSTOMER_APPROVE',
+      entity_id: customer._id,
+      user_id: APPROVED_BY,
+      action: `Customer ${paddedCustomerId} approved by ${APPROVED_BY}. Status changed from Pending to Active`,
+      old_value: 'Pending',
+      new_value: 'Active',
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_APPROVE',
+      outcome: 'success'
+    });
 
     // --- Success response ---
     return res.status(200).json({
@@ -544,6 +560,20 @@ export const approveCustomer = async (req, res) => {
 
   } catch (error) {
     console.error('❌ APPROVAL ERROR:', error);
+    // Audit failure (non-blocking)
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    auditLogger.error('Audit Event', {
+      entity_type: 'CUSTOMER_APPROVE',
+      entity_id: req.params.customerId || null,
+      user_id: req.body.approvedBy || 'system',
+      action: 'approve_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     return res.status(500).json({
       success: false,
       message: 'Internal server error during approval',
@@ -689,20 +719,21 @@ export const rejectCustomer = async (req, res) => {
       console.warn('⚠ Workflow update failed:', wfError.message);
     }
 
-    // --- Audit trail ---
-    try {
-      await logAuditTrail(
-        'CUSTOMER_REJECT',
-        customer._id,
-        REJECTED_BY,
-        `Customer ${paddedCustomerId} rejected by ${REJECTED_BY}. Reason: ${REJECTION_REASON}`,
-        customer.REC_ST,
-        'Rejected',
-        req.ip || 'unknown'
-      );
-    } catch (auditError) {
-      console.warn('⚠ Audit trail failed:', auditError.message);
-    }
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
+    // --- Audit trail via hybrid logger ---
+    auditLogger.info('Audit Event', {
+      entity_type: 'CUSTOMER_REJECT',
+      entity_id: customer._id,
+      user_id: REJECTED_BY,
+      action: `Customer ${paddedCustomerId} rejected by ${REJECTED_BY}. Reason: ${REJECTION_REASON}`,
+      old_value: customer.REC_ST,
+      new_value: 'Rejected',
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_REJECT',
+      outcome: 'success',
+      rejection_reason: REJECTION_REASON
+    });
 
     // --- Send notification ---
     try {
@@ -743,6 +774,21 @@ export const rejectCustomer = async (req, res) => {
 
   } catch (error) {
     console.error('❌ REJECTION ERROR:', error);
+    // Audit failure (non-blocking)
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    auditLogger.error('Audit Event', {
+      entity_type: 'CUSTOMER_REJECT',
+      entity_id: req.params.customerId || null,
+      user_id: req.body.rejectedBy || 'system',
+      action: 'reject_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_ERROR',
+      outcome: 'failure',
+      error: error.message,
+      rejection_reason: req.body.rejectionReason || null
+    });
     return res.status(500).json({
       success: false,
       message: 'Internal server error during rejection',
@@ -754,6 +800,9 @@ export const rejectCustomer = async (req, res) => {
 export const getAllCustomer = async (req, res) => {
   try {
     const { status, page = 1, limit = 10 } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
     let query = {};
 
     if (status) {
@@ -768,6 +817,19 @@ export const getAllCustomer = async (req, res) => {
 
     const total = await Customer.countDocuments(query);
 
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'customer_list_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_all_customer',
+      old_value: null,
+      new_value: { count: customers.length, filter: { status }, pagination: { page, limit, total } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
+
     res.status(200).json({
       success: true,
       data: customers,
@@ -780,6 +842,19 @@ export const getAllCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching customers:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_list_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_all_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({ 
       success: false,
       message: 'Error fetching customers', 
@@ -791,6 +866,8 @@ export const getAllCustomer = async (req, res) => {
 export const getCustomerById = async (req, res) => {
   try {
     let { CUST_ID } = req.params;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
 
     if (!CUST_ID) {
       return res.status(400).json({ message: 'CUST_ID parameter is required' });
@@ -802,8 +879,33 @@ export const getCustomerById = async (req, res) => {
     const customer = await Customer.findOne({ CUST_ID }).populate('nextOfKin'); // ✅ ADDED: Populate nextOfKin
 
     if (!customer) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'customer_query',
+        entity_id: CUST_ID,
+        user_id: userId,
+        action: 'get_customer_by_id',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: `Customer with CUST_ID ${CUST_ID} not found` });
     }
+
+    // Self-audit success (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'customer_query',
+      entity_id: CUST_ID,
+      user_id: userId,
+      action: 'get_customer_by_id',
+      old_value: null,
+      new_value: { event_id: customer.event_id },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
 
     res.status(200).json({
       success: true,
@@ -811,6 +913,19 @@ export const getCustomerById = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching customer:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_query',
+      entity_id: req.params.CUST_ID || null,
+      user_id: req.user_id || 'system',
+      action: 'get_customer_by_id',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({ 
       success: false,
       message: 'Error fetching customer', 
@@ -823,6 +938,9 @@ export const getCustomerById = async (req, res) => {
 export const getPendingCustomers = async (req, res) => {
   try {
     const { page = 1, limit = 10 } = req.query;
+    const userId = req.user_id || 'system';  // From middleware
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
     const pendingCustomers = await Customer.find({ REC_ST: 'Pending' })
       .sort({ CREATE_DT: -1 })
       .limit(limit * 1)
@@ -830,6 +948,19 @@ export const getPendingCustomers = async (req, res) => {
       .populate('nextOfKin'); // ✅ ADDED: Populate nextOfKin
 
     const total = await Customer.countDocuments({ REC_ST: 'Pending' });
+
+    // Self-audit the query (optional)
+    auditLogger.info('Audit Event', {
+      entity_type: 'pending_customer_query',
+      entity_id: null,
+      user_id: userId,
+      action: 'get_pending_customers',
+      old_value: null,
+      new_value: { count: pendingCustomers.length, pagination: { page, limit, total } },
+      ip_address: ipAddress,
+      event_type: 'QUERY_SUCCESS',
+      outcome: 'success'
+    });
 
     console.log('Found pending:', pendingCustomers.length);
     res.status(200).json({
@@ -844,6 +975,19 @@ export const getPendingCustomers = async (req, res) => {
     });
   } catch (error) {
     console.error('Error retrieving pending customers:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'pending_customer_query',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'get_pending_customers',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'QUERY_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({ 
       success: false,
       message: 'Error retrieving pending customers', 
@@ -855,13 +999,29 @@ export const getPendingCustomers = async (req, res) => {
 export const updateCustomer = async (req, res) => {
   const { CUST_ID } = req.params;
   const updateFields = req.body;
+  const userId = req.user?.username || req.body.USER_ID || 'SYSTEM';  // From user or body
+  const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
   try {
     const customer = await Customer.findOne({ CUST_ID });
 
     if (!customer) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'customer_update',
+        entity_id: CUST_ID,
+        user_id: userId,
+        action: 'update_customer',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'UPDATE_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Customer not found' });
     }
+
+    const oldValue = JSON.stringify(customer);
 
     // Validate Next of Kin if provided
     if (updateFields.nextOfKin) {
@@ -880,16 +1040,18 @@ export const updateCustomer = async (req, res) => {
 
     await customer.save();
 
-    // Audit log for update
-    await logAuditTrail(
-      'CUSTOMER_UPDATE',
-      customer._id,
-      req.user?.username || 'SYSTEM',
-      `Customer ${customer.CUST_NM} updated`,
-      null,
-      null,
-      req.ip || 'unknown'
-    );
+    // Audit log via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'CUSTOMER_UPDATE',
+      entity_id: customer._id,
+      user_id: userId,
+      action: `Customer ${customer.CUST_NM} updated`,
+      old_value: oldValue,
+      new_value: JSON.stringify(customer),
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_UPDATE',
+      outcome: 'success'
+    });
 
     res.status(200).json({
       success: true,
@@ -898,6 +1060,19 @@ export const updateCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Error updating customer:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_update',
+      entity_id: CUST_ID,
+      user_id: userId,
+      action: 'update_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: ipAddress,
+      event_type: 'UPDATE_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to update customer',
@@ -908,34 +1083,54 @@ export const updateCustomer = async (req, res) => {
 
 export const deactivateCustomer = async (req, res) => {
   const { CUST_ID } = req.params;
+  const userId = req.user?.username || req.body.USER_ID || 'SYSTEM';  // From user or body
+  const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
   try {
     const customer = await Customer.findOne({ CUST_ID });
 
     if (!customer) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'customer_deactivate',
+        entity_id: CUST_ID,
+        user_id: userId,
+        action: 'deactivate_customer',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'DEACTIVATE_NOT_FOUND',
+        outcome: 'failure'
+      });
       return res.status(404).json({ message: 'Customer not found' });
     }
 
+    const oldValue = JSON.stringify(customer);
+
     customer.REC_ST = 'Inactive';
     await customer.save();
+
+    const oldStatus = customer.REC_ST;  // Before update
 
     // Optional: update related work item status
     await WF_WORK_ITEMController.updateWorkItemStatusOnRejection(
       'CUSTOMER',
       CUST_ID,
-      req.user?.username || 'System'
+      userId
     );
 
-    // Audit log
-    await logAuditTrail(
-      'CUSTOMER_DEACTIVATE',
-      customer._id,
-      req.user?.username || 'SYSTEM',
-      `Customer ${customer.CUST_NM} deactivated`,
-      customer.REC_ST,
-      'Inactive',
-      req.ip || 'unknown'
-    );
+    // Audit log via hybrid logger
+    auditLogger.info('Audit Event', {
+      entity_type: 'CUSTOMER_DEACTIVATE',
+      entity_id: customer._id,
+      user_id: userId,
+      action: `Customer ${customer.CUST_NM} deactivated`,
+      old_value: oldStatus,
+      new_value: 'Inactive',
+      ip_address: ipAddress,
+      event_type: 'CUSTOMER_DEACTIVATE',
+      outcome: 'success'
+    });
 
     res.status(200).json({
       success: true,
@@ -944,6 +1139,19 @@ export const deactivateCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error('Error deactivating customer:', error);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_deactivate',
+      entity_id: CUST_ID,
+      user_id: userId,
+      action: 'deactivate_customer',
+      old_value: null,
+      new_value: null,
+      ip_address: ipAddress,
+      event_type: 'DEACTIVATE_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to deactivate customer',

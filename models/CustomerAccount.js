@@ -1,4 +1,4 @@
-// models/CustomerAccount.js
+// models/CustomerAccount.js - Complete Updated Schema
 import mongoose from "mongoose";
 import { generateAccountNumber, generateAccountId } from "../utils/generateAccountNumber.js";
 import logger from "../utils/logger.js";
@@ -54,7 +54,7 @@ const customerAccountSchema = new mongoose.Schema(
       },
     },
     productCode: {
-      type: Number,
+      type: String,
       required: function() { 
         return this.ACCOUNT_TYPE === 'SAVINGS' && this.isNew;
       },
@@ -63,8 +63,45 @@ const customerAccountSchema = new mongoose.Schema(
         validator: async function(v) {
           if (this.ACCOUNT_TYPE !== 'SAVINGS') return true;
           if (!v) return true;
-          const product = await SavingsProduct.findOne({ productCode: v, REC_ST: 'ACTIVE' });
-          return !!product;
+          
+          try {
+            console.log('🔍 Validating productCode:', v, 'Type:', typeof v);
+            
+            // FIXED: Use correct REC_ST values - "A" instead of "ACTIVE"
+            const product = await SavingsProduct.findOne({
+              $or: [
+                { productCode: String(v) },
+                { PROD_ID: Number(v) },
+                { PROD_CD: String(v) }
+              ],
+              // FIXED: Use the correct active status from your database
+              REC_ST: "A"
+            });
+
+            console.log('🔍 Search result:', product ? 'FOUND' : 'NOT FOUND');
+            if (product) {
+              console.log('✅ Found product:', {
+                productCode: product.productCode,
+                PROD_ID: product.PROD_ID,
+                REC_ST: product.REC_ST,
+                productName: product.productName
+              });
+            } else {
+              // Debug: Check what products exist
+              const allProducts = await SavingsProduct.find({});
+              console.log('📋 All products in database:', allProducts.map(p => ({
+                productCode: p.productCode,
+                PROD_ID: p.PROD_ID,
+                REC_ST: p.REC_ST,
+                productName: p.productName
+              })));
+            }
+
+            return !!product;
+          } catch (error) {
+            console.error('❌ Error in productCode validation:', error.message);
+            return false;
+          }
         },
         message: props => `Invalid productCode: ${props.value}. No active SavingsProduct found.`,
       },
@@ -130,9 +167,6 @@ const customerAccountSchema = new mongoose.Schema(
       default: mongoose.Types.Decimal128.fromString("0.00"),
       get: v => (v ? parseFloat(v.toString()) : 0),
     },
-    // REMOVED: All GL account fields (they belong to SavingsProduct)
-    // principalBalanceGLAccountNo, interestGLAccountNo, interestPayableGLAccountNo, withholdingTaxGLAccountNo
-    
     ACCRUED_INTEREST: {
       type: mongoose.Schema.Types.Decimal128,
       default: mongoose.Types.Decimal128.fromString("0.00"),
@@ -159,7 +193,6 @@ const customerAccountSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    // Account-specific flags and settings
     isOverdraftAllowed: {
       type: Boolean,
       default: false
@@ -233,23 +266,71 @@ customerAccountSchema.pre("save", async function (next) {
 
     // For SAVINGS accounts, validate product and set basic info (NOT GL accounts)
     if (this.ACCOUNT_TYPE === 'SAVINGS' && this.isNew) {
-      const product = await SavingsProduct.findOne({ 
-        productCode: this.productCode, 
-        REC_ST: 'ACTIVE' 
+      // FIXED: Use correct REC_ST values - "A" instead of "ACTIVE"
+      let product = await SavingsProduct.findOne({
+        $or: [
+          { productCode: String(this.productCode) },
+          { productCode: Number(this.productCode) },
+          { PROD_ID: Number(this.productCode) },
+          { PROD_CD: String(this.productCode) },
+          { PROD_ID: String(this.productCode) }
+        ],
+        // FIXED: Use the correct active status from your database
+        REC_ST: "A"
       });
-      
+
       if (!product) {
+        // Log detailed debug info
+        const allMatchingProducts = await SavingsProduct.find({
+          $or: [
+            { productCode: String(this.productCode) },
+            { productCode: Number(this.productCode) },
+            { PROD_ID: Number(this.productCode) },
+            { PROD_CD: String(this.productCode) },
+            { PROD_ID: String(this.productCode) }
+          ]
+        });
+
+        logger.error('No active SavingsProduct found in pre-save hook', {
+          productCode: this.productCode,
+          productCodeType: typeof this.productCode,
+          matchingProducts: allMatchingProducts.map(p => ({
+            productCode: p.productCode,
+            PROD_ID: p.PROD_ID,
+            PROD_CD: p.PROD_CD,
+            productName: p.productName,
+            REC_ST: p.REC_ST
+          }))
+        });
+
         throw new Error(`No active SavingsProduct found for productCode: ${this.productCode}`);
       }
 
       // Set only basic product information
-      this.PRODUCT_DESC = product.productName;
-      this.INTEREST_RATE = product.interestRate;
+      this.PRODUCT_DESC = product.productName || product.PROD_DESC || 'Savings Account';
+      
+      // Get interest rate from multiple possible fields
+      let interestRate = 0;
+      if (product.rateInformation?.fixedRate) {
+        interestRate = product.rateInformation.fixedRate;
+      } else if (product.interestRate) {
+        interestRate = product.interestRate;
+      } else if (product.rateInformation?.effectiveRate) {
+        interestRate = product.rateInformation.effectiveRate;
+      }
+      
+      this.INTEREST_RATE = mongoose.Types.Decimal128.fromString(String(interestRate));
 
       // Set LAST_INTEREST_DATE if not already set
       if (!this.LAST_INTEREST_DATE) {
         this.LAST_INTEREST_DATE = new Date();
       }
+
+      logger.info('Successfully validated and set product info for SAVINGS account', {
+        productCode: this.productCode,
+        productName: this.PRODUCT_DESC,
+        interestRate: interestRate
+      });
     } else if (this.ACCOUNT_TYPE === 'CURRENT' && this.isNew) {
       // For CURRENT accounts, ensure productCode is not set and clear interest fields
       this.productCode = undefined;
@@ -270,6 +351,7 @@ customerAccountSchema.index({ CUST_ID: 1, ACCOUNT_TYPE: 1 });
 customerAccountSchema.index({ ACCT_NO: 1 });
 customerAccountSchema.index({ REC_ST: 1 });
 customerAccountSchema.index({ lastActivityDate: -1 });
+customerAccountSchema.index({ productCode: 1 });
 
 const CustomerAccount =
   mongoose.models.CustomerAccount ||

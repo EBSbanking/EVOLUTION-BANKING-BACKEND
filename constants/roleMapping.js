@@ -37,7 +37,7 @@ export const ROLE_PERMISSION_MAPPING = {
       ],
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
         PERMISSIONS.RATE.LOAN_INTEREST,
       ],
     },
@@ -65,7 +65,7 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.FIXED_ASSET.DEPRECIATE,
       ],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
     },
   },
@@ -95,7 +95,7 @@ export const ROLE_PERMISSION_MAPPING = {
       CREDIT_APPL_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.CREDIT_APPL),
       RATE_ACCESS_LEVEL: [
         PERMISSIONS.RATE.LOAN_INTEREST,
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
     },
   },
@@ -142,7 +142,7 @@ export const ROLE_PERMISSION_MAPPING = {
       DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
       FIXED_ASSET_ACCESS_LEVEL: [PERMISSIONS.FIXED_ASSET.VIEW],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
     },
   },
@@ -155,7 +155,7 @@ export const ROLE_PERMISSION_MAPPING = {
       FIXED_ASSET_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.FIXED_ASSET),
       APPROVAL_ACCESS_LEVEL: [PERMISSIONS.APPROVAL.FINANCIAL],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
         PERMISSIONS.RATE.INDEX,
       ],
     },
@@ -167,7 +167,8 @@ export const ROLE_PERMISSION_MAPPING = {
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
       FIXED_ASSET_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.FIXED_ASSET),
-      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE), // Full rate management access
+      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE),
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS], // ✅ NEW
     },
   },
   // 15. Chief Executive Officer
@@ -177,7 +178,8 @@ export const ROLE_PERMISSION_MAPPING = {
       DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       APPROVAL_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.APPROVAL),
-      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE), // Full rate management access
+      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE),
+      PERFORMANCE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.PERFORMANCE), // ✅ NEW
     },
   },
   // 16. Treasurer
@@ -187,7 +189,8 @@ export const ROLE_PERMISSION_MAPPING = {
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
       TREASURY_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.TREASURY),
-      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE), // Full rate management access
+      RATE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RATE),
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS], // ✅ NEW
     },
   },
   // 17. Loan Processing Supervisor
@@ -210,7 +213,7 @@ export const ROLE_PERMISSION_MAPPING = {
       FIXED_ASSET_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.FIXED_ASSET),
       APPROVAL_ACCESS_LEVEL: [PERMISSIONS.APPROVAL.FINANCIAL],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
     },
   },
@@ -226,10 +229,17 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
         PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD,
         PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
+        PERMISSIONS.DASHBOARD.BU_PERFORMANCE, // ✅ NEW
+      ],
+      DEPOSIT_ACCESS_LEVEL: [PERMISSIONS.DEPOSIT.APPROVAL],
+      REPORT_ACCESS_LEVEL: [
+        PERMISSIONS.REPORT.VIEW,
+        PERMISSIONS.REPORT.PERFORMANCE_METRICS, // ✅ NEW
       ],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS], // ✅ NEW
     },
   },
   // 20. Branch Operation Supervisor
@@ -243,6 +253,14 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.LOAN_OPERATIONS.VIEW,
         PERMISSIONS.LOAN_OPERATIONS.PROCESS,
       ],
+      DASHBOARD_ACCESS_LEVEL: [
+        PERMISSIONS.DASHBOARD.VIEW,
+        PERMISSIONS.DASHBOARD.BU_PERFORMANCE, // ✅ NEW
+      ],
+      REPORT_ACCESS_LEVEL: [
+        PERMISSIONS.REPORT.VIEW,
+        PERMISSIONS.REPORT.PERFORMANCE_METRICS, // ✅ NEW
+      ],
     },
   },
   // 21. Chief Operation Officer
@@ -253,9 +271,10 @@ export const ROLE_PERMISSION_MAPPING = {
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       OPERATIONS_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.OPERATIONS),
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added deposit interest setup
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
         PERMISSIONS.RATE.INDEX,
       ],
+      PERFORMANCE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.PERFORMANCE), // ✅ NEW
     },
   },
   // 22. Marketing Manager
@@ -330,47 +349,80 @@ export const ROLE_PERMISSION_MAPPING = {
       PRODUCT_ACCESS_LEVEL: [
         PERMISSIONS.PRODUCT.VIEW,
       ],
-    },
-  },
-  // 29. Teller
-  29: {
-    permissions: {
-      DRAWER_ACCESS_LEVEL: [
-        PERMISSIONS.DRAWER.VIEW,
-        PERMISSIONS.DRAWER.MANAGE,
-        PERMISSIONS.DRAWER.RECONCILE,
+      // ADDED: Loan Operations Permissions
+      LOAN_OPERATIONS_ACCESS_LEVEL: [
+        PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
+        PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
+        PERMISSIONS.LOAN_OPERATIONS.VIEW,
+        PERMISSIONS.LOAN_OPERATIONS.PROCESS,
       ],
-      CUSTOMER_ACCESS_LEVEL: [
-        PERMISSIONS.CUSTOMER.VIEW,
-        PERMISSIONS.CUSTOMER.UPDATE,
-        PERMISSIONS.CUSTOMER.PROFILE,
+      // ADDED: Thrift Permissions for CSO fallback consistency
+      THRIFT_ACCESS_LEVEL: [
+        PERMISSIONS.THRIFT.CREATE,
+        PERMISSIONS.THRIFT.COLLECTION,
+        PERMISSIONS.THRIFT.WITHDRAWAL,
       ],
-      ACCOUNT_ACCESS_LEVEL: [
-        PERMISSIONS.ACCOUNT.DEPOSIT_101,
-        PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
-        PERMISSIONS.ACCOUNT.VIEW_BALANCE,
-        PERMISSIONS.ACCOUNT.VIEW_STATEMENT,
-      ],
-      TRANSACTION_ACCESS_LEVEL: [
-        PERMISSIONS.TRANSACTION.DEPOSIT,
-        PERMISSIONS.TRANSACTION.WITHDRAWAL,
-        PERMISSIONS.TRANSACTION.TRANSFER,
-        PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
-        PERMISSIONS.TRANSACTION.VIEW_HISTORY,
-      ],
-      DASHBOARD_ACCESS_LEVEL: [
-        PERMISSIONS.DASHBOARD.VIEW,
-        PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
-        PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
-        PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
-      ],
-      REPORT_ACCESS_LEVEL: [
-        PERMISSIONS.REPORT.VIEW,
-        PERMISSIONS.REPORT.TELLER_SUMMARY
+      // ADDED: Comprehensive Guarantor Permissions for CSO
+      GUARANTOR_ACCESS_LEVEL: [
+        PERMISSIONS.GUARANTOR.CREATE,
+        PERMISSIONS.GUARANTOR.VIEW,
+        PERMISSIONS.GUARANTOR.VIEW_DETAILS,
+        PERMISSIONS.GUARANTOR.SEARCH,
+        PERMISSIONS.GUARANTOR.UPDATE,
+        PERMISSIONS.GUARANTOR.VERIFY,
+        PERMISSIONS.GUARANTOR.REMOVAL_REQUEST,
+        PERMISSIONS.GUARANTOR.REPORTS,
+        PERMISSIONS.GUARANTOR.DASHBOARD,
+        PERMISSIONS.GUARANTOR.EXPORT,
       ],
     },
   },
-  // 30. Head Teller
+  
+// 29. Teller - UPDATED PERMISSIONS (ensure REAL_TIME_STATS is included)
+29: {
+  permissions: {
+    DRAWER_ACCESS_LEVEL: [
+      PERMISSIONS.DRAWER.VIEW,
+      PERMISSIONS.DRAWER.MANAGE,
+      PERMISSIONS.DRAWER.RECONCILE,
+    ],
+    CUSTOMER_ACCESS_LEVEL: [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.CUSTOMER.PROFILE,
+    ],
+    ACCOUNT_ACCESS_LEVEL: [
+      PERMISSIONS.ACCOUNT.DEPOSIT_101,
+      PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.ACCOUNT.VIEW_STATEMENT,
+    ],
+    TRANSACTION_ACCESS_LEVEL: [
+      PERMISSIONS.TRANSACTION.DEPOSIT,
+      PERMISSIONS.TRANSACTION.WITHDRAWAL,
+      PERMISSIONS.TRANSACTION.TRANSFER,
+      PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
+      PERMISSIONS.TRANSACTION.VIEW_HISTORY,
+      PERMISSIONS.TRANSACTION.VIEW_RECENT,
+      PERMISSIONS.TRANSACTION.VIEW_STATS,
+    ],
+    DASHBOARD_ACCESS_LEVEL: [
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
+      PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
+      PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
+      PERMISSIONS.DASHBOARD.REAL_TIME_STATS, // ✅ THIS IS CRITICAL FOR today-stats ENDPOINT
+    ],
+    REPORT_ACCESS_LEVEL: [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.TELLER_SUMMARY,
+    ],
+    THRIFT_ACCESS_LEVEL: [
+      PERMISSIONS.THRIFT.WITHDRAWAL,
+    ],
+  },
+},
+  // 30. Head Teller - UPDATED PERMISSIONS
   30: {
     permissions: {
       DRAWER_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DRAWER),
@@ -381,6 +433,18 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.ACCOUNT.FREEZE,
       ],
       APPROVAL_ACCESS_LEVEL: [PERMISSIONS.APPROVAL.TRANSACTION],
+      DEPOSIT_ACCESS_LEVEL: [PERMISSIONS.DEPOSIT.APPROVAL],
+      DASHBOARD_ACCESS_LEVEL: [
+        PERMISSIONS.DASHBOARD.VIEW,
+        PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
+        PERMISSIONS.DASHBOARD.BU_PERFORMANCE, // ✅ NEW
+      ],
+      REPORT_ACCESS_LEVEL: [
+        PERMISSIONS.REPORT.VIEW,
+        PERMISSIONS.REPORT.TELLER_SUMMARY,
+        PERMISSIONS.REPORT.PERFORMANCE_METRICS, // ✅ NEW
+      ],
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE], // ✅ NEW
     },
   },
   // 31. Customer Relationship Supervisor
@@ -409,8 +473,10 @@ export const ROLE_PERMISSION_MAPPING = {
       DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
       ANALYTICS_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.ANALYTICS),
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added for analysis purposes
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
+      PERFORMANCE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.PERFORMANCE), // ✅ NEW
+      STATISTICS_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.STATISTICS), // ✅ NEW
     },
   },
   // 34. Credit Risk Analyst
@@ -424,8 +490,9 @@ export const ROLE_PERMISSION_MAPPING = {
       ],
       RATE_ACCESS_LEVEL: [
         PERMISSIONS.RATE.LOAN_INTEREST,
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added for risk analysis
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS], // ✅ NEW
     },
   },
   // 35. Head of Digital Banking
@@ -438,8 +505,9 @@ export const ROLE_PERMISSION_MAPPING = {
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
       DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added for digital banking products
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
+      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS], // ✅ NEW
     },
   },
   // 36. Agency Banking Officer
@@ -456,7 +524,7 @@ export const ROLE_PERMISSION_MAPPING = {
       CUSTOMER_ACCESS_LEVEL: [PERMISSIONS.CUSTOMER.VIEW, PERMISSIONS.CUSTOMER.UPDATE],
       REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW],
       RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST, // Added for channel product management
+        PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
     },
   },
@@ -759,9 +827,11 @@ export function validatePermissions() {
     Object.entries(roleData.permissions).forEach(([group, permissions]) => {
       const groupName = group.replace('_ACCESS_LEVEL', '');
       
+      // Check if the permission group exists in PERMISSIONS
       if (!PERMISSIONS[groupName]) {
         errors.push(`Role ${roleId}: Permission group ${groupName} not found`);
       } else {
+        // Check if each permission exists in the correct group
         permissions.forEach(permission => {
           const groupPermissions = safeGetPermissions(PERMISSIONS[groupName]);
           if (!groupPermissions.includes(permission)) {
@@ -783,51 +853,98 @@ export function validatePermissions() {
 
 // MODULE_PERMISSIONS (aligned with permissions.js)
 export const MODULE_PERMISSIONS = {
+  // Account Permissions
   accountBalance: PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+  deposit101: PERMISSIONS.ACCOUNT.DEPOSIT_101,
+  withdrawal102: PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
+  accountUpdate: PERMISSIONS.ACCOUNT.UPDATE,
+
+  // AML Permissions
   amlThreshold: PERMISSIONS.AML.VIEW_THRESHOLD,
   amlApproval: PERMISSIONS.AML.APPROVE,
   configureAML: PERMISSIONS.AML.CONFIGURE,
   monitorAML: PERMISSIONS.AML.MONITOR,
   generateAMLReport: PERMISSIONS.AML.REPORT,
   suspendAMLTransaction: PERMISSIONS.AML.SUSPEND,
+
+  // System Admin Permissions
   auditTrail: PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
+  licenseDetails: PERMISSIONS.SYSTEM_ADMIN.LICENSE_DETAILS,
+  systemDate: PERMISSIONS.SYSTEM_ADMIN.SYSTEM_DATE,
+  osTrigger: PERMISSIONS.SYSTEM_ADMIN.OS_TRIGGER,
+
+  // Permission Management
   businessRole: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE,
   businessRoleList: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_LIST,
   buRoleCreation: PERMISSIONS.PERMISSION_MANAGEMENT.BU_ROLE_CREATION,
   businessRoleQueue: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_QUEUE,
   businessRoleQueueSetup: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_QUEUE_SETUP,
+
+  // Business Unit Permissions
   createBusinessUnit: PERMISSIONS.BUSINESS_UNIT.CREATE,
   businessUnit: PERMISSIONS.BUSINESS_UNIT.VIEW,
   securityBusinessUnit: PERMISSIONS.BUSINESS_UNIT.SECURITY,
   businessUnitRole: PERMISSIONS.BUSINESS_UNIT.ROLE,
+
+  // Security Profile Permissions
   addUser: PERMISSIONS.SECURITY_PROFILE.ADD_USER,
   assignUserRole: PERMISSIONS.SECURITY_PROFILE.ASSIGN_ROLE,
   assignCsoRight: PERMISSIONS.SECURITY_PROFILE.ASSIGN_CSO_RIGHT,
   passwordReset: PERMISSIONS.SECURITY_PROFILE.RESET_PASSWORD,
   securityConsole: PERMISSIONS.SECURITY_PROFILE.CONSOLE,
+
+  // Workflow Permissions
   workflowSetup: PERMISSIONS.WORKFLOW.CONFIGURE,
   workflowSubProcess: PERMISSIONS.WORKFLOW.MANAGE_SUBPROCESS,
+
+  // Approval Permissions
   managerApproval: PERMISSIONS.APPROVAL.MANAGER,
   cashDepositApproval: PERMISSIONS.APPROVAL.CASH_DEPOSIT,
   glTransactionApproval: PERMISSIONS.APPROVAL.GL_TRANSACTION,
   loanApproval: PERMISSIONS.LOAN_OPERATIONS.APPROVE,
-  deposit101: PERMISSIONS.ACCOUNT.DEPOSIT_101,
-  withdrawal102: PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
-  accountUpdate: PERMISSIONS.ACCOUNT.UPDATE,
+
+  // Loan Operations Permissions
   loanCreditApplication: PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
   loanApplicationDetails: PERMISSIONS.LOAN_OPERATIONS.VIEW,
   loanDisbursement: PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
   loanMontract: PERMISSIONS.LOAN_OPERATIONS.CREATE_CONTRACT,
   loanCalculator: PERMISSIONS.LOAN_OPERATIONS.PROCESS,
   emiCalculate: PERMISSIONS.LOAN_OPERATIONS.PROCESS,
+
+  // Customer Permissions
   createCustomer: PERMISSIONS.CUSTOMER.CREATE,
   customerProfile: PERMISSIONS.CUSTOMER.PROFILE,
   customerIdentification: PERMISSIONS.CUSTOMER.IDENTIFICATION,
+  customerApproval: PERMISSIONS.CUSTOMER.APPROVAL,
+
+  // Deposit Permissions
   depositModule: PERMISSIONS.DEPOSIT.CREATE,
   depositApplication: PERMISSIONS.DEPOSIT.APPLICATION,
   depositApplicationDetails: PERMISSIONS.DEPOSIT.VIEW_DETAILS,
+  depositApplicationApproval: PERMISSIONS.DEPOSIT.APPROVAL,
+
+  // GUARANTOR PERMISSIONS - Comprehensive Set
   createGuarantor: PERMISSIONS.GUARANTOR.CREATE,
-  approvedGuarantor: PERMISSIONS.GUARANTOR.APPROVE,
+  viewGuarantor: PERMISSIONS.GUARANTOR.VIEW,
+  viewGuarantorDetails: PERMISSIONS.GUARANTOR.VIEW_DETAILS,
+  searchGuarantor: PERMISSIONS.GUARANTOR.SEARCH,
+  approveGuarantor: PERMISSIONS.GUARANTOR.APPROVE,
+  rejectGuarantor: PERMISSIONS.GUARANTOR.REJECT,
+  verifyGuarantor: PERMISSIONS.GUARANTOR.VERIFY,
+  updateGuarantor: PERMISSIONS.GUARANTOR.UPDATE,
+  deleteGuarantor: PERMISSIONS.GUARANTOR.DELETE,
+  exportGuarantor: PERMISSIONS.GUARANTOR.EXPORT,
+  guarantorRemovalRequest: PERMISSIONS.GUARANTOR.REMOVAL_REQUEST,
+  approveGuarantorRemoval: PERMISSIONS.GUARANTOR.APPROVE_REMOVAL,
+  rejectGuarantorRemoval: PERMISSIONS.GUARANTOR.REJECT_REMOVAL,
+  reactivateGuarantor: PERMISSIONS.GUARANTOR.REACTIVATE,
+  deactivateGuarantor: PERMISSIONS.GUARANTOR.DEACTIVATE,
+  guarantorBulkActions: PERMISSIONS.GUARANTOR.BULK_ACTIONS,
+  guarantorReports: PERMISSIONS.GUARANTOR.REPORTS,
+  guarantorDashboard: PERMISSIONS.GUARANTOR.DASHBOARD,
+  guarantorAuditLog: PERMISSIONS.GUARANTOR.AUDIT_LOG,
+
+  // Transaction Permissions
   cashWithdrawal: PERMISSIONS.TRANSACTION.WITHDRAWAL,
   cashDeposit: PERMISSIONS.TRANSACTION.DEPOSIT,
   openingDeposit: PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
@@ -836,10 +953,17 @@ export const MODULE_PERMISSIONS = {
   debitGlTransaction: PERMISSIONS.TRANSACTION.DEBIT_GL,
   reprintReceipt: PERMISSIONS.TRANSACTION.REPRINT_RECEIPT,
   viewRecentTransactions: PERMISSIONS.TRANSACTION.VIEW_RECENT,
+  viewTransactionStats: PERMISSIONS.TRANSACTION.VIEW_STATS,
+
+  // Rate Permissions
   loanInterestSetup: PERMISSIONS.RATE.LOAN_INTEREST,
   depositInterestSetup: PERMISSIONS.RATE.DEPOSIT_INTEREST,
   indexRate: PERMISSIONS.RATE.INDEX,
+
+  // Loan Fee Permissions
   loanFeeSetup: PERMISSIONS.LOAN_FEE.SETUP,
+
+  // Report Permissions
   customerReport: PERMISSIONS.REPORT.CUSTOMER,
   reports: PERMISSIONS.REPORT.ALL_REPORTS,
   termDepositReports: PERMISSIONS.REPORT.TERM_DEPOSIT,
@@ -847,28 +971,160 @@ export const MODULE_PERMISSIONS = {
   trialBalanceReport: PERMISSIONS.REPORT.TRIAL_BALANCE,
   incomeExpenseReport: PERMISSIONS.REPORT.INCOME_EXPENSE,
   tellerSummaryReport: PERMISSIONS.REPORT.TELLER_SUMMARY,
+  guarantorReport: PERMISSIONS.REPORT.GUARANTOR,
+  performanceMetrics: PERMISSIONS.REPORT.PERFORMANCE_METRICS,
+
+  // Product Permissions
   productSetup: PERMISSIONS.PRODUCT.SETUP,
   loanProductSetup: PERMISSIONS.PRODUCT.LOAN,
   productMapping: PERMISSIONS.PRODUCT.MAPPING,
+
+  // Posting Permissions
   chartOfAccount: PERMISSIONS.POSTING.CHART_OF_ACCOUNT,
   glaSubfolderAccount: PERMISSIONS.POSTING.GL_SUBFOLDER,
   viewSubfolderAccount: PERMISSIONS.POSTING.VIEW_SUBFOLDER,
   department: PERMISSIONS.POSTING.DEPARTMENT,
+
+  // Holiday Permissions
   holidayCalendar: PERMISSIONS.HOLIDAY.MANAGE,
-  licenseDetails: PERMISSIONS.SYSTEM_ADMIN.LICENSE_DETAILS,
-  systemDate: PERMISSIONS.SYSTEM_ADMIN.SYSTEM_DATE,
-  osTrigger: PERMISSIONS.SYSTEM_ADMIN.OS_TRIGGER,
+
+  // Dashboard Permissions
   tellerDashboard: PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
   transactionOverview: PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
   quickActions: PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
   realTimeStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   creditOfficerDashboard: PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD,
-  Approval: PERMISSIONS.CUSTOMER.APPROVAL,
-  MANAGER_DASHBOARD: PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD,
+  managerDashboard: PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD,
+  guarantorDashboard: PERMISSIONS.DASHBOARD.GUARANTOR_DASHBOARD,
+  buPerformance: PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
+
+  // Analytics Permissions
+  viewTellerAnalytics: PERMISSIONS.ANALYTICS.VIEW_TELLER_ANALYTICS,
+
+  // Performance Permissions
+  viewPerformanceMetrics: PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+  viewTellerPerformance: PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
+  viewBranchPerformance: PERMISSIONS.PERFORMANCE.VIEW_BRANCH_PERFORMANCE,
+  exportPerformanceData: PERMISSIONS.PERFORMANCE.EXPORT_PERFORMANCE_DATA,
+
+  // Statistics Permissions
+  viewRealTimeStats: PERMISSIONS.STATISTICS.VIEW_REAL_TIME,
+  viewHistoricalStats: PERMISSIONS.STATISTICS.VIEW_HISTORICAL,
+  viewFinancialStats: PERMISSIONS.STATISTICS.VIEW_FINANCIAL,
+  viewOperationalStats: PERMISSIONS.STATISTICS.VIEW_OPERATIONAL,
+
+  // ✅ NEW: TELLER STATS ENDPOINT MAPPINGS - ADD THESE TO FIX THE ERROR
+  tellerTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  todayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  tellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  userTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  usersTellerTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  tellerDashboardStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  dashboardStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  
+  // Alternative performance-based mappings
+  tellerPerformance: PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
+  performanceMetrics: PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+  
+  // Statistics-based mappings
+  viewStatistics: PERMISSIONS.STATISTICS.VIEW_REAL_TIME,
+  tellerAnalytics: PERMISSIONS.ANALYTICS.VIEW_TELLER_ANALYTICS,
+
+  // Additional comprehensive mappings to cover all potential variations
+  getTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  getTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  getUserTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  apiTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+  apiTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS
 };
+
+// ======================
+// DEBUG PERMISSION MIDDLEWARE (TEMPORARY)
+// ======================
+export const checkPermissions = (moduleKey) => {
+  return async (req, res, next) => {
+    console.log('🔍 PERMISSION DEBUG START ======================');
+    console.log('📝 Route:', req.method, req.path);
+    console.log('🔑 Module Key Provided:', moduleKey);
+    console.log('👤 User Role:', req.user?.role);
+    console.log('🆔 User Role ID:', req.user?.roleId);
+    console.log('📋 Available Module Keys:', Object.keys(MODULE_PERMISSIONS).slice(0, 10));
+    
+    // If moduleKey is undefined, try to derive it
+    if (!moduleKey) {
+      const derivedKey = deriveModuleKey(req.path);
+      console.log('🔄 Derived Module Key:', derivedKey);
+      moduleKey = derivedKey;
+    }
+    
+    console.log('🎯 Final Module Key:', moduleKey);
+    console.log('🔍 Permission Lookup:', MODULE_PERMISSIONS[moduleKey]);
+    
+    if (!moduleKey || !MODULE_PERMISSIONS[moduleKey]) {
+      console.log('❌ PERMISSION ERROR: Invalid module key');
+      return res.status(400).json({
+        success: false,
+        message: `No permission defined for module ${moduleKey || 'undefined'}`,
+        errorCode: "INVALID_MODULE_KEY"
+      });
+    }
+    
+    console.log('✅ Module key found, proceeding with permission check...');
+    console.log('🔍 PERMISSION DEBUG END ========================');
+    
+    // Continue with your existing permission check logic
+    const requiredPermission = MODULE_PERMISSIONS[moduleKey];
+    const userRoleId = req.user?.roleId;
+    
+    if (!userRoleId) {
+      return res.status(401).json({
+        success: false,
+        message: "User role not found",
+        errorCode: "UNAUTHORIZED"
+      });
+    }
+    
+    try {
+      const hasPermission = await roleHasPermission(userRoleId, requiredPermission);
+      
+      if (!hasPermission) {
+        console.log('❌ Permission denied for:', requiredPermission);
+        return res.status(403).json({
+          success: false,
+          message: `Insufficient permissions. Required: ${requiredPermission}`,
+          errorCode: "FORBIDDEN"
+        });
+      }
+      
+      console.log('✅ Permission granted for:', requiredPermission);
+      next();
+    } catch (error) {
+      console.error('Permission check error:', error);
+      return res.status(500).json({
+        success: false,
+        message: "Permission check failed",
+        errorCode: "PERMISSION_ERROR"
+      });
+    }
+  };
+};
+
+function deriveModuleKey(path) {
+  const pathParts = path.split('/').filter(part => part);
+  
+  // Handle /api/users/teller/today-stats
+  if (path.includes('/teller/today-stats')) {
+    return 'tellerTodayStats';
+  }
+  
+  // Generic derivation: take last meaningful part
+  const lastPart = pathParts[pathParts.length - 1];
+  return lastPart || 'dashboard'; // fallback
+}
 
 // Call during application startup
 validatePermissions();
+
 
 export default {
   ROLE_MAPPING,
@@ -882,4 +1138,5 @@ export default {
   getRolePermissionsGrouped,
   canPerformAction,
   validatePermissions,
+  checkPermissions, // ✅ ADD THIS TO EXPORT THE DEBUG FUNCTION
 };

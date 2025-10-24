@@ -171,8 +171,7 @@ const WFWorkItemSchema = new mongoose.Schema({
 // Pagination plugin
 WFWorkItemSchema.plugin(mongoosePaginate);
 
-// Ensure unique index on WORK_ITEM_ID
-WFWorkItemSchema.index({ WORK_ITEM_ID: 1 }, { unique: true });
+
 
 const WFWorkItem = mongoose.model('WFWorkItem', WFWorkItemSchema);
 export default WFWorkItem;

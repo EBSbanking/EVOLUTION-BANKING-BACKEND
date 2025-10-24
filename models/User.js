@@ -24,6 +24,11 @@ const userSchema = new mongoose.Schema({
     select: false, // Hide by default
     default: null
   },
+  // 🔹 NEW FIELD: Track if user has completed first login
+  firstLogin: {
+    type: Boolean,
+    default: true,
+  },
   employer_number: String,
   first_name: String,
   last_name: String,
@@ -371,7 +376,7 @@ userSchema.methods.getActiveSessions = function() {
 userSchema.statics.findByUsernameWithPassword = function(username) {
   return this.findOne({ 
     user_name: { $regex: new RegExp(`^${username}$`, 'i') }
-  }).select('+password +passwordHistory');
+  }).select('+password +passwordHistory +firstLogin'); // Include firstLogin
 };
 
 // Get all users with active sessions
@@ -452,6 +457,9 @@ userSchema.statics.getForceLockedUsers = function() {
   return this.find({ status: 'ForceLocked' })
     .select('user_name first_name last_name email force_lock_reason force_locked_at force_locked_by');
 };
+
+// // 🔹 NEW STATIC METHOD: Update user login hours
+// userSchema.statics.updateLoginHours = function(userId
 
 // // 🔹 NEW STATIC METHOD: Update user login hours
 // userSchema.statics.updateLoginHours = function(userId, loginHours) {

@@ -159,13 +159,13 @@ AMLSchema.virtual('customer', {
   justOne: true
 });
 
-// Indexes
-AMLSchema.index({ CUST_ID: 1 });
-AMLSchema.index({ BVN: 1 });
-AMLSchema.index({ NIN: 1 });
-AMLSchema.index({ AML_STATUS: 1 });
-AMLSchema.index({ CUSTOMER_RISK_RATING: 1 });
-AMLSchema.index({ NEXT_REVIEW_DATE: 1 });
+// // Indexes
+// AMLSchema.index({ CUST_ID: 1 });
+// AMLSchema.index({ BVN: 1 });
+// AMLSchema.index({ NIN: 1 });
+// AMLSchema.index({ AML_STATUS: 1 });
+// AMLSchema.index({ CUSTOMER_RISK_RATING: 1 });
+// AMLSchema.index({ NEXT_REVIEW_DATE: 1 });
 
 // Pre-save hook for document verification status
 AMLSchema.pre('save', function (next) {

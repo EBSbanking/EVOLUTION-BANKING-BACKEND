@@ -40,11 +40,14 @@ const SystemDateSchema = new mongoose.Schema({
     transactionsProcessed: Number,
     errors: [String],
   }],
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  suppressReservedKeysWarning: true  // Suppress the reserved key warning as recommended
+});
 
-// Indexes
-SystemDateSchema.index({ currentBusinessDate: 1 });
-SystemDateSchema.index({ isEODProcessing: 1 });
+// // Indexes
+// SystemDateSchema.index({ currentBusinessDate: 1 });
+// SystemDateSchema.index({ isEODProcessing: 1 });
 
 // Pre-save hook to calculate next business date
 SystemDateSchema.pre('save', async function(next) {

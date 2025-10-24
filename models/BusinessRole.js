@@ -173,11 +173,11 @@ const BusinessRoleSchema = new mongoose.Schema({
   }
 });
 
-// Indexes
-BusinessRoleSchema.index({ ROLE_ID: 1, BUSINESS_UNIT: 1 });
-BusinessRoleSchema.index({ USER_ID: 1 });
-BusinessRoleSchema.index({ BU_ID: 1 });
-BusinessRoleSchema.index({ ALLOW_TXN_POSTING_FG: 1 });
+// // Indexes
+// BusinessRoleSchema.index({ ROLE_ID: 1, BUSINESS_UNIT: 1 });
+// BusinessRoleSchema.index({ USER_ID: 1 });
+// BusinessRoleSchema.index({ BU_ID: 1 });
+// BusinessRoleSchema.index({ ALLOW_TXN_POSTING_FG: 1 });
 
 // Virtual for role details
 BusinessRoleSchema.virtual('roleDetails').get(function() {

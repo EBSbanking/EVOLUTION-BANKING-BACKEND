@@ -1,4 +1,3 @@
-// models/Counter.js
 import mongoose from 'mongoose';
 
 const counterSchema = new mongoose.Schema({
@@ -35,8 +34,7 @@ const counterSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for better performance
-counterSchema.index({ _id: 1 });
+// NO index({ _id: 1 }) - MongoDB auto-creates unique _id index
 
 // Pre-save hook to sync seq and sequence_value
 counterSchema.pre('save', function(next) {

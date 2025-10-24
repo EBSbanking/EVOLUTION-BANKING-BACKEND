@@ -2,7 +2,7 @@
 
 import BusinessUnit from '../models/BusinessUnit.js'; // Import the BusinessUnit model
 import { ROLE_MAPPING } from '../constants/roleMapping.js';
-import { logger } from '../utils/logger.js';
+import {logger } from '../utils/logger.js';
 
 // Create a new business unit
 export const createBusinessUnit = async (req, res) => {

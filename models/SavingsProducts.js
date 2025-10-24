@@ -246,9 +246,9 @@ const savingsProductSchema = new mongoose.Schema({
   }
 });
 
-// Index for frequently queried fields
-savingsProductSchema.index({ productCode: 1 });
-savingsProductSchema.index({ REC_ST: 1 });
+// // Index for frequently queried fields
+// savingsProductSchema.index({ productCode: 1 });
+// savingsProductSchema.index({ REC_ST: 1 });
 
 const SavingsProduct = mongoose.models.SavingsProduct || 
   mongoose.model('SavingsProduct', savingsProductSchema);

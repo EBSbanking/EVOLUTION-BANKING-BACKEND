@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
-import { PERMISSIONS } from '../constants/permissions.js'; // Import PERMISSIONS constant
+import { PERMISSIONS } from '../constants/permissions.js';
 
 const permissionsSchema = new mongoose.Schema({
   BU_ROLE_ID: {
     type: Number,
     required: true,
-    unique: true, // Enforces unique BU_ROLE_ID
+    unique: true,
     index: true,
   },
   ROLE_NAME: {
@@ -23,106 +23,146 @@ const permissionsSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  VAULT_ACCESS_LEVEL: {
+  
+  // ✅ CORRECTED: Store actual permission strings as arrays
+  DRAWER_ACCESS_LEVEL: [{
     type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  DRAWER_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  TXN_ENQUIRY_ACCESS_LVL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  CREDIT_APPL_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  CUSTOMER_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  ACCOUNT_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  REPORT_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  WF_ITEM_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  CUST_POSTING_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  GL_POSTING_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  FIXED_ASSET_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  LOAN_FEE_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  LOAN_OPERATIONS_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  PERMISSION_MANAGEMENT_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  SYSTEM_ADMIN_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  DASHBOARD_ACCESS_LEVEL: {
-    type: String,
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: 'BU',
-    required: true,
-  },
-  permissions: [{
-    type: String,
-    enum: Object.values(PERMISSIONS).flatMap(category => Object.values(category)),
+    enum: Object.values(PERMISSIONS.DRAWER || {})
   }],
+  CUSTOMER_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.CUSTOMER || {})
+  }],
+  ACCOUNT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.ACCOUNT || {})
+  }],
+  TRANSACTION_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.TRANSACTION || {})
+  }],
+  DASHBOARD_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.DASHBOARD || {})
+  }],
+  REPORT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.REPORT || {})
+  }],
+  THRIFT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.THRIFT || {})
+  }],
+  LOAN_OPERATIONS_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.LOAN_OPERATIONS || {})
+  }],
+  LOAN_FEE_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.LOAN_FEE || {})
+  }],
+  POSTING_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.POSTING || {})
+  }],
+  FIXED_ASSET_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.FIXED_ASSET || {})
+  }],
+  SYSTEM_ADMIN_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.SYSTEM_ADMIN || {})
+  }],
+  PERMISSION_MANAGEMENT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.PERMISSION_MANAGEMENT || {})
+  }],
+  CREDIT_APPL_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.CREDIT_APPL || {})
+  }],
+  APPROVAL_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.APPROVAL || {})
+  }],
+  TREASURY_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.TREASURY || {})
+  }],
+  OPERATIONS_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.OPERATIONS || {})
+  }],
+  WORKFLOW_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.WORKFLOW || {})
+  }],
+  AML_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.AML || {})
+  }],
+  BUSINESS_UNIT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.BUSINESS_UNIT || {})
+  }],
+  SECURITY_PROFILE_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.SECURITY_PROFILE || {})
+  }],
+  DEPOSIT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.DEPOSIT || {})
+  }],
+  GUARANTOR_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.GUARANTOR || {})
+  }],
+  RATE_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.RATE || {})
+  }],
+  PRODUCT_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.PRODUCT || {})
+  }],
+  HOLIDAY_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.HOLIDAY || {})
+  }],
+  MARKETING_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.MARKETING || {})
+  }],
+  AGENCY_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.AGENCY || {})
+  }],
+  ANALYTICS_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.ANALYTICS || {})
+  }],
+  RISK_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.RISK || {})
+  }],
+  RECONCILIATION_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.RECONCILIATION || {})
+  }],
+  PERFORMANCE_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.PERFORMANCE || {})
+  }],
+  STATISTICS_ACCESS_LEVEL: [{
+    type: String,
+    enum: Object.values(PERMISSIONS.STATISTICS || {})
+  }],
+
+  // Remove the old permissions array since we're using the access level fields
+  // permissions: [{
+  //   type: String,
+  //   enum: Object.values(PERMISSIONS).flatMap(category => Object.values(category)),
+  // }],
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -141,11 +181,10 @@ permissionsSchema.virtual('formattedPermissions').get(function () {
       drawer: this.DRAWER_ACCESS_LEVEL,
       customer: this.CUSTOMER_ACCESS_LEVEL,
       account: this.ACCOUNT_ACCESS_LEVEL,
-      transactions: this.TXN_ENQUIRY_ACCESS_LVL,
+      transactions: this.TRANSACTION_ACCESS_LEVEL,
       reports: this.REPORT_ACCESS_LEVEL,
       dashboard: this.DASHBOARD_ACCESS_LEVEL,
-      customerPosting: this.CUST_POSTING_ACCESS_LEVEL,
-      glPosting: this.GL_POSTING_ACCESS_LEVEL,
+      posting: this.POSTING_ACCESS_LEVEL,
       fixedAsset: this.FIXED_ASSET_ACCESS_LEVEL,
       loans: {
         fees: this.LOAN_FEE_ACCESS_LEVEL,
@@ -156,8 +195,26 @@ permissionsSchema.virtual('formattedPermissions').get(function () {
         admin: this.SYSTEM_ADMIN_ACCESS_LEVEL,
         permissionManagement: this.PERMISSION_MANAGEMENT_ACCESS_LEVEL,
       },
-      workflow: this.WF_ITEM_ACCESS_LEVEL,
-      granularPermissions: this.permissions,
+      thrift: this.THRIFT_ACCESS_LEVEL,
+      approval: this.APPROVAL_ACCESS_LEVEL,
+      treasury: this.TREASURY_ACCESS_LEVEL,
+      operations: this.OPERATIONS_ACCESS_LEVEL,
+      workflow: this.WORKFLOW_ACCESS_LEVEL,
+      aml: this.AML_ACCESS_LEVEL,
+      businessUnit: this.BUSINESS_UNIT_ACCESS_LEVEL,
+      securityProfile: this.SECURITY_PROFILE_ACCESS_LEVEL,
+      deposit: this.DEPOSIT_ACCESS_LEVEL,
+      guarantor: this.GUARANTOR_ACCESS_LEVEL,
+      rate: this.RATE_ACCESS_LEVEL,
+      product: this.PRODUCT_ACCESS_LEVEL,
+      holiday: this.HOLIDAY_ACCESS_LEVEL,
+      marketing: this.MARKETING_ACCESS_LEVEL,
+      agency: this.AGENCY_ACCESS_LEVEL,
+      analytics: this.ANALYTICS_ACCESS_LEVEL,
+      risk: this.RISK_ACCESS_LEVEL,
+      reconciliation: this.RECONCILIATION_ACCESS_LEVEL,
+      performance: this.PERFORMANCE_ACCESS_LEVEL,
+      statistics: this.STATISTICS_ACCESS_LEVEL,
     },
   };
 });

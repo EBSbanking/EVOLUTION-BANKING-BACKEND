@@ -4,8 +4,8 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import AuditTrail from '../models/AuditTrail.js';
-import { generateEventID, logAuditTrail } from '../utils/AuditLogger.js';
 import { calculateMaturityDate, generateRepaymentSchedule } from '../utils/loanUtils.js';
+import auditLogger from '../utils/AuditLogger.js'; // Import the winston-based logger
 
 // Create Loan Account Details
 export const createLoanAccountDetails = async (req, res) => {
@@ -100,18 +100,24 @@ export const createLoanAccountDetails = async (req, res) => {
             CREATED_BY
         }, session);
 
-        // Log audit trail
-        await logAuditTrail({
-            EVENT_TYPE: 'LOAN_ACCOUNT_CREATION',
-            USER_ID: CREATED_BY,
-            ACTION: 'CREATE',
-            NEW_VALUE: {
+        // Log audit trail using winston logger
+        auditLogger.info('Audit Event', {
+            entity_type: 'LOAN_ACCOUNT',
+            entity_id: ACCT_NO,
+            user_id: CREATED_BY,
+            action: 'CREATE',
+            old_value: null,
+            new_value: {
                 accountNumber: ACCT_NO,
                 customerId: CUST_ID,
                 productId: PROD_ID,
-                amount: LOAN_AMOUNT
+                amount: LOAN_AMOUNT,
+                interestRate: INTEREST_RATE,
+                term: `${TERM_VALUE} ${TERM_CD}`
             },
-            IP_ADDRESS: req.ip || '127.0.0.1'
+            ip_address: req.ip || '127.0.0.1',
+            event_type: 'LOAN_ACCOUNT_CREATION',
+            outcome: 'SUCCESS'
         });
 
         await session.commitTransaction();
@@ -123,6 +129,21 @@ export const createLoanAccountDetails = async (req, res) => {
         });
     } catch (error) {
         await session.abortTransaction();
+        
+        // Log failure audit trail
+        auditLogger.error('Audit Event', {
+            entity_type: 'LOAN_ACCOUNT',
+            entity_id: req.body.ACCT_NO,
+            user_id: req.body.CREATED_BY || 'UNKNOWN',
+            action: 'CREATE',
+            old_value: null,
+            new_value: null,
+            ip_address: req.ip || '127.0.0.1',
+            event_type: 'LOAN_ACCOUNT_CREATION',
+            outcome: 'FAILURE',
+            error: error.message
+        });
+
         console.error('Error creating loan account:', error);
         res.status(500).json({
             success: false,
@@ -175,6 +196,13 @@ export const updateLoanAccountDetails = async (req, res) => {
             return res.status(400).json({ message: 'Modified by field is required' });
         }
 
+        // Get old values for audit trail
+        const oldAccount = await LoanAccountDetails.findOne({ ACCT_NO }).session(session);
+        if (!oldAccount) {
+            await session.abortTransaction();
+            return res.status(404).json({ message: 'Loan account not found' });
+        }
+
         // Prevent updating certain fields
         const restrictedFields = [
             'ACCT_NO', 'CUST_ID', 'PROD_ID', 'APPL_ID', 
@@ -206,16 +234,18 @@ export const updateLoanAccountDetails = async (req, res) => {
             return res.status(404).json({ message: 'Loan account not found' });
         }
 
-        // Log audit trail
-        await logAuditTrail({
-            EVENT_TYPE: 'LOAN_ACCOUNT_UPDATE',
-            USER_ID: lastModifiedBy,
-            ACTION: 'UPDATE',
-            NEW_VALUE: {
-                accountNumber: ACCT_NO,
-                updatedFields: Object.keys(updateData)
-            },
-            IP_ADDRESS: req.ip || '127.0.0.1'
+        // Log audit trail using winston logger
+        auditLogger.info('Audit Event', {
+            entity_type: 'LOAN_ACCOUNT',
+            entity_id: ACCT_NO,
+            user_id: lastModifiedBy,
+            action: 'UPDATE',
+            old_value: oldAccount.toObject(),
+            new_value: updatedAccount.toObject(),
+            ip_address: req.ip || '127.0.0.1',
+            event_type: 'LOAN_ACCOUNT_UPDATE',
+            outcome: 'SUCCESS',
+            changed_fields: Object.keys(updateData)
         });
 
         await session.commitTransaction();
@@ -227,6 +257,21 @@ export const updateLoanAccountDetails = async (req, res) => {
         });
     } catch (error) {
         await session.abortTransaction();
+        
+        // Log failure audit trail
+        auditLogger.error('Audit Event', {
+            entity_type: 'LOAN_ACCOUNT',
+            entity_id: req.params.ACCT_NO,
+            user_id: req.body.lastModifiedBy || 'UNKNOWN',
+            action: 'UPDATE',
+            old_value: null,
+            new_value: null,
+            ip_address: req.ip || '127.0.0.1',
+            event_type: 'LOAN_ACCOUNT_UPDATE',
+            outcome: 'FAILURE',
+            error: error.message
+        });
+
         console.error('Error updating loan account:', error);
         res.status(500).json({
             success: false,

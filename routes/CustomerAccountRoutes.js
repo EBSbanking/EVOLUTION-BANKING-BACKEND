@@ -5,9 +5,10 @@ import {
   getCustomerAccountById, 
   updateCustomerAccount, 
   deleteCustomerAccount,
-  getCustomerAccountByCUST_ID 
+  getCustomerAccountByCUST_ID
+
 } from '../controllers/CustomerAccountController.js';
-import postTransaction from '../Services/postTransaction.js'; // default import
+import postTransaction  from '../Services/postTransaction.js'; // default import
 import logger from '../utils/logger.js'; 
 import AuditTrail from '../models/AuditTrail.js'; // Make sure the import path is correct
 
@@ -22,6 +23,16 @@ router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
 
 // Post Transaction
 router.post('/transactions', postTransaction);
+
+// //=========== routes/transactionRoutes.js =================================================
+// router.post('/opening/transactions', (req, res) => {
+//   const { TRANSACTION_TYPE } = req.body;
+//   if (TRANSACTION_TYPE && TRANSACTION_TYPE.toUpperCase() === 'OPENING_CASH_DEPOSIT') {
+//     return postOpeningCashDeposit(req, res);
+//   }
+//   return postTransaction(req, res);
+// });
+// //==========================================================================================
 
 router.get('/transactions/:ACCT_NO', async (req, res) => {
   const { ACCT_NO } = req.params;

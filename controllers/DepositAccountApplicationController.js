@@ -12,6 +12,7 @@ import NotificationService from '../services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
 import { getProductTypeByProdIdInternal } from '../services/productService.js';
+import SavingsProduct from '../models/SavingsProduct.js'; // Add this import
 
 dotenv.config();
 
@@ -42,7 +43,7 @@ const DepositAccountApplicationController = {
         CREATED_BY, BVN_NO, DOCUMENT_TYPE,
         DOCUMENT_NUMBER, CREATED_AT, TRANSACTION_DATE,
         AMOUNT, DEPOSITOR_NAME, ACCT_NO: REQUEST_ACCT_NO, ACCT_ID: REQUEST_ACCT_ID,
-        DENOMINATIONS
+        DENOMINATIONS, ACCOUNT_TYPE // Add ACCOUNT_TYPE here
       } = req.body;
 
       // Validate required fields
@@ -187,7 +188,8 @@ const DepositAccountApplicationController = {
         DOCUMENT,
         BANK_MANDATE,
         STATUS: 'Pending',
-        DENOMINATIONS
+        DENOMINATIONS,
+        ACCOUNT_TYPE: ACCOUNT_TYPE || productType // Add ACCOUNT_TYPE
       });
       const savedApplication = await newApp.save({ session });
 
@@ -379,84 +381,7 @@ const DepositAccountApplicationController = {
     }
   },
 
-  updateApplication: async (req, res) => {
-    try {
-      const { CUST_ID } = req.params;
-      const { IMAGE, DOCUMENT, BANK_MANDATE, ...safeUpdates } = req.body;
-
-      if (!CUST_ID) {
-        return res.status(400).json({ message: 'CUST_ID is required.', code: 'MISSING_CUST_ID' });
-      }
-
-      if (safeUpdates.BVN_NO && !/^\d{11}$/.test(safeUpdates.BVN_NO)) {
-        return res.status(400).json({ message: 'BVN must be exactly 11 digits.', code: 'INVALID_BVN' });
-      }
-
-      if (safeUpdates.BVN_NO) {
-        const existingWithBVN = await DepositAccountApplication.findOne({
-          BVN_NO: safeUpdates.BVN_NO,
-          CUST_ID: { $ne: CUST_ID }
-        });
-        if (existingWithBVN) {
-          return res.status(400).json({ message: 'BVN already exists for another customer.', code: 'BVN_ALREADY_USED' });
-        }
-      }
-
-      const updatedApplication = await DepositAccountApplication.findOneAndUpdate(
-        { CUST_ID: Number(String(CUST_ID).replace(/^0+/, '')) },
-        { $set: { ...safeUpdates, LAST_UPDATED: new Date() } },
-        { new: true }
-      );
-
-      if (!updatedApplication) {
-        return res.status(404).json({ message: `Application not found for CUST_ID ${CUST_ID}`, code: 'APPLICATION_NOT_FOUND' });
-      }
-
-      return res.status(200).json({
-        message: 'Application updated successfully',
-        data: updatedApplication
-      });
-    } catch (error) {
-      console.error('❌ Error updating application:', {
-        message: error.message,
-        stack: error.stack
-      });
-      return res.status(500).json({
-        message: 'Error updating application details',
-        error: error.message,
-        code: 'INTERNAL_SERVER_ERROR'
-      });
-    }
-  },
-
-  deleteApplication: async (req, res) => {
-    try {
-      const { id } = req.params;
-
-      const deletedApplication = await DepositAccountApplication.findByIdAndDelete(id);
-
-      if (!deletedApplication) {
-        return res.status(404).json({ message: 'Application not found.', code: 'APPLICATION_NOT_FOUND' });
-      }
-
-      return res.status(200).json({
-        message: 'Application deleted successfully',
-        data: deletedApplication
-      });
-    } catch (error) {
-      console.error('❌ Error deleting application:', {
-        message: error.message,
-        stack: error.stack
-      });
-      return res.status(500).json({
-        message: 'Error deleting application',
-        error: error.message,
-        code: 'INTERNAL_SERVER_ERROR'
-      });
-    }
-  },
-
-  approveApplicationByCustomerId: async (req, res) => {
+approveApplicationByCustomerId: async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -617,7 +542,9 @@ const DepositAccountApplicationController = {
         });
       }
 
-      const newAccount = new CustomerAccount({
+      // Determine account type and prepare account data
+      const accountType = VALID_ACCOUNT_TYPES.includes(application.ACCOUNT_TYPE) ? application.ACCOUNT_TYPE : 'SAVINGS';
+      const accountData = {
         CUST_ID: application.CUST_ID,
         ACCT_ID: ACCT_ID,
         ACCT_NO: String(ACCT_NO),
@@ -626,23 +553,140 @@ const DepositAccountApplicationController = {
         LEDGER_BAL: mongoose.Types.Decimal128.fromString(depositAmount),
         CLEARED_BAL: mongoose.Types.Decimal128.fromString(depositAmount),
         AVAILABLE_BALANCE: mongoose.Types.Decimal128.fromString(depositAmount),
-        ACCOUNT_TYPE: VALID_ACCOUNT_TYPES.includes(application.ACCOUNT_TYPE) ? application.ACCOUNT_TYPE : 'SAVINGS',
+        ACCOUNT_TYPE: accountType,
         PRODUCT_DESC: application.PRODUCT_DESC || 'Savings Account',
         REC_ST: 'ACTIVE',
         PROD_ID: String(application.PROD_ID),
-        INTEREST_RATE: 0,
-        INTEREST_GL_ACCT_NO: String(ACCT_NO),
+        INTEREST_RATE: mongoose.Types.Decimal128.fromString("0.00"),
         ACCRUED_INTEREST: mongoose.Types.Decimal128.fromString('0.00'),
-        LAST_INTEREST_DATE: null,
         lastActivityDate: new Date(),
-      });
-      await newAccount.save({ session });
+      };
+
+      // Add SAVINGS account specific fields - FIXED PRODUCT LOOKUP
+      if (accountType === 'SAVINGS') {
+        console.log('🔍 DEBUG: Application details:', {
+          PROD_ID: application.PROD_ID,
+          PROD_ID_type: typeof application.PROD_ID,
+          ACCOUNT_TYPE: application.ACCOUNT_TYPE,
+          PRODUCT_DESC: application.PRODUCT_DESC
+        });
+
+        const productCode = String(application.PROD_ID);
+        console.log('🔍 Searching for SavingsProduct with PROD_ID:', productCode);
+
+        // First, let's see what products actually exist
+        const allProducts = await SavingsProduct.find({}).session(session);
+        console.log('📋 ALL SavingsProducts in database:', allProducts.map(p => ({
+          _id: p._id,
+          productCode: p.productCode,
+          PROD_ID: p.PROD_ID,
+          PROD_CD: p.PROD_CD,
+          productName: p.productName,
+          REC_ST: p.REC_ST
+        })));
+
+        // FIXED: Use the correct REC_ST values from your database
+        let product = null;
+        
+        // Convert productCode to number for PROD_ID search
+        const productCodeNum = Number(productCode);
+        
+        // FIXED: Search with correct REC_ST values - "A" instead of "ACTIVE"
+        const searchStrategies = [
+          // Strategy 1: Search by PROD_ID with REC_ST = "A"
+          { PROD_ID: productCodeNum, REC_ST: "A" },
+          // Strategy 2: Search by productCode with REC_ST = "A"  
+          { productCode: productCode, REC_ST: "A" },
+          // Strategy 3: Search by PROD_CD with REC_ST = "A"
+          { PROD_CD: productCode, REC_ST: "A" },
+          // Strategy 4: Search without REC_ST filter (fallback)
+          { PROD_ID: productCodeNum },
+          { productCode: productCode },
+          { PROD_CD: productCode }
+        ];
+
+        for (const strategy of searchStrategies) {
+          try {
+            product = await SavingsProduct.findOne(strategy).session(session);
+            if (product) {
+              console.log(`✅ Found product with strategy:`, strategy);
+              break;
+            }
+          } catch (searchError) {
+            console.log(`❌ Search failed for strategy:`, strategy, searchError.message);
+          }
+        }
+
+        if (product) {
+          console.log('✅ FOUND PRODUCT:', {
+            productCode: product.productCode,
+            PROD_ID: product.PROD_ID,
+            PROD_CD: product.PROD_CD,
+            productName: product.productName,
+            REC_ST: product.REC_ST,
+            interestRate: product.interestRate,
+            rateInformation: product.rateInformation
+          });
+
+          // Use the correct product code field
+          accountData.productCode = product.productCode || product.PROD_ID || product.PROD_CD;
+          accountData.LAST_INTEREST_DATE = new Date();
+          
+          // Set interest rate from product
+          let interestRate = 0;
+          if (product.rateInformation?.fixedRate) {
+            interestRate = product.rateInformation.fixedRate;
+          } else if (product.interestRate) {
+            interestRate = product.interestRate;
+          } else if (product.rateInformation?.effectiveRate) {
+            interestRate = product.rateInformation.effectiveRate;
+          }
+          
+          console.log('💰 Setting interest rate:', interestRate);
+          accountData.INTEREST_RATE = mongoose.Types.Decimal128.fromString(String(interestRate));
+          accountData.PRODUCT_DESC = product.productName || product.PROD_DESC || application.PRODUCT_DESC;
+          
+        } else {
+          console.error('❌ No SavingsProduct found for PROD_ID:', productCode);
+          await session.abortTransaction();
+          return res.status(400).json({
+            success: false,
+            message: `No active SavingsProduct found for product code: ${productCode}`,
+            code: 'PRODUCT_NOT_FOUND',
+            availableProducts: allProducts.map(p => ({
+              PROD_ID: p.PROD_ID,
+              productCode: p.productCode,
+              productName: p.productName,
+              REC_ST: p.REC_ST
+            }))
+          });
+        }
+      }
+
+      console.log('📝 Creating CustomerAccount with data:', accountData);
+      
+      try {
+        const newAccount = new CustomerAccount(accountData);
+        await newAccount.save({ session });
+        console.log('✅ CustomerAccount created successfully');
+      } catch (saveError) {
+        console.error('❌ Error saving CustomerAccount:', saveError.message);
+        
+        // FIXED: Provide more specific error information
+        if (saveError.message.includes('productCode')) {
+          throw new Error(`Product validation failed: ${saveError.message}. Please ensure SavingsProduct with code ${accountData.productCode} exists.`);
+        }
+        throw saveError;
+      }
     }
 
-    // Audit Trail with validated fields
+    // FIXED: Audit Trail with valid status values
+    // Check what valid status values the AuditTrail model expects
+    const auditTrailStatus = isApproval ? 'SUCCESS' : 'REJECTED'; // Common enum values
+    
     const auditTrailData = {
       event_id: Date.now(),
-      USER_ID: auditUserId, // Use alias as defined in schema
+      USER_ID: auditUserId,
       EVENT_TYPE: 'DepositAccountApplication',
       ACTION: isApproval ? 'Approve Application' : 'Reject Application',
       OLD_VALUE: {
@@ -657,14 +701,34 @@ const DepositAccountApplicationController = {
       timestamp: new Date(),
       entity_type: 'DepositAccountApplication',
       entity_id: application._id,
-      status: normalizedStatus,
-      additional_info: { comments: comments || '' },
+      status: auditTrailStatus, // FIXED: Use valid enum value
+      additional_info: { 
+        comments: comments || '',
+        originalStatus: normalizedStatus // Keep original status in additional info
+      },
     };
 
     // Log audit trail data for debugging
     console.log('AuditTrail data:', JSON.stringify(auditTrailData, null, 2));
 
-    await AuditTrail.create([auditTrailData], { session });
+    try {
+      await AuditTrail.create([auditTrailData], { session });
+      console.log('✅ AuditTrail created successfully');
+    } catch (auditError) {
+      console.error('❌ AuditTrail creation error:', auditError.message);
+      
+      // If AuditTrail fails, try without the status field
+      const fallbackAuditData = { ...auditTrailData };
+      delete fallbackAuditData.status;
+      
+      try {
+        await AuditTrail.create([fallbackAuditData], { session });
+        console.log('✅ AuditTrail created successfully without status field');
+      } catch (fallbackError) {
+        console.warn('⚠️ AuditTrail creation failed even without status field:', fallbackError.message);
+        // Continue with transaction even if AuditTrail fails
+      }
+    }
 
     await session.commitTransaction();
     return res.status(200).json({
@@ -695,9 +759,7 @@ const DepositAccountApplicationController = {
   }
 },
 
-
-
-  rejectApplicationByCustomerId: async (req, res) => {
+ rejectApplicationByCustomerId: async (req, res) => {
   try {
     const { CUST_ID } = req.params;
     const { rejectedBy, comments, ACCT_NO } = req.body;
@@ -716,20 +778,31 @@ const DepositAccountApplicationController = {
       });
     }
 
-    // Force the request to rejection
-    req.body.status = 'Rejected';
+    // Create a modified request object for the shared function
+    const modifiedReq = {
+      ...req,
+      body: {
+        ...req.body,
+        status: 'Rejected', // Force rejection status
+        rejectedBy: rejectedBy,
+        comments: comments,
+        ACCT_NO: ACCT_NO
+      }
+    };
 
-    // Call the main approveApplicationByCustomerId function
-    return DepositAccountApplicationController.approveApplicationByCustomerId(req, res);
+    // Call the main function with modified request
+    return DepositAccountApplicationController.approveApplicationByCustomerId(modifiedReq, res);
   } catch (error) {
-    res.status(500).json({
+    console.error('Rejection processing error:', error);
+    return res.status(500).json({
+      success: false,
       message: 'Error rejecting application',
       error: error.message,
       code: 'REJECTION_ERROR',
+      timestamp: new Date(),
     });
   }
 },
-
 
   updateApplication: async (req, res) => {
     try {

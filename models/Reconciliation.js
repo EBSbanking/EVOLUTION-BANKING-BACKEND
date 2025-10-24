@@ -70,8 +70,7 @@ const ReconciliationSchema = new mongoose.Schema({
   collection: 'reconciliations'
 });
 
-// Compound index for common queries
-ReconciliationSchema.index({ organizationName: 1, branchName: 1, GL_ACCT_NO: 1, TRANSACTION_ID: 1 });
+
 
 // Prevent model overwrite by checking if model exists
 const Reconciliation = mongoose.models.Reconciliation || mongoose.model('Reconciliation', ReconciliationSchema);

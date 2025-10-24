@@ -55,16 +55,57 @@ const loanProductSchema = new mongoose.Schema(
       required: true,
       default: 'NGN'
     },
+    
+    // UPDATED: BU_ID with wildcard support for multiple business units
+    BU_ID: {
+      type: [String],
+      required: true,
+      validate: {
+        validator: function(buIds) {
+          if (!Array.isArray(buIds) || buIds.length === 0) {
+            return false;
+          }
+          
+          // Valid patterns: 3-digit numbers, wildcards (*, 10*, *01, 1*1)
+          const validBuPattern = /^(\d{3}|\*|\d{1,2}\*|\*\d{1,2}|\d\*\d)$/;
+          
+          return buIds.every(id => validBuPattern.test(id));
+        },
+        message: 'BU_ID must be an array of valid business unit identifiers. Examples: ["101"], ["101", "102"], ["10*", "2*1"], ["*"]'
+      }
+    },
+    
+    // NEW: Product visibility settings
+    isGlobalProduct: {
+      type: Boolean,
+      default: false
+    },
+    
+    // NEW: Track which BUs can access this product
+    accessibleBUs: {
+      type: [String],
+      default: function() {
+        return this.BU_ID || [];
+      }
+    },
+    
+    // NEW: Product visibility level
+    visibility: {
+      type: String,
+      enum: ['GLOBAL', 'SELECTED_BUS', 'SPECIFIC_BRANCHES'],
+      default: 'SELECTED_BUS'
+    },
+
     minAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
       default: '0.00'
     },
     maxAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
       default: '0.00'
     },
     minTerm: {
@@ -89,8 +130,8 @@ const loanProductSchema = new mongoose.Schema(
     },
     interestRate: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: v => v ? parseFloat(v.toString()) : 6.00,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '6.00'),
       default: '6.00'
     },
     isActive: {
@@ -157,8 +198,8 @@ const loanProductSchema = new mongoose.Schema(
       },
       amount: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
         default: '0.00'
       },
       isPercentage: {
@@ -180,8 +221,8 @@ const loanProductSchema = new mongoose.Schema(
     }],
     processingFeeRate: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
       default: '0.00'
     },
     processingFeeGLCode: {
@@ -189,14 +230,14 @@ const loanProductSchema = new mongoose.Schema(
     },
     lateFeePerDay: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
       default: '0.00'
     },
     maxLateFee: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString())
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00')
     },
     // Rate Information
     rateInformation: {
@@ -213,34 +254,34 @@ const loanProductSchema = new mongoose.Schema(
       indexRate: String,
       absoluteRate: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString())
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00')
       },
       fixedRate: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: v => v ? parseFloat(v.toString()) : 6.00,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '6.00'),
         default: '6.00'
       },
       margin: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString())
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00')
       },
       minimumRate: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString())
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00')
       },
       maximumRate: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString())
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00')
       },
       effectiveRate: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: v => v ? parseFloat(v.toString()) : 6.00,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '6.00'),
         default: '6.00'
       },
       currentEffectiveDate: {
@@ -292,8 +333,8 @@ const loanProductSchema = new mongoose.Schema(
       },
       amount: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => mongoose.Types.Decimal128.fromString(v ? v.toString() : '0.00'),
         default: '0.00'
       },
       glAccountCode: {
@@ -365,11 +406,6 @@ const loanProductSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-loanProductSchema.index({ PROD_ID: 1 }, { unique: true });
-loanProductSchema.index({ productCode: 1 }, { unique: true });
-loanProductSchema.index({ PROD_CD: 1 }, { unique: true });
-
 // Virtual
 loanProductSchema.virtual('productId').get(function () {
   return this.PROD_ID;
@@ -390,6 +426,31 @@ loanProductSchema.pre('save', async function (next) {
     const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399];
     if (!validProdIds.includes(this.PROD_ID)) {
       throw new Error(`${this.PROD_ID} is not a valid PROD_ID!`);
+    }
+
+    // Set default accessibleBUs if not provided
+    if (!this.accessibleBUs || this.accessibleBUs.length === 0) {
+      this.accessibleBUs = this.BU_ID || [];
+    }
+
+    // Set isGlobalProduct based on BU_ID patterns
+    if (this.BU_ID && this.BU_ID.includes('*')) {
+      this.isGlobalProduct = true;
+    }
+
+    // Set visibility based on BU_ID patterns
+    if (!this.visibility) {
+      const hasGlobalWildcard = this.BU_ID && this.BU_ID.includes('*');
+      const hasWildcardPatterns = this.BU_ID && this.BU_ID.some(buId => buId.includes('*') && buId !== '*');
+      const hasMultipleBUs = this.BU_ID && this.BU_ID.length > 1;
+
+      if (hasGlobalWildcard) {
+        this.visibility = 'GLOBAL';
+      } else if (hasWildcardPatterns || hasMultipleBUs) {
+        this.visibility = 'SELECTED_BUS';
+      } else {
+        this.visibility = 'SPECIFIC_BRANCHES';
+      }
     }
 
     next();

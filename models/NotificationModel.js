@@ -35,7 +35,7 @@ const notificationSchema = new mongoose.Schema({
     timestamps: true, // Automatically manage createdAt and updatedAt fields
 });
 
-notificationSchema.index({ ROLE_ID: 1, WORK_ITEM_ID: 1 }); // Add an index for faster lookups
+
 
 // Check if the Notification model already exists, if not, create it
 const Notification = mongoose.models.Notification || mongoose.model('Notification', notificationSchema);

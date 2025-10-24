@@ -4,16 +4,22 @@ import {
   getAllLoanProducts,
   getLoanProduct,
   updateLoanProduct,
-  deleteLoanProduct
+  deleteLoanProduct,
+  getProductsByBU
 } from '../controllers/LoanProductController.js';
 
 const router = express.Router();
 
-// Use the createProduct method from the ProductsController object
+// Product creation and bulk operations
 router.post('/products', ProductsController.createProduct);
 router.get('/products', getAllLoanProducts);
-router.get('/:id', getLoanProduct);
-router.put('/:id', updateLoanProduct);
-router.delete('/:id', deleteLoanProduct);
+
+// Business Unit specific routes
+router.get('/products/business-unit/:bu_id', getProductsByBU);
+
+// Single product operations
+router.get('/products/:id', getLoanProduct);
+router.put('/products/:id', updateLoanProduct);
+router.delete('/products/:id', deleteLoanProduct);
 
 export default router;

@@ -11,19 +11,16 @@ const rateInformationSchema = new mongoose.Schema({
     type: mongoose.Types.Decimal128,
     required: function () { return this.rateType === 'FIXED'; },
     min: [0, 'Fixed rate cannot be negative'],
-    get: v => (v ? parseFloat(v.toString()).toFixed(2) : '0.00'),
   },
   marginRate: {
     type: mongoose.Types.Decimal128,
     required: function () { return this.rateType === 'FLOATING'; },
     min: [0, 'Margin rate cannot be negative'],
-    get: v => (v ? parseFloat(v.toString()).toFixed(2) : '0.00'),
   },
   effectiveRate: {
     type: mongoose.Types.Decimal128,
     required: true,
     min: [0, 'Effective rate cannot be negative'],
-    get: v => (v ? parseFloat(v.toString()).toFixed(2) : '0.00'),
   },
   effectiveDate: {
     type: Date,
@@ -39,18 +36,17 @@ const settlementInformationSchema = new mongoose.Schema({
   },
   principalSettlementMethod: {
     type: String,
-    enum: ['ACCOUNT', 'GL'],
+    enum: ['ACCOUNT', 'GL', 'CHECK'],
     required: true,
   },
   interestSettlementMethod: {
     type: String,
-    enum: ['ACCOUNT', 'GL'],
+    enum: ['ACCOUNT', 'GL', 'CHECK'],
     required: true,
   },
   settlementGLAccountNo: {
     type: String,
     required: true,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
   },
 });
 
@@ -72,58 +68,57 @@ const accrualInformationSchema = new mongoose.Schema({
 });
 
 const chargesSetupSchema = new mongoose.Schema({
-  CHRG_ID: {
-    type: Number,
-    required: false
-  },
-  CHRG_CD: {
+  name: {
     type: String,
-    required: false
+    required: true
+  },
+  amount: {
+    type: mongoose.Types.Decimal128,
+    required: true,
+    min: [0, 'Charge amount cannot be negative'],
+  },
+  glAccountCode: {
+    type: String,
+    required: true
   },
   chargeType: {
     type: String,
     enum: ['FLAT', 'PERCENTAGE'],
     required: true,
   },
-  chargeAmount: {
-    type: mongoose.Types.Decimal128,
-    required: true,
-    min: [0, 'Charge amount cannot be negative'],
-    get: v => parseFloat(v.toString()).toFixed(2),
-  },
-  chargeGLAccountNo: {
+  // Optional fields
+  CHRG_ID: Number,
+  CHRG_CD: String,
+  chargeGLAccountNo: String,
+  chargeName: String,
+  status: String,
+  TIER_TY: String,
+  BAL_ACTION_CD: String,
+  VERSION_NO: Number,
+  USER_ID: String,
+  CREATED_BY: String
+}, { strict: false });
+
+const glAccountsSchema = new mongoose.Schema({
+  principalBalance: {
     type: String,
-    required: true,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
+    required: true
   },
-  chargeName: {
+  interestIncome: {
     type: String,
-    required: false
+    required: true
   },
-  status: {
+  interestPayable: {
     type: String,
-    required: false
+    required: true
   },
-  TIER_TY: {
+  withholdingTax: {
     type: String,
-    required: false
-  },
-  BAL_ACTION_CD: {
-    type: String,
-    required: false
-  },
-  VERSION_NO: {
-    type: Number,
-    required: false
-  },
-  USER_ID: {
-    type: String,
-    required: false
-  },
-  CREATED_BY: {
-    type: String,
-    required: false
+    required: true
   }
+}, { 
+  _id: false,
+  strict: false 
 });
 
 const savingsProductSchema = new mongoose.Schema({
@@ -131,36 +126,19 @@ const savingsProductSchema = new mongoose.Schema({
     type: Number,
     required: true,
     unique: true,
-    validate: {
-      validator: function (v) {
-        return typeof v === 'number' && v > 0;
-      },
-      message: props => `${props.value} is not a valid PROD_ID! Must be a positive number.`
-    }
-  },
-  PROD_CD: {
-    type: String,
-    required: false
-  },
-  PROD_DESC: {
-    type: String,
-    required: false
-  },
-  PRODUCT_TYPE: {
-    type: String,
-    enum: ['SAVINGS', 'TERM_DEPOSIT'],
-    required: true,
   },
   productCode: {
     type: String,
     required: true,
     unique: true,
-    trim: true,
   },
   productName: {
     type: String,
     required: true,
-    trim: true,
+  },
+  productDescription: {
+    type: String,
+    required: true,
   },
   productType: {
     type: String,
@@ -172,25 +150,57 @@ const savingsProductSchema = new mongoose.Schema({
     required: true,
     enum: ['NGN', 'USD', 'EUR', 'GBP'],
   },
-  START_DT: {
-    type: Date,
-    default: Date.now
-  },
-  REC_ST: {
-    type: String,
-    default: 'A'
-  },
-  CREATED_BY: {
-    type: String,
-    default: 'system'
-  },
-  BU_ID: {
-    type: String,
-    required: true,
-    match: [/^\d{3}$/, 'BU_ID must be a 3-digit string'],
+  
+  // UPDATED: BU_ID as array to support multiple business units
+ // UPDATED: BU_ID as array to support multiple business units, patterns, and global products
+// In your SavingsProduct model (models/SavingsProduct.js)
+BU_ID: {
+  type: [String],
+  required: true,
+  validate: {
+    validator: function(buIds) {
+      if (!Array.isArray(buIds) || buIds.length === 0) {
+        return false;
+      }
+      
+      // Valid patterns: 3-digit numbers, wildcards (*, 10*, *01, 1*1)
+      const validBuPattern = /^(\d{3}|\*|\d{1,2}\*|\*\d{1,2}|\d\*\d)$/;
+      const invalidBUs = buIds.filter(buId => !validBuPattern.test(buId));
+      
+      return buIds.every(id => validBuPattern.test(id));
+    },
+    message: 'BU_ID must be an array of valid business unit identifiers. Examples: ["101"], ["101", "102"], ["10*", "2*1"], ["*"]'
+  }
+},
+  
+  // NEW: Product visibility settings
+  isGlobalProduct: {
+    type: Boolean,
+    default: false
   },
   
-  // Additional fields
+  // NEW: Track which BUs can access this product
+  accessibleBUs: {
+    type: [String],
+    default: function() {
+      return this.BU_ID || [];
+    }
+  },
+  
+  // NEW: Product visibility level
+  visibility: {
+    type: String,
+    enum: ['GLOBAL', 'SELECTED_BUS', 'SPECIFIC_BRANCHES'],
+    default: 'SELECTED_BUS'
+  },
+
+  // Optional fields
+  PROD_CD: String,
+  PROD_DESC: String,
+  PRODUCT_TYPE: String,
+  START_DT: { type: Date, default: Date.now },
+  REC_ST: { type: String, default: 'A' },
+  CREATED_BY: { type: String, default: 'system' },
   VERSION_NO: String,
   PROD_CAT_TY: String,
   PROD_DESIGN_ID: Number,
@@ -202,166 +212,20 @@ const savingsProductSchema = new mongoose.Schema({
   ACCT_CYCLE_VALUE: Number,
   ACCT_AUTH_BUS_PROD_ID: Number,
 
+  // Core structured data
   rateInformation: rateInformationSchema,
   settlementInformation: settlementInformationSchema,
   accrualInformation: accrualInformationSchema,
-  chargesSetup: chargesSetupSchema,
-  
-  // GL Account Fields
-  principalBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestPayableGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  withholdingTaxGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  depositChargeReceivableGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  delinquentBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  dormantBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  earmarkedBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  escheatedBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestChequesGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestExpenseGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestIncomeGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestReceivableGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestSuspenseGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  maturedBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  maturityChequesGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  nonAccrualBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  overdrawnBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  preDormantBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  provisionReserveGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  provisionExpenseGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  rejectedCreditSuspenseGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  rejectedDebitSuspenseGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  reservedBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  unclearedBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  writeOffBalanceGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  recoveriesGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestCreditGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
-  interestDebitGLAccountNo: {
-    type: String,
-    required: false,
-    match: [/^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}$/, 'Invalid GL account number format'],
-  },
+  chargesSetup: [chargesSetupSchema],
+  glAccounts: glAccountsSchema,
+
 }, {
-  timestamps: true // This automatically adds createdAt and updatedAt
+  timestamps: true,
+  strict: false
 });
 
-// Indexes
-savingsProductSchema.index({ PROD_ID: 1 }, { unique: true });
-savingsProductSchema.index({ productCode: 1 }, { unique: true });
-
-// ✅ CORRECTED EXPORT - Check if model already exists before creating
-const SavingsProduct = mongoose.models.SavingsProduct || mongoose.model('SavingsProduct', savingsProductSchema);
+// Clear any existing model and create new one
+delete mongoose.connection.models['SavingsProduct'];
+const SavingsProduct = mongoose.model('SavingsProduct', savingsProductSchema);
 
 export default SavingsProduct;
