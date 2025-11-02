@@ -5,6 +5,7 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
 import LoanProduct from '../models/LoanProduct.js';
 import LoanRepayment from '../models/LoanRepayment.js';
+import LoanEvent from '../models/LoanEvent.js'; // NEW: Import for event generation
 import GLAccount from '../models/GLAccount.js'; // Added missing import
 import { generateTransactionIds } from '../utils/generateAccountNumber.js';
 
@@ -310,6 +311,43 @@ export const recordPayment = async (req, res) => {
       },
       { session }
     );
+
+    // NEW: Determine and update servicing status
+    let servicingStatus = 'SERVICED'; // Default for successful payments
+    if (isOverduePayment) {
+      servicingStatus = 'UNSERVICED'; // Or 'DELINQUENT' if you have thresholds (e.g., >30 days late)
+    } else if (isEarlyPayment) {
+      servicingStatus = 'SERVICED'; // Explicitly reinforce
+    }
+
+    // Only update if status changed (to avoid spam)
+    const currentLoanStatus = loanAccount.SERVICING_STATUS || 'SERVICED'; // Assume default
+    if (servicingStatus !== currentLoanStatus) {
+      await LoanAccount.updateOne(
+        { _id: loanAccount._id },
+        { $set: { SERVICING_STATUS: servicingStatus } },
+        { session }
+      );
+    }
+
+    // NEW: Generate/emit event
+    const event = new LoanEvent({
+      ACCT_NO: String(ACCT_NO),
+      eventType: 'SERVICING_UPDATE',
+      status: servicingStatus,
+      installmentNumber: installment.installmentNumber,
+      details: {
+        paymentAmount,
+        isEarlyPayment,
+        isOverduePayment,
+        lateFee,
+        previousStatus: currentLoanStatus,
+        trigger: 'PAYMENT_PROCESSED' // Or 'PAYMENT_OVERDUE' from cron
+      },
+      createdBy
+    });
+
+    await event.save({ session });
 
     // Update GLAccount (credit) - Fixed GL account update
     if (loanProduct.loanGLAccount) {

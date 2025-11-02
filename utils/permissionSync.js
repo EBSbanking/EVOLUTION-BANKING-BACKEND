@@ -223,7 +223,10 @@ export const ROLE_PERMISSION_MAPPING = {
       CUSTOMER_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.CUSTOMER),
       ACCOUNT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.ACCOUNT),
       LOAN_OPERATIONS_ACCESS_LEVEL: [PERMISSIONS.LOAN_OPERATIONS.APPROVE],
-      APPROVAL_ACCESS_LEVEL: [PERMISSIONS.APPROVAL.CUSTOMER_RELATED],
+      APPROVAL_ACCESS_LEVEL: [
+        PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
+        PERMISSIONS.APPROVAL.STANDING_ORDER  // ✅ NEW: Standing order approval
+      ],
       DASHBOARD_ACCESS_LEVEL: [
         PERMISSIONS.DASHBOARD.VIEW,
         PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
@@ -322,7 +325,7 @@ export const ROLE_PERMISSION_MAPPING = {
       ACCOUNT_ACCESS_LEVEL: [PERMISSIONS.ACCOUNT.VIEW_BALANCE],
     },
   },
-  // 28. Customer Service Officer
+   // 28. Customer Service Officer
   28: {
     permissions: {
       CUSTOMER_ACCESS_LEVEL: [
@@ -375,10 +378,17 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.GUARANTOR.DASHBOARD,
         PERMISSIONS.GUARANTOR.EXPORT,
       ],
+      // ADDED: Standing Order Permissions for CSO
+      STANDING_ORDER_ACCESS_LEVEL: [
+        PERMISSIONS.STANDING_ORDER.CREATE,
+        PERMISSIONS.STANDING_ORDER.VIEW,
+        PERMISSIONS.STANDING_ORDER.UPDATE,
+        PERMISSIONS.STANDING_ORDER.DELETE,
+      ],
     },
   },
-
- // 29. Teller - UPDATED PERMISSIONS (ensure REAL_TIME_STATS is included)
+  
+// 29. Teller - UPDATED PERMISSIONS (ensure REAL_TIME_STATS is included)
 29: {
   permissions: {
     DRAWER_ACCESS_LEVEL: [
@@ -412,7 +422,6 @@ export const ROLE_PERMISSION_MAPPING = {
       PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
       PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
       PERMISSIONS.DASHBOARD.REAL_TIME_STATS, // ✅ THIS IS CRITICAL FOR today-stats ENDPOINT
-      
     ],
     REPORT_ACCESS_LEVEL: [
       PERMISSIONS.REPORT.VIEW,
@@ -582,37 +591,18 @@ export const ROLE_MAPPING = Object.fromEntries(
   ])
 );
 
-// ✅ UPDATED: FIXED syncPermissions FUNCTION
+// Synchronize ROLE_MAPPING with Permissions model
 export async function syncPermissions() {
   try {
     for (const [roleId, roleData] of Object.entries(ROLE_MAPPING)) {
       const existingPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
-      
-      // ✅ FIXED: Ensure all permission values are proper arrays
       const permissionsData = {
         BU_ROLE_ID: parseInt(roleId),
         ROLE_NAME: roleData.ROLE_NM,
         IS_ACTIVE: true,
         DESCRIPTION: roleData.description || `Permissions for ${roleData.ROLE_NM}`,
+        ...roleData.permissions,
       };
-
-      // ✅ FIXED: Process each permission group to ensure proper arrays
-      if (roleData.permissions) {
-        Object.entries(roleData.permissions).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            permissionsData[key] = value;
-          } else if (typeof value === 'string') {
-            // Handle case where it might be stored as string
-            try {
-              permissionsData[key] = JSON.parse(value);
-            } catch {
-              permissionsData[key] = [value];
-            }
-          } else {
-            permissionsData[key] = [];
-          }
-        });
-      }
 
       if (existingPermissions) {
         await Permissions.updateOne(
@@ -620,10 +610,14 @@ export async function syncPermissions() {
           { $set: permissionsData },
           { runValidators: true }
         );
-        logger.info(`Updated permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`);
+        logger.info(`Updated permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
+          permissions: JSON.stringify(permissionsData),
+        });
       } else {
         await Permissions.create(permissionsData);
-        logger.info(`Created permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`);
+        logger.info(`Created permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
+          permissions: JSON.stringify(permissionsData),
+        });
       }
     }
     logger.info('Permissions synchronization completed successfully');
@@ -633,73 +627,6 @@ export async function syncPermissions() {
       stack: error.stack,
     });
     throw new Error(`Failed to synchronize permissions: ${error.message}`);
-  }
-}
-
-// ✅ ADDED: TEMPORARY SYNC FUNCTION TO BYPASS SCHEMA ISSUES
-export async function syncPermissionsTemp() {
-  try {
-    // Drop and recreate collection with proper data
-    const mongoose = await import('mongoose');
-    const Permissions = await import('../models/Permissions.js');
-    
-    console.log('🔄 Using temporary sync method...');
-    
-    // Create a temporary collection with proper structure
-    const tempCollection = mongoose.default.connection.db.collection('permissions_temp');
-    
-    // Clear temporary collection
-    await tempCollection.deleteMany({});
-    
-    for (const [roleId, roleData] of Object.entries(ROLE_MAPPING)) {
-      const permissionsData = {
-        BU_ROLE_ID: parseInt(roleId),
-        ROLE_NAME: roleData.ROLE_NM,
-        IS_ACTIVE: true,
-        DESCRIPTION: roleData.description || `Permissions for ${roleData.ROLE_NM}`,
-      };
-      
-      // Add permission arrays
-      if (roleData.permissions) {
-        Object.entries(roleData.permissions).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            permissionsData[key] = value;
-          }
-        });
-      }
-      
-      await tempCollection.insertOne(permissionsData);
-      console.log(`✅ Synced role ${roleData.ROLE_NM} to temporary collection`);
-    }
-    
-    console.log('✅ Temporary sync completed');
-    
-    // Update roleHasPermission to use temporary collection
-    const originalRoleHasPermission = roleHasPermission;
-    
-    // Override roleHasPermission temporarily
-    global.roleHasPermission = async (roleId, permission) => {
-      const tempCollection = mongoose.default.connection.db.collection('permissions_temp');
-      const dbPermissions = await tempCollection.findOne({ BU_ROLE_ID: parseInt(roleId) });
-      
-      if (dbPermissions) {
-        const allPermissions = [];
-        Object.entries(dbPermissions).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            allPermissions.push(...value.filter(p => typeof p === 'string'));
-          }
-        });
-        return allPermissions.includes(permission);
-      }
-      
-      // Fallback to original function
-      return originalRoleHasPermission(roleId, permission);
-    };
-    
-    return true;
-  } catch (error) {
-    console.error('Temporary sync failed:', error);
-    throw error;
   }
 }
 
@@ -786,7 +713,6 @@ export function getRoleWithPermissions(roleId) {
     throw error;
   }
 }
-
 
 // Check if role has specific permission
 export async function roleHasPermission(roleId, permission) {
@@ -1028,6 +954,12 @@ export const MODULE_PERMISSIONS = {
   guarantorDashboard: PERMISSIONS.GUARANTOR.DASHBOARD,
   guarantorAuditLog: PERMISSIONS.GUARANTOR.AUDIT_LOG,
 
+  // Standing Order Permissions
+  standingOrderCreate: PERMISSIONS.STANDING_ORDER.CREATE,
+  standingOrderView: PERMISSIONS.STANDING_ORDER.VIEW,
+  standingOrderUpdate: PERMISSIONS.STANDING_ORDER.UPDATE,
+  standingOrderDelete: PERMISSIONS.STANDING_ORDER.DELETE,
+
   // Transaction Permissions
   cashWithdrawal: PERMISSIONS.TRANSACTION.WITHDRAWAL,
   cashDeposit: PERMISSIONS.TRANSACTION.DEPOSIT,
@@ -1081,7 +1013,6 @@ export const MODULE_PERMISSIONS = {
   managerDashboard: PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD,
   guarantorDashboard: PERMISSIONS.DASHBOARD.GUARANTOR_DASHBOARD,
   buPerformance: PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
-   dashboardStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
 
   // Analytics Permissions
   viewTellerAnalytics: PERMISSIONS.ANALYTICS.VIEW_TELLER_ANALYTICS,
@@ -1123,8 +1054,93 @@ export const MODULE_PERMISSIONS = {
   apiTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS
 };
 
+// ======================
+// DEBUG PERMISSION MIDDLEWARE (TEMPORARY)
+// ======================
+export const checkPermissions = (moduleKey) => {
+  return async (req, res, next) => {
+    console.log('🔍 PERMISSION DEBUG START ======================');
+    console.log('📝 Route:', req.method, req.path);
+    console.log('🔑 Module Key Provided:', moduleKey);
+    console.log('👤 User Role:', req.user?.role);
+    console.log('🆔 User Role ID:', req.user?.roleId);
+    console.log('📋 Available Module Keys:', Object.keys(MODULE_PERMISSIONS).slice(0, 10));
+    
+    // If moduleKey is undefined, try to derive it
+    if (!moduleKey) {
+      const derivedKey = deriveModuleKey(req.path);
+      console.log('🔄 Derived Module Key:', derivedKey);
+      moduleKey = derivedKey;
+    }
+    
+    console.log('🎯 Final Module Key:', moduleKey);
+    console.log('🔍 Permission Lookup:', MODULE_PERMISSIONS[moduleKey]);
+    
+    if (!moduleKey || !MODULE_PERMISSIONS[moduleKey]) {
+      console.log('❌ PERMISSION ERROR: Invalid module key');
+      return res.status(400).json({
+        success: false,
+        message: `No permission defined for module ${moduleKey || 'undefined'}`,
+        errorCode: "INVALID_MODULE_KEY"
+      });
+    }
+    
+    console.log('✅ Module key found, proceeding with permission check...');
+    console.log('🔍 PERMISSION DEBUG END ========================');
+    
+    // Continue with your existing permission check logic
+    const requiredPermission = MODULE_PERMISSIONS[moduleKey];
+    const userRoleId = req.user?.roleId;
+    
+    if (!userRoleId) {
+      return res.status(401).json({
+        success: false,
+        message: "User role not found",
+        errorCode: "UNAUTHORIZED"
+      });
+    }
+    
+    try {
+      const hasPermission = await roleHasPermission(userRoleId, requiredPermission);
+      
+      if (!hasPermission) {
+        console.log('❌ Permission denied for:', requiredPermission);
+        return res.status(403).json({
+          success: false,
+          message: `Insufficient permissions. Required: ${requiredPermission}`,
+          errorCode: "FORBIDDEN"
+        });
+      }
+      
+      console.log('✅ Permission granted for:', requiredPermission);
+      next();
+    } catch (error) {
+      console.error('Permission check error:', error);
+      return res.status(500).json({
+        success: false,
+        message: "Permission check failed",
+        errorCode: "PERMISSION_ERROR"
+      });
+    }
+  };
+};
+
+function deriveModuleKey(path) {
+  const pathParts = path.split('/').filter(part => part);
+  
+  // Handle /api/users/teller/today-stats
+  if (path.includes('/teller/today-stats')) {
+    return 'tellerTodayStats';
+  }
+  
+  // Generic derivation: take last meaningful part
+  const lastPart = pathParts[pathParts.length - 1];
+  return lastPart || 'dashboard'; // fallback
+}
+
 // Call during application startup
 validatePermissions();
+
 
 export default {
   ROLE_MAPPING,
@@ -1138,4 +1154,5 @@ export default {
   getRolePermissionsGrouped,
   canPerformAction,
   validatePermissions,
+  checkPermissions, // ✅ ADD THIS TO EXPORT THE DEBUG FUNCTION
 };

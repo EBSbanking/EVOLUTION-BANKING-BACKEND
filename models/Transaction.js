@@ -1,4 +1,4 @@
-
+// models/Transaction.js - CORRECTED AND CONSOLIDATED VERSION
 import mongoose from 'mongoose';
 import { getAllTransactionTypes } from '../constants/transactionTypes.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
@@ -57,6 +57,7 @@ const TransactionSchema = new mongoose.Schema(
       type: Number,
       required: [true, 'Transaction ID is required'],
       unique: true,
+      index: true,
     },
     EVENT_ID: {
       type: Number,
@@ -65,6 +66,12 @@ const TransactionSchema = new mongoose.Schema(
     TRAN_JOURNAL_ID: {
       type: String,
       required: [true, 'Journal ID is required'],
+    },
+    REFERENCE: {
+      type: String,
+      unique: true,
+      required: true,
+      // REMOVED default function - let the hook handle it completely
     },
     description: {
       type: String,
@@ -142,7 +149,6 @@ const TransactionSchema = new mongoose.Schema(
       transform: function (doc, ret) {
         delete ret.__v;
         delete ret._id;
-        delete ret.reference;
         return ret;
       },
     },
@@ -176,25 +182,91 @@ TransactionSchema.statics.findRecentByCustomer = function (customerId, limit = 1
   return this.find({ CUST_ID: customerId }).sort({ TRANSACTIONDATE: -1 }).limit(limit);
 };
 
-// Pre-validate hook to generate IDs
+// SINGLE PRE-VALIDATE HOOK - CONSOLIDATED AND FIXED
 TransactionSchema.pre('validate', async function (next) {
-  console.log('Pre-validate hook:', { TRANSACTION_ID: this.TRANSACTION_ID, EVENT_ID: this.EVENT_ID, TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID });
-  if (!this.TRANSACTION_ID || !this.EVENT_ID || !this.TRAN_JOURNAL_ID) {
-    const identifiers = await generateWorkflowIdentifiers();
-    this.TRANSACTION_ID = identifiers.TRANSACTION_ID;
-    this.EVENT_ID = identifiers.EVENT_ID;
-    this.TRAN_JOURNAL_ID = identifiers.JOURNAL_ID;
-    console.log('Generated identifiers in pre-validate:', identifiers);
+  console.log('Pre-validate hook - Current state:', { 
+    TRANSACTION_ID: this.TRANSACTION_ID, 
+    EVENT_ID: this.EVENT_ID, 
+    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+    REFERENCE: this.REFERENCE
+  });
+
+  // Only generate identifiers for new documents
+  if (this.isNew) {
+    try {
+      const identifiers = await generateWorkflowIdentifiers();
+      console.log('Generated identifiers in pre-validate:', identifiers);
+
+      // CRITICAL FIX: ALWAYS assign all identifiers to ensure consistency
+      // This overrides any existing values (including default REFERENCE)
+      this.TRANSACTION_ID = Number(identifiers.TRANSACTION_ID);
+      this.EVENT_ID = Number(identifiers.EVENT_ID);
+      this.TRAN_JOURNAL_ID = identifiers.TRAN_JOURNAL_ID;
+      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
+
+      console.log('Pre-validate hook - After assignment:', { 
+        TRANSACTION_ID: this.TRANSACTION_ID, 
+        EVENT_ID: this.EVENT_ID, 
+        TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+        REFERENCE: this.REFERENCE
+      });
+
+    } catch (error) {
+      console.error('Error generating workflow identifiers in pre-validate:', error);
+      
+      // Fallback: generate identifiers manually
+      const timestamp = Date.now();
+      const randomSuffix = Math.floor(Math.random() * 1000);
+      
+      this.TRANSACTION_ID = Number(timestamp.toString().slice(-9));
+      this.EVENT_ID = Number(timestamp.toString().slice(-8));
+      this.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
+      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
+      
+      console.log('Using fallback identifiers:', {
+        TRANSACTION_ID: this.TRANSACTION_ID,
+        EVENT_ID: this.EVENT_ID,
+        TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+        REFERENCE: this.REFERENCE
+      });
+    }
   }
   next();
 });
 
-// Pre-save hook to prevent unwanted fields
+// PRE-SAVE HOOK AS BACKUP
 TransactionSchema.pre('save', function (next) {
-  console.log('Pre-save hook:', { reference: this.reference });
-  if (this.reference !== undefined) {
-    delete this.reference;
+  console.log('Pre-save hook - Final check:', { 
+    TRANSACTION_ID: this.TRANSACTION_ID,
+    EVENT_ID: this.EVENT_ID,
+    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+    REFERENCE: this.REFERENCE
+  });
+
+  // Final validation for new documents
+  if (this.isNew) {
+    // Ensure all required fields have values
+    if (!this.TRANSACTION_ID) {
+      console.warn('TRANSACTION_ID still missing in pre-save, generating emergency fallback');
+      this.TRANSACTION_ID = Number(Date.now().toString().slice(-9));
+    }
+    if (!this.EVENT_ID) {
+      this.EVENT_ID = Number(Date.now().toString().slice(-8));
+    }
+    if (!this.TRAN_JOURNAL_ID) {
+      this.TRAN_JOURNAL_ID = `JRN${Date.now()}`;
+    }
+    if (!this.REFERENCE) {
+      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
+    }
+
+    // Final type conversion to ensure consistency
+    this.TRANSACTION_ID = Number(this.TRANSACTION_ID);
+    this.EVENT_ID = Number(this.EVENT_ID);
+    this.TRAN_JOURNAL_ID = String(this.TRAN_JOURNAL_ID);
+    this.REFERENCE = String(this.REFERENCE);
   }
+
   next();
 });
 
@@ -219,6 +291,11 @@ TransactionSchema.statics.dropTransactionIdIndex = async function () {
 TransactionSchema.post('init', async function () {
   await this.model('Transaction').dropTransactionIdIndex();
 });
+
+// Add index for better performance
+TransactionSchema.index({ TRANSACTION_ID: 1 }, { unique: true });
+TransactionSchema.index({ ACCT_NO: 1, TRANSACTIONDATE: -1 });
+TransactionSchema.index({ CUST_ID: 1, TRANSACTIONDATE: -1 });
 
 const Transaction = mongoose.model('Transaction', TransactionSchema);
 export default Transaction;

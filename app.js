@@ -13,7 +13,7 @@ import monitor from 'express-status-monitor';
 import mongoose from 'mongoose';
 import rateLimit from 'express-rate-limit';
 import logger from './utils/logger.js';
-import permissionSync from './utils/permissionSync.js'; // Updated import for sync functions
+import permissionSync from './utils/permissionSync.js';
 
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -41,11 +41,10 @@ app.use(monitor());
 
 // Rate Limiting (bypass for development or login endpoint)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000, // 15 minutes default
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100, // 100 requests default
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
   message: 'Too many requests from this IP, please try again later.',
   skip: (req) => {
-    // Bypass rate limiting in development or for login endpoint
     const isDev = process.env.NODE_ENV === 'development';
     const isLogin = req.path === '/api/users/users/login';
     logger.info('Rate limit check', { path: req.path, isDev, isLogin, skip: isDev || isLogin });
@@ -57,9 +56,9 @@ app.use(limiter);
 
 // Enhanced CORS Configuration
 const allowedOrigins = [
-  process.env.CLIENT_URL, // http://192.168.1.100:8080/core-x-banking-application
-  process.env.CLIENT_URL_LOCAL, // http://localhost:8080
-  process.env.CLIENT_URL_NETWORK// http://192.168.1.100:8080
+  process.env.CLIENT_URL,
+  process.env.CLIENT_URL_LOCAL,
+  process.env.CLIENT_URL_NETWORK
 ].filter(Boolean);
 
 logger.info('CORS allowed origins loaded:', { allowedOrigins });
@@ -108,14 +107,24 @@ app.use(cors({
   ]
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// ✅ INCREASED PAYLOAD SIZE LIMITS FOR FILE UPLOADS
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '50mb',
+  parameterLimit: 100000
+}));
 
+// ✅ FIXED: FILE UPLOAD CONFIGURATION - Use memory storage for file processing
 app.use(fileUpload({
-  useTempFiles: true,
-  tempFileDir: '/tmp/',
-  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 10 * 1024 * 1024 },
-  abortOnLimit: true
+  useTempFiles: false, // ✅ CHANGED: Store files in memory as buffers (not temp files)
+  limits: { 
+    fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 50 * 1024 * 1024 // 50MB
+  },
+  abortOnLimit: true,
+  createParentPath: true,
+  safeFileNames: true,
+  preserveExtension: true
 }));
 
 app.use(expressSession({
@@ -193,7 +202,7 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// MongoDB Connection with Permissions Sync - UPDATED
+// MongoDB Connection with Permissions Sync
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('✅ MongoDB connected');
@@ -211,7 +220,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(err => {
     console.error('❌ MongoDB connection error:', err);
     console.error('💡 Please ensure MONGODB_URI is set in your .env file');
-    process.exit(1); // Exit if DB fails
+    process.exit(1);
   });
 
 // ----------------------------
@@ -231,7 +240,7 @@ import CountryRoutes from './routes/CountryRoutes.js';
 import CreditApplicationRoutes from './routes/CreditApplicationRoutes.js';
 import CustWorkflowRoutingRoutes from './routes/CustWorkflowRoutingRoutes.js';
 import CustomerAccountRoutes from './routes/CustomerAccountRoutes.js';
-import CustomerRoutes from './routes/CustomerRoutes.js';
+import CustomerRoutes from './routes/CustomerRoutes.js'; // ✅ This includes batch upload
 import CustomerTypeRoutes from './routes/CustomerTypeRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import DepositAccountApplicationRoutes from './routes/DepositAccountApplicationRoutes.js';
@@ -308,7 +317,11 @@ import ThriftRoutes from './routes/ThriftRoutes.js';
 import creditOfficerRoutes from './routes/creditOfficerRoutes.js';
 import TriftReportRoutes from './routes/TriftReportRoutes.js';
 import CleanupDB from './routes/CleanupDB.js';
-
+import StandingOrderRoutes from './routes/StandingOrderRoutes.js';
+import LoanPortfolioRoutes from './routes/LoanPortfolioRoutes.js';
+import GroupRoutes from './routes/GroupRoutes.js';
+import groupSavingsRoutes from './routes/groupSavingsRoutes.js';
+import uploadTestRoutes from './routes/uploadTest.js';
 
 // ----------------------------
 // Mount API Routes
@@ -321,7 +334,7 @@ app.use('/api/permissions', PermissionRoutes);
 app.use('/api/aml', amlRoutes);
 app.use('/api/aml-threshold', AMLThresholdRoutes);
 
-app.use('/api/customer', CustomerRoutes);
+app.use('/api/customer', CustomerRoutes); // ✅ This now includes batch upload routes
 app.use('/api/customers-account', CustomerAccountRoutes);
 app.use('/api/customer-types', CustomerTypeRoutes);
 app.use('/api/identifications', IdentificationInformationRoutes);
@@ -424,10 +437,17 @@ app.use('/api/thrift-banking', ThriftRoutes);
 app.use('/api/users/credit-officer', creditOfficerRoutes);
 app.use('/api/thrift-report', TriftReportRoutes);
 
-app.use('/api/cleandb', CleanupDB );
+app.use('/api/cleandb', CleanupDB);
 
+app.use('/api/standing-order', StandingOrderRoutes);
 
+app.use('/api/portfolio-report', LoanPortfolioRoutes);
 
+app.use('/api/group', GroupRoutes);
+
+// Group Savings Routes
+app.use('/api/group-savings', groupSavingsRoutes);
+app.use('/api/debug', uploadTestRoutes);
 
 // ----------------------------
 // Static Files & React Build
@@ -439,8 +459,6 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(staticPath, 'index.html'));
   });
 }
-
-
 
 // ----------------------------
 // Error Handling
@@ -463,6 +481,10 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`📁 File upload configured with memory storage`);
+  console.log(`📁 File upload limit: ${parseInt(process.env.MAX_FILE_SIZE, 10) || 50}MB`);
+  console.log(`🔧 Express-fileupload: useTempFiles = false (memory buffers)`);
 });
 
 export default app;

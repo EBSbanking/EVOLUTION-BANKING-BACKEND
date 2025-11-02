@@ -36,7 +36,7 @@ function generateAcctNo(accountType, seq) {
 export const generateAccountNumber = async (accountType) => {
   const prefixMap = {
     'ACCT_SAVINGS': USE_NUBAN ? '2' : '100',
-    'ACCT_CURRENT': USE_NUBAN ? '3' : '310',
+    'ACCT_CURRENT': USE_NUBAN ? '3' : '210',
     'ACCT_LOAN': USE_NUBAN ? '1' : '300',
     'ACCT_TERM_DEPOSIT': USE_NUBAN ? '1' : '200',
     'ACCT_CREDIT_CARD': USE_NUBAN ? '1' : '320',

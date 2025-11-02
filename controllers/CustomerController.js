@@ -7,6 +7,7 @@ import { validateAMLInput } from '../utils/amlValidator.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
 import NotificationService from '../services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
+import CustomerBatchService from '../Services/customerBatchService.js';
 
 import moment from 'moment';
 import mongoose from 'mongoose';
@@ -378,6 +379,80 @@ export const createCustomer = async (req, res) => {
     });
     return res.status(500).json({
       message: 'Failed to create customer',
+      error: error.message
+    });
+  }
+};
+
+
+// controllers/CustomerController.js
+
+// Update your batchUploadCustomers function to accept buffer
+export const batchUploadCustomers = async (fileBuffer) => {
+  try {
+    console.log('📁 Processing batch upload with buffer length:', fileBuffer?.length);
+    
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return {
+        success: false,
+        message: 'Empty file buffer received',
+        total: 0,
+        created: 0,
+        errors: ['File buffer is empty'],
+        duplicates: 0,
+        failed: 0
+      };
+    }
+
+    const result = await CustomerBatchService.processExcelBatch(fileBuffer);
+    console.log('✅ Batch processing result:', result);
+    
+    // Ensure the result has all required fields
+    return {
+      success: result.success || false,
+      message: result.message || 'Processing completed',
+      total: result.total || 0,
+      created: result.created || 0,
+      duplicates: result.duplicates || 0,
+      failed: result.failed || 0,
+      errors: result.errors || [],
+      ...result // Spread any additional properties
+    };
+
+  } catch (error) {
+    console.error('❌ Batch upload error in controller:', error);
+    return {
+      success: false,
+      message: 'Processing failed',
+      error: error.message,
+      total: 0,
+      created: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: [error.message]
+    };
+  }
+};
+
+// Or if you want to keep the original signature, create a wrapper:
+export const handleBatchUpload = async (req, res) => {
+  try {
+    if (!req.files || !req.files.customersFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    const file = req.files.customersFile;
+    const result = await CustomerBatchService.processExcelBatch(file.data);
+    
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Batch upload error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
       error: error.message
     });
   }
@@ -866,23 +941,23 @@ export const getAllCustomer = async (req, res) => {
 export const getCustomerById = async (req, res) => {
   try {
     let { CUST_ID } = req.params;
-    const userId = req.user_id || 'system';  // From middleware
+    const userId = req.user_id || 'system';
     const ipAddress = req.ip_address || '0.0.0.0';
 
     if (!CUST_ID) {
       return res.status(400).json({ message: 'CUST_ID parameter is required' });
     }
 
-    // Ensure CUST_ID is a string and is 10 digits (padding if necessary)
-    CUST_ID = CUST_ID.toString().padStart(10, '0');
+    // Clean the CUST_ID - remove leading zeros
+    const cleanCustId = CUST_ID.toString().replace(/^0+/, '');
 
-    const customer = await Customer.findOne({ CUST_ID }).populate('nextOfKin'); // ✅ ADDED: Populate nextOfKin
+    const customer = await Customer.findOne({ CUST_ID: cleanCustId }).populate('nextOfKin');
 
     if (!customer) {
-      // Self-audit not-found (optional)
+      // Self-audit not-found
       auditLogger.info('Audit Event', {
         entity_type: 'customer_query',
-        entity_id: CUST_ID,
+        entity_id: cleanCustId,
         user_id: userId,
         action: 'get_customer_by_id',
         old_value: null,
@@ -894,10 +969,10 @@ export const getCustomerById = async (req, res) => {
       return res.status(404).json({ message: `Customer with CUST_ID ${CUST_ID} not found` });
     }
 
-    // Self-audit success (optional)
+    // Self-audit success
     auditLogger.info('Audit Event', {
       entity_type: 'customer_query',
-      entity_id: CUST_ID,
+      entity_id: cleanCustId,
       user_id: userId,
       action: 'get_customer_by_id',
       old_value: null,
@@ -913,7 +988,6 @@ export const getCustomerById = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching customer:', error);
-    // Audit failure (non-blocking)
     auditLogger.error('Audit Event', {
       entity_type: 'customer_query',
       entity_id: req.params.CUST_ID || null,
@@ -933,7 +1007,6 @@ export const getCustomerById = async (req, res) => {
     });
   }
 };
-
 // Example: CustomerController.js
 export const getPendingCustomers = async (req, res) => {
   try {

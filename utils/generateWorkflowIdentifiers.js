@@ -1,29 +1,14 @@
+// utils/generateWorkflowIdentifiers.js - CORRECTED VERSION
 import mongoose from 'mongoose';
-import Workflow from '../models/WF_WORK_ITEM.js';
-import { generateNumber } from '../utils/generateNumber.js';
+import Counter from '../models/Counter.js'; // Use your existing Counter model
 
-// Define Sequence schema - Use targetCollection to match your database index
-const SequenceSchema = new mongoose.Schema({
-  targetCollection: { 
-    type: String, 
-    required: true, 
-    unique: true,
-    default: 'default'
-  },
-  value: { type: Number, default: 0 },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Sequence = mongoose.model('Sequence', SequenceSchema, 'sequences');
-
+// Remove the Sequence model and use Counter instead
 // Helper to generate a random number with 8 to 12 digits
 const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
   try {
-    const digits = generateNumber(maxDigits);
-    const value = parseInt(digits.toString().substring(0, maxDigits));
-    
     const min = Math.pow(10, minDigits - 1);
     const max = Math.pow(10, maxDigits) - 1;
+    const value = Math.floor(min + Math.random() * (max - min + 1));
     
     if (!value || typeof value !== 'number' || value < min || value > max) {
       throw new Error(`Invalid random digits generated: ${value}`);
@@ -31,85 +16,133 @@ const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
     return value.toString();
   } catch (error) {
     console.error('generateRandomDigits error:', error.message);
-    throw new Error(`Failed to generate random digits: ${error.message}`);
+    // Fallback
+    return Math.floor(1000000000 + Math.random() * 9000000000).toString();
   }
 };
 
-// Helper function to generate random numbers (if not imported properly)
-const generateLocalNumber = (length) => {
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += Math.floor(Math.random() * 10);
-  }
-  return result;
-};
+// Generate sequential numbers using your Counter model
+const generateSequentialNumber = async (sequenceName, session = null) => {
+  try {
+    const options = { 
+      new: true, 
+      upsert: true,
+      setDefaultsOnInsert: { seq: 1000000000 } // Start from 1,000,000,000
+    };
+    
+    if (session) {
+      options.session = session;
+    }
 
-// Simple version of generateRandomDigits as fallback
-const generateSimpleRandomDigits = () => {
-  return Math.floor(1000000000 + Math.random() * 9000000000).toString();
+    const counter = await Counter.findByIdAndUpdate(
+      sequenceName,
+      { $inc: { seq: 1 } },
+      options
+    );
+
+    return counter.seq.toString();
+  } catch (error) {
+    console.error(`Error generating sequential number for ${sequenceName}:`, error);
+    // Fallback to timestamp-based number
+    return Date.now().toString().slice(-10);
+  }
 };
 
 export async function generateWorkflowIdentifiers(session = null) {
-  console.log('generateWorkflowIdentifiers: Using timestamp-based identifier generation');
+  console.log('generateWorkflowIdentifiers: Generating workflow identifiers');
   
   const timestamp = Date.now();
   const randomSuffix = Math.floor(100000 + Math.random() * 900000);
   
-  // Use local fallback if imported generateNumber fails
-  let numberGenerator;
   try {
-    // Test if the imported generateNumber works
-    const testNumber = generateNumber(1);
-    if (testNumber && typeof testNumber === 'string') {
-      numberGenerator = generateNumber;
-    } else {
-      throw new Error('Imported generateNumber not working');
-    }
+    // Generate sequential numbers using Counter model
+    const transactionSeq = await generateSequentialNumber('WORKFLOW_TRANSACTION', session);
+    const workItemSeq = await generateSequentialNumber('WORKFLOW_WORK_ITEM', session);
+    const eventSeq = await generateSequentialNumber('WORKFLOW_EVENT', session);
+    
+    const TRANSACTION_ID = parseInt(transactionSeq.padStart(10, '0').slice(-10));
+    const WORK_ITEM_ID = parseInt(workItemSeq.padStart(10, '0').slice(-10));
+    const EVENT_ID = parseInt(eventSeq.padStart(10, '0').slice(-10));
+
+    // Generate other IDs with proper error handling
+    const glInterestPaymentTxnId = generateRandomDigits();
+    const glSettlementTxnId = generateRandomDigits();
+    const customerInterestPaymentTxnId = generateRandomDigits();
+    const customerSettlementTxnId = generateRandomDigits();
+    
+    const identifiers = {
+      TRANSACTION_ID,
+      WORK_ITEM_ID,
+      EVENT_ID,
+      TRAN_JOURNAL_ID: `JRN${timestamp}${randomSuffix}`.substring(0, 18),
+      WORKFLOW_ID: `WF${timestamp}${randomSuffix}`.substring(0, 20),
+      BUS_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
+      SUB_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
+      QUEUE_ID: 1000 + Math.floor(Math.random() * 9000),
+      JOURNAL_ID: generateRandomDigits(16, 16),
+      glInterestPaymentTxnId,
+      glSettlementTxnId,
+      customerInterestPaymentTxnId,
+      customerSettlementTxnId,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('generateWorkflowIdentifiers: Generated identifiers:', identifiers);
+    return identifiers;
+
   } catch (error) {
-    console.log('Using local number generator as fallback');
-    numberGenerator = generateLocalNumber;
+    console.error('Error in generateWorkflowIdentifiers, using fallback:', error);
+    
+    // Fallback: generate timestamp-based identifiers without database
+    return generateFallbackWorkflowIdentifiers();
   }
+}
+
+// Fallback function without database dependency
+function generateFallbackWorkflowIdentifiers() {
+  const timestamp = Date.now();
+  const randomSuffix = Math.floor(100000 + Math.random() * 900000);
+  const microtime = process.hrtime?.bigint?.()?.toString()?.slice(-6) || '000000';
   
-  // Generate IDs based on timestamp and random numbers
-  const TRANSACTION_ID = parseInt(`${timestamp}${randomSuffix}`.substring(5, 15));
-  const WORK_ITEM_ID = parseInt(`${timestamp}${randomSuffix + 1}`.substring(5, 15));
-  const EVENT_ID = parseInt(`${timestamp}${randomSuffix + 2}`.substring(5, 15));
-  
-  // Generate other IDs with proper error handling
-  let glInterestPaymentTxnId, glSettlementTxnId, customerInterestPaymentTxnId, customerSettlementTxnId;
-  
-  try {
-    glInterestPaymentTxnId = generateRandomDigits();
-    glSettlementTxnId = generateRandomDigits();
-    customerInterestPaymentTxnId = generateRandomDigits();
-    customerSettlementTxnId = generateRandomDigits();
-  } catch (error) {
-    console.log('Using simple random digits as fallback');
-    glInterestPaymentTxnId = generateSimpleRandomDigits();
-    glSettlementTxnId = generateSimpleRandomDigits();
-    customerInterestPaymentTxnId = generateSimpleRandomDigits();
-    customerSettlementTxnId = generateSimpleRandomDigits();
-  }
+  const TRANSACTION_ID = parseInt(`${timestamp}${randomSuffix}`.substring(0, 10));
+  const WORK_ITEM_ID = parseInt(`${timestamp}${randomSuffix + 1}`.substring(0, 10));
+  const EVENT_ID = parseInt(`${timestamp}${randomSuffix + 2}`.substring(0, 10));
   
   const identifiers = {
     TRANSACTION_ID,
     WORK_ITEM_ID,
     EVENT_ID,
-    TRAN_JOURNAL_ID: `JRN${timestamp}${randomSuffix}`.substring(0, 18),
-    WORKFLOW_ID: `WF${timestamp}${randomSuffix}`.substring(0, 20),
+    TRAN_JOURNAL_ID: `JRN${timestamp}${microtime}`.substring(0, 18),
+    WORKFLOW_ID: `WF${timestamp}${microtime}`.substring(0, 20),
     BUS_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
     SUB_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
     QUEUE_ID: 1000 + Math.floor(Math.random() * 9000),
-    JOURNAL_ID: numberGenerator(16),
-    glInterestPaymentTxnId,
-    glSettlementTxnId,
-    customerInterestPaymentTxnId,
-    customerSettlementTxnId
+    JOURNAL_ID: `${timestamp}${microtime}`.padEnd(16, '0').substring(0, 16),
+    glInterestPaymentTxnId: generateRandomDigits(),
+    glSettlementTxnId: generateRandomDigits(),
+    customerInterestPaymentTxnId: generateRandomDigits(),
+    customerSettlementTxnId: generateRandomDigits(),
+    timestamp: new Date().toISOString(),
+    isFallback: true
   };
 
-  console.log('generateWorkflowIdentifiers: Generated timestamp-based identifiers:', identifiers);
+  console.log('generateWorkflowIdentifiers: Generated fallback identifiers:', identifiers);
   return identifiers;
 }
+
+// Simple version for transaction references only
+export const generateTransactionReference = async (session = null) => {
+  try {
+    const identifiers = await generateWorkflowIdentifiers(session);
+    return `TXN${identifiers.TRANSACTION_ID}`;
+  } catch (error) {
+    // Fallback
+    return `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+  }
+};
+
+// Export individual functions
+export { generateRandomDigits };
 
 // Export the function as default
 export default generateWorkflowIdentifiers;

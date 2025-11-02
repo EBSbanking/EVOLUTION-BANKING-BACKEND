@@ -152,7 +152,10 @@ export const PERMISSIONS = {
     LOAN: 'APPROVE_LOAN',
     MANAGER: 'MANAGER_APPROVAL', // For managerApproval module
     CASH_DEPOSIT: 'APPROVE_CASH_DEPOSIT', // For cashDepositApproval module
-    GL_TRANSACTION: 'APPROVE_GL_TRANSACTION' // For glTransactionApproval module
+    GL_TRANSACTION: 'APPROVE_GL_TRANSACTION', // For glTransactionApproval module
+    GUARANTOR: 'APPROVE_GUARANTOR',
+    DEPOSIT_APPLICATION: 'DEPOSIT_APPLICATION_APPROVAL',
+    STANDING_ORDER: 'APPROVE_STANDING_ORDER'
   },
 
   // Treasury
@@ -325,6 +328,14 @@ export const PERMISSIONS = {
     CREATE: 'CREATE_THRIFT',
     COLLECTION: 'COLLECT_THRIFT',
     WITHDRAWAL: 'WITHDRAWAL_THRIFT'
+  },
+
+  // Standing Order Management
+  STANDING_ORDER: {
+    CREATE: 'CREATE_STANDING_ORDER',
+    VIEW: 'VIEW_STANDING_ORDER',
+    UPDATE: 'UPDATE_STANDING_ORDER',
+    DELETE: 'DELETE_STANDING_ORDER'
   },
 
   // ✅ NEW: Performance & Monitoring Permissions

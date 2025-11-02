@@ -38,11 +38,13 @@ export function getPrefixForProductType(productType) {
     case 'SME LOAN':
     case 'SME_LOAN':
       return '309';
+    case 'GROUP_LOAN':
+      return '310';
     case 'GENERAL LOAN':
     case 'GENERAL_LOAN':
       return '399';
     default:
-      return '399'; // fallback prefix
+      throw new Error(`Invalid product type: ${productType}. Cannot generate loan account number.`);
   }
 }
 
