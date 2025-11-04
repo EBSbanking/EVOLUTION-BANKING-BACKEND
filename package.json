@@ -1,5 +1,5 @@
 {
-  "name": "pco_banking_backend",
+  "name": "core_X_Banking_Backend",
   "version": "1.0.0",
   "main": "server.js",
   "type": "module",
@@ -61,7 +61,7 @@
     "xlsx": "^0.18.5"
   },
   "engines": {
-    "node": "18.x"
+    "node": "20.x"
   },
   "devDependencies": {
     "chai": "^5.1.1",
