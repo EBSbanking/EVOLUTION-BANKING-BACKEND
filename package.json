@@ -1,6 +1,7 @@
 {
   "name": "core_X_Banking_Backend",
   "version": "1.0.0",
+  "description": "Evolution Core X Banking Backend API",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -60,12 +61,22 @@
     "ws": "^8.18.0",
     "xlsx": "^0.18.5"
   },
-  "engines": {
-    "node": "20.x"
-  },
   "devDependencies": {
     "chai": "^5.1.1",
     "mocha": "^10.7.3",
     "supertest": "^7.0.0"
-  }
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "author": "WarelogTech Limited",
+  "license": "ISC",
+  "keywords": [
+    "core-banking",
+    "evolution-core-x",
+    "financial-api",
+    "nodejs",
+    "express",
+    "banking-backend"
+  ]
 }

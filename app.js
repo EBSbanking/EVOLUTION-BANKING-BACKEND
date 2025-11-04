@@ -288,7 +288,7 @@ import SubfolderRoutes from './routes/SubfolderRoutes.js';
 import systemDateRoutes from './routes/systemDateRoutes.js';
 import TermDepositRoutes from './routes/TermDepositRoutes.js';
 import TransactionPolicyRoutes from './routes/TransactionPolicyRoutes.js';
-import TransactionRoutes from './routes/TransactionRoutes.js';
+import transactionRoutes from './routes/transactionsRoutes.js';
 import uploadFileRoutes from './routes/uploadFileRoutes.js';
 import uploadGuarantorDocumentsRoutes from './routes/uploadGuarantorDocumentsRoutes.js';
 import UserRoleRoutes from './routes/UserRoleRoutes.js';
@@ -353,7 +353,7 @@ app.use('/api/deposit-account-interest-tier', DepositAccountInterest_TierRoutes)
 app.use('/api/deposit-account-monthly-stat', DepositAccountMonthlyStatRoute);
 app.use('/api/deposit-search', DepositSearchRoutes);
 app.use('/api/term-deposit', TermDepositRoutes);
-app.use('/api/transaction', TransactionRoutes);
+app.use('/api/transaction', transactionRoutes);
 app.use('/api/cash-withdrawals', CashWithdrawalTransactionRoutes);
 app.use('/api/withdrawals', withdrawalRoutes);
 
