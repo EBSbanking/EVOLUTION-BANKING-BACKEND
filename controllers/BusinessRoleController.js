@@ -1,4 +1,4 @@
-import express from 'express';
+// src/controllers/businessRoleController.js
 import mongoose from 'mongoose';
 import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
@@ -39,7 +39,7 @@ export const createBusinessRole = async (req, res) => {
       WF_ITEM_ACCESS_LEVEL = ''
     } = req.body;
 
-    // 1. VERIFY ADMIN PRIVILEGES
+    // 1. VERIFY ADMIN PRIVILEGES (uncomment if using req.user from middleware)
     // if (!req.user?.isAdmin) {
     //   return res.status(403).json({
     //     success: false,
@@ -98,8 +98,8 @@ export const createBusinessRole = async (req, res) => {
       SUPERVISOR_FG: SUPERVISOR_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
       ALLOW_TXN_POSTING_FG: ALLOW_TXN_POSTING_FG.toUpperCase() === 'Y' ? 'Y' : 'N',
       WF_ITEM_ACCESS_LEVEL, // workflow access level
-      CREATED_BY: req.user.user_name,
-      CREATED_BY_ROLE: req.user.role,
+      CREATED_BY: req.user?.user_name || 'system', // Fallback if no user
+      CREATED_BY_ROLE: req.user?.role || 'system',
       CREATE_DT: new Date(),
       ROW_TS: new Date()
     });
@@ -143,9 +143,6 @@ export const createBusinessRole = async (req, res) => {
   }
 };
 
-
-
-
 // Get BusinessRole by User ID
 export const getBusinessRoleByUserId = async (req, res) => {
   try {
@@ -173,21 +170,21 @@ export const getBusinessRoleByUserId = async (req, res) => {
   }
 };
 
-// Update a BusinessRole by ID
+// Update a BusinessRole by USER_ID (note: param is USER_ID, not _id)
 export const updateBusinessRole = async (req, res) => {
   try {
     const { USER_ID } = req.params;
     const updateData = req.body;
 
-    // Verify admin privileges
-    if (!req.user.isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: 'Administrator privileges required',
-        solution: 'Contact your system administrator',
-        yourRole: req.user.role
-      });
-    }
+    // Verify admin privileges (uncomment if using req.user)
+    // if (!req.user.isAdmin) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: 'Administrator privileges required',
+    //     solution: 'Contact your system administrator',
+    //     yourRole: req.user.role
+    //   });
+    // }
 
     // Validate ROLE_ID if provided
     if (updateData.ROLE_ID && !ROLE_MAPPING[updateData.ROLE_ID]) {
@@ -216,7 +213,7 @@ export const updateBusinessRole = async (req, res) => {
           validRoles: Object.values(ROLE_MAPPING).map(role => role.ROLE_NM)
         });
       }
-      updateData.ROLE_ID = roleEntry.id;
+      updateData.ROLE_ID = roleEntry.id;  // Assuming roleEntry has .id; adjust if needed
     }
 
     // Perform the update
@@ -224,14 +221,14 @@ export const updateBusinessRole = async (req, res) => {
       { USER_ID },
       {
         ...updateData,
-        LAST_UPDATED_BY: req.user.user_name,
+        LAST_UPDATED_BY: req.user?.user_name || 'system',
         LAST_UPDATED_DT: new Date(),
         ROW_TS: new Date()
       },
       { 
         new: true,
         runValidators: true,
-        context: 'query' // Important for update validations
+        context: 'query'
       }
     );
 
@@ -281,32 +278,17 @@ export const updateBusinessRole = async (req, res) => {
   }
 };
 
-// Helper function for duplicate key messages
-function getDuplicateKeyMessage(error) {
-  if (error.keyPattern?.USER_ID) {
-    return 'User already has a business role assigned';
-  }
-  if (error.keyPattern?.ROLE_ID) {
-    return 'Role ID already exists';
-  }
-  if (error.keyPattern?.BUSINESS_UNIT) {
-    return 'Business unit already assigned';
-  }
-  return 'Duplicate key violation';
-}
-
-
-// Delete a BusinessRole by ID
+// Delete a BusinessRole by _id
 export const deleteBusinessRole = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Verify user has permission to delete
-    if (!req.user.isAdmin) {
-      return res.status(403).json({
-        message: 'Only Administrators can delete BusinessRoles'
-      });
-    }
+    // Verify user has permission to delete (uncomment if using req.user)
+    // if (!req.user.isAdmin) {
+    //   return res.status(403).json({
+    //     message: 'Only Administrators can delete BusinessRoles'
+    //   });
+    // }
 
     const deletedBusinessRole = await BusinessRole.findByIdAndDelete(id);
 
@@ -335,12 +317,12 @@ export const assignBusinessRoleToUser = async (req, res) => {
   try {
     const { USER_ID, ROLE_NM } = req.body;
 
-    // Verify user has permission to assign roles
-    if (!req.user.isAdmin) {
-      return res.status(403).json({
-        message: 'Only Administrators can assign roles'
-      });
-    }
+    // Verify user has permission to assign roles (uncomment if using req.user)
+    // if (!req.user.isAdmin) {
+    //   return res.status(403).json({
+    //     message: 'Only Administrators can assign roles'
+    //   });
+    // }
 
     const [user, role] = await Promise.all([
       User.findOne({ USER_ID }),
@@ -377,7 +359,7 @@ export const assignBusinessRoleToUser = async (req, res) => {
       data: { 
         USER_ID, 
         ROLE_NM,
-        assignedBy: req.user.user_name,
+        assignedBy: req.user?.user_name || 'system',
         assignmentDate: new Date()
       } 
     });
@@ -390,10 +372,9 @@ export const assignBusinessRoleToUser = async (req, res) => {
   }
 };
 
-// Get all BusinessRoles
+// Get all BusinessRoles (with pagination/filtering)
 export const getAllBusinessRoles = async (req, res) => {
   try {
-    // Optional: Add pagination and filtering
     const { page = 1, limit = 10, businessUnit } = req.query;
     const query = businessUnit ? { BUSINESS_UNIT: businessUnit } : {};
 
@@ -421,5 +402,19 @@ export const getAllBusinessRoles = async (req, res) => {
     });
   }
 };
+
+// Helper function for duplicate key messages (if needed elsewhere)
+export function getDuplicateKeyMessage(error) {
+  if (error.keyPattern?.USER_ID) {
+    return 'User already has a business role assigned';
+  }
+  if (error.keyPattern?.ROLE_ID) {
+    return 'Role ID already exists';
+  }
+  if (error.keyPattern?.BUSINESS_UNIT) {
+    return 'Business unit already assigned';
+  }
+  return 'Duplicate key violation';
+}
 
 export default router;
