@@ -4,24 +4,8 @@ import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
 import BusinessUnit from '../models/BusinessUnit.js';
 import UserRole from '../models/UserRole.js';
-import { ROLE_MAPPING, populateBusinessUnitMapping } from '../constants/roleMapping.js';
+import { ROLE_MAPPING } from '../constants/roleMapping.js';
 import { isBUAccessible, getAccessibleBusinessUnits } from "../utils/businessUnitUtils.js";
-
-const router = express.Router();
-
-// Middleware to populate business unit mapping before proceeding with the route
-router.use(async (req, res, next) => {
-  try {
-    await populateBusinessUnitMapping();
-    next();
-  } catch (error) {
-    console.error("Error populating business unit mapping:", error);
-    res.status(500).json({ 
-      message: "Error populating business unit mapping", 
-      error: error.message 
-    });
-  }
-});
 
 // Create BusinessRole — full flow with authorization, validation, and workflow access
 export const createBusinessRole = async (req, res) => {
@@ -205,15 +189,15 @@ export const updateBusinessRole = async (req, res) => {
 
     // If updating ROLE_NM without ROLE_ID, find matching ROLE_ID
     if (updateData.ROLE_NM && !updateData.ROLE_ID) {
-      const roleEntry = Object.values(ROLE_MAPPING).find(r => r.ROLE_NM === updateData.ROLE_NM);
-      if (!roleEntry) {
+      const matchingKey = Object.keys(ROLE_MAPPING).find(key => ROLE_MAPPING[key].ROLE_NM === updateData.ROLE_NM);
+      if (!matchingKey) {
         return res.status(400).json({
           success: false,
           message: 'Invalid Role Name',
           validRoles: Object.values(ROLE_MAPPING).map(role => role.ROLE_NM)
         });
       }
-      updateData.ROLE_ID = roleEntry.id;  // Assuming roleEntry has .id; adjust if needed
+      updateData.ROLE_ID = matchingKey;
     }
 
     // Perform the update
@@ -416,5 +400,3 @@ export function getDuplicateKeyMessage(error) {
   }
   return 'Duplicate key violation';
 }
-
-export default router;
