@@ -3,7 +3,7 @@ import CashWithdrawalTransaction from '../models/CashWithdrawalTransaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import TransactionPolicy from '../models/TransactionPolicy.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import moment from 'moment';
 
 // Helper function to generate random numbers for workflow items
