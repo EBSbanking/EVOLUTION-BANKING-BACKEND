@@ -243,7 +243,7 @@ import CustomerAccountRoutes from './routes/CustomerAccountRoutes.js';
 import CustomerRoutes from './routes/CustomerRoutes.js'; // ✅ This includes batch upload
 import CustomerTypeRoutes from './routes/CustomerTypeRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
-import DepositAccountApplicationRoutes from './routes/depositAccountApplicationRoutes.js';
+import DepositAccountApplicationRoutes from './routes/DepositAccountApplicationRoutes.js';
 import DepositAccountHistoryRoutes from './routes/DepositAccountHistoryRoutes.js';
 import DepositAccountInterestOptionRoutes from './routes/DepositAccountInterestOptionRoutes.js';
 import DepositAccountInterestRoutes from './routes/DepositAccountInterestRoute.js';
