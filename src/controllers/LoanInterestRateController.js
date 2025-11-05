@@ -1,7 +1,7 @@
 
 import express from 'express';
 import mongoose from 'mongoose';
-import InterestRate from '../models/loanInterestRate.js';
+import InterestRate from '../models/LoanInterestRate.js';
 import RateIndex from '../models/Rate-Index.js';
 
 // Utility function for EMI calculation - always using 'reducing' method

@@ -2,7 +2,7 @@ import { Decimal } from 'decimal.js';
 import Holidays from 'date-holidays';
 import LoanAccount from '../models/LoanAccount.js';
 import RateIndex from '../models/Rate-Index.js';
-import LoanInterestRate from '../models/loanInterestRate.js';
+import LoanInterestRate from '../models/LoanInterestRate.js';
 
 export default class InterestCalculationService {
   constructor() {
