@@ -1,7 +1,6 @@
-// routes/depositAccountApplicationRoutes.js
 import express from "express";
 import DepositAccountApplicationController from "../controllers/DepositAccountApplicationController.js";
-import { getProductTypeByProdIdInternal } from "../services/productservice.js";
+import { getProductTypeByProdIdInternal } from "../services/productservice.js";  // ✅ Correct relative path + .js
 import { generateAccountIdentifiersFromCounter } from "../utils/accountHelper.js";
 
 const router = express.Router();
@@ -48,6 +47,19 @@ const determineProductTypeFromProdId = (prodId) => {
   };
   
   return prodIdMap[prodIdStr] || 'SAVINGS'; // Default fallback
+};
+
+// ✅ Fallback for account identifiers (add this if missing in your code)
+const generateFallbackAccountIdentifiers = (productType) => {
+  // Simple fallback logic (expand as needed)
+  const prefix = productType === 'SAVINGS' ? 'SAV' : 'GEN';
+  return {
+    ACCT_NO: `${prefix}00000001`,
+    ACCT_ID: `ACCT${Date.now()}`,
+    nubanCategory: 'SAVINGS',
+    prefix,
+    isFallback: true
+  };
 };
 
 // In your depositAccountApplicationRoutes.js - update the account generation part:
