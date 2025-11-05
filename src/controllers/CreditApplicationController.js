@@ -2,7 +2,7 @@ import CreditApplication from '../models/CreditApplication.js';
 import { generateAcctNo, getLoanCycleCount, generateNumber } from '../utils/counterUtil.js';
 import AuditTrail from '../models/AuditTrail.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import moment from 'moment';
 import generateWorkflowIdentifiers from '../utils/generateWorkflowIdentifiers.js';
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
