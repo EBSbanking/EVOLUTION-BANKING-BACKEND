@@ -1,7 +1,7 @@
 // routes/depositAccountApplicationRoutes.js
 import express from "express";
 import DepositAccountApplicationController from "../controllers/DepositAccountApplicationController.js";
-import { getProductTypeByProdIdInternal } from "../services/productService.js";
+import { getProductTypeByProdIdInternal } from "../services/productservice.js";
 import { generateAccountIdentifiersFromCounter } from "../utils/accountHelper.js";
 
 const router = express.Router();
