@@ -6,10 +6,10 @@ import {
   deleteBusinessRole,
   assignBusinessRoleToUser,
   getAllBusinessRoles
-} from '../controllers/businessRoleController.js'; // Lowercase to match renamed file
+} from '../controllers/BusinessRoleController.js'; // adjust path if needed
 
-import { populateBusinessUnitMapping } from '../constants/roleMapping.js';
-import { authenticate, hasRole } from '../middlewares/authMiddleware.js'; // assuming you have auth middleware
+import { populateBusinessUnitMapping } from '../../constants/roleMapping.js';
+import { authenticate, hasRole } from '../../middlewares/authMiddleware.js'; // assuming you have auth middleware
 
 const router = express.Router();
 
