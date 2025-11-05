@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import CustomerAccount from '../models/CustomerAccount.js';
 import AuditTrail from '../models/AuditTrail.js';
 import Drawer from '../models/Drawer.js';
-import { checkPolicy } from '../services/transactionPolicyService.js';
+import { checkPolicy } from '../Services/transactionPolicyService.js';
 import logger from '../utils/logger.js';
 import { processDrawerTransaction } from '../controllers/DrawerController.js';  // Adjust path as needed
 
