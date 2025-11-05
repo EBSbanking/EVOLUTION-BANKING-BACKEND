@@ -1,6 +1,6 @@
 import express from "express";
 import DepositAccountApplicationController from "../controllers/DepositAccountApplicationController.js";
-import { getProductTypeByProdIdInternal } from "../services/productservice.js";  // ✅ Correct relative path + .js
+import { getProductTypeByProdIdInternal } from "../services/productservice.js";  // ✅ Lowercase 'services', .js
 import { generateAccountIdentifiersFromCounter } from "../utils/accountHelper.js";
 
 const router = express.Router();
@@ -61,8 +61,6 @@ const generateFallbackAccountIdentifiers = (productType) => {
     isFallback: true
   };
 };
-
-// In your depositAccountApplicationRoutes.js - update the account generation part:
 
 // ✅ Generate Account Number + Account ID
 router.get("/generate-account-number", async (req, res) => {
