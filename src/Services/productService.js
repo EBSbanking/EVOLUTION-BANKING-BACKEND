@@ -1,4 +1,4 @@
-import Product from '../models/SavingsProducts.js';
+import SavingsProducts from '../models/SavingsProducts.js';
 import ProductTypeMapping from '../models/ProductTypeMapping.js';
 
 export const getProductTypeByProdIdInternal = async (prodId) => {
@@ -13,14 +13,14 @@ export const getProductTypeByProdIdInternal = async (prodId) => {
     }
     
     // Try to find in Products collection
-    let product = await Product.findOne({ PROD_ID: parseInt(prodId) });
+    let product = await SavingsProducts.findOne({ PROD_ID: parseInt(prodId) });
     if (product) {
       console.log(`✅ Found product:`, product.PRODUCT_TYPE);
       return product;
     }
     
     // Try with string PROD_ID
-    product = await Product.findOne({ PROD_ID: prodId });
+    product = await SavingsProducts.findOne({ PROD_ID: prodId });
     if (product) {
       console.log(`✅ Found product (string ID):`, product.PRODUCT_TYPE);
       return product;
