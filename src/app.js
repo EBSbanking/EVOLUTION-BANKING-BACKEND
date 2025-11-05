@@ -174,12 +174,42 @@ app.use((req, res, next) => {
   next();
 });
 
-// Cloudinary Config
-cloudinaryV2.config({
+// Cloudinary Config with fallback
+const cloudinaryConfig = {
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
-});
+};
+
+// Check if Cloudinary is properly configured
+const isCloudinaryConfigured = cloudinaryConfig.cloud_name && 
+                              cloudinaryConfig.api_key && 
+                              cloudinaryConfig.api_secret;
+
+if (isCloudinaryConfigured) {
+  cloudinaryV2.config(cloudinaryConfig);
+  console.log('✅ Cloudinary configured successfully');
+} else {
+  console.warn('⚠️ Cloudinary not configured - file uploads will be disabled');
+  console.warn('💡 Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables');
+}
+
+// Alternative: If using CLOUDINARY_URL
+if (process.env.CLOUDINARY_URL) {
+  // Validate CLOUDINARY_URL format
+  if (process.env.CLOUDINARY_URL.startsWith('cloudinary://')) {
+    cloudinaryV2.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+    console.log('✅ Cloudinary configured via CLOUDINARY_URL');
+  } else {
+    console.error('❌ Invalid CLOUDINARY_URL format. Should start with "cloudinary://"');
+  }
+} else {
+  console.warn('⚠️ CLOUDINARY_URL not set - file uploads disabled');
+}
 
 // Health & Utility Endpoints
 app.get('/server-time', (req, res) => {
@@ -202,26 +232,72 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// MongoDB Connection with Permissions Sync
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('✅ MongoDB connected');
+// Simple MongoDB Connection (compatible with most versions)
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 45000,
+  maxPoolSize: 10,
+  retryWrites: true
+};
 
-    // Sync permissions on startup (runs once per server start)
-    mongoose.connection.once('open', async () => {
-      try {
-        await permissionSync.syncPermissions();
-        console.log('✅ Permissions synced successfully');
-      } catch (error) {
-        console.error('❌ Failed to sync permissions:', error);
-      }
-    });
+console.log('📡 Connecting to MongoDB...');
+
+mongoose.connect(process.env.MONGODB_URI, mongooseOptions)
+  .then(() => {
+    console.log('✅ MongoDB connected successfully');
+    initializePermissions();
   })
   .catch(err => {
     console.error('❌ MongoDB connection error:', err);
-    console.error('💡 Please ensure MONGODB_URI is set in your .env file');
+    console.error('💡 Troubleshooting tips:');
+    console.error('   1. Check MONGODB_URI format in .env file');
+    console.error('   2. Verify MongoDB Atlas IP whitelist');
+    console.error('   3. Check internet connection');
+    console.error('   4. Verify database name and credentials');
     process.exit(1);
   });
+
+// Handle MongoDB connection events
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('✅ MongoDB reconnected');
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Promise Rejection:', reason);
+  // Don't exit the process in development
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
+});
+
+// Initialize permissions after DB connection is ready
+async function initializePermissions() {
+  try {
+    // Wait for connection to be fully established
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⏳ Waiting for MongoDB connection to be ready...');
+      await new Promise(resolve => {
+        mongoose.connection.once('open', resolve);
+      });
+    }
+    
+    console.log('🔄 Syncing permissions...');
+    await permissionSync.syncPermissions();
+    console.log('✅ Permissions synced successfully');
+  } catch (error) {
+    console.error('❌ Failed to sync permissions:', error);
+    // Don't crash the app if permissions sync fails
+  }
+}
 
 // ----------------------------
 // API Route Imports
