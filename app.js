@@ -233,7 +233,7 @@ import LoginRoutes from './routes/LoginRoutes.js';
 import AuditTrailRoutes from './routes/AuditTrailRoutes.js';
 import AutoReclassifyRoutes from './routes/AutoReclassifyRoutes.js';
 import AnalyticsRoutes from './routes/AnalyticsRoute.js';
-import BusinessRoleRoutes from './routes/businessRoleRoutes.js';
+import businessRoleRoutes from './routes/businessRoleRoutes.js';
 import BusinessUnitRoutes from './routes/BusinessUnitRoutes.js';
 import CashWithdrawalTransactionRoutes from './routes/CashWithdrawalTransactionRoutes.js';
 import CountryRoutes from './routes/CountryRoutes.js';

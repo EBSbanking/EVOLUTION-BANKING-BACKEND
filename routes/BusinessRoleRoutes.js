@@ -6,7 +6,7 @@ import {
   deleteBusinessRole,
   assignBusinessRoleToUser,
   getAllBusinessRoles
-} from '../controllers/BusinessRoleController.js'; // adjust path if needed
+} from '../controllers/businessRoleController.js'; // Lowercase to match renamed file
 
 import { populateBusinessUnitMapping } from '../constants/roleMapping.js';
 import { authenticate, hasRole } from '../middlewares/authMiddleware.js'; // assuming you have auth middleware
