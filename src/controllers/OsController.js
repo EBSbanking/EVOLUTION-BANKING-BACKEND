@@ -5,7 +5,7 @@ import { processPendingRepayments } from '../Services/repaymentHandler.js';
 import { updateDormantAccounts, countDormantAccountsToUpdate } from '../Services/accountStatusUpdater.js';
 import { postDailyAccruedInterest } from '../Services/InterestPostingController.js';
 import { createLedgerEntry } from '../controllers/GLAccountController.js';
-import { accrueDailyInterest } from '../cronjobs/dailyInterestAccrual.js';
+import { accrueDailyInterest } from '../cronJobs/dailyInterestAccrual.js';
 import SystemDate from '../models/SystemDate.js';
 import Holiday from '../models/Holiday.js';
 import mongoose from 'mongoose';
