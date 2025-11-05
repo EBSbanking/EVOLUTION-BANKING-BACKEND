@@ -2,7 +2,7 @@
 import Counter from '../models/Counter.js';
 import Transaction from '../models/Transaction.js';
 import generateSerialNumber from './generateSerialNumber.js';
-import { getProductTypeByProdIdInternal } from '../services/productService.js'; // ✅ Correct import path
+import { getProductTypeByProdIdInternal } from '../Services/productService.js'; // ✅ Correct import path
 
 // ✅ Account prefix logic based on product type - UPDATED
 export function getPrefixForProductType(productType) {

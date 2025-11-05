@@ -3,7 +3,7 @@ import retry from 'async-retry';
 import Counter from '../models/Counter.js';
 import Customer from '../models/Customer.js';
 import LoanContractForm from '../models/LoanContractForm.js';
-import { getProductTypeByProdIdInternal } from '../services/productService.js';
+import { getProductTypeByProdIdInternal } from '../Services/productService.js';
 
 const USE_NUBAN = true; // Enforce NUBAN-compliant account numbers
 const ACCOUNT_NUMBER_LENGTH = 10;

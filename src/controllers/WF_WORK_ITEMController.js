@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import DepositTransaction from '../models/DepositTransaction.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import { generateNumber } from '../utils/generateNumber.js';
 import Customer from '../models/Customer.js';
 import DepositAccountApplication from '../models/DepositAccountApplication.js';

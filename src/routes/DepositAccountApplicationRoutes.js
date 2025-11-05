@@ -1,6 +1,6 @@
 import express from "express";
 import DepositAccountApplicationController from "../controllers/DepositAccountApplicationController.js";
-import { getProductTypeByProdIdInternal, getProductTypeFallback } from '../services/productservice.js';
+import { getProductTypeByProdIdInternal, getProductTypeFallback } from '../Services/productService.js';
 import { generateAccountIdentifiersFromCounter } from "../utils/accountHelper.js";
 
 const router = express.Router();

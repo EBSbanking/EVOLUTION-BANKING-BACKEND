@@ -1,7 +1,7 @@
 //services/workflowService.js
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import generateNumber  from '../utils/generateNumber.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from './NotificationService.js';
 import moment from 'moment';
 
 export async function submitWorkflowItem({

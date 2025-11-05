@@ -8,10 +8,10 @@ import DepositTransaction from '../models/DepositTransaction.js';
 import Customer from '../models/Customer.js';
 import { generateAccountIdentifiersFromCounter, generateNUBAN, generateAccountNumberByProdId, generateAccountId } from '../utils/generateAccountNumber.js';
 import WF_WORK_ITEMController from './WF_WORK_ITEMController.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
-import { getProductTypeByProdIdInternal } from '../services/productService.js';
+import { getProductTypeByProdIdInternal } from '../Services/productService.js';
 import SavingsProduct from '../models/SavingsProduct.js'; // Add this import
 
 dotenv.config();
