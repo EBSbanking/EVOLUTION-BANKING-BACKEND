@@ -49,7 +49,7 @@ const determineProductTypeFromProdId = (prodId) => {
   return prodIdMap[prodIdStr] || 'SAVINGS'; // Default fallback
 };
 
-// ✅ Fallback for account identifiers (add this if missing in your code)
+// ✅ Fallback for account identifiers
 const generateFallbackAccountIdentifiers = (productType) => {
   // Simple fallback logic (expand as needed)
   const prefix = productType === 'SAVINGS' ? 'SAV' : 'GEN';
@@ -108,10 +108,10 @@ router.get("/generate-account-number", async (req, res) => {
       console.log(`🔄 Product Type determined from PROD_ID: ${productType}`);
     }
 
-    // Final validation
+    // Extra fallback using imported service function (if static map fails)
     if (!productType || productType === 'UNDEFINED') {
-      console.error('❌ Invalid product type, using SAVINGS as fallback');
-      productType = 'SAVINGS';
+      productType = getProductTypeFallback(prodId);
+      console.error('❌ Invalid product type, using service fallback: SAVINGS');
     }
 
     console.log(`🎯 Final Product Type for generation: ${productType}`);
