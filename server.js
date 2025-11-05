@@ -1,16 +1,16 @@
 // server.js
-import app from './app.js';
+import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import connectDB from './config/db.js';
-import logger from './utils/logger.js';
-import { createError } from './utils/errorUtils.js';
-import initializeApplication from './utils/initializeApplication.js';
-import portStatusMonitor from './utils/portStatus.js';
+import connectDB from './config/db.js';  // ✅ Fixed: Added src/
+import logger from './src/utils/logger.js';
+import { createError } from './src/utils/errorUtils.js';
+import initializeApplication from './src/utils/initializeApplication.js';
+import portStatusMonitor from './src/utils/portStatus.js';
 
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -145,7 +145,7 @@ const logServerStartupAudit = async () => {
     console.log('⏳ Final safety delay before audit logging...');
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const { logAuditTrail } = await import('./utils/AuditLogger.js');
+    const { logAuditTrail } = await import('./src/utils/AuditLogger.js');  // ✅ Fixed: Added src/
 
     console.log('📝 Logging server startup audit...');
     const auditResult = await logAuditTrail(
@@ -202,7 +202,7 @@ const configureShutdown = (server) => {
   const shutdown = async (signal) => {
     console.log(`Shutdown signal received: ${signal}`);
     try {
-      const { logAuditTrail } = await import('./utils/AuditLogger.js');
+      const { logAuditTrail } = await import('./src/utils/AuditLogger.js');  // ✅ Fixed: Added src/
       await logAuditTrail(
         'system',
         'server_shutdown',

@@ -1,6 +1,6 @@
 // config/db.js
 import mongoose from 'mongoose';
-import logger from '../utils/logger.js';
+import logger from '../src/utils/logger.js';
 import os from 'os';
 import dotenv from 'dotenv';
 import path from 'path';

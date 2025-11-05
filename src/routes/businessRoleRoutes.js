@@ -8,9 +8,8 @@ import {
   getAllBusinessRoles
 } from '../controllers/BusinessRoleController.js'; // adjust path if needed
 
-import { populateBusinessUnitMapping } from '../../constants/roleMapping.js';
-import { authenticate, hasRole } from '../../middlewares/authMiddleware.js'; // assuming you have auth middleware
-
+import { populateBusinessUnitMapping } from '../constants/roleMapping.js';  // Up 1 dir
+import { authenticate, hasRole } from '../middlewares/authMiddleware.js';  // Up 1 dir
 const router = express.Router();
 
 // Middleware: Populate Business Unit Mapping (called on all routes here)

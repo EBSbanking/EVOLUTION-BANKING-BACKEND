@@ -370,7 +370,7 @@ app.use('/api/credit-applications', CreditApplicationRoutes);
 app.use('/api/system-date', systemDateRoutes);
 app.use('/api/holiday', holidayRoutes);
 app.use('/api/business-units', BusinessUnitRoutes);
-app.use('/api/business-roles', BusinessRoleRoutes);
+app.use('/api/business-roles', businessRoleRoutes);
 app.use('/api/license', LicenseRoutes);
 app.use('/api/countries', CountryRoutes);
 app.use('/api/os', OsRoutes);

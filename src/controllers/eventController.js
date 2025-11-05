@@ -1,4 +1,4 @@
-import connectDB from '../config/db.js'; // Use the Mongoose connection
+import connectDB from '../../config/db.js'; // Use the Mongoose connection
 import Event from '../models/event.js'; // Event model
 import Customer from '../models/Customer.js';   // Customer model
 import Transaction from '../models/Transaction.js'; // Transaction model
