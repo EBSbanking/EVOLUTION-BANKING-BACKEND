@@ -1,5 +1,5 @@
 import express from 'express';
-import NotificationService from '../services/NotificationService.js'; // Adjust path as needed
+import NotificationService from '../Services/NotificationService.js'; // Adjust path as needed
 import NotificationModel from '../models/NotificationModel.js'; // Ensure correct path
 
 const router = express.Router();
