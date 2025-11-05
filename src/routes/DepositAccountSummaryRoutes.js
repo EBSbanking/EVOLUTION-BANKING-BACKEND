@@ -7,7 +7,7 @@ import {
   updateDepositAccountSummary,
   deleteDepositAccountSummary,
   getTransactionHistoryByAcctId
-} from '../controllers/depositAccountSummaryController.js';
+} from '../controllers/DepositAccountSummaryController.js';
 
 const router = express.Router();
 
