@@ -5,7 +5,7 @@ import auditLogger from '../utils/AuditLogger.js';  // Fixed: Default import for
 import { checkSanctionList } from '../utils/checkSanctionList.js';
 import { validateAMLInput } from '../utils/amlValidator.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import CustomerBatchService from '../Services/customerBatchService.js';
 
