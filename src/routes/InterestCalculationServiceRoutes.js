@@ -20,7 +20,7 @@ import {
   updateRateIndex,
   deleteRateIndex,
   calculateInterest
-} from '../controllers/RateIndexController.js';
+} from '../controllers/Rate-IndexController.js';
 
 const router = express.Router();
 const interestService = new InterestCalculationService();
