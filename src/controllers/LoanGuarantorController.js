@@ -11,7 +11,7 @@ import GuarantorAudit from '../models/GuarantorAudit.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
 import RateIndex from '../models/Rate-Index.js';
-import LoanInterestRate from '../models/loanInterestRate.js';
+import LoanInterestRate from '../models/LoanInterestRate.js';
 import Counter from '../models/Counter.js';
 import GLAccount from '../models/GLAccount.js';
 

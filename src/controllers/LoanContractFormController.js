@@ -1,6 +1,6 @@
 import LoanContractForm from '../models/LoanContractForm.js';
 import LoanAccount from '../models/LoanAccount.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import moment from 'moment';
 
 class LoanContractController {
