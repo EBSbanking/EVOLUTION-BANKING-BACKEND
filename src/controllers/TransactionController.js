@@ -5,7 +5,7 @@ import { getAllTransactionTypes } from '../constants/transactionTypes.js';
 import AMLThreshold from '../models/AMLThreshold.js';
 import { checkSanctionList } from '../utils/checkSanctionList.js';
 import AML from '../models/AML.js';
-import NotificationService from '../services/NotificationService.js';
+import NotificationService from '../Services/NotificationService.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import logAuditTrail from '../utils/auditHelper.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
