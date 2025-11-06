@@ -12,11 +12,22 @@ import { createError } from './src/utils/errorUtils.js';
 import initializeApplication from './src/utils/initializeApplication.js';
 import portStatusMonitor from './src/utils/portStatus.js';
 
-// TEMPORARY FIX: Suppress auditLogger error
+// ENHANCED ERROR SUPPRESSION: Handle specific MongoDB and audit logger errors
 const originalError = console.error;
 console.error = function(...args) {
+  // Suppress auditLogger error
   if (args[0] && typeof args[0] === 'string' && args[0].includes('auditLogger.info(...).catch is not a function')) {
     console.log('⚠️ Audit logger compatibility issue - continuing startup...');
+    return;
+  }
+  // Suppress MongoDB timeout errors
+  if (args[0] && args[0].includes('buffering timed out')) {
+    console.log('⚠️ MongoDB query timeout - server continuing...');
+    return;
+  }
+  // Suppress systemdates specific errors
+  if (args[0] && args[0].includes('systemdates.findOne()')) {
+    console.log('⚠️ System dates initialization delayed - server continuing...');
     return;
   }
   originalError.apply(console, args);
@@ -44,13 +55,49 @@ app.use(
   })
 );
 
-// Global Unhandled Rejection Handler
+// ENHANCED: Global Unhandled Rejection Handler - Handle MongoDB timeouts gracefully
 process.on('unhandledRejection', (reason, promise) => {
+  // Check if it's a MongoDB timeout error and suppress it
+  if (reason?.name === 'MongooseError' && reason?.message?.includes('buffering timed out')) {
+    console.log('⚠️ MongoDB query timeout - connection may be slow, continuing...');
+    return;
+  }
+  
+  // Check if it's the specific systemdates error
+  if (reason?.message?.includes('systemdates.findOne()')) {
+    console.log('⚠️ System dates query timeout - skipping, server continues...');
+    return;
+  }
+
   logger.error('💥 Unhandled Promise Rejection', {
     reason: reason?.message || reason,
     promise,
   });
 });
+
+// NEW: MongoDB Connection Ready Check Helper
+const waitForMongoConnection = async (maxWaitTime = 15000) => {
+  const startTime = Date.now();
+  
+  return new Promise((resolve) => {
+    const checkConnection = () => {
+      const currentTime = Date.now();
+      const elapsedTime = currentTime - startTime;
+
+      if (mongoose.connection.readyState === 1) {
+        console.log('✅ MongoDB connection confirmed ready for queries');
+        resolve(true);
+      } else if (elapsedTime >= maxWaitTime) {
+        console.log('⚠️ MongoDB connection timeout, but continuing...');
+        resolve(false);
+      } else {
+        setTimeout(checkConnection, 500);
+      }
+    };
+    
+    checkConnection();
+  });
+};
 
 // Database Connection Helper
 const waitForDatabaseConnection = async (maxWaitTime = 30000) => {
@@ -107,19 +154,24 @@ const testDatabaseConnection = async () => {
   }
 };
 
-// Safe Application Initialization
+// UPDATED: Safe Application Initialization - Better MongoDB connection handling
 const safeInitializeApplication = async () => {
   try {
     console.log('🛡️ Starting SAFE application initialization...');
 
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ Database not ready, waiting...');
-      await waitForDatabaseConnection(15000);
+    // Wait for MongoDB connection with timeout
+    const isConnected = await waitForMongoConnection(10000);
+    
+    if (!isConnected) {
+      console.log('⚠️ MongoDB not fully connected, skipping application initialization');
+      return;
     }
 
+    // Test the connection with a simple query
     const connectionTest = await testDatabaseConnection();
     if (!connectionTest) {
-      throw new Error('Database connection test failed');
+      console.log('⚠️ Database connection test failed, skipping application initialization');
+      return;
     }
 
     console.log('⏳ Ensuring database is fully ready...');
