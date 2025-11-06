@@ -42,6 +42,109 @@ const debugMongoURI = () => {
   }
 };
 
+// Enhanced database initialization - FIXED DUPLICATE KEY ISSUE
+const initializeDatabase = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('Connection not ready for init');
+    }
+
+    logger.info('🏗️ Starting database initialization...');
+    const db = mongoose.connection.db;
+
+    // Check if counters collection exists and has data
+    const collections = await db.listCollections({ name: 'counters' }).toArray();
+    const counterCol = db.collection('counters');
+    
+    if (collections.length === 0) {
+      logger.info('📦 Creating counters collection...');
+      // Collection doesn't exist, create it with proper indexes
+      await db.createCollection('counters');
+    }
+
+    // FIX: Check for existing problematic documents with null values
+    const problematicDocs = await counterCol.find({
+      $or: [
+        { id: null },
+        { reference_value: null }
+      ]
+    }).toArray();
+
+    if (problematicDocs.length > 0) {
+      logger.warn(`⚠️ Found ${problematicDocs.length} problematic documents, cleaning up...`);
+      // Remove documents with null values that violate unique index
+      await counterCol.deleteMany({
+        $or: [
+          { id: null },
+          { reference_value: null }
+        ]
+      });
+    }
+
+    // FIX: Drop and recreate the problematic index
+    try {
+      await counterCol.dropIndex('id_1_reference_value_1');
+      logger.info('✅ Dropped problematic index');
+    } catch (idxErr) {
+      if (idxErr.codeName !== 'IndexNotFound') {
+        logger.warn('⚠️ Could not drop index:', idxErr.message);
+      }
+    }
+
+    // Create proper unique index only on _id
+    try {
+      await counterCol.createIndex({ _id: 1 }, { unique: true });
+      logger.debug('✅ Counters unique index on _id ensured');
+    } catch (idxErr) {
+      if (idxErr.codeName !== 'IndexAlreadyExists') {
+        logger.warn('⚠️ Could not create counters index:', idxErr.message);
+      }
+    }
+
+    // Counters with upsert - using only _id field
+    const counters = [
+      { _id: 'guarantorId', seq: 1000000 },
+      { _id: 'transactionId', seq: 1000000000 },
+      { _id: 'amlThresholdId', seq: 1000 },
+    ];
+
+    let initCount = 0;
+    for (const counter of counters) {
+      try {
+        const result = await counterCol.updateOne(
+          { _id: counter._id },
+          { 
+            $setOnInsert: { 
+              seq: counter.seq,
+              // Ensure these fields have proper values if they exist in schema
+              id: counter._id, // Use _id value for id field if needed
+              reference_value: `ref_${counter._id}` // Provide proper reference value
+            } 
+          },
+          { upsert: true }
+        );
+        if (result.upsertedCount > 0) {
+          logger.info(`🔢 Initialized counter for ${counter._id}`);
+          initCount++;
+        }
+      } catch (updateErr) {
+        logger.warn(`⚠️ Could not initialize counter ${counter._id}:`, updateErr.message);
+        // Skip this counter and continue with others
+      }
+    }
+
+    logger.info(`🎉 Database initialization completed: ${initCount} counters processed`);
+  } catch (err) {
+    logger.error('❌ Database initialization failed', {
+      error: err.message,
+      stack: err.stack,
+    });
+    
+    // Don't throw error - allow server to continue running
+    logger.warn('⚠️ Database initialization failed, but server will continue');
+  }
+};
+
 const connectDB = async () => {
   if (isConnected) {
     logger.info('✅ Using existing MongoDB connection');
@@ -114,8 +217,12 @@ const connectDB = async () => {
 
     logger.info('🎯 MongoDB connection successful');
 
-    // Initialize database
-    await initializeDatabase();
+    // Initialize database (with error handling)
+    try {
+      await initializeDatabase();
+    } catch (initError) {
+      logger.warn('⚠️ Database initialization had issues, but connection is established');
+    }
 
     return mongoose.connection;
   } catch (error) {
@@ -137,58 +244,6 @@ const connectDB = async () => {
     await new Promise(resolve => setTimeout(resolve, delay));
 
     return connectDB();
-  }
-};
-
-// Enhanced database initialization
-const initializeDatabase = async () => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      throw new Error('Connection not ready for init');
-    }
-
-    logger.info('🏗️ Starting database initialization...');
-    const db = mongoose.connection.db;
-
-    // Counters with upsert
-    const counters = [
-      { _id: 'guarantorId', seq: 1000000 },
-      { _id: 'transactionId', seq: 1000000000 },
-      { _id: 'amlThresholdId', seq: 1000 },
-    ];
-
-    const counterCol = db.collection('counters');
-
-    // Ensure unique index on _id
-    try {
-      await counterCol.createIndex({ _id: 1 }, { unique: true });
-      logger.debug('✅ Counters unique index ensured');
-    } catch (idxErr) {
-      if (idxErr.codeName !== 'IndexAlreadyExists') {
-        logger.warn('⚠️ Could not ensure counters index:', idxErr.message);
-      }
-    }
-
-    let initCount = 0;
-    for (const counter of counters) {
-      const result = await counterCol.updateOne(
-        { _id: counter._id },
-        { $setOnInsert: { seq: counter.seq } },
-        { upsert: true }
-      );
-      if (result.upsertedCount > 0) {
-        logger.info(`🔢 Initialized counter for ${counter._id}`);
-        initCount++;
-      }
-    }
-
-    logger.info(`🎉 Database initialization completed: ${initCount} new counters`);
-  } catch (err) {
-    logger.error('❌ Database initialization failed', {
-      error: err.message,
-      stack: err.stack,
-    });
-    throw err;
   }
 };
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import connectDB from './config/db.js';  // ✅ Fixed: Added src/
+import connectDB from './config/db.js';
 import logger from './src/utils/logger.js';
 import { createError } from './src/utils/errorUtils.js';
 import initializeApplication from './src/utils/initializeApplication.js';
@@ -127,7 +127,7 @@ const safeInitializeApplication = async () => {
   }
 };
 
-// Delayed Audit Logging
+// Delayed Audit Logging - FIXED: Removed .catch() usage
 const logServerStartupAudit = async () => {
   try {
     console.log('📝 Attempting to log server startup audit...');
@@ -145,31 +145,38 @@ const logServerStartupAudit = async () => {
     console.log('⏳ Final safety delay before audit logging...');
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const { logAuditTrail } = await import('./src/utils/AuditLogger.js');  // ✅ Fixed: Added src/
+    const { logAuditTrail } = await import('./src/utils/auditHelper.js');
 
     console.log('📝 Logging server startup audit...');
-    const auditResult = await logAuditTrail(
-      'system',
-      'server_startup',
-      'system',
-      'server_start',
-      null,
-      {
-        status: 'started',
-        port: process.env.PORT || 5000,
-        environment: process.env.NODE_ENV || 'development',
-        timestamp: new Date().toISOString(),
-        dbState: getDbStateText(mongoose.connection.readyState),
-      },
-      'internal',
-      'SYSTEM_START',
-      { startup: true, outcome: 'success' }
-    );
+    
+    let auditResult;
+    try {
+      auditResult = await logAuditTrail(
+        'system',
+        'server_startup',
+        'system',
+        'server_start',
+        null,
+        {
+          status: 'started',
+          port: process.env.PORT || 5000,
+          environment: process.env.NODE_ENV || 'development',
+          timestamp: new Date().toISOString(),
+          dbState: getDbStateText(mongoose.connection.readyState),
+        },
+        'internal',
+        'SYSTEM_START',
+        { startup: true, outcome: 'success' }
+      );
+    } catch (auditError) {
+      console.warn('⚠️ Could not log server startup audit:', auditError.message);
+      auditResult = null;
+    }
 
-    if (auditResult) {
+    if (auditResult && auditResult.success) {
       console.log('✅ Server startup audit logged successfully');
     } else {
-      console.log('⚠️ Server startup audit returned null (may be skipped)');
+      console.log('⚠️ Server startup audit skipped or failed');
     }
   } catch (error) {
     console.warn('⚠️ Could not log server startup audit:', error.message);
@@ -197,13 +204,15 @@ const configureLogging = () => {
 
 const { logStream, logFile } = configureLogging();
 
-// Graceful Shutdown
+// Graceful Shutdown - FIXED: Removed .catch() usage
 const configureShutdown = (server) => {
   const shutdown = async (signal) => {
     console.log(`Shutdown signal received: ${signal}`);
+    
+    // FIXED: Use try-catch instead of .catch()
     try {
-      const { logAuditTrail } = await import('./src/utils/AuditLogger.js');  // ✅ Fixed: Added src/
-      await logAuditTrail(
+      const { logAuditTrail } = await import('./src/utils/auditHelper.js');
+      const auditResult = await logAuditTrail(
         'system',
         'server_shutdown',
         'system',
@@ -218,14 +227,28 @@ const configureShutdown = (server) => {
         'SYSTEM_STOP',
         { shutdown: true }
       );
+      
+      if (auditResult && auditResult.success) {
+        console.log('✅ Shutdown audit logged successfully');
+      } else {
+        console.log('⚠️ Shutdown audit skipped');
+      }
     } catch (auditError) {
       console.warn('⚠️ Could not log shutdown audit:', auditError.message);
     }
 
-    await mongoose.connection.close();
-    console.log('✅ MongoDB connection closed');
+    // Close MongoDB connection
+    try {
+      await mongoose.connection.close();
+      console.log('✅ MongoDB connection closed');
+    } catch (dbError) {
+      console.error('❌ Error closing MongoDB connection:', dbError.message);
+    }
+
+    // Close log stream and exit
     logStream.end(() => {
-      console.log('Shutdown completed');
+      console.log('✅ Log stream closed');
+      console.log('🛑 Shutdown completed');
       process.exit(0);
     });
   };
@@ -274,7 +297,7 @@ const startServer = async () => {
       logServerStartupAudit().then(() => {
         console.log('🎉 Server startup sequence completed!');
       }).catch(err => {
-        console.log('⚠️  Startup audit skipped, server continues running...');
+        console.log('⚠️ Startup audit skipped, server continues running...');
       });
     });
 
@@ -283,7 +306,7 @@ const startServer = async () => {
     safeInitializeApplication().then(() => {
       console.log('🎉 Application initialization completed!');
     }).catch(err => {
-      console.log('⚠️  Application initialization continuing in background...');
+      console.log('⚠️ Application initialization continuing in background...');
     });
 
     // Add port connection monitoring
