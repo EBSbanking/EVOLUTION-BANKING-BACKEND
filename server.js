@@ -8,9 +8,7 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import connectDB from './config/db.js';
 import logger from './src/utils/logger.js';
-import { createError } from './src/utils/errorUtils.js';
 import initializeApplication from './src/utils/initializeApplication.js';
-import portStatusMonitor from './src/utils/portStatus.js';
 
 // ENHANCED ERROR SUPPRESSION: Handle specific MongoDB and audit logger errors
 const originalError = console.error;
@@ -75,7 +73,7 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
-// NEW: MongoDB Connection Ready Check Helper
+// MongoDB Connection Ready Check Helper
 const waitForMongoConnection = async (maxWaitTime = 15000) => {
   const startTime = Date.now();
   
@@ -99,42 +97,6 @@ const waitForMongoConnection = async (maxWaitTime = 15000) => {
   });
 };
 
-// Database Connection Helper
-const waitForDatabaseConnection = async (maxWaitTime = 30000) => {
-  const startTime = Date.now();
-
-  console.log('🔍 Checking MongoDB connection state...');
-  console.log(`📊 Current DB state: ${getDbStateText(mongoose.connection.readyState)}`);
-
-  return new Promise((resolve, reject) => {
-    const checkConnection = () => {
-      const currentTime = Date.now();
-      const elapsedTime = currentTime - startTime;
-
-      console.log(
-        `🔄 DB Connection Check - State: ${getDbStateText(mongoose.connection.readyState)}, Elapsed: ${elapsedTime}ms`
-      );
-
-      if (mongoose.connection.readyState === 1) {
-        console.log('✅ MongoDB connection verified and READY for queries');
-        resolve();
-      } else if (elapsedTime >= maxWaitTime) {
-        reject(
-          new Error(
-            `MongoDB connection timeout after ${maxWaitTime}ms. Current state: ${getDbStateText(
-              mongoose.connection.readyState
-            )}`
-          )
-        );
-      } else {
-        setTimeout(checkConnection, 1000);
-      }
-    };
-
-    checkConnection();
-  });
-};
-
 // Test Database Connection
 const testDatabaseConnection = async () => {
   try {
@@ -154,28 +116,27 @@ const testDatabaseConnection = async () => {
   }
 };
 
-// NEW: Test with actual systemdates query (or whatever model is failing)
+// Test with actual systemdates query
 const testModelReadiness = async () => {
   try {
     console.log('🧪 Testing model readiness with systemdates query...');
-    // Import your SystemDate model here (adjust path as needed)
-    const { default: SystemDate } = await import('../models/SystemDate.js');  // Example path - UPDATE TO YOUR ACTUAL MODEL PATH
-    const result = await SystemDate.findOne({}).lean().limit(1);  // Quick, lean query
+    const { default: SystemDate } = await import('./models/SystemDate.js');
+    const result = await SystemDate.findOne({}).lean().limit(1);
     console.log('✅ Model query test PASSED:', !!result);
-    return !!result || true;  // Pass even if empty
+    return !!result || true;
   } catch (error) {
     console.log('❌ Model query test FAILED:', error.message);
     return false;
   }
 };
 
-// UPDATED: Safe Application Initialization - Better MongoDB connection handling
+// Safe Application Initialization
 const safeInitializeApplication = async () => {
   try {
     console.log('🛡️ Starting SAFE application initialization...');
 
-    // Wait longer for full connection
-    const isConnected = await waitForMongoConnection(20000);  // Up from 10s
+    // Wait for full connection
+    const isConnected = await waitForMongoConnection(20000);
     
     if (!isConnected) {
       console.log('⚠️ MongoDB not fully connected, skipping application initialization');
@@ -189,12 +150,11 @@ const safeInitializeApplication = async () => {
       return;
     }
 
-    // Test with a *model* query, not just ping (key fix!)
+    // Test with model query
     const modelTest = await testModelReadiness();
     if (!modelTest) {
       console.log('⚠️ Model readiness test failed, retrying in 5s...');
       await new Promise(resolve => setTimeout(resolve, 5000));
-      // Retry once
       const retryTest = await testModelReadiness();
       if (!retryTest) {
         console.log('⚠️ Model test failed on retry, skipping init');
@@ -203,7 +163,7 @@ const safeInitializeApplication = async () => {
     }
 
     console.log('⏳ Ensuring database is fully ready...');
-    await new Promise(resolve => setTimeout(resolve, 3000));  // Up from 2s
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     console.log('✅ Database confirmed ready, initializing application...');
     await initializeApplication();
@@ -217,72 +177,8 @@ const safeInitializeApplication = async () => {
   }
 };
 
-// Delayed Audit Logging - FIXED: Removed .catch() usage
-const logServerStartupAudit = async () => {
-  try {
-    console.log('📝 Attempting to log server startup audit...');
-
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⏳ Waiting for database connection...');
-      await waitForDatabaseConnection(10000);
-    }
-
-    const connectionTest = await testDatabaseConnection();
-    if (!connectionTest) {
-      throw new Error('Database not responsive, skipping audit log');
-    }
-
-    // Add model test before audit
-    const modelTest = await testModelReadiness();
-    if (!modelTest) {
-      console.log('⚠️ Model not ready, skipping audit log');
-      return;
-    }
-
-    console.log('⏳ Final safety delay before audit logging...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    const { logAuditTrail } = await import('./src/utils/auditHelper.js');
-
-    console.log('📝 Logging server startup audit...');
-    
-    let auditResult;
-    try {
-      auditResult = await logAuditTrail(
-        'system',
-        'server_startup',
-        'system',
-        'server_start',
-        null,
-        {
-          status: 'started',
-          port: process.env.PORT || 5000,
-          environment: process.env.NODE_ENV || 'development',
-          timestamp: new Date().toISOString(),
-          dbState: getDbStateText(mongoose.connection.readyState),
-        },
-        'internal',
-        'SYSTEM_START',
-        { startup: true, outcome: 'success' }
-      );
-    } catch (auditError) {
-      console.warn('⚠️ Could not log server startup audit:', auditError.message);
-      auditResult = null;
-    }
-
-    if (auditResult && auditResult.success) {
-      console.log('✅ Server startup audit logged successfully');
-    } else {
-      console.log('⚠️ Server startup audit skipped or failed');
-    }
-  } catch (error) {
-    console.warn('⚠️ Could not log server startup audit:', error.message);
-  }
-};
-
-// Logging Setup - FIXED: Use relative path instead of absolute
+// Logging Setup
 const configureLogging = () => {
-  // FIX: Use relative path instead of absolute path
   let LOG_DIR = process.env.LOG_DIR || './logs';
   let LOG_FILE = path.join(LOG_DIR, 'server.log');
 
@@ -292,12 +188,10 @@ const configureLogging = () => {
       console.log(`✅ Created log directory: ${LOG_DIR}`);
     }
     
-    // Test if directory is writable
     fs.accessSync(LOG_DIR, fs.constants.W_OK | fs.constants.R_OK);
     console.log(`✅ Log directory is writable: ${LOG_DIR}`);
     
   } catch (err) {
-    // If we can't create/write to logs directory, fallback to current directory
     console.warn(`⚠️ Cannot use log directory ${LOG_DIR}: ${err.message}`);
     console.log('🔄 Falling back to current directory for logging...');
     
@@ -319,7 +213,6 @@ const configureLogging = () => {
     };
   } catch (streamErr) {
     console.error('❌ Failed to create log stream:', streamErr.message);
-    // Return a dummy stream to prevent crashes
     return {
       logStream: { 
         write: () => {}, 
@@ -332,12 +225,11 @@ const configureLogging = () => {
 
 const { logStream, logFile } = configureLogging();
 
-// Graceful Shutdown - FIXED: Removed .catch() usage
+// Graceful Shutdown
 const configureShutdown = (server) => {
   const shutdown = async (signal) => {
     console.log(`Shutdown signal received: ${signal}`);
     
-    // FIXED: Use try-catch instead of .catch()
     try {
       const { logAuditTrail } = await import('./src/utils/auditHelper.js');
       const auditResult = await logAuditTrail(
@@ -404,7 +296,7 @@ const startServer = async () => {
       throw new Error('Database connection test failed - MongoDB not responsive');
     }
 
-    // STEP 3: Start the server
+    // STEP 3: Start the server (ONLY SERVER STARTUP)
     console.log('🔄 STEP 3: Starting HTTP server...');
     const PORT = process.env.PORT || 5000;
 
@@ -421,24 +313,14 @@ const startServer = async () => {
       console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log('='.repeat(60) + '\n');
 
-      // STEP 4: Log server startup audit
-      logServerStartupAudit().then(() => {
-        console.log('🎉 Server startup sequence completed!');
+      // STEP 4: Initialize application in background
+      console.log('🔄 STEP 4: Starting background application initialization...');
+      safeInitializeApplication().then(() => {
+        console.log('🎉 Application initialization completed!');
       }).catch(err => {
-        console.log('⚠️ Startup audit skipped, server continues running...');
+        console.log('⚠️ Application initialization continuing in background...');
       });
     });
-
-    // STEP 5: Initialize application in background
-    console.log('🔄 STEP 5: Starting background application initialization...');
-    safeInitializeApplication().then(() => {
-      console.log('🎉 Application initialization completed!');
-    }).catch(err => {
-      console.log('⚠️ Application initialization continuing in background...');
-    });
-
-    // Add port connection monitoring
-    portStatusMonitor.onPortConnected(server, PORT);
 
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
@@ -461,7 +343,6 @@ const startServer = async () => {
     console.error('   Error:', err.message);
     console.error('   Database State:', getDbStateText(mongoose.connection.readyState));
     console.error('   Check: MongoDB connection string and network access');
-    console.error('   Check: MongoDB Atlas IP whitelist and credentials');
     process.exit(1);
   }
 };

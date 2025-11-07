@@ -10,7 +10,6 @@ import expressSession from 'express-session';
 import fileUpload from 'express-fileupload';
 import { v2 as cloudinaryV2 } from 'cloudinary';
 import monitor from 'express-status-monitor';
-import mongoose from 'mongoose';
 import rateLimit from 'express-rate-limit';
 import logger from './utils/logger.js';
 import permissionSync from './utils/permissionSync.js';
@@ -54,7 +53,7 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Enhanced CORS Configuration
+// Enhanced CORS Configuration (consolidated - no duplicate)
 const allowedOrigins = [
   process.env.CLIENT_URL,
   process.env.CLIENT_URL_LOCAL,
@@ -62,28 +61,6 @@ const allowedOrigins = [
 ].filter(Boolean);
 
 logger.info('CORS allowed origins loaded:', { allowedOrigins });
-
-app.options('*', cors({
-  origin: (origin, callback) => {
-    logger.info('CORS preflight check', { origin, allowedOrigins });
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, origin || true);
-    } else {
-      logger.warn('CORS preflight blocked', { origin, allowedOrigins });
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Accept', 
-    'Origin',
-    'x-request-id'
-  ]
-}));
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -107,7 +84,7 @@ app.use(cors({
   ]
 }));
 
-// ✅ INCREASED PAYLOAD SIZE LIMITS FOR FILE UPLOADS
+// Body Parsers with increased limits
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ 
   extended: true, 
@@ -115,9 +92,9 @@ app.use(express.urlencoded({
   parameterLimit: 100000
 }));
 
-// ✅ FIXED: FILE UPLOAD CONFIGURATION - Use memory storage for file processing
+// File Upload Configuration - Use memory storage
 app.use(fileUpload({
-  useTempFiles: false, // ✅ CHANGED: Store files in memory as buffers (not temp files)
+  useTempFiles: false, // Store files in memory as buffers
   limits: { 
     fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 50 * 1024 * 1024 // 50MB
   },
@@ -231,73 +208,6 @@ app.get('/health', async (req, res) => {
     environment: process.env.NODE_ENV || 'development'
   });
 });
-
-// Simple MongoDB Connection (compatible with most versions)
-const mongooseOptions = {
-  serverSelectionTimeoutMS: 30000,
-  socketTimeoutMS: 45000,
-  maxPoolSize: 10,
-  retryWrites: true
-};
-
-console.log('📡 Connecting to MongoDB...');
-
-mongoose.connect(process.env.MONGODB_URI, mongooseOptions)
-  .then(() => {
-    console.log('✅ MongoDB connected successfully');
-    initializePermissions();
-  })
-  .catch(err => {
-    console.error('❌ MongoDB connection error:', err);
-    console.error('💡 Troubleshooting tips:');
-    console.error('   1. Check MONGODB_URI format in .env file');
-    console.error('   2. Verify MongoDB Atlas IP whitelist');
-    console.error('   3. Check internet connection');
-    console.error('   4. Verify database name and credentials');
-    process.exit(1);
-  });
-
-// Handle MongoDB connection events
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB connection error:', err.message);
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️ MongoDB disconnected');
-});
-
-mongoose.connection.on('reconnected', () => {
-  console.log('✅ MongoDB reconnected');
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Promise Rejection:', reason);
-  // Don't exit the process in development
-  if (process.env.NODE_ENV === 'production') {
-    process.exit(1);
-  }
-});
-
-// Initialize permissions after DB connection is ready
-async function initializePermissions() {
-  try {
-    // Wait for connection to be fully established
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⏳ Waiting for MongoDB connection to be ready...');
-      await new Promise(resolve => {
-        mongoose.connection.once('open', resolve);
-      });
-    }
-    
-    console.log('🔄 Syncing permissions...');
-    await permissionSync.syncPermissions();
-    console.log('✅ Permissions synced successfully');
-  } catch (error) {
-    console.error('❌ Failed to sync permissions:', error);
-    // Don't crash the app if permissions sync fails
-  }
-}
 
 // ----------------------------
 // API Route Imports
@@ -526,7 +436,7 @@ app.use('/api/group-savings', groupSavingsRoutes);
 app.use('/api/debug', uploadTestRoutes);
 
 // ----------------------------
-// Static Files & React Build
+// Static Files & React Build (Production Only)
 // ----------------------------
 if (process.env.NODE_ENV === 'production') {
   const staticPath = path.join(__dirname, 'build');
@@ -551,16 +461,6 @@ app.use((err, req, res, next) => {
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
-});
-
-// Server Start
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`📁 File upload configured with memory storage`);
-  console.log(`📁 File upload limit: ${parseInt(process.env.MAX_FILE_SIZE, 10) || 50}MB`);
-  console.log(`🔧 Express-fileupload: useTempFiles = false (memory buffers)`);
 });
 
 export default app;
