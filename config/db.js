@@ -11,8 +11,10 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 // Configuration
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;
+const MAX_TOTAL_TIME = 120000; // 2min total for all retries
 let retryCount = 0;
 let isConnected = false;
+let startTime = Date.now();
 
 // Enhanced connection options
 const connectionOptions = {
@@ -27,18 +29,27 @@ const connectionOptions = {
   retryReads: true,
   heartbeatFrequencyMS: 10000,
   bufferCommands: false,
+  // Add if using Atlas with custom auth DB
+  // authSource: 'admin',
 };
 
-// Debug MongoDB URI (mask password for security)
+// Validate and debug MongoDB URI (enhanced for format checks)
 const debugMongoURI = () => {
   if (!process.env.MONGODB_URI) {
     return 'MONGODB_URI is undefined';
   }
   try {
     const url = new URL(process.env.MONGODB_URI);
-    return `${url.protocol}//${url.hostname}:${url.port}${url.pathname}?${url.searchParams}`;
+    // Check for common format issues
+    if (!url.username || !url.password) {
+      throw new Error('Missing username/password in URI (format: mongodb+srv://user:pass@host/db?)');
+    }
+    if (!url.pathname || url.pathname === '/') {
+      throw new Error('Missing database name in URI (after @host/)');
+    }
+    return `${url.protocol}//${url.username}:***@${url.hostname}${url.pathname}?${url.searchParams}`;
   } catch (error) {
-    return 'Invalid MONGODB_URI format';
+    return `Invalid MONGODB_URI: ${error.message}`;
   }
 };
 
@@ -151,14 +162,20 @@ const connectDB = async () => {
     return mongoose.connection;
   }
 
-  // Validate MONGODB_URI
-  if (!process.env.MONGODB_URI) {
-    logger.error('❌ MONGODB_URI is not defined in environment variables');
-    throw new Error('MONGODB_URI missing');
+  // Validate MONGODB_URI early
+  const uriDebug = debugMongoURI();
+  if (uriDebug.includes('Invalid') || uriDebug.includes('undefined')) {
+    logger.error('❌ Invalid MONGODB_URI:', uriDebug);
+    throw new Error(`MONGODB_URI invalid: ${uriDebug}`);
   }
 
-  logger.info(`🔍 Attempting to connect to: ${debugMongoURI()}`);
-  logger.info(`🔄 Connection attempt ${retryCount + 1}/${MAX_RETRIES}`);
+  // Check total time
+  if (Date.now() - startTime > MAX_TOTAL_TIME) {
+    throw new Error('Total connection time exceeded max retries');
+  }
+
+  retryCount++;
+  logger.info(`🔄 Connection attempt ${retryCount}/${MAX_RETRIES} to: ${uriDebug}`);
 
   // Wrap connect in timeout
   const connectWithTimeout = () => Promise.race([
@@ -169,50 +186,65 @@ const connectDB = async () => {
   ]);
 
   try {
-    // Set up event listeners
-    const setupListeners = () => {
-      mongoose.connection.once('connected', () => {
-        isConnected = true;
-        retryCount = 0;
-        logger.info('✅ MongoDB Connection Established', {
-          host: mongoose.connection.host,
-          port: mongoose.connection.port,
-          database: mongoose.connection.name,
-          readyState: mongoose.connection.readyState,
+    // Set up event listeners (only once, outside loop)
+    if (retryCount === 1) {
+      const setupListeners = () => {
+        mongoose.connection.once('connected', () => {
+          isConnected = true;
+          retryCount = 0;
+          startTime = Date.now(); // Reset timer on success
+          logger.info('✅ MongoDB Connection Established', {
+            host: mongoose.connection.host,
+            port: mongoose.connection.port,
+            database: mongoose.connection.name,
+            readyState: mongoose.connection.readyState,
+          });
         });
-      });
 
-      mongoose.connection.once('disconnected', () => {
-        isConnected = false;
-        logger.warn('⚠️ MongoDB Disconnected');
-      });
-
-      mongoose.connection.on('error', (err) => {
-        logger.error('❌ MongoDB Connection Error', {
-          error: err.message,
-          name: err.name,
+        mongoose.connection.once('disconnected', () => {
+          isConnected = false;
+          logger.warn('⚠️ MongoDB Disconnected');
         });
-      });
 
-      mongoose.connection.once('reconnected', () => {
-        isConnected = true;
-        logger.info('🔁 MongoDB Reconnected');
-      });
-    };
-    setupListeners();
+        mongoose.connection.on('error', (err) => {
+          logger.error('❌ MongoDB Connection Error', {
+            error: err.message,
+            name: err.name,
+            code: err.code, // e.g., 18 for auth failure
+          });
+          if (err.code === 18) { // Auth error
+            logger.error('💥 Authentication failed - Check MONGODB_URI credentials');
+          }
+        });
+
+        mongoose.connection.once('reconnected', () => {
+          isConnected = true;
+          logger.info('🔁 MongoDB Reconnected');
+        });
+      };
+      setupListeners();
+    }
 
     // Attempt connection
     logger.info('🚀 Connecting to MongoDB...');
     await connectWithTimeout();
 
-    // Wait for connection to be ready before initializing
+    // Enhanced: Poll + event for connection readiness
     await new Promise((resolve, reject) => {
-      if (mongoose.connection.readyState === 1) {
-        return resolve();
-      }
-      mongoose.connection.once('connected', resolve);
+      const checkReady = () => {
+        if (mongoose.connection.readyState === 1) {
+          return resolve();
+        }
+        setTimeout(checkReady, 1000);
+      };
+      checkReady();
+
+      const timeout = setTimeout(() => {
+        reject(new Error('Connection not ready after 30s'));
+      }, 30000);
+
+      mongoose.connection.once('connected', () => clearTimeout(timeout));
       mongoose.connection.once('error', reject);
-      setTimeout(() => reject(new Error('Connection not ready after 30s')), 30000);
     });
 
     logger.info('🎯 MongoDB connection successful');
@@ -221,17 +253,16 @@ const connectDB = async () => {
     try {
       await initializeDatabase();
     } catch (initError) {
-      logger.warn('⚠️ Database initialization had issues, but connection is established');
+      logger.warn('⚠️ Database initialization had issues, but connection is established:', initError.message);
     }
 
     return mongoose.connection;
   } catch (error) {
-    retryCount++;
     logger.error(`❌ MongoDB Connection Failed (Attempt ${retryCount}/${MAX_RETRIES})`, {
       error: error.message,
       name: error.name,
       code: error.code,
-      mongodbUri: debugMongoURI(),
+      mongodbUri: uriDebug,
     });
 
     if (retryCount >= MAX_RETRIES) {
@@ -277,17 +308,25 @@ const gracefulShutdown = async (signal) => {
   }
 };
 
-// Register shutdown handlers
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+// Register shutdown handlers (only if not already set)
+if (!process.listeners('SIGINT').length) {
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}
+if (!process.listeners('SIGTERM').length) {
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+}
 
-process.on('uncaughtException', (error) => {
-  logger.error('💥 Uncaught Exception', { error: error.message });
-  gracefulShutdown('uncaughtException');
-});
+if (!process.listeners('uncaughtException').length) {
+  process.on('uncaughtException', (error) => {
+    logger.error('💥 Uncaught Exception', { error: error.message });
+    gracefulShutdown('uncaughtException');
+  });
+}
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('💥 Unhandled Promise Rejection', { reason: reason?.message || reason });
-});
+if (!process.listeners('unhandledRejection').length) {
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('💥 Unhandled Promise Rejection', { reason: reason?.message || reason });
+  });
+}
 
 export default connectDB;
