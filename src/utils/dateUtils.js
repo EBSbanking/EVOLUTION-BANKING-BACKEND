@@ -66,7 +66,7 @@ export const calculateMaturityDate = (startDate, termCode, termValue) => {
   }
 
   termCode = String(termCode).toUpperCase();
-  const result = new Date(startDate);
+  const result = new Date(startDate); // Clone to avoid mutation
 
   switch(termCode) {
     case 'D': // Days
@@ -78,11 +78,14 @@ export const calculateMaturityDate = (startDate, termCode, termValue) => {
     case 'M': // Months
       result.setMonth(result.getMonth() + termValue);
       break;
+    case 'Q': // Quarters (FIXED: Added missing case)
+      result.setMonth(result.getMonth() + (termValue * 3));
+      break;
     case 'Y': // Years
       result.setFullYear(result.getFullYear() + termValue);
       break;
     default:
-      throw new Error(`Invalid term code: ${termCode}. Valid codes are D, W, M, Y`);
+      throw new Error(`Invalid term code: ${termCode}. Valid codes are D, W, M, Q, Y`);
   }
 
   return result;
@@ -109,6 +112,8 @@ export const getPaymentFrequency = (termCode, termValue) => {
       return 'WEEKLY';
     case 'M': 
       return termValue <= 3 ? 'MONTHLY' : 'QUARTERLY';
+    case 'Q':
+      return 'QUARTERLY';
     case 'Y':
       return termValue <= 1 ? 'MONTHLY' : 'YEARLY';
     default:
@@ -124,33 +129,61 @@ export const getPaymentFrequency = (termCode, termValue) => {
  */
 export const calculateNextBusinessDate = async (currentDate) => {
   try {
+    if (!isValidDate(currentDate)) {
+      throw new Error('Invalid current date provided');
+    }
+
     let nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
+    
+    // FIXED: Clone date for query to avoid mutation
+    const queryStart = new Date(nextDate);
+    queryStart.setHours(0, 0, 0, 0);
+    
+    const queryEnd = new Date(queryStart);
+    queryEnd.setFullYear(queryEnd.getFullYear() + 1);
+    
     // Fetch holidays for the next year to reduce queries
     const holidays = await Holiday.find({
       date: {
-        $gte: new Date(nextDate.setHours(0, 0, 0, 0)),
-        $lt: new Date(new Date(nextDate).setFullYear(nextDate.getFullYear() + 1)),
+        $gte: queryStart,
+        $lt: queryEnd,
       },
     });
-    const holidayDates = holidays.map(h => new Date(h.date).setHours(0, 0, 0, 0));
+    
+    // FIXED: Map to timestamps consistently (avoid mutation)
+    const holidayTimestamps = holidays.map(h => {
+      const hDate = new Date(h.date);
+      hDate.setHours(0, 0, 0, 0);
+      return hDate.getTime();
+    });
+    
     let isHolidayOrWeekend = true;
     while (isHolidayOrWeekend) {
-      const normalizedDate = new Date(nextDate.setHours(0, 0, 0, 0));
-      const isWeekend = nextDate.getDay() === 0 || nextDate.getDay() === 6;
-      const isHoliday = holidayDates.includes(normalizedDate.getTime());
+      // FIXED: Clone and normalize without mutation
+      const normalizedDate = new Date(nextDate);
+      normalizedDate.setHours(0, 0, 0, 0);
+      
+      const isWeekend = normalizedDate.getDay() === 0 || normalizedDate.getDay() === 6;
+      const isHoliday = holidayTimestamps.includes(normalizedDate.getTime());
+      
       isHolidayOrWeekend = isHoliday || isWeekend;
       if (isHolidayOrWeekend) {
+        nextDate = new Date(nextDate); // Clone
         nextDate.setDate(nextDate.getDate() + 1);
       }
     }
+    
+    // Ensure final date is at start of day
+    nextDate.setHours(0, 0, 0, 0);
     return nextDate;
   } catch (error) {
     logger.error('Failed to calculate next business date', { error: error.message, stack: error.stack });
-    throw error;
+    throw new Error(`Failed to calculate next business date: ${error.message}`);
   }
 };
 
+// Default export for convenience (optional, since named exports are used)
 export default {
   isValidDate,
   isFutureDate,

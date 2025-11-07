@@ -242,20 +242,96 @@ const initializeCollections = async () => {
 };
 
 /**
+ * Helper: Retry wrapper for DB ops
+ */
+const retryDBOperation = async (operation, maxRetries = 5, baseDelay = 2000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await operation();
+      logger.info(`✅ DB operation succeeded on attempt ${attempt}`);
+      return result;
+    } catch (error) {
+      if (error.message.includes('buffering timed out') && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
+        logger.warn(`⚠️ DB operation failed (attempt ${attempt}/${maxRetries}): ${error.message}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        logger.error(`❌ DB operation failed after ${maxRetries} attempts:`, error.message);
+        throw error;
+      }
+    }
+  }
+};
+
+/**
+ * Initialize system dates with retry logic
+ */
+const initializeSystemDates = async () => {
+  try {
+    logger.info('📅 Initializing system dates...');
+    
+    // Import model dynamically to avoid early load
+    const { default: SystemDate } = await import('../models/SystemDate.js'); // Adjust path as needed
+    
+    const systemDate = await retryDBOperation(async () => {
+      return await SystemDate.findOne({}).lean(); // Your original query; add filter if needed
+    });
+
+    if (!systemDate) {
+      logger.warn('⚠️ No system date found—creating default');
+      // Fallback: Create default (adjust schema)
+      await retryDBOperation(async () => {
+        const defaultDate = new SystemDate({
+          date: new Date(),
+          timezone: 'WAT', // Or from env
+          // Add other fields as per your schema
+        });
+        await defaultDate.save();
+        return defaultDate;
+      });
+      logger.info('✅ Default system date created');
+    } else {
+      logger.info(`✅ System date loaded: ${systemDate.date}`);
+    }
+  } catch (error) {
+    logger.error('❌ System dates initialization failed:', {
+      error: error.message,
+      stack: error.stack
+    });
+    // Graceful fallback
+    logger.warn('⚠️ System dates init failed, using current date as fallback');
+  }
+};
+
+/**
  * Main initialization function
  */
 const initializeApplication = async () => {
   try {
     logger.info('🚀 Starting application initialization');
     
-    // Wait for MongoDB connection to be ready (with timeout)
-    await Promise.race([
-      mongoose.connection.asPromise(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('DB connection timeout in init')), 10000)
-      )
-    ]);
+    // Enhanced: Wait for MongoDB connection to be ready (with timeout) - Fix deprecated asPromise()
+    await new Promise((resolve, reject) => {
+      if (mongoose.connection.readyState === 1) {
+        return resolve();
+      }
+      
+      const timeout = setTimeout(() => {
+        reject(new Error('DB connection timeout in init'));
+      }, 30000); // Increased to 30s for Render cold starts
+      
+      mongoose.connection.once('connected', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      
+      mongoose.connection.once('error', reject);
+    });
     
+    // Initialize system dates first (critical for app)
+    await initializeSystemDates();
+    
+    // Then collections/indexes
     await initializeCollections();
     
     logger.info('✅ Application initialization completed');
