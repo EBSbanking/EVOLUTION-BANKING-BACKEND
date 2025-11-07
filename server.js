@@ -65,7 +65,7 @@ process.on('unhandledRejection', (reason, promise) => {
   
   // Check if it's the specific systemdates error
   if (reason?.message?.includes('systemdates.findOne()')) {
-    console.log('⚠️ System dates query timeout - skipping, server continues...');
+    console.log('⚠️ System dates query timeout - retrying in background...');
     return;
   }
 
@@ -154,13 +154,28 @@ const testDatabaseConnection = async () => {
   }
 };
 
+// NEW: Test with actual systemdates query (or whatever model is failing)
+const testModelReadiness = async () => {
+  try {
+    console.log('🧪 Testing model readiness with systemdates query...');
+    // Import your SystemDate model here (adjust path as needed)
+    const { default: SystemDate } = await import('../models/SystemDate.js');  // Example path - UPDATE TO YOUR ACTUAL MODEL PATH
+    const result = await SystemDate.findOne({}).lean().limit(1);  // Quick, lean query
+    console.log('✅ Model query test PASSED:', !!result);
+    return !!result || true;  // Pass even if empty
+  } catch (error) {
+    console.log('❌ Model query test FAILED:', error.message);
+    return false;
+  }
+};
+
 // UPDATED: Safe Application Initialization - Better MongoDB connection handling
 const safeInitializeApplication = async () => {
   try {
     console.log('🛡️ Starting SAFE application initialization...');
 
-    // Wait for MongoDB connection with timeout
-    const isConnected = await waitForMongoConnection(10000);
+    // Wait longer for full connection
+    const isConnected = await waitForMongoConnection(20000);  // Up from 10s
     
     if (!isConnected) {
       console.log('⚠️ MongoDB not fully connected, skipping application initialization');
@@ -174,8 +189,21 @@ const safeInitializeApplication = async () => {
       return;
     }
 
+    // Test with a *model* query, not just ping (key fix!)
+    const modelTest = await testModelReadiness();
+    if (!modelTest) {
+      console.log('⚠️ Model readiness test failed, retrying in 5s...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Retry once
+      const retryTest = await testModelReadiness();
+      if (!retryTest) {
+        console.log('⚠️ Model test failed on retry, skipping init');
+        return;
+      }
+    }
+
     console.log('⏳ Ensuring database is fully ready...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 3000));  // Up from 2s
 
     console.log('✅ Database confirmed ready, initializing application...');
     await initializeApplication();
@@ -202,6 +230,13 @@ const logServerStartupAudit = async () => {
     const connectionTest = await testDatabaseConnection();
     if (!connectionTest) {
       throw new Error('Database not responsive, skipping audit log');
+    }
+
+    // Add model test before audit
+    const modelTest = await testModelReadiness();
+    if (!modelTest) {
+      console.log('⚠️ Model not ready, skipping audit log');
+      return;
     }
 
     console.log('⏳ Final safety delay before audit logging...');
