@@ -1,4 +1,4 @@
-// server.js
+// server.js - Updated for Stable Deployment
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -9,6 +9,8 @@ import cors from 'cors';
 import connectDB from './config/db.js';
 import logger from './src/utils/logger.js';
 import initializeApplication from './src/utils/initializeApplication.js';
+import { initializeSystemDates } from './src/controllers/OsController.js'; // FIXED: Import for system dates init
+import { initializePermissionsCache } from './src/routes/config.js'; // FIXED: Import for permissions cache
 
 // ENHANCED ERROR SUPPRESSION: Handle specific MongoDB and audit logger errors
 const originalError = console.error;
@@ -20,7 +22,7 @@ console.error = function(...args) {
   }
   // Suppress MongoDB timeout errors
   if (args[0] && args[0].includes('buffering timed out')) {
-    console.log('⚠️ MongoDB query timeout - server continuing...');
+    console.log('⚠️ MongoDB query timeout - connection may be slow, continuing...');
     return;
   }
   // Suppress systemdates specific errors
@@ -37,16 +39,33 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-// Enhanced CORS Configuration
+// Enhanced CORS Configuration with debugging
 const allowedOrigins = [
   process.env.CLIENT_URL,
   process.env.CLIENT_URL_LOCAL,
   process.env.CLIENT_URL_NETWORK,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173', // Vite default
+  'http://127.0.0.1:5173', // Vite alternative
 ].filter(Boolean);
+
+console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      // Allow requests with no origin
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log('🚫 CORS Blocked Origin:', origin);
+        console.log('✅ Allowed Origins:', allowedOrigins);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -167,7 +186,7 @@ const safeInitializeApplication = async () => {
 
     console.log('✅ Database confirmed ready, initializing application...');
     await initializeApplication();
-    console.log('✅ Application initialization completed successfully');
+    logger.info('✅ Application initialization completed successfully');
   } catch (error) {
     console.error('❌ Application initialization failed', {
       error: error.message,
@@ -289,15 +308,14 @@ const startServer = async () => {
     console.log('📡 Connecting to MongoDB Atlas...');
     await connectDB();
 
-    // STEP 2: Test the connection with actual query
-    console.log('🔄 STEP 2: Testing database responsiveness...');
-    const connectionTest = await testDatabaseConnection();
-    if (!connectionTest) {
-      throw new Error('Database connection test failed - MongoDB not responsive');
-    }
+    // FIXED: Wait for connection before initializing
+    console.log('🔄 STEP 1.5: Waiting for MongoDB to be fully ready...');
+    await waitForMongoConnection(15000);
+    await testDatabaseConnection();
+    await testModelReadiness();
 
-    // STEP 3: Start the server (ONLY SERVER STARTUP)
-    console.log('🔄 STEP 3: Starting HTTP server...');
+    // STEP 2: Start the server (ONLY SERVER STARTUP)
+    console.log('🔄 STEP 2: Starting HTTP server...');
     const PORT = process.env.PORT || 5000;
 
     const server = app.listen(PORT, '0.0.0.0', () => {
@@ -309,12 +327,13 @@ const startServer = async () => {
       console.log(`🔧 API Base: ${process.env.CLIENT_URL_NETWORK}:${PORT}/api`);
       console.log(`📱 Frontend: ${process.env.CLIENT_URL}`);
       console.log(`🗄️  Database: ${getDbStateText(mongoose.connection.readyState)}`);
-      console.log(`🧪 DB Test: ${connectionTest ? '✅ Responsive' : '❌ Not Responsive'}`);
+      console.log(`🧪 DB Test: ${testDatabaseConnection ? '✅ Responsive' : '❌ Not Responsive'}`);
       console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🛡️  CORS Origins: ${allowedOrigins.length} configured`);
       console.log('='.repeat(60) + '\n');
 
-      // STEP 4: Initialize application in background
-      console.log('🔄 STEP 4: Starting background application initialization...');
+      // STEP 3: Initialize application in background
+      console.log('🔄 STEP 3: Starting background application initialization...');
       safeInitializeApplication().then(() => {
         console.log('🎉 Application initialization completed!');
       }).catch(err => {

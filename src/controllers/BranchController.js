@@ -1,611 +1,761 @@
-import mongoose from 'mongoose';
 import Branch from '../models/Branch.js';
+import mongoose from 'mongoose';
 import BusinessUnit from '../models/BusinessUnit.js';
-import GLAccountCategory from '../models/GLAccountCategory.js';
 import { logger } from '../utils/logger.js';
-import { addAuditTrail } from '../controllers/AudiTrailController.js'; // Fixed typo
-import { baseCategories } from './GLAccountCategoryController.js';
+import { addAuditTrail } from '../controllers/AudiTrailController.js';
 
-// Initial branches for initialization
-const initialBranches = [
-  { code: '000', name: 'HEAD OFFICE' },
-  { code: '001', name: 'MD/CEO OFFICE' },
-  { code: '002', name: 'FINANCE' },
-  { code: '003', name: 'INFORMATION TECHNOLOGY' },
-  { code: '004', name: 'ADMIN' },
-  { code: '005', name: 'RISK' },
-  { code: '006', name: 'MARKETING' },
-  { code: '007', name: 'OPERATION' },
-  { code: '101', name: 'RELIEF BRANCH' },
-  { code: '102', name: 'WITHDRAWAL BRANCH' }
-];
-
-// Mapping of branch codes to specific category codes
-const branchCategoryMapping = {
-  '000': '01-110',
-  '001': '02-110',
-  '002': '03-110',
-  '003': '04-110',
-  '004': '05-110',
-  '005': '06-111'
-};
-
+// @desc    Create a new branch (with auto-linked BusinessUnit)
+// @route   POST /api/branches
+// @access  Private
 export const createBranch = async (req, res) => {
-  logger.info('createBranch hit', { body: req.body, ip: req.ip });
-
   const session = await mongoose.startSession();
+  session.startTransaction();
+  
   try {
-    await session.withTransaction(async () => {
-      let { organizationName, branchName, branchCode, allowReservedCode } = req.body;
+    let { organizationName, branchName, branchCode, DESCRIPTION, ADDRESS, status } = req.body;
+    const userId = req.user?._id;
 
-      // Clean up input
-      organizationName = organizationName?.trim().toUpperCase();
-      branchName = branchName?.trim().replace(/\s*-\s*/g, '-').toUpperCase();
-      branchCode = branchCode?.trim().toUpperCase();
+    // Normalize inputs
+    organizationName = organizationName?.trim().toUpperCase() || 'DEFAULT_ORG';
+    branchName = branchName?.trim().replace(/\s*-\s*/g, '-').toUpperCase();
+    branchCode = branchCode?.trim().toUpperCase();
+    DESCRIPTION = DESCRIPTION?.trim() || branchName;
+    ADDRESS = ADDRESS?.trim() || `${organizationName} ${branchName} Address`;
+    status = status ? status.toUpperCase() : 'ACTIVE';
 
-      // Required fields check
-      if (!organizationName || !branchName || !branchCode) {
-        logger.error('Missing required fields', { organizationName, branchName, branchCode });
-        throw new Error('Organization Name, Branch Name, and Branch Code are required');
-      }
-
-      // Validate branchCode format (3-digit number)
-      if (!/^\d{3}$/.test(branchCode)) {
-        logger.error('Invalid branchCode format', { branchCode });
-        throw new Error('Branch Code must be a 3-digit number');
-      }
-
-      // Check for reserved branch codes
-      const reservedCodes = initialBranches.map(b => b.code.toUpperCase());
-      if (reservedCodes.includes(branchCode) && !allowReservedCode) {
-        logger.error('Branch code is reserved', { branchCode });
-        throw new Error(`Branch Code ${branchCode} is reserved for initial branches`);
-      }
-
-      // Check if branch already exists (case-insensitive)
-      const existingBranch = await Branch.findOne({
-        organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-        $or: [
-          { branchName: { $regex: `^${branchName}$`, $options: 'i' } },
-          { branchCode: { $regex: `^${branchCode}$`, $options: 'i' } }
-        ]
-      }).session(session);
-      if (existingBranch) {
-        logger.warn('Branch already exists in organization', { organizationName, branchName, branchCode });
-        throw new Error(`Branch ${branchName} or code ${branchCode} already exists in organization ${organizationName}`);
-      }
-
-      // Check if BU_ID (branchCode as string) already exists in BusinessUnit
-      const existingBusinessUnit = await BusinessUnit.findOne({ BU_ID: branchCode }).session(session);
-      if (existingBusinessUnit) {
-        logger.warn('Business Unit with BU_ID already exists', { BU_ID: branchCode });
-        throw new Error(`Business Unit with BU_ID ${branchCode} already exists`);
-      }
-
-      // Create new branch
-      const newBranch = new Branch({
-        organizationName,
-        branchName,
-        branchCode,
-        createdAt: req.body.createdAt ? new Date(req.body.createdAt) : new Date(),
-        updatedAt: req.body.updatedAt ? new Date(req.body.updatedAt) : new Date()
-      });
-      await newBranch.save({ session });
-
-      // Create corresponding BusinessUnit
-      const newBusinessUnit = new BusinessUnit({
-        BU_ID: branchCode, // Use branchCode as string
-        BUSINESS_UNIT: branchName,
-        DESCRIPTION: branchName,
-        ADDRESS: `${organizationName} ${branchName} Address`,
-        created_at: newBranch.createdAt
-      });
-      await newBusinessUnit.save({ session });
-
-      // Determine the category code for this branch
-      const mappedCategoryCode = branchCategoryMapping[branchCode] || '06-111';
-
-      // Initialize categories with dynamic naming
-      const branchCategories = baseCategories.map((cat) => {
-        let categoryName = cat.categoryName;
-        if (cat.categoryCode === mappedCategoryCode) {
-          categoryName = `${organizationName} ${branchName} Branch (${branchCode})`;
-        }
-        return {
-          ...cat,
-          categoryName,
-          organizationName,
-          branchName,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-      });
-
-      // Check for existing categories and valid parentCodes
-      const existingCategories = await GLAccountCategory.find({
-        organizationName,
-        branchName,
-        categoryCode: { $in: branchCategories.map(cat => cat.categoryCode) }
-      }).session(session).lean();
-
-      const existingCategoryCodes = new Set(existingCategories.map(cat => cat.categoryCode));
-      const parentCodes = [...new Set(branchCategories.map(cat => cat.parentCode).filter(Boolean))];
-      const existingParents = await GLAccountCategory.find({
-        categoryCode: { $in: parentCodes },
-        organizationName,
-        branchName
-      }).session(session).lean();
-
-      const validParentCodes = new Set(existingParents.map(parent => parent.categoryCode));
-      const newCategories = branchCategories.filter(cat => 
-        !existingCategoryCodes.has(cat.categoryCode) && 
-        (!cat.parentCode || validParentCodes.has(cat.parentCode))
-      );
-
-      // Log invalid categories
-      const invalidCategories = branchCategories.filter(cat => 
-        !existingCategoryCodes.has(cat.categoryCode) && 
-        cat.parentCode && !validParentCodes.has(cat.parentCode)
-      );
-      if (invalidCategories.length > 0) {
-        logger.warn('Skipping categories with invalid parentCode', {
-          organizationName,
-          branchName,
-          invalidCategories: invalidCategories.map(cat => ({
-            categoryCode: cat.categoryCode,
-            parentCode: cat.parentCode
-          }))
-        });
-      }
-
-      // Insert new categories
-      let categoriesInitialized = 0;
-      if (newCategories.length > 0) {
-        await GLAccountCategory.insertMany(newCategories, { session, ordered: false });
-        categoriesInitialized = newCategories.length;
-      }
-
-      // Audit trail
-      await addAuditTrail({
-        EVENT_TYPE: 'CREATE_BRANCH',
-        USER_ID: req.userId || 'system',
-        ACTION: 'CREATE',
-        NEW_VALUE: { organizationName, branchName, branchCode, categoryCount: branchCategories.length, BU_ID: branchCode },
-        OLD_VALUE: null,
-        IP_ADDRESS: req.ip || req.headers['x-forwarded-for'] || '0.0.0.0',
-        ENTITY_ID: newBranch._id,
-        ENTITY_TYPE: 'Branch',
-        STATUS: 'SUCCESS',
-        DESCRIPTION: `Created branch ${branchName} with code ${branchCode} and Business Unit BU_ID ${branchCode} in organization ${organizationName}`,
-        REFERENCE_NO: `BRANCH-${newBranch._id}`,
-        ACCOUNT_NO: null,
-        ADDITIONAL_INFO: { categoriesInitialized, businessUnitId: newBusinessUnit._id },
-        session
-      });
-
-      return res.status(201).json({
-        message: `Branch ${branchName} and Business Unit BU_ID ${branchCode} created for organization ${organizationName}`,
-        branch: newBranch,
-        businessUnit: newBusinessUnit,
-        categoriesInitialized
-      });
+    logger.info('Creating new branch', { 
+      organizationName, 
+      branchName, 
+      branchCode,
+      DESCRIPTION,
+      ADDRESS,
+      status,
+      userId 
     });
-  } catch (error) {
-    if (session.inTransaction()) {
+
+    // Validate required fields
+    if (!organizationName || !branchName || !branchCode) {
       await session.abortTransaction();
-    }
-    logger.error('Error creating branch', {
-      error: error.message,
-      organizationName: req.body.organizationName,
-      branchName: req.body.branchName,
-      branchCode: req.body.branchCode
-    });
-    return res.status(error.message.includes('already exists') || error.message.includes('required') || error.message.includes('reserved') ? 409 : 500).json({
-      message: error.message,
-      code: error.message.includes('required') || error.message.includes('already exists') || error.message.includes('reserved') ? 'INVALID_REQUEST' : 'INTERNAL_SERVER_ERROR'
-    });
-  } finally {
-    session.endSession();
-  }
-};
-
-export const createBranches = async (req, res) => {
-  logger.info('createBranches hit', { body: req.body, ip: req.ip });
-
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      const branches = req.body.branches;
-      if (!Array.isArray(branches) || branches.length === 0) {
-        logger.error('Invalid branches array', { branches });
-        throw new Error('Branches array is required and must not be empty');
-      }
-
-      const createdBranches = [];
-      const failedBranches = [];
-
-      for (const branch of branches) {
-        let { organizationName, branchName, branchCode, allowReservedCode } = branch;
-
-        // Clean up input
-        organizationName = organizationName?.trim().toUpperCase();
-        branchName = branchName?.trim().replace(/\s*-\s*/g, '-').toUpperCase();
-        branchCode = branchCode?.trim().toUpperCase();
-
-        // Required fields check
-        if (!organizationName || !branchName || !branchCode) {
-          logger.error('Missing required fields for branch', { organizationName, branchName, branchCode });
-          failedBranches.push({
-            organizationName,
-            branchName: branchName || 'unknown',
-            branchCode: branchCode || 'unknown',
-            error: 'Missing required fields'
-          });
-          continue;
-        }
-
-        // Validate branchCode format
-        if (!/^\d{3}$/.test(branchCode)) {
-          logger.error('Invalid branchCode format', { branchCode });
-          failedBranches.push({
-            organizationName,
-            branchName,
-            branchCode,
-            error: 'Branch Code must be a 3-digit number'
-          });
-          continue;
-        }
-
-        // Check for reserved branch codes
-        const reservedCodes = initialBranches.map(b => b.code.toUpperCase());
-        if (reservedCodes.includes(branchCode) && !allowReservedCode) {
-          logger.error('Branch code is reserved', { branchCode });
-          failedBranches.push({
-            organizationName,
-            branchName,
-            branchCode,
-            error: `Branch Code ${branchCode} is reserved for initial branches`
-          });
-          continue;
-        }
-
-        // Check if branch already exists (case-insensitive)
-        const existingBranch = await Branch.findOne({
-          organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-          $or: [
-            { branchName: { $regex: `^${branchName}$`, $options: 'i' } },
-            { branchCode: { $regex: `^${branchCode}$`, $options: 'i' } }
-          ]
-        }).session(session);
-        if (existingBranch) {
-          logger.warn('Branch already exists in organization', { organizationName, branchName, branchCode });
-          failedBranches.push({
-            organizationName,
-            branchName,
-            branchCode,
-            error: `Branch ${branchName} or code ${branchCode} already exists in organization ${organizationName}`
-          });
-          continue;
-        }
-
-        // Check if BU_ID (branchCode as string) already exists in BusinessUnit
-        const existingBusinessUnit = await BusinessUnit.findOne({ BU_ID: branchCode }).session(session);
-        if (existingBusinessUnit) {
-          logger.warn('Business Unit with BU_ID already exists', { BU_ID: branchCode });
-          failedBranches.push({
-            organizationName,
-            branchName,
-            branchCode,
-            error: `Business Unit with BU_ID ${branchCode} already exists`
-          });
-          continue;
-        }
-
-        // Create new branch
-        const newBranch = new Branch({
-          organizationName,
-          branchName,
-          branchCode,
-          createdAt: branch.createdAt ? new Date(branch.createdAt) : new Date(),
-          updatedAt: branch.updatedAt ? new Date(branch.updatedAt) : new Date()
-        });
-        await newBranch.save({ session });
-
-        // Create corresponding BusinessUnit
-        const newBusinessUnit = new BusinessUnit({
-          BU_ID: branchCode, // Use branchCode as string
-          BUSINESS_UNIT: branchName,
-          DESCRIPTION: branchName,
-          ADDRESS: `${organizationName} ${branchName} Address`,
-          created_at: newBranch.createdAt
-        });
-        await newBusinessUnit.save({ session });
-
-        // Determine the category code for this branch
-        const mappedCategoryCode = branchCategoryMapping[branchCode] || '06-111';
-
-        // Initialize categories with dynamic naming
-        const branchCategories = baseCategories.map((cat) => {
-          let categoryName = cat.categoryName;
-          if (cat.categoryCode === mappedCategoryCode) {
-            categoryName = `${organizationName} ${branchName} Branch (${branchCode})`;
-          }
-          return {
-            ...cat,
-            categoryName,
-            organizationName,
-            branchName,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-        });
-
-        // Check for existing categories and valid parentCodes
-        const existingCategories = await GLAccountCategory.find({
-          organizationName,
-          branchName,
-          categoryCode: { $in: branchCategories.map(cat => cat.categoryCode) }
-        }).session(session).lean();
-
-        const existingCategoryCodes = new Set(existingCategories.map(cat => cat.categoryCode));
-        const parentCodes = [...new Set(branchCategories.map(cat => cat.parentCode).filter(Boolean))];
-        const existingParents = await GLAccountCategory.find({
-          categoryCode: { $in: parentCodes },
-          organizationName,
-          branchName
-        }).session(session).lean();
-
-        const validParentCodes = new Set(existingParents.map(parent => parent.categoryCode));
-        const newCategories = branchCategories.filter(cat => 
-          !existingCategoryCodes.has(cat.categoryCode) && 
-          (!cat.parentCode || validParentCodes.has(cat.parentCode))
-        );
-
-        // Log invalid categories
-        const invalidCategories = branchCategories.filter(cat => 
-          !existingCategoryCodes.has(cat.categoryCode) && 
-          cat.parentCode && !validParentCodes.has(cat.parentCode)
-        );
-        if (invalidCategories.length > 0) {
-          logger.warn('Skipping categories with invalid parentCode', {
-            organizationName,
-            branchName,
-            invalidCategories: invalidCategories.map(cat => ({
-              categoryCode: cat.categoryCode,
-              parentCode: cat.parentCode
-            }))
-          });
-        }
-
-        // Insert new categories
-        let categoriesInitialized = 0;
-        if (newCategories.length > 0) {
-          await GLAccountCategory.insertMany(newCategories, { session, ordered: false });
-          categoriesInitialized = newCategories.length;
-        }
-
-        // Audit trail
-        await addAuditTrail({
-          EVENT_TYPE: 'CREATE_BRANCH',
-          USER_ID: req.userId || 'system',
-          ACTION: 'CREATE',
-          NEW_VALUE: { organizationName, branchName, branchCode, categoryCount: branchCategories.length, BU_ID: branchCode },
-          OLD_VALUE: null,
-          IP_ADDRESS: req.ip || req.headers['x-forwarded-for'] || '0.0.0.0',
-          ENTITY_ID: newBranch._id,
-          ENTITY_TYPE: 'Branch',
-          STATUS: 'SUCCESS',
-          DESCRIPTION: `Created branch ${branchName} with code ${branchCode} and Business Unit BU_ID ${branchCode} in organization ${organizationName}`,
-          REFERENCE_NO: `BRANCH-${newBranch._id}`,
-          ACCOUNT_NO: null,
-          ADDITIONAL_INFO: { categoriesInitialized, businessUnitId: newBusinessUnit._id },
-          session
-        });
-
-        createdBranches.push({
-          branch: newBranch,
-          businessUnit: newBusinessUnit,
-          categoriesInitialized
-        });
-      }
-
-      if (failedBranches.length > 0) {
-        return res.status(207).json({
-          message: 'Some branches and business units were created successfully, but errors occurred',
-          createdBranches,
-          failedBranches
-        });
-      }
-
-      return res.status(201).json({
-        message: 'All branches and business units created successfully',
-        createdBranches
+      return res.status(400).json({
+        success: false,
+        message: 'Organization Name, Branch Name, and Branch Code are required'
       });
-    });
-  } catch (error) {
-    if (session.inTransaction()) {
+    }
+
+    // Check if branch code already exists
+    const existingBranch = await Branch.findOne({ branchCode }).session(session);
+    if (existingBranch) {
       await session.abortTransaction();
+      logger.warn('Branch creation failed - duplicate branch code', { branchCode });
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Branch code already exists'
+      });
     }
-    logger.error('Error creating branches', {
-      error: error.message,
-      branches: req.body.branches
+
+    // Check if BusinessUnit with BU_ID (branchCode) already exists
+    const existingBusinessUnit = await BusinessUnit.findOne({ BU_ID: branchCode }).session(session);
+    if (existingBusinessUnit) {
+      await session.abortTransaction();
+      logger.warn('Business Unit creation failed - duplicate BU_ID', { branchCode });
+      
+      return res.status(409).json({
+        success: false,
+        message: `Business Unit with BU_ID ${branchCode} already exists`,
+        code: 'DUPLICATE_KEY'
+      });
+    }
+
+    // Create and save Branch
+    const branchData = {
+      organizationName,
+      branchName,
+      branchCode,
+      address: ADDRESS,
+      status
+    };
+    const branch = new Branch(branchData);
+    const savedBranch = await branch.save({ session });
+
+    // Create and save linked BusinessUnit (explicit mapping to schema fields)
+    const businessUnitData = {
+      BU_ID: branchCode,  // Maps to required BU_ID
+      BUSINESS_UNIT: branchName,  // Maps to required BUSINESS_UNIT
+      DESCRIPTION,
+      ADDRESS,
+      branch: savedBranch._id,  // Ref if schema supports
+      created_at: new Date()
+    };
+    const businessUnit = new BusinessUnit(businessUnitData);
+    const savedBusinessUnit = await businessUnit.save({ session });
+
+    // Audit trails
+    await addAuditTrail({
+      user: userId,
+      action: 'CREATE',
+      entity: 'Branch',
+      entityId: savedBranch._id,
+      description: `Created branch: ${branchName} (${branchCode})`,
+      oldValues: {},
+      newValues: branchData,
+      timestamp: new Date()
+    }, session);
+
+    await addAuditTrail({
+      user: userId,
+      action: 'CREATE',
+      entity: 'BusinessUnit',
+      entityId: savedBusinessUnit._id,
+      description: `Created business unit: ${branchName} (${branchCode}) for branch ${savedBranch._id}`,
+      oldValues: {},
+      newValues: businessUnitData,
+      timestamp: new Date()
+    }, session);
+
+    await session.commitTransaction();
+    logger.info('Branch and Business Unit created successfully', { 
+      branchId: savedBranch._id, 
+      businessUnitId: savedBusinessUnit._id,
+      branchName, 
+      branchCode 
     });
-    return res.status(error.message.includes('required') || error.message.includes('already exists') || error.message.includes('reserved') ? 409 : 500).json({
-      message: error.message || 'Error creating branches',
-      code: error.message.includes('required') || error.message.includes('already exists') || error.message.includes('reserved') ? 'INVALID_REQUEST' : 'INTERNAL_SERVER_ERROR'
-    });
-  } finally {
-    session.endSession();
-  }
-};
 
-export const getBranch = async (req, res) => {
-  logger.info('getBranch hit with params/query:', { params: req.params, query: req.query });
-
-  try {
-    let organizationName, branchName, branchCode;
-
-    // Extract parameters from path or query
-    if (req.params.organizationName && req.params.branchName && req.params.branchCode) {
-      organizationName = req.params.organizationName.trim().toUpperCase();
-      branchName = req.params.branchName.trim().replace(/\s*-\s*/g, '-').toUpperCase();
-      branchCode = req.params.branchCode.trim().toUpperCase();
-    } else if (req.query.organizationName && req.query.branchName && req.query.branchCode) {
-      organizationName = req.query.organizationName.trim().toUpperCase();
-      branchName = req.query.branchName.trim().replace(/\s*-\s*/g, '-').toUpperCase();
-      branchCode = req.query.branchCode.trim().toUpperCase();
-    } else {
-      logger.error('Missing required parameters', { params: req.params, query: req.query });
-      return res.status(400).json({
-        success: false,
-        message: 'Organization Name, Branch Name, and Branch Code are required',
-        code: 'INVALID_REQUEST'
-      });
-    }
-
-    // Validate parameters
-    if (!/^\d{3}$/.test(branchCode)) {
-      logger.error('Invalid branchCode format', { branchCode });
-      return res.status(400).json({
-        success: false,
-        message: 'Branch Code must be a 3-digit number',
-        code: 'INVALID_REQUEST'
-      });
-    }
-    if (organizationName.length > 100 || branchName.length > 100) {
-      logger.error('Parameter length exceeded', { organizationName, branchName });
-      return res.status(400).json({
-        success: false,
-        message: 'Organization Name and Branch Name must be 100 characters or less',
-        code: 'INVALID_REQUEST'
-      });
-    }
-
-    // Fetch branch and business unit in parallel
-    const [branch, businessUnit] = await Promise.all([
-      Branch.findOne({
-        organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-        branchName: { $regex: `^${branchName}$`, $options: 'i' },
-        branchCode: { $regex: `^${branchCode}$`, $options: 'i' }
-      }).lean().catch(err => {
-        logger.error('Error fetching branch', { error: err.message });
-        throw new Error('Failed to fetch branch');
-      }),
-      BusinessUnit.findOne({ BU_ID: branchCode }).lean().catch(err => {
-        logger.warn('Error fetching business unit, returning null', { error: err.message });
-        return null; // Continue even if business unit query fails
-      })
-    ]);
-
-    if (!branch) {
-      logger.warn('Branch not found', { organizationName, branchName, branchCode });
-      return res.status(404).json({
-        success: false,
-        message: `Branch ${branchName} with code ${branchCode} not found in organization ${organizationName}`,
-        code: 'NOT_FOUND'
-      });
-    }
-
-    logger.info('Branch retrieved successfully', { organizationName, branchName, branchCode });
-
-    return res.status(200).json({
+    res.status(201).json({
       success: true,
-      message: `Branch ${branchName} with code ${branchCode} retrieved successfully`,
+      message: `Branch and Business Unit with branchCode: ${branchCode} created successfully`,
       data: {
-        branch,
-        businessUnit: businessUnit || null
+        branch: savedBranch,
+        businessUnit: savedBusinessUnit
       }
     });
   } catch (error) {
-    logger.error('Error fetching branch', {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    logger.error('Error creating branch and business unit', { 
       error: error.message,
-      params: req.params,
-      query: req.query
+      branchCode: req.body.branchCode,
+      body: req.body
     });
-    return res.status(500).json({
+
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors)
+        .map(err => err.message)
+        .join('; ');
+      return res.status(400).json({
+        success: false,
+        message: messages
+      });
+    }
+    
+    res.status(500).json({
       success: false,
-      message: 'Error fetching branch',
-      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Error creating branch and business unit',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// @desc    Get all branches with optional business units and migrated data
+// @route   GET /api/branches
+// @access  Private
+export const getAllBranches = async (req, res) => {
+  try {
+    const { includeBusinessUnits, organizationName, includeLegacy, migratedOnly } = req.query;
+    
+    logger.debug('Fetching all branches', { 
+      includeBusinessUnits, 
+      organizationName,
+      includeLegacy,
+      migratedOnly,
+      userId: req.user?._id 
+    });
+
+    // Base query filters
+    const baseQuery = {};
+    if (organizationName) {
+      baseQuery.organizationName = new RegExp(organizationName, 'i');
+    }
+
+    // Fetch new branches from 'branches' collection
+    let newBranches = await Branch.find(baseQuery)
+      .select(includeLegacy === 'true' 
+        ? 'organizationName branchName branchCode createdAt updatedAt external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
+        : 'organizationName branchName branchCode createdAt updatedAt'
+      );
+
+    if (migratedOnly === 'true') {
+      newBranches = newBranches.filter(b => b.migration_id); // Only migrated new ones
+    }
+
+    // Fetch legacy branches from 'branch' collection (raw MongoDB for flexibility)
+    let legacyBranches = [];
+    if (includeLegacy !== 'false' || migratedOnly !== 'true') { // Fetch legacy unless explicitly excluded or only new
+      const legacyQuery = organizationName ? { organizationName: new RegExp(organizationName, 'i') } : {}; // If legacy has organizationName
+      legacyBranches = await mongoose.connection.db.collection('branch').find(legacyQuery).toArray();
+
+      // Map legacy fields to match new schema/format
+      legacyBranches = legacyBranches.map(legacy => ({
+        // Core fields (map/derive)
+        _id: legacy._id,
+        organizationName: legacy.organizationName || 'DEFAULT_ORG', // Default if missing in legacy
+        branchName: (legacy.name || '').toUpperCase().trim() || 'UNKNOWN BRANCH', // Map from 'name'
+        branchCode: legacy.branchCode || generateBranchCode(legacy.name || ''), // Generate if missing (define helper below)
+        
+        // Legacy-specific fields (preserve)
+        id: legacy.id, // Legacy ID (e.g., 22)
+        external_id: legacy.external_id || '',
+        parent: legacy.parent,
+        office_address: legacy.office_address,
+        country: legacy.country,
+        state: legacy.state,
+        city: legacy.city,
+        phone: legacy.phone,
+        email: legacy.email,
+        branch_manager: legacy.branch_manager,
+        opening_date: legacy.opening_date,
+        branch_type: legacy.branch_type,
+        status: (legacy.status || 'Active').toUpperCase(),
+        created_by: legacy.created_by,
+        operational_model: legacy.operational_model,
+        approved_by: legacy.approved_by,
+        migration_id: legacy.migration_id || legacy._id, // Track as migrated
+
+        // Timestamps (derive from opening_date or default)
+        createdAt: legacy.opening_date || legacy.createdAt || new Date(),
+        updatedAt: legacy.updatedAt || new Date()
+      }));
+
+      // Filter if only migrated (legacy are all "migrated")
+      if (migratedOnly === 'true') {
+        legacyBranches = legacyBranches; // All legacy qualify
+      }
+    }
+
+    // Merge: new + mapped legacy
+    let allBranches = [...newBranches, ...legacyBranches];
+
+    // Apply organizationName filter post-merge if not applied earlier (for consistency)
+    if (organizationName) {
+      allBranches = allBranches.filter(b => 
+        b.organizationName.toLowerCase().includes(organizationName.toLowerCase())
+      );
+    }
+
+    // Optional: Populate businessUnits (for new branches only; extend for legacy if ref exists)
+    if (includeBusinessUnits === 'true') {
+      // For new branches (populate works on Mongoose docs)
+      const populatedNew = await Branch.populate(newBranches, {
+        path: 'businessUnits',
+        select: 'unitName unitCode description createdAt'
+      });
+      
+      // For legacy: Assuming no ref, query separately and attach (customize if legacy has branch ref)
+      const legacyIds = legacyBranches.map(b => b._id);
+      const busForLegacy = await BusinessUnit.find({ branch: { $in: legacyIds } });
+      const buMap = new Map();
+      busForLegacy.forEach(bu => buMap.set(bu.branch.toString(), bu));
+      legacyBranches.forEach(b => {
+        b.businessUnits = buMap.get(b._id.toString()) || [];
+      });
+
+      // Re-merge after populate
+      allBranches = [...populatedNew, ...legacyBranches];
+    }
+
+    logger.debug('All branches fetched successfully', { count: allBranches.length });
+
+    res.status(200).json({
+      success: true,
+      count: allBranches.length,
+      data: allBranches
+    });
+  } catch (error) {
+    logger.error('Error fetching branches', { error: error.message });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching branches',
       error: error.message
     });
   }
 };
 
-export const getAllBranches = async (req, res) => {
-  logger.info('getAllBranches hit', { ip: req.ip, query: req.query });
+// Helper function to generate branchCode for legacy (add at top of file or utils)
+const generateBranchCode = (branchName) => {
+  const nameUpper = branchName.toUpperCase().trim();
+  const codeMap = {
+    'HEAD OFFICE': '000',
+    'FINANCE': '002',
+    // Add more mappings as needed from initialBranches
+  };
+  return codeMap[nameUpper] || `9${Math.floor(Math.random() * 99).toString().padStart(2, '0')}`; // Fallback 3-digit
+};
 
+// @desc    Get single branch by ID with business units and migrated data
+// @route   GET /api/branches/:id
+// @access  Private
+export const getBranchById = async (req, res) => {
   try {
-    // Extract pagination parameters
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const { includeBusinessUnits, includeLegacy } = req.query;
+    
+    logger.debug('Fetching branch by ID', { 
+      branchId: req.params.id, 
+      includeBusinessUnits,
+      includeLegacy,
+      userId: req.user?._id 
+    });
+    
+    const selectFields = includeLegacy === 'true' 
+      ? 'organizationName branchName branchCode createdAt updatedAt external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
+      : 'organizationName branchName branchCode createdAt updatedAt';
+    
+    let branch;
+    
+    if (includeBusinessUnits === 'true') {
+      branch = await Branch.findById(req.params.id)
+        .select(selectFields)
+        .populate({
+          path: 'businessUnits',
+          select: 'unitName unitCode description createdAt'
+        });
+    } else {
+      branch = await Branch.findById(req.params.id).select(selectFields);
+    }
 
-    // Optional filtering by organizationName
-    const matchStage = req.query.organizationName
-      ? { $match: { organizationName: { $regex: `^${req.query.organizationName.trim()}$`, $options: 'i' } } }
-      : { $match: {} };
-
-    // Fetch branches with BusinessUnit data
-    const branches = await Branch.aggregate([
-      matchStage,
-      {
-        $lookup: {
-          from: 'businessunits', // Ensure this matches the exact collection name
-          localField: 'branchCode',
-          foreignField: 'BU_ID',
-          as: 'businessUnit'
-        }
-      },
-      {
-        $unwind: {
-          path: '$businessUnit',
-          preserveNullAndEmptyArrays: true
-        }
-      },
-      { $sort: { organizationName: 1, branchName: 1 } },
-      { $skip: skip },
-      { $limit: limit }
-    ]);
-
-    // Get total count for pagination metadata
-    const totalBranches = await Branch.countDocuments(
-      req.query.organizationName
-        ? { organizationName: { $regex: `^${req.query.organizationName.trim()}$`, $options: 'i' } }
-        : {}
-    );
-
-    if (!branches.length) {
-      logger.info('No branches found', { organizationName: req.query.organizationName || 'all' });
-      return res.status(200).json({
-        success: true,
-        message: 'No branches found',
-        data: [],
-        pagination: { page, limit, total: 0 }
+    if (!branch) {
+      logger.warn('Branch not found', { branchId: req.params.id });
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found'
       });
     }
 
-    logger.info('Branches retrieved successfully', { count: branches.length, page, limit });
+    logger.debug('Branch fetched successfully', { branchId: branch._id });
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      message: 'Branches retrieved successfully',
-      data: branches,
-      pagination: {
-        page,
-        limit,
-        total: totalBranches,
-        pages: Math.ceil(totalBranches / limit)
+      data: branch
+    });
+  } catch (error) {
+    logger.error('Error fetching branch by ID', { 
+      error: error.message,
+      branchId: req.params.id 
+    });
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid branch ID'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching branch',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get branch by branch code with business units and migrated data
+// @route   GET /api/branches/code/:branchCode
+// @access  Private
+export const getBranchByCode = async (req, res) => {
+  try {
+    const { includeBusinessUnits, includeLegacy } = req.query;
+    
+    logger.debug('Fetching branch by code', { 
+      branchCode: req.params.branchCode, 
+      includeBusinessUnits,
+      includeLegacy,
+      userId: req.user?._id 
+    });
+    
+    const selectFields = includeLegacy === 'true' 
+      ? 'organizationName branchName branchCode createdAt updatedAt external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
+      : 'organizationName branchName branchCode createdAt updatedAt';
+    
+    let branch;
+    
+    if (includeBusinessUnits === 'true') {
+      branch = await Branch.findOne({ branchCode: req.params.branchCode })
+        .select(selectFields)
+        .populate({
+          path: 'businessUnits',
+          select: 'unitName unitCode description createdAt'
+        });
+    } else {
+      branch = await Branch.findOne({ branchCode: req.params.branchCode }).select(selectFields);
+    }
+
+    if (!branch) {
+      logger.warn('Branch not found by code', { branchCode: req.params.branchCode });
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
+    logger.debug('Branch fetched by code successfully', { branchCode: branch.branchCode });
+
+    res.status(200).json({
+      success: true,
+      data: branch
+    });
+  } catch (error) {
+    logger.error('Error fetching branch by code', { 
+      error: error.message,
+      branchCode: req.params.branchCode 
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching branch',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update branch
+// @route   PUT /api/branches/:id
+// @access  Private
+export const updateBranch = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { organizationName, branchName, branchCode } = req.body;
+    const userId = req.user?._id;
+
+    logger.info('Updating branch', { 
+      branchId: req.params.id, 
+      updates: { organizationName, branchName, branchCode },
+      userId 
+    });
+
+    // Get current branch data for audit trail
+    const currentBranch = await Branch.findById(req.params.id).session(session);
+    if (!currentBranch) {
+      await session.abortTransaction();
+      logger.warn('Branch not found for update', { branchId: req.params.id });
+      
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
+    // Check if new branch code already exists (excluding current branch)
+    if (branchCode && branchCode !== currentBranch.branchCode) {
+      const existingBranch = await Branch.findOne({ 
+        branchCode, 
+        _id: { $ne: req.params.id } 
+      }).session(session);
+      
+      if (existingBranch) {
+        await session.abortTransaction();
+        logger.warn('Branch update failed - duplicate branch code', { branchCode });
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Branch code already exists'
+        });
+      }
+    }
+
+    const oldValues = {
+      organizationName: currentBranch.organizationName,
+      branchName: currentBranch.branchName,
+      branchCode: currentBranch.branchCode
+    };
+
+    // Spread legacy fields if updating them
+    const updateData = { 
+      organizationName, 
+      branchName, 
+      branchCode,
+      updatedAt: Date.now(),
+      ...req.body // Include legacy updates (e.g., office_address)
+    };
+
+    const updatedBranch = await Branch.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true, session }
+    );
+
+    // Add audit trail
+    await addAuditTrail({
+      user: userId,
+      action: 'UPDATE',
+      entity: 'Branch',
+      entityId: updatedBranch._id,
+      description: `Updated branch: ${branchName} (${branchCode})`,
+      oldValues,
+      newValues: updateData,
+      timestamp: new Date()
+    }, session);
+
+    await session.commitTransaction();
+    logger.info('Branch updated successfully', { 
+      branchId: updatedBranch._id, 
+      branchName: updatedBranch.branchName 
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Branch updated successfully',
+      data: updatedBranch
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    logger.error('Error updating branch', { 
+      error: error.message,
+      branchId: req.params.id 
+    });
+
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: Object.values(error.errors).map(err => err.message).join(', ')
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid branch ID'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error updating branch',
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// @desc    Delete branch
+// @route   DELETE /api/branches/:id
+// @access  Private
+export const deleteBranch = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const userId = req.user?._id;
+
+    logger.info('Deleting branch', { 
+      branchId: req.params.id,
+      userId 
+    });
+
+    // Check if branch has business units before deletion (works for migrated too)
+    const businessUnitsCount = await BusinessUnit.countDocuments({ 
+      branch: req.params.id 
+    }).session(session);
+    
+    if (businessUnitsCount > 0) {
+      await session.abortTransaction();
+      logger.warn('Branch deletion failed - has business units', { 
+        branchId: req.params.id,
+        businessUnitsCount 
+      });
+      
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete branch. It has ${businessUnitsCount} business unit(s) associated with it.`
+      });
+    }
+
+    const branchToDelete = await Branch.findById(req.params.id).session(session);
+    if (!branchToDelete) {
+      await session.abortTransaction();
+      logger.warn('Branch not found for deletion', { branchId: req.params.id });
+      
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
+    const deletedBranch = await Branch.findByIdAndDelete(req.params.id).session(session);
+
+    // Add audit trail
+    await addAuditTrail({
+      user: userId,
+      action: 'DELETE',
+      entity: 'Branch',
+      entityId: deletedBranch._id,
+      description: `Deleted branch: ${branchToDelete.branchName} (${branchToDelete.branchCode})`,
+      oldValues: {
+        organizationName: branchToDelete.organizationName,
+        branchName: branchToDelete.branchName,
+        branchCode: branchToDelete.branchCode
+      },
+      newValues: {},
+      timestamp: new Date()
+    }, session);
+
+    await session.commitTransaction();
+    logger.info('Branch deleted successfully', { 
+      branchId: deletedBranch._id,
+      branchName: deletedBranch.branchName 
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Branch deleted successfully',
+      data: deletedBranch
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    logger.error('Error deleting branch', { 
+      error: error.message,
+      branchId: req.params.id 
+    });
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid branch ID'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting branch',
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// @desc    Get business units for a specific branch
+// @route   GET /api/branches/:id/business-units
+// @access  Private
+export const getBranchBusinessUnits = async (req, res) => {
+  try {
+    logger.debug('Fetching business units for branch', { 
+      branchId: req.params.id,
+      userId: req.user?._id 
+    });
+
+    const branch = await Branch.findById(req.params.id);
+    
+    if (!branch) {
+      logger.warn('Branch not found when fetching business units', { branchId: req.params.id });
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
+    const businessUnits = await BusinessUnit.find({ branch: req.params.id })
+      .select('unitName unitCode description createdAt updatedAt')
+      .sort({ createdAt: -1 });
+
+    logger.debug('Business units fetched successfully for branch', { 
+      branchId: req.params.id,
+      businessUnitsCount: businessUnits.length 
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        branch: {
+          _id: branch._id,
+          branchName: branch.branchName,
+          branchCode: branch.branchCode,
+          organizationName: branch.organizationName
+        },
+        businessUnits,
+        count: businessUnits.length
       }
     });
   } catch (error) {
-    logger.error('Error fetching all branches', {
+    logger.error('Error fetching business units for branch', { 
       error: error.message,
-      query: req.query
+      branchId: req.params.id 
     });
-    return res.status(500).json({
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid branch ID'
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching business units',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get branches by organization with migrated data
+// @route   GET /api/branches/organization/:organizationName
+// @access  Private
+export const getBranchesByOrganization = async (req, res) => {
+  try {
+    const { includeBusinessUnits, includeLegacy } = req.query;
+    
+    logger.debug('Fetching branches by organization', { 
+      organizationName: req.params.organizationName, 
+      includeBusinessUnits,
+      includeLegacy,
+      userId: req.user?._id 
+    });
+    
+    const selectFields = includeLegacy === 'true' 
+      ? 'organizationName branchName branchCode createdAt updatedAt external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
+      : 'organizationName branchName branchCode createdAt updatedAt';
+    
+    let branches;
+    
+    if (includeBusinessUnits === 'true') {
+      branches = await Branch.find({ 
+        organizationName: new RegExp(req.params.organizationName, 'i') 
+      })
+        .select(selectFields)
+        .populate({
+          path: 'businessUnits',
+          select: 'unitName unitCode description'
+        });
+    } else {
+      branches = await Branch.find({ 
+        organizationName: new RegExp(req.params.organizationName, 'i') 
+      }).select(selectFields);
+    }
+
+    logger.debug('Branches by organization fetched successfully', { 
+      organizationName: req.params.organizationName,
+      count: branches.length 
+    });
+
+    res.status(200).json({
+      success: true,
+      count: branches.length,
+      data: branches
+    });
+  } catch (error) {
+    logger.error('Error fetching branches by organization', { 
+      error: error.message,
+      organizationName: req.params.organizationName 
+    });
+    
+    res.status(500).json({
       success: false,
       message: 'Error fetching branches',
-      code: 'INTERNAL_SERVER_ERROR',
       error: error.message
     });
   }

@@ -1,14 +1,20 @@
+// middleware/auth.js - Updated for New User Model & Enhanced Compatibility
 import jwt from 'jsonwebtoken';
-import Permissions from '../models/Permissions.js';
-import User from '../models/User.js';
-import { hasPermission, checkMultiplePermissions, hasAnyPermission } from '../utils/permissionHelpers.js';
-import { roleHasPermission } from '../utils/permissionSync.js';
+import User from '../models/User.js'; // Adjust path if needed
+import Permissions from '../models/Permissions.js'; // Adjust path if needed
+import { hasPermission, checkMultiplePermissions, hasAnyPermission } from '../utils/permissionHelpers.js'; // Adjust path
+import { roleHasPermission } from '../utils/permissionSync.js'; // Adjust path
+import dotenv from 'dotenv';
+import path from 'path';
 
-// Enhanced secret key handling
+// Load environment variables
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
+// Function to get JWT secret key
 export const getSecretKey = () => {
   const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET;
   if (!secret) {
-    throw new Error('JWT secret key not configured');
+    throw new Error('JWT_SECRET_KEY or JWT_SECRET is not defined in .env');
   }
   return secret;
 };
@@ -52,31 +58,33 @@ export const authenticate = async (req, res, next) => {
 
     // 4. Get user permissions from database
     let userPermissions = null;
-    const roleId = user.roleId || user.BU_ROLE_ID || decoded.roleId;
+    const roleId = user.BU_ROLE_ID || decoded.roleId;
     
     if (roleId) {
       userPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
     }
 
-    // 5. Enhanced user attachment with new permission system
+    // 5. Enhanced user attachment with new model fields
     req.user = user; // Full user document
     req.authUser = {
       id: user._id,
       user_name: user.user_name,
-      role: user.role,
+      role: user.primary_business_role, // Map to primary_business_role
       roles: user.roles || [],
-      roleId: roleId,
+      roleId: user.BU_ROLE_ID,
       permissions: userPermissions, // Database permissions
-      // ✅ ADDED: Critical fields for teller routes
-      businessUnit: user.businessUnit,
-      accessibleBusinessUnits: user.accessibleBusinessUnits || [],
-      BU_ROLE_ID: roleId,
-      isAdmin: user.isAdmin,
+      // ✅ CRITICAL: Fields for teller routes
+      businessUnit: user.main_business_unit,
+      accessibleBusinessUnits: user.accessibleBusinessUnits || [user.main_business_unit],
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      isAdmin: user.BU_ROLE_ID === 1,
       userId: user._id.toString(), // For backward compatibility
       // Additional fields for compatibility
-      bu_id: user.businessUnit, // Alias for businessUnit
+      bu_id: user.main_business_unit, // Alias for main_business_unit
       primary_business_role: user.primary_business_role,
-      email: user.email
+      email: user.email,
+      internal_employee_enabled: user.internal_employee_enabled,
+      status: user.status
     };
 
     // 6. Attach permission checking methods to request for easy access
@@ -128,7 +136,7 @@ export const authenticate = async (req, res, next) => {
 };
 
 // =========================
-// 2. Enhanced Permission Middleware (Updated for new system)
+// 2. Enhanced Permission Middleware (Updated for new model)
 // =========================
 export const validatePermission = (requiredPermissions = {}) => {
   return async (req, res, next) => {
@@ -142,9 +150,9 @@ export const validatePermission = (requiredPermissions = {}) => {
       }
 
       const user = req.user || req.authUser;
-      const roleId = user.roleId || user.BU_ROLE_ID;
+      const roleId = user.BU_ROLE_ID || user.roleId;
 
-      // Bypass permission checks for super admins (roleId 1)
+      // Bypass permission checks for super admins (BU_ROLE_ID 1)
       if (parseInt(roleId) === 1) {
         return next();
       }
@@ -237,8 +245,8 @@ export const hasRole = (...roles) => {
 
       const user = req.user || req.authUser;
       const userRoles = user.roles || [];
-      const userRole = user.role;
-      const userRoleId = user.roleId || user.BU_ROLE_ID;
+      const userRole = user.primary_business_role; // Map to primary_business_role
+      const userRoleId = user.BU_ROLE_ID || user.roleId;
       
       // Check numeric role IDs
       const hasRequiredById = roles.some(role => {
@@ -289,7 +297,7 @@ export const requirePermission = (permission) => {
       }
 
       const user = req.user || req.authUser;
-      const roleId = user.roleId || user.BU_ROLE_ID;
+      const roleId = user.BU_ROLE_ID || user.roleId;
 
       // Super admin bypass
       if (parseInt(roleId) === 1) {
@@ -325,7 +333,7 @@ export const requireAllPermissions = (permissions) => {
       }
 
       const user = req.user || req.authUser;
-      const roleId = user.roleId || user.BU_ROLE_ID;
+      const roleId = user.BU_ROLE_ID || user.roleId;
 
       // Super admin bypass
       if (parseInt(roleId) === 1) {
@@ -363,7 +371,7 @@ export const requireAnyPermission = (permissions) => {
       }
 
       const user = req.user || req.authUser;
-      const roleId = user.roleId || user.BU_ROLE_ID;
+      const roleId = user.BU_ROLE_ID || user.roleId;
 
       // Super admin bypass
       if (parseInt(roleId) === 1) {
@@ -399,7 +407,7 @@ export const authWithPermissions = (requiredPermissions = {}) => [
 ];
 
 // =========================
-// 6. JWT Generator (Enhanced - CRITICAL UPDATE)
+// 6. JWT Generator (Enhanced - Updated for new model)
 // =========================
 export const generateToken = (user) => {
   if (!user || !user._id) {
@@ -410,20 +418,20 @@ export const generateToken = (user) => {
     {
       id: user._id,
       user_name: user.user_name,
-      role: user.role,
+      role: user.primary_business_role,
       roles: user.roles || [],
-      roleId: user.BU_ROLE_ID || user.roleId || null,
-      // ✅ CRITICAL: Added all fields needed for teller routes
-      businessUnit: user.businessUnit,
-      accessibleBusinessUnits: user.accessibleBusinessUnits || [],
+      roleId: user.BU_ROLE_ID,
+      // ✅ CRITICAL: All fields needed for teller routes
+      businessUnit: user.main_business_unit,
+      accessibleBusinessUnits: user.accessibleBusinessUnits || [user.main_business_unit],
       BU_ROLE_ID: user.BU_ROLE_ID,
       permissions: user.permissions,
-      isAdmin: user.isAdmin,
+      isAdmin: user.BU_ROLE_ID === 1,
       primary_business_role: user.primary_business_role,
       email: user.email,
       // Backward compatibility aliases
       userId: user._id.toString(),
-      bu_id: user.businessUnit
+      bu_id: user.main_business_unit
     },
     getSecretKey(),
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' } // Extended for development
@@ -520,11 +528,11 @@ export const tellerAuthenticate = async (req, res, next) => {
   try {
     await authenticate(req, res, () => {
       // Ensure all required fields for teller routes are available
-      const user = req.user; // This is the full user document from database
-      const authUser = req.authUser; // This is the auth user object
+      const user = req.user; // Full user document from database
+      const authUser = req.authUser; // Auth user object
       
       console.log('🔍 tellerAuthenticate - Database User:', {
-        businessUnit: user?.businessUnit,
+        businessUnit: user?.main_business_unit,
         BU_ROLE_ID: user?.BU_ROLE_ID
       });
       
@@ -538,12 +546,12 @@ export const tellerAuthenticate = async (req, res, next) => {
         userId: authUser?.id || user?._id?.toString(),
         user_name: authUser?.user_name || user?.user_name,
         BU_ROLE_ID: authUser?.BU_ROLE_ID || user?.BU_ROLE_ID || 29,
-        businessUnit: user?.businessUnit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
-        bu_id: user?.businessUnit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
+        businessUnit: user?.main_business_unit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
+        bu_id: user?.main_business_unit || authUser?.businessUnit || 'RELIEF BRANCH', // ✅ FALLBACK
         permissions: authUser?.permissions || user?.permissions,
         accessibleBusinessUnits: user?.accessibleBusinessUnits || authUser?.accessibleBusinessUnits || ['RELIEF BRANCH'],
         isAdmin: authUser?.isAdmin || user?.isAdmin,
-        role: authUser?.role || user?.role,
+        role: authUser?.role || user?.primary_business_role,
         email: user?.email,
         primary_business_role: user?.primary_business_role
       };

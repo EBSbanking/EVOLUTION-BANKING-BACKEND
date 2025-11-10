@@ -3,28 +3,47 @@ import bcrypt from 'bcrypt';
 
 // Define the user schema
 const userSchema = new mongoose.Schema({
+  // Legacy fields to match existing data
+  id: {
+    type: Number,
+    unique: true,
+    sparse: true
+  },
+  user_id: {
+    type: Number,
+    unique: true,
+    sparse: true
+  },
+  username: {
+    type: String,
+    unique: true,
+    sparse: true,
+    index: true
+  },
+  
+  // Modern fields
   user_name: {
     type: String,
-    required: true,
+    required: false, // Changed to false for legacy compatibility
     unique: true,
+    sparse: true
   },
   password: {
     type: String,
     required: true,
     minlength: 6,
-    select: false // Hide password by default in queries
+    select: false
   },
   passwordHistory: {
     type: [String],
-    select: false, // Hide password history by default
+    select: false,
     default: []
   },
   passwordChangedAt: {
     type: Date,
-    select: false, // Hide by default
+    select: false,
     default: null
   },
-  // 🔹 NEW FIELD: Track if user has completed first login
   firstLogin: {
     type: Boolean,
     default: true,
@@ -37,8 +56,9 @@ const userSchema = new mongoose.Schema({
   job_title: String,
   email: {
     type: String,
-    required: true,
+    required: false, // Made optional for legacy users
     unique: true,
+    sparse: true,
     match: /.+\@.+\..+/,
   },
   customer_number: String,
@@ -47,14 +67,29 @@ const userSchema = new mongoose.Schema({
     default: '',
   },
   responsibility_centre: String,
-   BU_ROLE_ID: {
-    type: Number,
-    required: true,
-    ref: 'UserRole' // Add reference to UserRole model
+  
+  // ✅ FIXED: MULTI-ROLE SUPPORT - Changed to Number array to match your data
+  roles: [{
+    type: Number, // Changed from ObjectId to Number
+    default: []
+  }],
+  
+  // ✅ FIXED: PRIMARY ROLE - Changed to Number
+  primary_role: {
+    type: Number, // Changed from ObjectId to Number
+    sparse: true
   },
+  
+  // Legacy compatibility
+  BU_ROLE_ID: {
+    type: Number, // Changed from ObjectId to Number
+    sparse: true
+  },
+  
   primary_business_role: {
     type: String,
-    required: true, // 🔹 Make sure every user has a role
+    required: false, // Changed to false for legacy compatibility
+    default: 'Staff' // Default value for legacy users
   },
   start_date: Date,
   expiry_date: Date,
@@ -106,7 +141,7 @@ const userSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Active', 'Deactivated', 'ForceLocked'], // 🔹 Added ForceLocked status
+    enum: ['Active', 'Deactivated', 'ForceLocked'],
     default: 'Active',
   },
   failed_attempts: {
@@ -125,7 +160,18 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  // 🔹 NEW FIELDS FOR SESSION MANAGEMENT AND FRAUD DETECTION
+  
+  // Legacy session compatibility
+  token: {
+    type: String,
+    default: null,
+  },
+  last_updated: {
+    type: Date,
+    default: Date.now
+  },
+  
+  // Modern session management
   current_sessions: [{
     session_id: String,
     login_time: {
@@ -165,31 +211,324 @@ const userSchema = new mongoose.Schema({
     ip_address: String,
     user_agent: String,
     logout_time: Date,
-    session_duration: Number, // in minutes
+    session_duration: Number,
     was_forced_logout: {
       type: Boolean,
       default: false
     }
-  }]
+  }],
+
+  // ✅ ADDED: Legacy fields for migration
+  utype: {
+    type: String,
+    sparse: true
+  },
+  role: {
+    type: Number,
+    sparse: true
+  },
+  fname: {
+    type: String,
+    sparse: true
+  },
+  lname: {
+    type: String,
+    sparse: true
+  },
+  is_active: {
+    type: String,
+    sparse: true
+  },
+  branch: {
+    type: Number,
+    sparse: true
+  },
+  changepass_on_first_login: {
+    type: Number,
+    sparse: true
+  },
+  pass_never_expire: {
+    type: Number,
+    sparse: true
+  },
+  is_locked: {
+    type: String,
+    sparse: true
+  },
+  date_joined: {
+    type: Date,
+    sparse: true
+  },
+  date_modified: {
+    type: Date,
+    sparse: true
+  },
+  last_updated_password: {
+    type: Date,
+    sparse: true
+  },
+  ist_log: {
+    type: Number,
+    sparse: true
+  },
+  rofficer: {
+    type: String,
+    sparse: true
+  },
+  staffphoto: {
+    type: String,
+    sparse: true
+  },
+  created_by: {
+    type: Number,
+    sparse: true
+  },
+  us_agent: {
+    type: String,
+    sparse: true
+  },
+  browser_lock: {
+    type: Number,
+    sparse: true
+  },
+  reset_browser: {
+    type: Number,
+    sparse: true
+  },
+  updated_pwd: {
+    type: Number,
+    sparse: true
+  }
 }, {
   timestamps: true,
 });
 
-// Middleware to hash password before saving
+// Index for performance
+userSchema.index({ user_name: 1 });
+userSchema.index({ username: 1 });
+userSchema.index({ roles: 1 });
+userSchema.index({ primary_role: 1 });
+
+// ✅ ENHANCED: Middleware to handle legacy data compatibility
 userSchema.pre('save', async function(next) {
+  console.log('🔄 LEGACY MIGRATION DEBUG - User Pre-Save:', {
+    username: this.username,
+    user_name: this.user_name,
+    utype: this.utype,
+    role: this.role,
+    fname: this.fname,
+    lname: this.lname,
+    is_active: this.is_active
+  });
+
+  // ✅ CRITICAL FIX: Map legacy username to user_name if missing
+  if (this.username && !this.user_name) {
+    this.user_name = this.username;
+    console.log('✅ MAPPED: username -> user_name:', this.user_name);
+  }
+
+  // ✅ CRITICAL FIX: Map legacy fname/lname to first_name/last_name
+  if (this.fname && !this.first_name) {
+    this.first_name = this.fname;
+    console.log('✅ MAPPED: fname -> first_name:', this.first_name);
+  }
+  if (this.lname && !this.last_name) {
+    this.last_name = this.lname;
+    console.log('✅ MAPPED: lname -> last_name:', this.last_name);
+  }
+
+  // ✅ CRITICAL FIX: Map legacy utype to primary_business_role if missing
+  if (this.utype && !this.primary_business_role) {
+    this.primary_business_role = this.utype;
+    console.log('✅ MAPPED: utype -> primary_business_role:', this.primary_business_role);
+  }
+
+  // ✅ CRITICAL FIX: Set default primary_business_role if still missing
+  if (!this.primary_business_role) {
+    this.primary_business_role = 'Staff'; // Default role for legacy users
+    console.log('✅ SET DEFAULT: primary_business_role -> Staff');
+  }
+
+  // ✅ CRITICAL FIX: Map legacy is_active to status
+  if (this.is_active && !this.status) {
+    this.status = this.is_active === 'Active' ? 'Active' : 'Deactivated';
+    console.log('✅ MAPPED: is_active -> status:', this.status);
+  }
+
+  // ✅ CRITICAL FIX: Map legacy role and BU_ROLE_ID
+  if (this.role && (!this.roles || this.roles.length === 0)) {
+    if (!this.roles) this.roles = [];
+    // Convert role to number if it's a string
+    const roleNum = typeof this.role === 'string' ? parseInt(this.role) : this.role;
+    if (!isNaN(roleNum)) {
+      this.roles.push(roleNum);
+      console.log('✅ MAPPED: role -> roles:', roleNum);
+    }
+  }
+  
+  if (this.BU_ROLE_ID && (!this.roles || this.roles.length === 0)) {
+    if (!this.roles) this.roles = [];
+    // Convert BU_ROLE_ID to number if it's a string
+    const buRoleNum = typeof this.BU_ROLE_ID === 'string' ? parseInt(this.BU_ROLE_ID) : this.BU_ROLE_ID;
+    if (!isNaN(buRoleNum)) {
+      this.roles.push(buRoleNum);
+      console.log('✅ MAPPED: BU_ROLE_ID -> roles:', buRoleNum);
+    }
+  }
+
+  // Set primary role if not set and we have roles
+  if (this.roles && this.roles.length > 0 && !this.primary_role) {
+    this.primary_role = this.roles[0];
+    console.log('✅ SET: primary_role from first role:', this.primary_role);
+  }
+
+  // Map legacy id to user_id
+  if (this.id && !this.user_id) {
+    this.user_id = this.id;
+    console.log('✅ MAPPED: id -> user_id:', this.user_id);
+  }
+
+  // Auto-generate user_id if not provided (for new users)
+  if (!this.user_id && this.id) {
+    this.user_id = this.id;
+  }
+
+  // Only hash password if it's modified and not already hashed
   if (!this.isModified('password')) return next();
   
   try {
-    const saltRounds = 10;
-    this.password = await bcrypt.hash(this.password, saltRounds);
-    this.passwordChangedAt = Date.now();
+    if (this.password && !this.password.startsWith('$2')) {
+      console.log('⚠️ Unhashed password detected - auto-hashing for security');
+      this.password = await bcrypt.hash(this.password, 10);
+    } else if (this.isModified('password')) {
+      this.password = await bcrypt.hash(this.password, 10);
+    }
+    this.passwordChangedAt = new Date();
     next();
   } catch (error) {
     next(error);
   }
 });
 
-// Instance method to check if password was changed after JWT was issued
+// ✅ UPDATED ROLE MANAGEMENT METHODS for Number-based roles
+
+// Get all roles (with fallback to legacy)
+userSchema.methods.getAllRoles = function() {
+  if (this.roles && this.roles.length > 0) {
+    return this.roles;
+  }
+  // Fallback to legacy single role
+  return [this.BU_ROLE_ID].filter(role => role !== null && role !== undefined);
+};
+
+// Check if user has a specific role
+userSchema.methods.hasRole = function(roleId) {
+  const roles = this.getAllRoles();
+  const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+  return roles.some(role => role && role.toString() === targetRoleId.toString());
+};
+
+// Check if user has any of the specified roles
+userSchema.methods.hasAnyRole = function(roleIds) {
+  const roles = this.getAllRoles();
+  return roleIds.some(roleId => {
+    const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+    return roles.some(role => role && role.toString() === targetRoleId.toString());
+  });
+};
+
+// Check if user has all of the specified roles
+userSchema.methods.hasAllRoles = function(roleIds) {
+  const roles = this.getAllRoles();
+  return roleIds.every(roleId => {
+    const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+    return roles.some(role => role && role.toString() === targetRoleId.toString());
+  });
+};
+
+// Add a role to user
+userSchema.methods.addRole = function(roleId) {
+  if (!this.roles) {
+    this.roles = [];
+  }
+  
+  const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+  const alreadyHasRole = this.roles.some(role => 
+    role && role.toString() === targetRoleId.toString()
+  );
+  
+  if (!alreadyHasRole && !isNaN(targetRoleId)) {
+    this.roles.push(targetRoleId);
+    
+    // Set as primary role if this is the first role
+    if (this.roles.length === 1 && !this.primary_role) {
+      this.primary_role = targetRoleId;
+    }
+  }
+  
+  return this.save();
+};
+
+// Remove a role from user
+userSchema.methods.removeRole = function(roleId) {
+  if (!this.roles) return Promise.resolve(this);
+  
+  const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+  this.roles = this.roles.filter(role => 
+    role && role.toString() !== targetRoleId.toString()
+  );
+  
+  // Update primary role if it was removed
+  if (this.primary_role && this.primary_role.toString() === targetRoleId.toString()) {
+    this.primary_role = this.roles.length > 0 ? this.roles[0] : null;
+  }
+  
+  return this.save();
+};
+
+// Set primary role (must be one of the user's roles)
+userSchema.methods.setPrimaryRole = function(roleId) {
+  const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+  const hasRole = this.roles && this.roles.some(role => 
+    role && role.toString() === targetRoleId.toString()
+  );
+  
+  if (hasRole && !isNaN(targetRoleId)) {
+    this.primary_role = targetRoleId;
+    return this.save();
+  }
+  
+  throw new Error('Cannot set primary role: User does not have this role');
+};
+
+// Get primary role (with fallback)
+userSchema.methods.getPrimaryRole = function() {
+  if (this.primary_role) {
+    return this.primary_role;
+  }
+  
+  // Fallback to first role in array
+  if (this.roles && this.roles.length > 0) {
+    return this.roles[0];
+  }
+  
+  // Fallback to legacy BU_ROLE_ID
+  return this.BU_ROLE_ID;
+};
+
+// Get role count
+userSchema.methods.getRoleCount = function() {
+  return this.roles ? this.roles.length : 0;
+};
+
+// Clear all roles
+userSchema.methods.clearRoles = function() {
+  this.roles = [];
+  this.primary_role = null;
+  return this.save();
+};
+
+// Check if password was changed after JWT was issued
 userSchema.methods.changedPasswordAfter = function(JWTTimestamp) {
   if (this.passwordChangedAt) {
     const changedTimestamp = parseInt(this.passwordChangedAt.getTime() / 1000, 10);
@@ -203,66 +542,48 @@ userSchema.methods.correctPassword = async function(candidatePassword, userPassw
   return await bcrypt.compare(candidatePassword, userPassword);
 };
 
-// 🔹 NEW METHOD: Check if current time is within login hours
+// 🔹 MODIFIED METHOD: Always allow login (24-hour access)
 userSchema.methods.isWithinLoginHours = function() {
-  const now = new Date();
-  const currentTime = now.toTimeString().split(' ')[0].substring(0, 5); // Get HH:MM format
-  
-  console.log('🕒 Login Hours Check:', {
-    currentTime,
-    earliest: this.earliest_login_time,
-    latest: this.latest_login_time,
-    user: this.user_name
+  console.log('🔓 24-Hour Login Access Enabled:', {
+    user: this.user_name || this.username,
+    message: 'Login time restrictions disabled - 24-hour access allowed'
   });
-  
-  // If no restrictions are set, allow login
-  if (!this.earliest_login_time && !this.latest_login_time) {
-    return true;
-  }
-  
-  // Check if current time is within allowed range
-  if (this.earliest_login_time && this.latest_login_time) {
-    return currentTime >= this.earliest_login_time && currentTime <= this.latest_login_time;
-  }
-  
   return true;
 };
 
-// 🔹 NEW METHODS FOR FRAUD LOCK AND SESSION MANAGEMENT
+// 🔹 LEGACY COMPATIBILITY METHODS
 
-// Force lock a user due to fraud
-userSchema.methods.forceLock = function(adminUserId, reason = 'Suspicious activity detected') {
-  this.status = 'ForceLocked';
-  this.force_lock_reason = reason;
-  this.force_locked_by = adminUserId;
-  this.force_locked_at = new Date();
-  this.lock_until = null; // Clear any temporary lock
+// Method to create legacy-compatible session
+userSchema.methods.createLegacySession = function(sessionData) {
+  // Update legacy token field for compatibility
+  this.token = sessionData.session_id || `legacy_${Date.now()}`;
+  this.last_updated = new Date();
   
-  // Logout all active sessions
-  this.logoutAllSessions(true);
-  
-  return this.save();
+  // Also create modern session
+  return this.addLoginSession(sessionData);
 };
 
-// Unlock a force-locked user
-userSchema.methods.unlock = function() {
-  if (this.status === 'ForceLocked') {
-    this.status = 'Active';
-    this.force_lock_reason = null;
-    this.force_locked_by = null;
-    this.force_locked_at = null;
-    this.failed_attempts = 0;
-    this.lock_until = null;
-    
-    return this.save();
-  }
-  return Promise.resolve(this);
+// Method to validate legacy token
+userSchema.methods.validateLegacyToken = function(token) {
+  return this.token === token && this.status === 'Active';
 };
 
-// Add a new login session
+// Method to get legacy session data
+userSchema.methods.getLegacySessionData = function() {
+  return {
+    id: this.id || this._id.toString(),
+    user_id: this.user_id || this._id.toString(),
+    token: this.token,
+    last_updated: this.last_updated
+  };
+};
+
+// 🔹 MODERN SESSION MANAGEMENT METHODS
+
+// Add a new login session (updated for legacy compatibility)
 userSchema.methods.addLoginSession = function(sessionData) {
   const session = {
-    session_id: sessionData.session_id,
+    session_id: sessionData.session_id || `session_${Date.now()}`,
     ip_address: sessionData.ip_address,
     user_agent: sessionData.user_agent,
     login_time: new Date(),
@@ -272,6 +593,10 @@ userSchema.methods.addLoginSession = function(sessionData) {
   
   this.current_sessions.push(session);
   this.last_login = new Date();
+  
+  // Update legacy fields for compatibility
+  this.token = session.session_id;
+  this.last_updated = new Date();
   
   // Add to login history
   this.login_history.unshift({
@@ -293,6 +618,7 @@ userSchema.methods.updateSessionActivity = function(sessionId) {
   const session = this.current_sessions.find(s => s.session_id === sessionId && s.is_active);
   if (session) {
     session.last_activity = new Date();
+    this.last_updated = new Date(); // Update legacy field
     return this.save();
   }
   return Promise.resolve(this);
@@ -303,6 +629,11 @@ userSchema.methods.logoutSession = function(sessionId, isForced = false) {
   const session = this.current_sessions.find(s => s.session_id === sessionId && s.is_active);
   if (session) {
     session.is_active = false;
+    
+    // Clear legacy token if this was the active session
+    if (this.token === sessionId) {
+      this.token = null;
+    }
     
     // Update login history with logout time
     const loginRecord = this.login_history.find(record => 
@@ -323,14 +654,6 @@ userSchema.methods.logoutSession = function(sessionId, isForced = false) {
   }
   return Promise.resolve(this);
 };
-
-// Add virtual population
-userSchema.virtual('userRoles', {
-  ref: 'UserRole',
-  localField: 'BU_ROLE_ID',
-  foreignField: 'USER_ROLE_ID',
-  justOne: false
-});
 
 // Logout all active sessions
 userSchema.methods.logoutAllSessions = function(isForced = false) {
@@ -357,47 +680,188 @@ userSchema.methods.logoutAllSessions = function(isForced = false) {
     }
   });
   
+  // Clear legacy token
+  this.token = null;
+  this.last_updated = now;
+  
   return this.save();
 };
 
-// Check if user has active sessions
-userSchema.methods.hasActiveSessions = function() {
-  return this.current_sessions.some(session => session.is_active);
+// Force lock a user due to fraud
+userSchema.methods.forceLock = function(adminUserId, reason = 'Suspicious activity detected') {
+  this.status = 'ForceLocked';
+  this.force_lock_reason = reason;
+  this.force_locked_by = adminUserId;
+  this.force_locked_at = new Date();
+  this.lock_until = null;
+  
+  // Logout all active sessions
+  this.logoutAllSessions(true);
+  
+  return this.save();
 };
 
-// Get all active sessions
-userSchema.methods.getActiveSessions = function() {
-  return this.current_sessions.filter(session => session.is_active);
+// Unlock a force-locked user
+userSchema.methods.unlock = function() {
+  if (this.status === 'ForceLocked') {
+    this.status = 'Active';
+    this.force_lock_reason = null;
+    this.force_locked_by = null;
+    this.force_locked_at = null;
+    this.failed_attempts = 0;
+    this.lock_until = null;
+    
+    return this.save();
+  }
+  return Promise.resolve(this);
 };
 
-// 🔹 STATIC METHODS
+// 🔹 STATIC METHODS WITH LEGACY COMPATIBILITY
 
-// Static method to find user by username with password selected
-userSchema.statics.findByUsernameWithPassword = function(username) {
+// Static method to find user by username with password selected (updated for legacy)
+userSchema.statics.findByUsernameWithPassword = function(identifier) {
   return this.findOne({ 
-    user_name: { $regex: new RegExp(`^${username}$`, 'i') }
-  }).select('+password +passwordHistory +firstLogin'); // Include firstLogin
+    $or: [
+      { user_name: { $regex: new RegExp(`^${identifier}$`, 'i') } },
+      { username: { $regex: new RegExp(`^${identifier}$`, 'i') } }
+    ]
+  }).select('+password +passwordHistory +firstLogin');
 };
 
-// Get all users with active sessions
+// Static method to find user by legacy user_id
+userSchema.statics.findByLegacyUserId = function(userId) {
+  return this.findOne({ 
+    $or: [
+      { user_id: userId },
+      { id: userId }
+    ]
+  });
+};
+
+// Static method to find user by legacy token
+userSchema.statics.findByLegacyToken = function(token) {
+  return this.findOne({ 
+    token: token,
+    status: 'Active'
+  });
+};
+
+// Static method to find users by role
+userSchema.statics.findByRole = function(roleId) {
+  const targetRoleId = typeof roleId === 'string' ? parseInt(roleId) : roleId;
+  return this.find({
+    $or: [
+      { roles: targetRoleId },
+      { BU_ROLE_ID: targetRoleId },
+      { primary_role: targetRoleId }
+    ]
+  });
+};
+
+// Static method to find users with multiple roles
+userSchema.statics.findByMultipleRoles = function(roleIds) {
+  const targetRoleIds = roleIds.map(roleId => typeof roleId === 'string' ? parseInt(roleId) : roleId);
+  return this.find({
+    roles: { $all: targetRoleIds }
+  });
+};
+
+// Static method to find users with any of the specified roles
+userSchema.statics.findByAnyRole = function(roleIds) {
+  const targetRoleIds = roleIds.map(roleId => typeof roleId === 'string' ? parseInt(roleId) : roleId);
+  return this.find({
+    roles: { $in: targetRoleIds }
+  });
+};
+
+// Static method to migrate legacy roles to new system
+userSchema.statics.migrateLegacyRoles = async function() {
+  const usersWithLegacyRoles = await this.find({
+    $or: [
+      { BU_ROLE_ID: { $exists: true, $ne: null } },
+      { role: { $exists: true, $ne: null } }
+    ],
+    $or: [
+      { roles: { $exists: false } },
+      { roles: { $size: 0 } }
+    ]
+  });
+  
+  for (const user of usersWithLegacyRoles) {
+    if (user.BU_ROLE_ID && (!user.roles || !user.roles.includes(user.BU_ROLE_ID))) {
+      if (!user.roles) user.roles = [];
+      user.roles.push(user.BU_ROLE_ID);
+    }
+    if (user.role && (!user.roles || !user.roles.includes(user.role))) {
+      if (!user.roles) user.roles = [];
+      user.roles.push(user.role);
+    }
+    
+    // Set primary role
+    if (user.roles.length > 0 && !user.primary_role) {
+      user.primary_role = user.roles[0];
+    }
+    
+    await user.save();
+  }
+  
+  return usersWithLegacyRoles.length;
+};
+
+// Static method to migrate legacy session
+userSchema.statics.migrateLegacySession = async function(legacySessionData) {
+  const user = await this.findByLegacyUserId(legacySessionData.user_id);
+  if (user) {
+    // Create modern session from legacy data
+    await user.createLegacySession({
+      session_id: legacySessionData.token,
+      ip_address: 'legacy_migration',
+      user_agent: 'legacy_system'
+    });
+    return user;
+  }
+  return null;
+};
+
+// Get all users with active sessions (legacy compatible)
 userSchema.statics.getAllUsersWithActiveSessions = function() {
   return this.find({
-    'current_sessions.is_active': true
-  }).select('user_name first_name last_name email current_sessions status');
+    $or: [
+      { 'current_sessions.is_active': true },
+      { token: { $ne: null } }
+    ]
+  }).select('user_name username first_name last_name email current_sessions token status last_updated');
 };
 
 // Get all currently logged-in users
 userSchema.statics.getCurrentlyLoggedInUsers = function() {
   return this.aggregate([
-    { $match: { 'current_sessions.is_active': true } },
-    { $unwind: '$current_sessions' },
-    { $match: { 'current_sessions.is_active': true } },
+    { 
+      $match: { 
+        $or: [
+          { 'current_sessions.is_active': true },
+          { token: { $ne: null } }
+        ]
+      } 
+    },
+    { $unwind: { path: '$current_sessions', preserveNullAndEmptyArrays: true } },
+    { 
+      $match: { 
+        $or: [
+          { 'current_sessions.is_active': true },
+          { token: { $ne: null } }
+        ]
+      } 
+    },
     { $project: {
         user_name: 1,
+        username: 1,
         first_name: 1,
         last_name: 1,
         email: 1,
         status: 1,
+        token: 1,
+        last_updated: 1,
         session: '$current_sessions'
       }
     }
@@ -407,10 +871,17 @@ userSchema.statics.getCurrentlyLoggedInUsers = function() {
 // Force logout all users (admin function)
 userSchema.statics.forceLogoutAllUsers = function(adminUserId) {
   return this.updateMany(
-    { 'current_sessions.is_active': true },
+    { 
+      $or: [
+        { 'current_sessions.is_active': true },
+        { token: { $ne: null } }
+      ]
+    },
     { 
       $set: { 
-        'current_sessions.$[].is_active': false 
+        'current_sessions.$[].is_active': false,
+        token: null,
+        last_updated: new Date()
       } 
     }
   ).then(() => {
@@ -455,52 +926,15 @@ userSchema.statics.forceLogoutAllUsers = function(adminUserId) {
 // Find force-locked users
 userSchema.statics.getForceLockedUsers = function() {
   return this.find({ status: 'ForceLocked' })
-    .select('user_name first_name last_name email force_lock_reason force_locked_at force_locked_by');
-};
-
-// // 🔹 NEW STATIC METHOD: Update user login hours
-// userSchema.statics.updateLoginHours = function(userId
-
-// // 🔹 NEW STATIC METHOD: Update user login hours
-// userSchema.statics.updateLoginHours = function(userId, loginHours) {
-//   return this.findByIdAndUpdate(
-//     userId,
-//     { 
-//       earliest_login_time: loginHours.earliest_login_time,
-//       latest_login_time: loginHours.latest_login_time
-//     },
-//     { new: true, runValidators: true }
-//   );
-// };
-
-// // 🔹 NEW STATIC METHOD: Get users with login hours restrictions
-// userSchema.statics.getUsersWithLoginRestrictions = function() {
-//   return this.find({
-//     $or: [
-//       { earliest_login_time: { $ne: "00:00" } },
-//       { latest_login_time: { $ne: "23:59" } }
-//     ]
-//   }).select('user_name first_name last_name earliest_login_time latest_login_time');
-// };
-
-
-// 🔹 MODIFIED METHOD: Always allow login (24-hour access)
-userSchema.methods.isWithinLoginHours = function() {
-  console.log('🔓 24-Hour Login Access Enabled:', {
-    user: this.user_name,
-    message: 'Login time restrictions disabled - 24-hour access allowed'
-  });
-  
-  // Always return true to allow 24-hour login access
-  return true;
+    .select('user_name username first_name last_name email force_lock_reason force_locked_at force_locked_by');
 };
 
 // 🔹 MODIFIED STATIC METHOD: No users have login restrictions
 userSchema.statics.getUsersWithLoginRestrictions = function() {
   console.log('🔓 Login restrictions disabled - returning empty list');
   return this.find({
-    _id: null // This will always return empty results
-  }).select('user_name first_name last_name earliest_login_time latest_login_time');
+    _id: null
+  }).select('user_name username first_name last_name earliest_login_time latest_login_time');
 };
 
 // Create and export User model

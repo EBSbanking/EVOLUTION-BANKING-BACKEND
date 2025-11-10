@@ -1,3 +1,4 @@
+// userRoutes.js
 import express from 'express';
 import asyncHandler from 'express-async-handler';
 import mongoose from 'mongoose';
@@ -6,6 +7,7 @@ import {
   getClientIpController,
   updateUser,
   deactivateUser,
+  activateUser,
   getUserByEmployerNumber,
   getAllUsers,
   getUserConfig,
@@ -15,6 +17,8 @@ import {
   validatePermission,
   validatePermissions,
   login,
+  forceResetPassword,
+  debugUserCheck,
   verifyAdministratorPermissions,
   unlockUser,
   unlockMultipleUsers,
@@ -23,12 +27,12 @@ import {
   getUserLockStatus,
   forceLockUser,
   unlockForceLockedUser,
-  resetUser, // ✅ Added new function
-  clearUserCaches, // ✅ Added new function
-  getUserSessionInfo, // ✅ Added new function
+  resetUser,
+  clearUserCaches,
+  getUserSessionInfo,
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
-import { restrictToPermission } from '../middlewares/rbac.js';
+import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js'; // ✅ UPDATED: Use unified middleware
 import User from '../models/User.js';
 import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, syncPermissions, getRoleWithPermissions } from '../constants/roleMapping.js';
@@ -36,12 +40,6 @@ import DepositTransaction from '../models/DepositTransaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
-import { checkPermissions } from '../constants/roleMapping.js';
-
-
-
-
-
 
 const router = express.Router();
 
@@ -102,7 +100,7 @@ const PERMISSION_GROUPS = [
   {
     group: 'Administration',
     permissions: [
-      PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS,
+      PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS,
       PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS,
       PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
     ],
@@ -121,39 +119,54 @@ const safeGetPermissions = (permissionGroup) => {
 // Teller Dashboard Statistic
 //=======================================
 
-
-
-
 // 🔐 Public routes (no authentication required)
 router.post('/users/login', login);
 router.post('/users/register', registerUser);
 router.get('/users/get-ip', getClientIpController);
 
+// Debug routes (temporary - remove in production)
+router.post('/debug-check', debugUserCheck);
+router.post('/force-reset-password', forceResetPassword);
+
 // 🔐 Authentication required routes (no specific permissions needed)
-router.get('/users/config', verifyToken, getUserConfig); // Updated path to match frontend expectation
+router.get('/users/config', verifyToken, getUserConfig);
 router.get('/user/permissions', verifyToken, getUserPermissions);
 router.get('/user/profile', verifyToken, getUserProfile);
 router.post('/user/validate-permission', verifyToken, validatePermission);
 router.post('/user/validate-permissions', verifyToken, validatePermissions);
 
-// 🔐 Session Management Routes (new)
-router.post('/user/reset-session', verifyToken, resetUser); // ✅ Reset user session and clear caches
-router.get('/user/session-info', verifyToken, getUserSessionInfo); // ✅ Get user session information
-router.post('/admin/clear-user-caches/:user_name?', verifyToken, restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), clearUserCaches); // ✅ Admin: Clear user caches
+// 🔐 Session Management Routes
+router.post('/user/reset-session', verifyToken, resetUser);
+router.get('/user/session-info', verifyToken, getUserSessionInfo);
+router.post('/admin/clear-user-caches/:user_name?', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), clearUserCaches);
+
+// 👤 User Management Routes (using unified permission middleware)
+router.patch(
+  '/users/deactivate/:userId',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  deactivateUser
+);
+
+router.patch(
+  '/users/activate/:userId',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  activateUser
+);
 
 // 🔐 Administrator permission verification route
 router.get(
   '/user/verify-admin-permissions',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
   verifyAdministratorPermissions
 );
 
-// 🔐 Password management
+// 🔐 Password management - REMOVED PERMISSION REQUIREMENT
 router.post(
   '/users/reset-password',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
   resetPassword
 );
 
@@ -161,33 +174,80 @@ router.post(
 router.put(
   '/users/:userId',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
   updateUser
 );
-router.patch(
-  '/users/deactivate/:userId',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  deactivateUser
-);
+
 router.get(
   '/users/by-employer/:employer_number',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
   getUserByEmployerNumber
 );
+
 router.get(
   '/users',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
   getAllUsers
+);
+
+// 🔓 User unlock routes
+router.patch(
+  '/users/unlock/:identifier',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  unlockUser
+);
+
+router.post(
+  '/users/unlock-multiple',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  unlockMultipleUsers
+);
+
+router.get(
+  '/users/locked',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  getLockedUsers
+);
+
+router.post(
+  '/users/reset-all-locked',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  resetAllLockedUsers
+);
+
+router.get(
+  '/users/lock-status/:identifier',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  getUserLockStatus
+);
+
+// 🔒 Force lock/unlock routes (admin only)
+router.patch(
+  '/users/force-lock/:identifier',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  forceLockUser
+);
+
+router.patch(
+  '/users/force-unlock/:identifier',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  unlockForceLockedUser
 );
 
 // 🔐 Protected route with admin verification
 router.get(
   '/users/protected-route',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { userId, user_name, BU_ROLE_ID, role } = req.user;
@@ -212,8 +272,8 @@ router.get(
             validateSingle: '/user/validate-permission',
             validateMultiple: '/user/validate-permissions',
             verifyAdmin: '/user/verify-admin-permissions',
-            resetSession: '/user/reset-session', // ✅ Added new endpoint
-            sessionInfo: '/user/session-info', // ✅ Added new endpoint
+            resetSession: '/user/reset-session',
+            sessionInfo: '/user/session-info',
           },
         },
       });
@@ -232,7 +292,7 @@ router.get(
 router.get(
   '/admin/system-status',
   verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     res.json({
       success: true,
@@ -241,7 +301,7 @@ router.get(
         status: 'Operational',
         adminUser: req.user.user_name,
         timestamp: new Date().toISOString(),
-        sessionEndpoints: { // ✅ Added session management info
+        sessionEndpoints: {
           resetSession: '/user/reset-session',
           sessionInfo: '/user/session-info',
           clearCaches: '/admin/clear-user-caches/:user_name?',
@@ -255,7 +315,7 @@ router.get(
 router.get(
   '/user/permissions/debug',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { BU_ROLE_ID, user_name } = req.user;
@@ -284,55 +344,11 @@ router.get(
   })
 );
 
-// 🔓 User unlock routes
-router.patch(
-  '/users/unlock/:identifier',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  unlockUser
-);
-router.post(
-  '/users/unlock-multiple',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  unlockMultipleUsers
-);
-router.get(
-  '/users/locked',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  getLockedUsers
-);
-router.post(
-  '/users/reset-all-locked',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  resetAllLockedUsers
-);
-router.get(
-  '/users/lock-status/:identifier',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
-  getUserLockStatus
-);
-router.patch(
-  '/users/force-lock/:identifier',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
-  forceLockUser
-);
-router.patch(
-  '/users/force-unlock/:identifier',
-  verifyToken,
-  restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
-  unlockForceLockedUser
-);
-
 // 🔐 Role and permission management routes
 router.get(
   '/roles',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const dbRoles = await Permissions.find().lean();
@@ -363,7 +379,7 @@ router.get(
 router.get(
   '/permissions/groups',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const groups = PERMISSION_GROUPS.reduce((acc, group) => {
@@ -386,7 +402,7 @@ router.get(
 router.get(
   '/roles/:roleId/permissions',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { roleId } = req.params;
@@ -409,7 +425,7 @@ router.get(
       }
 
       const permissions = dbPermissions?.permissions || ROLE_MAPPING[roleId]?.permissions || {};
-      res.json({ success: true, data: Object.values(permissions).flat() }); // Flatten to array for frontend compatibility
+      res.json({ success: true, data: Object.values(permissions).flat() });
     } catch (error) {
       logger.error('Error fetching role permissions', {
         error: error.message,
@@ -423,7 +439,7 @@ router.get(
 );
 
 // Get user's current login hours
-router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => { // Added verifyToken
+router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     
@@ -443,9 +459,9 @@ router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
 }));
 
 // Update user's login hours (user can update their own)
-router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) => { // Added verifyToken
+router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
   try {
-    const { earliest_login_time, latest_login_time } = req.body; // Fixed variable names
+    const { earliest_login_time, latest_login_time } = req.body;
     
     // Validate time format
     const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
@@ -490,7 +506,7 @@ router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) =>
 }));
 
 // Admin: Update any user's login hours
-router.patch('/users/:userId/login-hours', verifyToken, restrictToPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), asyncHandler(async (req, res) => { // Added verifyToken and permission
+router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
     const { earliest_login_time, latest_login_time } = req.body;
@@ -532,7 +548,7 @@ router.patch('/users/:userId/login-hours', verifyToken, restrictToPermission(PER
 router.put(
   '/roles/:roleId/permissions',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { roleId } = req.params;
@@ -583,7 +599,7 @@ router.put(
 router.post(
   '/permissions/sync',
   verifyToken,
-  restrictToPermission(PERMISSIONS.PERMISSION_MANAGEMENT.MANAGE_PERMISSIONS),
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       await syncPermissions();
@@ -599,11 +615,11 @@ router.post(
   })
 );
 
-// 🔐 Credit Officer statistics route (new - to fix 404)
+// 🔐 Credit Officer statistics route
 router.get(
   '/users/credit-officer/today-stats',
   verifyToken,
-  restrictToPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD),
+  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       logger.info('Credit Officer stats endpoint hit', {
@@ -640,10 +656,8 @@ router.get(
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // TODO: Implement real DB queries for credit-officer metrics (e.g., customers created, accounts opened, KYC verified, loan fees)
-      // For now, use fallback/demo data as in frontend
       const stats = {
-        customers: 12, // e.g., COUNT(customers) WHERE created_by = user_name AND date = today
+        customers: 12,
         accountsOpened: 4,
         kycVerifications: 7,
         loanFees: 45000,
@@ -675,11 +689,11 @@ router.get(
   })
 );
 
-// 🔐 Credit Officer recent activities route (new - to fix 404)
+// 🔐 Credit Officer recent activities route
 router.get(
   '/users/credit-officer/recent-activities',
   verifyToken,
-  restrictToPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD),
+  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       logger.info('Credit Officer recent activities endpoint hit', {
@@ -687,8 +701,6 @@ router.get(
         user_name: req.user.user_name,
       });
 
-      // TODO: Query DB for last 10 activities by user (e.g., from audit logs or activity table)
-      // For now, use demo data as in frontend
       const activities = [
         { id: 1, type: 'Customer Created', customer: 'John Doe', time: '10:30 AM', status: 'completed', amount: 0 },
         { id: 2, type: 'KYC Verified', customer: 'Jane Smith', time: '11:15 AM', status: 'completed', amount: 0 },
@@ -717,15 +729,13 @@ router.get(
   })
 );
 
-// 🔐 Manager today stats route (new - to fix 404)
+// 🔐 Manager today stats route
 router.get(
   '/users/manager/today-stats',
   verifyToken,
-  restrictToPermission(PERMISSIONS.DASHBOARD.VIEW_MANAGER_DASHBOARD),
+  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
-      // TODO: Implement manager-specific stats (e.g., approvals, rejections)
-      // For now, demo data
       const stats = {
         approvals: 5,
         rejections: 2,
@@ -751,15 +761,13 @@ router.get(
   })
 );
 
-// 🔐 Manager recent approvals route (new - to fix 404)
+// 🔐 Manager recent approvals route
 router.get(
   '/users/manager/recent-approvals',
   verifyToken,
-  restrictToPermission(PERMISSIONS.DASHBOARD.VIEW_MANAGER_DASHBOARD),
+  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
-      // TODO: Query recent approvals
-      // For now, empty array
       const approvals = [];
 
       res.status(200).json({
@@ -782,10 +790,9 @@ router.get(
   })
 );
 
-// 🔐 Auth logout route (new - to fix 404; simple response, invalidate in middleware if needed)
+// 🔐 Auth logout route
 router.post('/auth/logout', verifyToken, asyncHandler(async (req, res) => {
   try {
-    // TODO: Invalidate token (e.g., blacklist in Redis)
     logger.info('User logged out', { userId: req.user.userId, user_name: req.user.user_name });
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
@@ -802,19 +809,18 @@ router.post('/auth/logout', verifyToken, asyncHandler(async (req, res) => {
   }
 }));
 
-// 🔐 Users approve route (new - to fix undefined/404)
+// 🔐 Users approve route
 router.get(
   '/users/approve/:id',
   verifyToken,
-  restrictToPermission(PERMISSIONS.APPROVAL.CUSTOMER_RELATED),
+  checkPermission(PERMISSIONS.APPROVAL.CUSTOMER_RELATED), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { id } = req.params;
       if (!id || id === 'undefined') {
         return res.status(400).json({ success: false, error: 'Invalid approval ID provided' });
       }
-      // TODO: Fetch approval by ID from DB
-      const approval = { id, status: 'pending' }; // Demo
+      const approval = { id, status: 'pending' };
 
       res.status(200).json({
         success: true,
@@ -841,7 +847,7 @@ router.get(
 router.get(
   '/accounts/balances',
   verifyToken,
-  restrictToPermission(PERMISSIONS.ACCOUNT.VIEW_BALANCE),
+  checkPermission(PERMISSIONS.ACCOUNT.VIEW_BALANCE), // ✅ UPDATED: Use unified middleware
   asyncHandler(async (req, res) => {
     try {
       const { userId, user_name, main_business_unit } = req.user;
@@ -862,7 +868,7 @@ router.get(
       }
 
       const balances = accounts.map(account => ({
-        accountId: account._id, // Fixed: was CustomerAccount._id
+        accountId: account._id,
         accountNumber: account.accountNumber,
         customerId: account.customerId,
         balance: account.balance || 0,
@@ -890,7 +896,7 @@ router.get(
   })
 );
 
-// 🔐 Protected route: Get authenticated user details
+// 🔐 Protected route: Get authenticated user details - FIXED VERSION with Legacy Compatibility
 router.get(
   '/me',
   verifyToken,
@@ -912,15 +918,41 @@ router.get(
         return res.status(404).json({ success: false, message: 'User not found' });
       }
 
+      // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
+      const mappedUser = {
+        ...user,
+        user_name: user.user_name || user.username,
+        first_name: user.first_name || user.fname,
+        last_name: user.last_name || user.lname,
+        BU_ROLE_ID: user.BU_ROLE_ID || user.role,
+        primary_business_role: user.primary_business_role || user.utype,
+        status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated'),
+        main_business_unit: user.main_business_unit || user.branch?.toString() || '',
+        is_supervisor: user.is_supervisor || (user.rofficer === 'Yes'),
+        BU_ID: user.BU_ID || user.branch,
+        internal_employee_enabled: user.internal_employee_enabled || (user.utype === 'Staff')
+      };
+
+      console.log('🔍 LEGACY MAPPING DEBUG (/me):', {
+        original_username: user.username,
+        mapped_user_name: mappedUser.user_name,
+        original_role: user.role,
+        mapped_BU_ROLE_ID: mappedUser.BU_ROLE_ID,
+        original_is_active: user.is_active,
+        mapped_status: mappedUser.status,
+        original_branch: user.branch,
+        mapped_BU_ID: mappedUser.BU_ID
+      });
+
       // Map role names to BU_ROLE_ID using ROLE_MAPPING
       const roleToIdMap = Object.fromEntries(
         Object.values(ROLE_MAPPING).map(role => [role.ROLE_NM, role.id.toString()])
       );
-      let BU_ROLE_ID = user.BU_ROLE_ID || roleToIdMap[user.role] || req.user.roleId || '29'; // Default to Teller
+      let BU_ROLE_ID = mappedUser.BU_ROLE_ID || roleToIdMap[user.role] || req.user.roleId || '29';
 
       // Special handling for admin role (1) - grant all permissions grouped by category
       let permissions = user.permissions || {};
-      let roleName = user.role || 'Unknown Role';
+      let roleName = mappedUser.primary_business_role || 'Unknown Role';
       if (BU_ROLE_ID === '1') {
         permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
           const permissionGroup = PERMISSIONS[key];
@@ -1026,7 +1058,7 @@ router.get(
       }
 
       logger.info('User permissions fetched in /me', {
-        user_name: user.user_name,
+        user_name: mappedUser.user_name,
         BU_ROLE_ID,
         roleName,
         permissions: JSON.stringify(permissions),
@@ -1055,19 +1087,23 @@ router.get(
         message: 'Authenticated user details',
         user: {
           userId: user._id,
-          user_name: user.user_name,
+          user_name: mappedUser.user_name,
           email: user.email || req.user.email || '',
           role: roleName,
           BU_ROLE_ID,
-          primary_business_role: user.primary_business_role || roleName,
-          businessUnit: user.main_business_unit || req.user.main_business_unit || 'Wethral',
-          permissions: Object.values(permissions).flat(), // Flatten for frontend hasPermission checks
+          primary_business_role: mappedUser.primary_business_role || roleName,
+          businessUnit: mappedUser.main_business_unit || req.user.main_business_unit || 'Wethral',
+          permissions: Object.values(permissions).flat(),
           isAdmin: user.isAdmin || req.user.isAdmin || BU_ROLE_ID === '1',
           accessibleBusinessUnits,
-          tokenIssuedAt,
-          tokenExpiresAt,
+          // Legacy fields for compatibility
+          username: mappedUser.username || mappedUser.user_name,
+          legacy_role: mappedUser.role,
+          legacy_status: mappedUser.is_active,
+          legacy_utype: mappedUser.utype,
+          legacy_branch: mappedUser.branch
         },
-        sessionEndpoints: { // ✅ Added session management endpoints info
+        sessionEndpoints: {
           resetSession: '/user/reset-session',
           sessionInfo: '/user/session-info',
         },

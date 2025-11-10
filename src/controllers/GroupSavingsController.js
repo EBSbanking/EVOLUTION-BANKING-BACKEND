@@ -12,6 +12,7 @@ import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
 // In controllers/GroupSavingsController.js - UPDATED addContribution
 import { createGroupSavingsTransaction } from '../utils/transactionHelper.js';
+import asyncHandler from 'express-async-handler'; // Added missing import for asyncHandler
 
 // Create group savings account with account number generation
 export const createGroupSavings = async (req, res) => {
@@ -1172,7 +1173,7 @@ export const disburseWithdrawal = async (req, res) => {
 };
 
 // Get group savings details with contributions and withdrawals
-export const getGroupSavings = async (req, res) => {
+export const getGroupSavingsById = async (req, res) => {
   try {
     const { groupSavingsId } = req.params;
 
@@ -1420,41 +1421,174 @@ export const updateGroupSavings = async (req, res) => {
   }
 };
 
-// Get all group savings accounts (for admin purposes)
-export const getAllGroupSavings = async (req, res) => {
+// Get Group Savings by Group Code - Updated to Use GroupSavings Model for Group-Level Savings
+export const getGroupSavingsByGroupCode = asyncHandler(async (req, res) => {
+  const { groupCode } = req.params;
   try {
-    const { page = 1, limit = 10, groupCode, savingsType, isActive } = req.query;
+    if (!groupCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group code is required.',
+      });
+    }
 
-    const filter = {};
-    if (groupCode) filter.groupCode = groupCode;
-    if (savingsType) filter.savingsType = savingsType;
-    if (isActive !== undefined) filter.isActive = isActive === 'true';
+    // Find GroupSavings by groupCode
+    const groupSavings = await GroupSavings.findOne({ groupCode })
+      .populate('createdBy', 'name email');
 
-    const groupSavings = await GroupSavings.find(filter)
-      .populate('group', 'groupName groupCode')
-      .populate('createdBy', 'name email')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    if (!groupSavings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group savings account not found.',
+      });
+    }
 
-    const total = await GroupSavings.countDocuments(filter);
+    // Manually find the associated group by groupCode for robustness
+    const group = await Group.findOne({ groupCode }).select('groupName groupCode memberCount members');
+    if (!group) {
+      logger.error(`Group not found for groupCode ${groupCode}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Associated group not found for this savings account.',
+      });
+    }
+
+    // Aggregate member savings if needed (optional - add if individual savings required)
+    const memberSavings = await CustomerAccount.find({
+      CUST_ID: { $in: group.members },
+      ACCOUNT_TYPE: 'SAVINGS',
+      REC_ST: 'ACTIVE',
+    }).populate('productCode', 'PROD_DESC');
+
+    const groupSavingsSummary = {
+      groupSavings: {
+        ...groupSavings.toObject(),
+        group: {
+          _id: group._id,
+          groupName: group.groupName,
+          groupCode: group.groupCode,
+          memberCount: group.memberCount || group.members.length,
+          members: group.members.length,
+        },
+      },
+      individualMemberSavings: {
+        totalAccounts: memberSavings.length,
+        totalBalance: 0,
+        totalAccruedInterest: 0,
+        averageBalance: 0,
+        accounts: memberSavings.map(account => ({
+          ACCT_NO: account.ACCT_NO,
+          CUST_ID: account.CUST_ID,
+          ACCT_NM: account.ACCT_NM,
+          PRODUCT_DESC: account.PRODUCT_DESC,
+          LEDGER_BALANCE: account.LEDGER_BALANCE,
+          ACCRUED_INTEREST: account.ACCRUED_INTEREST,
+          LAST_INTEREST_DATE: account.LAST_INTEREST_DATE,
+          REC_ST: account.REC_ST,
+        })),
+      },
+    };
+
+    // Calculate totals for individual savings
+    groupSavingsSummary.individualMemberSavings.totalBalance = memberSavings.reduce((sum, account) => sum + (account.LEDGER_BALANCE || 0), 0);
+    groupSavingsSummary.individualMemberSavings.totalAccruedInterest = memberSavings.reduce((sum, account) => sum + (account.ACCRUED_INTEREST || 0), 0);
+    groupSavingsSummary.individualMemberSavings.averageBalance = (group.memberCount || group.members.length) > 0 ? groupSavingsSummary.individualMemberSavings.totalBalance / (group.memberCount || group.members.length) : 0;
+
+    logger.info(`Group savings fetched for group ${groupCode}: Group balance ${groupSavings.currentBalance.toLocaleString()}, Individual accounts: ${memberSavings.length}, Total individual balance: ${groupSavingsSummary.individualMemberSavings.totalBalance.toLocaleString()}`);
 
     res.status(200).json({
       success: true,
-      data: groupSavings,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total,
-        itemsPerPage: parseInt(limit)
-      }
+      message: 'Group savings retrieved successfully.',
+      data: groupSavingsSummary,
     });
   } catch (error) {
-    logger.error('Error fetching all group savings:', error);
+    logger.error('Error fetching group savings:', error);
     res.status(500).json({
       success: false,
       message: 'Server error fetching group savings.',
       error: error.message,
     });
   }
-};
+});
+
+
+// FIXED: Add getGroupSavings function
+export const getGroupSavings = asyncHandler(async (req, res) => {
+  const { groupCode } = req.params;
+  try {
+    if (!groupCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group code is required.',
+      });
+    }
+
+    const group = await Group.findOne({ groupCode });
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found.',
+      });
+    }
+
+    // Find all savings accounts for group members
+    const memberSavings = await CustomerAccount.find({
+      CUST_ID: { $in: group.members },
+      ACCOUNT_TYPE: 'SAVINGS',
+      REC_ST: 'ACTIVE',
+    }).populate('productCode', 'PROD_DESC');
+
+    if (!memberSavings || memberSavings.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active savings accounts found for group members.',
+      });
+    }
+
+    // Aggregate group savings totals
+    const groupSavingsSummary = {
+      totalMembers: group.members.length,
+      totalSavingsAccounts: memberSavings.length,
+      totalBalance: 0,
+      totalAccruedInterest: 0,
+      averageBalance: 0,
+      accounts: memberSavings.map(account => ({
+        ACCT_NO: account.ACCT_NO,
+        CUST_ID: account.CUST_ID,
+        ACCT_NM: account.ACCT_NM,
+        PRODUCT_DESC: account.PRODUCT_DESC,
+        LEDGER_BALANCE: account.LEDGER_BALANCE,
+        ACCRUED_INTEREST: account.ACCRUED_INTEREST,
+        LAST_INTEREST_DATE: account.LAST_INTEREST_DATE,
+        REC_ST: account.REC_ST,
+      })),
+    };
+
+    // Calculate totals
+    groupSavingsSummary.totalBalance = memberSavings.reduce((sum, account) => sum + (account.LEDGER_BALANCE || 0), 0);
+    groupSavingsSummary.totalAccruedInterest = memberSavings.reduce((sum, account) => sum + (account.ACCRUED_INTEREST || 0), 0);
+    groupSavingsSummary.averageBalance = groupSavingsSummary.totalMembers > 0 ? groupSavingsSummary.totalBalance / groupSavingsSummary.totalMembers : 0;
+
+    logger.info(`Group savings fetched for group ${groupCode}: ${memberSavings.length} accounts, total balance: ${groupSavingsSummary.totalBalance.toLocaleString()}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Group savings retrieved successfully.',
+      data: {
+        group: {
+          groupCode,
+          groupName: group.groupName,
+          memberCount: group.members.length,
+        },
+        savingsSummary: groupSavingsSummary,
+      },
+    });
+  } catch (error) {
+    logger.error('Error fetching group savings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching group savings.',
+      error: error.message,
+   });
+  }
+});

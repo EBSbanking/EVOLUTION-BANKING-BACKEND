@@ -9,6 +9,18 @@ import express from 'express';
      import Holiday from '../models/Holiday.js';
      import LoanAccount from '../models/LoanAccount.js';
 
+
+  
+import {
+  getAllBanks,
+  getBank,
+  createBank,
+  updateBank,
+  deleteBank,
+  getActiveBanks,
+  searchBanks
+} from '../controllers/BankController.js';
+
      const router = express.Router();
 
      // AML Module
@@ -101,5 +113,18 @@ import express from 'express';
      router.post('/os-trigger', restrictToPermission('osTrigger'), asyncHandler(async (req, res) => {
        res.json({ success: true, message: 'OS trigger executed' });
      }));
+
+//###################################################################
+//
+// BANK API ROUTES
+//
+//##################################################################
+
+// Public routes
+router.route('/').get(getAllBanks).post(createBank);
+router.route('/:id').get(getBank).put(updateBank).delete(deleteBank);
+router.route('/active/list').get(getActiveBanks);
+router.route('/search/:query').get(searchBanks);
+
 
      export default router;

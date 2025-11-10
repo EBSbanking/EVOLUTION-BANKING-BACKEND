@@ -57,7 +57,7 @@ const TransactionSchema = new mongoose.Schema(
       type: Number,
       required: [true, 'Transaction ID is required'],
       unique: true,
-      index: true,
+     
     },
     EVENT_ID: {
       type: Number,
@@ -292,10 +292,6 @@ TransactionSchema.post('init', async function () {
   await this.model('Transaction').dropTransactionIdIndex();
 });
 
-// Add index for better performance
-TransactionSchema.index({ TRANSACTION_ID: 1 }, { unique: true });
-TransactionSchema.index({ ACCT_NO: 1, TRANSACTIONDATE: -1 });
-TransactionSchema.index({ CUST_ID: 1, TRANSACTIONDATE: -1 });
 
 const Transaction = mongoose.model('Transaction', TransactionSchema);
 export default Transaction;

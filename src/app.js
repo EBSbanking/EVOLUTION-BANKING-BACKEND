@@ -1,3 +1,4 @@
+// app.js
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -53,36 +54,69 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Enhanced CORS Configuration (consolidated - no duplicate)
+// Enhanced CORS Configuration with debugging
 const allowedOrigins = [
   process.env.CLIENT_URL,
   process.env.CLIENT_URL_LOCAL,
-  process.env.CLIENT_URL_NETWORK
+  process.env.CLIENT_URL_NETWORK,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173', // Vite default
+  'http://127.0.0.1:5173', // Vite alternative
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
 ].filter(Boolean);
 
-logger.info('CORS allowed origins loaded:', { allowedOrigins });
+console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    logger.info('CORS origin check', { origin, allowedOrigins });
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, origin || true);
-    } else {
-      logger.warn('CORS blocked', { origin, allowedOrigins });
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Accept', 
-    'Origin',
-    'x-request-id'
-  ]
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (mobile apps, postman, etc.)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log('🚫 CORS Blocked Origin:', origin);
+        console.log('✅ Allowed Origins:', allowedOrigins);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization', 
+      'X-Requested-With', 
+      'Accept', 
+      'Origin',
+      'x-request-id',
+      'x-auth-token'
+    ]
+  })
+);
+
+// Additional CORS headers middleware for preflight requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Set CORS headers for all responses
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-request-id, x-auth-token');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
 
 // Body Parsers with increased limits
 app.use(express.json({ limit: '50mb' }));
@@ -104,6 +138,7 @@ app.use(fileUpload({
   preserveExtension: true
 }));
 
+// Session Configuration
 app.use(expressSession({
   secret: process.env.SESSION_SECRET || 'dev_secret_key',
   resave: false,
@@ -116,7 +151,7 @@ app.use(expressSession({
   }
 }));
 
-// Request Logging
+// Request Logging Middleware
 app.use((req, res, next) => {
   const start = Date.now();
   const { method, url, headers, ip } = req;
@@ -199,14 +234,60 @@ app.get('/server-time', (req, res) => {
 });
 
 app.get('/health', async (req, res) => {
-  const dbStatus = mongoose.connection.readyState;
+  const dbStatus = mongoose?.connection?.readyState || 0;
   res.json({
     status: dbStatus === 1 ? 'HEALTHY' : 'UNHEALTHY',
     dbStatus,
     uptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    cors: {
+      allowedOrigins: allowedOrigins.length,
+      currentOrigin: req.headers.origin || 'none'
+    }
   });
+});
+
+// CORS Debug Endpoint
+app.get('/cors-info', (req, res) => {
+  res.json({
+    allowedOrigins,
+    currentOrigin: req.headers.origin || 'No origin header',
+    corsEnabled: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
+  });
+});
+
+// Test CORS endpoint
+app.options('/cors-test', (req, res) => {
+  res.status(200).end();
+});
+
+app.post('/cors-test', (req, res) => {
+  res.json({
+    message: 'CORS test successful',
+    origin: req.headers.origin,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Error handling for CORS errors
+app.use((err, req, res, next) => {
+  if (err.message === 'Not allowed by CORS') {
+    logger.warn('CORS request blocked', {
+      origin: req.headers.origin,
+      url: req.url,
+      method: req.method
+    });
+    
+    return res.status(403).json({
+      error: 'CORS Policy Failed',
+      message: `Origin ${req.headers.origin} is not allowed by CORS policy`,
+      allowedOrigins: allowedOrigins
+    });
+  }
+  next(err);
 });
 
 // ----------------------------
@@ -297,7 +378,7 @@ import identifierRoutes from './routes/identifierRoutes.js';
 import glCategoriesRoutes from './routes/glCategoriesRoutes.js';
 import BranchRoutes from './routes/BranchRoutes.js';
 import OrganizationRoutes from './routes/OrganizationRoutes.js';
-import bankingRoutes from './routes/bankingRoutes.js';
+import BankRoutes from './routes/BankRoutes.js';
 import tellerStatsRoutes from './routes/tellerStatsRoutes.js';
 import ThriftRoutes from './routes/ThriftRoutes.js';
 import creditOfficerRoutes from './routes/creditOfficerRoutes.js';
@@ -416,7 +497,7 @@ app.use('/api/gl-categories', glCategoriesRoutes);
 app.use('/api/branchs', BranchRoutes);
 app.use('/api/organization', OrganizationRoutes);
 
-app.use('/api/banking', bankingRoutes);
+app.use('/api/banking', BankRoutes);
 app.use('/api/teller', tellerStatsRoutes);
 app.use('/api/thrift-banking', ThriftRoutes);
 
@@ -434,6 +515,7 @@ app.use('/api/group', GroupRoutes);
 // Group Savings Routes
 app.use('/api/group-savings', groupSavingsRoutes);
 app.use('/api/debug', uploadTestRoutes);
+app.use('/api/branch', BranchRoutes);
 
 // ----------------------------
 // Static Files & React Build (Production Only)

@@ -6,23 +6,31 @@ import {
   requestWithdrawal,
   processWithdrawalApproval,
   disburseWithdrawal,
-  getGroupSavings,
+ getGroupSavingsByGroupCode,
   addBulkContributionsWithIndividualTransactions,
-  getGroupContributions
+  getGroupContributions,
+  getGroupSavings
 } from '../controllers/GroupSavingsController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.post('/create', authenticate, createGroupSavings);
-router.post('/contributions/add', authenticate, addContribution);
-router.post('/:groupSavingsId/withdrawals/request', authenticate, requestWithdrawal);
-router.put('/withdrawals/:withdrawalRequestId/approve', authenticate, processWithdrawalApproval);
-router.put('/withdrawals/:withdrawalRequestId/disburse', authenticate, disburseWithdrawal);
-router.get('/:groupSavingsId', authenticate, getGroupSavings);
+// 🧩 Group Savings Management Routes
+router.post('/create', authenticate, createGroupSavings); // Create new Group Savings
+router.post('/contributions/add', authenticate, addContribution); // Add single contribution
+router.post('/contributions/bulk-detailed', authenticate, addBulkContributionsWithIndividualTransactions); // Bulk contributions with individual transactions
+router.get('/contributions/:accountNumber/history', authenticate, getGroupContributions); // Get contribution history for account
+
+// 💳 Withdrawal Management Routes
+router.post('/:groupSavingsId/withdrawals/request', authenticate, requestWithdrawal); // Request withdrawal
+router.put('/withdrawals/:withdrawalRequestId/approve', authenticate, processWithdrawalApproval); // Approve withdrawal request
+router.put('/withdrawals/:withdrawalRequestId/disburse', authenticate, disburseWithdrawal); // Disburse withdrawal
+
+// 📊 Get Group Savings
+router.get('/:groupCode/savings', authenticate, getGroupSavingsByGroupCode); // FIXED: Route for getGroupSavings by groupCode
+
+router.get('/:groupCode/savings', authenticate, getGroupSavings); // FIXED: Route for getGroupSavings by groupCode
 
 
-router.post('/contributions/bulk-detailed', authenticate, addBulkContributionsWithIndividualTransactions);
-router.get('/contributions/:accountNumber/history', authenticate, getGroupContributions);
 
 export default router;

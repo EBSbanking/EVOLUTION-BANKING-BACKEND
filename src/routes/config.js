@@ -12,7 +12,7 @@ let cacheTimestamp = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Preload all role permissions once
-async function initializePermissionsCache() {
+export async function initializePermissionsCache() {
   try {
     console.log('Initializing permissions cache...');
     const allRoles = await UserRole.find().lean();

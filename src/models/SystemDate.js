@@ -1,6 +1,7 @@
 // models/SystemDate.js
 import mongoose from 'mongoose';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js'; // Ensure this utility exists; if not, implement it
+import logger from '../utils/logger.js';
 
 const SystemDateSchema = new mongoose.Schema({
   currentBusinessDate: {

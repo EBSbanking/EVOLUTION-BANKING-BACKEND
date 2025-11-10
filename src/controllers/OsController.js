@@ -193,10 +193,27 @@ const systemStatus = {
   },
 };
 
-// Initialize System Dates
-const initializeSystemDates = async () => {
+// FIXED: Export initializeSystemDates to call after mongoose.connect() in server.js
+export const initializeSystemDates = async () => {
   try {
     logger.info('Initializing system dates');
+    
+    // FIXED: Wait for connection to be ready before querying
+    if (mongoose.connection.readyState !== 1) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          mongoose.connection.removeListener('error', reject);
+          reject(new Error('Connection timeout'));
+        }, 10000); // 10s timeout
+
+        mongoose.connection.once('connected', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        mongoose.connection.once('error', reject);
+      });
+    }
+
     const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
 
     const today = new Date(getServerTime().setHours(0, 0, 0, 0));
