@@ -17,7 +17,7 @@ import logger from '../utils/logger.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
 import Thrift from '../models/Thrift.js';
 import Customer from '../models/Customer.js';
-import ThriftController from '../controllers/ThriftController.js'; // Import ThriftController for collection processing
+import ThriftController from '../controllers/ThriftController.js';
 
 // Placeholder for fetching bank statement data
 const fetchBankStatementData = async () => {
@@ -189,81 +189,109 @@ const systemStatus = {
     glTransactions: { healthy: true, lastError: null, lastRun: null, executionTime: null, processed: [], failed: [], skipped: [] },
     termDepositInterest: { healthy: true, lastError: null, lastRun: null, executionTime: null },
     reconciliation: { healthy: true, lastError: null, lastRun: null, executionTime: null, updated: 0, processed: [], failed: [], skipped: [] },
-    overdueThriftCollections: { healthy: true, lastError: null, lastRun: null, executionTime: null, processed: [], failed: [], skipped: [] }, // New service status
+    overdueThriftCollections: { healthy: true, lastError: null, lastRun: null, executionTime: null, processed: [], failed: [], skipped: [] },
   },
 };
 
-// FIXED: Export initializeSystemDates to call after mongoose.connect() in server.js
-export const initializeSystemDates = async () => {
-  try {
-    logger.info('Initializing system dates');
-    
-    // FIXED: Wait for connection to be ready before querying
-    if (mongoose.connection.readyState !== 1) {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          mongoose.connection.removeListener('error', reject);
-          reject(new Error('Connection timeout'));
-        }, 10000); // 10s timeout
+// FIXED: initializeSystemDates function
+export const initializeSystemDates = async (maxRetries = 3, retryDelay = 5000) => {
+  let retryCount = 0;
+  while (retryCount < maxRetries) {
+    try {
+      logger.info(`Initializing system dates (attempt ${retryCount + 1}/${maxRetries})`);
+      
+      // Wait for connection with longer timeout and retry logic
+      if (mongoose.connection.readyState !== 1) {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            mongoose.connection.removeListener('connected', onConnected);
+            mongoose.connection.removeListener('error', onError);
+            reject(new Error('Connection timeout'));
+          }, 30000);
 
-        mongoose.connection.once('connected', () => {
-          clearTimeout(timeout);
-          resolve();
+          const onConnected = () => {
+            clearTimeout(timeout);
+            mongoose.connection.removeListener('connected', onConnected);
+            mongoose.connection.removeListener('error', onError);
+            resolve();
+          };
+
+          const onError = (err) => {
+            clearTimeout(timeout);
+            mongoose.connection.removeListener('connected', onConnected);
+            mongoose.connection.removeListener('error', onError);
+            reject(err);
+          };
+
+          mongoose.connection.once('connected', onConnected);
+          mongoose.connection.once('error', onError);
         });
-        mongoose.connection.once('error', reject);
-      });
-    }
+      }
 
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-
-    const today = new Date(getServerTime().setHours(0, 0, 0, 0));
-    if (systemDate) {
-      systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
-      systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
-      systemStatus.eodStatus = systemDate.eodStatus || 'IDLE';
-      if (systemDate.currentBusinessDate < today || systemDate.currentBusinessDate > today) {
-        logger.warn('Business date is outdated or incorrect, updating', {
-          storedDate: systemDate.currentBusinessDate,
-          serverDate: today,
-        });
-        systemDate.currentBusinessDate = today;
-        systemDate.nextBusinessDate = await calculateNextBusinessDate(today);
-        await systemDate.save();
+      const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+      const today = new Date(getServerTime().setHours(0, 0, 0, 0));
+      
+      if (systemDate) {
         systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
         systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
+        systemStatus.eodStatus = systemDate.eodStatus || 'IDLE';
+        
+        if (systemDate.currentBusinessDate < today || systemDate.currentBusinessDate > today) {
+          logger.warn('Business date is outdated or incorrect, updating', {
+            storedDate: systemDate.currentBusinessDate,
+            serverDate: today,
+          });
+          systemDate.currentBusinessDate = today;
+          systemDate.nextBusinessDate = await calculateNextBusinessDate(today);
+          await systemDate.save();
+          systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
+          systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
+        }
+        
+        logger.info('System dates loaded from database', {
+          currentBusinessDate: systemStatus.currentBusinessDate,
+          nextBusinessDate: systemStatus.nextBusinessDate,
+        });
+      } else {
+        const currentBusinessDate = today;
+        const nextBusinessDate = await calculateNextBusinessDate(currentBusinessDate);
+
+        const newSystemDate = new SystemDate({
+          currentBusinessDate,
+          nextBusinessDate,
+          eodStatus: 'IDLE',
+          eodHistory: [],
+        });
+
+        await newSystemDate.save();
+        systemStatus.currentBusinessDate = currentBusinessDate;
+        systemStatus.nextBusinessDate = nextBusinessDate;
+        systemStatus.eodStatus = 'IDLE';
+        
+        logger.info('System dates initialized and saved', {
+          currentBusinessDate,
+          nextBusinessDate,
+        });
       }
-      logger.info('System dates loaded from database', {
-        currentBusinessDate: systemStatus.currentBusinessDate,
-        nextBusinessDate: systemStatus.nextBusinessDate,
-      });
-    } else {
-      const currentBusinessDate = today;
-      const nextBusinessDate = await calculateNextBusinessDate(currentBusinessDate);
 
-      const newSystemDate = new SystemDate({
-        currentBusinessDate,
-        nextBusinessDate,
-        eodStatus: 'IDLE',
-        eodHistory: [],
+      systemStatus.serverTime = getServerTime();
+      logger.info('System dates initialized successfully');
+      return; // Success
+    } catch (error) {
+      retryCount++;
+      logger.error(`Failed to initialize system dates (attempt ${retryCount}/${maxRetries})`, {
+        error: error.message,
+        stack: error.stack,
       });
-
-      await newSystemDate.save();
-      systemStatus.currentBusinessDate = currentBusinessDate;
-      systemStatus.nextBusinessDate = nextBusinessDate;
-      systemStatus.eodStatus = 'IDLE';
-      logger.info('System dates initialized and saved', {
-        currentBusinessDate,
-        nextBusinessDate,
-      });
+      
+      if (retryCount < maxRetries) {
+        logger.info(`Retrying in ${retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      } else {
+        logger.error('FATAL: All retries failed for system dates initialization');
+        process.exit(1);
+      }
     }
-
-    systemStatus.serverTime = getServerTime();
-  } catch (error) {
-    logger.error('Failed to initialize system dates', {
-      error: error.message,
-      stack: error.stack,
-    });
-    throw error;
   }
 };
 
@@ -614,7 +642,7 @@ const eodServices = [
   { name: 'overdueLoans', fn: checkOverdueLoans },
   { name: 'pendingRepayments', fn: processPendingRepayments },
   { name: 'dormantAccounts', fn: updateDormantAccounts },
-  { name: 'overdueThriftCollections', fn: processOverdueThriftCollections }, // New service for thrift overdue collections
+  { name: 'overdueThriftCollections', fn: processOverdueThriftCollections },
 ];
 
 // Service Executor
@@ -864,7 +892,7 @@ export const getServiceErrors = async (req, res) => {
       lastRun: status.lastRun,
       processed: name === 'glTransactions' || name === 'reconciliation' || name === 'overdueThriftCollections' ? status.processed : undefined,
       failed: name === 'glTransactions' || name === 'reconciliation' || name === 'overdueThriftCollections' ? status.failed : undefined,
-      skipped: name === 'glTransactions' || name == 'reconciliation' || name === 'overdueThriftCollections' ? status.skipped : undefined,
+      skipped: name === 'glTransactions' || name === 'reconciliation' || name === 'overdueThriftCollections' ? status.skipped : undefined,
       updated: name === 'reconciliation' ? status.updated : undefined,
     }));
 
@@ -957,9 +985,6 @@ export const getStatus = async (req, res) => {
   }
 };
 
-// Initialize system dates when the module loads
-initializeSystemDates();
-
 export default {
   triggerEndOfDayProcess,
   getCurrentBusinessDate,
@@ -967,4 +992,5 @@ export default {
   getDormantAccountsCount,
   getStatus,
   processReconciliation,
+  initializeSystemDates,
 };

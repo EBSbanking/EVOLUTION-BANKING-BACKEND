@@ -5,9 +5,10 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
 import LoanProduct from '../models/LoanProduct.js';
 import LoanRepayment from '../models/LoanRepayment.js';
-import LoanEvent from '../models/LoanEvent.js'; // NEW: Import for event generation
-import GLAccount from '../models/GLAccount.js'; // Added missing import
+import LoanEvent from '../models/LoanEvent.js';
+import GLAccount from '../models/GLAccount.js';
 import { generateTransactionIds } from '../utils/generateAccountNumber.js';
+import repaymentUtils from '../utils/repaymentUtils.js'; // NEW: Import updated utility for generation/validation helpers
 
 // Helper function to validate installment data - UPDATED for new schema structure
 const validateInstallment = (installment) => {
@@ -34,6 +35,79 @@ const validateInstallment = (installment) => {
       message: 'Installment marked as PAID but amount paid is less than total payment',
       status: 400
     };
+  }
+};
+
+// Add to repayment controller - Track payment servicing status
+export const updateLoanServicingStatus = async (loanAccountNo, paymentDate, isOverdue = false) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+
+    const loanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNo }).session(session);
+    if (!loanAccount) {
+      throw new Error('Loan account not found');
+    }
+
+    let servicingStatus = 'SERVICED';
+    
+    if (isOverdue) {
+      // Calculate days overdue
+      const repaymentSchedule = await RepaymentSchedule.findOne({ ACCT_NO: loanAccountNo }).session(session);
+      if (repaymentSchedule) {
+        const overdueInstallments = repaymentSchedule.SCHEDULE.filter(inst => 
+          new Date(inst.dueDate) < paymentDate && 
+          (inst.status === 'PENDING' || inst.status === 'OVERDUE')
+        );
+        
+        if (overdueInstallments.length > 0) {
+          const maxDaysOverdue = Math.max(...overdueInstallments.map(inst => 
+            Math.ceil((paymentDate - new Date(inst.dueDate)) / (1000 * 60 * 60 * 24))
+          ));
+          
+          if (maxDaysOverdue > 90) servicingStatus = 'DELINQUENT';
+          else if (maxDaysOverdue > 30) servicingStatus = 'NON_PERFORMING';
+          else servicingStatus = 'UNSERVICED';
+        }
+      }
+    }
+
+    // Update loan account servicing status
+    await LoanAccount.updateOne(
+      { _id: loanAccount._id },
+      { 
+        $set: { 
+          SERVICING_STATUS: servicingStatus,
+          LAST_SERVICING_UPDATE: paymentDate
+        }
+      },
+      { session }
+    );
+
+    // Create servicing event
+    const event = new LoanEvent({
+      ACCT_NO: loanAccountNo,
+      eventType: 'SERVICING_UPDATE',
+      status: servicingStatus,
+      details: {
+        trigger: isOverdue ? 'OVERDUE_PAYMENT' : 'ON_TIME_PAYMENT',
+        paymentDate,
+        previousStatus: loanAccount.SERVICING_STATUS
+      },
+      createdBy: 'SYSTEM'
+    });
+
+    await event.save({ session });
+    await session.commitTransaction();
+
+    return servicingStatus;
+  } catch (error) {
+    await session.abortTransaction();
+    logger.error('Error updating loan servicing status:', { error: error.message });
+    throw error;
+  } finally {
+    await session.endSession();
   }
 };
 
@@ -159,11 +233,12 @@ export const recordPayment = async (req, res) => {
       amountPaid: installment.amountPaid
     });
 
-    // Validate payment frequency
-    if (loanAccount.PAYMENT_FREQUENCY !== repaymentSchedule.paymentFrequency) {
+    // Validate payment frequency - UPDATED: Use utility helper for consistency
+    const expectedFrequency = repaymentUtils.getPaymentFrequency(loanAccount.TERM_CD);
+    if (loanAccount.PAYMENT_FREQUENCY !== expectedFrequency) {
       throw {
         code: 'FREQUENCY_MISMATCH',
-        message: 'Payment frequency does not match loan account frequency',
+        message: `Payment frequency does not match loan term code (${repaymentUtils.getTermDescription(loanAccount.TERM_CD)})`,
         status: 400
       };
     }
@@ -228,10 +303,10 @@ export const recordPayment = async (req, res) => {
       },
       {
         $inc: {
-          'SCHEDULE.$.amountPaid': paymentAmount,
-          'SCHEDULE.$.principalPaid': principalPayment,
-          'SCHEDULE.$.interestPaid': interestPayment,
-          'SCHEDULE.$.feesPaid': lateFee
+          'SCHEDULE.$.amountPaid': mongoose.Types.Decimal128.fromString(paymentAmount.toFixed(2)),  // FIXED: Use Decimal128
+          'SCHEDULE.$.principalPaid': mongoose.Types.Decimal128.fromString(principalPayment.toFixed(2)),
+          'SCHEDULE.$.interestPaid': mongoose.Types.Decimal128.fromString(interestPayment.toFixed(2)),
+          'SCHEDULE.$.feesPaid': mongoose.Types.Decimal128.fromString(lateFee.toFixed(2))
         },
         $set: {
           'SCHEDULE.$.status': newStatus,
@@ -260,7 +335,7 @@ export const recordPayment = async (req, res) => {
       { ACCT_NO: customerAccountNo },
       {
         $inc: {
-          BALANCE: -(paymentAmount + lateFee)
+          BALANCE: mongoose.Types.Decimal128.fromString((-(paymentAmount + lateFee)).toFixed(2))  // FIXED: Decimal128
         },
         $push: {
           transactionHistory: {
@@ -282,11 +357,11 @@ export const recordPayment = async (req, res) => {
       { _id: loanAccount._id },
       {
         $inc: {
-          principalPaid: principalPayment,
-          interestPaid: interestPayment,
-          feesPaid: lateFee,
-          outstandingBalance: -(principalPayment + lateFee),
-          TOTAL_REPAID_AMOUNT: paymentAmount
+          principalPaid: mongoose.Types.Decimal128.fromString(principalPayment.toFixed(2)),  // FIXED: Decimal128
+          interestPaid: mongoose.Types.Decimal128.fromString(interestPayment.toFixed(2)),
+          feesPaid: mongoose.Types.Decimal128.fromString(lateFee.toFixed(2)),
+          outstandingBalance: mongoose.Types.Decimal128.fromString((-(principalPayment + lateFee)).toFixed(2)),
+          TOTAL_REPAID_AMOUNT: mongoose.Types.Decimal128.fromString(paymentAmount.toFixed(2))
         },
         $set: {
           LAST_PAYMENT_DATE: paymentDateTime,
@@ -353,7 +428,7 @@ export const recordPayment = async (req, res) => {
     if (loanProduct.loanGLAccount) {
       await GLAccount.updateOne(
         { GL_ACCT_NO: loanProduct.loanGLAccount },
-        { $inc: { BALANCE: paymentAmount + lateFee } }, // Credit increases liability account
+        { $inc: { BALANCE: mongoose.Types.Decimal128.fromString((paymentAmount + lateFee).toFixed(2)) } }, // Credit increases liability account
         { session }
       );
     }
@@ -370,7 +445,7 @@ export const recordPayment = async (req, res) => {
       debitAccount: customerAccountNo,
       creditAccount: loanProduct.loanGLAccount,
       reference: referenceNumber || `PYMT-${Date.now()}`,
-      description: description || `Payment for ${repaymentSchedule.paymentFrequency.toLowerCase()} installment #${installment.installmentNumber}`,
+      description: description || `Payment for ${repaymentUtils.getTermDescription(loanAccount.TERM_CD).toLowerCase()} installment #${installment.installmentNumber}`,  // UPDATED: Use utility for description
       timestamp: paymentDateTime,
       status: 'COMPLETED',
       createdBy,
@@ -510,7 +585,7 @@ export const getRepaymentSchedule = async (req, res) => {
           RepaymentSchedule.updateOne(
             {
               _id: repaymentSchedule._id,
-              'SCHEDULE.installmentNumber': installment.installmentNumber
+              'SCHEDULE.installmentNumber': installment.installmentNumber  // FIXED: Consistent field name
             },
             {
               $set: { 'SCHEDULE.$.status': 'OVERDUE' }
@@ -558,7 +633,8 @@ export const getRepaymentSchedule = async (req, res) => {
       data: {
         overdueUpdates,
         repaymentSchedule: updatedSchedule,
-        loanStatus: overdueOrPendingInstallments.length > 0 && overdueOrPendingInstallments.some(inst => inst.status === 'OVERDUE') ? 'OVERDUE' : 'ACTIVE'
+        loanStatus: overdueOrPendingInstallments.length > 0 && overdueOrPendingInstallments.some(inst => inst.status === 'OVERDUE') ? 'OVERDUE' : 'ACTIVE',
+        termDescription: repaymentUtils.getTermDescription(loanAccount.TERM_CD)  // NEW: Use utility for enriched response
       }
     });
   } catch (error) {

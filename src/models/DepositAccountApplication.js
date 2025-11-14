@@ -5,7 +5,7 @@ const DepositAccountApplicationSchema = new mongoose.Schema({
 
   ACCT_ID: {
     type: String,
-    unique: true,
+    // REMOVED: unique: true, // Remove unique constraint
     validate: {
       validator: v => /^\d{6}$/.test(v),
       message: "ACCT_ID must be exactly 6 digits",
@@ -28,14 +28,8 @@ const DepositAccountApplicationSchema = new mongoose.Schema({
   BU_ID: { type: String, required: true },
   AVAIL_DT: { type: Date, required: true },
   OPENED_DT: { type: Date, required: true },
-  NATIONALITY_NO: { type: String },
   CREATED_BY: { type: String, required: true },
   USER_ID: { type: String, required: true },
-  BVN_NO: {
-    type: String,
-    required: true,
-    match: [/^\d{11}$/, "BVN_NO must be exactly 11 digits"],
-  },
   CREATED_AT: { type: Date, default: Date.now },
   IMAGE: { type: String, required: true },
   DOCUMENT: { type: String, required: true },
@@ -47,14 +41,17 @@ const DepositAccountApplicationSchema = new mongoose.Schema({
     enum: ["Pending", "Approved", "Rejected"],
     default: "Pending",
   },
+  DENOMINATIONS: { type: Object }, // Add this if needed
+  ACCOUNT_TYPE: { type: String } // Add this if needed
 });
 
-// ✅ Pre-save hook for ACCT_ID
+// ✅ Improved pre-save hook for ACCT_ID
 DepositAccountApplicationSchema.pre("save", async function (next) {
   try {
+    // Only generate ACCT_ID if it doesn't exist
     if (!this.ACCT_ID) {
-      const lastDoc = await this.constructor.findOne().sort({ ACCT_ID: -1 }).lean();
-      const nextId = lastDoc?.ACCT_ID ? parseInt(lastDoc.ACCT_ID, 10) + 1 : 1;
+      const lastDoc = await this.constructor.findOne().sort({ _id: -1 }).lean();
+      const nextId = lastDoc ? parseInt(lastDoc.ACCT_ID || '0', 10) + 1 : 1;
       this.ACCT_ID = String(nextId).padStart(6, "0");
     }
 

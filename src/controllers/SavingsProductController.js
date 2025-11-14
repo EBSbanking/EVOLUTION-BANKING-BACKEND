@@ -1,3 +1,4 @@
+// controllers/SavingsProductController.js - UPDATED FOR CONSOLIDATED MODEL
 import mongoose from 'mongoose';
 import SavingsProduct from '../models/SavingsProduct.js';
 import AuditTrail from '../models/AuditTrail.js';
@@ -5,44 +6,6 @@ import logger from '../utils/logger.js';
 
 export const createSavingsProduct = async (req, res) => {
   const {
-    PROD_ID,
-    PROD_CD,
-    PROD_DESC,
-    PRODUCT_TYPE,
-    productCode,
-    productName,
-    productDescription,
-    productType,
-    CRNCY_ID,
-    BU_ID, // Can be string, array, or mixed with wildcards
-    START_DT,
-    rateInformation,
-    settlementInformation,
-    accrualInformation,
-    chargesSetup,
-    glAccounts,
-    additionalGLAccounts,
-    customFields,
-    metadata,
-    // Multi-BU fields
-    isGlobalProduct,
-    accessibleBUs,
-    visibility,
-    // Other optional fields
-    VERSION_NO,
-    PROD_CAT_TY,
-    PROD_DESIGN_ID,
-    MIN_AGE_YEAR,
-    USER_ID,
-    STMNT_FREQ_CD,
-    STMNT_FREQ_VALUE,
-    ACCT_CYCLE_CD,
-    ACCT_CYCLE_VALUE,
-    ACCT_AUTH_BUS_PROD_ID
-  } = req.body;
-
-  // Validate required fields based on schema
-  const requiredFields = {
     PROD_ID,
     productCode,
     productName,
@@ -53,12 +16,32 @@ export const createSavingsProduct = async (req, res) => {
     rateInformation,
     settlementInformation,
     accrualInformation,
-    glAccounts
+    chargesSetup,
+    glAccounts,
+    isGlobalProduct,
+    accessibleBUs,
+    visibility,
+    // Legacy fields for compatibility
+    PROD_CD,
+    PROD_DESC,
+    PRODUCT_TYPE,
+    START_DT
+  } = req.body;
+
+  // ✅ VALIDATE REQUIRED FIELDS
+  const requiredFields = {
+    productCode,
+    productName,
+    productDescription,
+    productType,
+    CRNCY_ID,
+    BU_ID
   };
 
   const missingFields = Object.entries(requiredFields)
-    .filter(([_, value]) => value == null)
+    .filter(([_, value]) => value == null || value === '')
     .map(([key]) => key);
+  
   if (missingFields.length > 0) {
     return res.status(400).json({
       success: false,
@@ -66,16 +49,51 @@ export const createSavingsProduct = async (req, res) => {
     });
   }
 
-  // Validate glAccounts sub-fields
-  if (!glAccounts.principalBalance || !glAccounts.interestIncome || 
-      !glAccounts.interestPayable || !glAccounts.withholdingTax) {
-    return res.status(400).json({
-      success: false,
-      message: 'glAccounts must include principalBalance, interestIncome, interestPayable, and withholdingTax',
-    });
+  // ✅ HANDLE PROD_ID SAFELY
+  let finalPROD_ID = PROD_ID;
+  if (!finalPROD_ID || isNaN(finalPROD_ID)) {
+    try {
+      finalPROD_ID = await SavingsProduct.getNextProdId();
+      console.log(`🔄 Generated PROD_ID: ${finalPROD_ID}`);
+    } catch (error) {
+      console.error('Error generating PROD_ID:', error);
+      finalPROD_ID = Math.floor(1000 + Math.random() * 9000);
+      console.log(`🔄 Using fallback PROD_ID: ${finalPROD_ID}`);
+    }
+  } else {
+    finalPROD_ID = Number(finalPROD_ID);
+    if (isNaN(finalPROD_ID) || finalPROD_ID <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'PROD_ID must be a valid positive number',
+      });
+    }
   }
 
-  // Validate chargesSetup as array (if provided)
+  // ✅ VALIDATE GL ACCOUNTS
+  if (glAccounts) {
+    const requiredGLAccounts = ['principalBalance', 'interestIncome', 'interestPayable', 'withholdingTax'];
+    const missingGLAccounts = requiredGLAccounts.filter(field => !glAccounts[field]);
+    
+    if (missingGLAccounts.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing required GL accounts: ${missingGLAccounts.join(', ')}`,
+      });
+    }
+
+    // Validate GL account format
+    for (const [key, value] of Object.entries(glAccounts)) {
+      if (value && !/^\d+$/.test(value)) {
+        return res.status(400).json({
+          success: false,
+          message: `GL account ${key} must contain only digits`,
+        });
+      }
+    }
+  }
+
+  // ✅ VALIDATE CHARGES SETUP
   if (chargesSetup && !Array.isArray(chargesSetup)) {
     return res.status(400).json({
       success: false,
@@ -83,10 +101,9 @@ export const createSavingsProduct = async (req, res) => {
     });
   }
 
-  // Validate each charge in the array (if provided)
   if (chargesSetup) {
     for (const charge of chargesSetup) {
-      if (!charge.name || !charge.amount || !charge.glAccountCode || !charge.chargeType) {
+      if (!charge.name || charge.amount == null || !charge.glAccountCode || !charge.chargeType) {
         return res.status(400).json({
           success: false,
           message: 'Each charge must include name, amount, glAccountCode, and chargeType',
@@ -99,10 +116,9 @@ export const createSavingsProduct = async (req, res) => {
   session.startTransaction();
 
   try {
-    // Handle BU_ID - convert to array and normalize
+    // ✅ HANDLE BU_ID - CONVERT TO ARRAY AND VALIDATE
     let buIds = BU_ID;
     if (typeof BU_ID === 'string') {
-      // Handle comma-separated values or single value
       buIds = BU_ID.split(',').map(bu => bu.trim()).filter(bu => bu.length > 0);
     } else if (!Array.isArray(BU_ID)) {
       await session.abortTransaction();
@@ -112,29 +128,21 @@ export const createSavingsProduct = async (req, res) => {
       });
     }
 
-    // Remove duplicates and validate each BU_ID
+    // Remove duplicates and validate
     buIds = [...new Set(buIds)];
-
-    // NEW: Validate BU_ID format for all items (3-digit numbers or wildcard patterns)
-    const validBuPattern = /^(\d{3}|\*|\d{1,2}\*|\*\d{1,2}|\d\*\d)$/;
+    const validBuPattern = /^(\d{3}|\*)$/; // Only allow exact 3-digit or wildcard
     const invalidBUs = buIds.filter(buId => !validBuPattern.test(buId));
 
     if (invalidBUs.length > 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Invalid BU_ID format(s): ${invalidBUs.join(', ')}. Must be 3-digit string or valid wildcard pattern (*, 10*, *01, 1*1)`,
-        examples: {
-          single_bu: '"101" or ["101"]',
-          multiple_bus: '["101", "102", "103"]',
-          patterns: '["10*", "*01", "1*1"]',
-          global: '["*"]'
-        }
+        message: `Invalid BU_ID format(s): ${invalidBUs.join(', ')}. Must be 3-digit string or * for global`,
       });
     }
 
-    // Validate productType and CRNCY_ID
-    const validProductTypes = ['SAVINGS', 'TERM_DEPOSIT'];
+    // ✅ VALIDATE ENUM VALUES
+    const validProductTypes = ['SAVINGS', 'TERM_DEPOSIT', 'CURRENT', 'FIXED_DEPOSIT'];
     if (!validProductTypes.includes(productType)) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -152,11 +160,11 @@ export const createSavingsProduct = async (req, res) => {
       });
     }
 
-    // Check for duplicate productCode or PROD_ID across all BUs
+    // ✅ CHECK FOR DUPLICATES
     const existingProduct = await SavingsProduct.findOne({ 
       $or: [
         { productCode },
-        { PROD_ID }
+        { PROD_ID: finalPROD_ID }
       ]
     }).session(session);
     
@@ -164,7 +172,7 @@ export const createSavingsProduct = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Product with productCode ${productCode} or PROD_ID ${PROD_ID} already exists`,
+        message: `Product with productCode ${productCode} or PROD_ID ${finalPROD_ID} already exists`,
       });
     }
 
@@ -172,37 +180,33 @@ export const createSavingsProduct = async (req, res) => {
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     const now = new Date();
 
-    // Determine product scope based on BU_ID patterns
+    // ✅ DETERMINE PRODUCT SCOPE
     const hasGlobalWildcard = buIds.includes('*');
-    const hasWildcardPatterns = buIds.some(buId => buId.includes('*') && buId !== '*');
-    const hasSpecificBUs = buIds.some(buId => !buId.includes('*'));
-    
-    // Set global product flag
     const isGlobal = isGlobalProduct !== undefined ? isGlobalProduct : hasGlobalWildcard;
 
-    // Build accessibleBUs - use provided value or derive from BU_ID
+    // ✅ BUILD ACCESSIBLE BUs
     let finalAccessibleBUs = accessibleBUs;
     if (!finalAccessibleBUs) {
       if (hasGlobalWildcard) {
-        finalAccessibleBUs = ['*']; // Global wildcard
+        finalAccessibleBUs = ['*'];
       } else {
-        finalAccessibleBUs = buIds; // Use all specified patterns and BUs
+        finalAccessibleBUs = buIds;
       }
     }
 
-    // CORRECTED: Determine visibility - Use the correct enum values from your schema
+    // ✅ DETERMINE VISIBILITY
     let finalVisibility = visibility;
     if (!finalVisibility) {
       if (hasGlobalWildcard) {
-        finalVisibility = 'GLOBAL'; // CORRECTED: Matches your schema enum
-      } else if (hasWildcardPatterns || buIds.length > 1) {
-        finalVisibility = 'SELECTED_BUS'; // CORRECTED: Matches your schema enum
+        finalVisibility = 'GLOBAL';
+      } else if (buIds.length > 1) {
+        finalVisibility = 'SELECTED_BUS';
       } else {
-        finalVisibility = 'SPECIFIC_BRANCHES'; // CORRECTED: Matches your schema enum
+        finalVisibility = 'SPECIFIC_BRANCHES';
       }
     }
 
-    // CORRECTED: Validate visibility enum value - Use the correct values from your schema
+    // ✅ VALIDATE VISIBILITY
     const validVisibilityValues = ['GLOBAL', 'SELECTED_BUS', 'SPECIFIC_BRANCHES'];
     if (finalVisibility && !validVisibilityValues.includes(finalVisibility)) {
       await session.abortTransaction();
@@ -212,108 +216,116 @@ export const createSavingsProduct = async (req, res) => {
       });
     }
 
-    // Build the product data dynamically
+    // ✅ BUILD PRODUCT DATA
     const productData = {
-      PROD_ID,
-      PROD_CD,
-      PROD_DESC,
-      PRODUCT_TYPE,
-      productCode,
+      PROD_ID: finalPROD_ID,
+      productCode: productCode.toUpperCase(),
       productName,
       productDescription,
       productType,
       CRNCY_ID,
-      BU_ID: buIds, // Array of BU IDs or patterns
+      BU_ID: buIds,
       START_DT: START_DT ? new Date(START_DT) : new Date(),
-      rateInformation: {
-        rateType: rateInformation.rateType,
-        fixedRate: rateInformation.fixedRate
-          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.fixedRate).toFixed(2))
+      isGlobalProduct: isGlobal,
+      accessibleBUs: finalAccessibleBUs,
+      visibility: finalVisibility,
+      REC_ST: 'A',
+      CREATED_BY: userId
+    };
+
+    // ✅ ADD RATE INFORMATION WITH DEFAULTS
+    if (rateInformation) {
+      productData.rateInformation = {
+        rateType: rateInformation.rateType || 'FIXED',
+        fixedRate: rateInformation.fixedRate 
+          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.fixedRate).toFixed(4))
+          : mongoose.Types.Decimal128.fromString('0.0000'),
+        marginRate: rateInformation.marginRate 
+          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.marginRate).toFixed(4))
           : undefined,
-        marginRate: rateInformation.marginRate
-          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.marginRate).toFixed(2))
-          : undefined,
-        effectiveRate: mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.effectiveRate).toFixed(2)),
-        effectiveDate: new Date(rateInformation.effectiveDate),
-      },
-      settlementInformation: {
-        settlementFrequency: settlementInformation.settlementFrequency,
-        principalSettlementMethod: settlementInformation.principalSettlementMethod,
-        interestSettlementMethod: settlementInformation.interestSettlementMethod,
-        settlementGLAccountNo: settlementInformation.settlementGLAccountNo,
-      },
-      accrualInformation: {
-        accrualBasis: accrualInformation.accrualBasis,
-        accrualStartDate: new Date(accrualInformation.accrualStartDate),
-        accrualFrequency: accrualInformation.accrualFrequency,
-      },
-      glAccounts: {
+        effectiveRate: rateInformation.effectiveRate
+          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.effectiveRate).toFixed(4))
+          : mongoose.Types.Decimal128.fromString('0.0000'),
+        effectiveDate: rateInformation.effectiveDate ? new Date(rateInformation.effectiveDate) : new Date(),
+        rateStructure: rateInformation.rateStructure || 'FLAT'
+      };
+    } else {
+      // Default rate information
+      productData.rateInformation = {
+        rateType: 'FIXED',
+        fixedRate: mongoose.Types.Decimal128.fromString('0.5000'),
+        effectiveRate: mongoose.Types.Decimal128.fromString('0.5000'),
+        effectiveDate: new Date(),
+        rateStructure: 'FLAT'
+      };
+    }
+
+    // ✅ ADD INTEREST RATE (for first schema compatibility)
+    productData.interestRate = productData.rateInformation.effectiveRate;
+
+    // ✅ ADD SETTLEMENT INFORMATION WITH DEFAULTS
+    if (settlementInformation) {
+      productData.settlementInformation = {
+        settlementFrequency: settlementInformation.settlementFrequency || 'MONTHLY',
+        principalSettlementMethod: settlementInformation.principalSettlementMethod || 'ACCOUNT',
+        interestSettlementMethod: settlementInformation.interestSettlementMethod || 'ACCOUNT',
+        settlementGLAccountNo: settlementInformation.settlementGLAccountNo || '1-01-001-001-001-1',
+        applicableAccountStatusOption: settlementInformation.applicableAccountStatusOption || 'ACTIVE_ONLY'
+      };
+    }
+
+    // ✅ ADD ACCRUAL INFORMATION WITH DEFAULTS
+    if (accrualInformation) {
+      productData.accrualInformation = {
+        accrualBasis: accrualInformation.accrualBasis || 'ACT/365',
+        accrualStartDate: accrualInformation.accrualStartDate ? new Date(accrualInformation.accrualStartDate) : new Date(),
+        accrualFrequency: accrualInformation.accrualFrequency || 'DAILY',
+        accrualBalanceType: accrualInformation.accrualBalanceType || 'CURRENT_CLEARED',
+        skipInterestForIncompletePeriod: accrualInformation.skipInterestForIncompletePeriod || false
+      };
+    }
+
+    // ✅ ADD GL ACCOUNTS WITH DEFAULTS
+    if (glAccounts) {
+      productData.glAccounts = {
         principalBalance: glAccounts.principalBalance,
         interestIncome: glAccounts.interestIncome,
         interestPayable: glAccounts.interestPayable,
         withholdingTax: glAccounts.withholdingTax,
-      },
-      // Multi-BU fields
-      isGlobalProduct: isGlobal,
-      accessibleBUs: finalAccessibleBUs,
-      visibility: finalVisibility // CORRECTED: Now uses proper enum values
-    };
+        interestReceivable: glAccounts.interestReceivable || '1001001005'
+      };
+    } else {
+      // Default GL accounts
+      productData.glAccounts = {
+        principalBalance: '1001001001',
+        interestIncome: '1001001002',
+        interestPayable: '1001001003',
+        withholdingTax: '1001001004',
+        interestReceivable: '1001001005'
+      };
+    }
 
-    // Add optional fields if provided
-    if (VERSION_NO) productData.VERSION_NO = VERSION_NO;
-    if (PROD_CAT_TY) productData.PROD_CAT_TY = PROD_CAT_TY;
-    if (PROD_DESIGN_ID) productData.PROD_DESIGN_ID = PROD_DESIGN_ID;
-    if (MIN_AGE_YEAR) productData.MIN_AGE_YEAR = MIN_AGE_YEAR;
-    if (USER_ID) productData.USER_ID = USER_ID;
-    if (STMNT_FREQ_CD) productData.STMNT_FREQ_CD = STMNT_FREQ_CD;
-    if (STMNT_FREQ_VALUE) productData.STMNT_FREQ_VALUE = STMNT_FREQ_VALUE;
-    if (ACCT_CYCLE_CD) productData.ACCT_CYCLE_CD = ACCT_CYCLE_CD;
-    if (ACCT_CYCLE_VALUE) productData.ACCT_CYCLE_VALUE = ACCT_CYCLE_VALUE;
-    if (ACCT_AUTH_BUS_PROD_ID) productData.ACCT_AUTH_BUS_PROD_ID = ACCT_AUTH_BUS_PROD_ID;
-
-    // Add chargesSetup if provided
+    // ✅ ADD CHARGES SETUP
     if (chargesSetup && chargesSetup.length > 0) {
       productData.chargesSetup = chargesSetup.map(charge => ({
-        // Required fields
         name: charge.name,
+        chargeType: charge.chargeType,
         amount: mongoose.Types.Decimal128.fromString(parseFloat(charge.amount).toFixed(2)),
         glAccountCode: charge.glAccountCode,
-        chargeType: charge.chargeType,
-        
-        // Optional fields
-        CHRG_ID: charge.CHRG_ID,
-        CHRG_CD: charge.CHRG_CD,
-        chargeGLAccountNo: charge.chargeGLAccountNo,
-        chargeName: charge.chargeName,
-        status: charge.status,
-        TIER_TY: charge.TIER_TY,
-        BAL_ACTION_CD: charge.BAL_ACTION_CD,
-        VERSION_NO: charge.VERSION_NO,
-        USER_ID: charge.USER_ID,
-        CREATED_BY: charge.CREATED_BY
+        frequency: charge.frequency || 'ONE_TIME'
       }));
     }
 
-    // Add additionalGLAccounts if provided
-    if (additionalGLAccounts) {
-      productData.additionalGLAccounts = new Map(Object.entries(additionalGLAccounts));
-    }
+    // ✅ ADD LEGACY FIELDS
+    if (PROD_CD) productData.PROD_CD = PROD_CD;
+    if (PROD_DESC) productData.PROD_DESC = PROD_DESC;
+    if (PRODUCT_TYPE) productData.PRODUCT_TYPE = PRODUCT_TYPE;
 
-    // Add customFields if provided
-    if (customFields) {
-      productData.customFields = new Map(Object.entries(customFields));
-    }
-
-    // Add metadata if provided
-    if (metadata) {
-      productData.metadata = new Map(Object.entries(metadata));
-    }
-
-    // Create new savings product
+    // ✅ CREATE SAVINGS PRODUCT
     const newSavingsProduct = new SavingsProduct(productData);
     const savedProduct = await newSavingsProduct.save({ session });
 
-    // Create audit trail
+    // ✅ CREATE AUDIT TRAIL
     try {
       await AuditTrail.create([{
         event_id: Date.now(),
@@ -327,14 +339,11 @@ export const createSavingsProduct = async (req, res) => {
         entity_type: 'SavingsProduct',
         entity_id: savedProduct._id,
         status: 'SUCCESS',
-        description: `Created savings product with productCode ${productCode} for ${buIds.length} business unit(s) or patterns`,
+        description: `Created savings product ${productCode} with PROD_ID ${finalPROD_ID}`,
         metadata: {
           bu_patterns: buIds,
           is_global: isGlobal,
-          visibility: finalVisibility,
-          specific_bus: buIds.filter(buId => !buId.includes('*')),
-          pattern_bus: buIds.filter(buId => buId.includes('*') && buId !== '*'),
-          has_global_wildcard: hasGlobalWildcard
+          visibility: finalVisibility
         }
       }], { session });
     } catch (auditError) {
@@ -347,19 +356,12 @@ export const createSavingsProduct = async (req, res) => {
 
     await session.commitTransaction();
 
-    // Generate appropriate success message based on BU patterns
+    // ✅ SUCCESS RESPONSE
     let successMessage;
-    const specificBUs = buIds.filter(buId => !buId.includes('*'));
-    const patternBUs = buIds.filter(buId => buId.includes('*') && buId !== '*');
-    
     if (hasGlobalWildcard) {
       successMessage = 'Savings product created successfully for ALL business units (global)';
-    } else if (patternBUs.length > 0 && specificBUs.length > 0) {
-      successMessage = `Savings product created successfully for ${specificBUs.length} specific BU(s) and ${patternBUs.length} pattern(s)`;
-    } else if (patternBUs.length > 0) {
-      successMessage = `Savings product created successfully with ${patternBUs.length} pattern(s)`;
     } else {
-      successMessage = `Savings product created successfully for ${specificBUs.length} specific business unit(s)`;
+      successMessage = `Savings product created successfully for ${buIds.length} business unit(s)`;
     }
 
     return res.status(201).json({
@@ -367,10 +369,8 @@ export const createSavingsProduct = async (req, res) => {
       message: successMessage,
       product: savedProduct,
       metadata: {
+        PROD_ID: finalPROD_ID,
         total_bu_entries: buIds.length,
-        specific_bus: specificBUs,
-        pattern_bus: patternBUs,
-        has_global_wildcard: hasGlobalWildcard,
         is_global: isGlobal,
         visibility: finalVisibility
       }
@@ -387,7 +387,7 @@ export const createSavingsProduct = async (req, res) => {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: 'Duplicate key error',
+        message: 'Duplicate key error - Product with this code or ID already exists',
         error: error.keyValue,
       });
     }
@@ -402,62 +402,12 @@ export const createSavingsProduct = async (req, res) => {
   }
 };
 
-
-// Enhanced query logic for pattern matching
-export const getProductsByBU = async (req, res) => {
-  try {
-    const { bu_id } = req.params;
-    
-    if (!/^\d{3}$/.test(bu_id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid BU_ID format',
-      });
-    }
-
-    // Build query conditions for pattern matching
-    const conditions = [
-      { isGlobalProduct: true },
-      { accessibleBUs: '*' }, // Exact wildcard
-      { accessibleBUs: bu_id }, // Exact match
-      { BU_ID: bu_id },
-      { BU_ID: '*' }
-    ];
-
-    // Add pattern matching conditions
-    const patterns = [
-      `${bu_id.substring(0, 2)}*`, // First 2 digits + wildcard (101 -> 10*)
-      `*${bu_id.substring(1, 3)}`, // Wildcard + last 2 digits (101 -> *01)
-      `${bu_id.charAt(0)}*${bu_id.charAt(2)}` // First char + wildcard + last char (101 -> 1*1)
-    ];
-
-    patterns.forEach(pattern => {
-      conditions.push({ accessibleBUs: pattern });
-      conditions.push({ BU_ID: pattern });
-    });
-
-    const products = await SavingsProduct.find({
-      $or: conditions,
-      REC_ST: 'A'
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: `Products retrieved for BU ${bu_id}`,
-      data: products,
-      count: products.length
-    });
-  } catch (error) {
-    // ... error handling
-  }
-};
-
-// GET Savings Product by productCode - CORRECT
+// ✅ GET SAVINGS PRODUCT BY PRODUCT CODE
 export const getSavingsProduct = async (req, res) => {
   const { productCode } = req.params;
 
   try {
-    const product = await SavingsProduct.findOne({ productCode });
+    const product = await SavingsProduct.findByProductCode(productCode);
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -486,14 +436,21 @@ export const getSavingsProduct = async (req, res) => {
   }
 };
 
-// GET All Savings Products - CORRECT
+// ✅ GET ALL SAVINGS PRODUCTS
 export const getAllSavingsProducts = async (req, res) => {
   try {
-    const products = await SavingsProduct.find().sort({ productCode: 1 });
+    const { activeOnly = 'true' } = req.query;
+    
+    let query = {};
+    if (activeOnly === 'true') {
+      query = { REC_ST: { $in: ['A', 'ACTIVE'] } };
+    }
+
+    const products = await SavingsProduct.find(query).sort({ productCode: 1 });
     
     return res.status(200).json({
       success: true,
-      message: 'All savings products retrieved successfully',
+      message: 'Savings products retrieved successfully',
       data: products,
       count: products.length
     });
@@ -506,35 +463,22 @@ export const getAllSavingsProducts = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while retrieving all savings products',
+      message: 'An error occurred while retrieving savings products',
       error: error.message,
     });
   }
 };
 
-// UPDATE Savings Product by productCode - FIXED VERSION
+// ✅ UPDATE SAVINGS PRODUCT
 export const updateSavingsProduct = async (req, res) => {
   const { productCode } = req.params;
-  const {
-    productName,
-    productType,
-    CRNCY_ID,
-    BU_ID,
-    rateInformation,
-    settlementInformation,
-    accrualInformation,
-    chargesSetup,
-    principalBalanceGLAccountNo,
-    interestGLAccountNo,
-    interestPayableGLAccountNo,
-    withholdingTaxGLAccountNo,
-  } = req.body;
+  const updateData = req.body;
 
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    // Find existing product first
+    // ✅ FIND EXISTING PRODUCT
     const existingProduct = await SavingsProduct.findOne({ productCode }).session(session);
     if (!existingProduct) {
       await session.abortTransaction();
@@ -544,192 +488,46 @@ export const updateSavingsProduct = async (req, res) => {
       });
     }
 
-    // For updates, only validate fields that are actually provided
-    // Don't require all fields to be present for updates
-
-    // Validate provided subdocument fields
-    if (rateInformation) {
-      if (!rateInformation.rateType || !rateInformation.effectiveRate || !rateInformation.effectiveDate) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'rateInformation must include rateType, effectiveRate, and effectiveDate',
-        });
-      }
-      if (rateInformation.rateType === 'FIXED' && rateInformation.fixedRate == null) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'fixedRate is required for FIXED rateType',
-        });
-      }
-      if (rateInformation.rateType === 'FLOATING' && rateInformation.marginRate == null) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'marginRate is required for FLOATING rateType',
-        });
-      }
-    }
-
-    if (settlementInformation) {
-      if (
-        !settlementInformation.settlementFrequency ||
-        !settlementInformation.principalSettlementMethod ||
-        !settlementInformation.interestSettlementMethod ||
-        !settlementInformation.settlementGLAccountNo
-      ) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'settlementInformation must include settlementFrequency, principalSettlementMethod, interestSettlementMethod, and settlementGLAccountNo',
-        });
-      }
-    }
-
-    if (accrualInformation) {
-      if (
-        !accrualInformation.accrualBasis ||
-        !accrualInformation.accrualStartDate ||
-        !accrualInformation.accrualFrequency
-      ) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'accrualInformation must include accrualBasis, accrualStartDate, and accrualFrequency',
-        });
-      }
-    }
-
-    if (chargesSetup) {
-      if (!chargesSetup.chargeType || !chargesSetup.chargeAmount || !chargesSetup.chargeGLAccountNo) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: 'chargesSetup must include chargeType, chargeAmount, and chargeGLAccountNo',
-        });
-      }
-    }
-
-    // REMOVED: GL Account validation since validateGLAccount function doesn't exist
-    // Add basic GL account format validation instead
-    const glAccountRegex = /^\d{2}-\d{3}-\d{3}-\d{3}-\d{3}-\d{3}$/;
-    
-    const glAccountsToValidate = [
-      principalBalanceGLAccountNo,
-      interestGLAccountNo,
-      interestPayableGLAccountNo,
-      settlementInformation?.settlementGLAccountNo,
-      chargesSetup?.chargeGLAccountNo,
-      withholdingTaxGLAccountNo,
-    ].filter(account => account); // Only validate provided accounts
-
-    for (const account of glAccountsToValidate) {
-      if (account && !glAccountRegex.test(account)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Invalid GL account format: ${account}. Expected format: XX-XXX-XXX-XXX-XXX-XXX`,
-        });
-      }
-    }
-
-    // Validate BU_ID format if provided
-    if (BU_ID && !/^\d{3}$/.test(BU_ID)) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: 'BU_ID must be a 3-digit string',
-      });
-    }
-
-    // Validate productType if provided
-    if (productType) {
-      const validProductTypes = ['SAVINGS', 'TERM_DEPOSIT'];
-      if (!validProductTypes.includes(productType)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Invalid productType. Must be one of ${validProductTypes.join(', ')}`,
-        });
-      }
-    }
-
-    // Validate CRNCY_ID if provided
-    if (CRNCY_ID) {
-      const validCurrencies = ['NGN', 'USD', 'EUR', 'GBP'];
-      if (!validCurrencies.includes(CRNCY_ID)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Invalid CRNCY_ID. Must be one of ${validCurrencies.join(', ')}`,
-        });
-      }
-    }
-
     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
     const now = new Date();
 
-    // Build update object with only provided fields
-    const updateData = {
-      updatedAt: now,
-    };
-
-    // Only add fields that are provided
-    if (productName) updateData.productName = productName;
-    if (productType) updateData.productType = productType;
-    if (CRNCY_ID) updateData.CRNCY_ID = CRNCY_ID;
-    if (BU_ID) updateData.BU_ID = BU_ID;
-    if (principalBalanceGLAccountNo) updateData.principalBalanceGLAccountNo = principalBalanceGLAccountNo;
-    if (interestGLAccountNo) updateData.interestGLAccountNo = interestGLAccountNo;
-    if (interestPayableGLAccountNo) updateData.interestPayableGLAccountNo = interestPayableGLAccountNo;
-    if (withholdingTaxGLAccountNo) updateData.withholdingTaxGLAccountNo = withholdingTaxGLAccountNo;
-
-    // Handle nested objects
-    if (rateInformation) {
-      updateData.rateInformation = {
-        rateType: rateInformation.rateType,
-        fixedRate: rateInformation.fixedRate
-          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.fixedRate).toFixed(2))
-          : undefined,
-        marginRate: rateInformation.marginRate
-          ? mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.marginRate).toFixed(2))
-          : undefined,
-        effectiveRate: mongoose.Types.Decimal128.fromString(parseFloat(rateInformation.effectiveRate).toFixed(2)),
-        effectiveDate: new Date(rateInformation.effectiveDate),
-      };
+    // ✅ PREPARE UPDATE DATA
+    const updateFields = { ...updateData };
+    
+    // Handle Decimal128 conversions for rate fields
+    if (updateFields.rateInformation) {
+      if (updateFields.rateInformation.fixedRate) {
+        updateFields.rateInformation.fixedRate = mongoose.Types.Decimal128.fromString(
+          parseFloat(updateFields.rateInformation.fixedRate).toFixed(4)
+        );
+      }
+      if (updateFields.rateInformation.marginRate) {
+        updateFields.rateInformation.marginRate = mongoose.Types.Decimal128.fromString(
+          parseFloat(updateFields.rateInformation.marginRate).toFixed(4)
+        );
+      }
+      if (updateFields.rateInformation.effectiveRate) {
+        updateFields.rateInformation.effectiveRate = mongoose.Types.Decimal128.fromString(
+          parseFloat(updateFields.rateInformation.effectiveRate).toFixed(4)
+        );
+        // Also update the top-level interestRate for compatibility
+        updateFields.interestRate = updateFields.rateInformation.effectiveRate;
+      }
     }
 
-    if (settlementInformation) {
-      updateData.settlementInformation = {
-        settlementFrequency: settlementInformation.settlementFrequency,
-        principalSettlementMethod: settlementInformation.principalSettlementMethod,
-        interestSettlementMethod: settlementInformation.interestSettlementMethod,
-        settlementGLAccountNo: settlementInformation.settlementGLAccountNo,
-      };
+    // Handle charges setup amounts
+    if (updateFields.chargesSetup && Array.isArray(updateFields.chargesSetup)) {
+      updateFields.chargesSetup = updateFields.chargesSetup.map(charge => ({
+        ...charge,
+        amount: mongoose.Types.Decimal128.fromString(parseFloat(charge.amount).toFixed(2))
+      }));
     }
 
-    if (accrualInformation) {
-      updateData.accrualInformation = {
-        accrualBasis: accrualInformation.accrualBasis,
-        accrualStartDate: new Date(accrualInformation.accrualStartDate),
-        accrualFrequency: accrualInformation.accrualFrequency,
-      };
-    }
-
-    if (chargesSetup) {
-      updateData.chargesSetup = {
-        chargeType: chargesSetup.chargeType,
-        chargeAmount: mongoose.Types.Decimal128.fromString(parseFloat(chargesSetup.chargeAmount).toFixed(2)),
-        chargeGLAccountNo: chargesSetup.chargeGLAccountNo,
-      };
-    }
-
-    // Update savings product
+    // ✅ UPDATE PRODUCT
     const updatedProduct = await SavingsProduct.findOneAndUpdate(
       { productCode },
-      updateData,
+      updateFields,
       { new: true, runValidators: true, session }
     );
 
@@ -741,27 +539,22 @@ export const updateSavingsProduct = async (req, res) => {
       });
     }
 
-    // Create audit trail
+    // ✅ CREATE AUDIT TRAIL
     try {
-      await AuditTrail.create(
-        [
-          {
-            event_id: Date.now(),
-            user_id: userId,
-            event_type: 'SAVINGS_PRODUCT_UPDATE',
-            action: 'Update Savings Product',
-            old_value: existingProduct.toObject(),
-            new_value: updatedProduct.toObject(),
-            ip_address: ipAddress,
-            timestamp: now,
-            entity_type: 'SavingsProduct',
-            entity_id: updatedProduct._id,
-            status: 'SUCCESS',
-            description: `Updated savings product with productCode ${productCode}`,
-          },
-        ],
-        { session }
-      );
+      await AuditTrail.create([{
+        event_id: Date.now(),
+        user_id: userId,
+        event_type: 'SAVINGS_PRODUCT_UPDATE',
+        action: 'Update Savings Product',
+        old_value: existingProduct.toObject(),
+        new_value: updatedProduct.toObject(),
+        ip_address: ipAddress,
+        timestamp: now,
+        entity_type: 'SavingsProduct',
+        entity_id: updatedProduct._id,
+        status: 'SUCCESS',
+        description: `Updated savings product ${productCode}`,
+      }], { session });
     } catch (auditError) {
       logger.error('Failed to create audit trail for savings product update', {
         error: auditError.message,
@@ -782,8 +575,8 @@ export const updateSavingsProduct = async (req, res) => {
     logger.error('Error updating savings product:', {
       error: error.message,
       stack: error.stack,
-      body: req.body,
       productCode,
+      updateData,
       timestamp: new Date(),
     });
 
@@ -798,6 +591,119 @@ export const updateSavingsProduct = async (req, res) => {
     return res.status(error.name === 'ValidationError' ? 400 : 500).json({
       success: false,
       message: 'An error occurred while updating the savings product',
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// ✅ GET PRODUCTS BY BUSINESS UNIT
+export const getProductsByBU = async (req, res) => {
+  try {
+    const { bu_id } = req.params;
+    
+    if (!/^\d{3}$/.test(bu_id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'BU_ID must be a 3-digit string',
+      });
+    }
+
+    const products = await SavingsProduct.find({
+      $or: [
+        { isGlobalProduct: true },
+        { accessibleBUs: '*' },
+        { accessibleBUs: bu_id },
+        { BU_ID: bu_id },
+        { BU_ID: '*' }
+      ],
+      REC_ST: { $in: ['A', 'ACTIVE'] }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Products retrieved for BU ${bu_id}`,
+      data: products,
+      count: products.length
+    });
+  } catch (error) {
+    logger.error('Error retrieving products by BU:', {
+      error: error.message,
+      stack: error.stack,
+      bu_id: req.params.bu_id,
+      timestamp: new Date(),
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while retrieving products',
+      error: error.message,
+    });
+  }
+};
+
+// ✅ DEACTIVATE SAVINGS PRODUCT
+export const deactivateSavingsProduct = async (req, res) => {
+  const { productCode } = req.params;
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const existingProduct = await SavingsProduct.findOne({ productCode }).session(session);
+    if (!existingProduct) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: `Savings product with productCode ${productCode} not found`,
+      });
+    }
+
+    const updatedProduct = await SavingsProduct.findOneAndUpdate(
+      { productCode },
+      { REC_ST: 'I' },
+      { new: true, session }
+    );
+
+    // ✅ CREATE AUDIT TRAIL
+    const userId = req.user?.id || req.headers['x-user-id'] || 'system';
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+    
+    await AuditTrail.create([{
+      event_id: Date.now(),
+      user_id: userId,
+      event_type: 'SAVINGS_PRODUCT_DEACTIVATE',
+      action: 'Deactivate Savings Product',
+      old_value: existingProduct.toObject(),
+      new_value: updatedProduct.toObject(),
+      ip_address: ipAddress,
+      timestamp: new Date(),
+      entity_type: 'SavingsProduct',
+      entity_id: updatedProduct._id,
+      status: 'SUCCESS',
+      description: `Deactivated savings product ${productCode}`,
+    }], { session });
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Savings product deactivated successfully',
+      product: updatedProduct,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    logger.error('Error deactivating savings product:', {
+      error: error.message,
+      stack: error.stack,
+      productCode,
+      timestamp: new Date(),
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while deactivating the savings product',
       error: error.message,
     });
   } finally {

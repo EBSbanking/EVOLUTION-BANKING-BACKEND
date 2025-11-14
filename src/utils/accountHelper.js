@@ -1,6 +1,7 @@
 // utils/accountHelper.js
 import retry from "async-retry";
 import Counter from "../models/Counter.js";
+import { v4 as uuidv4 } from 'uuid'; // ✅ FIXED: Import uuidv4 from uuid library
 
 const USE_NUBAN = true;
 const ACCOUNT_ID_LENGTH = 6;
@@ -34,6 +35,35 @@ const calculateNUBANCheckDigit = (baseNumber) => {
   const mod = sum % 10;
   return mod === 0 ? "0" : String(10 - mod);
 };
+
+
+/**
+ * Generate loan account number for group loans
+ */
+export const getLoanAccountNumberForGroupLoan = async () => {
+  try {
+    const identifiers = await generateAccountIdentifiersFromCounter('LOAN');
+    return identifiers.ACCT_NO;
+  } catch (error) {
+    console.error('Error generating loan account number:', error);
+    throw new Error('Failed to generate loan account number');
+  }
+};
+
+/**
+ * Generate UUID (re-export for consistency)
+ */
+export { uuidv4 };
+
+/**
+ * Fallback function for emergency account number generation
+ */
+export const generateEmergencyLoanAccountNumber = () => {
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `1${timestamp}${random}`.padStart(10, '0');
+};
+
 
 // 🔢 Generate Account Identifiers (ACCT_NO + ACCT_ID)
 export const generateAccountIdentifiersFromCounter = async (productType) => {

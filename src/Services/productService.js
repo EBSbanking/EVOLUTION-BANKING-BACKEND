@@ -1,4 +1,4 @@
-import SavingsProducts from '../models/SavingsProducts.js';
+import SavingsProducts from '../models/SavingsProduct.js';
 import ProductTypeMapping from '../models/ProductTypeMapping.js';
 
 export const getProductTypeByProdIdInternal = async (prodId) => {

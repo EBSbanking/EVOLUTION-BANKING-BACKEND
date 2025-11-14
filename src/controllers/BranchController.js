@@ -376,8 +376,8 @@ export const getBranchByCode = async (req, res) => {
     });
     
     const selectFields = includeLegacy === 'true' 
-      ? 'organizationName branchName branchCode createdAt updatedAt external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
-      : 'organizationName branchName branchCode createdAt updatedAt';
+      ? 'organizationName branchName branchCode createdAt updatedAt address external_id parent office_address country state city phone email branch_manager opening_date branch_type status created_by operational_model approved_by migration_id'
+      : 'organizationName branchName branchCode createdAt updatedAt address';
     
     let branch;
     
@@ -386,7 +386,7 @@ export const getBranchByCode = async (req, res) => {
         .select(selectFields)
         .populate({
           path: 'businessUnits',
-          select: 'unitName unitCode description createdAt'
+          select: 'unitName unitCode DESCRIPTION ADDRESS createdAt'
         });
     } else {
       branch = await Branch.findOne({ branchCode: req.params.branchCode }).select(selectFields);

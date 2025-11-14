@@ -448,55 +448,85 @@ async applyForLoan(req, res) {
     }
   }
 
+  // FIXED: Updated EMI calculation to always generate full termMonths installments
   async function calculateFallbackEMI(principal, annualRate, termMonths, startDate) {
     console.log('Calculating fallback EMI...');
     
     const monthlyRate = (annualRate / 100) / 12;
-    const emi = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths) / 
-                (Math.pow(1 + monthlyRate, termMonths) - 1);
+    let emi = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths) / 
+              (Math.pow(1 + monthlyRate, termMonths) - 1);
+    emi = Math.round(emi * 100) / 100;  // Round to 2 decimals
     
-    const totalPayment = emi * termMonths;
-    const totalInterest = totalPayment - principal;
+    const totalPayment = Math.round(emi * termMonths * 100) / 100;
+    const totalInterest = Math.round((totalPayment - principal) * 100) / 100;
     
     const installments = [];
-    let balance = principal;
+    let balance = Math.round(principal * 100) / 100;  // Ensure precision
     
     for (let i = 1; i <= termMonths; i++) {
-      const interest = balance * monthlyRate;
-      const principalComponent = emi - interest;
+      let interest = Math.round(balance * monthlyRate * 100) / 100;
+      let principalComponent = Math.round((emi - interest) * 100) / 100;
       
-      if (principalComponent > balance) {
+      let dueDate = new Date(startDate);
+      dueDate.setMonth(dueDate.getMonth() + i);  // JS handles overflow (month 13 → Jan next year)
+      
+      // FIXED: Only adjust on the LAST installment to prevent early termination
+      if (i === termMonths && principalComponent > balance) {
         const finalPrincipal = balance;
-        const finalEMI = finalPrincipal + interest;
+        const finalInterest = interest;
+        const finalEMI = Math.round((finalPrincipal + finalInterest) * 100) / 100;
         balance = 0;
         
         installments.push({
           installmentNumber: i,
-          dueDate: new Date(startDate.getFullYear(), startDate.getMonth() + i, startDate.getDate()),
-          principal: parseFloat(finalPrincipal.toFixed(2)),
-          interest: parseFloat(interest.toFixed(2)),
-          totalPayment: parseFloat(finalEMI.toFixed(2)),
+          dueDate: dueDate,
+          principal: Math.round(finalPrincipal * 100) / 100,
+          interest: finalInterest,
+          totalPayment: finalEMI,
           remainingBalance: 0
         });
-        break;
+      } else {
+        // Normal installment
+        if (principalComponent > balance) {
+          principalComponent = balance;  // Cap without breaking loop
+        }
+        balance = Math.round((balance - principalComponent) * 100) / 100;
+        if (balance < 0) balance = 0;  // Prevent negative
+        
+        installments.push({
+          installmentNumber: i,
+          dueDate: dueDate,
+          principal: principalComponent,
+          interest: interest,
+          totalPayment: emi,
+          remainingBalance: balance
+        });
       }
-      
-      balance -= principalComponent;
-      
-      installments.push({
-        installmentNumber: i,
-        dueDate: new Date(startDate.getFullYear(), startDate.getMonth() + i, startDate.getDate()),
-        principal: parseFloat(principalComponent.toFixed(2)),
-        interest: parseFloat(interest.toFixed(2)),
-        totalPayment: parseFloat(emi.toFixed(2)),
-        remainingBalance: parseFloat(balance.toFixed(2))
-      });
     }
     
+    // FIXED: Ensure exactly termMonths installments (pad/adjust if needed, but loop guarantees)
+    if (installments.length !== termMonths) {
+      console.warn(`EMI calc produced ${installments.length} installments for termMonths=${termMonths}; adjusting.`);
+      // This shouldn't happen with the fix, but safeguard
+      while (installments.length < termMonths) {
+        const last = installments[installments.length - 1];
+        installments.push({
+          installmentNumber: installments.length + 1,
+          dueDate: new Date(last.dueDate),
+          principal: 0,
+          interest: 0,
+          totalPayment: 0,
+          remainingBalance: 0
+        });
+      }
+    }
+    
+    console.log(`Generated ${installments.length} installments for ${termMonths} months.`);
+    
     return {
-      emi: parseFloat(emi.toFixed(2)),
-      totalPayment: parseFloat(totalPayment.toFixed(2)),
-      totalInterest: parseFloat(totalInterest.toFixed(2)),
+      emi: emi,
+      totalPayment: totalPayment,
+      totalInterest: totalInterest,
       installments
     };
   }
@@ -549,7 +579,7 @@ async applyForLoan(req, res) {
     }
     
     try {
-      return mongoose.Types.Decimal128.fromString(numericValue.toString());
+      return mongoose.Types.Decimal128.fromString(numericValue.toFixed(2));  // FIXED: Use toFixed for consistency
     } catch (error) {
       console.error(`Error converting ${fieldName} to Decimal128:`, error);
       throw new Error(`Failed to convert ${fieldName} to Decimal128: ${error.message}`);
@@ -895,7 +925,7 @@ This agreement constitutes a legally binding contract between the borrower and t
       console.warn('Using default interest rate of 15.0% due to calculation error');
     }
 
-    // Calculate EMI using fallback method
+    // FIXED: Call updated EMI calculation
     let emiResult;
     try {
       console.log('Calculating EMI...');
@@ -921,7 +951,7 @@ This agreement constitutes a legally binding contract between the borrower and t
         termMonths,
         startDate
       );
-      console.log('EMI calculation successful');
+      console.log('EMI calculation successful - Generated', emiResult.installments.length, 'installments');
     } catch (emiError) {
       console.error('EMI calculation error:', emiError);
       throw {
@@ -1008,6 +1038,7 @@ This agreement constitutes a legally binding contract between the borrower and t
       { session }
     );
 
+    // FIXED: Use Decimal128 in installments map
     // SIMPLIFIED: Create RepaymentSchedule
     const repaymentScheduleData = {
       LOAN_ACCOUNT_ID: loanAccount._id,
@@ -1022,7 +1053,7 @@ This agreement constitutes a legally binding contract between the borrower and t
       paymentFrequency: paymentFrequency,
       EMI_AMOUNT: safeDecimal128(emiResult.emi, 'emiResult.emi'),
       installments: emiResult.installments.map((installment, index) => ({
-        installmentNo: installment.installmentNumber || (index + 1),
+        installmentNumber: installment.installmentNumber || (index + 1),
         dueDate: installment.dueDate,
         principal: safeDecimal128(installment.principal, `installment.principal for ${index}`),
         interest: safeDecimal128(installment.interest, `installment.interest for ${index}`),
@@ -1031,7 +1062,8 @@ This agreement constitutes a legally binding contract between the borrower and t
         status: 'PENDING',
         amountPaid: mongoose.Types.Decimal128.fromString('0.00'),
         principalPaid: mongoose.Types.Decimal128.fromString('0.00'),
-        interestPaid: mongoose.Types.Decimal128.fromString('0.00')
+        interestPaid: mongoose.Types.Decimal128.fromString('0.00'),
+        feesPaid: mongoose.Types.Decimal128.fromString('0.00')  // Added for consistency
       })),
       TOTAL_INTEREST: safeDecimal128(emiResult.totalInterest, 'emiResult.totalInterest'),
       TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment, 'emiResult.totalPayment'),
@@ -1043,7 +1075,7 @@ This agreement constitutes a legally binding contract between the borrower and t
 
     const repaymentSchedule = new RepaymentSchedule(repaymentScheduleData);
     await repaymentSchedule.save({ session });
-    console.log('RepaymentSchedule saved with ACCT_NO:', repaymentSchedule.ACCT_NO);
+    console.log('RepaymentSchedule saved with ACCT_NO:', repaymentSchedule.ACCT_NO, '- Installments:', repaymentScheduleData.installments.length);
 
     // SIMPLIFIED: Create CreditApplication
     const creditApplicationData = {
@@ -1157,7 +1189,7 @@ This agreement constitutes a legally binding contract between the borrower and t
         },
         repaymentSchedule: {
           id: repaymentSchedule._id,
-          numberOfInstallments: emiResult.installments.length,
+          numberOfInstallments: emiResult.installments.length,  // Now guaranteed correct
           firstPaymentDate: emiResult.installments[0]?.dueDate,
           lastPaymentDate: emiResult.installments.at(-1)?.dueDate,
           totalInterest: parseFloat(emiResult.totalInterest),
@@ -1200,7 +1232,6 @@ This agreement constitutes a legally binding contract between the borrower and t
     }
   }
 },
-
   // Additional controller methods can be added here
   async getLoanApplication(req, res) {
     try {
@@ -2394,54 +2425,85 @@ async disburseLoan(req, res) {
         };
       }
 
-      // EMI calculation function
+      // FIXED: Updated EMI calculation to always generate full termMonths installments
       const calculateEMI = ({ principal, annualRate, termMonths, startDate }) => {
-        const monthlyRate = (annualRate / 100) / 12;
-        const emi = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths) / 
-                    (Math.pow(1 + monthlyRate, termMonths) - 1);
+        console.log('Calculating EMI...');
         
-        const totalPayment = emi * termMonths;
-        const totalInterest = totalPayment - principal;
+        const monthlyRate = (annualRate / 100) / 12;
+        let emi = principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths) / 
+                  (Math.pow(1 + monthlyRate, termMonths) - 1);
+        emi = Math.round(emi * 100) / 100;  // Round to 2 decimals
+        
+        const totalPayment = Math.round(emi * termMonths * 100) / 100;
+        const totalInterest = Math.round((totalPayment - principal) * 100) / 100;
         
         const installments = [];
-        let balance = principal;
+        let balance = Math.round(principal * 100) / 100;  // Ensure precision
         
         for (let i = 1; i <= termMonths; i++) {
-          const interest = balance * monthlyRate;
-          const principalComponent = emi - interest;
+          let interest = Math.round(balance * monthlyRate * 100) / 100;
+          let principalComponent = Math.round((emi - interest) * 100) / 100;
           
-          if (principalComponent > balance) {
+          let dueDate = new Date(startDate);
+          dueDate.setMonth(dueDate.getMonth() + i);  // JS handles overflow (month 13 → Jan next year)
+          
+          // FIXED: Only adjust on the LAST installment to prevent early termination
+          if (i === termMonths && principalComponent > balance) {
             const finalPrincipal = balance;
-            const finalEMI = finalPrincipal + interest;
+            const finalInterest = interest;
+            const finalEMI = Math.round((finalPrincipal + finalInterest) * 100) / 100;
             balance = 0;
             
             installments.push({
               installmentNumber: i,
-              dueDate: new Date(startDate.getFullYear(), startDate.getMonth() + i, startDate.getDate()),
-              principal: parseFloat(finalPrincipal.toFixed(2)),
-              interest: parseFloat(interest.toFixed(2)),
-              totalPayment: parseFloat(finalEMI.toFixed(2)),
+              dueDate: dueDate,
+              principal: Math.round(finalPrincipal * 100) / 100,
+              interest: finalInterest,
+              totalPayment: finalEMI,
               remainingBalance: 0
             });
-            break;
+          } else {
+            // Normal installment
+            if (principalComponent > balance) {
+              principalComponent = balance;  // Cap without breaking loop
+            }
+            balance = Math.round((balance - principalComponent) * 100) / 100;
+            if (balance < 0) balance = 0;  // Prevent negative
+            
+            installments.push({
+              installmentNumber: i,
+              dueDate: dueDate,
+              principal: principalComponent,
+              interest: interest,
+              totalPayment: emi,
+              remainingBalance: balance
+            });
           }
-          
-          balance -= principalComponent;
-          
-          installments.push({
-            installmentNumber: i,
-            dueDate: new Date(startDate.getFullYear(), startDate.getMonth() + i, startDate.getDate()),
-            principal: parseFloat(principalComponent.toFixed(2)),
-            interest: parseFloat(interest.toFixed(2)),
-            totalPayment: parseFloat(emi.toFixed(2)),
-            remainingBalance: parseFloat(balance.toFixed(2))
-          });
         }
         
+        // FIXED: Ensure exactly termMonths installments (pad/adjust if needed, but loop guarantees)
+        if (installments.length !== termMonths) {
+          console.warn(`EMI calc produced ${installments.length} installments for termMonths=${termMonths}; adjusting.`);
+          // This shouldn't happen with the fix, but safeguard
+          while (installments.length < termMonths) {
+            const last = installments[installments.length - 1];
+            installments.push({
+              installmentNumber: installments.length + 1,
+              dueDate: new Date(last.dueDate),
+              principal: 0,
+              interest: 0,
+              totalPayment: 0,
+              remainingBalance: 0
+            });
+          }
+        }
+        
+        console.log(`Generated ${installments.length} installments for ${termMonths} months.`);
+        
         return {
-          emi: parseFloat(emi.toFixed(2)),
-          totalPayment: parseFloat(totalPayment.toFixed(2)),
-          totalInterest: parseFloat(totalInterest.toFixed(2)),
+          emi: emi,
+          totalPayment: totalPayment,
+          totalInterest: totalInterest,
           installments
         };
       };
@@ -2608,6 +2670,7 @@ async disburseLoan(req, res) {
         { session }
       );
 
+      // FIXED: Use Decimal128 in installments map
       // Create RepaymentSchedule
       const repaymentSchedule = new RepaymentSchedule({
         LOAN_ACCOUNT_ID: loanAccount._id,
@@ -2622,7 +2685,7 @@ async disburseLoan(req, res) {
         paymentFrequency: 'MONTHLY',
         EMI_AMOUNT: safeDecimal128(emiResult.emi.toFixed(2)),
         installments: emiResult.installments.map((installment, index) => ({
-          installmentNo: installment.installmentNumber || (index + 1),
+          installmentNumber: installment.installmentNumber || (index + 1),
           dueDate: installment.dueDate,
           principal: safeDecimal128(installment.principal.toFixed(2)),
           interest: safeDecimal128(installment.interest.toFixed(2)),
@@ -2631,7 +2694,8 @@ async disburseLoan(req, res) {
           status: 'PENDING',
           amountPaid: safeDecimal128('0.00'),
           principalPaid: safeDecimal128('0.00'),
-          interestPaid: safeDecimal128('0.00')
+          interestPaid: safeDecimal128('0.00'),
+          feesPaid: safeDecimal128('0.00')  // Added for consistency
         })),
         TOTAL_INTEREST: totalInterest,
         TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment.toFixed(2)),
@@ -2642,6 +2706,7 @@ async disburseLoan(req, res) {
       });
 
       await repaymentSchedule.save({ session });
+      console.log('RepaymentSchedule saved with', emiResult.installments.length, 'installments');
 
       transactionCompleted = true;
 
@@ -3488,14 +3553,14 @@ async repayLoan(req, res) {
   try {
     await session.startTransaction();
 
-    const { ACCT_NO, REPAYMENT_AMOUNT, LOAN_ACCOUNT_ID, REPAYMENT_DATE = new Date() } = req.body;
+    const { ACCT_NO, REPAYMENT_AMOUNT, LOAN_ACCOUNT_ID, REPAYMENT_DATE = new Date(), IS_LEGACY_LOAN = false } = req.body;
 
     if (!req.user || !req.user.id) {
       throw new Error('Unauthorized: User not found');
     }
 
     // Validate input
-    const requiredFields = ['ACCT_NO', 'REPAYMENT_AMOUNT', 'LOAN_ACCOUNT_ID'];
+    const requiredFields = ['ACCT_NO', 'REPAYMENT_AMOUNT'];
     const missingFields = requiredFields.filter(field => !req.body[field]);
     if (missingFields.length > 0) {
       throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
@@ -3510,40 +3575,113 @@ async repayLoan(req, res) {
       throw new Error('Invalid repayment date format');
     }
 
-    // Fetch required documents
-    const [loanAccount, loanProduct, customerAccount] = await Promise.all([
-      LoanAccount.findOne({ ACCT_NO, _id: LOAN_ACCOUNT_ID }).session(session),
-      LoanProduct.findOne({ PROD_ID: loanAccount?.PROD_ID }).session(session),
-      CustomerAccount.findOne({ ACCT_NO }).session(session),
-    ]);
-
+    // Find loan account by ACCT_NO
+    const loanAccount = await LoanAccount.findOne({ ACCT_NO }).session(session);
     if (!loanAccount) {
-      throw new Error('Loan account not found');
+      throw new Error(`Loan account not found for ACCT_NO: ${ACCT_NO}`);
     }
+
+    // FIXED: Use the mapped repayment source account from loan
+    const sourceAccountNo = loanAccount.REPAYMENT_SOURCE_ACCOUNT;
+    if (!sourceAccountNo) {
+      throw new Error('No repayment source account mapped to this loan');
+    }
+
+    console.log('DEBUG - Looking for source account:', sourceAccountNo);
+    console.log('DEBUG - Loan CUST_ID:', loanAccount.CUST_ID);
+
+    // FIXED: Handle both ACCT_NO and account_number fields in CustomerAccount
+    let customerAccount = await CustomerAccount.findOne({ 
+      $or: [
+        { ACCT_NO: sourceAccountNo },           // Try ACCT_NO field
+        { account_number: sourceAccountNo }     // Try account_number field
+      ]
+    }).session(session);
+
+    // If still not found, try to find any account for this customer
+    if (!customerAccount) {
+      customerAccount = await CustomerAccount.findOne({ 
+        CUST_ID: loanAccount.CUST_ID 
+      }).session(session);
+      
+      if (customerAccount) {
+        console.log('DEBUG - Found alternative account for customer:', {
+          ACCT_NO: customerAccount.ACCT_NO,
+          account_number: customerAccount.account_number,
+          CUST_ID: customerAccount.CUST_ID
+        });
+      }
+    }
+
+    if (!customerAccount) {
+      // Log all available accounts for debugging
+      const allAccounts = await CustomerAccount.find({}).limit(5).session(session);
+      console.log('DEBUG - Sample accounts in database:', allAccounts.map(acc => ({
+        _id: acc._id,
+        ACCT_NO: acc.ACCT_NO,
+        account_number: acc.account_number,
+        CUST_ID: acc.CUST_ID,
+        ACCT_NM: acc.ACCT_NM
+      })));
+      
+      throw new Error(`Repayment source account ${sourceAccountNo} not found. Available fields in CustomerAccount: ACCT_NO, account_number`);
+    }
+
+    console.log('DEBUG - Found customer account:', {
+      _id: customerAccount._id,
+      ACCT_NO: customerAccount.ACCT_NO,
+      account_number: customerAccount.account_number,
+      CUST_ID: customerAccount.CUST_ID,
+      ACCT_NM: customerAccount.ACCT_NM,
+      LEDGER_BAL: customerAccount.LEDGER_BAL,
+      AVAILABLE_BALANCE: customerAccount.AVAILABLE_BALANCE
+    });
+
+    // Determine which account number field to use for transactions
+    const actualAccountNo = customerAccount.ACCT_NO || customerAccount.account_number;
+    if (!actualAccountNo) {
+      throw new Error('Customer account has no valid account number (ACCT_NO or account_number)');
+    }
+
+    // Fetch loan product
+    const loanProduct = await LoanProduct.findOne({ PROD_ID: loanAccount.PROD_ID }).session(session);
     if (!loanProduct || !loanProduct.loanGLAccount) {
       throw new Error('Loan GL account not configured');
     }
-    if (!customerAccount) {
-      throw new Error('Customer account not found');
+
+    // Check if customer account has sufficient balance
+    const customerBalance = parseFloat(
+      customerAccount.AVAILABLE_BALANCE?.toString() || 
+      customerAccount.LEDGER_BAL?.toString() || 
+      customerAccount.BALANCE?.toString() || 
+      '0'
+    );
+    
+    if (customerBalance < REPAYMENT_AMOUNT) {
+      throw new Error(`Insufficient balance in source account. Available: ${customerBalance.toFixed(2)}, Required: ${REPAYMENT_AMOUNT}`);
     }
 
-    // Check if loan is active
-    if (loanAccount.LOAN_STATUS !== 'ACTIVE') {
-      throw new Error('Loan is not active for repayment');
+    // Check if loan is eligible for repayment
+    const eligibleStatuses = ['ACTIVE', 'active', 'DISBURSED', 'disbursed'];
+    if (!eligibleStatuses.includes(loanAccount.LOAN_STATUS)) {
+      throw new Error(`Loan is not active for repayment. Current status: ${loanAccount.LOAN_STATUS}`);
     }
 
-    // Calculate outstanding interest and principal
-    const outstandingPrincipal = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL?.toString() || loanAccount.DISBURSEMENT_LIMIT.toString());
-    const outstandingInterest = parseFloat(loanAccount.TOTAL_INTEREST?.toString() || 0) - parseFloat(loanAccount.TOTAL_REPAID_INTEREST?.toString() || 0);
-    const totalOutstanding = outstandingPrincipal + outstandingInterest;
+    // Calculate outstanding amounts
+    let outstandingPrincipal = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL?.toString() || '0');
+    let outstandingInterest = parseFloat(loanAccount.TOTAL_INTEREST?.toString() || '0') - 
+                             parseFloat(loanAccount.interestPaid?.toString() || '0');
+    
+    const totalOutstanding = outstandingPrincipal + Math.max(0, outstandingInterest);
 
     if (REPAYMENT_AMOUNT > totalOutstanding) {
-      throw new Error(`Repayment amount (${REPAYMENT_AMOUNT}) exceeds outstanding balance (${totalOutstanding})`);
+      throw new Error(`Repayment amount (${REPAYMENT_AMOUNT}) exceeds outstanding balance (${totalOutstanding.toFixed(2)})`);
     }
 
     // Allocate repayment to interest and principal
     let interestPaid = 0;
     let principalPaid = 0;
+    
     if (outstandingInterest > 0) {
       interestPaid = Math.min(REPAYMENT_AMOUNT, outstandingInterest);
       principalPaid = REPAYMENT_AMOUNT - interestPaid;
@@ -3553,50 +3691,23 @@ async repayLoan(req, res) {
 
     // Create LoanRepayment record
     const loanRepayment = new LoanRepayment({
-      ACCT_NO,
+      ACCT_NO: loanAccount.ACCT_NO,
+      LOAN_ACCOUNT_ID: loanAccount._id,
       amount: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
       date: repaymentDate,
       CUST_ID: loanAccount.CUST_ID,
+      interestPaid: mongoose.Types.Decimal128.fromString(interestPaid.toFixed(2)),
+      principalPaid: mongoose.Types.Decimal128.fromString(principalPaid.toFixed(2)),
       REPAYMENT_HISTORY: [{
         amount: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
-        date: repaymentDate
-      }]
+        date: repaymentDate,
+        interestPaid: mongoose.Types.Decimal128.fromString(interestPaid.toFixed(2)),
+        principalPaid: mongoose.Types.Decimal128.fromString(principalPaid.toFixed(2))
+      }],
+      isLegacyLoan: IS_LEGACY_LOAN,
+      processedBy: req.user.id,
+      sourceAccount: actualAccountNo
     });
-
-    // Update RepaymentSchedule
-    const repaymentSchedules = await RepaymentSchedule.find({
-      LOAN_ACCOUNT_ID: loanAccount._id,
-      status: 'PENDING'
-    }).sort({ dueDate: 1 }).session(session);
-
-    let remainingRepayment = REPAYMENT_AMOUNT;
-    for (const schedule of repaymentSchedules) {
-      if (remainingRepayment <= 0) break;
-
-      const scheduleTotal = parseFloat(schedule.totalPayment.toString());
-      const scheduleInterest = parseFloat(schedule.interest.toString());
-      const schedulePrincipal = parseFloat(schedule.principal.toString());
-
-      let interestToPay = Math.min(remainingRepayment, scheduleInterest);
-      let principalToPay = Math.min(remainingRepayment - interestToPay, schedulePrincipal);
-
-      if (interestToPay + principalToPay > 0) {
-        await RepaymentSchedule.updateOne(
-          { _id: schedule._id },
-          {
-            $set: {
-              interest: mongoose.Types.Decimal128.fromString((scheduleInterest - interestToPay).toFixed(2)),
-              principal: mongoose.Types.Decimal128.fromString((schedulePrincipal - principalToPay).toFixed(2)),
-              totalPayment: mongoose.Types.Decimal128.fromString((scheduleTotal - (interestToPay + principalToPay)).toFixed(2)),
-              status: interestToPay + principalToPay >= scheduleTotal ? 'PAID' : 'PARTIAL'
-            }
-          },
-          { session }
-        );
-
-        remainingRepayment -= (interestToPay + principalToPay);
-      }
-    }
 
     // Generate transaction IDs
     const TRANSACTION_IDS = generateTransactionIds();
@@ -3612,57 +3723,85 @@ async repayLoan(req, res) {
       ACCT_NM: loanAccount.ACCT_NM,
       CUST_ID: loanAccount.CUST_ID,
       BU_ID: loanAccount.BU_ID || 'DEFAULT_BU',
-      FROM_ACCT_NO: ACCT_NO, // Debit Customer Account
-      TO_ACCT_NO: loanProduct.loanGLAccount, // Credit Loan GL
+      FROM_ACCT_NO: actualAccountNo, // Use the actual account number found
+      TO_ACCT_NO: loanProduct.loanGLAccount,
       AMOUNT: mongoose.Types.Decimal128.fromString(REPAYMENT_AMOUNT.toFixed(2)),
       CRNCY_ID: 'NGN',
       TRANSACTION_TYPE: 'LOAN_REPAYMENT',
-      TRANSACTION_DESC: `Loan repayment for ${loanAccount.ACCT_NM} (Interest: ${interestPaid}, Principal: ${principalPaid})`,
+      TRANSACTION_DESC: `Loan repayment for ${loanAccount.ACCT_NM} (Interest: ${interestPaid.toFixed(2)}, Principal: ${principalPaid.toFixed(2)})`,
       STATUS: 'COMPLETED',
       VALUE_DATE: repaymentDate,
       createdBy: req.user.id,
       metadata: {
-        loanAccountNo: ACCT_NO,
+        loanAccountNo: loanAccount.ACCT_NO,
         productType: loanAccount.PRODUCT_TYPE,
         interestPaid,
-        principalPaid
+        principalPaid,
+        isLegacyLoan: IS_LEGACY_LOAN,
+        sourceAccount: actualAccountNo,
+        sourceAccountField: customerAccount.ACCT_NO ? 'ACCT_NO' : 'account_number'
       }
     });
 
-    // Update CustomerAccount (Debit)
+    // Update CustomerAccount (Debit) - handle both field structures
+    const updateQuery = {
+      $inc: {}
+    };
+
+    // Try different balance field names
+    if (customerAccount.AVAILABLE_BALANCE !== undefined) {
+      updateQuery.$inc.AVAILABLE_BALANCE = -REPAYMENT_AMOUNT;
+    }
+    if (customerAccount.LEDGER_BAL !== undefined) {
+      updateQuery.$inc.LEDGER_BAL = -REPAYMENT_AMOUNT;
+    }
+    if (customerAccount.BALANCE !== undefined) {
+      updateQuery.$inc.BALANCE = -REPAYMENT_AMOUNT;
+    }
+
+    // Use the correct identifier field for the update
+    const accountIdentifier = customerAccount.ACCT_NO ? { ACCT_NO: actualAccountNo } : { account_number: actualAccountNo };
+
     await CustomerAccount.updateOne(
-      { ACCT_NO },
-      { $inc: { BALANCE: -REPAYMENT_AMOUNT } },
+      accountIdentifier,
+      updateQuery,
       { session }
     );
 
     // Update GLAccount for Loan GL (Credit)
     await GLAccount.updateOne(
       { GL_ACCT_NO: loanProduct.loanGLAccount },
-      { $inc: { BALANCE: -REPAYMENT_AMOUNT } }, // Credit decreases balance
+      { $inc: { BALANCE: -REPAYMENT_AMOUNT } },
       { session }
     );
 
     // Update LoanAccount
-    await LoanAccount.updateOne(
-      { ACCT_NO },
-      {
-        $inc: {
-          TOTAL_REPAID_AMOUNT: REPAYMENT_AMOUNT,
-          OUTSTANDING_PRINCIPAL: -principalPaid,
-          TOTAL_REPAID_INTEREST: interestPaid || 0
-        },
-        $set: {
-          LOAN_STATUS: outstandingPrincipal - principalPaid <= 0 ? 'PAID' : 'ACTIVE'
-        }
+    const updateFields = {
+      $inc: {
+        TOTAL_REPAID_AMOUNT: REPAYMENT_AMOUNT,
+        OUTSTANDING_PRINCIPAL: -principalPaid,
+        interestPaid: interestPaid
       },
+      $set: {
+        lastRepaymentDate: repaymentDate
+      }
+    };
+
+    // Check if loan is fully paid
+    const newOutstandingPrincipal = outstandingPrincipal - principalPaid;
+    if (newOutstandingPrincipal <= 0.01) {
+      updateFields.$set.LOAN_STATUS = 'PAID';
+      updateFields.$set.repaidAt = new Date();
+    }
+
+    await LoanAccount.updateOne(
+      { _id: loanAccount._id },
+      updateFields,
       { session }
     );
 
-    // Save LoanRepayment record
+    // Save all records
     await loanRepayment.save({ session });
-
-    // Save transaction
     await repaymentTx.save({ session });
 
     await session.commitTransaction();
@@ -3674,21 +3813,28 @@ async repayLoan(req, res) {
       data: {
         transactionId: TRANSACTION_IDS.TRANSACTION_ID,
         repaymentAmount: REPAYMENT_AMOUNT,
-        interestPaid,
-        principalPaid,
-        loanAccountNo: ACCT_NO,
-        repaymentId: loanRepayment._id
+        interestPaid: parseFloat(interestPaid.toFixed(2)),
+        principalPaid: parseFloat(principalPaid.toFixed(2)),
+        loanAccountNo: loanAccount.ACCT_NO,
+        sourceAccount: actualAccountNo,
+        repaymentId: loanRepayment._id,
+        outstandingPrincipal: parseFloat(newOutstandingPrincipal.toFixed(2)),
+        outstandingInterest: parseFloat(Math.max(0, outstandingInterest - interestPaid).toFixed(2)),
+        isLegacyLoan: IS_LEGACY_LOAN
       }
     });
+
   } catch (error) {
     if (session.inTransaction() && !transactionCompleted) {
       await session.abortTransaction();
     }
+    
     console.error('Loan repayment error:', error);
     return res.status(error.status || 500).json({
       success: false,
       message: error.message || 'Failed to process loan repayment',
-      code: error.code || 'INTERNAL_SERVER_ERROR'
+      code: error.code || 'INTERNAL_SERVER_ERROR',
+      isLegacyLoan: req.body.IS_LEGACY_LOAN || false
     });
   } finally {
     session.endSession();

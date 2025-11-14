@@ -1,4 +1,4 @@
-// routes/groupSavingsRoutes.js
+// routes/groupSavingsRoutes.js - Updated
 import express from 'express';
 import {
   createGroupSavings,
@@ -6,31 +6,44 @@ import {
   requestWithdrawal,
   processWithdrawalApproval,
   disburseWithdrawal,
- getGroupSavingsByGroupCode,
+  getGroupSavingsByGroupCode,
   addBulkContributionsWithIndividualTransactions,
   getGroupContributions,
-  getGroupSavings
+  getGroupSavings,
+  getAccountByNumber,
+  getGroupSavingsById,
+  getGroupSavingsByAccountNumber,
+  updateGroupSavings,
+  getGroupSavingsByGroup,
+  syncGroupSavingsBalance
 } from '../controllers/GroupSavingsController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-// 🧩 Group Savings Management Routes
-router.post('/create', authenticate, createGroupSavings); // Create new Group Savings
-router.post('/contributions/add', authenticate, addContribution); // Add single contribution
-router.post('/contributions/bulk-detailed', authenticate, addBulkContributionsWithIndividualTransactions); // Bulk contributions with individual transactions
-router.get('/contributions/:accountNumber/history', authenticate, getGroupContributions); // Get contribution history for account
+// 🏦 GROUP SAVINGS ACCOUNT MANAGEMENT ROUTES
+router.post('/create', authenticate, createGroupSavings);
+router.get('/account/:accountNumber', authenticate, getAccountByNumber);
+router.get('/id/:groupSavingsId', authenticate, getGroupSavingsById);
+router.get('/account-number/:accountNumber/details', authenticate, getGroupSavingsByAccountNumber);
+router.put('/:groupSavingsId/update', authenticate, updateGroupSavings);
 
-// 💳 Withdrawal Management Routes
-router.post('/:groupSavingsId/withdrawals/request', authenticate, requestWithdrawal); // Request withdrawal
-router.put('/withdrawals/:withdrawalRequestId/approve', authenticate, processWithdrawalApproval); // Approve withdrawal request
-router.put('/withdrawals/:withdrawalRequestId/disburse', authenticate, disburseWithdrawal); // Disburse withdrawal
+// Group-based queries
+router.get('/group/:groupCode/all', authenticate, getGroupSavingsByGroup);
+router.get('/:groupCode/savings', authenticate, getGroupSavingsByGroupCode);
+router.get('/:groupCode/member-savings', authenticate, getGroupSavings);
 
-// 📊 Get Group Savings
-router.get('/:groupCode/savings', authenticate, getGroupSavingsByGroupCode); // FIXED: Route for getGroupSavings by groupCode
+// 💰 CONTRIBUTION MANAGEMENT ROUTES
+router.post('/contributions/add', authenticate, addContribution);
+router.post('/contributions/bulk-detailed', authenticate, addBulkContributionsWithIndividualTransactions);
+router.get('/contributions/:accountNumber/history', authenticate, getGroupContributions);
 
-router.get('/:groupCode/savings', authenticate, getGroupSavings); // FIXED: Route for getGroupSavings by groupCode
+// 💳 WITHDRAWAL MANAGEMENT ROUTES
+router.post('/withdrawals/request/:accountNumber', authenticate, requestWithdrawal);
+router.put('/withdrawals/:withdrawalRequestId/approve', authenticate, processWithdrawalApproval);
+router.put('/withdrawals/:withdrawalRequestId/disburse', authenticate, disburseWithdrawal);
 
-
+// 🔄 SYNC ROUTES
+router.post('/:groupSavingsId/sync-balance', authenticate, syncGroupSavingsBalance);
 
 export default router;

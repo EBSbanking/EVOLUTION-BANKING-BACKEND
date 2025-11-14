@@ -62,11 +62,14 @@ const validateNextOfKin = (nextOfKinArray) => {
 };
 
 // ===== Controller =====
+// ===== Controller =====
 export const createCustomer = async (req, res) => {
   const session = await Customer.startSession();
-  session.startTransaction();
+  let transactionCompleted = false; // ✅ Add transaction flag
 
   try {
+    await session.startTransaction();
+
     const {
       CUST_ID,
       CUST_NO,
@@ -123,19 +126,27 @@ export const createCustomer = async (req, res) => {
 
     // ===== Basic Validation =====
     if (!HOME_ADDRESS || !BU_ID) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: 'HOME_ADDRESS and BU_ID are required.' });
     }
 
     if (NIN && !/^\d{11}$/.test(NIN)) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: 'NIN must be exactly 11 digits.' });
     }
     if (BVN && !/^\d{11}$/.test(BVN)) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: 'BVN must be exactly 11 digits.' });
     }
 
     // ✅ Validation for Next of Kin (matches model fields: NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY)
     const nokValidationError = validateNextOfKin(nextOfKin);
     if (nokValidationError) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: nokValidationError });
     }
 
@@ -144,8 +155,11 @@ export const createCustomer = async (req, res) => {
         { CUST_NO: CUST_NO || '' },
         { EMAIL_ADDRESS: EMAIL_ADDRESS || '' }
       ]
-    });
+    }).session(session);
+    
     if (existingCustomer) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ message: 'Customer with this CUST_NO or EMAIL_ADDRESS already exists' });
     }
 
@@ -317,39 +331,48 @@ export const createCustomer = async (req, res) => {
       }
     }
 
-    // ===== Workflow Submission for Customer =====
-    const customerWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
-      body: {
-        ITEM_VALUE: finalCUST_NO,
-        ITEM_DESC: `Customer Account Application for ${fullName}`,
-        ITEM_CLASS_NM: 'Customer',
-        ITEM_TYPE: 'Customer',
-        ITEM_ID: newCustomer._id,
-        CUST_ID: finalCUST_ID,
-        USER_ID: userId,
-        BU_ID,
-        HOME_ADDRESS,
-        TARGET_USER_ROLE_ID: 'Manager',
-        ORIGINATOR_USER_ROLE_ID: 'Originator',
-        CREATE_DT: new Date(),
-        REC_ST: 'Pending',
-        WAIT_ST: 'Pending',
-        VERSION: 1,
-        ITEM_BU_ID: BU_ID
-      }
-    });
-
-    if (!customerWorkflowResponse.success) {
-      throw new Error('Failed to create customer workflow item');
-    }
-
-    const customerWorkItemId = customerWorkflowResponse.data.WORK_ITEM_ID;
-
+    // ✅ COMMIT TRANSACTION FIRST
     await session.commitTransaction();
+    transactionCompleted = true; // ✅ Mark transaction as completed
     session.endSession();
 
+    // ✅ THEN SUBMIT CUSTOMER WORKFLOW (outside transaction)
+    let customerWorkItemId = null;
+    try {
+      const customerWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
+        body: {
+          ITEM_VALUE: finalCUST_NO,
+          ITEM_DESC: `Customer Account Application for ${fullName}`,
+          ITEM_CLASS_NM: 'Customer',
+          ITEM_TYPE: 'Customer',
+          ITEM_ID: newCustomer._id,
+          CUST_ID: finalCUST_ID,
+          USER_ID: userId,
+          BU_ID,
+          HOME_ADDRESS,
+          TARGET_USER_ROLE_ID: 'Manager',
+          ORIGINATOR_USER_ROLE_ID: 'Originator',
+          CREATE_DT: new Date(),
+          REC_ST: 'Pending',
+          WAIT_ST: 'Pending',
+          VERSION: 1,
+          ITEM_BU_ID: BU_ID
+        }
+      });
+
+      if (customerWorkflowResponse.success) {
+        customerWorkItemId = customerWorkflowResponse.data.WORK_ITEM_ID;
+      } else {
+        customerWorkItemId = 'Workflow creation failed';
+        console.warn('Customer workflow creation failed:', customerWorkflowResponse.message);
+      }
+    } catch (workflowError) {
+      customerWorkItemId = 'Workflow error: ' + workflowError.message;
+      console.warn('Customer workflow submission failed:', workflowError.message);
+    }
+
     return res.status(201).json({
-      message: `Customer ${fullName} created successfully${IS_PEP ? ' with AML profile' : ''}${nextOfKin && nextOfKin.length > 0 ? ` with ${nextOfKin.length} next of kin` : ''}. Workflow item ID: ${customerWorkItemId}${amlWorkItemId ? `, AML Workflow item ID: ${amlWorkItemId}` : ''}.`,
+      message: `Customer ${fullName} created successfully${IS_PEP ? ' with AML profile' : ''}${nextOfKin && nextOfKin.length > 0 ? ` with ${nextOfKin.length} next of kin` : ''}.${customerWorkItemId ? ` Workflow item ID: ${customerWorkItemId}` : ''}${amlWorkItemId ? `, AML Workflow item ID: ${amlWorkItemId}` : ''}.`,
       customerInfo: {
         CUST_ID: finalCUST_ID,
         CUST_NO: finalCUST_NO,
@@ -360,10 +383,19 @@ export const createCustomer = async (req, res) => {
       }
     });
 
- } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+  } catch (error) {
+    // ✅ ONLY ABORT IF TRANSACTION WASN'T COMPLETED
+    if (session.inTransaction() && !transactionCompleted) {
+      await session.abortTransaction();
+    }
+    
+    // ✅ ALWAYS END SESSION
+    if (!session.hasEnded) {
+      session.endSession();
+    }
+    
     console.error('❌ Create Customer Error:', error);
+    
     // Audit failure (non-blocking)
     auditLogger.error('Audit Event', {
       entity_type: 'CUSTOMER_CREATE',
@@ -377,6 +409,7 @@ export const createCustomer = async (req, res) => {
       outcome: 'failure',
       error: error.message
     });
+    
     return res.status(500).json({
       message: 'Failed to create customer',
       error: error.message
@@ -468,8 +501,8 @@ export const approveCustomer = async (req, res) => {
 
     // --- Extract customerId from BOTH URL params and request body ---
     const CUSTOMER_ID = String(
-      req.params.customerId ||  // From URL: /approve/0000000109
-      req.body.customerId ||    // From body: { "customerId": "0000000109" }
+      req.params.customerId ||  
+      req.body.customerId ||    
       ''
     ).trim();
 
@@ -524,32 +557,67 @@ export const approveCustomer = async (req, res) => {
       nextOfKinCount: customer.nextOfKin ? customer.nextOfKin.length : 0
     });
 
-    // --- Check current status ---
+    // --- IMPROVED: Check current status ---
     if (customer.REC_ST === 'Active') {
-      console.log('❌ Customer already Active');
-      return res.status(400).json({
-        success: false,
+      console.log('ℹ️ Customer already Active - returning success');
+      
+      // Update workflow if still pending
+      try {
+        await WF_WORK_ITEM.findOneAndUpdate(
+          {
+            ITEM_CLASS_NM: 'Customer',
+            ITEM_VALUE: paddedCustomerId,
+            REC_ST: 'Pending'
+          },
+          {
+            REC_ST: 'Completed',
+            WAIT_ST: 'Approved',
+            APPROVED_BY: APPROVED_BY,
+            APPROVED_DT: new Date(),
+            COMPLETED_DT: new Date(),
+            ACTION_TAKEN: 'Approved',
+            UPDATED_AT: new Date(),
+            UPDATED_BY: APPROVED_BY
+          }
+        );
+        console.log('✅ Workflow updated for already Active customer');
+      } catch (wfError) {
+        console.warn('⚠ Workflow update failed:', wfError.message);
+      }
+
+      return res.status(200).json({
+        success: true,
         message: 'Customer is already Active',
-        currentStatus: customer.REC_ST
+        currentStatus: customer.REC_ST,
+        data: {
+          CUST_ID: customer.CUST_ID,
+          CUST_NO: customer.CUST_NO,
+          CUST_NM: customer.CUST_NM,
+          status: customer.REC_ST,
+          approvedBy: customer.approved_by || APPROVED_BY
+        }
       });
     }
 
-    if (customer.REC_ST !== 'Pending') {
-      console.log('❌ Customer not in Pending state:', customer.REC_ST);
+    // Allow approval from other valid initial states if needed
+    const allowedInitialStates = ['Pending', 'In Review', 'Draft'];
+    if (!allowedInitialStates.includes(customer.REC_ST)) {
+      console.log('❌ Customer not in approvable state:', customer.REC_ST);
       return res.status(400).json({
         success: false,
         message: `Customer cannot be approved from current status: ${customer.REC_ST}`,
-        currentStatus: customer.REC_ST
+        currentStatus: customer.REC_ST,
+        allowedStates: allowedInitialStates
       });
     }
 
     // --- APPROVE THE CUSTOMER ---
-    console.log('✅ Approving customer from Pending to Active');
+    console.log('✅ Approving customer from', customer.REC_ST, 'to Active');
     
     const updateResult = await Customer.findOneAndUpdate(
       { 
         CUST_ID: paddedCustomerId,
-        REC_ST: 'Pending'
+        REC_ST: customer.REC_ST // Use current status for atomic update
       },
       {
         $set: {
@@ -584,7 +652,7 @@ export const approveCustomer = async (req, res) => {
         {
           ITEM_CLASS_NM: 'Customer',
           ITEM_VALUE: paddedCustomerId,
-          REC_ST: 'Pending'
+          REC_ST: { $in: ['Pending', 'In Review'] } // Multiple possible workflow states
         },
         {
           REC_ST: 'Completed',
@@ -604,13 +672,13 @@ export const approveCustomer = async (req, res) => {
 
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
 
-    // --- Audit trail via hybrid logger ---
+    // --- Audit trail ---
     auditLogger.info('Audit Event', {
       entity_type: 'CUSTOMER_APPROVE',
       entity_id: customer._id,
       user_id: APPROVED_BY,
-      action: `Customer ${paddedCustomerId} approved by ${APPROVED_BY}. Status changed from Pending to Active`,
-      old_value: 'Pending',
+      action: `Customer ${paddedCustomerId} approved by ${APPROVED_BY}. Status changed from ${customer.REC_ST} to Active`,
+      old_value: customer.REC_ST,
       new_value: 'Active',
       ip_address: ipAddress,
       event_type: 'CUSTOMER_APPROVE',
@@ -625,7 +693,7 @@ export const approveCustomer = async (req, res) => {
         CUST_ID: updateResult.CUST_ID,
         CUST_NO: updateResult.CUST_NO,
         CUST_NM: updateResult.CUST_NM,
-        previousStatus: 'Pending',
+        previousStatus: customer.REC_ST,
         newStatus: 'Active',
         approvedBy: APPROVED_BY,
         approvedAt: updateResult.approved_at,
@@ -635,7 +703,6 @@ export const approveCustomer = async (req, res) => {
 
   } catch (error) {
     console.error('❌ APPROVAL ERROR:', error);
-    // Audit failure (non-blocking)
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     auditLogger.error('Audit Event', {
       entity_type: 'CUSTOMER_APPROVE',
@@ -948,35 +1015,56 @@ export const getCustomerById = async (req, res) => {
       return res.status(400).json({ message: 'CUST_ID parameter is required' });
     }
 
-    // Clean the CUST_ID - remove leading zeros
-    const cleanCustId = CUST_ID.toString().replace(/^0+/, '');
-
-    const customer = await Customer.findOne({ CUST_ID: cleanCustId }).populate('nextOfKin');
+    // Convert to string and remove any accidental whitespace
+    const custIdString = CUST_ID.toString().trim();
+    
+    // Generate both formats for searching
+    const originalCustId = custIdString;
+    const cleanCustId = custIdString.replace(/^0+/, ''); // Remove leading zeros
+    
+    // Search for customer in BOTH formats
+    const customer = await Customer.findOne({
+      $or: [
+        { CUST_ID: originalCustId },    // Try with original format (with leading zeros)
+        { CUST_ID: cleanCustId }        // Try without leading zeros
+      ]
+    }).populate('nextOfKin');
 
     if (!customer) {
       // Self-audit not-found
       auditLogger.info('Audit Event', {
         entity_type: 'customer_query',
-        entity_id: cleanCustId,
+        entity_id: originalCustId,
         user_id: userId,
         action: 'get_customer_by_id',
         old_value: null,
-        new_value: { status: 'not_found' },
+        new_value: { 
+          status: 'not_found',
+          searched_formats: [originalCustId, cleanCustId]
+        },
         ip_address: ipAddress,
         event_type: 'QUERY_NOT_FOUND',
         outcome: 'failure'
       });
-      return res.status(404).json({ message: `Customer with CUST_ID ${CUST_ID} not found` });
+      return res.status(404).json({ 
+        message: `Customer with CUST_ID ${originalCustId} not found`,
+        searched_formats: [originalCustId, cleanCustId]
+      });
     }
 
-    // Self-audit success
+    // Self-audit success - log which format was found
+    const foundWithFormat = customer.CUST_ID === originalCustId ? 'original' : 'clean';
     auditLogger.info('Audit Event', {
       entity_type: 'customer_query',
-      entity_id: cleanCustId,
+      entity_id: originalCustId,
       user_id: userId,
       action: 'get_customer_by_id',
       old_value: null,
-      new_value: { event_id: customer.event_id },
+      new_value: { 
+        event_id: customer.event_id,
+        found_cust_id: customer.CUST_ID,
+        matched_format: foundWithFormat
+      },
       ip_address: ipAddress,
       event_type: 'QUERY_SUCCESS',
       outcome: 'success'
@@ -984,7 +1072,8 @@ export const getCustomerById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: customer
+      data: customer,
+      matched_format: foundWithFormat // Optional: for debugging
     });
   } catch (error) {
     console.error('Error fetching customer:', error);
@@ -1007,6 +1096,7 @@ export const getCustomerById = async (req, res) => {
     });
   }
 };
+
 // Example: CustomerController.js
 export const getPendingCustomers = async (req, res) => {
   try {

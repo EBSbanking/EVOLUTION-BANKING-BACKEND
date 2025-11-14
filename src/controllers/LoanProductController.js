@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import Product from '../models/SavingsProducts.js';
+import Product from '../models/SavingsProduct.js';
 import LoanProduct from '../models/LoanProduct.js';
 import SavingsProduct from '../models/SavingsProduct.js';
 import ProductTypeMapping from '../models/ProductTypeMapping.js';

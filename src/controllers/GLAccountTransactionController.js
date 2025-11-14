@@ -1,921 +1,205 @@
 import mongoose from 'mongoose';
-import Ledger from '../models/Ledger.js';
-import GLAccountTransaction from '../models/GLAccountTransaction.js';
-import GLAccount from '../models/GLAccount.js';
-import GLTransactionQueue from '../models/GLTransactionQueue.js';
-import Reconciliation from '../models/Reconciliation.js'; // Added Reconciliation import
-import Branch from '../models/Branch.js'; // Added Branch import for validation
-import auditLogger from '../utils/AuditLogger.js';  // Fixed: Default import for hybrid logger
-import { queueGLTransaction } from '../utils/GLQueueUtils.js';
-import { createRootSubfolder } from '../utils/subfolderUtils.js';
+import { logger } from '../utils/logger.js';
+import { addAuditTrail } from '../controllers/AudiTrailController.js'; // Assuming this path based on previous code
+import GLAccountTransaction from '../models/GLAccountTransaction.js'; // Import the model (adjust path as needed)
 
-// Validate GL account number format: 6 groups of 1-3 digits separated by '-'
-const isValidGLAcctNo = (glAcctNo) => {
-  const regex = /^(\d{1,3}-){5}\d{1,3}$/;
-  return regex.test(glAcctNo);
-};
-
-// Generate a unique 16–18 digit TransactionId
-const generateTransactionId = async () => {
-  let transactionId;
-  let isUnique = false;
-  const minDigits = 16;
-  const maxDigits = 18;
-
-  while (!isUnique) {
-    const timestamp = Date.now().toString();
-    const randomDigits = Math.floor(Math.random() * 100000000).toString().padStart(8, '0');
-    transactionId = parseInt(timestamp + randomDigits);
-    if (transactionId.toString().length < minDigits) {
-      transactionId = parseInt(transactionId.toString().padEnd(minDigits, '0'));
-    } else if (transactionId.toString().length > maxDigits) {
-      transactionId = parseInt(transactionId.toString().slice(0, maxDigits));
-    }
-    const existing = await GLAccountTransaction.findOne({ TransactionId: transactionId });
-    isUnique = !existing;
-  }
-  return transactionId;
-};
-
-// Controller: Create a single GL transaction
-export const createGLAccountTransaction = async (req, res, session = null) => {
-  const isExternalSession = !!session;
-  if (!session) {
-    session = await mongoose.startSession();
-  }
-  let transactionCompleted = false;
-
+// Controller: Get all GL Account Transactions
+export const getAllGLAccountTransactions = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
-    const result = await session.withTransaction(async () => {
-      const {
-        GL_ACCT_NO,
-        AMOUNT,
-        TRANSACTION_TYPE,
-        CREATED_BY,
-        DRS_ALLOWED_FG,
-        CRS_ALLOWED_FG,
-        description,
-        SUB_LEDGER_NO,
-        SEG_NO,
-        JOURNAL_ID,
-        CHART_OF_ACCT_ID,
-        ACCT_DESC,
-        DELAY_GL_POSTING,
-        source = 'manual',
-        organizationName, // Added for Reconciliation and Branch validation
-        branchName, // Added for Reconciliation and Branch validation
-        EXTERNAL_REF // Added for Reconciliation
-      } = req.body;
+    await session.withTransaction(async () => {
+      const { journalId, transactionId, drAcctNo, crAcctNo, status, createdBy, startDate, endDate } = req.query;
 
-      // Validate required fields
-      if (!GL_ACCT_NO || AMOUNT == null || !TRANSACTION_TYPE || !CREATED_BY || !organizationName || !branchName) {
-        throw new Error('Missing required fields: GL_ACCT_NO, AMOUNT, TRANSACTION_TYPE, CREATED_BY, organizationName, branchName');
+      // Build filter
+      const filter = {};
+      if (journalId) filter.JOURNAL_ID = journalId;
+      if (transactionId) filter.TRANSACTION_ID = transactionId;
+      if (drAcctNo) filter.DR_ACCT_NO = drAcctNo;
+      if (crAcctNo) filter.CR_ACCT_NO = crAcctNo;
+      if (status) filter.STATUS = status;
+      if (createdBy) filter.CREATED_BY = createdBy;
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
       }
 
-      // Validate organizationName and branchName
-      const branch = await Branch.findOne({
-        organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-        branchName: { $regex: `^${branchName}$`, $options: 'i' }
-      }).session(session);
-      if (!branch) {
-        throw new Error(`Branch ${branchName} does not exist for organization ${organizationName}`);
-      }
+      // Fetch transactions with pagination support
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const skip = (page - 1) * limit;
 
-      if (!isValidGLAcctNo(GL_ACCT_NO)) {
-        throw new Error('Invalid GL_ACCT_NO format. It should be in the format xx-xx-xx-xx-xx-xx (e.g., 2-400-100-200-101-1)');
-      }
+      const [transactions, total] = await Promise.all([
+        GLAccountTransaction.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .session(session),
+        GLAccountTransaction.countDocuments(filter).session(session),
+      ]);
 
-      if (typeof AMOUNT !== 'number' || AMOUNT <= 0) {
-        throw new Error('AMOUNT must be a positive number');
-      }
+      logger.info('Fetched GL account transactions', { count: transactions.length, filter, page, limit });
 
-      const normalizedType = TRANSACTION_TYPE.toUpperCase();
-      if (!['DEBIT', 'CREDIT'].includes(normalizedType)) {
-        throw new Error('TRANSACTION_TYPE must be "Debit" or "Credit"');
-      }
-
-      // Log request data for debugging
-      console.log('Transaction request:', { GL_ACCT_NO, AMOUNT, TRANSACTION_TYPE, JOURNAL_ID, source, organizationName, branchName });
-
-      const glAccount = await GLAccount.findOne({ GL_ACCT_NO, organizationName, branchName }).session(session);
-      if (!glAccount) {
-        throw new Error(`GL Account ${GL_ACCT_NO} not found for organization ${organizationName} and branch ${branchName}`);
-      }
-
-      // Log glAccount and DELAY_GL_POSTING for debugging
-      console.log('glAccount:', glAccount);
-      console.log('Request DELAY_GL_POSTING:', DELAY_GL_POSTING);
-
-      // Check for existing Ledger
-      let ledger = await Ledger.findOne({ GL_ACCT_NO, organizationName, branchName }).session(session);
-      let isNewLedger = false;
-
-      if (!ledger) {
-        console.log(`No ledger found for GL_ACCT_NO: ${GL_ACCT_NO}, creating new ledger`);
-        const [PARENT_ID, BAL_CD, LEDGER_NO, SUB_LEDGER_NO_PART, BU_ID, SEG_NO_PART] = GL_ACCT_NO.split('-');
-        const lastAcct = await Ledger.findOne().sort({ GL_ACCT_ID: -1 }).limit(1).session(session);
-        const newGLAcctId = lastAcct ? String(parseInt(lastAcct.GL_ACCT_ID) + 1).padStart(7, '0') : '3111111';
-        const postFg = glAccount?.POST_FG ? (glAccount.POST_FG === 'Y' ? true : false) : false;
-
-        ledger = new Ledger({
-          GL_ACCT_NO,
-          GL_ACCT_ID: newGLAcctId,
-          CREATED_BY,
-          LEDGER_NO: LEDGER_NO || SUB_LEDGER_NO || '100',
-          PARENT_ID: PARENT_ID || '1',
-          BAL_CD: BAL_CD || glAccount?.BAL_CD || '01',
-          SUB_LEDGER_NO: SUB_LEDGER_NO || SUB_LEDGER_NO_PART || '000',
-          BU_ID: BU_ID || '001',
-          SEG_NO: SEG_NO || SEG_NO_PART || '1',
-          CHART_OF_ACCT_ID: CHART_OF_ACCT_ID || glAccount?.CHART_OF_ACCT_ID || '10001',
-          ACCT_DESC: ACCT_DESC || glAccount?.ACCT_DESC || 'GL Account',
-          GL_ACCT_CAT: glAccount?.GL_ACCT_CAT && ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'].includes(glAccount.GL_ACCT_CAT.toUpperCase())
-            ? glAccount.GL_ACCT_CAT.toUpperCase()
-            : 'ASSET',
-          GL_ACCT_STRUCT_ID: glAccount?.GL_ACCT_STRUCT_ID || '100',
-          JOURNAL_ID: JOURNAL_ID || (await generateTransactionId()),
-          TRANSACTION_TYPE: normalizedType,
-          CR_ALLOWED: CRS_ALLOWED_FG ?? glAccount?.CR_ALLOWED ?? true,
-          DR_ALLOWED: DRS_ALLOWED_FG ?? glAccount?.DR_ALLOWED ?? true,
-          REC_ST: 'Active',
-          POST_FG: postFg,
-          CONTROL_ACCT_FG: glAccount?.CONTROL_ACCT_FG || false,
-          SUSPENSE_ACCT_FG: glAccount?.SUSPENSE_ACCT_FG || false,
-          ALLOW_BAL_SWING_FG: glAccount?.ALLOW_BAL_SWING_FG || false,
-          DELAY_GL_POSTING: DELAY_GL_POSTING ?? glAccount?.DELAY_GL_POSTING ?? false,
-          LEDGER_BALANCE: 0,
-          transactions: [],
-          organizationName,
-          branchName
-        });
-
-        try {
-          await ledger.save({ session });
-          isNewLedger = true;
-          console.log(`Created new ledger for GL_ACCT_NO: ${GL_ACCT_NO}`);
-        } catch (error) {
-          if (error.code === 11000 && error.keyPattern.GL_ACCT_NO) {
-            console.log(`Duplicate ledger detected for GL_ACCT_NO: ${GL_ACCT_NO}, fetching existing ledger`);
-            ledger = await Ledger.findOne({ GL_ACCT_NO, organizationName, branchName }).session(session);
-            if (!ledger) {
-              throw new Error(`Failed to find existing ledger for GL_ACCT_NO ${GL_ACCT_NO} after duplicate key error`);
-            }
-          } else {
-            throw error; // Rethrow non-duplicate errors
-          }
-        }
-
-        // Audit ledger creation via hybrid logger
-        auditLogger.info('Audit Event', {
-          entity_type: 'LEDGER_CREATION',
-          entity_id: ledger._id,
-          user_id: CREATED_BY,
-          action: 'CREATE',
-          old_value: null,
-          new_value: ledger.toObject(),
-          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          event_type: 'LEDGER_CREATION',
-          outcome: 'success',
-          description: `Created Ledger for GL_ACCT_NO ${GL_ACCT_NO} in ${organizationName}/${branchName}`
-        });
-      } else {
-        console.log(`Ledger found for GL_ACCT_NO: ${GL_ACCT_NO}, proceeding with transaction`);
-      }
-
-      // CONTROL_ACCT_FG enforcement
-      if (glAccount.CONTROL_ACCT_FG && source === 'manual') {
-        throw new Error(`Manual transactions are not allowed on CONTROL account ${GL_ACCT_NO}`);
-      }
-
-      // Generate JOURNAL_ID if not provided
-      const journalId = JOURNAL_ID || (await generateTransactionId());
-
-      // Queue transaction if DELAY_GL_POSTING is true or inherited from glAccount
-      if (DELAY_GL_POSTING === true || (DELAY_GL_POSTING === undefined && glAccount.DELAY_GL_POSTING === true)) {
-        const queued = await queueGLTransaction(
-          {
-            GL_ACCT_NO,
-            TRANSACTION_TYPE: normalizedType,
-            AMOUNT,
-            CREATED_BY,
-            JOURNAL_ID: journalId,
-            SUB_LEDGER_NO: SUB_LEDGER_NO || ledger.SUB_LEDGER_NO || '0000',
-            SEG_NO: SEG_NO || ledger.SEG_NO || '1',
-            ACCT_DESC: description || `Queued transaction for ${GL_ACCT_NO}`,
-            CURRENCY_CODE: 'NGN',
-            EXCHANGE_RATE: 1,
-            APPROVAL_STATUS: 'Pending',
-            CREATED_AT: new Date(),
-            organizationName,
-            branchName
+      return res.status(200).json({
+        success: true,
+        message: 'GL account transactions fetched successfully',
+        data: {
+          transactions,
+          pagination: {
+            current: page,
+            pages: Math.ceil(total / limit),
+            total,
           },
-          { session }
-        );
-
-        // Create Reconciliation entry for queued transaction
-        const reconciliation = new Reconciliation({
-          JOURNAL_ID: journalId,
-          GL_ACCT_NO,
-          TRANSACTION_ID: queued.transaction.TransactionId,
-          EXTERNAL_REF: EXTERNAL_REF || null,
-          STATUS: 'Pending',
-          AMOUNT,
-          CURRENCY_CODE: 'NGN',
-          organizationName,
-          branchName,
-          CREATED_AT: new Date()
-        });
-        await reconciliation.save({ session });
-
-        // Audit queued transaction via hybrid logger
-        auditLogger.info('Audit Event', {
-          entity_type: 'QUEUE_GL_TRANSACTION',
-          entity_id: queued.transaction?._id,
-          user_id: CREATED_BY,
-          action: 'CREATE',
-          old_value: null,
-          new_value: { ...queued.transaction, reconciliationId: reconciliation._id },
-          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          event_type: 'QUEUE_GL_TRANSACTION',
-          outcome: 'success',
-          description: `Queued transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}`
-        });
-
-        return {
-          message: 'Transaction queued successfully with reconciliation entry',
-          transaction: queued.transaction,
-          reconciliation
-        };
-      }
-
-      // Immediate posting
-      const transactionData = {
-        GL_ACCT_NO,
-        AMOUNT,
-        TRANSACTION_TYPE: normalizedType,
-        CREATED_BY,
-        DRS_ALLOWED_FG: DRS_ALLOWED_FG ?? (normalizedType === 'DEBIT'),
-        CRS_ALLOWED_FG: CRS_ALLOWED_FG ?? (normalizedType === 'CREDIT'),
-        DESCRIPTION: description || `Transaction for ${GL_ACCT_NO}`,
-        SUB_LEDGER_NO: SUB_LEDGER_NO || ledger.SUB_LEDGER_NO || '0000',
-        SEG_NO: SEG_NO || ledger.SEG_NO || '1',
-        TransactionId: await generateTransactionId(),
-        JOURNAL_ID: journalId,
-        source,
-        organizationName,
-        branchName
-      };
-
-      const processedTransaction = await postSingleGLTransaction(transactionData, req, session);
-
-      // Create Reconciliation entry for immediate transaction
-      const reconciliation = new Reconciliation({
-        JOURNAL_ID: journalId,
-        GL_ACCT_NO,
-        TRANSACTION_ID: processedTransaction.TransactionId,
-        EXTERNAL_REF: EXTERNAL_REF || null,
-        STATUS: 'Pending',
-        AMOUNT,
-        CURRENCY_CODE: 'NGN',
-        organizationName,
-        branchName,
-        CREATED_AT: new Date()
+        },
       });
-      await reconciliation.save({ session });
-
-      // Audit immediate transaction via hybrid logger
-      auditLogger.info('Audit Event', {
-        entity_type: 'GL_ACCOUNT_TRANSACTION',
-        entity_id: processedTransaction._id,
-        user_id: CREATED_BY,
-        action: 'CREATE',
-        old_value: null,
-        new_value: { ...processedTransaction.toObject(), reconciliationId: reconciliation._id },
-        ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-        event_type: 'GL_ACCOUNT_TRANSACTION',
-        outcome: 'success',
-        description: `Processed transaction for ${GL_ACCT_NO} with reconciliation in ${organizationName}/${branchName}`
-      });
-
-      return {
-        message: 'Transaction processed successfully with reconciliation entry',
-        transaction: processedTransaction,
-        reconciliation,
-        updatedBalance: (await Ledger.findOne({ GL_ACCT_NO, organizationName, branchName }, null, { session })).LEDGER_BALANCE
-      };
     });
-
-    transactionCompleted = true;
-    await session.commitTransaction();
-    return res.status(201).json(result);
-  } catch (err) {
-    if (session.inTransaction() && !transactionCompleted) {
-      await session.abortTransaction();
-    }
-    console.error('❌ GL Transaction Error:', err.message, { transactionData: req.body });
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'GL_ACCOUNT_TRANSACTION',
-      entity_id: null,
-      user_id: req.body.CREATED_BY || 'system',
-      action: 'create_gl_account_transaction',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'GL_ERROR',
-      outcome: 'failure',
-      error: err.message
+  } catch (error) {
+    logger.error('Error fetching GL account transactions', {
+      error: error.message,
+      stack: error.stack,
+      query: req.query,
+      timestamp: new Date(),
     });
-    return res.status(err.message.includes('required') || err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
-      message: 'Transaction processing failed',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching GL account transactions',
+      error: error.message,
     });
   } finally {
-    if (!isExternalSession) {
-      session.endSession();
-    }
+    session.endSession();
   }
 };
 
-// Helper to post a single GL transaction with CONTROL_ACCT_FG enforcement
-const postSingleGLTransaction = async (entry, req, session) => {
-  const {
-    GL_ACCT_NO,
-    AMOUNT,
-    TRANSACTION_TYPE,
-    CREATED_BY,
-    DRS_ALLOWED_FG,
-    CRS_ALLOWED_FG,
-    DESCRIPTION,
-    CREATE_DT,
-    SUB_LEDGER_NO,
-    SEG_NO,
-    TransactionId,
-    JOURNAL_ID,
-    QueueTransactionId,
-    source = 'system',
-    organizationName,
-    branchName
-  } = entry;
 
-  if (!GL_ACCT_NO || AMOUNT == null || !TRANSACTION_TYPE || !CREATED_BY || !JOURNAL_ID || !organizationName || !branchName) {
-    throw new Error('Missing or invalid required fields');
-  }
-
-  if (!isValidGLAcctNo(GL_ACCT_NO)) {
-    throw new Error('Invalid GL_ACCT_NO format');
-  }
-
-  const normalizedType = TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'DR' : TRANSACTION_TYPE.toUpperCase() === 'CREDIT' ? 'CR' : TRANSACTION_TYPE.toUpperCase();
-  if (!['DR', 'CR'].includes(normalizedType)) {
-    throw new Error('Invalid TRANSACTION_TYPE');
-  }
-
-  const ledger = await Ledger.findOne({ GL_ACCT_NO, organizationName, branchName }).session(session);
-  if (!ledger) {
-    throw new Error(`Ledger not found for GL_ACCT_NO ${GL_ACCT_NO} in ${organizationName}/${branchName}`);
-  }
-
-  const glAccount = await GLAccount.findOne({ GL_ACCT_NO, organizationName, branchName }).session(session);
-  if (!glAccount) {
-    throw new Error(`GL Account not found for GL_ACCT_NO ${GL_ACCT_NO} in ${organizationName}/${branchName}`);
-  }
-
-  if (glAccount.CONTROL_ACCT_FG && source === 'manual') {
-    throw new Error(`Manual transactions are not allowed on CONTROL account ${GL_ACCT_NO}`);
-  }
-
-  let newBalance = ledger.LEDGER_BALANCE ?? 0;
-  const amt = parseFloat(AMOUNT);
-  const isSettlementGLAccount = GL_ACCT_NO === '01-002-100-115-102'; // settlementGLAccountNo
-
-  if (normalizedType === 'DR') {
-    if (!DRS_ALLOWED_FG) {
-      throw new Error('Debit not allowed on this account');
-    }
-    if (ledger.GL_ACCT_CAT === 'ASSET' && newBalance < amt && !isSettlementGLAccount) {
-      throw new Error('Insufficient funds for debit transaction');
-    }
-    newBalance -= amt;
-  } else {
-    if (!CRS_ALLOWED_FG) {
-      throw new Error('Credit not allowed on this account');
-    }
-    newBalance += amt;
-  }
-
-  const newTxn = new GLAccountTransaction({
-    GL_ACCT_NO,
-    AMOUNT: amt,
-    TRANSACTION_TYPE: normalizedType,
-    DRS_ALLOWED_FG: DRS_ALLOWED_FG ? 'Y' : 'N',
-    CRS_ALLOWED_FG: CRS_ALLOWED_FG ? 'Y' : 'N',
-    CURRENCY_CODE: 'NGN',
-    EXCHANGE_RATE: 1,
-    CREATED_BY,
-    CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : new Date(),
-    ROW_TS: new Date(),
-    SYS_CREATE_TS: new Date(),
-    REC_ST: 'A',
-    VERSION_NO: 1,
-    USER_ID: CREATED_BY,
-    LEDGER_NO: ledger.LEDGER_NO,
-    SUB_LEDGER_NO: ledger.SUB_LEDGER_NO || SUB_LEDGER_NO || '0000',
-    SEG_NO: ledger.SEG_NO || SEG_NO || '1',
-    BAL_CD: ledger.BAL_CD,
-    ACCT_DESC: ledger.ACCT_DESC,
-    GL_ACCT_CAT: ledger.GL_ACCT_CAT,
-    GL_ACCT_ID: ledger.GL_ACCT_ID,
-    GL_ACCT_STRUCT_ID: ledger.GL_ACCT_STRUCT_ID,
-    CHART_OF_ACCT_ID: ledger.CHART_OF_ACCT_ID,
-    BU_ID: ledger.BU_ID,
-    POST_FG: 'Y',
-    CONTROL_ACCT_FG: glAccount.CONTROL_ACCT_FG ? 'Y' : 'N',
-    DESCRIPTION,
-    TransactionId: TransactionId || (await generateTransactionId()),
-    JOURNAL_ID: JOURNAL_ID || (await generateTransactionId()),
-    QueueTransactionId,
-    organizationName,
-    branchName
-  });
-
-  await newTxn.save({ session });
-
-  ledger.LEDGER_BALANCE = newBalance;
-  await ledger.save({ session });
-
-  await GLAccount.updateOne({ GL_ACCT_NO, organizationName, branchName }, { LEDGER_BALANCE: newBalance }, { session });
-
-  const ip = req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN';
-  // Audit via hybrid logger
-  auditLogger.info('Audit Event', {
-    entity_type: 'GL_ACCOUNT_TRANSACTION',
-    entity_id: newTxn._id,
-    user_id: req?.user?.id || CREATED_BY,
-    action: 'CREATE',
-    old_value: null,
-    new_value: newTxn.toObject(),
-    ip_address: ip,
-    event_type: 'GL_TRANSACTION',
-    outcome: 'success',
-    description: DESCRIPTION
-  });
-
+// Controller: Create GL Account Transaction
+export const createGLAccountTransaction = async (req, res) => {
+  logger.info('createGLAccountTransaction hit with body:', { body: req.body });
+  const session = await mongoose.startSession();
+  let result;
   try {
-    await createRootSubfolder(newTxn._id, { GL_ACCT_NO, createdBy: CREATED_BY, description: DESCRIPTION });
-  } catch (error) {
-    console.error('Error creating subfolder:', error);
-  }
+    await session.withTransaction(async () => {
+      const {
+        JOURNAL_ID,
+        DR_ACCT_NO,
+        CR_ACCT_NO,
+        AMOUNT,
+        NARRATION,
+        CREATED_BY,
+        TRANSACTION_TYPE,
+        CURRENCY_CODE,
+        STATUS,
+        organizationName,
+        branchName,
+      } = req.body;
 
-  return newTxn;
-};
-
-// Create a double-entry GL transaction
-export const createDoubleEntryTransaction = async (req, res) => {
-  try {
-    const { debitEntry, creditEntry } = req.body;
-    if (!debitEntry || !creditEntry) {
-      return res.status(400).json({ message: 'Missing debit or credit entry' });
-    }
-    if (parseFloat(debitEntry.AMOUNT) !== parseFloat(creditEntry.AMOUNT)) {
-      return res.status(400).json({ message: 'Debit and credit amounts must match' });
-    }
-    if (!debitEntry.organizationName || !debitEntry.branchName || !creditEntry.organizationName || !creditEntry.branchName) {
-      return res.status(400).json({ message: 'organizationName and branchName are required for both entries' });
-    }
-
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
-        // Validate branches
-        const debitBranch = await Branch.findOne({
-          organizationName: { $regex: `^${debitEntry.organizationName}$`, $options: 'i' },
-          branchName: { $regex: `^${debitEntry.branchName}$`, $options: 'i' }
-        }).session(session);
-        const creditBranch = await Branch.findOne({
-          organizationName: { $regex: `^${creditEntry.organizationName}$`, $options: 'i' },
-          branchName: { $regex: `^${creditEntry.branchName}$`, $options: 'i' }
-        }).session(session);
-        if (!debitBranch) {
-          throw new Error(`Debit branch ${debitEntry.branchName} does not exist for organization ${debitEntry.organizationName}`);
-        }
-        if (!creditBranch) {
-          throw new Error(`Credit branch ${creditEntry.branchName} does not exist for organization ${creditEntry.organizationName}`);
-        }
-
-        const debitTxn = await postSingleGLTransaction(
-          { ...debitEntry, TRANSACTION_TYPE: 'Debit', TransactionId: await generateTransactionId() },
-          req,
-          session
-        );
-        const creditTxn = await postSingleGLTransaction(
-          { ...creditEntry, TRANSACTION_TYPE: 'Credit', TransactionId: await generateTransactionId() },
-          req,
-          session
-        );
-
-        // Create Reconciliation entries for both transactions
-        const debitReconciliation = new Reconciliation({
-          JOURNAL_ID: debitTxn.JOURNAL_ID,
-          GL_ACCT_NO: debitTxn.GL_ACCT_NO,
-          TRANSACTION_ID: debitTxn.TransactionId,
-          EXTERNAL_REF: debitEntry.EXTERNAL_REF || null,
-          STATUS: 'Pending',
-          AMOUNT: debitTxn.AMOUNT,
-          CURRENCY_CODE: 'NGN',
-          organizationName: debitEntry.organizationName,
-          branchName: debitEntry.branchName,
-          CREATED_AT: new Date()
-        });
-        await debitReconciliation.save({ session });
-
-        const creditReconciliation = new Reconciliation({
-          JOURNAL_ID: creditTxn.JOURNAL_ID,
-          GL_ACCT_NO: creditTxn.GL_ACCT_NO,
-          TRANSACTION_ID: creditTxn.TransactionId,
-          EXTERNAL_REF: creditEntry.EXTERNAL_REF || null,
-          STATUS: 'Pending',
-          AMOUNT: creditTxn.AMOUNT,
-          CURRENCY_CODE: 'NGN',
-          organizationName: creditEntry.organizationName,
-          branchName: creditEntry.branchName,
-          CREATED_AT: new Date()
-        });
-        await creditReconciliation.save({ session });
-
-        // Audit double-entry via hybrid logger
-        auditLogger.info('Audit Event', {
-          entity_type: 'DOUBLE_ENTRY_TRANSACTION',
-          entity_id: debitTxn._id,
-          user_id: req?.user?.id || debitEntry.CREATED_BY,
-          action: 'CREATE',
-          old_value: null,
-          new_value: { debit: debitTxn.toObject(), credit: creditTxn.toObject(), debitReconciliationId: debitReconciliation._id, creditReconciliationId: creditReconciliation._id },
-          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
-          event_type: 'DOUBLE_ENTRY_TRANSACTION',
-          outcome: 'success',
-          description: `Created double-entry transaction for ${debitTxn.GL_ACCT_NO} and ${creditTxn.GL_ACCT_NO}`
-        });
-
-        return res.status(201).json({
-          message: 'Double-entry transaction processed successfully with reconciliation entries',
-          debitTransaction: debitTxn,
-          creditTransaction: creditTxn,
-          debitReconciliation,
-          creditReconciliation
-        });
-      });
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
-  } catch (err) {
-    console.error('❌ Double Entry Transaction Error:', err.message);
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'DOUBLE_ENTRY_TRANSACTION',
-      entity_id: null,
-      user_id: req.body.debitEntry?.CREATED_BY || 'system',
-      action: 'create_double_entry_transaction',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'DOUBLE_ENTRY_ERROR',
-      outcome: 'failure',
-      error: err.message
-    });
-    return res.status(err.message.includes('required') || err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
-      message: 'Double-entry transaction failed',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-};
-
-// Fetch all GL account transactions
-export const getGLAccountTransactions = async (req, res) => {
-  try {
-    const { organizationName, branchName } = req.query;
-    const userId = req.user_id || 'system';  // From middleware
-    const ipAddress = req.ip_address || '0.0.0.0';
-    
-    const query = {};
-    if (organizationName) query.organizationName = { $regex: `^${organizationName}$`, $options: 'i' };
-    if (branchName) query.branchName = { $regex: `^${branchName}$`, $options: 'i' };
-
-    const transactions = await GLAccountTransaction.find(query).lean();
-    const reconciliations = await Reconciliation.find({
-      TRANSACTION_ID: { $in: transactions.map(t => t.TransactionId) },
-      organizationName: query.organizationName || { $exists: true },
-      branchName: query.branchName || { $exists: true }
-    }).lean();
-
-    const reconciliationMap = reconciliations.reduce((map, rec) => {
-      map[rec.TRANSACTION_ID] = rec;
-      return map;
-    }, {});
-
-    const transactionsWithReconciliation = transactions.map(txn => ({
-      ...txn,
-      reconciliation: reconciliationMap[txn.TransactionId] || null
-    }));
-
-    // Self-audit the query (optional)
-    auditLogger.info('Audit Event', {
-      entity_type: 'gl_transactions_query',
-      entity_id: null,
-      user_id: userId,
-      action: 'get_gl_account_transactions',
-      old_value: null,
-      new_value: { count: transactionsWithReconciliation.length, filters: { organizationName, branchName } },
-      ip_address: ipAddress,
-      event_type: 'QUERY_SUCCESS',
-      outcome: 'success'
-    });
-
-    return res.status(200).json({
-      message: 'GL Account Transactions retrieved successfully',
-      data: transactionsWithReconciliation
-    });
-  } catch (err) {
-    console.error('❌ Fetch GL Transactions Error:', err.message);
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'gl_transactions_query',
-      entity_id: null,
-      user_id: req.user_id || 'system',
-      action: 'get_gl_account_transactions',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'QUERY_ERROR',
-      outcome: 'failure',
-      error: err.message
-    });
-    return res.status(500).json({
-      message: 'Failed to fetch GL transactions',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-};
-
-// Fetch a GL account transaction by ID
-export const getGLAccountTransactionById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user_id || 'system';  // From middleware
-    const ipAddress = req.ip_address || '0.0.0.0';
-
-    const transaction = await GLAccountTransaction.findById(id).lean();
-    if (!transaction) {
-      // Self-audit not-found (optional)
-      auditLogger.info('Audit Event', {
-        entity_type: 'gl_transaction_query',
-        entity_id: id,
-        user_id: userId,
-        action: 'get_gl_account_transaction_by_id',
-        old_value: null,
-        new_value: { status: 'not_found' },
-        ip_address: ipAddress,
-        event_type: 'QUERY_NOT_FOUND',
-        outcome: 'failure'
-      });
-      return res.status(404).json({ message: 'GL Account Transaction not found' });
-    }
-
-    const reconciliation = await Reconciliation.findOne({
-      TRANSACTION_ID: transaction.TransactionId,
-      organizationName: transaction.organizationName,
-      branchName: transaction.branchName
-    }).lean();
-
-    // Self-audit success (optional)
-    auditLogger.info('Audit Event', {
-      entity_type: 'gl_transaction_query',
-      entity_id: id,
-      user_id: userId,
-      action: 'get_gl_account_transaction_by_id',
-      old_value: null,
-      new_value: { event_id: transaction.event_id },
-      ip_address: ipAddress,
-      event_type: 'QUERY_SUCCESS',
-      outcome: 'success'
-    });
-
-    return res.status(200).json({
-      message: 'GL Account Transaction retrieved successfully',
-      data: { ...transaction, reconciliation }
-    });
-  } catch (err) {
-    console.error('❌ Fetch GL Transaction By ID Error:', err.message);
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'gl_transaction_query',
-      entity_id: req.params.id || null,
-      user_id: req.user_id || 'system',
-      action: 'get_gl_account_transaction_by_id',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'QUERY_ERROR',
-      outcome: 'failure',
-      error: err.message
-    });
-    return res.status(500).json({
-      message: 'Failed to fetch GL transaction',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-};
-
-// Fetch GL account transactions by account number
-export const getGLAccountTransactionByAcctNo = async (req, res) => {
-  try {
-    const { glAcctNo, organizationName, branchName } = req.params;
-    const userId = req.user_id || 'system';  // From middleware
-    const ipAddress = req.ip_address || '0.0.0.0';
-
-    if (!organizationName || !branchName) {
-      return res.status(400).json({ message: 'organizationName and branchName are required' });
-    }
-
-    const transactions = await GLAccountTransaction.find({
-      GL_ACCT_NO: glAcctNo,
-      organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-      branchName: { $regex: `^${branchName}$`, $options: 'i' }
-    }).lean();
-
-    if (!transactions || transactions.length === 0) {
-      // Self-audit not-found (optional)
-      auditLogger.info('Audit Event', {
-        entity_type: 'gl_transaction_by_acct_query',
-        entity_id: glAcctNo,
-        user_id: userId,
-        action: 'get_gl_account_transaction_by_acct_no',
-        old_value: null,
-        new_value: { status: 'not_found' },
-        ip_address: ipAddress,
-        event_type: 'QUERY_NOT_FOUND',
-        outcome: 'failure'
-      });
-      return res.status(404).json({ message: 'No transactions found for GL Account' });
-    }
-
-    const reconciliations = await Reconciliation.find({
-      TRANSACTION_ID: { $in: transactions.map(t => t.TransactionId) },
-      organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
-      branchName: { $regex: `^${branchName}$`, $options: 'i' }
-    }).lean();
-
-    const reconciliationMap = reconciliations.reduce((map, rec) => {
-      map[rec.TRANSACTION_ID] = rec;
-      return map;
-    }, {});
-
-    const transactionsWithReconciliation = transactions.map(txn => ({
-      ...txn,
-      reconciliation: reconciliationMap[txn.TransactionId] || null
-    }));
-
-    // Self-audit success (optional)
-    auditLogger.info('Audit Event', {
-      entity_type: 'gl_transaction_by_acct_query',
-      entity_id: glAcctNo,
-      user_id: userId,
-      action: 'get_gl_account_transaction_by_acct_no',
-      old_value: null,
-      new_value: { count: transactionsWithReconciliation.length },
-      ip_address: ipAddress,
-      event_type: 'QUERY_SUCCESS',
-      outcome: 'success'
-    });
-
-    return res.status(200).json({
-      message: 'GL Account transactions retrieved successfully',
-      data: transactionsWithReconciliation
-    });
-  } catch (err) {
-    console.error('❌ Fetch GL Transactions By Acct No Error:', err.message);
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'gl_transaction_by_acct_query',
-      entity_id: req.params.glAcctNo || null,
-      user_id: req.user_id || 'system',
-      action: 'get_gl_account_transaction_by_acct_no',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'QUERY_ERROR',
-      outcome: 'failure',
-      error: err.message
-    });
-    return res.status(500).json({
-      message: 'Failed to fetch GL transactions',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
-  }
-};
-
-// Update a GL account transaction
-export const updateGLAccountTransaction = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updatedData = req.body;
-    const userId = req.user_id || 'system';  // From middleware
-    const ipAddress = req.ip_address || '0.0.0.0';
-
-    if (updatedData.GL_ACCT_NO && !isValidGLAcctNo(updatedData.GL_ACCT_NO)) {
-      return res.status(400).json({
-        message: 'Invalid GL_ACCT_NO format. It should be in the format xx-xx-xx-xx-xx-xx (e.g., 2-400-100-200-101-1)'
-      });
-    }
-
-    const original = await GLAccountTransaction.findById(id);
-    if (!original) {
-      // Self-audit not-found (optional)
-      auditLogger.info('Audit Event', {
-        entity_type: 'gl_transaction_update',
-        entity_id: id,
-        user_id: userId,
-        action: 'update_gl_account_transaction',
-        old_value: null,
-        new_value: { status: 'not_found' },
-        ip_address: ipAddress,
-        event_type: 'UPDATE_NOT_FOUND',
-        outcome: 'failure'
-      });
-      return res.status(404).json({ message: 'GL Account Transaction not found' });
-    }
-
-    if (updatedData.organizationName || updatedData.branchName) {
-      const branch = await Branch.findOne({
-        organizationName: { $regex: `^${updatedData.organizationName || original.organizationName}$`, $options: 'i' },
-        branchName: { $regex: `^${updatedData.branchName || original.branchName}$`, $options: 'i' }
-      });
-      if (!branch) {
-        return res.status(400).json({
-          message: `Branch ${updatedData.branchName || original.branchName} does not exist for organization ${updatedData.organizationName || original.organizationName}`
-        });
+      // Required fields check, including organizationName and branchName
+      const criticalFields = {
+        JOURNAL_ID,
+        DR_ACCT_NO,
+        CR_ACCT_NO,
+        AMOUNT,
+        NARRATION,
+        CREATED_BY,
+        organizationName,
+        branchName,
+      };
+      const missingFields = Object.entries(criticalFields)
+        .filter(([_, value]) => value === null || value === undefined || value === '')
+        .map(([key]) => key);
+      if (missingFields.length > 0) {
+        logger.error('Missing required fields', { missingFields });
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
+
+      // Validate AMOUNT > 0
+      if (AMOUNT <= 0) {
+        throw new Error('Amount must be greater than 0');
+      }
+
+      // Generate TRANSACTION_ID if not provided
+      const TRANSACTION_ID = req.body.TRANSACTION_ID || `TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+      // Check for duplicate TRANSACTION_ID
+      const existingTransaction = await GLAccountTransaction.findOne({ TRANSACTION_ID }).session(session);
+      if (existingTransaction) {
+        logger.error('Duplicate TRANSACTION_ID found', { TRANSACTION_ID });
+        throw new Error(`Transaction ID ${TRANSACTION_ID} already exists`);
+      }
+
+      // Create new transaction
+      const newTransaction = new GLAccountTransaction({
+        JOURNAL_ID,
+        TRANSACTION_ID,
+        DR_ACCT_NO,
+        CR_ACCT_NO,
+        AMOUNT,
+        NARRATION,
+        CREATED_BY,
+        TRANSACTION_TYPE: TRANSACTION_TYPE || 'GENERAL',
+        CURRENCY_CODE: CURRENCY_CODE || 'NGN',
+        STATUS: STATUS || 'POSTED',
+        organizationName,
+        branchName,
+      });
+
+      await newTransaction.save({ session });
+      logger.info('Created new GL account transaction', { TRANSACTION_ID });
+
+      // Audit trail
+      await addAuditTrail({
+        EVENT_TYPE: 'CREATE_GL_ACCOUNT_TRANSACTION',
+        USER_ID: CREATED_BY,
+        ACTION: 'CREATE',
+        NEW_VALUE: {
+          JOURNAL_ID,
+          TRANSACTION_ID,
+          DR_ACCT_NO,
+          CR_ACCT_NO,
+          AMOUNT,
+          NARRATION,
+          TRANSACTION_TYPE: newTransaction.TRANSACTION_TYPE,
+          STATUS: newTransaction.STATUS,
+          organizationName,
+          branchName,
+        },
+        OLD_VALUE: null,
+        IP_ADDRESS: req.ip || '0.0.0.0',
+        ENTITY_ID: newTransaction._id,
+        ENTITY_TYPE: 'GLAccountTransaction',
+        STATUS: 'SUCCESS',
+        DESCRIPTION: `Created GL account transaction ${TRANSACTION_ID}`,
+        REFERENCE_NO: `TXN-${newTransaction._id}`,
+        ACCOUNT_NO: `${DR_ACCT_NO}/${CR_ACCT_NO}`,
+        ADDITIONAL_INFO: {},
+        session,
+      });
+
+      result = {
+        success: true,
+        message: 'GL account transaction created successfully',
+        data: newTransaction,
+      };
+    });
+
+    return res.status(201).json(result);
+  } catch (error) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
     }
-
-    const updated = await GLAccountTransaction.findByIdAndUpdate(id, updatedData, { new: true });
-
-    // Update Reconciliation entry if necessary
-    if (updatedData.AMOUNT || updatedData.GL_ACCT_NO || updatedData.JOURNAL_ID) {
-      await Reconciliation.updateOne(
-        { TRANSACTION_ID: original.TransactionId, organizationName: original.organizationName, branchName: original.branchName },
-        {
-          JOURNAL_ID: updatedData.JOURNAL_ID || original.JOURNAL_ID,
-          GL_ACCT_NO: updatedData.GL_ACCT_NO || original.GL_ACCT_NO,
-          AMOUNT: updatedData.AMOUNT || original.AMOUNT
-        }
-      );
-    }
-
-    // Audit update via hybrid logger
-    auditLogger.info('Audit Event', {
-      entity_type: 'GL_ACCOUNT_TRANSACTION',
-      entity_id: id,
-      user_id: userId,
-      action: 'UPDATE',
-      old_value: original.toObject(),
-      new_value: updated.toObject(),
-      ip_address: ipAddress,
-      event_type: 'GL_TRANSACTION_UPDATE',
-      outcome: 'success'
+    logger.error('Error creating GL account transaction', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body,
+      timestamp: new Date(),
     });
-
-    return res.status(200).json({
-      message: 'GL Account Transaction updated successfully',
-      data: updated
+    return res.status(400).json({
+      success: false,
+      message: 'Error creating GL account transaction',
+      error: error.message,
+      code: error.message.includes('Missing') || error.message.includes('Invalid') || error.message.includes('Duplicate') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
     });
-  } catch (err) {
-    console.error('❌ Update GL Transaction Error:', err.message);
-    // Audit failure (non-blocking)
-    auditLogger.error('Audit Event', {
-      entity_type: 'GL_ACCOUNT_TRANSACTION',
-      entity_id: req.params.id || null,
-      user_id: req.user_id || 'system',
-      action: 'update_gl_account_transaction',
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || 'unknown',
-      event_type: 'GL_ERROR',
-      outcome: 'failure',
-      error: err.message
-    });
-    return res.status(err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
-      message: 'Failed to update GL transaction',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -1433,44 +717,204 @@ export const processEODGLTransactionsService = async (session = null) => {
   }
 };
 
-// Fetch GL accounts
-export const getGLAccounts = async (req, res) => {
+// Create a double-entry GL transaction
+export const createDoubleEntryTransaction = async (req, res) => {
   try {
-    const { organizationName, branchName } = req.query;
+    const { debitEntry, creditEntry } = req.body;
+    if (!debitEntry || !creditEntry) {
+      return res.status(400).json({ message: 'Missing debit or credit entry' });
+    }
+    if (parseFloat(debitEntry.AMOUNT) !== parseFloat(creditEntry.AMOUNT)) {
+      return res.status(400).json({ message: 'Debit and credit amounts must match' });
+    }
+    if (!debitEntry.organizationName || !debitEntry.branchName || !creditEntry.organizationName || !creditEntry.branchName) {
+      return res.status(400).json({ message: 'organizationName and branchName are required for both entries' });
+    }
+
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        // Validate branches
+        const debitBranch = await Branch.findOne({
+          organizationName: { $regex: `^${debitEntry.organizationName}$`, $options: 'i' },
+          branchName: { $regex: `^${debitEntry.branchName}$`, $options: 'i' }
+        }).session(session);
+        const creditBranch = await Branch.findOne({
+          organizationName: { $regex: `^${creditEntry.organizationName}$`, $options: 'i' },
+          branchName: { $regex: `^${creditEntry.branchName}$`, $options: 'i' }
+        }).session(session);
+        if (!debitBranch) {
+          throw new Error(`Debit branch ${debitEntry.branchName} does not exist for organization ${debitEntry.organizationName}`);
+        }
+        if (!creditBranch) {
+          throw new Error(`Credit branch ${creditEntry.branchName} does not exist for organization ${creditEntry.organizationName}`);
+        }
+
+        const debitTxn = await postSingleGLTransaction(
+          { ...debitEntry, TRANSACTION_TYPE: 'Debit', TransactionId: await generateTransactionId() },
+          req,
+          session
+        );
+        const creditTxn = await postSingleGLTransaction(
+          { ...creditEntry, TRANSACTION_TYPE: 'Credit', TransactionId: await generateTransactionId() },
+          req,
+          session
+        );
+
+        // Create Reconciliation entries for both transactions
+        const debitReconciliation = new Reconciliation({
+          JOURNAL_ID: debitTxn.JOURNAL_ID,
+          GL_ACCT_NO: debitTxn.GL_ACCT_NO,
+          TRANSACTION_ID: debitTxn.TransactionId,
+          EXTERNAL_REF: debitEntry.EXTERNAL_REF || null,
+          STATUS: 'Pending',
+          AMOUNT: debitTxn.AMOUNT,
+          CURRENCY_CODE: 'NGN',
+          organizationName: debitEntry.organizationName,
+          branchName: debitEntry.branchName,
+          CREATED_AT: new Date()
+        });
+        await debitReconciliation.save({ session });
+
+        const creditReconciliation = new Reconciliation({
+          JOURNAL_ID: creditTxn.JOURNAL_ID,
+          GL_ACCT_NO: creditTxn.GL_ACCT_NO,
+          TRANSACTION_ID: creditTxn.TransactionId,
+          EXTERNAL_REF: creditEntry.EXTERNAL_REF || null,
+          STATUS: 'Pending',
+          AMOUNT: creditTxn.AMOUNT,
+          CURRENCY_CODE: 'NGN',
+          organizationName: creditEntry.organizationName,
+          branchName: creditEntry.branchName,
+          CREATED_AT: new Date()
+        });
+        await creditReconciliation.save({ session });
+
+        // Audit double-entry via hybrid logger
+        auditLogger.info('Audit Event', {
+          entity_type: 'DOUBLE_ENTRY_TRANSACTION',
+          entity_id: debitTxn._id,
+          user_id: req?.user?.id || debitEntry.CREATED_BY,
+          action: 'CREATE',
+          old_value: null,
+          new_value: { debit: debitTxn.toObject(), credit: creditTxn.toObject(), debitReconciliationId: debitReconciliation._id, creditReconciliationId: creditReconciliation._id },
+          ip_address: req?.headers['x-forwarded-for'] || req?.connection?.remoteAddress || 'UNKNOWN',
+          event_type: 'DOUBLE_ENTRY_TRANSACTION',
+          outcome: 'success',
+          description: `Created double-entry transaction for ${debitTxn.GL_ACCT_NO} and ${creditTxn.GL_ACCT_NO}`
+        });
+
+        return res.status(201).json({
+          message: 'Double-entry transaction processed successfully with reconciliation entries',
+          debitTransaction: debitTxn,
+          creditTransaction: creditTxn,
+          debitReconciliation,
+          creditReconciliation
+        });
+      });
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+  } catch (err) {
+    console.error('❌ Double Entry Transaction Error:', err.message);
+    // Audit failure (non-blocking)
+    auditLogger.error('Audit Event', {
+      entity_type: 'DOUBLE_ENTRY_TRANSACTION',
+      entity_id: null,
+      user_id: req.body.debitEntry?.CREATED_BY || 'system',
+      action: 'create_double_entry_transaction',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'DOUBLE_ENTRY_ERROR',
+      outcome: 'failure',
+      error: err.message
+    });
+    return res.status(err.message.includes('required') || err.message.includes('Invalid') || err.message.includes('not found') ? 400 : 500).json({
+      message: 'Double-entry transaction failed',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+};
+
+// Fetch GL account transactions by account number
+export const getGLAccountTransactionByAcctNo = async (req, res) => {
+  try {
+    const { glAcctNo, organizationName, branchName } = req.params;
     const userId = req.user_id || 'system';  // From middleware
     const ipAddress = req.ip_address || '0.0.0.0';
-    
-    const query = {};
-    if (organizationName) query.organizationName = { $regex: `^${organizationName}$`, $options: 'i' };
-    if (branchName) query.branchName = { $regex: `^${branchName}$`, $options: 'i' };
 
-    const glAccounts = await GLAccount.find(query);
-    
-    // Self-audit the query (optional)
+    if (!organizationName || !branchName) {
+      return res.status(400).json({ message: 'organizationName and branchName are required' });
+    }
+
+    const transactions = await GLAccountTransaction.find({
+      GL_ACCT_NO: glAcctNo,
+      organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
+      branchName: { $regex: `^${branchName}$`, $options: 'i' }
+    }).lean();
+
+    if (!transactions || transactions.length === 0) {
+      // Self-audit not-found (optional)
+      auditLogger.info('Audit Event', {
+        entity_type: 'gl_transaction_by_acct_query',
+        entity_id: glAcctNo,
+        user_id: userId,
+        action: 'get_gl_account_transaction_by_acct_no',
+        old_value: null,
+        new_value: { status: 'not_found' },
+        ip_address: ipAddress,
+        event_type: 'QUERY_NOT_FOUND',
+        outcome: 'failure'
+      });
+      return res.status(404).json({ message: 'No transactions found for GL Account' });
+    }
+
+    const reconciliations = await Reconciliation.find({
+      TRANSACTION_ID: { $in: transactions.map(t => t.TransactionId) },
+      organizationName: { $regex: `^${organizationName}$`, $options: 'i' },
+      branchName: { $regex: `^${branchName}$`, $options: 'i' }
+    }).lean();
+
+    const reconciliationMap = reconciliations.reduce((map, rec) => {
+      map[rec.TRANSACTION_ID] = rec;
+      return map;
+    }, {});
+
+    const transactionsWithReconciliation = transactions.map(txn => ({
+      ...txn,
+      reconciliation: reconciliationMap[txn.TransactionId] || null
+    }));
+
+    // Self-audit success (optional)
     auditLogger.info('Audit Event', {
-      entity_type: 'gl_accounts_query',
-      entity_id: null,
+      entity_type: 'gl_transaction_by_acct_query',
+      entity_id: glAcctNo,
       user_id: userId,
-      action: 'get_gl_accounts',
+      action: 'get_gl_account_transaction_by_acct_no',
       old_value: null,
-      new_value: { count: glAccounts.length, filters: { organizationName, branchName } },
+      new_value: { count: transactionsWithReconciliation.length },
       ip_address: ipAddress,
       event_type: 'QUERY_SUCCESS',
       outcome: 'success'
     });
 
     return res.status(200).json({
-      message: 'GL Accounts retrieved successfully',
-      data: glAccounts
+      message: 'GL Account transactions retrieved successfully',
+      data: transactionsWithReconciliation
     });
   } catch (err) {
-    console.error('❌ Fetch GL Accounts Error:', err.message);
+    console.error('❌ Fetch GL Transactions By Acct No Error:', err.message);
     // Audit failure (non-blocking)
     auditLogger.error('Audit Event', {
-      entity_type: 'gl_accounts_query',
-      entity_id: null,
+      entity_type: 'gl_transaction_by_acct_query',
+      entity_id: req.params.glAcctNo || null,
       user_id: req.user_id || 'system',
-      action: 'get_gl_accounts',
+      action: 'get_gl_account_transaction_by_acct_no',
       old_value: null,
       new_value: null,
       ip_address: req.ip || 'unknown',
@@ -1479,9 +923,377 @@ export const getGLAccounts = async (req, res) => {
       error: err.message
     });
     return res.status(500).json({
-      message: 'Failed to fetch GL accounts',
+      message: 'Failed to fetch GL transactions',
       error: err.message,
       stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 };
+
+
+// Controller: Get GL Account Transaction by ID
+export const getGLAccountTransactionById = async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const { id } = req.params;
+      const transaction = await GLAccountTransaction.findById(id).session(session);
+      if (!transaction) {
+        return res.status(404).json({
+          success: false,
+          message: `GL account transaction with ID ${id} not found`,
+        });
+      }
+
+      logger.info('Fetched GL account transaction by ID', { id });
+
+      return res.status(200).json({
+        success: true,
+        message: 'GL account transaction fetched successfully',
+        data: transaction,
+      });
+    });
+  } catch (error) {
+    logger.error('Error fetching GL account transaction by ID', {
+      error: error.message,
+      stack: error.stack,
+      id: req.params.id,
+      timestamp: new Date(),
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching GL account transaction',
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+
+// Controller: Update GL Account Transaction
+export const updateGLAccountTransaction = async (req, res) => {
+  logger.info('updateGLAccountTransaction hit with body:', { body: req.body, params: req.params });
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      const { id } = req.params;
+      const {
+        JOURNAL_ID,
+        DR_ACCT_NO,
+        CR_ACCT_NO,
+        AMOUNT,
+        NARRATION,
+        UPDATED_BY,
+        TRANSACTION_TYPE,
+        CURRENCY_CODE,
+        STATUS,
+        organizationName,
+        branchName,
+      } = req.body;
+
+      // Find existing transaction
+      const existingTransaction = await GLAccountTransaction.findById(id).session(session);
+      if (!existingTransaction) {
+        throw new Error(`GL account transaction with ID ${id} not found`);
+      }
+
+      // Prevent updating immutable fields like TRANSACTION_ID if needed
+      if (req.body.TRANSACTION_ID && req.body.TRANSACTION_ID !== existingTransaction.TRANSACTION_ID) {
+        throw new Error('TRANSACTION_ID cannot be updated');
+      }
+
+      // Update fields if provided
+      if (JOURNAL_ID !== undefined) existingTransaction.JOURNAL_ID = JOURNAL_ID;
+      if (DR_ACCT_NO !== undefined) existingTransaction.DR_ACCT_NO = DR_ACCT_NO;
+      if (CR_ACCT_NO !== undefined) existingTransaction.CR_ACCT_NO = CR_ACCT_NO;
+      if (AMOUNT !== undefined) {
+        if (AMOUNT <= 0) throw new Error('Amount must be greater than 0');
+        existingTransaction.AMOUNT = AMOUNT;
+      }
+      if (NARRATION !== undefined) existingTransaction.NARRATION = NARRATION;
+      if (TRANSACTION_TYPE !== undefined) existingTransaction.TRANSACTION_TYPE = TRANSACTION_TYPE;
+      if (CURRENCY_CODE !== undefined) existingTransaction.CURRENCY_CODE = CURRENCY_CODE;
+      if (STATUS !== undefined) {
+        if (!['POSTED', 'PENDING', 'REVERSED'].includes(STATUS)) {
+          throw new Error('Invalid STATUS value');
+        }
+        existingTransaction.STATUS = STATUS;
+      }
+      if (organizationName !== undefined) existingTransaction.organizationName = organizationName;
+      if (branchName !== undefined) existingTransaction.branchName = branchName;
+
+      existingTransaction.UPDATED_BY = UPDATED_BY;
+      existingTransaction.updatedAt = new Date();
+
+      await existingTransaction.save({ session });
+      logger.info('Updated GL account transaction', { id });
+
+      // Audit trail
+      await addAuditTrail({
+        EVENT_TYPE: 'UPDATE_GL_ACCOUNT_TRANSACTION',
+        USER_ID: UPDATED_BY,
+        ACTION: 'UPDATE',
+        NEW_VALUE: {
+          JOURNAL_ID: existingTransaction.JOURNAL_ID,
+          DR_ACCT_NO: existingTransaction.DR_ACCT_NO,
+          CR_ACCT_NO: existingTransaction.CR_ACCT_NO,
+          AMOUNT: existingTransaction.AMOUNT,
+          NARRATION: existingTransaction.NARRATION,
+          TRANSACTION_TYPE: existingTransaction.TRANSACTION_TYPE,
+          STATUS: existingTransaction.STATUS,
+          organizationName: existingTransaction.organizationName,
+          branchName: existingTransaction.branchName,
+        },
+        OLD_VALUE: {
+          // Track changes - simplified; expand as needed
+          STATUS: req.body.STATUS !== undefined ? existingTransaction.STATUS : null,
+          AMOUNT: req.body.AMOUNT !== undefined ? existingTransaction.AMOUNT : null,
+        },
+        IP_ADDRESS: req.ip || '0.0.0.0',
+        ENTITY_ID: id,
+        ENTITY_TYPE: 'GLAccountTransaction',
+        STATUS: 'SUCCESS',
+        DESCRIPTION: `Updated GL account transaction ${existingTransaction.TRANSACTION_ID}`,
+        REFERENCE_NO: `TXN-${id}`,
+        ACCOUNT_NO: `${existingTransaction.DR_ACCT_NO}/${existingTransaction.CR_ACCT_NO}`,
+        ADDITIONAL_INFO: {},
+        session,
+      });
+
+      result = {
+        success: true,
+        message: 'GL account transaction updated successfully',
+        data: existingTransaction,
+      };
+    });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    logger.error('Error updating GL account transaction', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body,
+      params: req.params,
+      timestamp: new Date(),
+    });
+    return res.status(400).json({
+      success: false,
+      message: 'Error updating GL account transaction',
+      error: error.message,
+      code: error.message.includes('not found') || error.message.includes('Invalid') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// Controller: Delete GL Account Transaction
+export const deleteGLAccountTransaction = async (req, res) => {
+  logger.info('deleteGLAccountTransaction hit with params:', { params: req.params });
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => {
+      const { id } = req.params;
+      const { DELETED_BY } = req.body;
+
+      // Find existing transaction
+      const existingTransaction = await GLAccountTransaction.findById(id).session(session);
+      if (!existingTransaction) {
+        throw new Error(`GL account transaction with ID ${id} not found`);
+      }
+
+      // Optionally, check if can be deleted (e.g., STATUS !== 'POSTED')
+      if (existingTransaction.STATUS === 'POSTED') {
+        throw new Error(`Cannot delete posted transaction ${existingTransaction.TRANSACTION_ID}; use reverse instead`);
+      }
+
+      // Hard delete
+      await GLAccountTransaction.findByIdAndDelete(id).session(session);
+
+      logger.info('Deleted GL account transaction', { id });
+
+      // Audit trail
+      await addAuditTrail({
+        EVENT_TYPE: 'DELETE_GL_ACCOUNT_TRANSACTION',
+        USER_ID: DELETED_BY,
+        ACTION: 'DELETE',
+        NEW_VALUE: null,
+        OLD_VALUE: {
+          JOURNAL_ID: existingTransaction.JOURNAL_ID,
+          TRANSACTION_ID: existingTransaction.TRANSACTION_ID,
+          DR_ACCT_NO: existingTransaction.DR_ACCT_NO,
+          CR_ACCT_NO: existingTransaction.CR_ACCT_NO,
+          AMOUNT: existingTransaction.AMOUNT,
+          STATUS: existingTransaction.STATUS,
+          organizationName: existingTransaction.organizationName,
+          branchName: existingTransaction.branchName,
+        },
+        IP_ADDRESS: req.ip || '0.0.0.0',
+        ENTITY_ID: id,
+        ENTITY_TYPE: 'GLAccountTransaction',
+        STATUS: 'SUCCESS',
+        DESCRIPTION: `Deleted GL account transaction ${existingTransaction.TRANSACTION_ID}`,
+        REFERENCE_NO: `TXN-${id}`,
+        ACCOUNT_NO: `${existingTransaction.DR_ACCT_NO}/${existingTransaction.CR_ACCT_NO}`,
+        ADDITIONAL_INFO: {},
+        session,
+      });
+
+      result = {
+        success: true,
+        message: 'GL account transaction deleted successfully',
+        data: existingTransaction,
+      };
+    });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    logger.error('Error deleting GL account transaction', {
+      error: error.message,
+      stack: error.stack,
+      params: req.params,
+      body: req.body,
+      timestamp: new Date(),
+    });
+    return res.status(400).json({
+      success: false,
+      message: 'Error deleting GL account transaction',
+      error: error.message,
+      code: error.message.includes('not found') || error.message.includes('Cannot delete') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// Controller: Get GL Account Transactions (renamed/updated from getAllGLAccountTransactions for flexibility)
+export const getGLAccountTransactions = async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const { journalId, transactionId, drAcctNo, crAcctNo, status, createdBy, startDate, endDate, organizationName, branchName, glAcctNo } = req.query;
+
+      // Build filter with organizationName, branchName, and glAcctNo support
+      const filter = {};
+      if (organizationName) filter.organizationName = organizationName;
+      if (branchName) filter.branchName = branchName;
+      if (glAcctNo) filter.GL_ACCT_NO = glAcctNo;
+      if (journalId) filter.JOURNAL_ID = journalId;
+      if (transactionId) filter.TRANSACTION_ID = transactionId;
+      if (drAcctNo) filter.DR_ACCT_NO = drAcctNo;
+      if (crAcctNo) filter.CR_ACCT_NO = crAcctNo;
+      if (status) filter.STATUS = status;
+      if (createdBy) filter.CREATED_BY = createdBy;
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
+      }
+
+      // Fetch transactions with pagination support
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const skip = (page - 1) * limit;
+
+      const [transactions, total] = await Promise.all([
+        GLAccountTransaction.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .session(session),
+        GLAccountTransaction.countDocuments(filter).session(session),
+      ]);
+
+      logger.info('Fetched GL account transactions', { count: transactions.length, filter, page, limit });
+
+      return res.status(200).json({
+        success: true,
+        message: 'GL account transactions fetched successfully',
+        data: {
+          transactions,
+          pagination: {
+            current: page,
+            pages: Math.ceil(total / limit),
+            total,
+          },
+        },
+      });
+    });
+  } catch (error) {
+    logger.error('Error fetching GL account transactions', {
+      error: error.message,
+      stack: error.stack,
+      query: req.query,
+      timestamp: new Date(),
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching GL account transactions',
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+export const getGLAccountByAcctNo = async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const { glAcctNo, organizationName, branchName } = req.params;
+      const account = await GLAccount.findOne({ GL_ACCT_NO: glAcctNo, organizationName, branchName }).session(session);
+      if (!account) {
+        return res.status(404).json({
+          success: false,
+          message: `GL account with number ${glAcctNo} not found`,
+        });
+      }
+
+      logger.info('Fetched GL account by account number', { glAcctNo, organizationName, branchName });
+
+      return res.status(200).json({
+        success: true,
+        message: 'GL account fetched successfully',
+        data: account,
+      });
+    });
+  } catch (error) {
+    logger.error('Error fetching GL account by account number', {
+      error: error.message,
+      stack: error.stack,
+      params: req.params,
+      timestamp: new Date(),
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching GL account',
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+export default {
+  getGLAccountTransactions,
+  deleteGLAccountTransaction,
+  updateGLAccountTransaction,
+  getGLAccountTransactionById,
+  getGLAccountTransactionByAcctNo,
+  createDoubleEntryTransaction,
+  processEODGLTransactionsService,
+  rejectGLTransaction,
+  approveGLTransaction,
+  getPendingTransactions,
+  getAllGLAccountTransactions,
+  getGLAccountByAcctNo
+}

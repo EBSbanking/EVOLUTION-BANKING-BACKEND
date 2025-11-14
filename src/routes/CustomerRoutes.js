@@ -1,5 +1,6 @@
 import express from 'express';
 import Customer from '../models/Customer.js';
+import logger from '../utils/logger.js'; // ✅ Added logger import
 import {
   getAllCustomer,
   getCustomerById,
@@ -8,15 +9,23 @@ import {
   getPendingCustomers,
   updateCustomer,
   rejectCustomer,
-  batchUploadCustomers
+  batchUploadCustomers,
+  createCustomer // ✅ Added createCustomer import
 } from '../controllers/CustomerController.js';
 import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
 
 const router = express.Router();
 
-// Helper function for error handling
+// Helper function for error handling - FIXED VERSION
 const handleError = (res, error, defaultMessage = 'An error occurred') => {
-  console.error(error);
+  // Use logger instead of console.error to avoid the problematic override
+  logger.error('Customer Route Error:', { 
+    message: error.message,
+    customMessage: defaultMessage,
+    stack: error.stack,
+    timestamp: new Date().toISOString()
+  });
+  
   const statusCode = error.message.includes('not found') ? 404 : 500;
   res.status(statusCode).json({ 
     message: defaultMessage,
@@ -24,287 +33,62 @@ const handleError = (res, error, defaultMessage = 'An error occurred') => {
   });
 };
 
-// Add this to your CustomerRoutes.js
-router.post('/debug-file-structure', (req, res) => {
+// CREATE CUSTOMER - Use the imported controller function ✅ FIXED
+router.post('/customers', createCustomer);
+
+// GET ALL CUSTOMERS
+router.get('/customers', getAllCustomer);
+
+// GET PENDING CUSTOMERS
+router.get('/customers/pending', getPendingCustomers);
+
+// GET SINGLE CUSTOMER BY ID
+router.get('/customers/:CUST_ID', getCustomerById);
+
+// UPDATE CUSTOMER DATA
+router.put('/customers/:CUST_ID', updateCustomer);
+
+// APPROVE CUSTOMER
+router.put('/approve/:customerId', approveCustomer);
+
+// REJECT CUSTOMER
+router.put('/reject/:customerId', rejectCustomer);
+
+// DEACTIVATE CUSTOMER
+router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
+
+// GENERATE CUSTOMER NUMBER
+router.get('/generate-customer-number', async (req, res) => {
   try {
-    console.log('🔍 Debug - Full req.files structure:', req.files);
-    console.log('🔍 Debug - req.files keys:', Object.keys(req.files || {}));
+    const { CUST_ID, CUST_NO } = await generateCustomerNumber();
     
-    if (!req.files || !req.files.customersFile) {
-      return res.status(400).json({
-        success: false,
-        message: 'No file uploaded',
-        filesAvailable: Object.keys(req.files || {})
-      });
-    }
-
-    const file = req.files.customersFile;
-    
-    console.log('🔍 Debug - File object structure:');
-    console.log('   - File keys:', Object.keys(file));
-    console.log('   - name:', file.name);
-    console.log('   - size:', file.size);
-    console.log('   - mimetype:', file.mimetype);
-    console.log('   - md5:', file.md5);
-    console.log('   - data type:', typeof file.data);
-    console.log('   - data length:', file.data?.length);
-    console.log('   - is buffer:', Buffer.isBuffer(file.data));
-    console.log('   - tempFilePath:', file.tempFilePath);
-    
-    // Try different ways to access the file data
-    const dataAccessMethods = {
-      'file.data': file.data,
-      'file.data (as buffer)': Buffer.isBuffer(file.data) ? file.data : 'Not a buffer',
-      'Object.keys(file)': Object.keys(file)
-    };
-
-    res.json({
+    res.status(200).json({
       success: true,
-      message: 'File structure analysis',
-      fileInfo: {
-        name: file.name,
-        size: file.size,
-        mimetype: file.mimetype,
-        dataLength: file.data?.length || 0,
-        isBuffer: Buffer.isBuffer(file.data),
-        availableKeys: Object.keys(file)
-      },
-      dataAccessMethods
-    });
-
-  } catch (error) {
-    console.error('Debug error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Debug failed',
-      error: error.message
-    });
-  }
-});
-
-
-// Test endpoint using express-fileupload - UPDATED
-router.post('/test-upload', (req, res) => {
-  try {
-    console.log('📁 Test upload - Files received:', req.files ? Object.keys(req.files) : 'None');
-    
-    if (!req.files || !req.files.customersFile) {
-      return res.status(400).json({
-        success: false,
-        message: 'No file uploaded. Please ensure: 1) Field name is "customersFile", 2) File is selected, 3) File is not empty',
-        total: 0,
-        created: 0,
-        duplicates: 0,
-        failed: 0,
-        errors: ['No file uploaded']
-      });
-    }
-
-    const file = req.files.customersFile;
-    
-    console.log('🔍 File details:', {
-      name: file.name,
-      size: file.size,
-      mimetype: file.mimetype,
-      dataType: typeof file.data,
-      dataLength: file.data?.length,
-      isBuffer: Buffer.isBuffer(file.data),
-      tempFilePath: file.tempFilePath,
-      useTempFiles: file.tempFilePath ? 'YES' : 'NO'
-    });
-
-    // Validate file type
-    const allowedMimes = [
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/octet-stream'
-    ];
-    
-    if (!allowedMimes.includes(file.mimetype)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid file type. Please upload only Excel files. Received: ${file.mimetype}`,
-        total: 0,
-        created: 0,
-        duplicates: 0,
-        failed: 0,
-        errors: [`Invalid file type: ${file.mimetype}`]
-      });
-    }
-
-    let dataLength = 0;
-    if (file.tempFilePath) {
-      // File is stored as temp file
-      const fs = require('fs');
-      const stats = fs.statSync(file.tempFilePath);
-      dataLength = stats.size;
-    } else if (Buffer.isBuffer(file.data)) {
-      // File is stored in memory
-      dataLength = file.data.length;
-    }
-
-    res.json({
-      success: true,
-      message: 'File uploaded successfully using express-fileupload!',
-      file: {
-        name: file.name,
-        size: file.size,
-        type: file.mimetype,
-        dataLength: dataLength,
-        storageMethod: file.tempFilePath ? 'tempFile' : 'memoryBuffer',
-        tempFilePath: file.tempFilePath || 'None'
-      },
-      total: 0,
-      created: 0,
-      duplicates: 0,
-      failed: 0,
-      errors: []
-    });
-  } catch (error) {
-    console.error('Test upload error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Upload processing failed',
-      error: error.message,
-      total: 0,
-      created: 0,
-      duplicates: 0,
-      failed: 0,
-      errors: [error.message]
-    });
-  }
-});
-
-// Main batch upload endpoint using express-fileupload - UPDATED
-router.post('/batch-upload', async (req, res) => {
-  try {
-    console.log('📁 Batch upload - Files received:', req.files ? Object.keys(req.files) : 'None');
-    
-    if (!req.files || !req.files.customersFile) {
-      return res.status(400).json({
-        success: false,
-        message: 'No file uploaded. Please select an Excel file with field name "customersFile"',
-        total: 0,
-        created: 0,
-        duplicates: 0,
-        failed: 0,
-        errors: ['No file uploaded']
-      });
-    }
-
-    const file = req.files.customersFile;
-    
-    console.log('🔍 File object keys:', Object.keys(file));
-    console.log('📊 File details:', {
-      name: file.name,
-      size: file.size,
-      mimetype: file.mimetype,
-      dataType: typeof file.data,
-      dataLength: file.data?.length,
-      isBuffer: Buffer.isBuffer(file.data),
-      tempFilePath: file.tempFilePath,
-      useTempFiles: file.tempFilePath ? 'YES' : 'NO'
-    });
-
-    // Validate file type
-    const allowedMimes = [
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/octet-stream'
-    ];
-    
-    if (!allowedMimes.includes(file.mimetype)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid file type. Please upload only Excel files (.xls, .xlsx)',
-        total: 0,
-        created: 0,
-        duplicates: 0,
-        failed: 0,
-        errors: [`Invalid file type: ${file.mimetype}`]
-      });
-    }
-
-    let fileBuffer;
-
-    // Handle file data based on storage method
-    if (file.tempFilePath) {
-      // File is stored as temporary file - read from disk
-      console.log('📂 Reading from temp file:', file.tempFilePath);
-      const fs = await import('fs');
-      try {
-        fileBuffer = fs.readFileSync(file.tempFilePath);
-        console.log('✅ Successfully read temp file, buffer length:', fileBuffer.length);
-        
-        // Clean up temp file
-        fs.unlinkSync(file.tempFilePath);
-        console.log('✅ Temp file cleaned up');
-      } catch (error) {
-        console.error('❌ Error reading temp file:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Error reading uploaded file',
-          total: 0,
-          created: 0,
-          duplicates: 0,
-          failed: 0,
-          errors: ['Cannot read file from temporary storage']
-        });
+      data: {
+        customerId: CUST_ID,
+        customerNumber: CUST_NO
       }
-    } else if (Buffer.isBuffer(file.data) && file.data.length > 0) {
-      // File is stored in memory as buffer
-      fileBuffer = file.data;
-      console.log('✅ Using memory buffer, length:', fileBuffer.length);
-    } else {
-      // No accessible file data
-      console.error('❌ No accessible file data found');
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot read file content. The file might be empty or corrupted.',
-        total: 0,
-        created: 0,
-        duplicates: 0,
-        failed: 0,
-        errors: ['Empty file content']
-      });
-    }
-
-    console.log('🔄 Processing file with buffer length:', fileBuffer.length);
-
-    // Process the file buffer using your existing service
-    const result = await batchUploadCustomers(fileBuffer);
-    
-    console.log('✅ Batch upload result:', result);
-
-    // Ensure response has all required fields
-    const response = {
-      success: result.success || false,
-      message: result.message || 'Processing completed',
-      total: result.total || 0,
-      created: result.created || 0,
-      duplicates: result.duplicates || 0,
-      failed: result.failed || 0,
-      errors: result.errors || []
-    };
-
-    return res.status(result.success ? 200 : 400).json(response);
+    });
 
   } catch (error) {
-    console.error('❌ Batch upload route error:', error);
-    return res.status(500).json({
+    logger.error('[Customer Number Generation Error]', { 
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    
+    const statusCode = error.message.includes('not found') ? 404 : 500;
+    const errorMessage = error.message.replace(/^Error: /, '');
+    
+    res.status(statusCode).json({
       success: false,
-      message: 'Internal server error during upload processing',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Processing failed',
-      total: 0,
-      created: 0,
-      duplicates: 0,
-      failed: 0,
-      errors: [error.message]
+      message: 'Failed to generate customer numbers',
+      error: errorMessage
     });
   }
 });
 
-// Add this to your CustomerRoutes.js
+// BATCH UPLOAD TEMPLATE
 router.get('/batch-template', (req, res) => {
   try {
     // Dynamic template structure based on your customer schema
@@ -388,7 +172,11 @@ router.get('/batch-template', (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error generating template:', error);
+    logger.error('Error generating template:', { 
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to generate template structure'
@@ -396,89 +184,298 @@ router.get('/batch-template', (req, res) => {
   }
 });
 
-// CREATE CUSTOMER
-router.post('/customers', async (req, res) => {
+// DEBUG FILE STRUCTURE
+router.post('/debug-file-structure', (req, res) => {
   try {
-    const { buId } = req.query;
+    logger.info('🔍 Debug - Full req.files structure:', { files: req.files });
+    logger.info('🔍 Debug - req.files keys:', { keys: Object.keys(req.files || {}) });
     
-    if (buId && isNaN(parseInt(buId))) {
-      return res.status(400).json({ message: 'Invalid Business Unit ID' });
+    if (!req.files || !req.files.customersFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded',
+        filesAvailable: Object.keys(req.files || {})
+      });
     }
 
-    let generatedNumbers = {};
-    if (buId) {
-      generatedNumbers = await generateCustomerNumber(parseInt(buId));
-    }
-
-    const newCustomer = new Customer({
-      ...req.body,
-      ...generatedNumbers,
-      STATUS: 'PENDING'
+    const file = req.files.customersFile;
+    
+    logger.info('🔍 Debug - File object structure:', {
+      fileKeys: Object.keys(file),
+      name: file.name,
+      size: file.size,
+      mimetype: file.mimetype,
+      md5: file.md5,
+      dataType: typeof file.data,
+      dataLength: file.data?.length,
+      isBuffer: Buffer.isBuffer(file.data),
+      tempFilePath: file.tempFilePath
     });
+    
+    // Try different ways to access the file data
+    const dataAccessMethods = {
+      'file.data': file.data,
+      'file.data (as buffer)': Buffer.isBuffer(file.data) ? file.data : 'Not a buffer',
+      'Object.keys(file)': Object.keys(file)
+    };
 
-    await newCustomer.save();
-
-    const fullName = `${newCustomer.FIRST_NAME || ''} ${newCustomer.LAST_NAME || ''}`.trim();
-
-    res.status(201).json({
-      message: 'Customer created and submitted for approval',
-      data: {
-        _id: newCustomer._id,
-        CUST_ID: newCustomer.CUST_ID,
-        CUST_NO: newCustomer.CUST_NO,
-        CUST_NM: fullName || 'N/A',
-        STATUS: newCustomer.STATUS
+    res.json({
+      success: true,
+      message: 'File structure analysis',
+      fileInfo: {
+        name: file.name,
+        size: file.size,
+        mimetype: file.mimetype,
+        dataLength: file.data?.length || 0,
+        isBuffer: Buffer.isBuffer(file.data),
+        availableKeys: Object.keys(file)
       },
-      actions: {
-        approve: `/api/customer/approve/${newCustomer.CUST_ID}`,
-        reject: `/api/customer/reject/${newCustomer.CUST_ID}`
-      }
+      dataAccessMethods
     });
+
   } catch (error) {
-    handleError(res, error, 'Failed to create customer');
+    logger.error('Debug error:', { 
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Debug failed',
+      error: error.message
+    });
   }
 });
 
-// GET ALL CUSTOMERS
-router.get('/customers', getAllCustomer);
-
-// GET PENDING CUSTOMERS
-router.get('/customers/pending', getPendingCustomers);
-
-// GET SINGLE CUSTOMER BY ID
-router.get('/customers/:CUST_ID', getCustomerById);
-
-// UPDATE CUSTOMER DATA
-router.put('/customers/:CUST_ID', updateCustomer);
-
-router.put('/approve/:customerId', approveCustomer);
-router.put('/reject/:customerId', rejectCustomer);
-
-// DEACTIVATE CUSTOMER
-router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
-
-router.get('/generate-customer-number', async (req, res) => {
+// TEST UPLOAD ENDPOINT
+router.post('/test-upload', (req, res) => {
   try {
-    const { CUST_ID, CUST_NO } = await generateCustomerNumber();
+    logger.info('📁 Test upload - Files received:', { files: req.files ? Object.keys(req.files) : 'None' });
     
-    res.status(200).json({
-      success: true,
-      data: {
-        customerId: CUST_ID,
-        customerNumber: CUST_NO
-      }
+    if (!req.files || !req.files.customersFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Please ensure: 1) Field name is "customersFile", 2) File is selected, 3) File is not empty',
+        total: 0,
+        created: 0,
+        duplicates: 0,
+        failed: 0,
+        errors: ['No file uploaded']
+      });
+    }
+
+    const file = req.files.customersFile;
+    
+    logger.info('🔍 File details:', {
+      name: file.name,
+      size: file.size,
+      mimetype: file.mimetype,
+      dataType: typeof file.data,
+      dataLength: file.data?.length,
+      isBuffer: Buffer.isBuffer(file.data),
+      tempFilePath: file.tempFilePath,
+      useTempFiles: file.tempFilePath ? 'YES' : 'NO'
     });
 
+    // Validate file type
+    const allowedMimes = [
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/octet-stream'
+    ];
+    
+    if (!allowedMimes.includes(file.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid file type. Please upload only Excel files. Received: ${file.mimetype}`,
+        total: 0,
+        created: 0,
+        duplicates: 0,
+        failed: 0,
+        errors: [`Invalid file type: ${file.mimetype}`]
+      });
+    }
+
+    let dataLength = 0;
+    if (file.tempFilePath) {
+      // File is stored as temp file
+      const fs = require('fs');
+      const stats = fs.statSync(file.tempFilePath);
+      dataLength = stats.size;
+    } else if (Buffer.isBuffer(file.data)) {
+      // File is stored in memory
+      dataLength = file.data.length;
+    }
+
+    res.json({
+      success: true,
+      message: 'File uploaded successfully using express-fileupload!',
+      file: {
+        name: file.name,
+        size: file.size,
+        type: file.mimetype,
+        dataLength: dataLength,
+        storageMethod: file.tempFilePath ? 'tempFile' : 'memoryBuffer',
+        tempFilePath: file.tempFilePath || 'None'
+      },
+      total: 0,
+      created: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: []
+    });
   } catch (error) {
-    console.error('[Customer Number Generation Error]', error);
-    
-    const statusCode = error.message.includes('not found') ? 404 : 500;
-    const errorMessage = error.message.replace(/^Error: /, '');
-    
-    res.status(statusCode).json({
+    logger.error('Test upload error:', { 
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({
       success: false,
-      message: 'Failed to generate customer numbers',
-      error: errorMessage
+      message: 'Upload processing failed',
+      error: error.message,
+      total: 0,
+      created: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: [error.message]
+    });
+  }
+});
+
+// MAIN BATCH UPLOAD ENDPOINT
+router.post('/batch-upload', async (req, res) => {
+  try {
+    logger.info('📁 Batch upload - Files received:', { files: req.files ? Object.keys(req.files) : 'None' });
+    
+    if (!req.files || !req.files.customersFile) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded. Please select an Excel file with field name "customersFile"',
+        total: 0,
+        created: 0,
+        duplicates: 0,
+        failed: 0,
+        errors: ['No file uploaded']
+      });
+    }
+
+    const file = req.files.customersFile;
+    
+    logger.info('🔍 File object keys:', { keys: Object.keys(file) });
+    logger.info('📊 File details:', {
+      name: file.name,
+      size: file.size,
+      mimetype: file.mimetype,
+      dataType: typeof file.data,
+      dataLength: file.data?.length,
+      isBuffer: Buffer.isBuffer(file.data),
+      tempFilePath: file.tempFilePath,
+      useTempFiles: file.tempFilePath ? 'YES' : 'NO'
+    });
+
+    // Validate file type
+    const allowedMimes = [
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/octet-stream'
+    ];
+    
+    if (!allowedMimes.includes(file.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file type. Please upload only Excel files (.xls, .xlsx)',
+        total: 0,
+        created: 0,
+        duplicates: 0,
+        failed: 0,
+        errors: [`Invalid file type: ${file.mimetype}`]
+      });
+    }
+
+    let fileBuffer;
+
+    // Handle file data based on storage method
+    if (file.tempFilePath) {
+      // File is stored as temporary file - read from disk
+      logger.info('📂 Reading from temp file:', { tempFilePath: file.tempFilePath });
+      const fs = await import('fs');
+      try {
+        fileBuffer = fs.readFileSync(file.tempFilePath);
+        logger.info('✅ Successfully read temp file:', { bufferLength: fileBuffer.length });
+        
+        // Clean up temp file
+        fs.unlinkSync(file.tempFilePath);
+        logger.info('✅ Temp file cleaned up');
+      } catch (error) {
+        logger.error('❌ Error reading temp file:', { 
+          error: error.message,
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        });
+        return res.status(500).json({
+          success: false,
+          message: 'Error reading uploaded file',
+          total: 0,
+          created: 0,
+          duplicates: 0,
+          failed: 0,
+          errors: ['Cannot read file from temporary storage']
+        });
+      }
+    } else if (Buffer.isBuffer(file.data) && file.data.length > 0) {
+      // File is stored in memory as buffer
+      fileBuffer = file.data;
+      logger.info('✅ Using memory buffer:', { length: fileBuffer.length });
+    } else {
+      // No accessible file data
+      logger.error('❌ No accessible file data found');
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot read file content. The file might be empty or corrupted.',
+        total: 0,
+        created: 0,
+        duplicates: 0,
+        failed: 0,
+        errors: ['Empty file content']
+      });
+    }
+
+    logger.info('🔄 Processing file with buffer length:', { length: fileBuffer.length });
+
+    // Process the file buffer using your existing service
+    const result = await batchUploadCustomers(fileBuffer);
+    
+    logger.info('✅ Batch upload result:', { result });
+
+    // Ensure response has all required fields
+    const response = {
+      success: result.success || false,
+      message: result.message || 'Processing completed',
+      total: result.total || 0,
+      created: result.created || 0,
+      duplicates: result.duplicates || 0,
+      failed: result.failed || 0,
+      errors: result.errors || []
+    };
+
+    return res.status(result.success ? 200 : 400).json(response);
+
+  } catch (error) {
+    logger.error('❌ Batch upload route error:', { 
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during upload processing',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Processing failed',
+      total: 0,
+      created: 0,
+      duplicates: 0,
+      failed: 0,
+      errors: [error.message]
     });
   }
 });

@@ -1,26 +1,13 @@
 import mongoose from 'mongoose';
 
 const ledgerSchema = new mongoose.Schema({
-GL_ACCT_NO: {
-  type: String,
-  required: true,
-  unique: true,
-  validate: {
-    validator: function (value) {
-      // ✅ Format 1: Padded (01-002-100-115-102) → last part 2–3 digits
-      const regexPadded = /^\d{2}-\d{3}-\d{3}-\d{3}-\d{2,3}$/;
-
-      // ✅ Format 2: Short (1-12-2-100-102) → last part 2–3 digits
-      const regexShort = /^\d{1,2}-\d{1,3}-\d{1,3}-\d{1,3}-\d{2,3}$/;
-
-      return regexPadded.test(value) || regexShort.test(value);
-    },
-    message:
-      'GL_ACCT_NO must match format: 01-002-100-115-102 (padded) OR 1-12-2-100-102 (short), with last part 2–3 digits',
+  GL_ACCT_NO: {
+    type: String,
+    required: [true, 'GL_ACCT_NO is required'],
+    unique: true,
+    trim: true,
   },
-},
-
-  GL_ACCT_ID: { type: String, required: true, unique: true },
+  GL_ACCT_ID: { type: String, required: [true, 'GL_ACCT_ID is required'], unique: true },
   CHART_OF_ACCT_ID: {
     type: String,
     required: [true, 'CHART_OF_ACCT_ID is required'],
@@ -146,6 +133,16 @@ GL_ACCT_NO: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'GLTransaction',
   }],
+  organizationName: {
+    type: String,
+    required: [true, 'organizationName is required'],
+    trim: true,
+  },
+  branchName: {
+    type: String,
+    required: [true, 'branchName is required'],
+    trim: true,
+  },
 }, { timestamps: true });
 
 // Helper method to check if posting is allowed

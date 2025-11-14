@@ -1,6 +1,6 @@
 import ProductTypeMapping from '../models/ProductTypeMapping.js';
 import GLAccount from '../models/GLAccount.js';
-import SavingsProduct from '../models/SavingsProduct.js'; // ✅ CORRECTED IMPORT NAME
+import SavingsProduct from '../models/SavingsProduct.js';
 import LoanProduct from '../models/LoanProduct.js';
 import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
 
@@ -33,21 +33,44 @@ export const getProductTypeByProdIdInternal = async (prodId) => {
  */
 export const createOrUpdateMapping = async (req, res) => {
   try {
+    console.log('📥 Incoming request body:', JSON.stringify(req.body, null, 2));
+    
     const { PROD_ID, PRODUCT_TYPE, productName, PROD_DESC, PROD_CD, glAccounts } = req.body;
+    
+    console.log('📥 PROD_ID received:', PROD_ID, 'Type:', typeof PROD_ID);
 
-    // Validate required fields using schema field names
-    if (!PROD_ID || !PRODUCT_TYPE || !productName || !PROD_DESC || !PROD_CD) {
-      return res.status(400).json({
-        success: false,
-        message: 'PROD_ID, PRODUCT_TYPE, productName, PROD_DESC, and PROD_CD are required'
-      });
+    // ✅ IMPROVED PROD_ID VALIDATION & PARSING
+    let finalProdId;
+    
+    if (!PROD_ID) {
+      // Generate a new PROD_ID using the model's static method
+      try {
+        finalProdId = await SavingsProduct.getNextProdId();
+        console.log(`🔄 Generated new PROD_ID: ${finalProdId}`);
+      } catch (genError) {
+        console.error('Error generating PROD_ID:', genError);
+        // Fallback to random generation
+        finalProdId = Math.floor(1000 + Math.random() * 9000);
+        console.log(`🔄 Using fallback PROD_ID: ${finalProdId}`);
+      }
+    } else {
+      // Parse existing PROD_ID safely
+      const parsedProdId = parseInt(String(PROD_ID).trim());
+      if (isNaN(parsedProdId)) {
+        return res.status(400).json({
+          success: false,
+          message: `PROD_ID must be a valid number. Received: ${PROD_ID}`
+        });
+      }
+      finalProdId = Math.max(parsedProdId, 1000); // Ensure minimum 1000
+      console.log(`✅ Using provided PROD_ID: ${finalProdId} (parsed from: ${PROD_ID})`);
     }
 
-    // Validate PROD_ID format (should be string based on your schema)
-    if (typeof PROD_ID !== 'string') {
+    // Validate other required fields
+    if (!PRODUCT_TYPE || !productName || !PROD_DESC || !PROD_CD) {
       return res.status(400).json({
         success: false,
-        message: 'PROD_ID must be a string'
+        message: 'PRODUCT_TYPE, productName, PROD_DESC, and PROD_CD are required'
       });
     }
 
@@ -187,19 +210,19 @@ export const createOrUpdateMapping = async (req, res) => {
           });
         }
         updatedGLAccounts.SETTLEMENT_GL_ACCT_NO = defaultGLAccount.GL_ACCT_NO;
-        console.warn(`SETTLEMENT_GL_ACCT_NO not provided for PROD_ID ${PROD_ID}. Using default: ${defaultGLAccount.GL_ACCT_NO}`);
+        console.warn(`SETTLEMENT_GL_ACCT_NO not provided for PROD_ID ${finalProdId}. Using default: ${defaultGLAccount.GL_ACCT_NO}`);
       }
       
       // Set principalGLAccountNo to loanGLAccount if not provided
       if (!updatedGLAccounts.principalGLAccountNo) {
         updatedGLAccounts.principalGLAccountNo = updatedGLAccounts.loanGLAccount;
-        console.log(`principalGLAccountNo not provided for PROD_ID ${PROD_ID}. Using loanGLAccount value: ${updatedGLAccounts.loanGLAccount}`);
+        console.log(`principalGLAccountNo not provided for PROD_ID ${finalProdId}. Using loanGLAccount value: ${updatedGLAccounts.loanGLAccount}`);
       }
 
       // Set fallbacks for other GL accounts to prevent undefined values
       if (!updatedGLAccounts.interestPayableGLAccountNo) {
         updatedGLAccounts.interestPayableGLAccountNo = updatedGLAccounts.interestGLAccountNo || updatedGLAccounts.loanGLAccount;
-        console.log(`interestPayableGLAccountNo not provided for PROD_ID ${PROD_ID}. Using interestGLAccountNo or loanGLAccount value: ${updatedGLAccounts.interestPayableGLAccountNo}`);
+        console.log(`interestPayableGLAccountNo not provided for PROD_ID ${finalProdId}. Using interestGLAccountNo or loanGLAccount value: ${updatedGLAccounts.interestPayableGLAccountNo}`);
       }
       if (!updatedGLAccounts.withholdingTaxGLAccountNo) {
         // Attempt to find a default tax account; fallback to loan if not found
@@ -213,7 +236,7 @@ export const createOrUpdateMapping = async (req, res) => {
           updatedGLAccounts.withholdingTaxGLAccountNo = updatedGLAccounts.loanGLAccount;
           console.warn(`No default tax account found for withholdingTaxGLAccountNo. Using loanGLAccount: ${updatedGLAccounts.loanGLAccount}`);
         }
-        console.log(`withholdingTaxGLAccountNo set for PROD_ID ${PROD_ID}: ${updatedGLAccounts.withholdingTaxGLAccountNo}`);
+        console.log(`withholdingTaxGLAccountNo set for PROD_ID ${finalProdId}: ${updatedGLAccounts.withholdingTaxGLAccountNo}`);
       }
       
     } else if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
@@ -252,10 +275,14 @@ export const createOrUpdateMapping = async (req, res) => {
     const accountPrefix = getPrefixForProductType(finalProductType);
     console.log(`Generated account prefix for ${finalProductType}: ${accountPrefix}`);
 
+    // ✅ SAFE PARSING FOR NUMERIC FIELDS
+    const parsedProductCode = parseInt(String(finalPROD_CD).trim());
+    const finalProductCode = isNaN(parsedProductCode) ? 200 : parsedProductCode; // Default fallback
+
     // Prepare mapping data - map to schema fields to satisfy required validation
     const mappingData = {
-      productCode: parseInt(finalPROD_CD),
-      PROD_ID: parseInt(PROD_ID),
+      productCode: finalProductCode,
+      PROD_ID: finalProdId, // ✅ Use the validated finalProdId
       name: productName,
       isActive: true,
       allowedCurrencies: [req.body.CRNCY_ID || 'NGN'],
@@ -271,12 +298,12 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // Save or update product type mapping
     const updatedMapping = await ProductTypeMapping.findOneAndUpdate(
-      { PROD_ID: parseInt(PROD_ID) },
+      { PROD_ID: finalProdId }, // ✅ Use validated ID
       mappingData,
       { upsert: true, new: true, runValidators: true }
     );
 
-    console.log(`Product type mapping saved/updated for PROD_ID: ${PROD_ID}`, {
+    console.log(`Product type mapping saved/updated for PROD_ID: ${finalProdId}`, {
       PRODUCT_TYPE: finalProductType,
       accountPrefix,
       glAccountCount: Object.keys(updatedGLAccounts).length
@@ -284,7 +311,7 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // Create or update specific product based on type
     const productData = {
-      PROD_ID: parseInt(PROD_ID), // Convert to number for product models
+      PROD_ID: finalProdId, // ✅ Use validated ID
       PROD_CD: finalPROD_CD,
       PROD_DESC: finalPROD_DESC,
       PRODUCT_TYPE: finalProductType,
@@ -299,7 +326,7 @@ export const createOrUpdateMapping = async (req, res) => {
     if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
       const savingsProductData = {
         ...productData,
-        productCode: parseInt(finalPROD_CD), // Ensure number type
+        productCode: String(finalProductCode), // ✅ Ensure string type for productCode
         productType: finalProductType, // Map PRODUCT_TYPE to productType
         CRNCY_ID: req.body.CRNCY_ID || 'NGN',
         START_DT: req.body.START_DT ? new Date(req.body.START_DT) : new Date(),
@@ -317,18 +344,18 @@ export const createOrUpdateMapping = async (req, res) => {
       };
 
       specificProduct = await SavingsProduct.findOneAndUpdate(
-        { PROD_ID: parseInt(PROD_ID) },
+        { PROD_ID: finalProdId }, // ✅ Use validated ID
         savingsProductData,
         { upsert: true, new: true, runValidators: true }
       );
-      console.log(`Savings product saved/updated for PROD_ID: ${PROD_ID}`);
+      console.log(`Savings product saved/updated for PROD_ID: ${finalProdId}`);
 
     } 
     // Handle Loan Products
     else if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
       const loanProductData = {
         ...productData,
-        productCode: parseInt(finalPROD_CD), // Ensure number type
+        productCode: String(finalProductCode), // ✅ Ensure string type for productCode
         name: productName, // Map productName to name
         description: PROD_DESC, // Map PROD_DESC to description
         CRNCY_ID: req.body.CRNCY_ID || 'NGN',
@@ -345,7 +372,7 @@ export const createOrUpdateMapping = async (req, res) => {
         maxTerm: parseInt(req.body.maxTerm) || 12,
         TERM_CD: req.body.TERM_CD || 'M',
         PAYMENT_FREQUENCY: req.body.PAYMENT_FREQUENCY || 'MONTHLY',
-        interestRate: parseFloat(req.body.interestRate) || 6.00,
+        interestRate: parseFloat(req.body.interestRate) || 0.00,
         // Additional defaults for common loan fields to prevent undefined in getters
         gracePeriod: parseInt(req.body.gracePeriod) || 0,
         lateFeeRate: parseFloat(req.body.lateFeeRate) || 0.00,
@@ -356,19 +383,19 @@ export const createOrUpdateMapping = async (req, res) => {
       };
 
       specificProduct = await LoanProduct.findOneAndUpdate(
-        { PROD_ID: parseInt(PROD_ID) },
+        { PROD_ID: finalProdId }, // ✅ Use validated ID
         loanProductData,
         { upsert: true, new: true, runValidators: true }
       );
-      console.log(`Loan product saved/updated for PROD_ID: ${PROD_ID}`);
+      console.log(`Loan product saved/updated for PROD_ID: ${finalProdId}`);
     }
 
     // Generate loan account number (if applicable)
     let generatedAccountNumber = null;
     if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
       try {
-        generatedAccountNumber = await generateLoanAccountNumberByProdId(PROD_ID);
-        console.log(`Generated loan account number for PROD_ID ${PROD_ID}: ${generatedAccountNumber}`);
+        generatedAccountNumber = await generateLoanAccountNumberByProdId(finalProdId);
+        console.log(`Generated loan account number for PROD_ID ${finalProdId}: ${generatedAccountNumber}`);
       } catch (accountError) {
         console.warn('Account number generation failed:', accountError.message);
         // Don't fail the entire operation if account generation fails
@@ -472,12 +499,21 @@ export const getMappingByProdId = async (req, res) => {
       });
     }
 
-    const mapping = await ProductTypeMapping.findOne({ PROD_ID: prodId });
+    // ✅ SAFE PROD_ID PARSING
+    const parsedProdId = parseInt(String(prodId).trim());
+    if (isNaN(parsedProdId)) {
+      return res.status(400).json({
+        success: false,
+        message: `PROD_ID must be a valid number. Received: ${prodId}`
+      });
+    }
+
+    const mapping = await ProductTypeMapping.findOne({ PROD_ID: parsedProdId });
     
     if (!mapping) {
       return res.status(404).json({
         success: false,
-        message: `No product type mapping found for PROD_ID: ${prodId}`
+        message: `No product type mapping found for PROD_ID: ${parsedProdId}`
       });
     }
 
@@ -523,12 +559,22 @@ export const getAllMappings = async (req, res) => {
 export const getProductTypeByProdId = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
-    const mapping = await ProductTypeMapping.findOne({ PROD_ID: parseInt(PROD_ID) }).lean();
+    
+    // ✅ SAFE PROD_ID PARSING
+    const parsedProdId = parseInt(String(PROD_ID).trim());
+    if (isNaN(parsedProdId)) {
+      return res.status(400).json({
+        success: false,
+        message: `PROD_ID must be a valid number. Received: ${PROD_ID}`
+      });
+    }
+
+    const mapping = await ProductTypeMapping.findOne({ PROD_ID: parsedProdId }).lean();
 
     if (!mapping) {
       return res.status(404).json({
         success: false,
-        message: `No mapping found for PROD_ID ${PROD_ID}`
+        message: `No mapping found for PROD_ID ${parsedProdId}`
       });
     }
 
@@ -547,27 +593,33 @@ export const getProductTypeByProdId = async (req, res) => {
 };
 
 /**
- * Get all product type mappings
- */
-
-/**
  * Delete mapping by PROD_ID
  */
 export const deleteMapping = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
-    const result = await ProductTypeMapping.deleteOne({ PROD_ID: parseInt(PROD_ID) });
+    
+    // ✅ SAFE PROD_ID PARSING
+    const parsedProdId = parseInt(String(PROD_ID).trim());
+    if (isNaN(parsedProdId)) {
+      return res.status(400).json({
+        success: false,
+        message: `PROD_ID must be a valid number. Received: ${PROD_ID}`
+      });
+    }
+
+    const result = await ProductTypeMapping.deleteOne({ PROD_ID: parsedProdId });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: `No mapping found for PROD_ID ${PROD_ID}`
+        message: `No mapping found for PROD_ID ${parsedProdId}`
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: `Mapping for PROD_ID ${PROD_ID} deleted`
+      message: `Mapping for PROD_ID ${parsedProdId} deleted`
     });
   } catch (error) {
     console.error('Error deleting mapping:', error);
@@ -585,15 +637,25 @@ export const deleteMapping = async (req, res) => {
 export const getProductTypeOnly = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
+    
+    // ✅ SAFE PROD_ID PARSING
+    const parsedProdId = parseInt(String(PROD_ID).trim());
+    if (isNaN(parsedProdId)) {
+      return res.status(400).json({
+        success: false,
+        message: `PROD_ID must be a valid number. Received: ${PROD_ID}`
+      });
+    }
+
     const mapping = await ProductTypeMapping.findOne(
-      { PROD_ID: parseInt(PROD_ID) },
+      { PROD_ID: parsedProdId },
       { PRODUCT_TYPE: 1, _id: 0 } // only return PRODUCT_TYPE
     ).lean();
 
     if (!mapping) {
       return res.status(404).json({
         success: false,
-        message: `No mapping found for PROD_ID ${PROD_ID}`
+        message: `No mapping found for PROD_ID ${parsedProdId}`
       });
     }
 
