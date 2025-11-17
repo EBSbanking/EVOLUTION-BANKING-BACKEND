@@ -21,6 +21,13 @@ const branchSchema = new mongoose.Schema({
     match: [/^\d{3}$/, 'Branch code must be a 3-digit number'],
     index: true // For fast lookups
   },
+  // Add to branchSchema (after migration_id)
+legacyId: {
+  type: Number,
+  unique: true,
+  sparse: true, // Allow nulls/duplicates for non-legacy
+  index: true
+},
 
   // Address field (aligned with BusinessUnit's ADDRESS; optional for legacy)
   address: {

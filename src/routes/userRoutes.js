@@ -30,6 +30,8 @@ import {
   resetUser,
   clearUserCaches,
   getUserSessionInfo,
+  getBUSummary,
+  getUsersByBU_ID
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js'; // ✅ UPDATED: Use unified middleware
@@ -134,6 +136,14 @@ router.get('/user/permissions', verifyToken, getUserPermissions);
 router.get('/user/profile', verifyToken, getUserProfile);
 router.post('/user/validate-permission', verifyToken, validatePermission);
 router.post('/user/validate-permissions', verifyToken, validatePermissions);
+
+// ✅ Get users by Business Unit ID with filtering and pagination
+router.get('/:bu_id/users', verifyToken, getUsersByBU_ID);
+
+// ✅ Get Business Unit summary and statistics
+router.get('/:bu_id/summary', verifyToken, getBUSummary);
+ 
+
 
 // 🔐 Session Management Routes
 router.post('/user/reset-session', verifyToken, resetUser);

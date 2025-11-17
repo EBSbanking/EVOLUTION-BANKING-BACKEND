@@ -1,9 +1,13 @@
+// routes/organizationRoutes.js
 import express from 'express';
-import { createOrganization } from '../controllers/organizationController.js'; // Import the controller function
+import { createOrganization, getOrganizations } from '../controllers/organizationController.js'; // Adjust path as needed
 
 const router = express.Router();
 
-// POST route for creating an organization
+// Create a new organization
 router.post('/create-organization', createOrganization);
+
+// Get all organizations (assuming a getOrganizations controller exists)
+router.get('/', getOrganizations); // You'll need to implement getOrganizations in controller
 
 export default router;

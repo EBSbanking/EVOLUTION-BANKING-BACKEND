@@ -2,26 +2,40 @@
 import { Router } from 'express';
 import {
   createGroup,
-  getGroups, // ✅ added
+  getGroups,
   addMemberToGroup,
   createGroupLoanApplication,
   disburseGroupLoan,
   repayGroupLoan,
   getGroupLoan,
-} from '../controllers/GroupController.js'; // Adjust path if needed
-import { authenticate } from '../middlewares/authMiddleware.js'; // Assuming auth middleware exists
+  approveGroupLoan,
+  rejectGroupLoan,
+  getPendingCreditApplications,
+  getApprovedCreditApplications, 
+  getRejectedCreditApplications  
+} from '../controllers/GroupController.js';
+import { authenticate } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
 // 🧩 Group management routes
-router.post('/groups', authenticate, createGroup); // Create new group
-router.get('/groups', authenticate, getGroups); // ✅ Get groups (with search/filter)
-router.post('/groups/:groupCode/members', authenticate, addMemberToGroup); // Add member to group
+router.post('/groups', authenticate, createGroup);
+router.get('/groups', authenticate, getGroups);
+router.post('/groups/:groupCode/members', authenticate, addMemberToGroup);
 
 // 💰 Group loan management routes
-router.post('/group-loans', authenticate, createGroupLoanApplication); // Create group loan
-router.post('/group-loans/:groupLoanId/disbursement', authenticate, disburseGroupLoan); // Disburse loan
-router.post('/group-loans/:groupLoanId/repayment', authenticate, repayGroupLoan); // Repay loan
-router.get('/group-loans/:groupLoanId', authenticate, getGroupLoan); // Get group loan by ID
+router.post('/group-loans', authenticate, createGroupLoanApplication);
+router.post('/group-loans/:id/disbursement', authenticate, disburseGroupLoan);
+router.post('/group-loans/:id/repayment', authenticate, repayGroupLoan);
+
+// ✅ Credit applications routes - FIXED: Placed BEFORE parameterized routes
+router.get('/group-loans/pending-credit-applications', authenticate, getPendingCreditApplications);
+router.get('/group-loans/approved-credit-applications', authenticate, getApprovedCreditApplications); // ✅ Added
+router.get('/group-loans/rejected-credit-applications', authenticate, getRejectedCreditApplications); // ✅ Added
+
+// Parameterized routes (placed AFTER specific routes to avoid catching literals as params)
+router.get('/group-loans/:id', authenticate, getGroupLoan);
+router.patch('/group-loans/:id/approve', authenticate, approveGroupLoan);
+router.patch('/group-loans/:id/reject', authenticate, rejectGroupLoan);
 
 export default router;

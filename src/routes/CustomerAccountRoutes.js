@@ -158,7 +158,7 @@ router.get('/accounts/:accountNumber', async (req, res) => {
 
 router.post('/accounts', createCustomerAccount);
 router.get('/accounts', getAllCustomerAccounts);
-router.get('/accounts/:ACCT_NO', getCustomerAccountById);
+router.get('/accounts/:identifier', getCustomerAccountById);
 router.put('/accounts/:ACCT_NO', updateCustomerAccount);
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount);
 router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);

@@ -203,9 +203,14 @@ const loanAccountSchema = new mongoose.Schema(
       required: true
     },
     INTEREST_RATE_ID: {
-      type: mongoose.Schema.Types.ObjectId, // CHANGED: From Number to ObjectId
-      ref: 'LoanInterestRate',
-      required: true
+      type: Number, // FIXED: Changed back to Number for legacy numeric IDs
+      required: true,
+      validate: {
+        validator: function(v) {
+          return typeof v === 'number' && v > 0;
+        },
+        message: props => `${props.value} must be a positive number`
+      }
     },
     INTEREST_RATE: {
       type: mongoose.Schema.Types.Decimal128,

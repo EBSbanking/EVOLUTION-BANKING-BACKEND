@@ -1018,20 +1018,36 @@ export const getCustomerById = async (req, res) => {
     // Convert to string and remove any accidental whitespace
     const custIdString = CUST_ID.toString().trim();
     
-    // Generate both formats for searching
+    // Generate multiple formats for searching
     const originalCustId = custIdString;
     const cleanCustId = custIdString.replace(/^0+/, ''); // Remove leading zeros
+    const numericCustId = parseInt(custIdString, 10); // Convert to number for legacy ID matching
     
-    // Search for customer in BOTH formats
+    console.log(`🔍 Searching for customer with ID: ${originalCustId}`);
+    console.log(`📋 Search formats: original=${originalCustId}, clean=${cleanCustId}, numeric=${numericCustId}`);
+
+    // Search for customer in MULTIPLE formats including legacy IDs
     const customer = await Customer.findOne({
       $or: [
-        { CUST_ID: originalCustId },    // Try with original format (with leading zeros)
-        { CUST_ID: cleanCustId }        // Try without leading zeros
+        { CUST_ID: originalCustId },                    // Try with original format (with leading zeros)
+        { CUST_ID: cleanCustId },                       // Try without leading zeros
+        { CUST_ID: numericCustId.toString() },          // Try as number string
+        { legacy_customer_id: numericCustId },          // Try legacy customer_id (numeric)
+        { legacy_customer_id: originalCustId },         // Try legacy customer_id (string)
+        { legacy_customer_id: cleanCustId }             // Try legacy customer_id (clean string)
       ]
     }).populate('nextOfKin');
 
     if (!customer) {
-      // Self-audit not-found
+      // Enhanced debugging: Check what customer IDs exist in the database
+      const sampleCustomers = await Customer.find({})
+        .select('CUST_ID legacy_customer_id FIRST_NAME LAST_NAME')
+        .limit(5)
+        .lean();
+      
+      console.log('📊 Sample customers in database:', sampleCustomers);
+      
+      // Self-audit not-found with enhanced details
       auditLogger.info('Audit Event', {
         entity_type: 'customer_query',
         entity_id: originalCustId,
@@ -1040,20 +1056,59 @@ export const getCustomerById = async (req, res) => {
         old_value: null,
         new_value: { 
           status: 'not_found',
-          searched_formats: [originalCustId, cleanCustId]
+          searched_formats: [
+            `CUST_ID: ${originalCustId}`,
+            `CUST_ID: ${cleanCustId}`,
+            `CUST_ID: ${numericCustId}`,
+            `legacy_customer_id: ${numericCustId}`,
+            `legacy_customer_id: ${originalCustId}`,
+            `legacy_customer_id: ${cleanCustId}`
+          ],
+          sample_customers: sampleCustomers
         },
         ip_address: ipAddress,
         event_type: 'QUERY_NOT_FOUND',
         outcome: 'failure'
       });
+      
       return res.status(404).json({ 
-        message: `Customer with CUST_ID ${originalCustId} not found`,
-        searched_formats: [originalCustId, cleanCustId]
+        success: false,
+        message: `Customer not found with ID: ${originalCustId}`,
+        searched_formats: [
+          `CUST_ID: ${originalCustId}`,
+          `CUST_ID: ${cleanCustId}`, 
+          `CUST_ID: ${numericCustId}`,
+          `legacy_customer_id: ${numericCustId}`,
+          `legacy_customer_id: ${originalCustId}`,
+          `legacy_customer_id: ${cleanCustId}`
+        ],
+        sample_customers: sampleCustomers, // For debugging
+        troubleshooting: [
+          'Check if customer exists in the database',
+          'Verify the ID format matches customer records',
+          'Try using the legacy customer_id if migrated from old system'
+        ]
       });
     }
 
+    // Determine which field was matched
+    let matchedField = 'unknown';
+    let matchedValue = 'unknown';
+    
+    if (customer.CUST_ID === originalCustId || customer.CUST_ID === cleanCustId || customer.CUST_ID === numericCustId.toString()) {
+      matchedField = 'CUST_ID';
+      matchedValue = customer.CUST_ID;
+    } else if (customer.legacy_customer_id == numericCustId || 
+               customer.legacy_customer_id == originalCustId || 
+               customer.legacy_customer_id == cleanCustId) {
+      matchedField = 'legacy_customer_id';
+      matchedValue = customer.legacy_customer_id;
+    }
+
+    console.log(`✅ Customer found: ${customer.FIRST_NAME} ${customer.LAST_NAME}`);
+    console.log(`📝 Matched on: ${matchedField} = ${matchedValue}`);
+
     // Self-audit success - log which format was found
-    const foundWithFormat = customer.CUST_ID === originalCustId ? 'original' : 'clean';
     auditLogger.info('Audit Event', {
       entity_type: 'customer_query',
       entity_id: originalCustId,
@@ -1063,7 +1118,10 @@ export const getCustomerById = async (req, res) => {
       new_value: { 
         event_id: customer.event_id,
         found_cust_id: customer.CUST_ID,
-        matched_format: foundWithFormat
+        legacy_customer_id: customer.legacy_customer_id,
+        matched_field: matchedField,
+        matched_value: matchedValue,
+        customer_name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`
       },
       ip_address: ipAddress,
       event_type: 'QUERY_SUCCESS',
@@ -1073,10 +1131,14 @@ export const getCustomerById = async (req, res) => {
     res.status(200).json({
       success: true,
       data: customer,
-      matched_format: foundWithFormat // Optional: for debugging
+      match_details: {
+        matched_field: matchedField,
+        matched_value: matchedValue,
+        searched_id: originalCustId
+      }
     });
   } catch (error) {
-    console.error('Error fetching customer:', error);
+    console.error('❌ Error fetching customer:', error);
     auditLogger.error('Audit Event', {
       entity_type: 'customer_query',
       entity_id: req.params.CUST_ID || null,
@@ -1087,7 +1149,8 @@ export const getCustomerById = async (req, res) => {
       ip_address: req.ip || 'unknown',
       event_type: 'QUERY_ERROR',
       outcome: 'failure',
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
     res.status(500).json({ 
       success: false,

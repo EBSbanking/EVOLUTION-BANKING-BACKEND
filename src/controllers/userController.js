@@ -528,6 +528,402 @@ export const getUserPermissions = asyncHandler(async (req, res) => {
   }
 });
 
+// ✅ Get Users by Business Unit ID - FIXED VERSION with Legacy Compatibility
+export const getUsersByBU_ID = asyncHandler(async (req, res) => {
+  try {
+    const { bu_id } = req.params;
+    const { 
+      page = 1, 
+      limit = 50, 
+      status, 
+      role_id,
+      include_inactive = false 
+    } = req.query;
+
+    console.log('🔍 Get Users by BU_ID request:', { 
+      bu_id, 
+      page, 
+      limit, 
+      status,
+      role_id,
+      include_inactive 
+    });
+
+    // Build base query with BU_ID search (including legacy branch field)
+    const baseQuery = {
+      $or: [
+        { main_business_unit: bu_id },
+        { BU_ID: bu_id },
+        { branch: bu_id } // Legacy branch field
+      ]
+    };
+
+    // Add status filter if provided
+    if (status && status !== 'all') {
+      baseQuery.status = status;
+    } else if (!include_inactive) {
+      // Default: only active users unless explicitly including inactive
+      baseQuery.status = 'Active';
+    }
+
+    // Add role filter if provided
+    if (role_id) {
+      baseQuery.$or = baseQuery.$or || [];
+      baseQuery.$or.push(
+        { BU_ROLE_ID: role_id },
+        { role: role_id } // Legacy role field
+      );
+    }
+
+    console.log('📊 Database query:', JSON.stringify(baseQuery, null, 2));
+
+    // Execute query with pagination
+    const users = await User.find(baseQuery)
+      .select('-password -passwordHistory') // Exclude sensitive fields
+      .sort({ 
+        first_name: 1, 
+        last_name: 1,
+        created_at: -1 
+      })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .lean();
+
+    // Get total count for pagination
+    const total = await User.countDocuments(baseQuery);
+
+    console.log('📈 Query results:', {
+      bu_id,
+      users_found: users.length,
+      total_users: total,
+      page,
+      limit
+    });
+
+    if (users.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No users found for this business unit',
+        data: {
+          users: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            pages: 0
+          },
+          summary: {
+            business_unit_id: bu_id,
+            active_users: 0,
+            inactive_users: 0,
+            total_users: 0
+          }
+        }
+      });
+    }
+
+    // Map users with legacy compatibility and enhanced information
+    const mappedUsers = await Promise.all(users.map(async (user) => {
+      // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
+      const mappedUser = {
+        ...user,
+        user_name: user.user_name || user.username,
+        first_name: user.first_name || user.fname,
+        last_name: user.last_name || user.lname,
+        BU_ROLE_ID: user.BU_ROLE_ID || user.role,
+        primary_business_role: user.primary_business_role || user.utype,
+        status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated'),
+        main_business_unit: user.main_business_unit || user.branch?.toString() || '',
+        is_supervisor: user.is_supervisor || (user.rofficer === 'Yes'),
+        BU_ID: user.BU_ID || user.branch,
+        internal_employee_enabled: user.internal_employee_enabled || (user.utype === 'Staff'),
+        enable_multi_session: user.enable_multi_session || (user.pass_never_expire === 2),
+        validate_ip_address: user.validate_ip_address || false,
+        ip_address: user.ip_address || null
+      };
+
+      // Get role permissions and details
+      let permissions = [];
+      let roleName = mappedUser.primary_business_role || 'Unknown Role';
+
+      // Check if user is Administrator
+      if (parseInt(mappedUser.BU_ROLE_ID) === 1) {
+        // Administrator has all permissions
+        permissions = Object.values(PERMISSIONS).flatMap(group => 
+          typeof group === 'object' ? Object.values(group) : []
+        );
+        roleName = 'Administrator';
+      } else {
+        // Non-admin logic
+        const permissionsDoc = await Permissions.findOne({ 
+          BU_ROLE_ID: mappedUser.BU_ROLE_ID 
+        }).select('permissions ROLE_NAME').lean();
+
+        if (permissionsDoc) {
+          permissions = Object.values(permissionsDoc.permissions).flat();
+          roleName = permissionsDoc.ROLE_NAME;
+        } else {
+          const roleDetails = getRoleWithPermissions(mappedUser.BU_ROLE_ID);
+          if (roleDetails) {
+            permissions = Object.values(roleDetails.permissions).flat();
+            roleName = roleDetails.ROLE_NM;
+          }
+        }
+      }
+
+      // Calculate lock status
+      const isLocked = user.lock_until && user.lock_until > Date.now();
+      const lockRemaining = isLocked ? Math.ceil((user.lock_until - Date.now()) / 60000) : 0;
+
+      return {
+        // Basic user information
+        id: user._id,
+        user_name: mappedUser.user_name,
+        email: user.email,
+        first_name: mappedUser.first_name,
+        last_name: mappedUser.last_name,
+        full_name: `${mappedUser.first_name || ''} ${mappedUser.last_name || ''}`.trim(),
+        employer_number: user.employer_number,
+        job_title: user.job_title,
+        
+        // Business unit information
+        main_business_unit: mappedUser.main_business_unit,
+        BU_ID: mappedUser.BU_ID,
+        responsibility_centre: user.responsibility_centre,
+        
+        // Role and permissions
+        primary_business_role: mappedUser.primary_business_role,
+        BU_ROLE_ID: mappedUser.BU_ROLE_ID,
+        role_name: roleName,
+        permissions_count: permissions.length,
+        is_administrator: parseInt(mappedUser.BU_ROLE_ID) === 1,
+        
+        // Status and security
+        status: mappedUser.status,
+        internal_employee_enabled: mappedUser.internal_employee_enabled,
+        is_supervisor: mappedUser.is_supervisor,
+        enable_multi_session: mappedUser.enable_multi_session,
+        validate_ip_address: mappedUser.validate_ip_address,
+        ip_address: mappedUser.ip_address,
+        
+        // Lock status
+        lock_status: {
+          is_locked: isLocked,
+          is_force_locked: user.status === 'ForceLocked',
+          failed_attempts: user.failed_attempts || 0,
+          lock_until: user.lock_until,
+          lock_remaining_minutes: lockRemaining,
+          force_lock_reason: user.force_lock_reason,
+          force_locked_at: user.force_locked_at,
+          force_locked_by: user.force_locked_by
+        },
+        
+        // Dates
+        start_date: user.start_date,
+        expiry_date: user.expiry_date,
+        last_login: user.last_login,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        
+        // Legacy fields for compatibility
+        username: user.username || mappedUser.user_name,
+        legacy_role: user.role,
+        legacy_status: user.is_active,
+        legacy_branch: user.branch,
+        legacy_utype: user.utype
+      };
+    }));
+
+    // Calculate summary statistics
+    const activeUsers = mappedUsers.filter(user => user.status === 'Active').length;
+    const inactiveUsers = mappedUsers.filter(user => user.status !== 'Active').length;
+    const lockedUsers = mappedUsers.filter(user => user.lock_status.is_locked).length;
+    const supervisorUsers = mappedUsers.filter(user => user.is_supervisor).length;
+    const administratorUsers = mappedUsers.filter(user => user.is_administrator).length;
+
+    console.log('✅ Users retrieved successfully:', {
+      bu_id,
+      total_users: mappedUsers.length,
+      active_users: activeUsers,
+      inactive_users: inactiveUsers,
+      locked_users: lockedUsers,
+      supervisor_users: supervisorUsers,
+      administrator_users: administratorUsers
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Found ${mappedUsers.length} users for business unit ${bu_id}`,
+      data: {
+        users: mappedUsers,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit)
+        },
+        summary: {
+          business_unit_id: bu_id,
+          active_users: activeUsers,
+          inactive_users: inactiveUsers,
+          locked_users: lockedUsers,
+          supervisor_users: supervisorUsers,
+          administrator_users: administratorUsers,
+          total_users: mappedUsers.length,
+          query_filters: {
+            status: status || 'Active (default)',
+            role_id: role_id || 'All',
+            include_inactive: include_inactive === 'true'
+          }
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Get users by BU_ID error:', {
+      message: error.message,
+      stack: error.stack,
+      bu_id: req.params.bu_id,
+      query: req.query
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching users by business unit',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ✅ Get Business Unit Summary - Get statistics for a specific BU_ID
+export const getBUSummary = asyncHandler(async (req, res) => {
+  try {
+    const { bu_id } = req.params;
+
+    console.log('📊 Get Business Unit Summary request:', { bu_id });
+
+    // Build query for this business unit
+    const buQuery = {
+      $or: [
+        { main_business_unit: bu_id },
+        { BU_ID: bu_id },
+        { branch: bu_id } // Legacy branch field
+      ]
+    };
+
+    // Get all users for this business unit
+    const users = await User.find(buQuery)
+      .select('status BU_ROLE_ID role is_supervisor lock_until failed_attempts internal_employee_enabled')
+      .lean();
+
+    if (users.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No users found for this business unit',
+        data: {
+          business_unit_id: bu_id,
+          total_users: 0,
+          summary: {
+            active_users: 0,
+            inactive_users: 0,
+            locked_users: 0,
+            supervisors: 0,
+            administrators: 0,
+            internal_employees: 0,
+            external_users: 0
+          },
+          role_breakdown: {},
+          status_breakdown: {}
+        }
+      });
+    }
+
+    // Calculate comprehensive statistics
+    const summary = {
+      total_users: users.length,
+      active_users: users.filter(user => 
+        user.status === 'Active' || user.is_active === 'Active'
+      ).length,
+      inactive_users: users.filter(user => 
+        user.status !== 'Active' && user.is_active !== 'Active'
+      ).length,
+      locked_users: users.filter(user => 
+        user.lock_until && user.lock_until > Date.now()
+      ).length,
+      supervisors: users.filter(user => 
+        user.is_supervisor || user.rofficer === 'Yes'
+      ).length,
+      administrators: users.filter(user => 
+        parseInt(user.BU_ROLE_ID || user.role) === 1
+      ).length,
+      internal_employees: users.filter(user => 
+        user.internal_employee_enabled || user.utype === 'Staff'
+      ).length,
+      external_users: users.filter(user => 
+        !user.internal_employee_enabled && user.utype !== 'Staff'
+      ).length
+    };
+
+    // Role breakdown
+    const roleBreakdown = users.reduce((acc, user) => {
+      const roleId = user.BU_ROLE_ID || user.role;
+      const roleKey = roleId ? roleId.toString() : 'unknown';
+      
+      if (!acc[roleKey]) {
+        acc[roleKey] = {
+          count: 0,
+          role_id: roleId,
+          role_name: getRoleWithPermissions(roleId)?.ROLE_NM || 'Unknown Role'
+        };
+      }
+      acc[roleKey].count++;
+      return acc;
+    }, {});
+
+    // Status breakdown
+    const statusBreakdown = users.reduce((acc, user) => {
+      const status = user.status || (user.is_active === 'Active' ? 'Active' : 'Inactive');
+      if (!acc[status]) {
+        acc[status] = 0;
+      }
+      acc[status]++;
+      return acc;
+    }, {});
+
+    console.log('✅ Business Unit summary retrieved:', {
+      bu_id,
+      total_users: summary.total_users,
+      active_users: summary.active_users
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Business unit summary for ${bu_id}`,
+      data: {
+        business_unit_id: bu_id,
+        total_users: summary.total_users,
+        summary,
+        role_breakdown: roleBreakdown,
+        status_breakdown: statusBreakdown,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Get business unit summary error:', {
+      message: error.message,
+      stack: error.stack,
+      bu_id: req.params.bu_id
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching business unit summary',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 // 🔐 Get user profile with permissions - FIXED VERSION with Legacy Compatibility
 export const getUserProfile = asyncHandler(async (req, res) => {
   try {

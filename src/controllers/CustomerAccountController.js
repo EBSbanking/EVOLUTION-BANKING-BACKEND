@@ -299,7 +299,11 @@ export const getCustomerAccountById = async (req, res) => {
       });
     }
 
-    const account = await CustomerAccount.findOne({ ACCT_NO });
+    // UPDATED: Explicitly select fields including ACCT_NM to ensure it's returned
+    const account = await CustomerAccount.findOne({ ACCT_NO })
+      .select('ACCT_NO ACCT_NM customer_id status product_type branch currency opening_amount cleared_balance ledger_balance REC_ST ACCOUNT_TYPE PRODUCT_DESC created_by last_updated')
+      .lean(); // Use lean() for better performance if full doc not needed
+
     if (!account) {
       return res.status(404).json({
         success: false,
@@ -661,32 +665,153 @@ export const updateDormantAccounts = async () => {
 };
 
 // Get customer accounts by CUST_ID
+// Get customer accounts by CUST_ID (handles multiple formats including legacy customer_id)
 export const getCustomerAccountByCUST_ID = async (req, res) => {
     const { CUST_ID } = req.params;
     
     try {
-        // Find all accounts for the given customer ID
-        const accounts = await CustomerAccount.find({ CUST_ID: CUST_ID.toString() });
-
-        if (!accounts || accounts.length === 0) {
-            return res.status(404).json({
-                message: 'No accounts found for this customer ID',
-                CUST_ID,
+        if (!CUST_ID) {
+            return res.status(400).json({
+                success: false,
+                message: 'CUST_ID parameter is required',
             });
         }
 
-        // Get customer details if needed
-        const customer = await Customer.findOne({ CUST_ID });
+        console.log(`🔍 Searching for customer accounts with identifier: ${CUST_ID}`);
         
+        // Generate multiple formats for searching
+        const originalId = CUST_ID.toString().trim();
+        const cleanId = originalId.replace(/^0+/, ''); // Remove leading zeros
+        const numericId = parseInt(originalId, 10); // Convert to number
+        
+        console.log(`📋 Search formats: original=${originalId}, clean=${cleanId}, numeric=${numericId}`);
+
+        // Build search query for multiple CUST_ID AND customer_id formats
+        const searchQuery = {
+            $or: [
+                // Search by CUST_ID in multiple formats
+                { CUST_ID: originalId },          // Try with original format "0000000057"
+                { CUST_ID: cleanId },             // Try without leading zeros "57"
+                { CUST_ID: numericId.toString() }, // Try as number string "57"
+                
+                // Search by legacy customer_id field
+                { customer_id: numericId },       // Try as number 57
+                { customer_id: parseInt(originalId) || 0 } // Try parsing original as number
+            ]
+        };
+
+        console.log('🔎 Search query:', JSON.stringify(searchQuery, null, 2));
+
+        // Find all accounts for the given customer ID in multiple formats
+        const accounts = await CustomerAccount.find(searchQuery)
+            .select('ACCT_NO ACCT_NM account_number customer_id CUST_ID customer_code status product_type branch currency opening_amount cleared_balance ledger_balance REC_ST ACCOUNT_TYPE PRODUCT_DESC created_by last_updated approval_date creation_datetime glAccounts productDetails')
+            .lean();
+
+        if (!accounts || accounts.length === 0) {
+            // Enhanced debugging: Check what accounts exist in the database
+            const sampleAccounts = await CustomerAccount.find({})
+                .select('ACCT_NO account_number CUST_ID customer_id ACCT_NM product_type status')
+                .limit(5)
+                .lean();
+            
+            console.log('📊 Sample accounts in database:', sampleAccounts);
+            
+            return res.status(404).json({
+                success: false,
+                message: `No accounts found for identifier: ${originalId}`,
+                searched_identifier: originalId,
+                searched_formats: [
+                    `CUST_ID: ${originalId}`,
+                    `CUST_ID: ${cleanId}`,
+                    `CUST_ID: ${numericId}`,
+                    `customer_id: ${numericId}`,
+                    `customer_id: ${parseInt(originalId) || 'invalid'}`
+                ],
+                sample_accounts: sampleAccounts,
+                troubleshooting: [
+                    'Check if customer has any accounts',
+                    'Verify the identifier format matches account records',
+                    'Try using different formats (with/without leading zeros)',
+                    'Check both CUST_ID and customer_id fields'
+                ]
+            });
+        }
+
+        // Determine which fields and formats were matched
+        const matchedFields = accounts.reduce((acc, account) => {
+            if (account.CUST_ID === originalId || account.CUST_ID === cleanId || account.CUST_ID === numericId.toString()) {
+                acc.CUST_ID = account.CUST_ID;
+            }
+            if (account.customer_id == numericId || account.customer_id == originalId) {
+                acc.customer_id = account.customer_id;
+            }
+            return acc;
+        }, {});
+
+        console.log(`✅ Found ${accounts.length} accounts`);
+        console.log(`📝 Matched fields:`, matchedFields);
+
+        // Get customer details from both CUST_ID and legacy customer_id
+        const customer = await Customer.findOne({
+            $or: [
+                { CUST_ID: originalId },
+                { CUST_ID: cleanId },
+                { CUST_ID: numericId.toString() },
+                { legacy_customer_id: numericId },
+                { customer_id: numericId }
+            ]
+        }).select('CUST_ID legacy_customer_id customer_id FIRST_NAME LAST_NAME email phone address');
+
+        // Group accounts by matched field for better insight
+        const accountsByMatchedField = accounts.reduce((acc, account) => {
+            let matchedOn = [];
+            
+            if (account.CUST_ID === originalId || account.CUST_ID === cleanId || account.CUST_ID === numericId.toString()) {
+                matchedOn.push('CUST_ID');
+            }
+            if (account.customer_id == numericId || account.customer_id == originalId) {
+                matchedOn.push('customer_id');
+            }
+            
+            const key = matchedOn.join('_') || 'unknown';
+            if (!acc[key]) acc[key] = [];
+            acc[key].push({
+                ...account,
+                matched_fields: matchedOn
+            });
+            return acc;
+        }, {});
+
+        // Group accounts by product type for better organization
+        const accountsByType = accounts.reduce((acc, account) => {
+            const type = account.product_type || account.ACCOUNT_TYPE || 'Unknown';
+            if (!acc[type]) acc[type] = [];
+            acc[type].push(account);
+            return acc;
+        }, {});
+
         return res.status(200).json({
+            success: true,
             message: 'Customer accounts retrieved successfully',
             count: accounts.length,
             customer: customer || null,
-            accounts,
+            matched_fields: matchedFields,
+            accounts_by_matched_field: accountsByMatchedField,
+            accounts_by_type: accountsByType,
+            accounts: accounts,
+            search_details: {
+                searched_identifier: originalId,
+                searched_formats: {
+                    CUST_ID: [originalId, cleanId, numericId.toString()],
+                    customer_id: [numericId, parseInt(originalId) || 'invalid']
+                },
+                matched_fields: matchedFields
+            }
         });
     } catch (error) {
-        console.error('Error fetching customer accounts:', error);
+        console.error('❌ Error fetching customer accounts:', error);
         return res.status(500).json({
+            success: false,
             message: 'An error occurred while fetching customer accounts',
             error: error.message,
         });

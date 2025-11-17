@@ -390,9 +390,9 @@ offline_id: { // Maps to MySQL: offline_id (bigint)
       required: true,
       trim: true,
     },
-    REC_ST: { // Retained, aligned with status
+    REC_ST: { // Retained, aligned with status - UPDATED: Added "PENDING" to enum
       type: String,
-      enum: ["ACTIVE", "DORMANT", "SUSPENDED", "CLOSED", "INACTIVE"],
+      enum: ["ACTIVE", "DORMANT", "SUSPENDED", "CLOSED", "INACTIVE", "PENDING"],
       default: "ACTIVE",
       uppercase: true,
     },
@@ -549,11 +549,13 @@ customerAccountSchema.pre("save", async function (next) {
       this.LAST_INTEREST_DATE = undefined;
     }
 
-    // Set defaults for new docs
+    // Set defaults for new docs - UPDATED: Auto-set REC_ST based on status
     if (this.isNew) {
       this.last_updated = new Date();
       if (!this.status) this.status = 'Active';
-      if (!this.REC_ST) this.REC_ST = 'ACTIVE';
+      if (!this.REC_ST) {
+        this.REC_ST = this.status === 'Pending' ? 'PENDING' : 'ACTIVE';
+      }
     }
 
     next();

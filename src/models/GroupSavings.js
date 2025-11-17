@@ -1,5 +1,30 @@
-// models/GroupSavings.js - CONSOLIDATED MODEL
+// models/GroupSavings.js - FIXED VERSION
 import mongoose from 'mongoose';
+
+// SAFE UTILITY FUNCTIONS FOR THE MODEL
+const safeDecimalToString = (value, defaultValue = '0.00') => {
+  if (!value) return defaultValue;
+  try {
+    if (typeof value === 'object' && value.toString) {
+      return value.toString();
+    }
+    return String(value || defaultValue);
+  } catch (error) {
+    return defaultValue;
+  }
+};
+
+const safeParseFloat = (value, defaultValue = 0) => {
+  if (!value) return defaultValue;
+  try {
+    if (typeof value === 'object' && value.toString) {
+      return parseFloat(value.toString()) || defaultValue;
+    }
+    return parseFloat(value) || defaultValue;
+  } catch (error) {
+    return defaultValue;
+  }
+};
 
 const groupSavingsSchema = new mongoose.Schema({
   // ✅ GROUP IDENTIFICATION
@@ -43,40 +68,53 @@ const groupSavingsSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ FINANCIAL FIELDS
+  // ✅ FINANCIAL FIELDS - WITH SAFE DEFAULTS
   targetAmount: {
     type: mongoose.Types.Decimal128,
     required: true,
     default: mongoose.Types.Decimal128.fromString("0.00"),
-    get: v => v ? parseFloat(v.toString()) : 0
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   minimumContribution: {
     type: mongoose.Types.Decimal128,
     required: true,
     default: mongoose.Types.Decimal128.fromString("0.00"),
-    get: v => v ? parseFloat(v.toString()) : 0
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   
-  // ✅ BALANCE FIELDS - COMPREHENSIVE
+  // ✅ BALANCE FIELDS - COMPREHENSIVE WITH SAFE HANDLING
   LEDGER_BAL: {
     type: mongoose.Types.Decimal128,
     default: mongoose.Types.Decimal128.fromString('0.00'),
-    get: (v) => parseFloat(v.toString())
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   CLEARED_BAL: {
     type: mongoose.Types.Decimal128,
     default: mongoose.Types.Decimal128.fromString('0.00'),
-    get: (v) => parseFloat(v.toString())
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   AVAILABLE_BALANCE: {
     type: mongoose.Types.Decimal128,
     default: mongoose.Types.Decimal128.fromString('0.00'),
-    get: (v) => parseFloat(v.toString())
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   // Backward compatibility field
   currentBalance: {
     type: Number,
-    default: 0
+    default: 0,
+    get: function(v) {
+      return safeParseFloat(v, 0);
+    }
   },
   
   // ✅ CONTRIBUTION SETTINGS
@@ -90,7 +128,7 @@ const groupSavingsSchema = new mongoose.Schema({
     type: Date,
     default: function() {
       const now = new Date();
-      const freq = this.contributionFrequency || 'monthly'; // Fallback to default
+      const freq = this.contributionFrequency || 'monthly';
       let futureDate = new Date(now);
       switch (freq) {
         case 'daily': 
@@ -155,12 +193,16 @@ const groupSavingsSchema = new mongoose.Schema({
     minWithdrawal: {
       type: mongoose.Types.Decimal128,
       default: mongoose.Types.Decimal128.fromString('0.00'),
-      get: v => v ? parseFloat(v.toString()) : 0
+      get: function(v) {
+        return safeParseFloat(v, 0);
+      }
     },
     maxWithdrawal: {
       type: mongoose.Types.Decimal128,
-      default: mongoose.Types.Decimal128.fromString('0.00'), // 0 means no limit
-      get: v => v ? parseFloat(v.toString()) : 0
+      default: mongoose.Types.Decimal128.fromString('0.00'),
+      get: function(v) {
+        return safeParseFloat(v, 0);
+      }
     },
     approvalRequired: {
       type: Boolean,
@@ -178,7 +220,7 @@ const groupSavingsSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ PRODUCT LINKING (OPTIONAL) - Now with validation to prevent invalid refs
+  // ✅ PRODUCT LINKING (OPTIONAL)
   linkedProductId: {
     type: Number,
     ref: 'SavingsProduct',
@@ -233,113 +275,183 @@ const groupSavingsSchema = new mongoose.Schema({
   }
 
 }, {
-  timestamps: true, // This will automatically manage createdAt and updatedAt
+  timestamps: true,
   toJSON: { 
-    getters: true, // Ensure getters are applied when converting to JSON
-    virtuals: true 
+    getters: true,
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Apply safe transformation to prevent virtual field errors
+      return applySafeTransformation(ret);
+    }
   },
   toObject: { 
-    getters: true, // Ensure getters are applied when converting to objects
-    virtuals: true 
+    getters: true,
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Apply safe transformation to prevent virtual field errors
+      return applySafeTransformation(ret);
+    }
   }
 });
 
-// ✅ PRE-SAVE MIDDLEWARE FOR BALANCE SYNCHRONIZATION AND ARRAY DEDUPING
-groupSavingsSchema.pre('save', function(next) {
-  // Let timestamps: true handle updatedAt automatically
-  
-  // Sync status with isActive
-  if (this.status === 'active') {
-    this.isActive = true;
-  } else if (['inactive', 'closed', 'suspended'].includes(this.status)) {
-    this.isActive = false;
-  }
-  
-  // Initialize balance fields if they don't exist
-  if (!this.LEDGER_BAL) {
-    this.LEDGER_BAL = mongoose.Types.Decimal128.fromString((this.currentBalance || 0).toFixed(2));
-  }
-  if (!this.CLEARED_BAL) {
-    this.CLEARED_BAL = mongoose.Types.Decimal128.fromString((this.currentBalance || 0).toFixed(2));
-  }
-  if (!this.AVAILABLE_BALANCE) {
-    this.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString((this.currentBalance || 0).toFixed(2));
-  }
-  
-  // Sync currentBalance with AVAILABLE_BALANCE for backward compatibility
-  if (this.AVAILABLE_BALANCE && this.isModified('AVAILABLE_BALANCE')) {
-    this.currentBalance = parseFloat(this.AVAILABLE_BALANCE.toString());
-  }
-  
-  // Set closure timestamp if status changed to closed
-  if (this.isModified('status') && this.status === 'closed' && !this.closedAt) {
-    this.closedAt = new Date();
-  }
-  
-  // Deduplicate arrays
-  if (this.managedBy) {
-    this.managedBy = [...new Set(this.managedBy)];
-  }
-  if (this.members) {
-    this.members = [...new Set(this.members)];
-  }
-  
-  // Generate accountNumber if not provided (fallback - adjust as needed)
-  if (!this.accountNumber) {
-    this.accountNumber = `GS${Date.now() % 1000000000}`.slice(-10); // Simple 10-digit gen
-    // TODO: Use a proper unique generator (e.g., via counter)
-  }
-  
-  next();
-});
-
-// ✅ TRANSFORM FOR JSON OUTPUT
-groupSavingsSchema.set('toJSON', {
-  transform: function(doc, ret) {
-    // Convert Decimal128 to numbers in JSON output
-    const decimalFields = [
+// ✅ SAFE TRANSFORMATION FUNCTION
+function applySafeTransformation(ret) {
+  try {
+    // Ensure all balance fields have safe values
+    const balanceFields = [
       'targetAmount', 'minimumContribution', 'LEDGER_BAL', 
-      'CLEARED_BAL', 'AVAILABLE_BALANCE'
+      'CLEARED_BAL', 'AVAILABLE_BALANCE', 'currentBalance'
     ];
     
-    decimalFields.forEach(field => {
-      if (ret[field] && typeof ret[field] === 'object') {
-        ret[field] = parseFloat(ret[field].toString());
+    balanceFields.forEach(field => {
+      if (ret[field] === undefined || ret[field] === null) {
+        ret[field] = 0;
+      } else if (typeof ret[field] === 'object') {
+        try {
+          ret[field] = safeParseFloat(ret[field]);
+        } catch (error) {
+          ret[field] = 0;
+        }
       }
     });
     
-    // Convert withdrawal rule decimals
+    // Handle withdrawal rules
     if (ret.withdrawalRules) {
       ['minWithdrawal', 'maxWithdrawal'].forEach(field => {
-        if (ret.withdrawalRules[field] && typeof ret.withdrawalRules[field] === 'object') {
-          ret.withdrawalRules[field] = parseFloat(ret.withdrawalRules[field].toString());
+        if (ret.withdrawalRules[field] === undefined || ret.withdrawalRules[field] === null) {
+          ret.withdrawalRules[field] = 0;
+        } else if (typeof ret.withdrawalRules[field] === 'object') {
+          try {
+            ret.withdrawalRules[field] = safeParseFloat(ret.withdrawalRules[field]);
+          } catch (error) {
+            ret.withdrawalRules[field] = 0;
+          }
         }
       });
     }
     
-    return ret;
+    // Ensure virtual fields have safe defaults
+    if (ret.ledgerBalanceVirtual === undefined || ret.ledgerBalanceVirtual === null) {
+      ret.ledgerBalanceVirtual = '0.00';
+    }
+    if (ret.availableBalanceVirtual === undefined || ret.availableBalanceVirtual === null) {
+      ret.availableBalanceVirtual = '0.00';
+    }
+    
+  } catch (error) {
+    console.error('Error in safe transformation:', error);
+    // Ensure critical fields have defaults
+    ret.LEDGER_BAL = 0;
+    ret.AVAILABLE_BALANCE = 0;
+    ret.currentBalance = 0;
+  }
+  
+  return ret;
+}
+
+// ✅ PRE-SAVE MIDDLEWARE WITH ENHANCED SAFETY
+groupSavingsSchema.pre('save', function(next) {
+  try {
+    // Sync status with isActive
+    if (this.status === 'active') {
+      this.isActive = true;
+    } else if (['inactive', 'closed', 'suspended'].includes(this.status)) {
+      this.isActive = false;
+    }
+    
+    // SAFE BALANCE INITIALIZATION
+    const currentBal = safeParseFloat(this.currentBalance, 0);
+    const defaultBalance = currentBal.toFixed(2);
+    
+    // Initialize balance fields safely
+    if (!this.LEDGER_BAL || this.isModified('currentBalance')) {
+      try {
+        this.LEDGER_BAL = mongoose.Types.Decimal128.fromString(defaultBalance);
+      } catch (error) {
+        this.LEDGER_BAL = mongoose.Types.Decimal128.fromString('0.00');
+      }
+    }
+    
+    if (!this.CLEARED_BAL || this.isModified('currentBalance')) {
+      try {
+        this.CLEARED_BAL = mongoose.Types.Decimal128.fromString(defaultBalance);
+      } catch (error) {
+        this.CLEARED_BAL = mongoose.Types.Decimal128.fromString('0.00');
+      }
+    }
+    
+    if (!this.AVAILABLE_BALANCE || this.isModified('currentBalance')) {
+      try {
+        this.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(defaultBalance);
+      } catch (error) {
+        this.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString('0.00');
+      }
+    }
+    
+    // Sync currentBalance with AVAILABLE_BALANCE for backward compatibility
+    if (this.AVAILABLE_BALANCE && this.isModified('AVAILABLE_BALANCE')) {
+      try {
+        this.currentBalance = safeParseFloat(this.AVAILABLE_BALANCE);
+      } catch (error) {
+        this.currentBalance = 0;
+      }
+    }
+    
+    // Set closure timestamp if status changed to closed
+    if (this.isModified('status') && this.status === 'closed' && !this.closedAt) {
+      this.closedAt = new Date();
+    }
+    
+    // Deduplicate arrays
+    if (this.managedBy) {
+      this.managedBy = [...new Set(this.managedBy)];
+    }
+    if (this.members) {
+      this.members = [...new Set(this.members)];
+    }
+    
+    // Generate accountNumber if not provided
+    if (!this.accountNumber) {
+      this.accountNumber = `GS${Date.now() % 1000000000}`.padStart(10, '0').slice(-10);
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Error in pre-save middleware:', error);
+    // Ensure we don't block the save operation
+    next();
   }
 });
 
-// ✅ STATIC METHODS (unchanged)
+// ✅ STATIC METHODS WITH ERROR HANDLING
 groupSavingsSchema.statics.initializeBalances = async function() {
-  const docs = await this.find({
-    $or: [
-      { LEDGER_BAL: { $exists: false } },
-      { CLEARED_BAL: { $exists: false } },
-      { AVAILABLE_BALANCE: { $exists: false } }
-    ]
-  });
-  
-  for (const doc of docs) {
-    const balance = doc.currentBalance || 0;
-    doc.LEDGER_BAL = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
-    doc.CLEARED_BAL = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
-    doc.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
-    await doc.save();
+  try {
+    const docs = await this.find({
+      $or: [
+        { LEDGER_BAL: { $exists: false } },
+        { CLEARED_BAL: { $exists: false } },
+        { AVAILABLE_BALANCE: { $exists: false } }
+      ]
+    });
+    
+    for (const doc of docs) {
+      try {
+        const balance = safeParseFloat(doc.currentBalance, 0);
+        doc.LEDGER_BAL = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
+        doc.CLEARED_BAL = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
+        doc.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(balance.toFixed(2));
+        await doc.save();
+      } catch (docError) {
+        console.error(`Error initializing balances for doc ${doc._id}:`, docError);
+        continue;
+      }
+    }
+    
+    return docs.length;
+  } catch (error) {
+    console.error('Error in initializeBalances:', error);
+    return 0;
   }
-  
-  return docs.length;
 };
 
 groupSavingsSchema.statics.findByGroupCode = function(groupCode) {
@@ -354,66 +466,131 @@ groupSavingsSchema.statics.findBySavingsType = function(savingsType) {
   return this.find({ savingsType, status: 'active' });
 };
 
-// ✅ INSTANCE METHODS (unchanged)
-groupSavingsSchema.methods.updateBalance = function(amount, balanceType = 'AVAILABLE_BALANCE') {
-  const currentBalance = parseFloat(this[balanceType].toString());
-  const newBalance = currentBalance + amount;
-  this[balanceType] = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
-  
-  // Sync all balances if updating available balance
-  if (balanceType === 'AVAILABLE_BALANCE') {
-    this.LEDGER_BAL = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
-    this.CLEARED_BAL = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
-    this.currentBalance = newBalance;
+// ✅ INSTANCE METHODS WITH SAFE HANDLING
+groupSavingsSchema.methods.updateBalance = async function(amount, balanceType = 'AVAILABLE_BALANCE') {
+  try {
+    const currentBalance = safeParseFloat(this[balanceType], 0);
+    const newBalance = currentBalance + safeParseFloat(amount, 0);
+    
+    this[balanceType] = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
+    
+    // Sync all balances if updating available balance
+    if (balanceType === 'AVAILABLE_BALANCE') {
+      this.LEDGER_BAL = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
+      this.CLEARED_BAL = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
+      this.currentBalance = newBalance;
+    }
+    
+    return await this.save();
+  } catch (error) {
+    console.error('Error in updateBalance:', error);
+    throw new Error(`Failed to update balance: ${error.message}`);
   }
-  
-  return this.save();
 };
 
 groupSavingsSchema.methods.canWithdraw = function(amount) {
-  const availableBalance = parseFloat(this.AVAILABLE_BALANCE.toString());
-  const minWithdrawal = parseFloat(this.withdrawalRules.minWithdrawal.toString());
-  const maxWithdrawal = parseFloat(this.withdrawalRules.maxWithdrawal.toString());
-  
-  if (amount > availableBalance) return false;
-  if (minWithdrawal > 0 && amount < minWithdrawal) return false;
-  if (maxWithdrawal > 0 && amount > maxWithdrawal) return false;
-  
-  return true;
+  try {
+    const availableBalance = safeParseFloat(this.AVAILABLE_BALANCE, 0);
+    const minWithdrawal = safeParseFloat(this.withdrawalRules?.minWithdrawal, 0);
+    const maxWithdrawal = safeParseFloat(this.withdrawalRules?.maxWithdrawal, 0);
+    
+    if (amount > availableBalance) return false;
+    if (minWithdrawal > 0 && amount < minWithdrawal) return false;
+    if (maxWithdrawal > 0 && amount > maxWithdrawal) return false;
+    
+    return true;
+  } catch (error) {
+    console.error('Error in canWithdraw:', error);
+    return false;
+  }
 };
 
-groupSavingsSchema.methods.closeAccount = function(userId, reason = '') {
-  this.status = 'closed';
-  this.closedAt = new Date();
-  this.closedBy = userId;
-  this.closureReason = reason;
-  this.isActive = false;
-  return this.save();
+groupSavingsSchema.methods.closeAccount = async function(userId, reason = '') {
+  try {
+    this.status = 'closed';
+    this.closedAt = new Date();
+    this.closedBy = userId;
+    this.closureReason = reason;
+    this.isActive = false;
+    return await this.save();
+  } catch (error) {
+    console.error('Error in closeAccount:', error);
+    throw new Error(`Failed to close account: ${error.message}`);
+  }
 };
 
-// ✅ VIRTUAL FIELDS (unchanged)
+groupSavingsSchema.methods.getSafeBalance = function() {
+  return {
+    ledgerBalance: safeParseFloat(this.LEDGER_BAL, 0),
+    clearedBalance: safeParseFloat(this.CLEARED_BAL, 0),
+    availableBalance: safeParseFloat(this.AVAILABLE_BALANCE, 0),
+    currentBalance: safeParseFloat(this.currentBalance, 0)
+  };
+};
+
+// ✅ VIRTUAL FIELDS WITH SAFE HANDLING
+groupSavingsSchema.virtual('ledgerBalanceVirtual').get(function() {
+  try {
+    if (!this.LEDGER_BAL) return '0.00';
+    
+    if (typeof this.LEDGER_BAL.toString === 'function') {
+      return this.LEDGER_BAL.toString();
+    }
+    
+    return String(safeParseFloat(this.LEDGER_BAL, 0).toFixed(2));
+  } catch (error) {
+    console.error('Error in ledgerBalanceVirtual:', error);
+    return '0.00';
+  }
+});
+
+groupSavingsSchema.virtual('availableBalanceVirtual').get(function() {
+  try {
+    if (!this.AVAILABLE_BALANCE) return '0.00';
+    
+    if (typeof this.AVAILABLE_BALANCE.toString === 'function') {
+      return this.AVAILABLE_BALANCE.toString();
+    }
+    
+    return String(safeParseFloat(this.AVAILABLE_BALANCE, 0).toFixed(2));
+  } catch (error) {
+    console.error('Error in availableBalanceVirtual:', error);
+    return '0.00';
+  }
+});
+
 groupSavingsSchema.virtual('formattedBalances').get(function() {
   return {
-    ledgerBalance: parseFloat(this.LEDGER_BAL.toString()),
-    clearedBalance: parseFloat(this.CLEARED_BAL.toString()),
-    availableBalance: parseFloat(this.AVAILABLE_BALANCE.toString()),
-    currentBalance: this.currentBalance
+    ledgerBalance: safeParseFloat(this.LEDGER_BAL, 0),
+    clearedBalance: safeParseFloat(this.CLEARED_BAL, 0),
+    availableBalance: safeParseFloat(this.AVAILABLE_BALANCE, 0),
+    currentBalance: safeParseFloat(this.currentBalance, 0)
   };
 });
 
 groupSavingsSchema.virtual('progressToTarget').get(function() {
-  const currentBalance = parseFloat(this.AVAILABLE_BALANCE.toString());
-  const target = parseFloat(this.targetAmount.toString());
-  return target > 0 ? (currentBalance / target) * 100 : 0;
+  try {
+    const currentBalance = safeParseFloat(this.AVAILABLE_BALANCE, 0);
+    const target = safeParseFloat(this.targetAmount, 0);
+    return target > 0 ? (currentBalance / target) * 100 : 0;
+  } catch (error) {
+    console.error('Error in progressToTarget:', error);
+    return 0;
+  }
 });
 
 groupSavingsSchema.virtual('isTargetAchieved').get(function() {
-  const currentBalance = parseFloat(this.AVAILABLE_BALANCE.toString());
-  const target = parseFloat(this.targetAmount.toString());
-  return currentBalance >= target;
+  try {
+    const currentBalance = safeParseFloat(this.AVAILABLE_BALANCE, 0);
+    const target = safeParseFloat(this.targetAmount, 0);
+    return currentBalance >= target;
+  } catch (error) {
+    console.error('Error in isTargetAchieved:', error);
+    return false;
+  }
 });
 
-// ✅ INDEXES FOR PERFORMANCE (unchanged)
+// ✅ INDEXES FOR PERFORMANCE
 groupSavingsSchema.index({ groupCode: 1 });
 groupSavingsSchema.index({ accountNumber: 1 }, { unique: true });
 groupSavingsSchema.index({ status: 1 });

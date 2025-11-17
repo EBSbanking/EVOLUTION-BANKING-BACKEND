@@ -14,7 +14,6 @@ import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifier
 import { getProductTypeByProdIdInternal } from '../Services/productService.js';
 import SavingsProduct from '../models/SavingsProduct.js';
 import AuditLogger from '../utils/AuditLogger.js'; // Add this import
-
 dotenv.config();
 
 const VALID_ACCOUNT_TYPES = ['SAVINGS', 'CURRENT', 'LOAN', 'TERM_DEPOSIT', 'CREDIT_CARD', 'INDIVIDUAL_LOAN', 'BUSINESS_TERM_LOAN'];
@@ -329,8 +328,9 @@ createApplication: async (req, res) => {
     // UPDATED: Create CustomerAccount with BOTH old and new schema fields for compatibility
     console.log('🔄 Creating CustomerAccount with dual schema support...');
     let savedCustomerAccount = null;
+    let customerAccountData = null; // FIXED: Declare outside to avoid scope issues in catch
     try {
-      const customerAccountData = {
+      customerAccountData = {
         // === CORE IDENTIFIERS - BOTH SCHEMAS ===
         customer_id: normalizedCUST_ID,
         CUST_ID: normalizedCUST_ID, // Add old schema field for compatibility
@@ -373,7 +373,7 @@ createApplication: async (req, res) => {
         
         // === STATUS ===
         status: 'Pending',
-        REC_ST: 'N', // Using valid check constraint value
+        REC_ST: 'PENDING', // UPDATED: Use consistent with status and schema enum
         substatus: 'Pending',
         
         // === USER & CREATION ===
@@ -403,6 +403,12 @@ createApplication: async (req, res) => {
         overdraftLimit: mongoose.Types.Decimal128.fromString('0.00')
       };
 
+      // UPDATED: Explicit validation for REC_ST before save - include all enum values
+      const validRECST = ['ACTIVE', 'DORMANT', 'SUSPENDED', 'CLOSED', 'INACTIVE', 'PENDING'];
+      if (!validRECST.includes(customerAccountData.REC_ST)) {
+        throw new Error(`Invalid REC_ST value: ${customerAccountData.REC_ST}. Must be one of: ${validRECST.join(', ')}`);
+      }
+
       const customerAccount = new CustomerAccount(customerAccountData);
       savedCustomerAccount = await customerAccount.save({ session });
       
@@ -412,7 +418,8 @@ createApplication: async (req, res) => {
         customer_id: savedCustomerAccount.customer_id,
         CUST_ID: savedCustomerAccount.CUST_ID,
         _id: savedCustomerAccount._id,
-        status: savedCustomerAccount.status
+        status: savedCustomerAccount.status,
+        REC_ST: savedCustomerAccount.REC_ST // Log the fixed value
       });
 
       // VERIFY: Immediately check if account can be retrieved with both field names
@@ -434,7 +441,11 @@ createApplication: async (req, res) => {
       });
 
     } catch (accountError) {
-      console.error('❌ Customer account creation FAILED:', accountError);
+      // FIXED: Safe logging - declare customerAccountData outside try to ensure scope in catch
+      console.error('❌ Customer account creation FAILED:', accountError.message);
+      if (customerAccountData) {
+        console.error('Attempted data:', customerAccountData);
+      }
       throw new Error(`Failed to create customer account: ${accountError.message}`);
     }
 
@@ -549,7 +560,8 @@ createApplication: async (req, res) => {
       with_ACCT_NO: !!finalCheckWithACCT_NO,
       account_number: finalCheckWithAccountNumber?.account_number,
       ACCT_NO: finalCheckWithACCT_NO?.ACCT_NO,
-      status: finalCheckWithAccountNumber?.status || finalCheckWithACCT_NO?.status
+      status: finalCheckWithAccountNumber?.status || finalCheckWithACCT_NO?.status,
+      REC_ST: finalCheckWithAccountNumber?.REC_ST || finalCheckWithACCT_NO?.REC_ST // Added for verification
     });
     
     return res.status(201).json({
@@ -562,6 +574,7 @@ createApplication: async (req, res) => {
           customer_id: savedCustomerAccount.customer_id,
           CUST_ID: savedCustomerAccount.CUST_ID,
           status: savedCustomerAccount.status,
+          REC_ST: savedCustomerAccount.REC_ST, // Added for response
           _id: savedCustomerAccount._id
         }
       },

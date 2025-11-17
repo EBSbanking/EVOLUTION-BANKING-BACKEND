@@ -36,3 +36,25 @@ export const createOrganization = async (req, res) => {
     session.endSession();
   }
 };
+
+export const getOrganizations = async (req, res) => {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      // Fetch all organizations
+      const organizations = await Organization.find({}).session(session).lean(); // Use lean for performance
+      logger.info('Fetched organizations', { count: organizations.length });
+
+      return res.status(200).json({ 
+        message: 'Organizations fetched successfully', 
+        data: organizations 
+      });
+    });
+  } catch (error) {
+    logger.error('Error fetching organizations', { error: error.message, stack: error.stack });
+    return res.status(500).json({ message: 'Error fetching organizations', error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+
