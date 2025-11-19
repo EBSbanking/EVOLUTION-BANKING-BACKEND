@@ -8,6 +8,14 @@ import {
   getCustomerAccountByCUST_ID,
   updateDormantAccounts // Make sure this is imported
 } from '../controllers/CustomerAccountController.js';
+
+// ADD THE ACCOUNT ACTIVATION CONTROLLERS
+import { 
+  activateCustomerAccount, 
+  bulkActivateAccounts, 
+  getAccountActivationHistory 
+} from '../controllers/CustomerAccountController.js';
+
 import postTransaction  from '../Services/postTransaction.js'; // default import
 import logger from '../utils/logger.js'; 
 import AuditTrail from '../models/AuditTrail.js'; // Make sure the import path is correct
@@ -163,6 +171,17 @@ router.put('/accounts/:ACCT_NO', updateCustomerAccount);
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount);
 router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
 
+// ==================== ACCOUNT ACTIVATION ROUTES ====================
+// Single account activation
+router.patch('/accounts/:ACCT_NO/activate', activateCustomerAccount);
+
+// Bulk account activation
+router.post('/accounts/bulk-activate', bulkActivateAccounts);
+
+// Get account activation history
+router.get('/accounts/:ACCT_NO/activation-history', getAccountActivationHistory);
+
+// ==================== TRANSACTION ROUTES ====================
 // Post Transaction
 router.post('/transactions', postTransaction);
 

@@ -8,7 +8,7 @@ const loanProductSchema = new mongoose.Schema(
       unique: true,
       validate: {
         validator: function (v) {
-          const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399];
+          const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 400, 499];
           return validProdIds.includes(v);
         },
         message: props => `${props.value} is not a valid PROD_ID!`
@@ -47,7 +47,8 @@ const loanProductSchema = new mongoose.Schema(
         'CREDIT CARD',
         'LINE OF CREDIT',
         'SME LOAN',
-        'GENERAL LOAN'
+        'GENERAL LOAN',
+        'GROUP_LOAN'
       ]
     },
     CRNCY_ID: {
@@ -423,7 +424,7 @@ loanProductSchema.pre('save', async function (next) {
     }
 
     // Validate PROD_ID
-    const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399];
+    const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 400, 499];
     if (!validProdIds.includes(this.PROD_ID)) {
       throw new Error(`${this.PROD_ID} is not a valid PROD_ID!`);
     }

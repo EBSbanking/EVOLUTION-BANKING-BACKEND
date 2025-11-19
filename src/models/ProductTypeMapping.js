@@ -29,6 +29,7 @@ const ProductTypeMappingSchema = new mongoose.Schema(
         'LINE OF CREDIT',
         'SME LOAN',
         'GENERAL LOAN',
+        'GROUP_LOAN',
         'SAVINGS',
         'TERM_DEPOSIT'
       ]

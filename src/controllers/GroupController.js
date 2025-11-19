@@ -1,4 +1,4 @@
-// controllers/GroupController.js - Complete Controller with Legacy Field Support and GL Integration
+// src/controllers/GroupController.js
 import mongoose from 'mongoose';
 import Group from '../models/Group.js';
 import GroupLoan from '../models/GroupLoan.js';
@@ -6,24 +6,20 @@ import LoanAccount from '../models/LoanAccount.js';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
 import CustomerAccount from '../models/CustomerAccount.js';
-import GroupSavings from '../models/GroupSavings.js';
-import RepaymentSchedule from '../models/RepaymentSchedules.js';
+import LoanProduct from '../models/LoanProduct.js';  // ← ADDED
+import ProductTypeMapping from '../models/ProductTypeMapping.js';
 import Counter from '../models/Counter.js';
-import InterestRate from '../models/LoanInterestRate.js';
-import { getPrefixForProductType } from '../utils/generateLoanAccountId.js';
-import { calculateMaturityDate } from '../utils/loanUtils.js';
-import logAuditTrail from '../Services/AuditService.js';
 import logger from '../utils/logger.js';
 import { asyncHandler } from "../middlewares/asyncHandler.js";
 import { v4 as uuidv4 } from 'uuid';
-import RateIndex from '../models/Rate-Index.js';
-import { createLedgerEntry } from './GLAccountController.js';
-import GLAccount from '../models/GLAccount.js';
+import logAuditTrail from '../Services/AuditService.js';
+import LoanInterestRate from '../models/LoanInterestRate.js';
+import RepaymentSchedule from '../models/RepaymentSchedules.js';
+import { 
+   calculateLoanRepayment } from '../controllers/LoanInterestRateController.js';
 import Transaction from '../models/Transaction.js';
-import InsurancePolicy from '../models/InsurancePolicy.js';
-import Ledger from '../models/Ledger.js';
-import Branch from '../models/Branch.js';
-import { safeToString, safeNumber, safeBoolean } from '../utils/safeHandlers.js';
+
+
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
 export const GL_ACCOUNT_TEMPLATES = {
   PROCESSING_FEE: {
@@ -777,1043 +773,816 @@ export const getGroupsByBranch = asyncHandler(async (req, res) => {
     data: populatedGroups,
   });
 });
-// Add this helper function at the top with other imports
-const generateGroupLoanId = async () => {
-  try {
-    const counterId = 'GROUP_LOAN_ID';
-    const result = await Counter.findOneAndUpdate(
-      { _id: counterId },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    const sequence = result.seq.toString().padStart(6, '0');
-    return `GL${sequence}`; // Format: GL000001, GL000002, etc.
-  } catch (error) {
-    logger.error('Error generating group loan ID:', error);
-    // Fallback: timestamp-based ID
-    const timestamp = Date.now().toString().slice(-8);
-    return `GL${timestamp}`;
-  }
+
+
+// Convert to Decimal128 safely
+const toDecimal = (val, field) => {
+  const num = parseFloat(val);
+  if (isNaN(num) || num < 0) throw new Error(`${field} must be a positive number`);
+  return mongoose.Types.Decimal128.fromString(num.toFixed(2));
 };
-// Updated createGroupLoanApplication function with COMPLETE safe handling
+
+
+
+
+
+// Helper functions
+const normalizeCustomerId = (id) => String(id).padStart(10, '0');
+
+// Generate group loan ID
+async function generateGroupLoanId() {
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `GL${timestamp}${random}`;
+}
+
+// Generate loan account number by product ID
+async function generateLoanAccountNumberByProdId(productId) {
+  try {
+    // Find the last loan account for this product to increment
+    const lastLoanAccount = await LoanAccount.findOne(
+      { PROD_ID: productId },
+      { ACCT_NO: 1 },
+      { sort: { createdAt: -1 } }
+    );
+
+    let nextNumber = 1;
+    
+    if (lastLoanAccount && lastLoanAccount.ACCT_NO) {
+      // Extract numeric part and increment
+      const lastNumber = parseInt(lastLoanAccount.ACCT_NO.slice(-6)) || 0;
+      nextNumber = lastNumber + 1;
+    }
+
+    // Format: 2 + productId (padded to 3 digits) + sequential number (padded to 6 digits)
+    const productPart = String(productId).padStart(3, '0');
+    const sequentialPart = String(nextNumber).padStart(6, '0');
+    
+    const loanAccountNo = `2${productPart}${sequentialPart}`;
+    
+    console.log(`Generated loan account: ${loanAccountNo} for product ${productId}`);
+    return loanAccountNo;
+    
+  } catch (error) {
+    console.error('Error generating loan account number:', error);
+    // Fallback: timestamp-based generation
+    const timestamp = Date.now().toString().slice(-8);
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `2${String(productId).padStart(3, '0')}${timestamp}${random}`.slice(0, 16);
+  }
+}
+
+// Calculate flat rate interest (make sure this function exists)
+function calculateFlatRate({ principal, annualRate, termMonths, startDate, paymentFrequency }) {
+  const principalAmount = parseFloat(principal) || 0;
+  const interestRate = parseFloat(annualRate) || 0;
+  const termValue = parseInt(termMonths) || 0;
+
+  if (!principalAmount || !interestRate || !termValue) {
+    throw new Error('Invalid parameters for interest calculation');
+  }
+
+  // Calculate total interest (flat rate)
+  const totalInterest = principalAmount * (interestRate / 100) * (termValue / 12);
+  const totalRepayment = principalAmount + totalInterest;
+  
+  let totalInstallments = termValue;
+  let installmentAmount = totalRepayment / totalInstallments;
+
+  // Generate installment schedule
+  const installments = [];
+  let remainingBalance = totalRepayment;
+  const start = new Date(startDate);
+
+  for (let i = 1; i <= totalInstallments; i++) {
+    let dueDate = new Date(start);
+    
+    // Calculate due date based on payment frequency
+    switch (paymentFrequency.toUpperCase()) {
+      case 'WEEKLY':
+        dueDate.setDate(start.getDate() + (i * 7));
+        break;
+      case 'BI_WEEKLY':
+        dueDate.setDate(start.getDate() + (i * 14));
+        break;
+      case 'MONTHLY':
+      default:
+        dueDate.setMonth(start.getMonth() + i);
+        break;
+    }
+
+    const principalPortion = i === totalInstallments ? 
+      principalAmount - (installmentAmount * (totalInstallments - 1)) : 
+      installmentAmount - (totalInterest / totalInstallments);
+    
+    const interestPortion = installmentAmount - principalPortion;
+    
+    remainingBalance -= installmentAmount;
+    if (i === totalInstallments) remainingBalance = 0;
+
+    installments.push({
+      installmentNo: i,
+      dueDate: dueDate.toISOString().split('T')[0],
+      principal: parseFloat(principalPortion.toFixed(2)),
+      interest: parseFloat(interestPortion.toFixed(2)),
+      totalPayment: parseFloat(installmentAmount.toFixed(2)),
+      remainingBalance: parseFloat(Math.max(0, remainingBalance).toFixed(2))
+    });
+  }
+
+  return {
+    totalInterest: parseFloat(totalInterest.toFixed(2)),
+    paymentAmount: parseFloat(installmentAmount.toFixed(2)),
+    totalRepayment: parseFloat(totalRepayment.toFixed(2)),
+    totalInstallments,
+    installments
+  };
+}
+
 export const createGroupLoanApplication = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    console.log('=== STARTING GROUP LOAN CREATION ===');
-    
-    // ✅ SAFE UTILITY FUNCTIONS
-    const safeToString = (value, defaultValue = '') => {
-      if (value === null || value === undefined) return defaultValue;
-      if (typeof value === 'string') return value.trim();
-      if (typeof value.toString === 'function') {
-        try {
-          return value.toString().trim();
-        } catch (error) {
-          return defaultValue;
-        }
-      }
-      return String(value || defaultValue).trim();
-    };
-
-    const safeNumber = (value, defaultValue = 0) => {
-      if (value === null || value === undefined) return defaultValue;
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
-
-    const safeBoolean = (value, defaultValue = false) => {
-      if (value === null || value === undefined) return defaultValue;
-      return Boolean(value);
-    };
-
-    // Create a safe version of req.body with defaults
-    const safeBody = {
-      groupCode: '',
-      totalAmount: 0,
-      primaryRelationshipManager: '',
-      secondaryRelationshipManager: null,
-      loanPurpose: '',
-      savingsAccount: '',
-      interestRate: 0,
-      loanTerm: '',
-      termValue: 0,
-      disbursementMethod: 'CASH',
-      useSavingsAsCollateral: false,
-      groupSavingsId: null,
-      members: [],
-      rateType: 'FIXED',
-      interestType: 'COMPOUND',
-      accrualBasisType: '',
-      accrualFrequency: 'DAILY',
-      accrualFrequencyValue: 1,
-      fixedRate: true,
-      capitalizeInterest: false,
-      amortized: false,
-      rateChangeAllowed: false,
-      rateChangeNoticeDays: 30,
-      charges: [],
-      insuranceDetails: null,
-      processingFee: null,
-      adminFee: null,
-      insuranceFee: 0,
-      otherFees: 0,
-      upfrontInterest: false,
-      upfrontInterestPercentage: 0,
-      ...req.body
-    };
+    console.log('=== STARTING GROUP LOAN CREATION (FULL DISBURSEMENT + FEES FROM SAVINGS + REPAYMENT SCHEDULE) ===');
 
     const {
       groupCode,
       totalAmount,
       primaryRelationshipManager,
-      secondaryRelationshipManager,
+      loanPurpose,
+      savingsAccount,
+      productId = 400,
+      disbursementMethod = 'CASH',
+      members = [],
+      processingFee = 3,
+      adminFee = 1000
+    } = req.body;
+
+    if (!groupCode || !primaryRelationshipManager || !loanPurpose || !savingsAccount || members.length === 0) {
+      throw new Error('Missing required fields: groupCode, primaryRelationshipManager, loanPurpose, savingsAccount, and members are required');
+    }
+
+    const group = await Group.findOne({ groupCode }).session(session);
+    if (!group) throw new Error('Group not found');
+
+    const existing = await GroupLoan.findOne({
+      groupCode,
+      status: { $in: ['applied', 'approved', 'disbursed', 'partially_disbursed'] }
+    }).session(session);
+    if (existing) throw new Error(`Group already has active loan: ${existing.loanId}`);
+
+    const loanProduct = await LoanProduct.findOne({ PROD_ID: productId }).session(session);
+    if (!loanProduct) throw new Error(`Loan product with PROD_ID ${productId} not found`);
+
+    const loanId = await generateGroupLoanId();
+    const createdBy = req.user?._id || (await User.findOne({ employeeId: 'SYSTEM' }))?._id;
+
+    let computedTotal = 0;
+    const processedMembers = [];
+    let totalFeesCollected = 0;
+
+    // Validate members
+    for (const m of members) {
+      const memberId = safeToString(m.memberId);
+      const amount = safeNumber(m.individualAmount);
+      const savingsAccNo = safeToString(m.savingsAccountNo);
+      const name = safeToString(m.name, 'Unknown Member');
+
+      if (!memberId || amount <= 0 || !savingsAccNo) {
+        throw new Error(`Invalid member data for ${name}: memberId, individualAmount, and savingsAccountNo are required`);
+      }
+
+      const savingsAcc = await CustomerAccount.findOne({
+        $or: [{ account_number: savingsAccNo }, { ACCT_NO: savingsAccNo }]
+      }).session(session);
+
+      if (!savingsAcc) throw new Error(`Savings account ${savingsAccNo} not found`);
+      
+      const accountStatus = savingsAcc.status || savingsAcc.REC_ST || '';
+      if (!['ACTIVE', 'Active', 'A', 'OPEN'].includes(accountStatus)) {
+        throw new Error(`Savings account ${savingsAccNo} is not active. Current status: ${accountStatus}`);
+      }
+
+      const accountOwnerId = savingsAcc.CUST_ID || savingsAcc.customer_id;
+      if (!accountOwnerId) throw new Error(`Savings account ${savingsAccNo} has no owner`);
+
+      const memberNorm = normalizeCustomerId(memberId);
+      const ownerNorm = normalizeCustomerId(accountOwnerId);
+      if (memberNorm !== ownerNorm) {
+        throw new Error(`Account ${savingsAccNo} does not belong to member ${memberId}`);
+      }
+
+      processedMembers.push({
+        memberId,
+        name,
+        individualAmount: amount,
+        savingsAccountNo: savingsAccNo,
+        savingsAccount: savingsAcc
+      });
+
+      computedTotal += amount;
+    }
+
+    const finalTotal = safeNumber(totalAmount) || computedTotal;
+    if (Math.abs(finalTotal - computedTotal) > 0.01) {
+      throw new Error(`Total amount mismatch: Calculated ${computedTotal} vs Provided ${finalTotal}`);
+    }
+
+    // Dynamic values from product
+    const termValue = safeNumber(req.body.termValue) || loanProduct.maxTerm || 12;
+    const paymentFrequency = loanProduct.PAYMENT_FREQUENCY || 'WEEKLY';
+    const interestRate = parseFloat(loanProduct.interestRate?.toString() || '6.5');
+
+    // Maturity date
+    const startDate = new Date();
+    const maturityDate = new Date(startDate);
+    if (paymentFrequency.includes('WEEK')) {
+      maturityDate.setDate(startDate.getDate() + termValue * 7);
+    } else {
+      maturityDate.setMonth(startDate.getMonth() + termValue);
+    }
+
+    console.log('=== LOAN PARAMETERS ===');
+    console.log('Total Amount:', finalTotal);
+    console.log('Interest Rate:', interestRate + '%');
+    console.log('Term Value:', termValue);
+    console.log('Payment Frequency:', paymentFrequency);
+    console.log('Maturity Date:', maturityDate.toISOString().split('T')[0]);
+
+    // === CREATE LOAN ACCOUNTS + DEBIT FEES + CREATE REPAYMENT SCHEDULE ===
+    const individualLoanIds = [];
+    const memberRepaymentSchedules = [];
+
+    for (const mem of processedMembers) {
+      const loanAccNo = await generateLoanAccountNumberByProdId(productId);
+      
+      console.log(`Processing member ${mem.memberId} with loan account ${loanAccNo}`);
+
+      // Fees calculation
+      const processingFeeAmount = mem.individualAmount * (safeNumber(processingFee) / 100);
+      const adminFeeAmount = safeNumber(adminFee);
+      const memberTotalFees = processingFeeAmount + adminFeeAmount;
+      totalFeesCollected += memberTotalFees;
+
+      // DEBIT FEES FROM SAVINGS
+      if (memberTotalFees > 0) {
+        const available = safeNumber(mem.savingsAccount.AVAILABLE_BALANCE || mem.savingsAccount.ledger_balance || 0);
+        if (available < memberTotalFees) {
+          throw new Error(`Member ${mem.name} insufficient balance for fees. Available: ₦${available}, Required: ₦${memberTotalFees}`);
+        }
+
+        // Update savings account balance
+        mem.savingsAccount.AVAILABLE_BALANCE = available - memberTotalFees;
+        if (mem.savingsAccount.ledger_balance !== undefined) {
+          mem.savingsAccount.ledger_balance -= memberTotalFees;
+        }
+        await mem.savingsAccount.save({ session });
+
+        // Get account details for transaction
+        const accountNumber = mem.savingsAccount.account_number || mem.savingsAccount.ACCT_NO;
+        const accountName = mem.savingsAccount.ACCT_NM || mem.savingsAccount.account_name || mem.name;
+        const customerId = mem.savingsAccount.CUST_ID || mem.savingsAccount.customer_id || mem.memberId;
+        const businessUnit = mem.savingsAccount.BU_ID || group.branch || '100';
+
+        // Record fee transaction with all required fields
+        const feeTransaction = new Transaction({
+          // Required core fields
+          TRANSACTION_TYPE: 'DEBIT',
+          AMOUNT: parseFloat(memberTotalFees),
+          ACCT_NM: accountName,
+          CUST_ID: normalizeCustomerId(customerId),
+          BU_ID: businessUnit,
+          ACCT_ID: mem.savingsAccount._id,
+          ACCT_NO: accountNumber,
+          
+          // Account number aliases
+          account_number: accountNumber,
+          transaction_type: 'DEBIT',
+          amount: parseFloat(memberTotalFees),
+          
+          // Descriptive fields
+          description: `Group loan fees - Processing ₦${processingFeeAmount.toFixed(2)} + Admin ₦${adminFeeAmount.toFixed(2)}`,
+          reference: `FEE_${loanAccNo}_${Date.now()}`,
+          TRAN_PARTICULARS: `Loan processing and admin fees for group loan ${loanId}`,
+          TRAN_REFERENCE: `GL_FEE_${loanId}_${mem.memberId}`,
+          
+          // Date fields
+          transaction_date: new Date(),
+          TRAN_DATE: new Date(),
+          VALUE_DATE: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          
+          // Status fields
+          STATUS: 'COMPLETED',
+          REC_ST: 'A',
+          TRAN_STATUS: 'SUCCESS',
+          
+          // User and branch
+          createdBy: createdBy,
+          branch: group.branch || 1,
+          CREATED_BY: createdBy?.toString() || 'SYSTEM',
+          
+          // Balance information
+          BALANCE: available - memberTotalFees,
+          AVAILABLE_BALANCE: available - memberTotalFees,
+          LEDGER_BALANCE: (mem.savingsAccount.ledger_balance || available) - memberTotalFees,
+          
+          // Metadata
+          metadata: { 
+            purpose: 'GROUP_LOAN_FEES', 
+            loanId, 
+            memberId: mem.memberId,
+            processingFee: processingFeeAmount,
+            adminFee: adminFeeAmount,
+            totalFees: memberTotalFees,
+            loanAccountNo: loanAccNo
+          }
+        });
+
+        await feeTransaction.save({ session });
+
+        console.log(`✅ Debited fees ₦${memberTotalFees} from ${accountNumber} for member ${mem.memberId}`);
+      }
+
+      // Calculate member's repayment schedule with precise calculation
+      const memberRepayment = calculateFlatRatePrecise({
+        principal: mem.individualAmount,
+        annualRate: interestRate,
+        termMonths: termValue,
+        startDate,
+        paymentFrequency
+      });
+
+      // Validate final balance is zero
+      const finalInstallment = memberRepayment.installments[memberRepayment.installments.length - 1];
+      if (Math.abs(finalInstallment.remainingBalance) > 0.01) {
+        console.warn(`Final balance not zero for member ${mem.memberId}: ${finalInstallment.remainingBalance}. Adjusting...`);
+        // Force final balance to zero and adjust the last payment
+        const adjustment = finalInstallment.remainingBalance;
+        memberRepayment.installments[memberRepayment.installments.length - 1].remainingBalance = 0;
+        memberRepayment.installments[memberRepayment.installments.length - 1].totalPayment += adjustment;
+        memberRepayment.installments[memberRepayment.installments.length - 1].interest += adjustment;
+      }
+
+      if (!memberRepayment.installments || !Array.isArray(memberRepayment.installments)) {
+        throw new Error(`Failed to generate repayment schedule for member ${mem.memberId}`);
+      }
+
+      // Verify the schedule totals
+      const totalCalculated = memberRepayment.installments.reduce((sum, inst) => sum + inst.totalPayment, 0);
+      const expectedTotal = memberRepayment.totalRepayment;
+      if (Math.abs(totalCalculated - expectedTotal) > 0.01) {
+        console.warn(`Schedule total mismatch for member ${mem.memberId}: Calculated ${totalCalculated} vs Expected ${expectedTotal}`);
+      }
+
+      console.log(`✅ Generated repayment schedule for ${mem.memberId}: ${memberRepayment.installments.length} installments, Final Balance: ${memberRepayment.installments[memberRepayment.installments.length - 1].remainingBalance}`);
+
+      // Create loan account
+      const newLoanAcc = new LoanAccount({
+        CUST_ID: normalizeCustomerId(mem.memberId),
+        ACCT_NM: mem.name,
+        ACCT_NO: loanAccNo,
+        LOAN_STATUS: 'PENDING',
+        PRODUCT_TYPE: 'GROUP_LOAN',
+
+        PROD_ID: loanProduct.PROD_ID,
+        BU_ID: loanProduct.BU_ID[0] || '100',
+        PAYMENT_FREQUENCY: paymentFrequency,
+        TERM_CD: loanProduct.TERM_CD || 'W',
+        PRIMARY_OFFICER_ID: primaryRelationshipManager,
+
+        loanGLAccount: loanProduct.loanGLAccount,
+        principalGLAccountNo: loanProduct.principalGLAccountNo,
+        interestGLAccountNo: loanProduct.interestGLAccountNo,
+        SETTLEMENT_GL_ACCT_NO: loanProduct.SETTLEMENT_GL_ACCT_NO,
+
+        INTEREST_RATE_ID: 1,
+        INTEREST_RATE: interestRate,
+
+        APPL_ID: `APP_${loanId}_${mem.memberId}`,
+        JOURNAL_ID: `JNL_${loanId}_${Date.now()}`,
+
+        MATURITY_DT: maturityDate,
+        TERM_VALUE: termValue,
+
+        DISBURSEMENT_LIMIT: mem.individualAmount,
+        OUTSTANDING_PRINCIPAL: mem.individualAmount,
+        ORIGINAL_PRINCIPAL: mem.individualAmount,
+
+        Borrower_address: {
+          street: 'Group Member Residence',
+          city: 'Lagos',
+          state: 'Lagos',
+          zipCode: '100001',
+          country: 'Nigeria'
+        },
+
+        loanPurpose,
+        createdBy,
+        savingsAccountNo: mem.savingsAccountNo,
+        FEE_DETAILS: {
+          processingFee: processingFeeAmount,
+          adminFee: adminFeeAmount,
+          totalFees: memberTotalFees,
+          feesCollectedFromSavings: true,
+          collectionDate: new Date()
+        },
+        PAYMENT_SCHEDULE: memberRepayment.installments
+      });
+
+      const savedLoanAcc = await newLoanAcc.save({ session });
+      individualLoanIds.push(savedLoanAcc._id);
+
+      // === CREATE REPAYMENT SCHEDULE DOCUMENT ===
+      const repaymentScheduleData = {
+        LOAN_ACCOUNT_ID: savedLoanAcc._id,
+        ACCT_NO: loanAccNo,
+        CUST_ID: normalizeCustomerId(mem.memberId),
+        START_DATE: startDate,
+        MATURITY_DATE: maturityDate,
+        PRINCIPAL_AMOUNT: mem.individualAmount,
+        INTEREST_RATE: interestRate,
+        TERM: termValue,
+        TERM_TYPE: loanProduct.TERM_CD || 'W',
+        paymentFrequency,
+        installments: memberRepayment.installments.map(inst => ({
+          installmentNo: inst.installmentNo,
+          dueDate: inst.dueDate,
+          principal: inst.principal,
+          interest: inst.interest,
+          totalPayment: inst.totalPayment,
+          remainingBalance: inst.remainingBalance,
+          status: 'PENDING',
+          amountPaid: 0,
+          principalPaid: 0,
+          interestPaid: 0
+        })),
+        TOTAL_INTEREST: memberRepayment.totalInterest,
+        TOTAL_REPAYMENT: memberRepayment.totalRepayment,
+        TRANSACTION_ID: `TXN_${loanId}_${mem.memberId}`,
+        EVENT_ID: `EVT_${loanId}_${Date.now()}`,
+        CREATED_BY: createdBy.toString(),
+        STATUS: 'PENDING',
+        EMI_AMOUNT: memberRepayment.paymentAmount
+      };
+
+      const repaymentSchedule = new RepaymentSchedule(repaymentScheduleData);
+      const savedSchedule = await repaymentSchedule.save({ session });
+
+      memberRepaymentSchedules.push({
+        memberId: mem.memberId,
+        memberName: mem.name,
+        loanAccountId: savedLoanAcc._id,
+        repaymentScheduleId: savedSchedule._id,
+        loanAccountNo: loanAccNo,
+        schedule: memberRepayment
+      });
+
+      console.log(`✅ Created loan account ${loanAccNo} for member ${mem.memberId} with ${memberRepayment.installments.length} installments`);
+    }
+
+    // === CREATE GROUP LOAN ===
+    const groupLoanInterest = calculateFlatRatePrecise({
+      principal: finalTotal,
+      annualRate: interestRate,
+      termMonths: termValue,
+      startDate,
+      paymentFrequency
+    });
+
+    // Validate group loan final balance
+    const groupFinalInstallment = groupLoanInterest.installments[groupLoanInterest.installments.length - 1];
+    if (Math.abs(groupFinalInstallment.remainingBalance) > 0.01) {
+      console.warn(`Group loan final balance not zero: ${groupFinalInstallment.remainingBalance}. Adjusting...`);
+      groupLoanInterest.installments[groupLoanInterest.installments.length - 1].remainingBalance = 0;
+    }
+
+    const newGroupLoan = new GroupLoan({
+      loanId,
+      group: group._id,
+      groupCode,
+      groupName: group.groupName || 'Unknown Group',
+      totalAmount: finalTotal,
+      individualShare: finalTotal / processedMembers.length,
+      memberCount: processedMembers.length,
+      members: processedMembers.map(m => ({
+        memberId: m.memberId,
+        name: m.name,
+        individualAmount: m.individualAmount,
+        savingsAccountNo: m.savingsAccountNo
+      })),
+      branch: group.branch || 1,
+      primaryRelationshipManager,
       loanPurpose,
       savingsAccount,
       interestRate,
-      loanTerm,
+      loanTerm: paymentFrequency.toLowerCase(),
       termValue,
-      disbursementMethod,
-      useSavingsAsCollateral,
-      groupSavingsId,
-      members,
-      rateType,
-      interestType,
-      accrualBasisType,
-      accrualFrequency,
-      accrualFrequencyValue,
-      fixedRate,
-      capitalizeInterest,
-      amortized,
-      rateChangeAllowed,
-      rateChangeNoticeDays,
-      charges,
-      insuranceDetails,
-      processingFee,
-      adminFee,
-      insuranceFee,
-      otherFees,
-      upfrontInterest,
-      upfrontInterestPercentage
-    } = safeBody;
-
-    console.log('Received group loan application request:', { 
-      groupCode, 
-      totalAmount, 
-      membersCount: members?.length 
-    });
-
-    // SAFE FIELD CONVERSIONS
-    const safeGroupCode = safeToString(groupCode);
-    const safePrimaryRM = safeToString(primaryRelationshipManager);
-    const safeLoanPurpose = safeToString(loanPurpose);
-    const safeSavingsAccount = safeToString(savingsAccount);
-    const safeLoanTerm = safeToString(loanTerm).toLowerCase();
-    const safeDisbursementMethod = safeToString(disbursementMethod);
-    const safeTermValue = safeNumber(termValue);
-    
-    const safeTotalAmount = safeNumber(totalAmount);
-    const safeInterestRate = safeNumber(interestRate);
-    const safeSecondaryRM = secondaryRelationshipManager ? safeToString(secondaryRelationshipManager) : null;
-    const safeUseSavingsAsCollateral = safeBoolean(useSavingsAsCollateral);
-    const safeGroupSavingsId = groupSavingsId ? safeToString(groupSavingsId) : null;
-    
-    const safeRateType = safeToString(rateType);
-    const safeInterestType = safeToString(interestType);
-    const safeAccrualBasisType = safeToString(accrualBasisType);
-    const safeAccrualFrequency = safeToString(accrualFrequency);
-    const safeAccrualFrequencyValue = safeNumber(accrualFrequencyValue, 1);
-    const safeFixedRate = safeBoolean(fixedRate, true);
-    const safeCapitalizeInterest = safeBoolean(capitalizeInterest);
-    const safeAmortized = safeBoolean(amortized);
-    const safeRateChangeAllowed = safeBoolean(rateChangeAllowed);
-    const safeRateChangeNoticeDays = safeNumber(rateChangeNoticeDays, 30);
-    const safeUpfrontInterest = safeBoolean(upfrontInterest);
-    const safeUpfrontInterestPercentage = safeNumber(upfrontInterestPercentage);
-
-    console.log('=== VALIDATING REQUIRED FIELDS ===');
-
-    // VALIDATE REQUIRED FIELDS
-    const validationErrors = [];
-    if (!safeGroupCode) validationErrors.push('Group code is required');
-    if (!safePrimaryRM) validationErrors.push('Primary relationship manager is required');
-    if (!safeLoanPurpose) validationErrors.push('Loan purpose is required');
-    if (!safeSavingsAccount) validationErrors.push('Savings account is required');
-    if (!safeLoanTerm) validationErrors.push('Loan term is required');
-    if (!safeTermValue || safeTermValue <= 0) validationErrors.push('Valid term value is required');
-    if (!safeDisbursementMethod) validationErrors.push('Disbursement method is required');
-
-    // ✅ NEW VALIDATION: Check if members array is provided and has required fields
-    if (!members || !Array.isArray(members) || members.length === 0) {
-      validationErrors.push('At least one member is required with memberId, individualAmount, and savingsAccountNo');
-    }
-
-    if (validationErrors.length > 0) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: 'Validation failed',
-        errors: validationErrors
-      });
-    }
-
-    // Validate loanTerm
-    if (!['weekly', 'monthly', 'yearly'].includes(safeLoanTerm)) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: 'Loan term must be one of: weekly, monthly, yearly.',
-      });
-    }
-
-    // Get group
-    const group = await Group.findOne({ groupCode: safeGroupCode }).select('branch members groupName groupCode').session(session);
-    if (!group) {
-      await session.abortTransaction();
-      return res.status(404).json({
-        success: false,
-        message: 'Group not found.',
-      });
-    }
-
-    // SAFE GROUP VALIDATION
-    if (!group.members || !Array.isArray(group.members) || group.members.length === 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No members found in group.' 
-      });
-    }
-
-    // ✅ CHECK FOR EXISTING ACTIVE GROUP LOAN FOR THIS GROUP
-    const existingActiveGroupLoan = await GroupLoan.findOne({
-      groupCode: safeGroupCode,
-      status: { $in: ['applied', 'approved', 'disbursed', 'partially_disbursed', 'active'] }
-    }).session(session);
-
-    if (existingActiveGroupLoan) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: `Group "${group.groupName}" already has an active loan application (${existingActiveGroupLoan.loanId}). Please settle or close the existing loan before applying for a new one.`,
-        existingLoan: {
-          loanId: existingActiveGroupLoan.loanId,
-          status: existingActiveGroupLoan.status,
-          totalAmount: existingActiveGroupLoan.totalAmount,
-          appliedDate: existingActiveGroupLoan.applicationDate
-        }
-      });
-    }
-
-    // Generate Group Loan ID
-    const loanId = await generateGroupLoanId();
-    console.log('Generated loan ID:', loanId);
-
-    // SAFE USER ID HANDLING
-    let validCreatedBy = req.user?._id || req.user?.id;
-
-    if (!validCreatedBy) {
-      const systemUser = await User.findOne({ employeeId: 'SYSTEM' }).session(session);
-      if (systemUser) {
-        validCreatedBy = systemUser._id;
-      } else {
-        const fallbackUser = new User({
-          employeeId: 'SYSTEM',
-          name: 'System User',
-          email: 'system@bank.com',
-          role: 'SYSTEM'
-        });
-        const savedUser = await fallbackUser.save({ session });
-        validCreatedBy = savedUser._id;
-      }
-    }
-
-    // SAFE OBJECTID VALIDATION
-    const createdByIdString = validCreatedBy ? safeToString(validCreatedBy.toString()) : '';
-    if (!mongoose.Types.ObjectId.isValid(createdByIdString)) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid user authentication. Please log in again.',
-      });
-    }
-
-    // ✅ ENHANCED MEMBERS PROCESSING WITH REQUIRED SAVINGS ACCOUNT VALIDATION
-    let processingMembers = [];
-    let computedTotalAmount = 0;
-    
-    for (const mem of members) {
-      const memberId = safeToString(mem.memberId);
-      const individualAmount = safeNumber(mem.individualAmount);
-      const savingsAccountNo = safeToString(mem.savingsAccountNo); // ✅ REQUIRED FIELD
-      const memberName = safeToString(mem.name, 'Unknown Member');
-      
-      console.log(`🔍 Processing member: ${memberName} (${memberId}) - Savings Account: ${savingsAccountNo}`);
-
-      // ✅ VALIDATE REQUIRED MEMBER FIELDS
-      if (!memberId) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Member ID is required for all members. Missing for: ${memberName}`
-        });
-      }
-
-      if (!individualAmount || individualAmount <= 0) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Valid individual amount is required for member ${memberName} (${memberId})`
-        });
-      }
-
-      // ✅ VALIDATE SAVINGS ACCOUNT NUMBER IS PROVIDED
-      if (!savingsAccountNo) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Savings account number is required for member ${memberName} (${memberId}). Please specify which savings account should receive the loan disbursement.`
-        });
-      }
-
-      // ✅ VALIDATE SAVINGS ACCOUNT EXISTS AND IS ACTIVE
-      console.log(`🔍 Validating savings account: ${savingsAccountNo} for member ${memberId}`);
-      
-      const memberSavingsAccount = await CustomerAccount.findOne({
-        account_number: savingsAccountNo,
-        status: 'ACTIVE'
-      }).session(session);
-
-      if (!memberSavingsAccount) {
-        await session.abortTransaction();
-        
-        // Check if account exists but inactive
-        const inactiveAccount = await CustomerAccount.findOne({
-          account_number: savingsAccountNo
-        }).session(session);
-        
-        if (inactiveAccount) {
-          return res.status(400).json({
-            success: false,
-            message: `Savings account ${savingsAccountNo} exists but is not active. Status: ${inactiveAccount.status}`,
-            memberId: memberId,
-            memberName: memberName,
-            accountNumber: savingsAccountNo,
-            accountStatus: inactiveAccount.status
-          });
-        }
-        
-        return res.status(404).json({
-          success: false,
-          message: `Savings account not found: ${savingsAccountNo} for member ${memberName} (${memberId})`,
-          memberId: memberId,
-          memberName: memberName,
-          savingsAccountNo: savingsAccountNo,
-          troubleshooting: [
-            'Verify the savings account number is correct',
-            'Ensure the account exists in the system',
-            'Check if the account status is ACTIVE'
-          ]
-        });
-      }
-
-      // ✅ VALIDATE SAVINGS ACCOUNT BELONGS TO THE MEMBER
-      if (memberSavingsAccount.CUST_ID !== memberId) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: `Savings account ${savingsAccountNo} does not belong to member ${memberId}. Account belongs to CUST_ID: ${memberSavingsAccount.CUST_ID}`,
-          memberId: memberId,
-          memberName: memberName,
-          savingsAccountNo: savingsAccountNo,
-          accountOwner: memberSavingsAccount.CUST_ID,
-          accountCustomerName: memberSavingsAccount.customerName
-        });
-      }
-
-      console.log(`✅ Validated savings account: ${savingsAccountNo} for member ${memberId}`);
-
-      // ✅ CHECK IF MEMBER HAS EXISTING ACTIVE LOAN
-      const existingMemberLoan = await LoanAccount.findOne({
-        CUST_ID: memberId,
-        LOAN_STATUS: { $in: ['ACTIVE', 'PENDING', 'APPROVED', 'APPROVED_PENDING_DISBURSAL'] },
-        PRODUCT_TYPE: 'GROUP_LOAN'
-      }).session(session);
-
-      if (existingMemberLoan) {
-        await session.abortTransaction();
-        
-        // Get group loan details for the existing loan
-        const existingGroupLoan = await GroupLoan.findOne({
-          individualLoanAccounts: existingMemberLoan._id
-        }).populate('group', 'groupName groupCode').session(session);
-
-        const groupName = existingGroupLoan?.group?.groupName || 'Unknown Group';
-        const existingLoanId = existingGroupLoan?.loanId || 'Unknown Loan ID';
-        
-        return res.status(400).json({
-          success: false,
-          message: `Member ${memberId} (${memberName}) already has an active group loan.`,
-          memberDetails: {
-            memberId: memberId,
-            memberName: memberName,
-            existingLoan: {
-              loanId: existingLoanId,
-              groupName: groupName,
-              loanStatus: existingMemberLoan.LOAN_STATUS,
-              loanAmount: existingMemberLoan.DISBURSEMENT_LIMIT,
-              outstandingPrincipal: existingMemberLoan.OUTSTANDING_PRINCIPAL
-            }
-          }
-        });
-      }
-      
-      const memberCustomer = await Customer.findOne({ CUST_ID: memberId }).select('FIRST_NAME LAST_NAME address').session(session);
-      if (!memberCustomer) {
-        await session.abortTransaction();
-        return res.status(404).json({ 
-          success: false, 
-          message: `Customer not found for memberId: ${memberId}` 
-        });
-      }
-      
-      const firstName = safeToString(memberCustomer.FIRST_NAME);
-      const lastName = safeToString(memberCustomer.LAST_NAME);
-      const finalMemberName = memberName !== 'Unknown Member' ? memberName : `${firstName} ${lastName}`.trim() || 'Unknown Member';
-      
-      const memberData = {
-        memberId: memberId,
-        individualAmount: individualAmount,
-        name: finalMemberName,
-        savingsAccountNo: savingsAccountNo, // ✅ USER-PROVIDED SAVINGS ACCOUNT
-        savingsAccountType: memberSavingsAccount.account_type,
-        savingsAccountBalance: safeNumber(memberSavingsAccount.ledger_balance, 0),
-        isInGroup: group.members.includes(memberId),
-        savingsAccountDetails: {
-          account_number: memberSavingsAccount.account_number,
-          account_type: memberSavingsAccount.account_type,
-          customerName: memberSavingsAccount.customerName,
-          CUST_ID: memberSavingsAccount.CUST_ID,
-          status: memberSavingsAccount.status,
-          currentBalance: safeNumber(memberSavingsAccount.ledger_balance, 0),
-          availableBalance: safeNumber(memberSavingsAccount.AVAILABLE_BALANCE, 0)
-        }
-      };
-      processingMembers.push(memberData);
-      computedTotalAmount += individualAmount;
-    }
-
-    // SAFE TOTAL AMOUNT CALCULATION
-    const finalTotalAmount = safeTotalAmount > 0 ? safeTotalAmount : safeNumber(computedTotalAmount);
-
-    if (safeTotalAmount > 0 && Math.abs(safeTotalAmount - computedTotalAmount) > 0.01) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: `Provided totalAmount (${safeTotalAmount}) does not match sum of individualAmounts (${computedTotalAmount}).`
-      });
-    }
-    
-    if (finalTotalAmount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Total amount must be greater than 0.' 
-      });
-    }
-
-    // SAFE SAVINGS ACCOUNT VALIDATION
-    const savings = await CustomerAccount.findOne({ account_number: safeSavingsAccount }).session(session);
-    if (!savings) {
-      await session.abortTransaction();
-      return res.status(404).json({
-        success: false,
-        message: 'Savings account not found.',
-      });
-    }
-
-    // ... [Rest of your existing code for fee calculations, interest calculations, etc.]
-    // SAFE FEE CALCULATION
-    const processingFeePercentage = processingFee !== null ? safeNumber(processingFee, 3) : 3;
-    const adminFeeAmount = adminFee !== null ? safeNumber(adminFee, 1000) : 1000;
-    const totalInsuranceFee = safeNumber(insuranceFee);
-    const totalOtherFees = safeNumber(otherFees);
-
-    // SAFE CHARGES PROCESSING
-    let totalChargesAmount = 0;
-    const processedCharges = (charges || []).map(charge => {
-      const amount = safeNumber(charge?.amount);
-      totalChargesAmount += amount;
-      
-      const numericChargeId = parseInt(`${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-9), 10);
-      
-      return {
-        chargeId: numericChargeId,
-        chargeCode: safeToString(charge?.chargeCode, `CHG_${Date.now()}`),
-        name: safeToString(charge?.name, 'Other Charge'),
-        amount: amount,
-        glAccountCode: safeToString(charge?.glAccountCode, '005-001-400-004-100'),
-        chargeType: safeToString(charge?.chargeType, 'OTHER_FEES'),
-        isUpfront: safeBoolean(charge?.isUpfront, false)
-      };
-    });
-
-    // Calculate fees function
-    const calculateMemberFees = (individualAmount, processingFeePercent, adminFee) => {
-      const processingFee = individualAmount * (processingFeePercent / 100);
-      const adminFeeAmount = adminFee;
-      return {
-        processingFee,
-        adminFee: adminFeeAmount,
-        totalFees: processingFee + adminFeeAmount
-      };
-    };
-
-    let totalGroupProcessingFee = 0;
-    let totalGroupAdminFee = 0;
-    let totalGroupFees = 0;
-
-    const memberFeeDetails = processingMembers.map(member => {
-      const fees = calculateMemberFees(member.individualAmount, processingFeePercentage, adminFeeAmount);
-      totalGroupProcessingFee += fees.processingFee;
-      totalGroupAdminFee += fees.adminFee;
-      totalGroupFees += fees.totalFees;
-      return {
-        memberId: member.memberId,
-        name: member.name,
-        individualAmount: member.individualAmount,
-        savingsAccountNo: member.savingsAccountNo,
-        fees: fees
-      };
-    });
-
-    const totalFees = totalGroupFees + totalInsuranceFee + totalOtherFees + totalChargesAmount;
-
-    // SAFE INTEREST CALCULATION
-    let years;
-    if (safeLoanTerm === 'weekly') {
-      years = safeTermValue / 52;
-    } else if (safeLoanTerm === 'monthly') {
-      years = safeTermValue / 12;
-    } else if (safeLoanTerm === 'yearly') {
-      years = safeTermValue;
-    } else {
-      years = safeTermValue;
-    }
-    
-    const rate = safeInterestRate / 100;
-    const totalInterest = finalTotalAmount * rate * years;
-
-    let upfrontInterestAmount = 0;
-    let remainingInterestAmount = totalInterest;
-    if (safeUpfrontInterest && safeUpfrontInterestPercentage > 0) {
-      upfrontInterestAmount = totalInterest * (safeUpfrontInterestPercentage / 100);
-      remainingInterestAmount = totalInterest - upfrontInterestAmount;
-    }
-
-    const totalRepayable = finalTotalAmount + totalInterest;
-    const numPeriods = safeTermValue;
-    const groupInstallment = totalRepayable / numPeriods;
-
-    const netDisbursementAmount = finalTotalAmount;
-
-    if (netDisbursementAmount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        success: false,
-        message: `Net disbursement amount after fees and upfront interest would be ${netDisbursementAmount}. Adjust loan amount or reduce fees.`
-      });
-    }
-
-    // SAFE INDIVIDUAL LOANACCOUNT CREATION WITH SAVINGS ACCOUNT INFO
-    const individualLoanAccounts = [];
-    const startDate = new Date();
-    
-    for (const mem of processingMembers) {
-      try {
-        // Generate loan account number
-        let individualLoanAccountNumber;
-        try {
-          individualLoanAccountNumber = await getLoanAccountNumberForGroupLoan();
-        } catch (accountError) {
-          const timestamp = Date.now().toString().slice(-8);
-          const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-          individualLoanAccountNumber = `1${timestamp}${random}`.padStart(10, '0');
-        }
-
-        // Get customer details
-        const memberCustomer = await Customer.findOne({ CUST_ID: mem.memberId }).select('address FIRST_NAME LAST_NAME').session(session);
-        if (!memberCustomer) {
-          throw new Error(`Customer not found for ${mem.memberId}`);
-        }
-
-        // SAFE CUSTOMER DATA
-        const customerFirstName = safeToString(memberCustomer.FIRST_NAME);
-        const customerLastName = safeToString(memberCustomer.LAST_NAME);
-        const customerName = `${customerFirstName} ${customerLastName}`.trim() || mem.name;
-
-        // Calculate individual member's share
-        const memberShareRatio = mem.individualAmount / finalTotalAmount;
-        const individualShare = mem.individualAmount;
-        const individualInterest = individualShare * rate * years;
-        const individualUpfrontInterest = individualInterest * (safeUpfrontInterestPercentage / 100);
-        const individualRemainingInterest = individualInterest - individualUpfrontInterest;
-        const individualTotalRepayable = individualShare + individualInterest;
-        const individualInstallment = individualTotalRepayable / numPeriods;
-
-        // Calculate member fees
-        const memberFees = calculateMemberFees(mem.individualAmount, processingFeePercentage, adminFeeAmount);
-        const memberInsuranceFee = totalInsuranceFee * memberShareRatio;
-        const memberOtherFees = totalOtherFees * memberShareRatio;
-
-        const memberCharges = processedCharges.map((charge, index) => ({
-          ...charge,
-          chargeId: parseInt(`${Date.now()}${index}${Math.floor(Math.random() * 100)}`.slice(-9), 10)
-        }));
-
-        const memberTotalFees = memberFees.totalFees + memberInsuranceFee + memberOtherFees + memberCharges.reduce((sum, charge) => sum + charge.amount, 0);
-        const memberNetDisbursement = individualShare;
-
-        // Calculate maturity date
-        const maturityDt = new Date(startDate);
-        switch (safeLoanTerm) {
-          case 'weekly':
-            maturityDt.setDate(maturityDt.getDate() + (safeTermValue * 7));
-            break;
-          case 'monthly':
-            maturityDt.setMonth(maturityDt.getMonth() + safeTermValue);
-            break;
-          case 'yearly':
-            maturityDt.setFullYear(maturityDt.getFullYear() + safeTermValue);
-            break;
-          default:
-            maturityDt.setMonth(maturityDt.getMonth() + safeTermValue);
-        }
-
-        // SAFE CUSTOMER ID CONVERSION
-        const safeCustId = parseInt(mem.memberId, 10) || 0;
-
-        const newIndividualLoanAccount = new LoanAccount({
-          CUST_ID: safeCustId,
-          ACCT_NM: customerName,
-          ACCT_NO: individualLoanAccountNumber,
-          LOAN_STATUS: 'PENDING',
-          PRIMARY_OFFICER_ID: safePrimaryRM,
-          BU_ID: 'DEFAULT_BU_001',
-          PROD_ID: 1,
-          PRODUCT_TYPE: 'GROUP_LOAN',
-          APPL_ID: uuidv4().replace(/-/g, '').slice(0, 32),
-          JOURNAL_ID: uuidv4().replace(/-/g, '').slice(0, 32),
-          PAYMENT_FREQUENCY: safeLoanTerm.toUpperCase(),
-          INTEREST_RATE: safeInterestRate,
-          INTEREST_RATE_ID: 1,
-          MATURITY_DT: maturityDt,
-          TERM_VALUE: safeTermValue,
-          TERM_CD: safeLoanTerm.toUpperCase(),
-          DISBURSEMENT_LIMIT: individualShare,
-          ACTUAL_DISBURSEMENT: 0.00,
-          OUTSTANDING_PRINCIPAL: individualShare,
-          TOTAL_INTEREST: individualInterest,
-          TOTAL_REPAYMENT: individualTotalRepayable,
-          deductUpfrontInterest: safeUpfrontInterest,
-          partialUpfrontInterest: safeUpfrontInterestPercentage > 0 && safeUpfrontInterestPercentage < 100,
-          upfrontInterestPercentage: safeUpfrontInterestPercentage,
-          upfrontInterestAmount: individualUpfrontInterest,
-          remainingInterestAmount: individualRemainingInterest,
-          Borrower_address: {
-            street: safeToString(memberCustomer.address?.street, 'Not Provided'),
-            city: safeToString(memberCustomer.address?.city, 'Not Provided'),
-            state: safeToString(memberCustomer.address?.state, 'Not Provided'),
-            zipCode: safeToString(memberCustomer.address?.zipCode, '00000'),
-            country: 'Nigeria'
-          },
-          groupLoan: null,
-          loanPurpose: safeLoanPurpose,
-          interestRate: safeInterestRate,
-          loanTerm: safeLoanTerm,
-          disbursementMethod: safeDisbursementMethod,
-          individualShare,
-          installmentAmount: individualInstallment,
-          numPeriods: safeTermValue,
-          createdBy: validCreatedBy,
-          // ✅ STORE USER-PROVIDED SAVINGS ACCOUNT FOR DISBURSEMENT
-          savingsAccountNo: mem.savingsAccountNo,
-          savingsAccountDetails: mem.savingsAccountDetails,
-          FEE_DETAILS: {
-            processingFee: memberFees.processingFee,
-            adminFee: memberFees.adminFee,
-            insuranceFee: memberInsuranceFee,
-            otherFees: memberOtherFees,
-            totalFees: memberTotalFees,
-            charges: memberCharges,
-            upfrontInterest: individualUpfrontInterest,
-            upfrontInterestPercentage: safeUpfrontInterestPercentage,
-            processingFeePercentage: processingFeePercentage,
-            adminFeeAmount: adminFeeAmount
-          },
-          netDisbursementAmount: memberNetDisbursement,
-          totalDeductions: memberTotalFees + individualUpfrontInterest,
-          insuranceDetails: insuranceDetails ? {
-            ...insuranceDetails,
-            premiumAmount: memberInsuranceFee,
-            insuredAmount: individualShare,
-            coverageType: safeToString(insuranceDetails.coverageType, 'LOAN_PROTECTION'),
-            provider: safeToString(insuranceDetails.provider, 'DEFAULT_INSURER'),
-            policyNumber: safeToString(insuranceDetails.policyNumber, `POL_${individualLoanAccountNumber}`),
-            startDate: insuranceDetails.startDate || startDate,
-            endDate: insuranceDetails.endDate || maturityDt
-          } : null
-        });
-
-        const savedIndividualLoanAccount = await newIndividualLoanAccount.save({ session });
-        individualLoanAccounts.push(savedIndividualLoanAccount._id);
-      } catch (error) {
-        await session.abortTransaction();
-        logger.error(`Failed to create LoanAccount for member ${mem.memberId}:`, error);
-        return res.status(400).json({
-          success: false,
-          message: `Failed to create LoanAccount for member ${mem.memberId}: ${error.message}`
-        });
-      }
-    }
-
-    // SAFE GROUP LOAN CREATION
-    const newGroupLoan = new GroupLoan({
-      loanId: loanId,
-      group: group._id,
-      groupCode: safeToString(group.groupCode, safeGroupCode),
-      groupName: safeToString(group.groupName, 'Unknown Group'),
-      totalAmount: finalTotalAmount,
-      memberCount: processingMembers.length,
-      individualShare: finalTotalAmount / processingMembers.length,
-      members: processingMembers.map(mem => ({
-        memberId: safeToString(mem.memberId),
-        name: safeToString(mem.name),
-        individualAmount: mem.individualAmount,
-        savingsAccountNo: mem.savingsAccountNo, // ✅ STORE USER-PROVIDED SAVINGS ACCOUNT
-        savingsAccountType: mem.savingsAccountType,
-        savingsAccountBalance: mem.savingsAccountBalance,
-        savingsAccountDetails: mem.savingsAccountDetails
+      productId: loanProduct.PROD_ID,
+      individualLoanAccounts: individualLoanIds,
+      memberRepaymentSchedules: memberRepaymentSchedules.map(rs => ({
+        memberId: rs.memberId,
+        memberName: rs.memberName,
+        loanAccountId: rs.loanAccountId,
+        repaymentScheduleId: rs.repaymentScheduleId,
+        loanAccountNo: rs.loanAccountNo
       })),
-      branch: safeNumber(group.branch, 0),
-      primaryRelationshipManager: safePrimaryRM,
-      secondaryRelationshipManager: safeSecondaryRM,
-      loanPurpose: safeLoanPurpose,
-      savingsAccount: safeSavingsAccount,
-      interestRate: safeInterestRate,
-      loanTerm: safeLoanTerm,
-      termValue: safeTermValue,
-      disbursementMethod: safeDisbursementMethod,
-      useSavingsAsCollateral: safeUseSavingsAsCollateral,
-      groupSavings: null,
-      savingsCollateral: 0,
-      individualLoanAccounts,
-      createdBy: validCreatedBy,
+      createdBy,
       status: 'applied',
-      totalInterest,
-      totalRepayable,
-      installmentAmount: groupInstallment,
-      numPeriods,
-      netDisbursementAmount,
-      totalFees,
-      upfrontInterestAmount,
-      remainingInterestAmount,
-      feeSummary: {
-        processingFee: totalGroupProcessingFee,
-        adminFee: totalGroupAdminFee,
-        insuranceFee: totalInsuranceFee,
-        otherFees: totalOtherFees,
-        totalCharges: totalChargesAmount,
-        totalFees: totalFees,
-        charges: processedCharges,
-        upfrontInterestPercentage: safeUpfrontInterestPercentage,
-        processingFeePercentage: processingFeePercentage,
-        adminFeeAmount: adminFeeAmount
+      totalFeesCollected,
+      netDisbursementAmount: finalTotal,
+      interestDetails: {
+        totalInterest: groupLoanInterest.totalInterest,
+        totalRepayment: groupLoanInterest.totalRepayment,
+        paymentAmount: groupLoanInterest.paymentAmount,
+        calculationMethod: 'flat',
+        paymentFrequency: paymentFrequency,
+        totalInstallments: groupLoanInterest.totalInstallments
       },
-      insuranceDetails: insuranceDetails ? {
-        totalPremium: totalInsuranceFee,
-        totalCoverage: finalTotalAmount,
-        ...insuranceDetails
-      } : null,
-      rateType: safeRateType,
-      interestType: safeInterestType,
-      accrualBasisType: safeAccrualBasisType,
-      accrualFrequency: safeAccrualFrequency,
-      accrualFrequencyValue: safeAccrualFrequencyValue,
-      fixedRate: safeFixedRate,
-      capitalizeInterest: safeCapitalizeInterest,
-      amortized: safeAmortized,
-      rateChangeAllowed: safeRateChangeAllowed,
-      rateChangeNoticeDays: safeRateChangeNoticeDays,
-      upfrontInterest: safeUpfrontInterest,
-      upfrontInterestPercentage: safeUpfrontInterestPercentage
+      paymentSchedule: groupLoanInterest.installments.map(i => ({
+        installmentNo: i.installmentNo,
+        dueDate: i.dueDate,
+        principal: i.principal,
+        interest: i.interest,
+        totalPayment: i.totalPayment,
+        remainingBalance: i.remainingBalance
+      }))
     });
 
-    const savedLoan = await newGroupLoan.save({ session });
+    await newGroupLoan.save({ session });
 
-    // Update individual LoanAccounts with group loan reference
+    // Update individual loan accounts with group loan reference
     await LoanAccount.updateMany(
-      { _id: { $in: individualLoanAccounts } },
-      { groupLoan: savedLoan._id },
+      { _id: { $in: individualLoanIds } },
+      { 
+        groupLoan: newGroupLoan._id,
+        GROUP_LOAN_REF: {
+          loanId: loanId,
+          groupCode: groupCode,
+          totalGroupAmount: finalTotal
+        }
+      },
       { session }
     );
 
-    // ✅ COMMIT TRANSACTION
     await session.commitTransaction();
-    console.log('✅ Group loan transaction committed successfully');
 
-    // Populate response (outside transaction)
-    await savedLoan.populate('group', 'groupName memberCount');
-
-    // Response message with LOAN ID and savings account info
-    let message = `Group loan application ${loanId} created successfully for ${processingMembers.length} members. `;
-    message += `Total amount: ₦${finalTotalAmount.toLocaleString()}. `;
-    message += `Processing Fee: ${processingFeePercentage}% per member, Admin Fee: ₦${adminFeeAmount.toLocaleString()} per member. `;
-    message += `Total fees: ₦${totalFees.toLocaleString()}. `;
-
-    if (upfrontInterestAmount > 0) {
-      message += `Upfront interest: ₦${upfrontInterestAmount.toLocaleString()}. `;
+    console.log(`✅ Group loan ${loanId} created successfully with ${processedMembers.length} members`);
+    console.log(`   Total Fees Collected: ₦${totalFeesCollected.toLocaleString()}`);
+    console.log(`   Total Loan Amount: ₦${finalTotal.toLocaleString()}`);
+    console.log(`   Repayment Schedules Created: ${memberRepaymentSchedules.length}`);
+    
+    // Final validation
+    let allBalancesZero = true;
+    for (const ms of memberRepaymentSchedules) {
+      const finalBalance = ms.schedule.installments[ms.schedule.installments.length - 1].remainingBalance;
+      if (Math.abs(finalBalance) > 0.01) {
+        console.warn(`Member ${ms.memberId} final balance: ${finalBalance}`);
+        allBalancesZero = false;
+      }
     }
+    console.log(`   All final balances zero: ${allBalancesZero}`);
 
-    message += `Total repayable: ₦${totalRepayable.toLocaleString()} over ${safeTermValue} ${safeLoanTerm} payments.`;
-    message += ` Loan amounts will be disbursed to the specified savings accounts.`;
-    
-    console.log('Group loan application created successfully:', loanId);
-    
     res.status(201).json({
       success: true,
-      message: message,
+      message: `Group loan ${loanId} created successfully. ₦${totalFeesCollected.toLocaleString()} fees collected from savings accounts.`,
       data: {
-        ...savedLoan.toObject(),
-        loanId: loanId
-      },
-      financialSummary: {
-        totalAmount: finalTotalAmount,
-        totalFees: totalFees,
-        processingFeePercentage: processingFeePercentage,
-        adminFeeAmount: adminFeeAmount,
-        upfrontInterest: upfrontInterestAmount,
-        netDisbursement: netDisbursementAmount,
-        totalInterest: totalInterest,
-        totalRepayable: totalRepayable,
-        installmentAmount: groupInstallment,
-        memberFeeBreakdown: memberFeeDetails
-      },
-      memberSavingsAccounts: processingMembers.map(mem => ({
-        memberId: mem.memberId,
-        name: mem.name,
-        savingsAccountNo: mem.savingsAccountNo,
-        savingsAccountType: mem.savingsAccountType,
-        currentBalance: mem.savingsAccountBalance,
-        accountStatus: 'VALIDATED'
-      }))
+        loanId,
+        totalAmount: finalTotal,
+        totalFeesCollected,
+        netDisbursed: finalTotal,
+        memberCount: processedMembers.length,
+        repaymentSchedulesCreated: memberRepaymentSchedules.length,
+        interestRate: interestRate + '%',
+        paymentFrequency: paymentFrequency,
+        termValue: termValue,
+        interestDetails: {
+          totalInterest: groupLoanInterest.totalInterest,
+          paymentAmount: groupLoanInterest.paymentAmount,
+          totalRepayment: groupLoanInterest.totalRepayment,
+          totalInstallments: groupLoanInterest.totalInstallments
+        },
+        memberAccounts: memberRepaymentSchedules.map(ms => ({
+          memberId: ms.memberId,
+          memberName: ms.memberName,
+          loanAccountNo: ms.loanAccountNo,
+          installmentAmount: ms.schedule.paymentAmount,
+          totalInstallments: ms.schedule.totalInstallments,
+          finalBalance: ms.schedule.installments[ms.schedule.installments.length - 1].remainingBalance
+        }))
+      }
     });
 
   } catch (error) {
     await session.abortTransaction();
-    console.error('❌ Error in createGroupLoanApplication:', error);
-    console.error('Error stack:', error.stack);
-    logger.error('Group loan application creation failed:', error);
-    
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    console.error('Group loan creation failed:', error);
+    res.status(400).json({ 
+      success: false, 
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 });
+
+// Add this precise calculation function
+const calculateFlatRatePrecise = ({ principal, annualRate, termMonths, startDate, paymentFrequency }) => {
+  // Convert everything to pennies to avoid floating-point errors
+  const principalInCents = Math.round(principal * 100);
+  const monthlyRate = annualRate / 100 / 12;
+  const totalInterestInCents = Math.round(principalInCents * monthlyRate * termMonths);
+  const totalRepaymentInCents = principalInCents + totalInterestInCents;
+  
+  let totalInstallments;
+  
+  if (paymentFrequency.includes('WEEK')) {
+    totalInstallments = termMonths * 4;
+  } else {
+    totalInstallments = termMonths;
+  }
+  
+  const paymentInCents = Math.floor(totalRepaymentInCents / totalInstallments);
+  const remainder = totalRepaymentInCents - (paymentInCents * totalInstallments);
+  
+  const installments = [];
+  let remainingBalanceInCents = totalRepaymentInCents;
+  
+  for (let i = 1; i <= totalInstallments; i++) {
+    const dueDate = new Date(startDate);
+    if (paymentFrequency.includes('WEEK')) {
+      dueDate.setDate(startDate.getDate() + (i * 7));
+    } else {
+      dueDate.setMonth(startDate.getMonth() + i);
+    }
+    
+    let paymentThisInstallment = paymentInCents;
+    
+    // Add remainder to the first installment to distribute rounding difference
+    if (i === 1) {
+      paymentThisInstallment += remainder;
+    }
+    
+    const principalThisInstallment = Math.floor(principalInCents / totalInstallments);
+    const interestThisInstallment = paymentThisInstallment - principalThisInstallment;
+    
+    remainingBalanceInCents -= paymentThisInstallment;
+    
+    // Ensure final balance is exactly zero
+    if (i === totalInstallments) {
+      remainingBalanceInCents = 0;
+    }
+    
+    installments.push({
+      installmentNo: i,
+      dueDate,
+      principal: principalThisInstallment / 100,
+      interest: interestThisInstallment / 100,
+      totalPayment: paymentThisInstallment / 100,
+      remainingBalance: Math.max(0, remainingBalanceInCents) / 100
+    });
+  }
+  
+  return {
+    principal: principalInCents / 100,
+    totalInterest: totalInterestInCents / 100,
+    totalRepayment: totalRepaymentInCents / 100,
+    paymentAmount: paymentInCents / 100,
+    totalInstallments,
+    installments
+  };
+};
+
+
+// Helper function to get payment field name based on frequency
+function getPaymentFieldName(paymentFrequency) {
+  switch (paymentFrequency.toUpperCase()) {
+    case 'WEEKLY':
+      return 'WEEKLY_PAYMENT';
+    case 'BI_WEEKLY':
+      return 'BI_WEEKLY_PAYMENT';
+    case 'MONTHLY':
+    default:
+      return 'MONTHLY_PAYMENT';
+  }
+}
+
 /////////////////////////////////////////////////////////////////////////
 // Add this to your GroupController.js
 export const approveGroupLoan = asyncHandler(async (req, res) => {
+  let loanId = req.params.id || req.params.groupLoanId || req.body.loanId;
+
+  if (!loanId) {
+    return res.status(400).json({
+      success: false,
+      message: "Group loan ID is required (e.g., GL000123)"
+    });
+  }
+
+  loanId = loanId.toString().trim().toUpperCase();
+
   const session = await mongoose.startSession();
- 
+
   try {
     await session.withTransaction(async () => {
-      const { id: groupLoanId } = req.params;
-      const { approvalNotes } = req.body;
+      // Search by human-readable loanId (String)
+      const groupLoan = await GroupLoan.findOne({ loanId }).session(session);
 
-      console.log('=== APPROVING GROUP LOAN ===');
-      console.log('Group Loan ID:', groupLoanId);
-
-      // SAFE UTILITY FUNCTIONS
-      const safeToString = (value, defaultValue = '') => {
-        if (value === null || value === undefined) return defaultValue;
-        if (typeof value === 'string') return value.trim();
-        if (typeof value.toString === 'function') {
-          try {
-            return value.toString().trim();
-          } catch (error) {
-            return defaultValue;
-          }
-        }
-        return String(value || defaultValue).trim();
-      };
-
-      // Safe user ID handler
-      const getSafeUserId = (userId) => {
-        if (!userId) return null;
-        if (mongoose.Types.ObjectId.isValid(userId)) return userId;
-        if (typeof userId === 'number') return userId.toString();
-        if (typeof userId === 'string') return userId;
-        return String(userId);
-      };
-
-      const safeUserId = getSafeUserId(req.user.id);
-
-      // Build query
-      const query = { loanId: groupLoanId };
-      
-      console.log('Searching for group loan with query:', query);
-
-      const groupLoan = await GroupLoan.findOne(query).session(session);
-      
       if (!groupLoan) {
-        throw new Error(`Group loan with ID '${groupLoanId}' not found`);
+        throw new Error(`Group loan with ID ${loanId} not found`);
       }
 
-      console.log('Found group loan:', groupLoan.loanId, 'Current status:', groupLoan.status);
+      const userId = req.user?._id || req.user?.id;
 
-      // ✅ FIX: Check if already approved - handle gracefully
+      // Already approved? → Just update notes (idempotent)
       if (groupLoan.status === 'approved') {
-        console.log(`✅ Group loan ${groupLoan.loanId} is already approved - updating timestamps only`);
-        
-        // Update timestamps and notes without changing status
         groupLoan.approvedAt = new Date();
-        groupLoan.approvedBy = safeUserId;
-        groupLoan.approvalNotes = safeToString(approvalNotes, '');
-        groupLoan.lastUpdatedBy = safeUserId;
-        groupLoan.updatedAt = new Date();
-        
-        // ✅ FIX: Use $set to avoid triggering status validation
-        await GroupLoan.updateOne(
-          { _id: groupLoan._id },
-          { 
-            $set: {
-              approvedAt: new Date(),
-              approvedBy: safeUserId,
-              approvalNotes: safeToString(approvalNotes, ''),
-              lastUpdatedBy: safeUserId,
-              updatedAt: new Date()
-            }
-          },
-          { session }
-        );
+        groupLoan.approvedBy = userId;
+        groupLoan.approvalNotes = req.body.approvalNotes || groupLoan.approvalNotes || '';
+        groupLoan.lastUpdatedBy = userId;
 
-        // Log audit trail for the update
+        await groupLoan.save({ session });
+
         await logAuditTrail(
           'GroupLoan',
           groupLoan._id.toString(),
-          safeUserId,
+          userId,
           'APPROVE_UPDATE',
-          { previousStatus: 'approved' },
-          {
-            status: 'approved',
-            approvedAt: new Date(),
-            approvedBy: safeUserId,
-            approvalNotes: safeToString(approvalNotes, ''),
-            memberCount: groupLoan.memberCount,
-            totalAmount: groupLoan.totalAmount
-          },
+          { status: 'approved' },
+          { approvedAt: groupLoan.approvedAt, approvalNotes: groupLoan.approvalNotes },
           req.ip,
           'GROUP_LOAN_APPROVAL_UPDATE'
         );
 
-        console.log('✅ Group loan approval details updated successfully:', groupLoan.loanId);
-        return; // Exit early
+        return;
       }
 
-      // Check if already disbursed
-      if (groupLoan.status === 'disbursed' || groupLoan.status === 'partially_disbursed') {
-        throw new Error(`Group loan ${groupLoan.loanId} has already been disbursed`);
+      // Cannot approve disbursed or rejected loans
+      if (['disbursed', 'partially_disbursed'].includes(groupLoan.status)) {
+        throw new Error(`Cannot approve: loan ${loanId} has already been disbursed`);
       }
-
-      // Check if rejected (cannot approve a rejected loan)
       if (groupLoan.status === 'rejected') {
-        throw new Error(`Group loan ${groupLoan.loanId} cannot be approved because it has been rejected`);
+        throw new Error(`Cannot approve: loan ${loanId} was previously rejected`);
       }
 
-      // Store the original status
-      const originalStatus = groupLoan.status;
-
-      // ✅ FIX: Temporarily disable status validation for this save operation
-      groupLoan._skipStatusValidation = true;
-
-      // Update status to approved
+      // APPROVE THE LOAN
       groupLoan.status = 'approved';
       groupLoan.approvedAt = new Date();
-      groupLoan.approvedBy = safeUserId;
-      groupLoan.approvalNotes = safeToString(approvalNotes, '');
-      groupLoan.lastUpdatedBy = safeUserId;
-      
+      groupLoan.approvedBy = userId;
+      groupLoan.approvalNotes = req.body.approvalNotes || '';
+      groupLoan.lastUpdatedBy = userId;
+
       await groupLoan.save({ session });
 
-      // Also update individual loan accounts
+      // Update all individual loan accounts
       await LoanAccount.updateMany(
         { groupLoan: groupLoan._id },
         {
           LOAN_STATUS: 'APPROVED',
           approvedAt: new Date(),
-          approvedBy: safeUserId
+          approvedBy: userId
         },
         { session }
       );
 
-      // Log audit trail
+      // Audit trail
       await logAuditTrail(
         'GroupLoan',
         groupLoan._id.toString(),
-        safeUserId,
+        userId,
         'APPROVE',
-        { previousStatus: originalStatus },
+        { previousStatus: 'applied' },
         {
           status: 'approved',
-          approvedAt: new Date(),
-          approvedBy: safeUserId,
-          approvalNotes: safeToString(approvalNotes, ''),
-          memberCount: groupLoan.memberCount,
+          approvedAt: groupLoan.approvedAt,
           totalAmount: groupLoan.totalAmount
         },
         req.ip,
         'GROUP_LOAN_APPROVAL'
       );
 
-      console.log('✅ Group loan approved successfully:', groupLoan.loanId);
+      console.log(`Group loan ${loanId} approved by user ${userId}`);
     });
 
-    // Find the updated group loan
-    const groupLoan = await GroupLoan.findOne({ loanId: req.params.id });
+    // Final response
+    const updatedLoan = await GroupLoan.findOne({ loanId })
+      .select('loanId status approvedAt approvedBy approvalNotes totalAmount memberCount')
+      .lean();
 
     res.status(200).json({
       success: true,
-      message: `Group loan ${groupLoan.loanId} approved successfully`,
-      data: {
-        groupLoanId: groupLoan.loanId,
-        status: groupLoan.status,
-        approvedAt: groupLoan.approvedAt,
-        approvedBy: groupLoan.approvedBy,
-        approvalNotes: groupLoan.approvalNotes,
-        memberCount: groupLoan.memberCount,
-        totalAmount: groupLoan.totalAmount
-      }
+      message: `Group loan ${loanId} approved successfully`,
+      data: updatedLoan
     });
 
   } catch (error) {
-    console.error('❌ Group loan approval failed:', error);
-   
-    let statusCode = 500;
-    if (error.message.includes('not found')) {
-      statusCode = 404;
-    } else if (error.message.includes('already') || error.message.includes('cannot be approved')) {
-      statusCode = 400;
-    }
-    
-    res.status(statusCode).json({
+    console.error('Group loan approval failed:', error.message);
+    const status = error.message.includes('not found') ? 404 : 400;
+    res.status(status).json({
       success: false,
-      message: error.message,
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Approval failed'
+      message: error.message
     });
   } finally {
     await session.endSession();
@@ -1824,128 +1593,106 @@ export const approveGroupLoan = asyncHandler(async (req, res) => {
 //////////////////////////////////////////////////////////////////////
 // Add this to your GroupController.js
 export const rejectGroupLoan = asyncHandler(async (req, res) => {
-  const session = await mongoose.startSession();
- 
-  try {
-    await session.withTransaction(async () => {
-      const { groupLoanId } = req.params;
-      const { rejectionReason } = req.body; // Get rejection reason from request body
-     
-      console.log('=== REJECTING GROUP LOAN ===');
-      console.log('Group Loan ID:', groupLoanId, 'Reason:', rejectionReason);
-      // SAFE UTILITY FUNCTIONS
-      const safeToString = (value, defaultValue = '') => {
-        if (value === null || value === undefined) return defaultValue;
-        if (typeof value === 'string') return value.trim();
-        if (typeof value.toString === 'function') {
-          try {
-            return value.toString().trim();
-          } catch (error) {
-            return defaultValue;
-          }
-        }
-        return String(value || defaultValue).trim();
-      };
-      // SAFE OBJECTID CHECK
-      const isValidObjectId = (id) => {
-        return mongoose.Types.ObjectId.isValid(id) && /^[0-9a-fA-F]{24}$/.test(id);
-      };
-      // Build query
-      const query = { loanId: groupLoanId };
-      if (isValidObjectId(groupLoanId)) {
-        query.$or = [
-          { loanId: groupLoanId },
-          { _id: new mongoose.Types.ObjectId(groupLoanId) }
-        ];
-      }
-      const groupLoan = await GroupLoan.findOne(query).session(session);
-      if (!groupLoan) {
-        throw new Error(`Group loan with ID '${groupLoanId}' not found`);
-      }
-      console.log('Found group loan:', groupLoan.loanId, 'Current status:', groupLoan.status);
-      // Check if already rejected
-      if (groupLoan.status === 'rejected') {
-        throw new Error(`Group loan ${groupLoan.loanId} is already rejected`);
-      }
-      // Check if already disbursed (cannot reject after disbursement)
-      if (groupLoan.status === 'disbursed' || groupLoan.status === 'partially_disbursed') {
-        throw new Error(`Group loan ${groupLoan.loanId} cannot be rejected because it has already been disbursed`);
-      }
-      // Check if already approved (can reject approved loans before disbursement)
-      if (groupLoan.status === 'approved') {
-        console.log('Rejecting previously approved loan:', groupLoan.loanId);
-      }
-      // Validate rejection reason
-      const safeRejectionReason = safeToString(rejectionReason, 'No reason provided');
-      if (!safeRejectionReason || safeRejectionReason === 'No reason provided') {
-        console.warn('⚠️ No rejection reason provided');
-      }
-      // Update status to rejected
-      groupLoan.status = 'rejected';
-      groupLoan.rejectedAt = new Date();
-      groupLoan.rejectedBy = req.user.id;
-      groupLoan.rejectionReason = safeRejectionReason;
-      groupLoan.lastUpdatedBy = req.user.id;
-      await groupLoan.save({ session });
-      // Also update individual loan accounts to rejected status
-      await LoanAccount.updateMany(
-        { groupLoan: groupLoan._id },
-        {
-          LOAN_STATUS: 'REJECTED',
-          rejectedAt: new Date(),
-          rejectedBy: req.user.id,
-          rejectionReason: safeRejectionReason
-        },
-        { session }
-      );
-      // Log audit trail
-      await logAuditTrail(
-        'GroupLoan',
-        groupLoan._id.toString(),
-        req.user.id,
-        'REJECT',
-        { previousStatus: groupLoan.status },
-        {
-          status: 'rejected',
-          rejectedAt: new Date(),
-          rejectedBy: req.user.id,
-          rejectionReason: safeRejectionReason,
-          memberCount: groupLoan.memberCount,
-          totalAmount: groupLoan.totalAmount
-        },
-        req.ip,
-        'GROUP_LOAN_REJECTION'
-      );
-      console.log('✅ Group loan rejected successfully:', groupLoan.loanId);
+  let loanId = req.params.groupLoanId || req.params.id || req.body.loanId;
+
+  if (!loanId) {
+    return res.status(400).json({
+      success: false,
+      message: "Group loan ID is required (e.g., GL000123)"
     });
-    const groupLoan = await GroupLoan.findOne({ loanId: req.params.groupLoanId });
-   
+  }
+
+  loanId = loanId.toString().trim().toUpperCase();
+
+  const { rejectionReason } = req.body;
+  if (!rejectionReason?.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Rejection reason is required"
+    });
+  }
+
+  const session = new mongoose.Session();
+  await session.startTransaction();
+
+  try {
+    // Search by human-readable loanId (String)
+    const groupLoan = await GroupLoan.findOne({ loanId }).session(session);
+
+    if (!groupLoan) {
+      throw new Error(`Group loan with ID ${loanId} not found`);
+    }
+
+    const userId = req.user?._id || req.user?.id;
+
+    // Already rejected?
+    if (groupLoan.status === 'rejected') {
+      throw new Error(`Group loan ${loanId} is already rejected`);
+    }
+
+    // Cannot reject disbursed loans
+    if (['disbursed', 'partially_disbursed'].includes(groupLoan.status)) {
+      throw new Error(`Cannot reject: loan ${loanId} has already been disbursed`);
+    }
+
+    // REJECT THE LOAN
+    groupLoan.status = 'rejected';
+    groupLoan.rejectedAt = new Date();
+    groupLoan.rejectedBy = userId;
+    groupLoan.rejectionReason = rejectionReason.trim();
+    groupLoan.lastUpdatedBy = userId;
+
+    await groupLoan.save({ session });
+
+    // Update all individual loan accounts
+    await LoanAccount.updateMany(
+      { groupLoan: groupLoan._id },
+      {
+        LOAN_STATUS: 'REJECTED',
+        rejectedAt: new Date(),
+        rejectedBy: userId,
+        rejectionReason: rejectionReason.trim()
+      },
+      { session }
+    );
+
+    // Audit trail
+    await logAuditTrail(
+      'GroupLoan',
+      groupLoan._id.toString(),
+      userId,
+      'REJECT',
+      { previousStatus: groupLoan.status },
+      {
+        status: 'rejected',
+        rejectedAt: groupLoan.rejectedAt,
+        rejectionReason: groupLoan.rejectionReason
+      },
+      req.ip,
+      'GROUP_LOAN_REJECTION'
+    );
+
+    await session.commitTransaction();
+
     res.status(200).json({
       success: true,
-      message: `Group loan ${groupLoan.loanId} rejected successfully`,
+      message: `Group loan ${loanId} rejected successfully`,
       data: {
-        groupLoanId: groupLoan.loanId,
-        status: groupLoan.status,
+        loanId: groupLoan.loanId,
+        status: 'rejected',
         rejectedAt: groupLoan.rejectedAt,
         rejectedBy: groupLoan.rejectedBy,
-        rejectionReason: groupLoan.rejectionReason,
-        memberCount: groupLoan.memberCount,
-        totalAmount: groupLoan.totalAmount
+        rejectionReason: groupLoan.rejectionReason
       }
     });
+
   } catch (error) {
-    console.error('❌ Group loan rejection failed:', error);
-   
-    let statusCode = 500;
-    if (error.message.includes('not found')) {
-      statusCode = 404;
-    } else if (error.message.includes('already') || error.message.includes('cannot be rejected')) {
-      statusCode = 400;
-    }
-    res.status(statusCode).json({
+    await session.abortTransaction();
+    console.error('Group loan rejection failed:', error.message);
+    const status = error.message.includes('not found') ? 404 : 400;
+    res.status(status).json({
       success: false,
-      message: error.message,
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Rejection failed'
+      message: error.message
     });
   } finally {
     await session.endSession();
@@ -1957,44 +1704,87 @@ export const rejectGroupLoan = asyncHandler(async (req, res) => {
 /// Get Approved Credit Applications - FIXED
 //////////////////////////////////////////////////////////////////////
 
+
+
+// UTILITY FUNCTIONS
+const safeToString = (value, defaultValue = '') => {
+  if (value === null || value === undefined) return defaultValue;
+  if (typeof value === 'string') return value.trim();
+  return String(value || defaultValue).trim();
+};
+
+const safeNumber = (value, defaultValue = 0) => {
+  if (value === null || value === undefined) return defaultValue;
+  const num = Number(value);
+  return isNaN(num) ? defaultValue : num;
+};
+
+// Helper to enhance applications (approved or rejected)
+const enhanceApplications = (apps, type = 'approved') => {
+  return apps.map(app => {
+    const totalMembers = app.memberCount || (app.members?.length || 0);
+    const memberPreview = app.members
+      ? app.members.slice(0, 3).map(m => m.name || `Member ${m.memberId || 'Unknown'}`).join(', ')
+      : '';
+
+    const more = totalMembers > 3 ? ` and ${totalMembers - 3} more` : '';
+
+    const dateField = type === 'approved' ? app.approvedAt : app.rejectedAt;
+    const fallbackDate = app.applicationDate || new Date();
+    const daysSince = Math.floor((Date.now() - new Date(dateField || fallbackDate)) / (1000 * 60 * 60 * 24));
+
+    return {
+      _id: app._id,
+      loanId: app.loanId,
+      groupCode: app.groupCode,
+      groupName: app.group?.groupName || app.groupName || 'Unknown Group',
+      totalAmount: app.totalAmount || 0,
+      status: app.status,
+      applicationDate: app.applicationDate,
+      [type === 'approved' ? 'approvedAt' : 'rejectedAt']: dateField,
+      [type === 'approved' ? 'approvedBy' : 'rejectedBy']: app[type === 'approved' ? 'approvedBy' : 'rejectedBy'],
+      [type === 'approved' ? 'approvalNotes' : 'rejectionReason']: 
+        type === 'approved' ? app.approvalNotes : app.rejectionReason,
+
+      primaryRelationshipManager: app.primaryRelationshipManager || 'Unassigned',
+      loanPurpose: app.loanPurpose || 'Not specified',
+      interestRate: app.interestRate || 0,
+      branch: app.branch || app.group?.branch,
+      businessUnit: app.businessUnit || app.BU_ID,
+
+      summary: {
+        totalMembers,
+        memberPreview: memberPreview + more,
+        daysSince,
+        totalFees: app.feeSummary?.totalFees || 0,
+        netDisbursement: app.netDisbursementAmount || app.totalAmount || 0,
+        totalRepayable: app.totalRepayable || (app.totalAmount + (app.totalInterest || 0)) || 0
+      }
+    };
+  });
+};
+
+// GET APPROVED CREDIT APPLICATIONS WITH BU FILTERING
 export const getApprovedCreditApplications = asyncHandler(async (req, res) => {
   try {
-    // ✅ LOCAL SAFE UTILITY FUNCTIONS
-    const safeToString = (value, defaultValue = '') => {
-      if (value === null || value === undefined) return defaultValue;
-      if (typeof value === 'string') return value.trim();
-      if (typeof value.toString === 'function') {
-        try {
-          return value.toString().trim();
-        } catch (error) {
-          return defaultValue;
-        }
-      }
-      return String(value || defaultValue).trim();
-    };
+    const { page = 1, limit = 10, groupCode, branchId, primaryRM, showAll = false } = req.query;
 
-    const safeNumber = (value, defaultValue = 0) => {
-      if (value === null || value === undefined) return defaultValue;
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
-
-    const {
-      page = 1,
-      limit = 10,
-      groupCode,
-      branchId,
-      primaryRM,
-      sortBy = 'approvedAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    // Build filter for approved credit applications
-    const filter = {
-      status: 'approved'
-    };
-
-    // Optional filters
+    // Get user's BU_ID from request
+    const userBUId = req.user?.BU_ID || req.user?.businessUnit || req.user?.branch;
+    
+    // Build filter
+    const filter = { status: 'approved' };
+    
+    // Apply BU filtering unless showAll=true
+    if (!showAll && userBUId) {
+      filter.$or = [
+        { businessUnit: userBUId },
+        { BU_ID: userBUId },
+        { branch: safeNumber(userBUId) }
+      ];
+    }
+    
+    // Apply optional filters
     if (groupCode) {
       filter.groupCode = { $regex: safeToString(groupCode), $options: 'i' };
     }
@@ -2005,165 +1795,76 @@ export const getApprovedCreditApplications = asyncHandler(async (req, res) => {
       filter.primaryRelationshipManager = { $regex: safeToString(primaryRM), $options: 'i' };
     }
 
-    // Pagination and sorting
-    const pageNum = safeNumber(page, 1);
-    const limitNum = safeNumber(limit, 10);
+    // Pagination
+    const pageNum = Math.max(1, safeNumber(page, 1));
+    const limitNum = Math.min(100, Math.max(1, safeNumber(limit, 10)));
     const skip = (pageNum - 1) * limitNum;
 
-    const sortOptions = { approvedAt: -1 }; // Default sort by approval date
-    if (sortBy === 'totalAmount') sortOptions.totalAmount = sortOrder === 'desc' ? -1 : 1;
-    if (sortBy === 'groupName') sortOptions.groupName = sortOrder === 'desc' ? -1 : 1;
-    if (sortBy === 'applicationDate') sortOptions.applicationDate = sortOrder === 'desc' ? -1 : 1;
+    console.log(`Fetching ${showAll ? 'ALL' : 'BU-filtered'} approved applications for BU: ${userBUId}`);
 
-    console.log('Fetching approved applications with filter:', {
-      filter,
-      skip,
-      limit: limitNum,
-      sort: sortOptions
-    });
-
-    // ✅ FIX: Fetch approved applications without problematic population
-    const approvedApplications = await GroupLoan.find(filter)
-      .populate('group', 'groupName groupCode members branch')
-      // ✅ FIX: Remove population of user fields that contain numeric IDs
-      // .populate('approvedBy', 'name email employeeId') // Removed due to numeric ID
-      // .populate('createdBy', 'name email employeeId') // Removed due to numeric ID
-      .populate({
-        path: 'individualLoanAccounts',
-        select: 'ACCT_NO ACCT_NM CUST_ID LOAN_STATUS DISBURSEMENT_LIMIT OUTSTANDING_PRINCIPAL'
-      })
-      .sort(sortOptions)
+    // Fetch applications
+    const applications = await GroupLoan.find(filter)
+      .populate('group', 'groupName groupCode branch')
+      .select('loanId groupCode group groupName totalAmount status applicationDate approvedAt approvedBy approvalNotes primaryRelationshipManager loanPurpose interestRate memberCount members feeSummary netDisbursementAmount totalRepayable branch businessUnit BU_ID')
+      .sort({ approvedAt: -1 })
       .skip(skip)
       .limit(limitNum)
       .lean();
 
-    // Get total count for pagination
-    const totalCount = await GroupLoan.countDocuments(filter);
+    const total = await GroupLoan.countDocuments(filter);
 
-    // ✅ FIX: Enhanced each application with safe data access
-    const enhancedApplications = approvedApplications.map(app => {
-      const totalMembers = app.memberCount || (app.members ? app.members.length : 0);
-      
-      const memberNames = app.members && app.members.length > 0 
-        ? app.members.slice(0, 3).map(member => member.name || `Member ${member.memberId}`)
-        : [];
+    const message = showAll 
+      ? `Found ${applications.length} approved credit applications (all business units)`
+      : `Found ${applications.length} approved credit applications for your business unit (BU: ${userBUId})`;
 
-      const totalFees = app.feeSummary?.totalFees || 0;
-      const netDisbursement = app.netDisbursementAmount || 0;
-      const totalRepayable = app.totalRepayable || 0;
-
-      // Calculate days since approval
-      const approvalDate = app.approvedAt || new Date();
-      const daysSinceApproval = Math.floor((new Date() - new Date(approvalDate)) / (1000 * 60 * 60 * 24));
-
-      // ✅ FIX: Safe user ID handling
-      const getSafeUserId = (userId) => {
-        if (!userId) return null;
-        if (typeof userId === 'object' && userId._id) return userId._id; // If already populated object
-        return userId; // Return as is (could be ObjectId, string, or number)
-      };
-
-      return {
-        _id: app._id,
-        loanId: app.loanId,
-        groupCode: app.groupCode,
-        groupName: app.groupName,
-        group: app.group,
-        totalAmount: app.totalAmount,
-        status: app.status,
-        applicationDate: app.applicationDate,
-        approvedAt: app.approvedAt,
-        approvedBy: getSafeUserId(app.approvedBy), // Safe user ID
-        approvalNotes: app.approvalNotes,
-        primaryRelationshipManager: app.primaryRelationshipManager,
-        secondaryRelationshipManager: app.secondaryRelationshipManager,
-        loanPurpose: app.loanPurpose,
-        interestRate: app.interestRate,
-        individualLoanAccounts: app.individualLoanAccounts,
-        summary: {
-          totalAmount: app.totalAmount,
-          totalMembers,
-          memberPreview: memberNames.join(', ') + (totalMembers > 3 ? ` and ${totalMembers - 3} more` : ''),
-          daysSinceApproval,
-          financialSummary: {
-            totalFees,
-            netDisbursement,
-            totalRepayable
-          },
-          readyForDisbursement: app.status === 'approved' && !app.disbursedAt
-        }
-      };
-    });
-
-    res.status(200).json({
+    res.json({
       success: true,
-      message: `Found ${totalCount} approved credit applications`,
-      data: enhancedApplications,
+      message,
+      count: applications.length,
+      total,
+      userBUId: showAll ? null : userBUId,
+      showAll: !!showAll,
+      data: enhanceApplications(applications, 'approved'),
       pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(totalCount / limitNum),
-        totalCount,
-        hasNext: skip + enhancedApplications.length < totalCount,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+        hasNext: pageNum * limitNum < total,
         hasPrev: pageNum > 1
-      },
-      filters: {
-        applied: { groupCode, branchId, primaryRM, status: 'approved' }
       }
     });
 
   } catch (error) {
-    console.error('Error fetching approved credit applications:', error);
-    
+    console.error('Error in getApprovedCreditApplications:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch approved credit applications',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error occurred'
     });
   }
 });
 
-///////////////////////////////////////////////////////////////////////
-/// Get Rejected Credit Applications - FIXED
-//////////////////////////////////////////////////////////////////////
-
+// GET REJECTED CREDIT APPLICATIONS WITH BU FILTERING
 export const getRejectedCreditApplications = asyncHandler(async (req, res) => {
   try {
-    // ✅ LOCAL SAFE UTILITY FUNCTIONS
-    const safeToString = (value, defaultValue = '') => {
-      if (value === null || value === undefined) return defaultValue;
-      if (typeof value === 'string') return value.trim();
-      if (typeof value.toString === 'function') {
-        try {
-          return value.toString().trim();
-        } catch (error) {
-          return defaultValue;
-        }
-      }
-      return String(value || defaultValue).trim();
-    };
+    const { page = 1, limit = 10, groupCode, branchId, primaryRM, showAll = false } = req.query;
 
-    const safeNumber = (value, defaultValue = 0) => {
-      if (value === null || value === undefined) return defaultValue;
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
-
-    const {
-      page = 1,
-      limit = 10,
-      groupCode,
-      branchId,
-      primaryRM,
-      sortBy = 'rejectedAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    // Build filter for rejected credit applications
-    const filter = {
-      status: 'rejected'
-    };
-
-    // Optional filters
+    // Get user's BU_ID from request
+    const userBUId = req.user?.BU_ID || req.user?.businessUnit || req.user?.branch;
+    
+    // Build filter
+    const filter = { status: 'rejected' };
+    
+    // Apply BU filtering unless showAll=true
+    if (!showAll && userBUId) {
+      filter.$or = [
+        { businessUnit: userBUId },
+        { BU_ID: userBUId },
+        { branch: safeNumber(userBUId) }
+      ];
+    }
+    
+    // Apply optional filters
     if (groupCode) {
       filter.groupCode = { $regex: safeToString(groupCode), $options: 'i' };
     }
@@ -2174,884 +1875,509 @@ export const getRejectedCreditApplications = asyncHandler(async (req, res) => {
       filter.primaryRelationshipManager = { $regex: safeToString(primaryRM), $options: 'i' };
     }
 
-    // Pagination and sorting
-    const pageNum = safeNumber(page, 1);
-    const limitNum = safeNumber(limit, 10);
+    // Pagination
+    const pageNum = Math.max(1, safeNumber(page, 1));
+    const limitNum = Math.min(100, Math.max(1, safeNumber(limit, 10)));
     const skip = (pageNum - 1) * limitNum;
 
-    const sortOptions = { rejectedAt: -1 }; // Default sort by rejection date
-    if (sortBy === 'totalAmount') sortOptions.totalAmount = sortOrder === 'desc' ? -1 : 1;
-    if (sortBy === 'groupName') sortOptions.groupName = sortOrder === 'desc' ? -1 : 1;
-    if (sortBy === 'applicationDate') sortOptions.applicationDate = sortOrder === 'desc' ? -1 : 1;
+    console.log(`Fetching ${showAll ? 'ALL' : 'BU-filtered'} rejected applications for BU: ${userBUId}`);
 
-    console.log('Fetching rejected applications with filter:', {
-      filter,
-      skip,
-      limit: limitNum,
-      sort: sortOptions
-    });
-
-    // ✅ FIX: Fetch rejected applications without problematic population
-    const rejectedApplications = await GroupLoan.find(filter)
-      .populate('group', 'groupName groupCode members branch')
-      // ✅ FIX: Remove population of user fields that contain numeric IDs
-      // .populate('rejectedBy', 'name email employeeId') // Removed due to numeric ID
-      // .populate('createdBy', 'name email employeeId') // Removed due to numeric ID
-      .populate({
-        path: 'individualLoanAccounts',
-        select: 'ACCT_NO ACCT_NM CUST_ID LOAN_STATUS DISBURSEMENT_LIMIT'
-      })
-      .sort(sortOptions)
+    // Fetch applications
+    const applications = await GroupLoan.find(filter)
+      .populate('group', 'groupName groupCode branch')
+      .select('loanId groupCode group groupName totalAmount status applicationDate rejectedAt rejectedBy rejectionReason primaryRelationshipManager loanPurpose interestRate memberCount members branch businessUnit BU_ID')
+      .sort({ rejectedAt: -1 })
       .skip(skip)
       .limit(limitNum)
       .lean();
 
-    // Get total count for pagination
-    const totalCount = await GroupLoan.countDocuments(filter);
+    const total = await GroupLoan.countDocuments(filter);
 
-    // ✅ FIX: Enhanced each application with safe data access
-    const enhancedApplications = rejectedApplications.map(app => {
-      const totalMembers = app.memberCount || (app.members ? app.members.length : 0);
-      
-      const memberNames = app.members && app.members.length > 0 
-        ? app.members.slice(0, 3).map(member => member.name || `Member ${member.memberId}`)
-        : [];
+    const message = showAll 
+      ? `Found ${applications.length} rejected credit applications (all business units)`
+      : `Found ${applications.length} rejected credit applications for your business unit (BU: ${userBUId})`;
 
-      // Calculate days since rejection
-      const rejectionDate = app.rejectedAt || new Date();
-      const daysSinceRejection = Math.floor((new Date() - new Date(rejectionDate)) / (1000 * 60 * 60 * 24));
-
-      // ✅ FIX: Safe user ID handling
-      const getSafeUserId = (userId) => {
-        if (!userId) return null;
-        if (typeof userId === 'object' && userId._id) return userId._id; // If already populated object
-        return userId; // Return as is (could be ObjectId, string, or number)
-      };
-
-      return {
-        _id: app._id,
-        loanId: app.loanId,
-        groupCode: app.groupCode,
-        groupName: app.groupName,
-        group: app.group,
-        totalAmount: app.totalAmount,
-        status: app.status,
-        applicationDate: app.applicationDate,
-        rejectedAt: app.rejectedAt,
-        rejectedBy: getSafeUserId(app.rejectedBy), // Safe user ID
-        rejectionReason: app.rejectionReason,
-        primaryRelationshipManager: app.primaryRelationshipManager,
-        secondaryRelationshipManager: app.secondaryRelationshipManager,
-        loanPurpose: app.loanPurpose,
-        interestRate: app.interestRate,
-        individualLoanAccounts: app.individualLoanAccounts,
-        summary: {
-          totalAmount: app.totalAmount,
-          totalMembers,
-          memberPreview: memberNames.join(', ') + (totalMembers > 3 ? ` and ${totalMembers - 3} more` : ''),
-          daysSinceRejection,
-          rejectionReason: app.rejectionReason || 'No reason provided'
-        }
-      };
-    });
-
-    res.status(200).json({
+    res.json({
       success: true,
-      message: `Found ${totalCount} rejected credit applications`,
-      data: enhancedApplications,
+      message,
+      count: applications.length,
+      total,
+      userBUId: showAll ? null : userBUId,
+      showAll: !!showAll,
+      data: enhanceApplications(applications, 'rejected'),
       pagination: {
-        currentPage: pageNum,
-        totalPages: Math.ceil(totalCount / limitNum),
-        totalCount,
-        hasNext: skip + enhancedApplications.length < totalCount,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+        hasNext: pageNum * limitNum < total,
         hasPrev: pageNum > 1
-      },
-      filters: {
-        applied: { groupCode, branchId, primaryRM, status: 'rejected' }
       }
     });
 
   } catch (error) {
-    console.error('Error fetching rejected credit applications:', error);
-    
+    console.error('Error in getRejectedCreditApplications:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch rejected credit applications',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Server error occurred'
     });
   }
 });
 
-
 // Updated disburseGroupLoan function
-// Updated disburseGroupLoan controller with ObjectId validation fix
 export const disburseGroupLoan = asyncHandler(async (req, res) => {
-  // IMMEDIATE PARAMETER VALIDATION
-  console.log('=== REQUEST DEBUG INFO ===');
-  console.log('req.params:', req.params);
- 
-  let groupLoanId = req.params.groupLoanId;
- 
-  if (!groupLoanId || groupLoanId === 'undefined') {
-    groupLoanId = req.params.id || req.params.loanId || req.params.groupLoanId;
-  }
- 
-  if (!groupLoanId || groupLoanId === 'undefined') {
+  let groupLoanId = req.params.groupLoanId || req.params.id || req.body.loanId;
+
+  if (!groupLoanId) {
     return res.status(400).json({
       success: false,
-      message: 'Group loan ID is required'
+      message: "Group loan ID is required (e.g., GL000123)"
     });
   }
 
-  // ✅ FIX: Validate if groupLoanId can be an ObjectId before including in query
-  const isValidObjectId = mongoose.Types.ObjectId.isValid(groupLoanId);
-  const query = isValidObjectId
-    ? { $or: [{ loanId: groupLoanId }, { _id: groupLoanId }] }
-    : { loanId: groupLoanId };
+  groupLoanId = groupLoanId.toString().trim().toUpperCase();
+  console.log(`=== STARTING DISBURSEMENT FOR GROUP LOAN: ${groupLoanId} ===`);
 
   const session = await mongoose.startSession();
-  let disbursementResults = {
+
+  const results = {
     successful: [],
     failed: [],
     feesCollected: [],
-    insuranceActivated: [],
     insufficientFunds: [],
-    skipped: [],
+    missingSavingsAccounts: [],
+    invalidLoanAccounts: [],
     validationErrors: []
   };
+
+  const safeNumber = (v, def = 0) => (isNaN(Number(v)) ? def : Number(v));
+
   try {
     await session.withTransaction(async () => {
-      console.log('=== STARTING GROUP LOAN DISBURSEMENT ===');
-      console.log('Group Loan ID:', groupLoanId);
-      console.log('Query used:', JSON.stringify(query, null, 2)); // Debug log for query
-     
-      // SAFE UTILITY FUNCTIONS
-      const safeToString = (value, defaultValue = '') => {
-        if (value === null || value === undefined) return defaultValue;
-        if (typeof value === 'string') return value.trim();
-        return String(value || defaultValue).trim();
-      };
-      const safeNumber = (value, defaultValue = 0) => {
-        if (value === null || value === undefined) return defaultValue;
-        const num = Number(value);
-        return isNaN(num) ? defaultValue : num;
-      };
-      // Find group loan - UPDATED QUERY WITH OBJECTID VALIDATION
-      let groupLoan = await GroupLoan.findOne(query)
-      .populate('group', 'branch groupCode groupName')
-      .populate('individualLoanAccounts')
-      .session(session);
+      // STEP 1: Find the group loan
+      console.log(`🔍 Looking for group loan: ${groupLoanId}`);
+      const groupLoan = await GroupLoan.findOne({ loanId: groupLoanId })
+        .populate('individualLoanAccounts')
+        .populate('members.memberId')
+        .session(session);
+
       if (!groupLoan) {
-        throw new Error(`Group loan with ID '${groupLoanId}' not found`);
+        throw new Error(`Group loan with ID ${groupLoanId} not found`);
       }
-      console.log('✅ Found group loan:', groupLoan.loanId, 'Status:', groupLoan.status);
-      // Status checks
-      if (groupLoan.status === 'disbursed' || groupLoan.status === 'partially_disbursed') {
-        throw new Error(`Group loan ${groupLoan.loanId} has already been ${groupLoan.status}`);
+
+      console.log(`✅ Found group loan: ${groupLoan.loanId}, Status: ${groupLoan.status}, Members: ${groupLoan.members?.length || 0}`);
+
+      // Check if already disbursed
+      if (['disbursed', 'partially_disbursed', 'active'].includes(groupLoan.status)) {
+        throw new Error(`Cannot disburse: loan ${groupLoan.loanId} has already been disbursed. Current status: ${groupLoan.status}`);
       }
+
       if (groupLoan.status !== 'approved') {
-        throw new Error(`Group loan ${groupLoan.loanId} must be approved before disbursement. Current status: ${groupLoan.status}`);
+        throw new Error(`Loan ${groupLoan.loanId} is not approved. Current status: ${groupLoan.status}`);
       }
-      const branchId = safeNumber(groupLoan.group?.branch, 1);
-      const startDate = new Date();
-      // Get individual loan accounts
-      const individualAccounts = await LoanAccount.find({
-        groupLoan: groupLoan._id,
-        LOAN_STATUS: { $in: ['PENDING', 'APPROVED', 'APPROVED_PENDING_DISBURSAL'] }
+
+      // STEP 2: Get loan accounts
+      console.log(`🔍 Looking for loan accounts for group loan: ${groupLoan._id}`);
+      const loanAccounts = await LoanAccount.find({
+        groupLoan: groupLoan._id
       }).session(session);
-      if (!individualAccounts || individualAccounts.length === 0) {
-        throw new Error('No individual loan accounts found for this group loan');
+
+      console.log(`📊 Found ${loanAccounts.length} loan accounts total`);
+
+      // Filter eligible loan accounts
+      const eligibleLoanAccounts = loanAccounts.filter(acc => {
+        const status = (acc.LOAN_STATUS || '').toString().toUpperCase();
+        const eligibleStatuses = ['APPROVED', 'APPROVED_PENDING_DISBURSAL', 'PENDING', 'approved', 'pending'];
+        const isEligible = eligibleStatuses.includes(status);
+        
+        if (!isEligible) {
+          console.log(`❌ Loan account ${acc.ACCT_NO} has ineligible status: ${status}`);
+        }
+        
+        return isEligible;
+      });
+
+      console.log(`✅ ${eligibleLoanAccounts.length} loan accounts eligible for disbursement`);
+
+      if (eligibleLoanAccounts.length === 0) {
+        throw new Error('No eligible loan accounts found for disbursement');
       }
-      console.log(`Found ${individualAccounts.length} individual loan accounts for disbursement`);
-      let totalDisbursed = 0;
-      let totalFeesCollected = 0;
-      // ENHANCED VALIDATION WITH SAVINGS ACCOUNT INFO
-      console.log('=== STARTING ENHANCED VALIDATION ===');
-     
-      for (const loanAccount of individualAccounts) {
+
+      // STEP 3: Process each loan account
+      for (const loanAcc of eligibleLoanAccounts) {
+        console.log(`\n--- Processing loan account: ${loanAcc.ACCT_NO} ---`);
+        
         try {
-          const loanAmount = safeNumber(loanAccount.DISBURSEMENT_LIMIT, 0);
-          const custId = safeToString(loanAccount.CUST_ID);
-          const accountName = safeToString(loanAccount.ACCT_NM, 'Unknown Customer');
-          const loanAccountNumber = safeToString(loanAccount.ACCT_NO);
-          const savingsAccountNo = safeToString(loanAccount.savingsAccountNo); // NEW: Get savings account from loan account
-          console.log(`\n🔍 Validating: ${accountName} (CUST_ID: ${custId}, Loan Acc: ${loanAccountNumber}, Savings Acc: ${savingsAccountNo})`);
-          // Basic validations
+          // Validate loan account
+          if (!loanAcc.ACCT_NO || loanAcc.ACCT_NO.toString().length < 5) {
+            const errorMsg = `Invalid loan account number: ${loanAcc.ACCT_NO}`;
+            console.log(`❌ ${errorMsg}`);
+            results.invalidLoanAccounts.push({
+              custId: loanAcc.CUST_ID,
+              name: loanAcc.ACCT_NM,
+              loanAccountNo: loanAcc.ACCT_NO,
+              reason: errorMsg
+            });
+            continue;
+          }
+
+          // Determine savings account number - FIXED: Use the correct field
+          const savingsAccNo = loanAcc.savingsAccountNo || groupLoan.savingsAccount;
+          if (!savingsAccNo) {
+            const errorMsg = 'No savings account specified';
+            console.log(`❌ ${errorMsg}`);
+            results.missingSavingsAccounts.push({
+              custId: loanAcc.CUST_ID,
+              name: loanAcc.ACCT_NM,
+              loanAccountNo: loanAcc.ACCT_NO,
+              reason: errorMsg
+            });
+            continue;
+          }
+
+          console.log(`💳 Savings account to use: ${savingsAccNo}`);
+
+          // Determine loan amount
+          const loanAmount = safeNumber(
+            loanAcc.DISBURSEMENT_LIMIT || 
+            loanAcc.ORIGINAL_PRINCIPAL || 
+            groupLoan.individualShare || 
+            (groupLoan.totalAmount / groupLoan.memberCount)
+          );
+
           if (loanAmount <= 0) {
-            disbursementResults.validationErrors.push({
-              custId: custId,
-              name: accountName,
-              loanAccountNumber: loanAccountNumber,
-              reason: 'Invalid loan amount'
+            const errorMsg = `Invalid loan amount: ${loanAmount}`;
+            console.log(`❌ ${errorMsg}`);
+            results.validationErrors.push({
+              custId: loanAcc.CUST_ID,
+              loanAccountNo: loanAcc.ACCT_NO,
+              reason: errorMsg
             });
             continue;
           }
-          if (!custId) {
-            disbursementResults.validationErrors.push({
-              custId: custId,
-              name: accountName,
-              loanAccountNumber: loanAccountNumber,
-              reason: 'Missing customer ID'
-            });
-            continue;
-          }
-          // ENHANCED CUSTOMER ACCOUNT SEARCH USING SAVINGS ACCOUNT NUMBER
-          let customerAccount = null;
-          let searchLog = [];
-          // Strategy 1: Use savings account number from loan account
-          if (savingsAccountNo) {
-            customerAccount = await CustomerAccount.findOne({
-              account_number: savingsAccountNo,
-              account_type: 'SAVINGS'
-            }).session(session);
-            if (customerAccount) {
-              searchLog.push(`Found with savings account number: ${savingsAccountNo}`);
-              console.log(`✅ Found account with savings account number: ${customerAccount.account_number}`);
-            }
-          }
-          // Strategy 2: Exact CUST_ID match with SAVINGS account type
-          if (!customerAccount) {
-            customerAccount = await CustomerAccount.findOne({
-              CUST_ID: custId,
-              account_type: 'SAVINGS'
-            }).session(session);
-            if (customerAccount) {
-              searchLog.push(`Found with CUST_ID + SAVINGS account: ${custId}`);
-              console.log(`✅ Found account with CUST_ID: ${customerAccount.account_number}`);
-            }
-          }
-          // Strategy 3: Exact CUST_ID match (any account type)
-          if (!customerAccount) {
-            customerAccount = await CustomerAccount.findOne({ CUST_ID: custId }).session(session);
-            if (customerAccount) {
-              searchLog.push(`Found with CUST_ID only: ${custId} (type: ${customerAccount.account_type})`);
-              console.log(`✅ Found account with CUST_ID: ${customerAccount.account_number}`);
-            }
-          }
-          // If still no account found
-          if (!customerAccount) {
-            console.error(`❌ NO CUSTOMER ACCOUNT FOUND for CUST_ID: ${custId}, Savings Account: ${savingsAccountNo}`);
-            console.error('Search strategies attempted:', searchLog);
-           
-            disbursementResults.validationErrors.push({
-              custId: custId,
-              name: accountName,
-              loanAccountNumber: loanAccountNumber,
-              savingsAccountNo: savingsAccountNo,
-              reason: 'Customer savings account not found',
-              searchStrategies: searchLog,
-              troubleshooting: [
-                `Check if savings account '${savingsAccountNo}' exists for customer ${custId}`,
-                'Verify account_type is set to SAVINGS',
-                'Ensure customer has an active savings account'
+
+          console.log(`💰 Loan amount: ₦${loanAmount}`);
+
+          // FIXED: Find savings account using account_number field only (not _id)
+          console.log(`🔍 Searching for savings account by account_number: ${savingsAccNo}`);
+          const savingsAccount = await CustomerAccount.findOne({
+            account_number: savingsAccNo // Only search by account_number field
+          }).session(session);
+
+          if (!savingsAccount) {
+            // Try alternative search if account_number doesn't work
+            console.log(`🔍 Trying alternative search for savings account: ${savingsAccNo}`);
+            const savingsAccountAlt = await CustomerAccount.findOne({
+              $or: [
+                { ACCT_NO: savingsAccNo },
+                { account_no: savingsAccNo }
               ]
+            }).session(session);
+
+            if (!savingsAccountAlt) {
+              const errorMsg = `Savings account ${savingsAccNo} not found`;
+              console.log(`❌ ${errorMsg}`);
+              results.missingSavingsAccounts.push({
+                custId: loanAcc.CUST_ID,
+                name: loanAcc.ACCT_NM,
+                loanAccountNo: loanAcc.ACCT_NO,
+                savingsAccountNo: savingsAccNo,
+                reason: errorMsg
+              });
+              continue;
+            }
+            savingsAccount = savingsAccountAlt;
+          }
+
+          console.log(`✅ Found savings account: ${savingsAccount.account_number || savingsAccount.ACCT_NO}`);
+
+          // Check account status - FIXED: Use your schema's status fields
+          const accountStatus = (savingsAccount.status || savingsAccount.REC_ST || '').toString().toUpperCase();
+          console.log(`📊 Savings account status: ${accountStatus}`);
+          
+          const activeStatuses = ['ACTIVE', 'A', 'OPEN', 'LIVE'];
+          if (!activeStatuses.includes(accountStatus)) {
+            const errorMsg = `Savings account not active. Status: ${accountStatus}`;
+            console.log(`❌ ${errorMsg}`);
+            results.validationErrors.push({
+              custId: loanAcc.CUST_ID,
+              loanAccountNo: loanAcc.ACCT_NO,
+              savingsAccountNo: savingsAccNo,
+              reason: errorMsg
             });
             continue;
           }
-          console.log(`✅ Customer account found: ${customerAccount.account_number} (Type: ${customerAccount.account_type})`);
-          // FEE VALIDATION
-          const feeDetails = loanAccount.FEE_DETAILS || {};
-          const totalFees = safeNumber(feeDetails.processingFee, 0) +
-                           safeNumber(feeDetails.adminFee, 0) +
-                           safeNumber(feeDetails.insuranceFee, 0) +
-                           safeNumber(feeDetails.otherFees, 0) +
-                           safeNumber(feeDetails.upfrontInterest, 0);
-          const availableBalance = safeNumber(customerAccount.AVAILABLE_BALANCE, safeNumber(customerAccount.ledger_balance, 0));
-          console.log(`💰 Fee check for ${custId}: Total Fees = ${totalFees}, Available Balance = ${availableBalance}`);
+
+          // Check available balance - FIXED: Use your schema's balance fields
+          const availableBalance = safeNumber(
+            savingsAccount.AVAILABLE_BALANCE || 
+            savingsAccount.ledger_balance || 
+            savingsAccount.cleared_balance ||
+            savingsAccount.balance ||
+            0
+          );
+
+          console.log(`💵 Available balance: ₦${availableBalance}`);
+
+          // Check fees
+          const totalFees = safeNumber(loanAcc.FEE_DETAILS?.totalFees || 0);
+          console.log(`💸 Total fees: ₦${totalFees}`);
+
           if (totalFees > 0 && availableBalance < totalFees) {
-            disbursementResults.insufficientFunds.push({
-              custId: custId,
-              name: accountName,
-              loanAccountNumber: loanAccountNumber,
-              savingsAccountNo: customerAccount.account_number,
-              requiredFees: totalFees,
-              availableBalance: availableBalance,
+            const errorMsg = `Insufficient funds for fees. Required: ₦${totalFees}, Available: ₦${availableBalance}`;
+            console.log(`❌ ${errorMsg}`);
+            results.insufficientFunds.push({
+              custId: loanAcc.CUST_ID,
+              loanAccountNo: loanAcc.ACCT_NO,
+              savingsAccountNo: savingsAccNo,
+              required: totalFees,
+              available: availableBalance,
               shortfall: totalFees - availableBalance,
-              customerAccount: customerAccount.account_number,
-              reason: 'Insufficient funds for fee payment'
+              reason: errorMsg
             });
-          } else {
-            console.log(`✅ Sufficient funds for ${custId}`);
+            continue;
           }
-        } catch (validationError) {
-          console.error(`Validation error:`, validationError);
-          disbursementResults.validationErrors.push({
-            custId: safeToString(loanAccount.CUST_ID),
-            name: safeToString(loanAccount.ACCT_NM, 'Unknown'),
-            loanAccountNumber: safeToString(loanAccount.ACCT_NO),
-            reason: `Validation error: ${validationError.message}`
-          });
-        }
-      }
-      // VALIDATION SUMMARY
-      console.log('\n=== VALIDATION SUMMARY ===');
-      console.log(`Total accounts: ${individualAccounts.length}`);
-      console.log(`Validation errors: ${disbursementResults.validationErrors.length}`);
-      console.log(`Insufficient funds: ${disbursementResults.insufficientFunds.length}`);
-      console.log(`Ready for disbursement: ${individualAccounts.length - disbursementResults.validationErrors.length - disbursementResults.insufficientFunds.length}`);
-      // If validation fails, throw detailed error
-      if (disbursementResults.validationErrors.length > 0 || disbursementResults.insufficientFunds.length > 0) {
-        const error = new Error('Pre-disbursement validation failed');
-        error.validationDetails = {
-          validationErrors: disbursementResults.validationErrors,
-          insufficientFunds: disbursementResults.insufficientFunds,
-          totalAccounts: individualAccounts.length,
-          validAccounts: individualAccounts.length - disbursementResults.validationErrors.length - disbursementResults.insufficientFunds.length
-        };
-        throw error;
-      }
-      console.log('✅ All accounts validated successfully');
-      // PROCESS DISBURSEMENT FOR EACH ACCOUNT
-      for (const loanAccount of individualAccounts) {
-        const memberSession = await mongoose.startSession();
-      
-        try {
-          await memberSession.withTransaction(async () => {
-            const custId = safeToString(loanAccount.CUST_ID);
-            const accountName = safeToString(loanAccount.ACCT_NM, 'Unknown Customer');
-            const loanAmount = safeNumber(loanAccount.DISBURSEMENT_LIMIT, 0);
-            const loanAccountNumber = safeToString(loanAccount.ACCT_NO);
-            const savingsAccountNo = safeToString(loanAccount.savingsAccountNo);
-            console.log(`🚀 Processing disbursement for: ${custId} - ${accountName}, Savings Account: ${savingsAccountNo}`);
-            // Skip if already active
-            if (loanAccount.LOAN_STATUS === 'ACTIVE') {
-              disbursementResults.skipped.push({
-                custId: custId,
-                name: accountName,
-                loanAccountNumber: loanAccountNumber,
-                reason: 'Loan already active'
-              });
-              return;
+
+          // === PROCESS DISBURSEMENT ===
+          console.log(`🔄 Starting disbursement process...`);
+
+          // STEP 1: Deduct fees if any
+          if (totalFees > 0) {
+            console.log(`💳 Deducting fees: ₦${totalFees}`);
+            savingsAccount.AVAILABLE_BALANCE = availableBalance - totalFees;
+            if (savingsAccount.ledger_balance !== undefined) {
+              savingsAccount.ledger_balance -= totalFees;
             }
-            // GET CUSTOMER ACCOUNT USING SAVINGS ACCOUNT NUMBER
-            const customerAccount = await CustomerAccount.findOne({
-              account_number: savingsAccountNo
-            }).session(memberSession);
-            if (!customerAccount) {
-              throw new Error(`Customer savings account not found: ${savingsAccountNo}`);
+            if (savingsAccount.cleared_balance !== undefined) {
+              savingsAccount.cleared_balance -= totalFees;
             }
-            // FEE CALCULATION
-            const feeDetails = loanAccount.FEE_DETAILS || {};
-            const processingFee = safeNumber(feeDetails.processingFee, 0);
-            const adminFee = safeNumber(feeDetails.adminFee, 0);
-            const insuranceFee = safeNumber(feeDetails.insuranceFee, 0);
-            const otherFees = safeNumber(feeDetails.otherFees, 0);
-            const upfrontInterest = safeNumber(feeDetails.upfrontInterest, 0);
-          
-            const totalFees = processingFee + adminFee + insuranceFee + otherFees + upfrontInterest;
-            // STEP 1: DEBIT FEES FROM CUSTOMER ACCOUNT
-            if (totalFees > 0) {
-              try {
-                console.log(`💰 Debiting fees: ${totalFees} from ${custId} (Account: ${customerAccount.account_number})`);
-                await debitFeesFromCustomerAccount(loanAccount, customerAccount, req.user.id, memberSession, branchId);
-                totalFeesCollected += totalFees;
-                disbursementResults.feesCollected.push({
-                  custId: custId,
-                  name: accountName,
-                  loanAccountNumber: loanAccountNumber,
-                  totalFees: totalFees,
-                  accountDebited: safeToString(customerAccount.account_number),
-                  transactionType: 'FEE_COLLECTION'
-                });
-                console.log(`✅ Fees collected successfully from ${custId}`);
-              } catch (feeError) {
-                console.error(`❌ Fee collection failed for ${custId}:`, feeError);
-                throw new Error(`Fee collection failed: ${feeError.message}`);
+            await savingsAccount.save({ session });
+
+            // Create fee transaction
+            const feeTransaction = new Transaction({
+              ACCT_NO: savingsAccNo,
+              ACCT_NM: savingsAccount.account_name || savingsAccount.ACCT_NM || loanAcc.ACCT_NM,
+              CUST_ID: savingsAccount.customer_id || savingsAccount.CUST_ID,
+              TRANSACTION_TYPE: 'DEBIT',
+              AMOUNT: totalFees,
+              account_number: savingsAccNo,
+              transaction_type: 'DEBIT',
+              amount: totalFees,
+              description: `Loan fees for ${groupLoan.loanId}`,
+              reference: `FEE_${loanAcc.ACCT_NO}_${Date.now()}`,
+              STATUS: 'COMPLETED',
+              TRAN_STATUS: 'SUCCESS',
+              REC_ST: 'A',
+              transaction_date: new Date(),
+              TRAN_DATE: new Date(),
+              VALUE_DATE: new Date(),
+              createdBy: req.user?._id || 'SYSTEM',
+              CREATED_BY: (req.user?._id || 'SYSTEM').toString(),
+              branch: groupLoan.branch || 1,
+              BU_ID: savingsAccount.branch?.toString() || groupLoan.branch?.toString() || '100',
+              BALANCE: availableBalance - totalFees,
+              AVAILABLE_BALANCE: availableBalance - totalFees,
+              metadata: { 
+                purpose: 'LOAN_FEES', 
+                loanId: groupLoan.loanId,
+                loanAccountNo: loanAcc.ACCT_NO,
+                memberId: loanAcc.CUST_ID
               }
-            }
-            // STEP 2: ACTIVATE INSURANCE
-            if (loanAccount.insuranceDetails && typeof activateInsurance === 'function') {
-              try {
-                console.log(`🛡️ Activating insurance for ${custId}`);
-                await activateInsurance(loanAccount, req.user.id, memberSession);
-                disbursementResults.insuranceActivated.push({
-                  custId: custId,
-                  name: accountName,
-                  loanAccountNumber: loanAccountNumber,
-                  premium: safeNumber(loanAccount.insuranceDetails.premiumAmount, 0)
-                });
-                console.log(`✅ Insurance activated for ${custId}`);
-              } catch (insuranceError) {
-                console.warn(`⚠️ Insurance activation failed for ${custId}:`, insuranceError);
-                // Continue with disbursement even if insurance fails
-              }
-            }
-            // STEP 3: DISBURSE FULL LOAN AMOUNT TO CUSTOMER SAVINGS ACCOUNT
-            try {
-              console.log(`💸 Disbursing loan amount: ${loanAmount} to ${custId} (Account: ${customerAccount.account_number})`);
-              await disburseFullAmount(loanAccount, customerAccount, req.user.id, memberSession, branchId);
-              console.log(`✅ Loan disbursed successfully to ${custId}`);
-            } catch (disbursementError) {
-              console.error(`❌ Loan disbursement failed for ${custId}:`, disbursementError);
-              throw new Error(`Loan disbursement failed: ${disbursementError.message}`);
-            }
-            // STEP 4: UPDATE LOAN ACCOUNT STATUS
-            loanAccount.ACTUAL_DISBURSEMENT = loanAmount;
-            loanAccount.LOAN_STATUS = 'ACTIVE';
-            loanAccount.START_DT = startDate;
-            loanAccount.disbursedAt = startDate;
-            loanAccount.netDisbursementAmount = loanAmount;
-            loanAccount.totalDeductions = totalFees;
-            if (loanAccount.FEE_DETAILS) {
-              loanAccount.FEE_DETAILS.feesCollected = true;
-              loanAccount.FEE_DETAILS.collectionDate = startDate;
-              loanAccount.FEE_DETAILS.collectionMethod = 'CUSTOMER_ACCOUNT_DEBIT';
-              loanAccount.FEE_DETAILS.collectedBy = req.user.id;
-            }
-            if (loanAccount.insuranceDetails) {
-              loanAccount.insuranceDetails.premiumCollected = true;
-              loanAccount.insuranceDetails.policyActive = true;
-              loanAccount.insuranceDetails.collectionDate = startDate;
-            }
-            await loanAccount.save({ session: memberSession });
-          
-            totalDisbursed += loanAmount;
-            disbursementResults.successful.push({
-              custId: custId,
-              name: accountName,
-              loanAccountId: loanAccount._id,
-              loanAccountNumber: loanAccountNumber,
-              loanAmount: loanAmount,
-              feesPaid: totalFees,
-              netReceived: loanAmount,
-              savingsAccountNo: savingsAccountNo,
-              customerAccount: safeToString(customerAccount.account_number),
-              disbursementDate: startDate,
-              transactionReferences: {
-                feeTransaction: `FEE_${Date.now()}_${custId}`,
-                disbursementTransaction: `DISB_${Date.now()}_${custId}`
-              },
-              note: `Full loan amount disbursed to savings account. Fees debited from customer account.`
             });
-            console.log(`🎉 Successfully completed disbursement for member ${custId}`);
+
+            await feeTransaction.save({ session });
+            results.feesCollected.push({
+              custId: loanAcc.CUST_ID,
+              name: loanAcc.ACCT_NM,
+              amount: totalFees,
+              loanAccountNo: loanAcc.ACCT_NO,
+              savingsAccountNo: savingsAccNo
+            });
+            console.log(`✅ Fees deducted successfully`);
+          }
+
+          // STEP 2: Credit loan amount to savings
+          const currentBalance = safeNumber(
+            savingsAccount.AVAILABLE_BALANCE || 
+            savingsAccount.ledger_balance || 
+            savingsAccount.cleared_balance || 
+            0
+          );
+          
+          console.log(`💰 Crediting loan amount: ₦${loanAmount} to savings account`);
+          
+          savingsAccount.AVAILABLE_BALANCE = currentBalance + loanAmount;
+          if (savingsAccount.ledger_balance !== undefined) {
+            savingsAccount.ledger_balance += loanAmount;
+          }
+          if (savingsAccount.cleared_balance !== undefined) {
+            savingsAccount.cleared_balance += loanAmount;
+          }
+          await savingsAccount.save({ session });
+
+          // Create credit transaction
+          const creditTransaction = new Transaction({
+            ACCT_NO: savingsAccNo,
+            ACCT_NM: savingsAccount.account_name || savingsAccount.ACCT_NM || loanAcc.ACCT_NM,
+            CUST_ID: savingsAccount.customer_id || savingsAccount.CUST_ID,
+            TRANSACTION_TYPE: 'CREDIT',
+            AMOUNT: loanAmount,
+            account_number: savingsAccNo,
+            transaction_type: 'CREDIT',
+            amount: loanAmount,
+            description: `Loan disbursement - ${groupLoan.loanId}`,
+            reference: `LOAN_${loanAcc.ACCT_NO}_${Date.now()}`,
+            STATUS: 'COMPLETED',
+            TRAN_STATUS: 'SUCCESS',
+            REC_ST: 'A',
+            transaction_date: new Date(),
+            TRAN_DATE: new Date(),
+            VALUE_DATE: new Date(),
+            createdBy: req.user?._id || 'SYSTEM',
+            CREATED_BY: (req.user?._id || 'SYSTEM').toString(),
+            branch: groupLoan.branch || 1,
+            BU_ID: savingsAccount.branch?.toString() || groupLoan.branch?.toString() || '100',
+            BALANCE: currentBalance + loanAmount,
+            AVAILABLE_BALANCE: currentBalance + loanAmount,
+            metadata: { 
+              purpose: 'LOAN_DISBURSEMENT', 
+              loanId: groupLoan.loanId,
+              loanAccountNo: loanAcc.ACCT_NO,
+              memberId: loanAcc.CUST_ID
+            }
           });
-        } catch (memberError) {
-          console.error(`💥 Error disbursing to member ${loanAccount.CUST_ID}:`, memberError);
-          disbursementResults.failed.push({
-            custId: safeToString(loanAccount.CUST_ID),
-            name: safeToString(loanAccount.ACCT_NM, 'Unknown'),
-            loanAccountId: loanAccount._id,
-            loanAccountNumber: safeToString(loanAccount.ACCT_NO),
-            savingsAccountNo: safeToString(loanAccount.savingsAccountNo),
-            reason: memberError.message,
-            errorDetails: process.env.NODE_ENV === 'development' ? memberError.stack : undefined
+
+          await creditTransaction.save({ session });
+          console.log(`✅ Loan amount credited to savings account`);
+
+          // STEP 3: Update loan account
+          console.log(`📝 Updating loan account status...`);
+          loanAcc.LOAN_STATUS = 'ACTIVE';
+          loanAcc.ACTUAL_DISBURSEMENT = loanAmount;
+          loanAcc.disbursedAt = new Date();
+          loanAcc.START_DT = new Date();
+          loanAcc.OUTSTANDING_PRINCIPAL = loanAmount;
+          loanAcc.ledger_balance = -loanAmount;
+          loanAcc.outstanding_balance = loanAmount;
+          loanAcc.AVAILABLE_BALANCE = 0;
+          loanAcc.REC_ST = 'A';
+
+          await loanAcc.save({ session });
+          console.log(`✅ Loan account updated successfully`);
+
+          // Record success
+          results.successful.push({
+            custId: loanAcc.CUST_ID,
+            name: loanAcc.ACCT_NM,
+            loanAccountNo: loanAcc.ACCT_NO,
+            savingsAccountNo: savingsAccNo,
+            loanAmount: loanAmount,
+            feesDeducted: totalFees,
+            netReceived: loanAmount - totalFees,
+            savingsBalanceBefore: currentBalance,
+            savingsBalanceAfter: currentBalance + loanAmount - totalFees
           });
-        } finally {
-          await memberSession.endSession();
+
+          console.log(`🎉 SUCCESS: Disbursement completed for ${loanAcc.ACCT_NM}`);
+
+        } catch (error) {
+          console.error(`💥 ERROR processing ${loanAcc.ACCT_NO}:`, error.message);
+          results.failed.push({
+            custId: loanAcc.CUST_ID,
+            loanAccountNo: loanAcc.ACCT_NO,
+            name: loanAcc.ACCT_NM,
+            savingsAccountNo: loanAcc.savingsAccountNo,
+            reason: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+          });
         }
       }
-      // Determine group loan status based on results
-      let groupLoanStatus = 'disbursed';
-      if (disbursementResults.failed.length > 0 && disbursementResults.successful.length > 0) {
-        groupLoanStatus = 'partially_disbursed';
-      } else if (disbursementResults.successful.length === 0) {
-        groupLoanStatus = 'approved'; // Revert to approved if all failed
+
+      // STEP 4: Update group loan status
+      console.log(`\n=== DISBURSEMENT SUMMARY ===`);
+      console.log(`Successful: ${results.successful.length}`);
+      console.log(`Failed: ${results.failed.length}`);
+      console.log(`Missing Savings: ${results.missingSavingsAccounts.length}`);
+      console.log(`Insufficient Funds: ${results.insufficientFunds.length}`);
+      console.log(`Invalid Accounts: ${results.invalidLoanAccounts.length}`);
+
+      if (results.successful.length === eligibleLoanAccounts.length) {
+        groupLoan.status = 'disbursed';
+        console.log(`✅ All disbursements successful - marking as DISBURSED`);
+      } else if (results.successful.length > 0) {
+        groupLoan.status = 'partially_disbursed';
+        console.log(`⚠️ Partial disbursement - marking as PARTIALLY_DISBURSED`);
+      } else {
+        groupLoan.status = 'approved';
+        console.log(`❌ All disbursements failed - keeping as APPROVED`);
       }
-      // Update group loan status and financials
-      groupLoan.status = groupLoanStatus;
-      groupLoan.disbursedAt = startDate;
-      groupLoan.actualDisbursementDate = startDate;
-      groupLoan.feesCollected = disbursementResults.feesCollected.length > 0;
-      groupLoan.lastUpdatedBy = req.user.id;
-      groupLoan.netDisbursementAmount = totalDisbursed;
-    
-      // Update disbursed members tracking
-      groupLoan.disbursedToMembers = individualAccounts
-        .filter(acc => disbursementResults.successful.some(s => s.loanAccountId.toString() === acc._id.toString()))
-        .map(acc => acc._id);
-      // Store disbursement results summary
+
+      groupLoan.disbursedAt = new Date();
+      groupLoan.actualDisbursementDate = new Date();
       groupLoan.disbursementResults = {
         summary: {
-          totalMembers: individualAccounts.length,
-          successful: disbursementResults.successful.length,
-          failed: disbursementResults.failed.length,
-          insufficientFunds: disbursementResults.insufficientFunds.length,
-          skipped: disbursementResults.skipped.length,
-          validationErrors: disbursementResults.validationErrors.length,
-          totalDisbursed: totalDisbursed,
-          totalFeesCollected: totalFeesCollected,
-          disbursementDate: startDate,
-          processedBy: req.user.id,
-          disbursementMethod: 'FULL_AMOUNT_WITH_SEPARATE_FEE_DEBIT'
-        },
-        details: disbursementResults
-      };
-      await groupLoan.save({ session });
-      // Log comprehensive disbursement audit trail
-      await logAuditTrail(
-        'GroupLoan',
-        groupLoan._id.toString(),
-        req.user.id,
-        'DISBURSE_WITH_FEES',
-        { previousStatus: 'approved' },
-        {
-          status: groupLoan.status,
-          successful: disbursementResults.successful.length,
-          failed: disbursementResults.failed.length,
-          insufficientFunds: disbursementResults.insufficientFunds.length,
-          feesCollected: disbursementResults.feesCollected.length,
-          insuranceActivated: disbursementResults.insuranceActivated.length,
-          skipped: disbursementResults.skipped.length,
-          totalFees: totalFeesCollected,
-          totalDisbursed: totalDisbursed,
-          netDisbursement: totalDisbursed,
-          disbursementMethod: 'FULL_AMOUNT_WITH_SEPARATE_FEE_DEBIT'
-        },
-        req.ip,
-        'GROUP_LOAN_DISBURSEMENT_WITH_ACCOUNT_DEBIT'
-      );
-      console.log('=== GROUP LOAN DISBURSEMENT COMPLETED ===');
-      console.log('Summary:', {
-        totalMembers: individualAccounts.length,
-        successful: disbursementResults.successful.length,
-        failed: disbursementResults.failed.length,
-        totalDisbursed: totalDisbursed,
-        totalFees: totalFeesCollected,
-        disbursementMethod: 'FULL_AMOUNT_WITH_SEPARATE_FEE_DEBIT'
-      });
-    });
-    // If we reach here, the transaction was successful
-    // Re-fetch the group loan to get updated data
-    const groupLoan = await GroupLoan.findOne({
-      loanId: groupLoanId
-    });
-    let message = '';
-    if (disbursementResults.failed.length === 0) {
-      message = `Group loan ${groupLoan.loanId} fully disbursed to ${disbursementResults.successful.length} members successfully. Fees debited from customer savings accounts.`;
-    } else if (disbursementResults.successful.length > 0) {
-      message = `Group loan ${groupLoan.loanId} partially disbursed. ${disbursementResults.successful.length} successful, ${disbursementResults.failed.length} failed.`;
-    } else {
-      message = `Group loan ${groupLoan.loanId} disbursement failed for all members.`;
-    }
-    res.status(200).json({
-      success: disbursementResults.successful.length > 0,
-      message: message,
-      data: {
-        groupLoanId: groupLoan.loanId,
-        groupLoanObjectId: groupLoan._id,
-        groupLoanStatus: groupLoan.status,
-        disbursementSummary: {
-          totalMembers: disbursementResults.successful.length + disbursementResults.failed.length + disbursementResults.skipped.length,
-          successful: disbursementResults.successful.length,
-          failed: disbursementResults.failed.length,
-          insufficientFunds: disbursementResults.insufficientFunds.length,
-          skipped: disbursementResults.skipped.length,
-          validationErrors: disbursementResults.validationErrors.length
-        },
-        financialBreakdown: {
-          totalLoanAmount: safeNumber(groupLoan.totalAmount, 0),
-          totalDisbursed: disbursementResults.successful.reduce((sum, s) => sum + s.loanAmount, 0),
-          totalFeesCollected: disbursementResults.feesCollected.reduce((sum, f) => sum + f.totalFees, 0),
-          netCustomerReceipt: disbursementResults.successful.reduce((sum, s) => sum + s.netReceived, 0),
-          feesCollectionMethod: 'DEBIT_FROM_CUSTOMER_SAVINGS_ACCOUNTS',
+          totalMembers: eligibleLoanAccounts.length,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          insufficientFunds: results.insufficientFunds.length,
+          missingSavingsAccounts: results.missingSavingsAccounts.length,
+          invalidLoanAccounts: results.invalidLoanAccounts.length,
+          validationErrors: results.validationErrors.length,
+          totalDisbursed: results.successful.reduce((sum, s) => sum + s.loanAmount, 0),
+          totalFeesCollected: results.feesCollected.reduce((sum, f) => sum + f.amount, 0),
           disbursementDate: new Date(),
-          note: 'Full loan amounts disbursed to customer savings accounts. Fees debited separately from customer savings accounts.'
+          processedBy: req.user?._id || 'SYSTEM'
         },
-        details: disbursementResults
-      }
+        details: results
+      };
+
+      await groupLoan.save({ session });
+      console.log(`💾 Group loan status updated to: ${groupLoan.status}`);
     });
-  } catch (error) {
-    console.error('❌ Group loan disbursement failed:', error);
-  
-    // Determine appropriate status code based on error type
-    let statusCode = 500;
-    let errorMessage = 'Group loan disbursement failed';
-  
-    if (error.message.includes('not found')) {
-      statusCode = 404;
-      errorMessage = error.message;
-    } else if (error.message.includes('already been') || error.message.includes('must be approved')) {
-      statusCode = 400;
-      errorMessage = error.message;
-    } else if (error.message.includes('Pre-disbursement validation failed')) {
-      statusCode = 400;
-      errorMessage = error.message;
-    } else if (error.message.includes('Group loan ID is required')) {
-      statusCode = 400;
-      errorMessage = error.message;
-    }
-    // Enhanced error response with validation details
-    const errorResponse = {
-      success: false,
-      message: errorMessage,
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error during disbursement',
+
+    // Prepare final response
+    const totalProcessed = results.successful.length + results.failed.length + 
+                         results.missingSavingsAccounts.length + results.invalidLoanAccounts.length +
+                         results.validationErrors.length;
+
+    const response = {
+      success: results.successful.length > 0,
+      message: results.successful.length > 0 
+        ? `Disbursement completed for ${results.successful.length}/${totalProcessed} members` 
+        : 'Disbursement failed for all members',
+      summary: {
+        totalProcessed,
+        successful: results.successful.length,
+        failed: results.failed.length,
+        missingSavingsAccounts: results.missingSavingsAccounts.length,
+        invalidLoanAccounts: results.invalidLoanAccounts.length,
+        validationErrors: results.validationErrors.length,
+        insufficientFunds: results.insufficientFunds.length,
+        feesCollected: results.feesCollected.length,
+        totalDisbursed: results.successful.reduce((sum, s) => sum + s.loanAmount, 0),
+        totalFees: results.feesCollected.reduce((sum, f) => sum + f.amount, 0)
+      },
+      details: results
     };
-    // Include validation details if available
-    if (error.validationDetails) {
-      errorResponse.validationDetails = error.validationDetails;
+
+    if (results.successful.length === 0) {
+      return res.status(400).json(response);
     }
-    // Include individual validation arrays
-    if (disbursementResults.validationErrors.length > 0) {
-      errorResponse.validationErrors = disbursementResults.validationErrors;
-    }
-    if (disbursementResults.insufficientFunds.length > 0) {
-      errorResponse.insufficientFunds = disbursementResults.insufficientFunds;
-    }
-    res.status(statusCode).json(errorResponse);
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('💥 DISBURSEMENT FAILED:', error.message);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Disbursement failed',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   } finally {
     await session.endSession();
+    console.log(`=== DISBURSEMENT PROCESS COMPLETED ===`);
   }
 });
-
-// Helper function to debit fees from customer account
-const debitFeesFromCustomerAccount = async (loanAccount, customerAccount, userId, session, branchId) => {
-  try {
-    console.log(`Starting fee debit for customer ${customerAccount.CUST_ID}, account ${customerAccount.account_number}`);
-   
-    // SAFE UTILITY FUNCTIONS
-    const safeNumber = (value, defaultValue = 0) => {
-      if (value === null || value === undefined) return defaultValue;
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
-    const safeToString = (value, defaultValue = '') => {
-      if (value === null || value === undefined) return defaultValue;
-      return String(value || defaultValue).trim();
-    };
-    // Get fee details safely
-    const feeDetails = loanAccount.FEE_DETAILS || {};
-    const processingFee = safeNumber(feeDetails.processingFee, 0);
-    const adminFee = safeNumber(feeDetails.adminFee, 0);
-    const insuranceFee = safeNumber(feeDetails.insuranceFee, 0);
-    const otherFees = safeNumber(feeDetails.otherFees, 0);
-    const upfrontInterest = safeNumber(feeDetails.upfrontInterest, 0);
-   
-    const totalFees = processingFee + adminFee + insuranceFee + otherFees + upfrontInterest;
-    if (totalFees <= 0) {
-      console.log('No fees to debit for customer:', customerAccount.CUST_ID);
-      return { success: true, message: 'No fees to debit', totalFees: 0 };
-    }
-    // Get current balances safely
-    const currentLedgerBalance = safeNumber(customerAccount.ledger_balance, 0);
-    const currentAvailableBalance = safeNumber(customerAccount.AVAILABLE_BALANCE, currentLedgerBalance);
-    // Validate sufficient balance for fees
-    if (currentAvailableBalance < totalFees) {
-      throw new Error(`Insufficient balance for fees. Required: ${totalFees}, Available: ${currentAvailableBalance}`);
-    }
-    // Calculate new balances
-    const newLedgerBalance = currentLedgerBalance - totalFees;
-    const newAvailableBalance = currentAvailableBalance - totalFees;
-    // Create detailed fee transaction record
-    const feeTransaction = new Transaction({
-      transaction_type: 'DEBIT',
-      amount: totalFees,
-      currency: 'NGN',
-      description: `Loan Processing Fees - ${loanAccount.ACCT_NO}`,
-      reference: `FEE_${Date.now()}_${loanAccount.CUST_ID}`,
-      status: 'completed',
-      customer_account: customerAccount._id,
-      loan_account: loanAccount._id,
-      branch: branchId,
-      created_by: userId,
-      transaction_date: new Date(),
-      balance_after: newLedgerBalance,
-      metadata: {
-        feeBreakdown: {
-          processingFee: processingFee,
-          adminFee: adminFee,
-          insuranceFee: insuranceFee,
-          otherFees: otherFees,
-          upfrontInterest: upfrontInterest
-        },
-        loanAccountNumber: safeToString(loanAccount.ACCT_NO),
-        customerAccountNumber: safeToString(customerAccount.account_number),
-        transactionPurpose: 'LOAN_FEES_COLLECTION'
-      }
-    });
-    await feeTransaction.save({ session });
-    // Update customer account balance
-    customerAccount.ledger_balance = newLedgerBalance;
-    customerAccount.AVAILABLE_BALANCE = newAvailableBalance;
-    customerAccount.last_activity_date = new Date();
-    // Add transaction history
-    if (!customerAccount.transaction_history) {
-      customerAccount.transaction_history = [];
-    }
-   
-    customerAccount.transaction_history.push({
-      date: new Date(),
-      type: 'DEBIT',
-      amount: totalFees,
-      description: `Loan fees for ${loanAccount.ACCT_NO}`,
-      reference: feeTransaction.reference,
-      balance_after: newLedgerBalance
-    });
-    await customerAccount.save({ session });
-    console.log(`✅ Successfully debited fees: ₦${totalFees} from customer ${customerAccount.CUST_ID}`);
-    console.log(` Previous balance: ₦${currentLedgerBalance}, New balance: ₦${newLedgerBalance}`);
-    return {
-      success: true,
-      totalFees: totalFees,
-      feeBreakdown: {
-        processingFee: processingFee,
-        adminFee: adminFee,
-        insuranceFee: insuranceFee,
-        otherFees: otherFees,
-        upfrontInterest: upfrontInterest
-      },
-      previousBalance: currentLedgerBalance,
-      newBalance: newLedgerBalance,
-      transactionReference: feeTransaction.reference
-    };
-  } catch (error) {
-    console.error(`❌ Failed to debit fees for customer ${customerAccount?.CUST_ID}:`, error);
-    throw new Error(`Fee debit failed: ${error.message}`);
-  }
-};
-// Helper function to disburse full loan amount to customer
-const disburseFullAmount = async (loanAccount, customerAccount, userId, session, branchId) => {
-  try {
-    console.log(`Starting loan disbursement to customer ${customerAccount.CUST_ID}, account ${customerAccount.account_number}`);
-   
-    // SAFE UTILITY FUNCTIONS
-    const safeNumber = (value, defaultValue = 0) => {
-      if (value === null || value === undefined) return defaultValue;
-      const num = Number(value);
-      return isNaN(num) ? defaultValue : num;
-    };
-    const safeToString = (value, defaultValue = '') => {
-      if (value === null || value === undefined) return defaultValue;
-      return String(value || defaultValue).trim();
-    };
-    // Get loan amount safely
-    const loanAmount = safeNumber(loanAccount.DISBURSEMENT_LIMIT, 0);
-   
-    if (loanAmount <= 0) {
-      throw new Error(`Invalid loan amount: ${loanAmount}`);
-    }
-    // Get current balances safely
-    const currentLedgerBalance = safeNumber(customerAccount.ledger_balance, 0);
-    const currentAvailableBalance = safeNumber(customerAccount.AVAILABLE_BALANCE, currentLedgerBalance);
-    // Calculate new balances
-    const newLedgerBalance = currentLedgerBalance + loanAmount;
-    const newAvailableBalance = currentAvailableBalance + loanAmount;
-    // Create disbursement transaction record
-    const disbursementTransaction = new Transaction({
-      transaction_type: 'CREDIT',
-      amount: loanAmount,
-      currency: 'NGN',
-      description: `Loan Disbursement - ${loanAccount.ACCT_NO}`,
-      reference: `DISB_${Date.now()}_${loanAccount.CUST_ID}`,
-      status: 'completed',
-      customer_account: customerAccount._id,
-      loan_account: loanAccount._id,
-      branch: branchId,
-      created_by: userId,
-      transaction_date: new Date(),
-      balance_after: newLedgerBalance,
-      metadata: {
-        loanAccountNumber: safeToString(loanAccount.ACCT_NO),
-        customerAccountNumber: safeToString(customerAccount.account_number),
-        loanPurpose: safeToString(loanAccount.loanPurpose, 'Not specified'),
-        disbursementMethod: safeToString(loanAccount.disbursementMethod, 'CASH'),
-        transactionPurpose: 'LOAN_DISBURSEMENT'
-      }
-    });
-    await disbursementTransaction.save({ session });
-    // Update customer account balance
-    customerAccount.ledger_balance = newLedgerBalance;
-    customerAccount.AVAILABLE_BALANCE = newAvailableBalance;
-    customerAccount.last_activity_date = new Date();
-    // Add transaction history
-    if (!customerAccount.transaction_history) {
-      customerAccount.transaction_history = [];
-    }
-   
-    customerAccount.transaction_history.push({
-      date: new Date(),
-      type: 'CREDIT',
-      amount: loanAmount,
-      description: `Loan disbursement - ${loanAccount.ACCT_NO}`,
-      reference: disbursementTransaction.reference,
-      balance_after: newLedgerBalance
-    });
-    await customerAccount.save({ session });
-    // Update loan account disbursement details
-    loanAccount.ACTUAL_DISBURSEMENT = loanAmount;
-    loanAccount.START_DT = new Date();
-    loanAccount.disbursedAt = new Date();
-   
-    if (!loanAccount.disbursement_details) {
-      loanAccount.disbursement_details = {};
-    }
-   
-    loanAccount.disbursement_details.disbursementDate = new Date();
-    loanAccount.disbursement_details.disbursedBy = userId;
-    loanAccount.disbursement_details.disbursementReference = disbursementTransaction.reference;
-    loanAccount.disbursement_details.disbursementMethod = safeToString(loanAccount.disbursementMethod, 'CASH');
-    await loanAccount.save({ session });
-    console.log(`✅ Successfully disbursed loan: ₦${loanAmount} to customer ${customerAccount.CUST_ID}`);
-    console.log(` Previous balance: ₦${currentLedgerBalance}, New balance: ₦${newLedgerBalance}`);
-    return {
-      success: true,
-      loanAmount: loanAmount,
-      previousBalance: currentLedgerBalance,
-      newBalance: newLedgerBalance,
-      transactionReference: disbursementTransaction.reference,
-      disbursementDate: new Date()
-    };
-  } catch (error) {
-    console.error(`❌ Failed to disburse loan to customer ${customerAccount?.CUST_ID}:`, error);
-    throw new Error(`Loan disbursement failed: ${error.message}`);
-  }
-};
-// Additional helper function for comprehensive fee breakdown
-const getLoanAccountFeeBreakdown = (loanAccount) => {
-  const safeNumber = (value, defaultValue = 0) => {
-    if (value === null || value === undefined) return defaultValue;
-    const num = Number(value);
-    return isNaN(num) ? defaultValue : num;
-  };
-  const feeDetails = loanAccount.FEE_DETAILS || {};
- 
-  const processingFee = safeNumber(feeDetails.processingFee, 0);
-  const adminFee = safeNumber(feeDetails.adminFee, 0);
-  const insuranceFee = safeNumber(feeDetails.insuranceFee, 0);
-  const otherFees = safeNumber(feeDetails.otherFees, 0);
-  const upfrontInterest = safeNumber(feeDetails.upfrontInterest, 0);
- 
-  const totalFees = processingFee + adminFee + insuranceFee + otherFees + upfrontInterest;
-  return {
-    processingFee,
-    adminFee,
-    insuranceFee,
-    otherFees,
-    upfrontInterest,
-    totalFees,
-    breakdown: [
-      { type: 'Processing Fee', amount: processingFee },
-      { type: 'Admin Fee', amount: adminFee },
-      { type: 'Insurance Fee', amount: insuranceFee },
-      { type: 'Other Fees', amount: otherFees },
-      { type: 'Upfront Interest', amount: upfrontInterest }
-    ].filter(item => item.amount > 0)
-  };
-};
-// Helper to validate customer account before operations
-const validateCustomerAccount = async (customerAccount, requiredAmount = 0, operation = 'DEBIT') => {
-  const safeNumber = (value, defaultValue = 0) => {
-    if (value === null || value === undefined) return defaultValue;
-    const num = Number(value);
-    return isNaN(num) ? defaultValue : num;
-  };
-  if (!customerAccount) {
-    throw new Error('Customer account not found');
-  }
-  const currentLedgerBalance = safeNumber(customerAccount.ledger_balance, 0);
-  const currentAvailableBalance = safeNumber(customerAccount.AVAILABLE_BALANCE, currentLedgerBalance);
-  if (operation === 'DEBIT' && currentAvailableBalance < requiredAmount) {
-    throw new Error(`Insufficient balance. Required: ${requiredAmount}, Available: ${currentAvailableBalance}`);
-  }
-  if (requiredAmount <= 0 && operation === 'DEBIT') {
-    throw new Error('Invalid amount for debit operation');
-  }
-  return {
-    currentLedgerBalance,
-    currentAvailableBalance,
-    isValid: true
-  };
-};
-
 // Add this function to your GroupController.js (or appropriate controller for credit applications)
 
 export const getPendingCreditApplications = asyncHandler(async (req, res) => {
@@ -3189,52 +2515,602 @@ export const getPendingCreditApplications = asyncHandler(async (req, res) => {
 
 // In your GroupController.js - update getGroupLoan function
 
-// Repay group loan (split repayment across members)
+// ==================== HELPER FUNCTIONS ====================
+
+// Helper function to calculate expected repayment amounts
+const calculateExpectedRepayment = (groupLoan, paymentFrequency) => {
+  console.log('=== CALCULATING EXPECTED REPAYMENT ===');
+  console.log('Group Loan Total:', groupLoan.totalAmount);
+  console.log('Interest Rate:', groupLoan.interestRate);
+  console.log('Term Value:', groupLoan.termValue);
+  console.log('Payment Frequency:', paymentFrequency);
+
+  const principal = groupLoan.totalAmount || 0;
+  const interestRate = groupLoan.interestRate || 0;
+  const termValue = groupLoan.termValue || 12;
+  
+  // Calculate total interest (simple interest for now)
+  const totalInterest = principal * (interestRate / 100) * (termValue / 12);
+  const totalRepayment = principal + totalInterest;
+  
+  // Calculate installment amount based on payment frequency
+  let installmentAmount = 0;
+  let totalInstallments = termValue;
+  
+  if (paymentFrequency.includes('WEEK')) {
+    totalInstallments = termValue * 4; // Approximate weeks in month
+    installmentAmount = totalRepayment / totalInstallments;
+  } else if (paymentFrequency.includes('MONTH')) {
+    installmentAmount = totalRepayment / totalInstallments;
+  } else {
+    // Default to monthly
+    installmentAmount = totalRepayment / totalInstallments;
+  }
+  
+  const result = {
+    principal,
+    totalInterest,
+    totalRepayment,
+    installmentAmount: Math.round(installmentAmount * 100) / 100,
+    totalInstallments,
+    paymentFrequency
+  };
+  
+  console.log('Expected Repayment Calculation:', result);
+  return result;
+};
+
+// Helper function to calculate accrued interest
+const calculateAccruedInterest = (groupLoan, expectedRepaymentDetails) => {
+  console.log('=== CALCULATING ACCRUED INTEREST ===');
+  
+  const principal = groupLoan.totalAmount || 0;
+  const interestRate = groupLoan.interestRate || 0;
+  const totalInterest = expectedRepaymentDetails.totalInterest || 0;
+  
+  // Simple calculation: assume interest accrues linearly
+  const totalRepaid = groupLoan.totalRepaid || 0;
+  const installmentsPaid = groupLoan.installmentsPaid || 0;
+  const totalInstallments = expectedRepaymentDetails.totalInstallments || 12;
+  
+  const accruedInterestPerInstallment = totalInterest / totalInstallments;
+  const totalAccruedInterest = accruedInterestPerInstallment * installmentsPaid;
+  
+  const result = {
+    totalAccruedInterest: Math.round(totalAccruedInterest * 100) / 100,
+    accruedInterestPerInstallment: Math.round(accruedInterestPerInstallment * 100) / 100,
+    installmentsPaid,
+    totalInstallments
+  };
+  
+  console.log('Accrued Interest Calculation:', result);
+  return result;
+};
+
+// Calculate expected repayment for each member (spreadsheet view)
+const calculateMemberExpectedRepayments = (groupLoan, expectedRepaymentDetails, accruedInterestDetails) => {
+  const memberRepayments = [];
+  
+  if (!groupLoan.individualLoanAccounts || groupLoan.individualLoanAccounts.length === 0) {
+    // For legacy loans without individual accounts, distribute equally
+    const groupMembers = groupLoan.group?.members || [];
+    const memberCount = groupMembers.length;
+    
+    if (memberCount > 0) {
+      const memberShare = expectedRepaymentDetails.installmentAmount / memberCount;
+      const principalShare = (groupLoan.totalAmount || 0) / memberCount;
+      const interestShare = (expectedRepaymentDetails.totalInterest || 0) / memberCount;
+      
+      groupMembers.forEach(member => {
+        memberRepayments.push({
+          memberId: member._id || member.CUST_ID,
+          memberName: member.name || member.CUST_NM || 'Unknown Member',
+          accountNumber: member.accountNumber || member.ACCT_NO || 'N/A',
+          savingsAccountNo: member.savingsAccountNo || 'N/A',
+          expectedAmount: memberShare,
+          principalAmount: principalShare,
+          interestAmount: interestShare,
+          outstandingPrincipal: principalShare,
+          outstandingInterest: interestShare,
+          currentBalance: principalShare + interestShare,
+          isLegacy: true
+        });
+      });
+    }
+  } else {
+    // For modern loans with individual accounts
+    const totalPrincipal = groupLoan.individualLoanAccounts.reduce((sum, account) => 
+      sum + (account.OUTSTANDING_PRINCIPAL || account.DISBURSEMENT_LIMIT || 0), 0);
+    
+    groupLoan.individualLoanAccounts.forEach(account => {
+      const memberPrincipal = account.OUTSTANDING_PRINCIPAL || account.DISBURSEMENT_LIMIT || 0;
+      const memberShare = totalPrincipal > 0 ? memberPrincipal / totalPrincipal : 0;
+      
+      const expectedAmount = expectedRepaymentDetails.installmentAmount * memberShare;
+      const principalAmount = (groupLoan.totalAmount || 0) * memberShare;
+      const interestAmount = (expectedRepaymentDetails.totalInterest || 0) * memberShare;
+      
+      // Calculate accrued interest for this member
+      let memberAccruedInterest = account.interestOutstanding || 0;
+      if (accruedInterestDetails && account.ORIGINAL_PRINCIPAL) {
+        const memberAccruedShare = account.ORIGINAL_PRINCIPAL / accruedInterestDetails.totalPrincipal;
+        memberAccruedInterest = Math.max(memberAccruedInterest, accruedInterestDetails.totalAccruedInterest * memberAccruedShare);
+      }
+      
+      memberRepayments.push({
+        memberId: account.CUST_ID,
+        memberName: account.ACCT_NM || 'Unknown Member',
+        accountNumber: account.ACCT_NO,
+        savingsAccountNo: account.savingsAccountNo,
+        expectedAmount: expectedAmount,
+        principalAmount: principalAmount,
+        interestAmount: interestAmount,
+        outstandingPrincipal: account.OUTSTANDING_PRINCIPAL || 0,
+        outstandingInterest: memberAccruedInterest,
+        currentBalance: account.outstanding_balance || account.OUTSTANDING_PRINCIPAL || 0,
+        isLegacy: false
+      });
+    });
+  }
+  
+  return memberRepayments;
+};
+
+// Payment frequency detection
+const getPaymentFrequency = (providedFrequency, groupLoan) => {
+  console.log('=== PAYMENT FREQUENCY ANALYSIS ===');
+  console.log('Input providedFrequency:', providedFrequency);
+  console.log('GroupLoan paymentFrequency:', groupLoan.paymentFrequency);
+  console.log('GroupLoan loanTerm:', groupLoan.loanTerm);
+  
+  // Priority 1: Use explicitly provided frequency
+  if (providedFrequency) {
+    const freq = providedFrequency.toUpperCase();
+    console.log('Using provided frequency:', freq);
+    return freq;
+  }
+  
+  // Priority 2: Use paymentFrequency field
+  if (groupLoan.paymentFrequency) {
+    const freq = groupLoan.paymentFrequency.toUpperCase();
+    console.log('Using paymentFrequency field:', freq);
+    return freq;
+  }
+  
+  // Priority 3: Convert loanTerm to payment frequency
+  if (groupLoan.loanTerm) {
+    const loanTerm = groupLoan.loanTerm.toLowerCase().trim();
+    console.log('Processing loanTerm:', loanTerm);
+    
+    let detectedFrequency;
+    switch (loanTerm) {
+      case 'weekly':
+      case 'week':
+      case 'w':
+      case 'wk':
+        detectedFrequency = 'WEEKLY';
+        break;
+      case 'bi-weekly':
+      case 'bi_weekly':
+      case 'biweekly':
+      case 'bw':
+      case 'bi-week':
+      case 'bi_week':
+        detectedFrequency = 'BI_WEEKLY';
+        break;
+      case 'monthly':
+      case 'month':
+      case 'm':
+        detectedFrequency = 'MONTHLY';
+        break;
+      default:
+        detectedFrequency = groupLoan.loanTerm.toUpperCase();
+    }
+    console.log('Detected frequency from loanTerm:', detectedFrequency);
+    return detectedFrequency;
+  }
+  
+  // Priority 4: Check individual loan accounts
+  if (groupLoan.individualLoanAccounts && groupLoan.individualLoanAccounts.length > 0) {
+    const firstLoanAccount = groupLoan.individualLoanAccounts[0];
+    if (firstLoanAccount.PAYMENT_FREQUENCY) {
+      const freq = firstLoanAccount.PAYMENT_FREQUENCY.toUpperCase();
+      console.log('Using individual loan account frequency:', freq);
+      return freq;
+    }
+  }
+  
+  console.log('Using default frequency: MONTHLY');
+  return 'MONTHLY';
+};
+
+// Helper function to validate member repayments
+const validateMemberRepayments = (memberRepayments, groupLoan, expectedRepaymentDetails, paymentFrequency, repaymentType) => {
+  console.log('=== VALIDATING MEMBER REPAYMENTS ===');
+  
+  const totalMemberAmount = memberRepayments.reduce((sum, member) => sum + (member.amount || 0), 0);
+  const groupMembers = groupLoan.members || [];
+  
+  // Check if all member IDs exist in the group
+  for (const repayment of memberRepayments) {
+    const memberExists = groupMembers.some(member => member.memberId === repayment.memberId);
+    if (!memberExists) {
+      return {
+        valid: false,
+        message: `Member ${repayment.memberId} not found in group ${groupLoan.groupCode}`
+      };
+    }
+  }
+  
+  // Validate repayment type allocation
+  if (repaymentType === 'principal' || repaymentType === 'interest') {
+    for (const repayment of memberRepayments) {
+      if (repaymentType === 'principal' && repayment.interest > 0) {
+        return {
+          valid: false,
+          message: 'Interest amount should be zero for principal-only repayment'
+        };
+      }
+      if (repaymentType === 'interest' && repayment.principal > 0) {
+        return {
+          valid: false,
+          message: 'Principal amount should be zero for interest-only repayment'
+        };
+      }
+    }
+  }
+  
+  return { valid: true, message: 'Member repayments validated successfully' };
+};
+
+// Helper function to calculate next due date
+const calculateNextDueDate = (paymentDate, paymentFrequency, lastRepaymentDate) => {
+  const nextDate = new Date(paymentDate);
+  
+  switch (paymentFrequency.toUpperCase()) {
+    case 'WEEKLY':
+      nextDate.setDate(nextDate.getDate() + 7);
+      break;
+    case 'BIWEEKLY':
+      nextDate.setDate(nextDate.getDate() + 14);
+      break;
+    case 'MONTHLY':
+      nextDate.setMonth(nextDate.getMonth() + 1);
+      break;
+    case 'QUARTERLY':
+      nextDate.setMonth(nextDate.getMonth() + 3);
+      break;
+    default:
+      nextDate.setMonth(nextDate.getMonth() + 1); // Default to monthly
+  }
+  
+  return nextDate;
+};
+
+// Helper function to process modern group loan repayment with members
+const processModernGroupLoanRepaymentWithMembers = async (
+  groupLoan,
+  calculatedTotalRepayAmount,
+  memberRepayments,
+  isInstallment,
+  paymentDate,
+  paymentMethod,
+  transactionReference,
+  userId,
+  repaidMembers,
+  repaymentDetails,
+  session,
+  expectedRepaymentDetails,
+  repaymentType,
+  finalPaymentFrequency,
+  accruedInterestDetails
+) => {
+  console.log('=== PROCESSING MODERN GROUP LOAN REPAYMENT ===');
+  
+  const individualLoanAccounts = groupLoan.individualLoanAccounts || [];
+  
+  if (memberRepayments && memberRepayments.length > 0) {
+    // Process specific member repayments
+    for (const memberRepayment of memberRepayments) {
+      await processSingleMemberRepayment(
+        memberRepayment,
+        individualLoanAccounts,
+        paymentDate,
+        paymentMethod,
+        transactionReference,
+        userId,
+        repaidMembers,
+        repaymentDetails,
+        session,
+        repaymentType
+      );
+    }
+  } else {
+    // Distribute total amount equally among members
+    const memberCount = groupLoan.members.length;
+    const amountPerMember = calculatedTotalRepayAmount / memberCount;
+    
+    for (const member of groupLoan.members) {
+      const memberRepayment = {
+        memberId: member.memberId,
+        amount: amountPerMember,
+        principal: amountPerMember * 0.8, // Example allocation
+        interest: amountPerMember * 0.2   // Example allocation
+      };
+      
+      await processSingleMemberRepayment(
+        memberRepayment,
+        individualLoanAccounts,
+        paymentDate,
+        paymentMethod,
+        transactionReference,
+        userId,
+        repaidMembers,
+        repaymentDetails,
+        session,
+        repaymentType
+      );
+    }
+  }
+};
+
+// Helper function to process single member repayment
+const processSingleMemberRepayment = async (
+  memberRepayment,
+  individualLoanAccounts,
+  paymentDate,
+  paymentMethod,
+  transactionReference,
+  userId,
+  repaidMembers,
+  repaymentDetails,
+  session,
+  repaymentType
+) => {
+  const memberLoanAccount = individualLoanAccounts.find(acc => 
+    acc.CUST_ID === memberRepayment.memberId
+  );
+  
+  if (!memberLoanAccount) {
+    console.log(`❌ No loan account found for member: ${memberRepayment.memberId}`);
+    return;
+  }
+  
+  console.log(`💳 Processing repayment for member: ${memberRepayment.memberId}, Amount: ${memberRepayment.amount}`);
+  
+  // Update loan account
+  const principalPaid = memberRepayment.principal || 0;
+  const interestPaid = memberRepayment.interest || 0;
+  
+  memberLoanAccount.OUTSTANDING_PRINCIPAL = Math.max(0, memberLoanAccount.OUTSTANDING_PRINCIPAL - principalPaid);
+  memberLoanAccount.outstanding_balance = Math.max(0, memberLoanAccount.outstanding_balance - (principalPaid + interestPaid));
+  memberLoanAccount.ledger_balance = -memberLoanAccount.outstanding_balance;
+  
+  // Add repayment transaction
+  await new Transaction({
+    ACCT_NO: memberLoanAccount.ACCT_NO,
+    ACCT_ID: memberLoanAccount._id.toString(),
+    BU_ID: memberLoanAccount.BU_ID || 1,
+    CUST_ID: memberLoanAccount.CUST_ID,
+    ACCT_NM: memberLoanAccount.ACCT_NM,
+    AMOUNT: memberRepayment.amount,
+    TRANSACTIONDATE: paymentDate,
+    TRANSACTION_TYPE: 'CREDIT',
+    description: `Loan repayment - ${repaymentType}`,
+    currency: 'NGN',
+    createdBy: userId.toString(),
+    status: 'COMPLETED',
+    metadata: {
+      purpose: 'LOAN_REPAYMENT',
+      principalPaid,
+      interestPaid,
+      repaymentType,
+      paymentMethod
+    }
+  }).save({ session });
+  
+  repaidMembers.push(memberRepayment.memberId);
+  repaymentDetails.push({
+    memberId: memberRepayment.memberId,
+    memberName: memberLoanAccount.ACCT_NM,
+    loanAccountNo: memberLoanAccount.ACCT_NO,
+    amount: memberRepayment.amount,
+    principal: principalPaid,
+    interest: interestPaid,
+    remainingPrincipal: memberLoanAccount.OUTSTANDING_PRINCIPAL,
+    remainingBalance: memberLoanAccount.outstanding_balance
+  });
+  
+  await memberLoanAccount.save({ session });
+  console.log(`✅ Repayment processed for member: ${memberRepayment.memberId}`);
+};
+
+// Helper function to process legacy group loan repayment
+const processLegacyGroupLoanRepayment = async (
+  groupLoan,
+  calculatedTotalRepayAmount,
+  isInstallment,
+  paymentDate,
+  userId,
+  repaidMembers,
+  repaymentDetails,
+  session
+) => {
+  console.log('=== PROCESSING LEGACY GROUP LOAN REPAYMENT ===');
+  
+  // For legacy loans, we just record the repayment at group level
+  const principalPaid = calculatedTotalRepayAmount * 0.8; // Example allocation
+  const interestPaid = calculatedTotalRepayAmount * 0.2; // Example allocation
+  
+  // Record group-level transaction
+  await new Transaction({
+    ACCT_NO: groupLoan.groupCode,
+    ACCT_ID: groupLoan._id.toString(),
+    BU_ID: groupLoan.branch || 1,
+    CUST_ID: 'GROUP', // Special identifier for group transactions
+    ACCT_NM: groupLoan.groupName,
+    AMOUNT: calculatedTotalRepayAmount,
+    TRANSACTIONDATE: paymentDate,
+    TRANSACTION_TYPE: 'CREDIT',
+    description: `Legacy group loan repayment`,
+    currency: 'NGN',
+    createdBy: userId.toString(),
+    status: 'COMPLETED',
+    metadata: {
+      purpose: 'LEGACY_GROUP_REPAYMENT',
+      principalPaid,
+      interestPaid,
+      isInstallment
+    }
+  }).save({ session });
+  
+  // For legacy loans, mark all members as repaid
+  groupLoan.members.forEach(member => {
+    repaidMembers.push(member.memberId);
+    repaymentDetails.push({
+      memberId: member.memberId,
+      memberName: member.name,
+      loanAccountNo: 'LEGACY',
+      amount: calculatedTotalRepayAmount / groupLoan.members.length,
+      principal: principalPaid / groupLoan.members.length,
+      interest: interestPaid / groupLoan.members.length,
+      remainingPrincipal: 0, // Legacy loans don't track individual balances
+      remainingBalance: 0
+    });
+  });
+  
+  console.log(`✅ Legacy repayment processed for ${groupLoan.members.length} members`);
+};
+
+// // Helper function for audit trail
+// const logAuditTrail = async (
+//   entityType,
+//   entityId,
+//   userId,
+//   action,
+//   oldState,
+//   newState,
+//   ipAddress,
+//   eventType
+// ) => {
+//   try {
+//     console.log('=== AUDIT TRAIL ===');
+//     console.log('Entity:', entityType);
+//     console.log('Entity ID:', entityId);
+//     console.log('User:', userId);
+//     console.log('Action:', action);
+//     console.log('Old State:', oldState);
+//     console.log('New State:', newState);
+//     console.log('IP:', ipAddress);
+//     console.log('Event:', eventType);
+    
+//     // You can implement your audit trail logging here
+//     // This could save to an AuditTrail collection or log to a file
+//   } catch (error) {
+//     console.error('Error logging audit trail:', error);
+//   }
+// };
+
+// ==================== MAIN REPAYMENT FUNCTION ====================
+
 export const repayGroupLoan = asyncHandler(async (req, res) => {
-  const { groupLoanId } = req.params;
+  // FIX: Get groupLoanId from multiple possible sources
+  let groupLoanId = req.params.groupLoanId || req.params.id || req.body.groupLoanId;
+  
+  console.log('=== REPAYMENT REQUEST DETAILS ===');
+  console.log('Params:', req.params);
+  console.log('Body:', req.body);
+  console.log('Query:', req.query);
+  console.log('Extracted groupLoanId:', groupLoanId);
+
+  // If still undefined, try to extract from URL
+  if (!groupLoanId) {
+    const urlParts = req.originalUrl.split('/');
+    const possibleId = urlParts[urlParts.length - 2]; // Second last part of URL
+    if (possibleId && possibleId !== 'repayment') {
+      groupLoanId = possibleId;
+      console.log('Extracted from URL:', groupLoanId);
+    }
+  }
+
+  if (!groupLoanId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Group loan ID is required. Please provide it in the URL path like: /api/group/group-loans/GL90659288STV3/repayment',
+    });
+  }
+
   const {
     totalRepayAmount,
+    memberRepayments = [],
     isInstallment,
     paymentMethod = 'CASH',
     transactionReference,
-    isLegacyLoan = false
+    isLegacyLoan = false,
+    repaymentType = 'both',
+    paymentFrequency
   } = req.body;
+
+  console.log(`🔍 Looking for group loan with ID: ${groupLoanId}`);
+
   // Validate required fields
-  if (!totalRepayAmount || totalRepayAmount <= 0) {
+  if ((!totalRepayAmount || totalRepayAmount <= 0) && (!memberRepayments || memberRepayments.length === 0)) {
     return res.status(400).json({
       success: false,
-      message: 'Repayment amount is required and must be greater than 0.',
+      message: 'Either totalRepayAmount or memberRepayments array is required.',
     });
   }
-  // Get group loan - handle both legacy and new loans
-  let groupLoan;
-  if (isLegacyLoan) {
-    // Handle legacy group loans (using legacyId or other identifier)
+
+  // FIXED: Enhanced group loan lookup - ONLY search by loanId, not _id
+  let groupLoan = await GroupLoan.findOne({
+    loanId: groupLoanId // Only search by loanId field, not _id
+  })
+  .populate('group', 'members groupCode groupName')
+  .populate('individualLoanAccounts');
+
+  if (!groupLoan) {
+    console.log(`❌ Group loan not found for loanId: ${groupLoanId}`);
+    
+    // Try alternative search if needed
+    console.log(`🔍 Trying alternative search...`);
     groupLoan = await GroupLoan.findOne({
       $or: [
-        { _id: groupLoanId },
-        { legacyId: groupLoanId },
-        { mysqlId: groupLoanId }
+        { groupCode: groupLoanId },
+        { _id: groupLoanId } // Only try _id if it's a valid ObjectId
       ]
     })
     .populate('group', 'members groupCode groupName')
     .populate('individualLoanAccounts');
-  } else {
-    // Standard lookup
-    groupLoan = await GroupLoan.findById(groupLoanId)
-      .populate('group', 'members groupCode groupName')
-      .populate('individualLoanAccounts');
   }
+
   if (!groupLoan) {
+    console.log(`❌ Group loan not found for any identifier: ${groupLoanId}`);
+    
+    // Show available loans for debugging
+    const allGroupLoans = await GroupLoan.find({}).select('loanId groupCode _id status').limit(10);
+    const availableLoans = allGroupLoans.map(gl => ({
+      loanId: gl.loanId, 
+      groupCode: gl.groupCode, 
+      _id: gl._id, 
+      status: gl.status
+    }));
+    
+    console.log('Available group loans:', availableLoans);
+    
     return res.status(404).json({
       success: false,
-      message: 'Group loan not found.',
+      message: `Group loan not found for ID: ${groupLoanId}.`,
+      availableLoans: availableLoans,
+      suggestion: 'Try using one of the available loan IDs shown above.'
     });
   }
-  // Enhanced status validation for both legacy and modern loans
+
+  console.log(`✅ Found group loan: ${groupLoan.loanId}, Group Code: ${groupLoan.groupCode}, Status: ${groupLoan.status}`);
+
+  // Enhanced status validation
   const validRepaymentStatuses = [
     'disbursed', 'partially_disbursed', 'active',
-    'disbursed_legacy', 'active_legacy', 'approved' // Include legacy statuses
+    'disbursed_legacy', 'active_legacy', 'approved'
   ];
  
   if (!validRepaymentStatuses.includes(groupLoan.status)) {
@@ -3243,45 +3119,110 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       message: `Group loan must be in disbursed/active status for repayment. Current status: ${groupLoan.status}`,
     });
   }
-  // Calculate financials with legacy fallbacks
-  const totalRepayable = groupLoan.totalRepayable ||
-                        (groupLoan.totalAmount + (groupLoan.totalInterest || 0)) ||
-                        (groupLoan.loanAmount + (groupLoan.interestAmount || 0)); // Legacy field names
-  const currentTotalRepaid = groupLoan.totalRepaid || groupLoan.repaidAmount || 0; // Legacy field name
+
+  // Payment frequency detection
+  const finalPaymentFrequency = getPaymentFrequency(paymentFrequency, groupLoan);
+  
+  console.log('=== PAYMENT FREQUENCY DETECTION ===');
+  console.log('Provided frequency:', paymentFrequency);
+  console.log('Loan paymentFrequency:', groupLoan.paymentFrequency);
+  console.log('Loan loanTerm:', groupLoan.loanTerm);
+  console.log('Final detected frequency:', finalPaymentFrequency);
+
+  // Calculate expected repayment amounts with payment frequency
+  const expectedRepaymentDetails = calculateExpectedRepayment(groupLoan, finalPaymentFrequency);
+  
+  // Calculate accrued interest for proper allocation
+  const accruedInterestDetails = calculateAccruedInterest(groupLoan, expectedRepaymentDetails);
+  
+  // NEW: Calculate member expected repayments (spreadsheet view)
+  const memberExpectedRepayments = calculateMemberExpectedRepayments(
+    groupLoan, 
+    expectedRepaymentDetails, 
+    accruedInterestDetails
+  );
+
+  console.log('=== MEMBER EXPECTED REPAYMENTS (SPREADSHEET VIEW) ===');
+  memberExpectedRepayments.forEach((member, index) => {
+    console.log(`Member ${index + 1}: ${member.memberName}`);
+    console.log(`  Account: ${member.accountNumber}`);
+    console.log(`  Savings Account: ${member.savingsAccountNo || 'N/A'}`);
+    console.log(`  Expected Amount: ${member.expectedAmount.toLocaleString()}`);
+    console.log(`  Principal: ${member.principalAmount.toLocaleString()}`);
+    console.log(`  Interest: ${member.interestAmount.toLocaleString()}`);
+    console.log(`  Outstanding Principal: ${member.outstandingPrincipal.toLocaleString()}`);
+    console.log(`  Outstanding Interest: ${member.outstandingInterest.toLocaleString()}`);
+    console.log(`  Current Balance: ${member.currentBalance.toLocaleString()}`);
+    console.log('---');
+  });
+
+  // Calculate financials with proper interest handling
+  const totalRepayable = expectedRepaymentDetails.totalRepayment || 
+                        groupLoan.totalRepayable ||
+                        (groupLoan.totalAmount + accruedInterestDetails.totalAccruedInterest);
+  
+  const currentTotalRepaid = groupLoan.totalRepaid || groupLoan.repaidAmount || 0;
   const remainingBalance = totalRepayable - currentTotalRepaid;
-  if (totalRepayAmount > remainingBalance) {
-    return res.status(400).json({
-      success: false,
-      message: `Repayment amount (${totalRepayAmount.toLocaleString()}) exceeds remaining balance (${remainingBalance.toLocaleString()}).`,
-    });
-  }
-  // Validate installment amount with tolerance for legacy calculations
-  let validationMessage = '';
-  if (isInstallment && groupLoan.installmentAmount) {
-    const tolerance = isLegacyLoan ? 1.00 : 0.01; // Higher tolerance for legacy loans
-    if (Math.abs(totalRepayAmount - groupLoan.installmentAmount) > tolerance) {
+
+  // Calculate total from member repayments if provided
+  let calculatedTotalRepayAmount = totalRepayAmount;
+  if (memberRepayments && memberRepayments.length > 0) {
+    calculatedTotalRepayAmount = memberRepayments.reduce((sum, member) => sum + (member.amount || 0), 0);
+    
+    const validationResult = validateMemberRepayments(
+      memberRepayments, 
+      groupLoan, 
+      expectedRepaymentDetails,
+      finalPaymentFrequency,
+      repaymentType
+    );
+    if (!validationResult.valid) {
       return res.status(400).json({
         success: false,
-        message: `For installment repayment, amount should match the scheduled ${groupLoan.loanTerm} installment of ${groupLoan.installmentAmount.toLocaleString()}.`,
+        message: validationResult.message
       });
     }
-    validationMessage = ` (${groupLoan.loanTerm} installment applied)`;
   }
+
+  if (calculatedTotalRepayAmount > remainingBalance) {
+    return res.status(400).json({
+      success: false,
+      message: `Repayment amount (${calculatedTotalRepayAmount.toLocaleString()}) exceeds remaining balance (${remainingBalance.toLocaleString()}).`,
+    });
+  }
+
+  // Enhanced installment validation with payment frequency
+  let validationMessage = '';
+  if (isInstallment && expectedRepaymentDetails.installmentAmount) {
+    const tolerance = isLegacyLoan ? 1.00 : 0.01;
+    const expectedAmount = expectedRepaymentDetails.installmentAmount;
+    
+    if (Math.abs(calculatedTotalRepayAmount - expectedAmount) > tolerance) {
+      return res.status(400).json({
+        success: false,
+        message: `For ${finalPaymentFrequency.toLowerCase()} installment repayment, amount should match the scheduled installment of ${expectedAmount.toLocaleString()}.`,
+      });
+    }
+    validationMessage = ` (${finalPaymentFrequency.toLowerCase()} installment applied)`;
+  }
+
   const paymentDate = new Date();
   const oldTotalRepaid = currentTotalRepaid;
   const repaidMembers = [];
   const repaymentDetails = [];
   const session = await mongoose.startSession();
+
   try {
     await session.withTransaction(async () => {
-      // Determine if we need legacy processing
+      // Determine processing method
       const needsLegacyProcessing = isLegacyLoan ||
                                   !groupLoan.individualLoanAccounts ||
                                   groupLoan.individualLoanAccounts.length === 0;
+
       if (needsLegacyProcessing) {
         await processLegacyGroupLoanRepayment(
           groupLoan,
-          totalRepayAmount,
+          calculatedTotalRepayAmount,
           isInstallment,
           paymentDate,
           req.user.id,
@@ -3290,10 +3231,11 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
           session
         );
       } else {
-        // Process modern group loans with individual LoanAccounts
-        await processModernGroupLoanRepayment(
+        // Process modern group loans with individual member support
+        await processModernGroupLoanRepaymentWithMembers(
           groupLoan,
-          totalRepayAmount,
+          calculatedTotalRepayAmount,
+          memberRepayments,
           isInstallment,
           paymentDate,
           paymentMethod,
@@ -3301,16 +3243,30 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
           req.user.id,
           repaidMembers,
           repaymentDetails,
-          session
+          session,
+          expectedRepaymentDetails,
+          repaymentType,
+          finalPaymentFrequency,
+          accruedInterestDetails
         );
       }
+
       // Update group loan repayment totals
-      groupLoan.totalRepaid = (groupLoan.totalRepaid || 0) + totalRepayAmount;
+      groupLoan.totalRepaid = (groupLoan.totalRepaid || 0) + calculatedTotalRepayAmount;
       groupLoan.repaidToMembers = [...new Set([...(groupLoan.repaidToMembers || []), ...repaidMembers])];
+      
       // Track installments paid at group level
       if (isInstallment) {
         groupLoan.installmentsPaid = (groupLoan.installmentsPaid || 0) + 1;
+        
+        // Update next due date based on payment frequency
+        groupLoan.nextDueDate = calculateNextDueDate(
+          paymentDate, 
+          finalPaymentFrequency, 
+          groupLoan.lastRepaymentDate
+        );
       }
+      
       // Check if group loan is fully repaid
       if (groupLoan.totalRepaid >= totalRepayable) {
         groupLoan.status = isLegacyLoan ? 'repaid_legacy' : 'repaid';
@@ -3319,15 +3275,19 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       } else {
         groupLoan.remainingBalance = totalRepayable - groupLoan.totalRepaid;
       }
+      
       // Update last repayment date
       groupLoan.lastRepaymentDate = paymentDate;
+      
       // Mark as migrated if this is a legacy loan's first repayment
       if (isLegacyLoan && !groupLoan.migrationCompleted) {
         groupLoan.migrationCompleted = true;
         groupLoan.lastMigratedAt = paymentDate;
       }
+      
       await groupLoan.save({ session });
     });
+
     // Log audit trail
     await logAuditTrail(
       'GroupLoan',
@@ -3342,20 +3302,28 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       {
         totalRepaid: groupLoan.totalRepaid,
         isInstallment,
-        totalRepayAmount,
+        totalRepayAmount: calculatedTotalRepayAmount,
+        memberRepaymentsCount: memberRepayments?.length || 0,
         paymentMethod,
+        paymentFrequency: finalPaymentFrequency,
         membersRepaid: repaidMembers.length,
-        loanType: isLegacyLoan ? 'legacy' : 'modern'
+        loanType: isLegacyLoan ? 'legacy' : 'modern',
+        repaymentType,
+        expectedInstallment: expectedRepaymentDetails.installmentAmount,
+        accruedInterest: accruedInterestDetails.totalAccruedInterest
       },
       req.ip,
       isLegacyLoan ? 'LEGACY_GROUP_LOAN_REPAYMENT' : 'GROUP_LOAN_REPAYMENT'
     );
-    logger.info(`Group loan repayment processed: ${groupLoan._id}, Amount: ${totalRepayAmount}, Members: ${repaidMembers.length}, Type: ${isLegacyLoan ? 'legacy' : 'modern'}`);
-    const installmentInfo = groupLoan.installmentAmount ? ` Expected ${groupLoan.loanTerm} installment per group: ${groupLoan.installmentAmount.toLocaleString()}.` : '';
-   
+
+    logger.info(`Group loan repayment processed: ${groupLoan._id}, Amount: ${calculatedTotalRepayAmount}, Frequency: ${finalPaymentFrequency}, RepaymentType: ${repaymentType}, Members: ${repaidMembers.length}`);
+    
+    const installmentInfo = expectedRepaymentDetails.installmentAmount ? 
+      ` Expected ${finalPaymentFrequency.toLowerCase()} installment: ${expectedRepaymentDetails.installmentAmount.toLocaleString()}.` : '';
+
     res.status(200).json({
       success: true,
-      message: `Group loan repayment of ${totalRepayAmount.toLocaleString()} processed successfully for ${repaidMembers.length} members.${validationMessage} Total repaid: ${groupLoan.totalRepaid.toLocaleString()}.${installmentInfo}`,
+      message: `Group loan ${finalPaymentFrequency.toLowerCase()} repayment of ${calculatedTotalRepayAmount.toLocaleString()} processed successfully for ${repaidMembers.length} members.${validationMessage} Total repaid: ${groupLoan.totalRepaid.toLocaleString()}.${installmentInfo}`,
       data: {
         groupLoan: {
           _id: groupLoan._id,
@@ -3364,17 +3332,50 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
           totalRepaid: groupLoan.totalRepaid,
           remainingBalance: groupLoan.remainingBalance,
           installmentsPaid: groupLoan.installmentsPaid,
+          nextDueDate: groupLoan.nextDueDate,
+          paymentFrequency: finalPaymentFrequency,
           isLegacyLoan
         },
         repaymentSummary: {
-          totalAmount: totalRepayAmount,
+          totalAmount: calculatedTotalRepayAmount,
           membersRepaid: repaidMembers.length,
           paymentDate,
           paymentMethod,
+          paymentFrequency: finalPaymentFrequency,
           isInstallment,
-          isLegacyLoan
+          isLegacyLoan,
+          memberRepaymentsUsed: memberRepayments && memberRepayments.length > 0,
+          repaymentType,
+          expectedInstallment: expectedRepaymentDetails.installmentAmount,
+          totalInterest: expectedRepaymentDetails.totalInterest,
+          totalRepayment: expectedRepaymentDetails.totalRepayment,
+          accruedInterest: accruedInterestDetails.totalAccruedInterest
         },
-        memberDetails: repaymentDetails
+        memberDetails: repaymentDetails,
+        // NEW: Add member spreadsheet data
+        memberSpreadsheet: {
+          summary: {
+            totalMembers: memberExpectedRepayments.length,
+            totalExpectedAmount: memberExpectedRepayments.reduce((sum, member) => sum + member.expectedAmount, 0),
+            totalOutstandingPrincipal: memberExpectedRepayments.reduce((sum, member) => sum + member.outstandingPrincipal, 0),
+            totalOutstandingInterest: memberExpectedRepayments.reduce((sum, member) => sum + member.outstandingInterest, 0),
+            paymentFrequency: finalPaymentFrequency,
+            installmentAmount: expectedRepaymentDetails.installmentAmount
+          },
+          members: memberExpectedRepayments.map(member => ({
+            memberId: member.memberId,
+            memberName: member.memberName,
+            loanAccountNo: member.accountNumber,
+            savingsAccountNo: member.savingsAccountNo,
+            expectedRepayment: member.expectedAmount,
+            outstandingPrincipal: member.outstandingPrincipal,
+            outstandingInterest: member.outstandingInterest,
+            currentBalance: member.currentBalance,
+            principalShare: member.principalAmount,
+            interestShare: member.interestAmount,
+            isLegacy: member.isLegacy
+          }))
+        }
       },
     });
   } catch (error) {
@@ -3391,156 +3392,198 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
     await session.endSession();
   }
 });
-// Helper function for legacy group loan repayment (no individual LoanAccounts)
-const processLegacyGroupLoanRepayment = async (
-  groupLoan,
-  totalRepayAmount,
-  isInstallment,
-  paymentDate,
-  userId,
-  repaidMembers,
-  repaymentDetails,
-  session
-) => {
-  // For legacy loans, we might not have individual LoanAccounts
-  // So we track repayment at the group level only or create stub records
- 
-  if (groupLoan.group && groupLoan.group.members) {
-    // Calculate equal share per member for legacy loans
-    const individualRepay = totalRepayAmount / groupLoan.group.members.length;
-   
-    for (const memberCustId of groupLoan.group.members) {
-      try {
-        // Try to find existing loan account for this member
-        let loanAccount = await LoanAccount.findOne({
-          CUST_ID: memberCustId,
-          groupLoan: groupLoan._id
-        }).session(session);
-        if (!loanAccount) {
-          // Get customer details for account name
-          const customer = await Customer.findOne({ CUST_ID: memberCustId }).session(session);
-          const customerName = customer ?
-            `${customer.FIRST_NAME} ${customer.LAST_NAME}`.trim() :
-            `Member ${memberCustId}`;
-          // Create a stub loan account for tracking if none exists
-          // Use realistic estimates based on group loan data
-          const estimatedLoanAmount = (groupLoan.totalAmount / groupLoan.group.members.length) || individualRepay * 10;
-          const estimatedInterest = estimatedLoanAmount * 0.2; // 20% interest estimate
-         
-          loanAccount = new LoanAccount({
-            CUST_ID: memberCustId,
-            ACCT_NM: customerName,
-            ACCT_NO: `LEGACY_${groupLoan.groupCode}_${memberCustId}_${Date.now().toString().slice(-6)}`,
-            LOAN_STATUS: 'ACTIVE',
-            DISBURSEMENT_LIMIT: estimatedLoanAmount,
-            ACTUAL_DISBURSEMENT: estimatedLoanAmount,
-            OUTSTANDING_PRINCIPAL: estimatedLoanAmount,
-            TOTAL_INTEREST: estimatedInterest,
-            TOTAL_REPAYMENT: estimatedLoanAmount + estimatedInterest,
-            repaidAmount: 0,
-            groupLoan: groupLoan._id,
-            isLegacy: true,
-            migratedFrom: 'legacy_system',
-            createdBy: userId,
-            START_DT: groupLoan.disbursedAt || groupLoan.applicationDate || new Date(),
-            MATURITY_DT: groupLoan.repaidAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year from now
-          });
-        }
-        // Update repayment tracking
-        const currentRepaid = loanAccount.repaidAmount || 0;
-        loanAccount.repaidAmount = currentRepaid + individualRepay;
-        loanAccount.OUTSTANDING_PRINCIPAL = Math.max(0, loanAccount.DISBURSEMENT_LIMIT - (loanAccount.repaidAmount - loanAccount.TOTAL_INTEREST));
-       
-        if (isInstallment) {
-          loanAccount.installmentsPaid = (loanAccount.installmentsPaid || 0) + 1;
-        }
-        // Check if fully repaid
-        if (loanAccount.repaidAmount >= loanAccount.TOTAL_REPAYMENT) {
-          loanAccount.LOAN_STATUS = 'REPAID';
-          loanAccount.repaidAt = paymentDate;
-        }
-        await loanAccount.save({ session });
-        repaidMembers.push(loanAccount._id);
-        // Get customer details for response
-        const customer = await Customer.findOne({ CUST_ID: memberCustId }).session(session);
-        repaymentDetails.push({
-          custId: memberCustId,
-          name: customer ? `${customer.FIRST_NAME} ${customer.LAST_NAME}`.trim() : `Member ${memberCustId}`,
-          amount: individualRepay,
-          loanAccountNo: loanAccount.ACCT_NO,
-          newBalance: loanAccount.TOTAL_REPAYMENT - loanAccount.repaidAmount,
-          isLegacy: true
-        });
-      } catch (memberError) {
-        logger.error(`Error processing legacy member ${memberCustId}:`, memberError);
-        // Continue with other members even if one fails
-      }
+
+// ==================== OTHER FUNCTIONS (KEEP ONLY ONE VERSION) ====================
+
+// Add this to your GroupController.js
+export const getGroupLoanPortfolio = asyncHandler(async (req, res) => {
+  try {
+    const {
+      status,
+      branch,
+      groupCode,
+      dateFrom,
+      dateTo,
+      relationshipManager
+    } = req.query;
+
+    // Build filter
+    const filter = {};
+    
+    if (status) filter.status = status;
+    if (branch) filter.branch = Number(branch);
+    if (groupCode) filter.groupCode = { $regex: groupCode, $options: 'i' };
+    if (relationshipManager) {
+      filter.primaryRelationshipManager = { $regex: relationshipManager, $options: 'i' };
     }
-  }
-};
-// Helper function for modern group loan repayment
-const processModernGroupLoanRepayment = async (
-  groupLoan,
-  totalRepayAmount,
-  isInstallment,
-  paymentDate,
-  paymentMethod,
-  transactionReference,
-  userId,
-  repaidMembers,
-  repaymentDetails,
-  session
-) => {
-  // Process repayment for each individual loan account (modern approach)
-  for (const loanAccount of groupLoan.individualLoanAccounts) {
-    if (!['ACTIVE', 'disbursed'].includes(loanAccount.LOAN_STATUS)) {
-      continue; // Skip non-active loans
+    
+    // Date range filter
+    if (dateFrom || dateTo) {
+      filter.applicationDate = {};
+      if (dateFrom) filter.applicationDate.$gte = new Date(dateFrom);
+      if (dateTo) filter.applicationDate.$lte = new Date(dateTo);
     }
-    // Calculate member's share of repayment based on their loan amount
-    const memberShareRatio = loanAccount.DISBURSEMENT_LIMIT / groupLoan.totalAmount;
-    const memberRepayAmount = totalRepayAmount * memberShareRatio;
-    // Update loan account repayment fields
-    const currentRepaid = loanAccount.repaidAmount || 0;
-    const memberTotalRepayable = loanAccount.TOTAL_REPAYMENT || (loanAccount.DISBURSEMENT_LIMIT + (loanAccount.TOTAL_INTEREST || 0));
-   
-    loanAccount.repaidAmount = currentRepaid + memberRepayAmount;
-    loanAccount.OUTSTANDING_PRINCIPAL = Math.max(0, loanAccount.DISBURSEMENT_LIMIT - (loanAccount.repaidAmount - (loanAccount.TOTAL_INTEREST || 0)));
-   
-    // Track installments paid
-    if (isInstallment) {
-      loanAccount.installmentsPaid = (loanAccount.installmentsPaid || 0) + 1;
-    }
-    // Check if individual loan is fully repaid
-    if (loanAccount.repaidAmount >= memberTotalRepayable) {
-      loanAccount.LOAN_STATUS = 'REPAID';
-      loanAccount.repaidAt = paymentDate;
-    }
-    await loanAccount.save({ session });
-    repaidMembers.push(loanAccount._id);
-    repaymentDetails.push({
-      custId: loanAccount.CUST_ID,
-      name: loanAccount.ACCT_NM,
-      amount: memberRepayAmount,
-      loanAccountNo: loanAccount.ACCT_NO,
-      newBalance: memberTotalRepayable - loanAccount.repaidAmount,
-      isLegacy: false
+
+    // Fetch group loans with populated data
+    const groupLoans = await GroupLoan.find(filter)
+      .populate('group', 'groupName groupCode members')
+      .populate('individualLoanAccounts', 'ACCT_NO ACCT_NM OUTSTANDING_PRINCIPAL outstanding_balance')
+      .populate('createdBy', 'name email')
+      .sort({ applicationDate: -1 })
+      .lean();
+
+    // Calculate portfolio summary
+    const summary = {
+      totalLoans: groupLoans.length,
+      totalAmount: groupLoans.reduce((sum, loan) => sum + (loan.totalAmount || 0), 0),
+      totalRepaid: groupLoans.reduce((sum, loan) => sum + (loan.totalRepaid || 0), 0),
+      totalOutstanding: groupLoans.reduce((sum, loan) => sum + (loan.remainingBalance || 0), 0),
+      activeLoans: groupLoans.filter(loan => ['disbursed', 'active'].includes(loan.status)).length,
+      completedLoans: groupLoans.filter(loan => ['repaid', 'closed'].includes(loan.status)).length,
+      overdueLoans: groupLoans.filter(loan => 
+        loan.remainingBalance > 0 && loan.status === 'disbursed'
+      ).length
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Portfolio data retrieved successfully',
+      data: groupLoans,
+      summary: summary
     });
-    // Update repayment schedule if exists and this is an installment
-    if (isInstallment) {
-      await updateRepaymentSchedule(loanAccount, memberRepayAmount, paymentDate, session);
+
+  } catch (error) {
+    console.error('Error fetching portfolio data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch portfolio data',
+      error: error.message
+    });
+  }
+});
+
+// Remove duplicate function definitions below - only keep the ones above
+
+// Helper function to update repayment schedule
+// Helper function to update repayment schedule
+const updateRepaymentSchedule = async (loanAccount, amount, paymentDate, session) => {
+  try {
+    const schedule = await RepaymentSchedule.findOne({ LOAN_ACCOUNT_ID: loanAccount._id }).session(session);
+    
+    if (!schedule) {
+      console.log(`No repayment schedule found for loan account: ${loanAccount.ACCT_NO}`);
+      return;
     }
-    // Create repayment transaction record
-    await createRepaymentTransaction(
-      loanAccount,
-      memberRepayAmount,
-      paymentMethod,
-      transactionReference,
-      userId,
-      groupLoan.group.branch,
-      session
+
+    // Find the next pending installment
+    const pendingInstallment = schedule.installments.find(inst => 
+      inst.status === 'PENDING' || inst.status === 'DUE'
     );
+
+    if (!pendingInstallment) {
+      console.log(`No pending installments found for loan account: ${loanAccount.ACCT_NO}`);
+      return;
+    }
+
+    const installmentNo = pendingInstallment.installmentNo;
+    
+    // Update the installment directly
+    const installment = schedule.installments.find(inst => inst.installmentNo === installmentNo);
+    
+    if (installment) {
+      // Calculate allocation between principal and interest
+      const principalAmount = Math.min(amount, installment.principal);
+      const interestAmount = Math.min(amount - principalAmount, installment.interest);
+      
+      // Update installment status and payment details
+      installment.status = amount >= installment.totalPayment ? 'PAID' : 'PARTIAL';
+      installment.amountPaid = (installment.amountPaid || 0) + amount;
+      installment.principalPaid = (installment.principalPaid || 0) + principalAmount;
+      installment.interestPaid = (installment.interestPaid || 0) + interestAmount;
+      installment.paymentDate = paymentDate;
+      
+      // Update remaining balance
+      if (installment.remainingBalance !== undefined) {
+        installment.remainingBalance = Math.max(0, installment.remainingBalance - amount);
+      }
+
+      // Update next payment reference if this installment is fully paid
+      if (installment.status === 'PAID') {
+        const nextInstallment = schedule.installments.find(inst => 
+          inst.installmentNo === installmentNo + 1 && 
+          (inst.status === 'PENDING' || inst.status === 'DUE')
+        );
+        
+        if (nextInstallment) {
+          schedule.nextPayment = {
+            installmentNo: nextInstallment.installmentNo,
+            dueDate: nextInstallment.dueDate,
+            amountDue: nextInstallment.totalPayment
+          };
+        } else {
+          schedule.nextPayment = null; // No more payments
+        }
+      }
+
+      await schedule.save({ session });
+      console.log(`✅ Updated repayment schedule for installment ${installmentNo}, loan: ${loanAccount.ACCT_NO}`);
+    }
+  } catch (error) {
+    logger.error(`Error updating repayment schedule for loan ${loanAccount.ACCT_NO}:`, error);
+    // Don't fail the entire repayment if schedule update fails
   }
 };
+
+// Helper function to create repayment transaction
+const createRepaymentTransaction = async (loanAccount, amount, paymentMethod, reference, userId, branchId, session) => {
+  try {
+    // Create transaction with proper schema fields
+    const transaction = new Transaction({
+      // Core required fields
+      ACCT_NO: loanAccount.ACCT_NO,
+      ACCT_ID: loanAccount._id.toString(),
+      BU_ID: branchId || loanAccount.BU_ID || 1,
+      CUST_ID: loanAccount.CUST_ID,
+      ACCT_NM: loanAccount.ACCT_NM,
+      AMOUNT: amount,
+      TRANSACTIONDATE: new Date(),
+      TRANSACTION_TYPE: 'CREDIT',
+      
+      // Additional required fields
+      TRANSACTION_ID: 0, // Will be auto-generated by pre-save hook
+      EVENT_ID: 0, // Will be auto-generated by pre-save hook
+      TRAN_JOURNAL_ID: '', // Will be auto-generated by pre-save hook
+      REFERENCE: reference || `REPAY_${loanAccount.ACCT_NO}_${Date.now()}`,
+      
+      // Descriptive fields
+      description: `Loan repayment for ${loanAccount.ACCT_NM}`,
+      currency: 'NGN',
+      createdBy: userId.toString(),
+      status: 'COMPLETED',
+      
+      // Branch information
+      branch: branchId || loanAccount.branch || 1,
+      
+      // Metadata
+      metadata: {
+        purpose: 'LOAN_REPAYMENT',
+        loanAccountNo: loanAccount.ACCT_NO,
+        customerId: loanAccount.CUST_ID,
+        paymentMethod: paymentMethod,
+        repaymentType: 'GROUP_LOAN'
+      }
+    });
+
+    await transaction.save({ session });
+    console.log(`✅ Created repayment transaction for loan: ${loanAccount.ACCT_NO}, Amount: ${amount}`);
+    return transaction;
+  } catch (error) {
+    logger.error(`Error creating repayment transaction for loan ${loanAccount.ACCT_NO}:`, error);
+    // Don't fail the entire repayment if transaction creation fails
+    return null;
+  }
+};
+
 // Get group loan by ID - Updated with proper population
 export const getGroupLoan = asyncHandler(async (req, res) => {
   const { groupLoanId } = req.params;
@@ -3599,60 +3642,7 @@ export const getGroupLoan = asyncHandler(async (req, res) => {
     data: groupLoan,
   });
 });
-// Helper function to update repayment schedule
-const updateRepaymentSchedule = async (loanAccount, amount, paymentDate, session) => {
-  try {
-    const schedule = await RepaymentSchedule.findOne({ LOAN_ACCOUNT_ID: loanAccount._id }).session(session);
-    if (schedule && schedule.nextPayment) {
-      const installmentNo = schedule.nextPayment.installmentNo;
-      const installment = schedule.installments.find(inst => inst.installmentNo === installmentNo);
-     
-      if (installment) {
-        const paymentData = {
-          amount: amount,
-          principal: parseFloat(installment.principal.toString()),
-          interest: parseFloat(installment.interest.toString()),
-          paymentDate,
-          isEarlyPayment: new Date(installment.dueDate) > paymentDate,
-          status: 'PAID'
-        };
-       
-        schedule.updateInstallmentPayment(installmentNo, paymentData);
-        await schedule.save({ session });
-      }
-    }
-  } catch (error) {
-    logger.error(`Error updating repayment schedule for loan ${loanAccount.ACCT_NO}:`, error);
-    // Don't fail the entire repayment if schedule update fails
-  }
-};
-// Helper function to create repayment transaction
-const createRepaymentTransaction = async (loanAccount, amount, paymentMethod, reference, userId, branchId, session) => {
-  try {
-    const transaction = new Transaction({
-      account_number: loanAccount.ACCT_NO,
-      transaction_type: 'CREDIT',
-      amount: amount,
-      description: `Loan repayment for ${loanAccount.ACCT_NM}`,
-      status: 'completed',
-      payment_method: paymentMethod,
-      reference: reference || `REPAY_${loanAccount.ACCT_NO}_${Date.now()}`,
-      createdBy: userId,
-      branch: branchId,
-      transaction_date: new Date(),
-      metadata: {
-        loanAccount: loanAccount.ACCT_NO,
-        customerId: loanAccount.CUST_ID,
-        repaymentType: 'GROUP_LOAN'
-      }
-    });
-    await transaction.save({ session });
-    return transaction;
-  } catch (error) {
-    logger.error(`Error creating repayment transaction for loan ${loanAccount.ACCT_NO}:`, error);
-    // Don't fail the entire repayment if transaction creation fails
-  }
-};
+
 // Delete group
 export const deleteGroup = asyncHandler(async (req, res) => {
   const { groupId } = req.params;
@@ -3693,6 +3683,7 @@ export const deleteGroup = asyncHandler(async (req, res) => {
     message: 'Group deleted successfully.',
   });
 });
+
 export default {
   createGroup,
   getGroups,

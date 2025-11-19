@@ -52,6 +52,7 @@ export const getProductTypeFallback = (prodId) => {
     '307': 'CREDIT CARD',
     '308': 'LINE OF CREDIT',
     '309': 'SME LOAN',
+    '400': 'GROUP_LOAN',
     '500': 'SAVINGS'
   };
   

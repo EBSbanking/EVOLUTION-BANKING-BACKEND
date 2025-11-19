@@ -99,7 +99,7 @@ const loanAccountSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator: function(v) {
-          const validProdIds = [1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399]; // ADDED: 1 for group loans
+          const validProdIds = [1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399, 400]; // ADDED: 1 for group loans
           return validProdIds.includes(v);
         },
         message: props => `${props.value} is not a valid PROD_ID!`

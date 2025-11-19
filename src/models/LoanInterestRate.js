@@ -82,7 +82,7 @@ const LoanInterestRateSchema = new mongoose.Schema({
         GL_ACCOUNT: {
             type: String,
             required: true,
-            default: '1-02-100-105-103-1'  // Default interest receivable GL
+            default: ''  // Default interest receivable GL
         },
         POSTING_FREQUENCY: {
             type: String,
