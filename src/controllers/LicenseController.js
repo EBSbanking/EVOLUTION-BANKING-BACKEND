@@ -1,6 +1,21 @@
 import CryptoJS from 'crypto-js';
 import License from '../models/License.js';
 
+import path from 'path';
+import fs from 'fs'
+
+// Calculate the absolute path to the license file.
+// The '../' moves up from 'backend' to 'app' directory,
+// then down into 'frontend/build/license'.
+const LICENSE_FILE_PATH = path.join(
+  __dirname, 
+  '..', // Move up from /backend/routes (or wherever script is) to /app
+  'CORE_X_FRONTEND', 
+  'build', 
+  'license', 
+  'license.txt'
+);
+
 // ✅ Generate license and return downloadable .txt
 export const generateLicense = async (req, res) => {
   try {
@@ -133,6 +148,7 @@ export const validateLicenseFile = async (req, res) => {
       },
       { upsert: true }
     );
+    fs.writeFileSync(LICENSE_FILE_PATH, encrypted_key, 'utf8');
 
     return res.status(200).json({
       message: 'License is valid',
