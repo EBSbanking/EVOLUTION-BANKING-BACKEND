@@ -1,9 +1,12 @@
 import CryptoJS from 'crypto-js';
 import License from '../models/License.js';
-
 import path from 'path';
 import fs from 'fs'
+import { fileURLToPath } from 'url'; // 1. IMPORT fileURLToPath
 
+// --- Define replacements for __filename and __dirname ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 // Calculate the absolute path to the license file.
 // The '../' moves up from 'backend' to 'app' directory,
 // then down into 'frontend/build/license'.
