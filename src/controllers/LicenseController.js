@@ -13,6 +13,8 @@ const __dirname = path.dirname(__filename);
 const LICENSE_FILE_PATH = path.join(
   __dirname, 
   '..', // Move up from /backend/routes (or wherever script is) to /app
+  '..', // Move up from /backend/routes (or wherever script is) to /app
+  '..', // Move up from /backend/routes (or wherever script is) to /app
   'CORE_X_FRONTEND', 
   'build', 
   'license', 
