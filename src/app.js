@@ -47,8 +47,9 @@ const limiter = rateLimit({
   skip: (req) => {
     const isDev = process.env.NODE_ENV === 'development';
     const isLogin = req.path === '/api/users/users/login';
+    const isLicense = req.path === '/api/license/validate-file';
     logger.info('Rate limit check', { path: req.path, isDev, isLogin, skip: isDev || isLogin });
-    return isDev || isLogin;
+    return isDev || isLogin || isLicense;
   }
 });
 

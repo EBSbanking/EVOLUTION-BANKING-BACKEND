@@ -1,5 +1,25 @@
 import CryptoJS from 'crypto-js';
 import License from '../models/License.js';
+import path from 'path';
+import fs from 'fs'
+import { fileURLToPath } from 'url'; // 1. IMPORT fileURLToPath
+
+// --- Define replacements for __filename and __dirname ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// Calculate the absolute path to the license file.
+// The '../' moves up from 'backend' to 'app' directory,
+// then down into 'frontend/build/license'.
+const LICENSE_FILE_PATH = path.join(
+  __dirname, 
+  '..', // Move up from /backend/routes (or wherever script is) to /app
+  '..', // Move up from /backend/routes (or wherever script is) to /app
+  '..', // Move up from /backend/routes (or wherever script is) to /app
+  'CORE_X_FRONTEND', 
+  'build', 
+  'license', 
+  'license.txt'
+);
 
 // ✅ Generate license and return downloadable .txt
 export const generateLicense = async (req, res) => {
@@ -112,13 +132,13 @@ export const validateLicenseFile = async (req, res) => {
     // Check if license exists and has been used
     const existing = await License.findOne({ encrypted_key });
 
-    if (existing && existing.is_used) {
-      return res.status(409).json({
-        message: 'This license key has already been used. Please acquire a new license.',
-        issued_to: existing.issued_to,
-        used_at: existing.used_at
-      });
-    }
+    // if (existing && existing.is_used) {
+    //   return res.status(409).json({
+    //     message: 'This license key has already been used. Please acquire a new license.',
+    //     issued_to: existing.issued_to,
+    //     used_at: existing.used_at
+    //   });
+    // }
 
     // Save or update usage
     await License.updateOne(
@@ -133,6 +153,7 @@ export const validateLicenseFile = async (req, res) => {
       },
       { upsert: true }
     );
+    fs.writeFileSync(LICENSE_FILE_PATH, encrypted_key, 'utf8');
 
     return res.status(200).json({
       message: 'License is valid',
