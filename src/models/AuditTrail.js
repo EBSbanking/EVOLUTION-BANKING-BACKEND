@@ -1,3 +1,4 @@
+// models/AuditTrail.js
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
 
@@ -41,7 +42,7 @@ const auditTrailSchema = new mongoose.Schema(
     ip_address: { 
       type: String, 
       required: true, 
-      alias: 'ipAddress' 
+      alias: 'IP_ADDRESS' 
     },
     timestamp: { 
       type: Date, 
@@ -50,11 +51,13 @@ const auditTrailSchema = new mongoose.Schema(
     },
     entity_type: { 
       type: String, 
-      default: 'general' 
+      required: true,
+      alias: 'ENTITY_TYPE'
     },
     entity_id: { 
-      type: mongoose.Schema.Types.Mixed, // CHANGED: Now accepts any type
-      default: null 
+      type: mongoose.Schema.Types.Mixed,
+      required: true,
+      alias: 'ENTITY_ID'
     },
     status: { 
       type: String, 
@@ -62,16 +65,20 @@ const auditTrailSchema = new mongoose.Schema(
       default: 'SUCCESS' 
     },
     description: { 
-      type: String 
+      type: String,
+      alias: 'DESCRIPTION'
     },
     reference_no: { 
-      type: String 
+      type: String,
+      alias: 'REFERENCE_NO'
     },
     account_no: { 
-      type: String 
+      type: String,
+      alias: 'ACCOUNT_NO'
     },
     additional_info: { 
-      type: mongoose.Schema.Types.Mixed 
+      type: mongoose.Schema.Types.Mixed,
+      alias: 'ADDITIONAL_INFO'
     },
   },
   {
@@ -94,14 +101,6 @@ auditTrailSchema.virtual('updatedAt_WAT').get(function () {
   return moment(this.updatedAt).tz('Africa/Lagos').format();
 });
 
-// // Indexes
-// auditTrailSchema.index({ event_id: 1 });
-// auditTrailSchema.index({ user_id: 1 });
-// auditTrailSchema.index({ event_type: 1 });
-// auditTrailSchema.index({ timestamp: -1 });
-// auditTrailSchema.index({ account_no: 1 });
-// auditTrailSchema.index({ entity_id: 1 }); // Added index for entity_id
-
 // Pre-save hook to generate event_id if not provided
 auditTrailSchema.pre('save', async function (next) {
   if (!this.event_id) {
@@ -109,7 +108,6 @@ auditTrailSchema.pre('save', async function (next) {
       const lastAudit = await this.constructor.findOne().sort({ event_id: -1 });
       this.event_id = lastAudit && lastAudit.event_id ? lastAudit.event_id + 1 : 1;
     } catch (error) {
-      // Fallback: use timestamp if database query fails
       this.event_id = Date.now();
     }
   }
@@ -118,7 +116,84 @@ auditTrailSchema.pre('save', async function (next) {
 
 const AuditTrail = mongoose.models.AuditTrail || mongoose.model('AuditTrail', auditTrailSchema);
 
-// Enhanced audit logging function with better error handling
+// Simple, clean addAuditTrail function that matches your usage
+export const addAuditTrail = async (auditData, session = null) => {
+  try {
+    const {
+      EVENT_TYPE,
+      USER_ID,
+      ACTION,
+      NEW_VALUE,
+      OLD_VALUE,
+      IP_ADDRESS,
+      ENTITY_ID,
+      ENTITY_TYPE,
+      STATUS,
+      DESCRIPTION,
+      REFERENCE_NO,
+      ACCOUNT_NO
+    } = auditData;
+
+    // Validate required fields
+    if (!EVENT_TYPE || !USER_ID || !ACTION || !ENTITY_ID || !ENTITY_TYPE) {
+      console.warn('Skipping audit trail: missing required fields', {
+        EVENT_TYPE, USER_ID, ACTION, ENTITY_ID, ENTITY_TYPE
+      });
+      return null;
+    }
+
+    // Generate event_id
+    let event_id;
+    try {
+      const lastAudit = await AuditTrail.findOne().sort({ event_id: -1 });
+      event_id = lastAudit && lastAudit.event_id ? lastAudit.event_id + 1 : 1;
+    } catch (error) {
+      event_id = Date.now();
+    }
+
+    const auditTrail = new AuditTrail({
+      event_id,
+      event_type: EVENT_TYPE,
+      user_id: USER_ID,
+      action: ACTION,
+      new_value: NEW_VALUE || {},
+      old_value: OLD_VALUE || null,
+      ip_address: String(IP_ADDRESS || '127.0.0.1'),
+      entity_id: ENTITY_ID,
+      entity_type: ENTITY_TYPE,
+      status: STATUS || 'SUCCESS',
+      description: DESCRIPTION,
+      reference_no: REFERENCE_NO,
+      account_no: ACCOUNT_NO,
+      timestamp: new Date()
+    });
+
+    const options = session ? { session } : {};
+    await auditTrail.save(options);
+    
+    console.log('✅ Audit trail created:', {
+      event_type: EVENT_TYPE,
+      entity_type: ENTITY_TYPE,
+      entity_id: ENTITY_ID
+    });
+    
+    return auditTrail;
+  } catch (error) {
+    console.error('❌ Error creating audit trail:', {
+      error: error.message,
+      auditData: {
+        EVENT_TYPE: auditData.EVENT_TYPE,
+        ENTITY_TYPE: auditData.ENTITY_TYPE,
+        ENTITY_ID: auditData.ENTITY_ID
+      }
+    });
+    return null;
+  }
+};
+
+// Add this to your AuditTrail.js file (at the bottom, before export default)
+
+// Alternative function with different parameter order for backward compatibility
 export const logAuditTrail = async (
   entity_type,
   entity_id,
@@ -130,47 +205,20 @@ export const logAuditTrail = async (
   event_type = 'GENERAL',
   additional_info = null
 ) => {
-  try {
-    // Generate event_id first to ensure it's always available
-    let event_id;
-    try {
-      const lastAudit = await AuditTrail.findOne().sort({ event_id: -1 });
-      event_id = lastAudit && lastAudit.event_id ? lastAudit.event_id + 1 : 1;
-    } catch (error) {
-      // Fallback if we can't query the database
-      event_id = Date.now();
-    }
-
-    const auditLog = new AuditTrail({
-      entity_type: entity_type || 'general',
-      entity_id: entity_id, // Can now be string, ObjectId, number, or any value
-      user_id: user_id || 'system',
-      action: action || 'UNKNOWN',
-      old_value: old_value,
-      new_value: new_value || {}, // Ensure new_value is never null
-      ip_address: ip_address || '0.0.0.0',
-      event_type: event_type,
-      additional_info: additional_info,
-      timestamp: new Date(),
-      event_id: event_id // Explicitly set event_id to avoid validation errors
-    });
-
-    await auditLog.save();
-    return auditLog;
-  } catch (error) {
-    console.error('❌ Error logging audit trail:', {
-      error: error.message,
-      entity_type,
-      entity_id,
-      user_id,
-      action,
-      event_type
-    });
-    
-    // Don't throw the error to prevent breaking the application
-    // Just log it and return null so the main application continues
-    return null;
-  }
+  return addAuditTrail({
+    EVENT_TYPE: event_type,
+    USER_ID: user_id,
+    ACTION: action,
+    NEW_VALUE: new_value,
+    OLD_VALUE: old_value,
+    IP_ADDRESS: ip_address,
+    ENTITY_ID: entity_id,
+    ENTITY_TYPE: entity_type,
+    STATUS: 'SUCCESS',
+    DESCRIPTION: additional_info?.description,
+    REFERENCE_NO: additional_info?.reference_no,
+    ACCOUNT_NO: additional_info?.account_no
+  });
 };
 
 export default AuditTrail;

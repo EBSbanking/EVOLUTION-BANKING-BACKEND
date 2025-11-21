@@ -1,9 +1,16 @@
 import express from 'express';
-import { createRootSubfolder, fetchSubfolders } from '../controllers/SubfolderController.js';
+import {
+  createRootSubfolder,
+  createSimpleRootSubfolder,
+  createSubfolderWithGLAccount,
+  getAllSubfolders,
+  getSubfolderById,
+  fetchSubfolders
+} from '../controllers/SubfolderController.js';
 
 const router = express.Router();
 
-// Route to create a new subfolder
+// Route to create a new subfolder (original - requires GL_ACCT_NO)
 router.post('/create', async (req, res) => {
   try {
     const { transactionId, GL_ACCT_NO, createdBy, description } = req.body;
@@ -19,10 +26,16 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// Route to fetch subfolders (optionally filtered by parentId)
+// Create simple root subfolder (no GL_ACCT_NO required)
+router.post('/create-simple-root', createSimpleRootSubfolder);
+
+// Create subfolder with GL account integration
+router.post('/create-with-gl-account', createSubfolderWithGLAccount);
+
+// Route to fetch subfolders (optionally filtered by parentId) - original endpoint
 router.get('/fetch', async (req, res) => {
   try {
-    const { parentId } = req.query; // Assuming parentId is passed as a query parameter
+    const { parentId } = req.query;
     const subfolders = await fetchSubfolders(parentId);
     return res.status(200).json(subfolders);
   } catch (error) {
@@ -30,5 +43,11 @@ router.get('/fetch', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
+// Get all subfolders (new endpoint)
+router.get('/', getAllSubfolders);
+
+// Get subfolder by ID
+router.get('/:id', getSubfolderById);
 
 export default router;

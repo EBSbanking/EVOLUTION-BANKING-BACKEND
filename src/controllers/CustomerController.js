@@ -1385,3 +1385,294 @@ export const deactivateCustomer = async (req, res) => {
     });
   }
 };
+
+// Add this search function to your CustomerController.js
+
+export const searchCustomers = async (req, res) => {
+  try {
+    const { 
+      search, 
+      firstName, 
+      lastName, 
+      name,
+      page = 1, 
+      limit = 10,
+      status 
+    } = req.query;
+    
+    const userId = req.user_id || 'system';
+    const ipAddress = req.ip_address || '0.0.0.0';
+    
+    let query = {};
+
+    // Add status filter if provided
+    if (status) {
+      query.REC_ST = status;
+    }
+
+    // Build search conditions
+    let searchConditions = [];
+
+    // Option 1: General search term (searches first name, last name, and full name)
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      searchConditions.push(
+        { FIRST_NAME: searchRegex },
+        { LAST_NAME: searchRegex },
+        { CUST_NM: searchRegex },
+        { MIDDLE_NAME: searchRegex }
+      );
+    }
+
+    // Option 2: Specific first name search
+    if (firstName) {
+      const firstNameRegex = new RegExp(firstName, 'i');
+      searchConditions.push({ FIRST_NAME: firstNameRegex });
+    }
+
+    // Option 3: Specific last name search
+    if (lastName) {
+      const lastNameRegex = new RegExp(lastName, 'i');
+      searchConditions.push({ LAST_NAME: lastNameRegex });
+    }
+
+    // Option 4: Specific full name search
+    if (name) {
+      const nameRegex = new RegExp(name, 'i');
+      searchConditions.push({ CUST_NM: nameRegex });
+    }
+
+    // If we have search conditions, add them to the query
+    if (searchConditions.length > 0) {
+      query.$or = searchConditions;
+    }
+
+    // If no search parameters provided, return all customers (with optional status filter)
+    const customers = await Customer.find(query)
+      .sort({ CREATE_DT: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('nextOfKin')
+      .select('-__v'); // Exclude version key
+
+    const total = await Customer.countDocuments(query);
+
+    // Self-audit the search query
+    auditLogger.info('Audit Event', {
+      entity_type: 'customer_search',
+      entity_id: null,
+      user_id: userId,
+      action: 'search_customers',
+      old_value: null,
+      new_value: { 
+        search_term: search,
+        first_name: firstName,
+        last_name: lastName,
+        full_name: name,
+        status: status,
+        count: customers.length,
+        pagination: { page, limit, total }
+      },
+      ip_address: ipAddress,
+      event_type: 'SEARCH_SUCCESS',
+      outcome: 'success'
+    });
+
+    res.status(200).json({
+      success: true,
+      data: customers,
+      search_parameters: {
+        search_term: search,
+        first_name: firstName,
+        last_name: lastName,
+        full_name: name,
+        status: status
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error searching customers:', error);
+    
+    // Audit failure
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_search',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'search_customers',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'SEARCH_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Error searching customers', 
+      error: error.message 
+    });
+  }
+};
+
+// Advanced search with multiple criteria
+export const advancedSearchCustomers = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      bvn,
+      nin,
+      status,
+      riskClass,
+      isPEP,
+      fromDate,
+      toDate,
+      page = 1,
+      limit = 10
+    } = req.query;
+
+    const userId = req.user_id || 'system';
+    const ipAddress = req.ip_address || '0.0.0.0';
+
+    let query = {};
+
+    // Name filters
+    if (firstName) {
+      query.FIRST_NAME = new RegExp(firstName, 'i');
+    }
+    if (lastName) {
+      query.LAST_NAME = new RegExp(lastName, 'i');
+    }
+
+    // Contact filters
+    if (email) {
+      query.EMAIL_ADDRESS = new RegExp(email, 'i');
+    }
+    if (phone) {
+      query.PHONE_NO = new RegExp(phone, 'i');
+    }
+
+    // Identification filters
+    if (bvn) {
+      query.BVN = bvn;
+    }
+    if (nin) {
+      query.NIN = nin;
+    }
+
+    // Status and risk filters
+    if (status) {
+      query.REC_ST = status;
+    }
+    if (riskClass) {
+      query.RISK_CLASS = riskClass;
+    }
+    if (isPEP !== undefined) {
+      query.IS_PEP = isPEP === 'true';
+    }
+
+    // Date range filter
+    if (fromDate || toDate) {
+      query.CREATE_DT = {};
+      if (fromDate) {
+        query.CREATE_DT.$gte = new Date(fromDate);
+      }
+      if (toDate) {
+        query.CREATE_DT.$lte = new Date(toDate);
+      }
+    }
+
+    const customers = await Customer.find(query)
+      .sort({ CREATE_DT: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('nextOfKin')
+      .select('-__v');
+
+    const total = await Customer.countDocuments(query);
+
+    // Audit the advanced search
+    auditLogger.info('Audit Event', {
+      entity_type: 'customer_advanced_search',
+      entity_id: null,
+      user_id: userId,
+      action: 'advanced_search_customers',
+      old_value: null,
+      new_value: {
+        filters: {
+          firstName,
+          lastName,
+          email,
+          phone,
+          bvn,
+          nin,
+          status,
+          riskClass,
+          isPEP,
+          fromDate,
+          toDate
+        },
+        count: customers.length,
+        pagination: { page, limit, total }
+      },
+      ip_address: ipAddress,
+      event_type: 'ADVANCED_SEARCH_SUCCESS',
+      outcome: 'success'
+    });
+
+    res.status(200).json({
+      success: true,
+      data: customers,
+      filters_applied: {
+        firstName,
+        lastName,
+        email,
+        phone,
+        bvn,
+        nin,
+        status,
+        riskClass,
+        isPEP,
+        fromDate,
+        toDate
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in advanced customer search:', error);
+    
+    auditLogger.error('Audit Event', {
+      entity_type: 'customer_advanced_search',
+      entity_id: null,
+      user_id: req.user_id || 'system',
+      action: 'advanced_search_customers',
+      old_value: null,
+      new_value: null,
+      ip_address: req.ip || 'unknown',
+      event_type: 'ADVANCED_SEARCH_ERROR',
+      outcome: 'failure',
+      error: error.message
+    });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error in advanced customer search',
+      error: error.message
+    });
+  }
+};

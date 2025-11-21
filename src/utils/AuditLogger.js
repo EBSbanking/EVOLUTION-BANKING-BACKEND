@@ -17,6 +17,8 @@ class AuditTrailTransport extends winston.Transport {
       return callback(null, info);
     }
 
+    
+
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) { // 1 = connected
       console.warn('⚠️ MongoDB not connected, skipping audit log');
@@ -29,6 +31,7 @@ class AuditTrailTransport extends winston.Transport {
     const {
       entity_type,
       entity_id,
+      branch,
       user_id,
       action,
       old_value,
@@ -56,6 +59,7 @@ class AuditTrailTransport extends winston.Transport {
       modelLogAuditTrail(
         entity_type,
         entity_id,
+        branch,
         user_id,
         action,
         old_value,

@@ -1,7 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 
-// Define the user schema
 const userSchema = new mongoose.Schema({
   // Legacy fields to match existing data
   id: {
@@ -18,13 +17,13 @@ const userSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true,
-    index: true
+    // REMOVED: index: true
   },
   
   // Modern fields
   user_name: {
     type: String,
-    required: false, // Changed to false for legacy compatibility
+    required: false,
     unique: true,
     sparse: true
   },
@@ -56,7 +55,7 @@ const userSchema = new mongoose.Schema({
   job_title: String,
   email: {
     type: String,
-    required: false, // Made optional for legacy users
+    required: false,
     unique: true,
     sparse: true,
     match: /.+\@.+\..+/,
@@ -68,28 +67,26 @@ const userSchema = new mongoose.Schema({
   },
   responsibility_centre: String,
   
-  // ✅ FIXED: MULTI-ROLE SUPPORT - Changed to Number array to match your data
   roles: [{
-    type: Number, // Changed from ObjectId to Number
+    type: Number,
     default: []
   }],
   
-  // ✅ FIXED: PRIMARY ROLE - Changed to Number
   primary_role: {
-    type: Number, // Changed from ObjectId to Number
+    type: Number,
     sparse: true
   },
   
   // Legacy compatibility
   BU_ROLE_ID: {
-    type: Number, // Changed from ObjectId to Number
+    type: Number,
     sparse: true
   },
   
   primary_business_role: {
     type: String,
-    required: false, // Changed to false for legacy compatibility
-    default: 'Staff' // Default value for legacy users
+    required: false,
+    default: 'Staff'
   },
   start_date: Date,
   expiry_date: Date,
@@ -218,7 +215,7 @@ const userSchema = new mongoose.Schema({
     }
   }],
 
-  // ✅ ADDED: Legacy fields for migration
+  // Legacy fields for migration
   utype: {
     type: String,
     sparse: true

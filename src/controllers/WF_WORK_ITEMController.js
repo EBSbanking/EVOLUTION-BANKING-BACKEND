@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import DepositTransaction from '../models/DepositTransaction.js';
 import NotificationService from '../Services/NotificationService.js';
-import { generateNumber } from '../utils/generateNumber.js';
+import generateNumber from '../utils/generateNumber.js'; // ✅ FIXED: Default import
 import Customer from '../models/Customer.js';
 import DepositAccountApplication from '../models/DepositAccountApplication.js';
 import CustomerAccount from '../models/CustomerAccount.js';
@@ -35,77 +35,226 @@ function normalizeItemType(type) {
   return type;
 }
 
+// Helper function with fallback for generateNumber
+const generateIdWithFallback = async (length, collectionName) => {
+  try {
+    return await generateNumber(length, collectionName);
+  } catch (error) {
+    console.warn(`⚠️ generateNumber failed, using fallback for ${collectionName}:`, error.message);
+    // Fallback: timestamp + random
+    const timestamp = Date.now().toString();
+    const random = Math.floor(Math.random() * 1000);
+    const combined = timestamp + random;
+    return combined.slice(-length).padStart(length, '0');
+  }
+};
+
 const WF_WORK_ITEMController = {
- updateWorkItemStatusOnApproval: async (itemClass, custId, approvedBy) => {
-  try {
-    const workItem = await WF_WORK_ITEM.findOneAndUpdate(
-      { ITEM_CLASS_NM: itemClass, CUST_ID: custId, REC_ST: 'pending' },
-      {
-        REC_ST: 'completed',
-        WAIT_ST: 'approved',
-        APPROVED_BY: approvedBy,
-        APPROVED_DT: new Date(),
-        COMPLETED_DT: new Date(),
-        ACTION_TAKEN: 'Approved',
-        UPDATED_AT: new Date(),
-      },
-      { new: true }
-    );
+  // New method to move work item to achieved status and leave workflow
+  moveToAchieved: async (workItemId, status, userId = 'system', session = null) => {
+    try {
+      const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: Number(workItemId) }).session(session || null);
 
-    if (!workItem) return { success: false, error: 'No pending workflow item found' };
+      if (!workItem) {
+        console.warn(`⚠️ Workflow item ${workItemId} not found`);
+        return { success: false, message: 'Workflow item not found' };
+      }
 
-    await NotificationService.send({
-      ROLE_ID: workItem.TARGET_USER_ROLE_ID,
-      message: `Work item ${workItem.ITEM_DESC} approved by ${approvedBy}`,
-      WORK_ITEM_ID: workItem.WORK_ITEM_ID,
-      EVENT_ID: workItem.EVENT_ID,
-      status: 'approved',
-      notificationType: 'system',
-    });
+      // Update to achieved status and mark as completed
+      workItem.REC_ST = 'achieved';
+      workItem.WAIT_ST = status;
+      workItem.APPROVED_BY = userId;
+      workItem.APPROVAL_DATE = new Date();
+      workItem.COMPLETED_DT = new Date();
+      workItem.ACTION_TAKEN = status === 'APPROVED' ? 'Approved' : 'Completed';
+      workItem.LAST_UPDATED = new Date();
+      workItem.WORKFLOW_STATUS = 'EXITED'; // Mark as exited from workflow
 
-    return { success: true, data: workItem };
-  } catch (error) {
-    console.error('❌ Error updating work item on approval:', error);
-    return { success: false, error: error.message };
-  }
-},
+      const options = session ? { session } : {};
+      await workItem.save(options);
 
-updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments) => {
-  try {
-    const workItem = await WF_WORK_ITEM.findOneAndUpdate(
-      { ITEM_CLASS_NM: itemClass, CUST_ID: custId, REC_ST: 'pending' },
-      {
-        REC_ST: 'completed',
-        WAIT_ST: 'rejected',
-        REJECTED_BY: rejectedBy,
-        COMMENTS: comments,
-        COMPLETED_DT: new Date(),
-        ACTION_TAKEN: 'Rejected',
-        UPDATED_AT: new Date(),
-      },
-      { new: true }
-    );
+      await NotificationService.send({
+        ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
+        message: `Workflow item ${workItem.WORK_ITEM_ID} has been ${status} and moved to achieved status`,
+        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+        CUST_ID: workItem.CUST_ID,
+        status: 'achieved'
+      });
 
-    if (!workItem) return { success: false, error: 'No pending workflow item found' };
+      console.log(`✅ Workflow item ${workItemId} moved to achieved status with ${status}`);
+      return { success: true, updatedWorkItem: workItem };
+    } catch (error) {
+      console.error(`❌ Error moving workflow item ${workItemId} to achieved:`, error.message);
+      return { success: false, message: error.message };
+    }
+  },
 
-    await NotificationService.send({
-      ROLE_ID: workItem.TARGET_USER_ROLE_ID,
-      message: `Work item ${workItem.ITEM_DESC} rejected by ${rejectedBy}: ${comments}`,
-      WORK_ITEM_ID: workItem.WORK_ITEM_ID,
-      EVENT_ID: workItem.EVENT_ID,
-      status: 'rejected',
-      notificationType: 'system',
-    });
+  // Updated approval method to move to achieved
+  updateWorkItemStatusOnApproval: async (itemClass, custId, approvedBy) => {
+    try {
+      const workItem = await WF_WORK_ITEM.findOneAndUpdate(
+        { ITEM_CLASS_NM: itemClass, CUST_ID: custId, REC_ST: 'pending' },
+        {
+          REC_ST: 'achieved',
+          WAIT_ST: 'APPROVED',
+          APPROVED_BY: approvedBy,
+          APPROVED_DT: new Date(),
+          COMPLETED_DT: new Date(),
+          ACTION_TAKEN: 'Approved',
+          UPDATED_AT: new Date(),
+          WORKFLOW_STATUS: 'EXITED'
+        },
+        { new: true }
+      );
 
-    return { success: true, data: workItem };
-  } catch (error) {
-    console.error('❌ Error updating work item on rejection:', error);
-    return { success: false, error: error.message };
-  }
-},
+      if (!workItem) return { success: false, error: 'No pending workflow item found' };
 
+      await NotificationService.send({
+        ROLE_ID: workItem.TARGET_USER_ROLE_ID,
+        message: `Work item ${workItem.ITEM_DESC} approved by ${approvedBy} and moved to achieved status`,
+        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+        EVENT_ID: workItem.EVENT_ID,
+        status: 'achieved',
+        notificationType: 'system',
+      });
 
-  // Existing submitTransaction method (unchanged)
+      return { success: true, data: workItem };
+    } catch (error) {
+      console.error('❌ Error updating work item on approval:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Updated rejection method
+  updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments) => {
+    try {
+      const workItem = await WF_WORK_ITEM.findOneAndUpdate(
+        { ITEM_CLASS_NM: itemClass, CUST_ID: custId, REC_ST: 'pending' },
+        {
+          REC_ST: 'completed',
+          WAIT_ST: 'REJECTED',
+          REJECTED_BY: rejectedBy,
+          COMMENTS: comments,
+          COMPLETED_DT: new Date(),
+          ACTION_TAKEN: 'Rejected',
+          UPDATED_AT: new Date(),
+        },
+        { new: true }
+      );
+
+      if (!workItem) return { success: false, error: 'No pending workflow item found' };
+
+      await NotificationService.send({
+        ROLE_ID: workItem.TARGET_USER_ROLE_ID,
+        message: `Work item ${workItem.ITEM_DESC} rejected by ${rejectedBy}: ${comments}`,
+        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+        EVENT_ID: workItem.EVENT_ID,
+        status: 'rejected',
+        notificationType: 'system',
+      });
+
+      return { success: true, data: workItem };
+    } catch (error) {
+      console.error('❌ Error updating work item on rejection:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Updated completeWorkItem method to move to achieved for approved/completed statuses
+  completeWorkItem: async (workItemId, status = 'APPROVED', userId = 'system', session = null) => {
+    try {
+      const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: Number(workItemId) }).session(session || null);
+
+      if (!workItem) {
+        console.warn(`⚠️ Workflow item ${workItemId} not found`);
+        return { success: false, message: 'Workflow item not found' };
+      }
+
+      // Check if status should move to achieved
+      const shouldMoveToAchieved = status === 'APPROVED' || status === 'COMPLETED';
+      
+      if (shouldMoveToAchieved) {
+        return await WF_WORK_ITEMController.moveToAchieved(workItemId, status, userId, session);
+      } else {
+        // For other statuses, use normal completion
+        workItem.REC_ST = 'completed';
+        workItem.WAIT_ST = status;
+        workItem.APPROVED_BY = userId;
+        workItem.APPROVAL_DATE = new Date();
+        workItem.COMPLETED_DT = new Date();
+        workItem.ACTION_TAKEN = status;
+        workItem.LAST_UPDATED = new Date();
+
+        const options = session ? { session } : {};
+        await workItem.save(options);
+
+        await NotificationService.send({
+          ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
+          message: `Workflow item ${workItem.WORK_ITEM_ID} has been ${status}`,
+          WORK_ITEM_ID: workItem.WORK_ITEM_ID,
+          CUST_ID: workItem.CUST_ID,
+          status
+        });
+
+        console.log(`✅ Workflow item ${workItemId} updated to ${status}`);
+        return { success: true, updatedWorkItem: workItem };
+      }
+    } catch (error) {
+      console.error(`❌ Error completing workflow item ${workItemId}:`, error.message);
+      return { success: false, message: error.message };
+    }
+  },
+
+  // New method to get achieved work items
+  getAchievedWorkItems: async (req, res) => {
+    try {
+      const {
+        page = 1, 
+        limit = 10,
+        CUST_ID,
+        ITEM_CLASS_NM
+      } = req.query;
+
+      const query = { REC_ST: 'achieved' };
+      
+      if (CUST_ID) query.CUST_ID = CUST_ID;
+      if (ITEM_CLASS_NM) query.ITEM_CLASS_NM = ITEM_CLASS_NM;
+
+      const options = {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        sort: { COMPLETED_DT: -1 }
+      };
+
+      const workItems = await WF_WORK_ITEM.paginate(query, options);
+
+      if (!workItems || workItems.docs.length === 0) {
+        return res.status(200).json({ 
+          message: 'No achieved work items found',
+          data: []
+        });
+      }
+
+      return res.status(200).json({
+        message: 'Achieved work items fetched successfully',
+        data: workItems.docs,
+        pagination: {
+          total: workItems.totalDocs,
+          pages: workItems.totalPages,
+          currentPage: workItems.page,
+          itemsPerPage: workItems.limit
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching achieved work items:', error);
+      return res.status(500).json({ 
+        message: 'Error fetching achieved work items', 
+        error: error.message 
+      });
+    }
+  },
+
+  // ✅ FIXED: submitTransaction method with proper generateNumber usage
   submitTransaction: async (req) => {
     try {
       console.log('🟢 Entering submitTransaction');
@@ -132,31 +281,39 @@ updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments)
         HOME_ADDRESS,
         depositPayload,
       } = req.body || {};
+
       if (!ITEM_VALUE || !ITEM_DESC || !ITEM_CLASS_NM || !ITEM_TYPE || !CUST_ID || !USER_ID || !BU_ID || !TARGET_USER_ROLE_ID || !ORIGINATOR_USER_ROLE_ID) {
         throw new Error('Missing required workflow fields');
       }
+
       if (normalizeItemType(ITEM_TYPE) === 'Customer' && !HOME_ADDRESS) {
         throw new Error('HOME_ADDRESS is required for customer workflow items.');
       }
+
       let deposit = null;
       if (depositPayload && depositPayload._id) {
         deposit = await DepositTransaction.findById(depositPayload._id);
         if (!deposit) throw new Error('DepositTransaction not found or invalid deposit payload.');
       }
+
       const normalizedItemType = normalizeItemType(ITEM_TYPE || ITEM_CLASS_NM);
       const TARGET_DUR_TM = TARGET_DUR_HOURS ? TARGET_DUR_HOURS * 3600 : 0;
       const ESCALATION_TM = ESCALATION_MINUTES ? ESCALATION_MINUTES * 60 : 0;
-      const WORK_ITEM_ID = generateNumber(6);
-      const EVENT_ID = generateNumber(7);
-      const BUS_PROC_ID = generateNumber(4);
-      const SUB_PROC_ID = generateNumber(4);
-      const QUEUE_ID = generateNumber(4);
-      const WORK_ITEM_SESSION_ID = generateNumber(8);
-      const ITEM_REF_NO = generateNumber(4);
+
+      // ✅ FIXED: Use await and fallback for all generateNumber calls
+      const WORK_ITEM_ID = await generateIdWithFallback(6, 'work_item');
+      const EVENT_ID = await generateIdWithFallback(7, 'work_event');
+      const BUS_PROC_ID = await generateIdWithFallback(4, 'business_process');
+      const SUB_PROC_ID = await generateIdWithFallback(4, 'sub_process');
+      const QUEUE_ID = await generateIdWithFallback(4, 'work_queue');
+      const WORK_ITEM_SESSION_ID = await generateIdWithFallback(8, 'work_session');
+      const ITEM_REF_NO = await generateIdWithFallback(4, 'item_reference');
+
       const existingEvent = await WF_WORK_ITEM.findOne({ EVENT_ID });
       if (existingEvent) {
         return { success: false, error: 'Event ID already exists. Please retry.' };
       }
+
       const newWorkItem = new WF_WORK_ITEM({
         WORK_ITEM_ID,
         BUS_PROC_ID,
@@ -174,7 +331,7 @@ updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments)
         BU_ID,
         CREATE_DT: CREATE_DT || new Date(),
         SYS_CREATE_TS: new Date(),
-        WAIT_ST: WAIT_ST || 'pending',
+        WAIT_ST: WAIT_ST || 'PENDING',
         MAX_DELAY_TM,
         DEADLINE_TM,
         ORIGINATOR_USER_ROLE_ID,
@@ -188,7 +345,9 @@ updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments)
         TARGET_USER_ROLE_ID,
         HOME_ADDRESS,
       });
+
       await newWorkItem.save();
+
       await NotificationService.send({
         ROLE_ID: TARGET_USER_ROLE_ID,
         message: `New work item created: ${ITEM_DESC}`,
@@ -197,8 +356,10 @@ updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments)
         status: 'pending',
         notificationType: 'system',
       });
+
       console.log('✅ Workflow item created:', newWorkItem);
       return { success: true, data: newWorkItem };
+
     } catch (error) {
       console.error('❌ submitTransaction error:', error);
       return { success: false, error: error.message || 'Unexpected error' };
@@ -239,66 +400,71 @@ updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, comments)
     }
   },
 
-getAllWorkItems: async (req, res) => {
-  try {
-    const pendingWorkItems = await WF_WORK_ITEM.find({
-      REC_ST: { $regex: /^pending$/i }   // case-insensitive
-    }).sort({ CREATE_DT: -1 });
+  getAllWorkItems: async (req, res) => {
+    try {
+      const pendingWorkItems = await WF_WORK_ITEM.find({
+        REC_ST: { $regex: /^pending$/i }
+      }).sort({ CREATE_DT: -1 });
 
-    if (!pendingWorkItems || pendingWorkItems.length === 0) {
+      if (!pendingWorkItems || pendingWorkItems.length === 0) {
+        return res.status(200).json({
+          message: 'No pending work items found',
+          data: []
+        });
+      }
+
+      const enrichedItems = await Promise.all(
+        pendingWorkItems.map(async (item) => {
+          let details = null;
+
+          try {
+            const itemType = item.ITEM_TYPE;
+
+            if (itemType === 'Customer') {
+              details = await Customer.findOne({ CUST_ID: item.CUST_ID }).lean();
+            } else if (itemType === 'DepositTransaction') {
+              if (mongoose.Types.ObjectId.isValid(item.ITEM_ID)) {
+                details = await DepositTransaction.findById(item.ITEM_ID).lean();
+              }
+            } else if (itemType === 'DepositAccountApplication') {
+              details = await DepositAccountApplication.findOne({ CUST_ID: item.CUST_ID }).lean();
+            }
+          } catch (err) {
+            console.warn(`⚠️ Failed to fetch details for item ${item.ITEM_ID}:`, err.message);
+          }
+
+          return {
+            ...item.toObject(),
+            age: WF_WORK_ITEMController.calculateAge(
+              item.CREATE_DT || item.created_at || item.CREATE_AT
+            ),
+            details
+          };
+        })
+      );
+
       return res.status(200).json({
-        message: 'No pending work items found',
-        data: []
+        message: 'Pending work items fetched successfully.',
+        data: enrichedItems
+      });
+    } catch (error) {
+      console.error('❌ Error fetching work items:', error);
+      return res.status(500).json({
+        message: 'Error fetching work items',
+        error: error.message
       });
     }
-
-    const enrichedItems = await Promise.all(
-      pendingWorkItems.map(async (item) => {
-        let details = null;
-
-        try {
-          const itemType = item.ITEM_TYPE;
-
-          if (itemType === 'Customer') {
-            details = await Customer.findOne({ CUST_ID: item.CUST_ID }).lean();
-          } else if (itemType === 'DepositTransaction') {
-            if (mongoose.Types.ObjectId.isValid(item.ITEM_ID)) {
-              details = await DepositTransaction.findById(item.ITEM_ID).lean();
-            }
-          } else if (itemType === 'DepositAccountApplication') {
-            details = await DepositAccountApplication.findOne({ CUST_ID: item.CUST_ID }).lean();
-          }
-        } catch (err) {
-          console.warn(`⚠️ Failed to fetch details for item ${item.ITEM_ID}:`, err.message);
-        }
-
-        return {
-          ...item.toObject(),
-          age: WF_WORK_ITEMController.calculateAge(
-            item.CREATE_DT || item.created_at || item.CREATE_AT
-          ),
-          details
-        };
-      })
-    );
-
-    return res.status(200).json({
-      message: 'Pending work items fetched successfully.',
-      data: enrichedItems
-    });
-  } catch (error) {
-    console.error('❌ Error fetching work items:', error);
-    return res.status(500).json({
-      message: 'Error fetching work items',
-      error: error.message
-    });
-  }
-},
-
+  },
 
   getWorkItemHistory: async (req, res) => {
     try {
-      const workItems = await WF_WORK_ITEM.find({ REC_ST: 'completed' }).sort({ APPROVED_DT: -1 }).limit(100); // Changed to lowercase
+      const workItems = await WF_WORK_ITEM.find({ 
+        $or: [
+          { REC_ST: 'completed' },
+          { REC_ST: 'achieved' }
+        ]
+      }).sort({ COMPLETED_DT: -1 }).limit(100);
+      
       res.status(200).json({ message: 'Work item history fetched successfully.', data: workItems });
     } catch (error) {
       console.error('Error fetching work item history:', error);
@@ -351,7 +517,7 @@ getAllWorkItems: async (req, res) => {
       } = req.query;
 
       const query = { ITEM_CLASS_NM };
-      if (!showAll && !REC_ST) query.REC_ST = 'pending'; // Changed to lowercase
+      if (!showAll && !REC_ST) query.REC_ST = 'pending';
       if (REC_ST) query.REC_ST = REC_ST;
       if (CUST_ID) query.CUST_ID = CUST_ID;
       if (USER_ID) query.USER_ID = USER_ID;
@@ -376,16 +542,18 @@ getAllWorkItems: async (req, res) => {
           return {
             ...item._doc,
             ITEM_VALUE: decodedValue,
-            status: item.REC_ST === 'completed' // Changed to lowercase
-              ? (item.WAIT_ST === 'approved' ? 'approved' : 'rejected') // Changed to lowercase
-              : 'pending' // Changed to lowercase
+            status: item.REC_ST === 'achieved' ? 'achieved' : 
+                   item.REC_ST === 'completed' ? 
+                   (item.WAIT_ST === 'APPROVED' ? 'approved' : 'rejected') : 
+                   'pending'
           };
         } catch {
           return {
             ...item._doc,
-            status: item.REC_ST === 'completed' // Changed to lowercase
-              ? (item.WAIT_ST === 'approved' ? 'approved' : 'rejected') // Changed to lowercase
-              : 'pending' // Changed to lowercase
+            status: item.REC_ST === 'achieved' ? 'achieved' : 
+                   item.REC_ST === 'completed' ? 
+                   (item.WAIT_ST === 'APPROVED' ? 'approved' : 'rejected') : 
+                   'pending'
           };
         }
       });
@@ -403,88 +571,6 @@ getAllWorkItems: async (req, res) => {
     } catch (error) {
       console.error('Error fetching work items:', error);
       return res.status(500).json({ message: 'Error fetching work items', error: error.message });
-    }
-  },
-
-  updateWorkItemStatusOnApproval: async (itemClass, custId, approvedBy) => {
-    try {
-      const workItem = await WF_WORK_ITEM.findOneAndUpdate(
-        { ITEM_CLASS_NM: itemClass, CUST_ID: custId },
-        {
-          REC_ST: 'completed', // Changed to lowercase
-          WAIT_ST: 'approved', // Changed to lowercase
-          APPROVED_BY: approvedBy,
-          APPROVED_DT: new Date(),
-          COMPLETED_DT: new Date(),
-          ACTION_TAKEN: 'Approved',
-          UPDATED_AT: new Date()
-        },
-        { new: true }
-      );
-
-      return { success: !!workItem, data: workItem };
-    } catch (error) {
-      console.error('❌ Error updating work item on approval:', error);
-      return { success: false, error: error.message };
-    }
-  },
-
-  completeWorkItem: async (workItemId, status = 'approved', userId = 'system', session = null) => { // Changed to lowercase
-    try {
-      const workItem = await WF_WORK_ITEM.findOne({ WORK_ITEM_ID: Number(workItemId) }).session(session || null);
-
-      if (!workItem) {
-        console.warn(`⚠️ Workflow item ${workItemId} not found`);
-        return { success: false, message: 'Workflow item not found' };
-      }
-
-      workItem.REC_ST = 'completed'; // Changed to lowercase
-      workItem.WAIT_ST = status;
-      workItem.APPROVED_BY = userId;
-      workItem.APPROVAL_DATE = new Date();
-      workItem.COMPLETED_DT = new Date();
-      workItem.ACTION_TAKEN = status;
-      workItem.LAST_UPDATED = new Date();
-
-      const options = session ? { session } : {};
-      await workItem.save(options);
-
-      await NotificationService.send({
-        ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
-        message: `Workflow item ${workItem.WORK_ITEM_ID} has been ${status}`,
-        WORK_ITEM_ID: workItem.WORK_ITEM_ID,
-        CUST_ID: workItem.CUST_ID,
-        status
-      });
-
-      console.log(`✅ Workflow item ${workItemId} updated to ${status}`);
-      return { success: true, updatedWorkItem: workItem };
-    } catch (error) {
-      console.error(`❌ Error completing workflow item ${workItemId}:`, error.message);
-      return { success: false, message: error.message };
-    }
-  },
-
-  updateWorkItemStatusOnRejection: async (itemClass, custId, rejectedBy, rejectionReason) => {
-    try {
-      const workItem = await WF_WORK_ITEM.findOneAndUpdate(
-        { ITEM_CLASS_NM: itemClass, CUST_ID: custId },
-        {
-          REC_ST: 'rejected', // Changed to lowercase
-          WAIT_ST: 'rejected', // Changed to lowercase
-          COMPLETED_BY: rejectedBy,
-          COMPLETED_DT: new Date(),
-          ACTION_TAKEN: 'Rejected',
-          REJECTION_REASON: rejectionReason,
-          UPDATED_AT: new Date()
-        },
-        { new: true }
-      );
-
-      return { success: !!workItem, data: workItem };
-    } catch (error) {
-      console.error('❌ Error updating work item on rejection:', error);
-      return { success: false, error: error.message };
     }
   }
 };

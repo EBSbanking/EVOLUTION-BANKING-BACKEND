@@ -62,7 +62,15 @@ const WFWorkItemSchema = new mongoose.Schema({
       values: Object.values(STATUS),
       message: '{VALUE} is not a valid status'
     },
-    alias: 'WAIT_ST',
+    default: STATUS.PENDING
+  },
+  WAIT_ST: {
+    type: String,
+    required: [true, 'Wait Status is required'],
+    enum: {
+      values: Object.values(STATUS), // Same STATUS values
+      message: '{VALUE} is not a valid wait status'
+    },
     default: STATUS.PENDING
   },
   createdBy: {
@@ -117,7 +125,7 @@ const WFWorkItemSchema = new mongoose.Schema({
   },
   ITEM_REF_NO: {
     type: Number,
-    required: [true, 'Item Reference Number is required'] // Matches TRANSACTION_ID
+    required: [true, 'Item Reference Number is required']
   },
   ESCALATION_TM: {
     type: Number
@@ -134,7 +142,7 @@ const WFWorkItemSchema = new mongoose.Schema({
     type: String
   },
   TRANSACTION_ID: {
-    type: Number // Matches Transaction schema
+    type: Number
   },
   ROW_TS: {
     type: Date,
@@ -171,7 +179,18 @@ const WFWorkItemSchema = new mongoose.Schema({
 // Pagination plugin
 WFWorkItemSchema.plugin(mongoosePaginate);
 
-
+// Pre-save middleware to keep status and WAIT_ST in sync
+WFWorkItemSchema.pre('save', function(next) {
+  // If WAIT_ST is modified, update status to match
+  if (this.isModified('WAIT_ST') && this.WAIT_ST) {
+    this.status = this.WAIT_ST;
+  }
+  // If status is modified, update WAIT_ST to match
+  if (this.isModified('status') && this.status) {
+    this.WAIT_ST = this.status;
+  }
+  next();
+});
 
 const WFWorkItem = mongoose.model('WFWorkItem', WFWorkItemSchema);
 export default WFWorkItem;

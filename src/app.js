@@ -389,6 +389,7 @@ import LoanPortfolioRoutes from './routes/LoanPortfolioRoutes.js';
 import GroupRoutes from './routes/GroupRoutes.js';
 import groupSavingsRoutes from './routes/groupSavingsRoutes.js';
 import uploadTestRoutes from './routes/uploadTest.js';
+import LoanAccountSummaryRoutes from './routes/LoanAccountSummaryRoutes.js'
 
 // ----------------------------
 // Mount API Routes
@@ -516,6 +517,9 @@ app.use('/api/group', GroupRoutes);
 app.use('/api/group-savings', groupSavingsRoutes);
 app.use('/api/debug', uploadTestRoutes);
 app.use('/api/branch', BranchRoutes);
+
+/// Loan Account Summary Routes
+app.use ('/api/loan-account-summary', LoanAccountSummaryRoutes);
 
 // ----------------------------
 // Static Files & React Build (Production Only)

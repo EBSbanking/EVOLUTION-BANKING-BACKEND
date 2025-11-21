@@ -24,21 +24,15 @@ const SequenceSchema = new mongoose.Schema({
   strict: false
 });
 
-// Prevent any document from having null targetCollection and ensure updatedAt
+// Pre-save middleware
 SequenceSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   
   if (!this.targetCollection || this.targetCollection === null || this.targetCollection === 'null') {
-    if (this.collection && this.collection !== null) {
-      this.targetCollection = this.collection;
-    } else {
-      this.targetCollection = `sequence_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    }
+    this.targetCollection = `sequence_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
   next();
 });
-
-// ADD THESE STATIC METHODS:
 
 // Static method to safely get or create sequence
 SequenceSchema.statics.getOrCreateSequence = async function(collectionName, session = null) {
@@ -62,6 +56,7 @@ SequenceSchema.statics.getOrCreateSequence = async function(collectionName, sess
     return sequence;
   } catch (error) {
     if (error.code === 11000) {
+      // Duplicate key error - sequence already exists
       const existing = await this.findOne({ targetCollection: collectionName }).session(session);
       if (existing) return existing;
     }
@@ -71,26 +66,45 @@ SequenceSchema.statics.getOrCreateSequence = async function(collectionName, sess
 
 // Static method to increment and get next value
 SequenceSchema.statics.getNextValue = async function(collectionName, session = null) {
-  const sequence = await this.findOneAndUpdate(
-    { targetCollection: collectionName },
-    { 
-      $inc: { value: 1 },
-      $set: { updatedAt: new Date() }
-    },
-    { 
-      new: true, 
-      upsert: true, 
-      session,
-      setDefaultsOnInsert: true,
-      runValidators: true
+  try {
+    const sequence = await this.findOneAndUpdate(
+      { targetCollection: collectionName },
+      { 
+        $inc: { value: 1 },
+        $set: { updatedAt: new Date() }
+      },
+      { 
+        new: true, 
+        upsert: true, 
+        session,
+        setDefaultsOnInsert: true,
+        runValidators: true
+      }
+    );
+    
+    if (!sequence) {
+      throw new Error(`Failed to get sequence for ${collectionName}`);
     }
-  );
-  
-  if (!sequence) {
-    throw new Error(`Failed to get sequence for ${collectionName}`);
+    
+    return sequence.value;
+  } catch (error) {
+    if (error.code === 11000) {
+      // Retry once if there's a duplicate key error
+      const sequence = await this.findOne({ targetCollection: collectionName }).session(session);
+      if (sequence) {
+        const updated = await this.findOneAndUpdate(
+          { targetCollection: collectionName },
+          { 
+            $inc: { value: 1 },
+            $set: { updatedAt: new Date() }
+          },
+          { new: true, session }
+        );
+        return updated.value;
+      }
+    }
+    throw error;
   }
-  
-  return sequence.value;
 };
 
 const Sequence = mongoose.model('Sequence', SequenceSchema, 'sequences');

@@ -1,71 +1,77 @@
-import { DataTypes } from 'sequelize';
-import { sequelize } from '../server.js'; // Import the sequelize instance from server.js
-import GLAccount from './GLAccount';  // Assuming GLAccount is in the models folder
+// models/GLAccountSeg.js
+import mongoose from 'mongoose';
 
-const GLAccountSeg = sequelize.define('GLAccountSeg', {
+const GLAccountSegSchema = new mongoose.Schema({
   GL_ACCT_SEG_ID: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    allowNull: false,
+    type: Number,
+    required: true,
     unique: true,
-    autoIncrement: true,
     comment: 'Account Segment Identifier',
   },
   GL_ACCT_STRUCT_ID: {
-    type: DataTypes.STRING,  // Match the GLAccountNumber type in GLAccount model
-    allowNull: false,
-    comment: 'GL Account Structure Identifier (matches GLAccountNumber)',
+    type: String,
+    required: true,
+    ref: 'GLAccount',
+    comment: 'GL Account Structure Identifier (matches GL_ACCT_NO)',
   },
   POSN: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: { len: [1, 3] }, // Ensures 3 digits for NUMBER(3)
-    comment: 'Position in Account Segment',
+    type: Number,
+    required: true,
+    min: 1,
+    max: 999,
+    comment: 'Position in Account Segment (1-3 digits)',
   },
   PROMPT: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
+    type: String,
+    maxlength: 50,
     comment: 'Prompt Text',
   },
   SEG_PLACEHLDR_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
+    type: Number,
+    required: true,
     comment: 'Segment Placeholder Identifier',
   },
   ACCT_SEG_DESC: {
-    type: DataTypes.STRING(100),
-    allowNull: true,
+    type: String,
+    maxlength: 100,
     comment: 'Account Segment Description',
   },
   SEG_TY_CD: {
-    type: DataTypes.STRING(10),
-    allowNull: false,
+    type: String,
+    required: true,
+    maxlength: 10,
     comment: 'Segment Type Code',
   },
   REC_ST: {
-    type: DataTypes.CHAR(1),
-    allowNull: false,
+    type: String,
+    required: true,
+    maxlength: 1,
+    enum: ['A', 'I'], // Active, Inactive
+    default: 'A',
     comment: 'Record State',
   },
   VERSION_NO: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 1,
+    type: Number,
+    required: true,
+    default: 1,
     comment: 'Version Number',
-  },
-  ROW_TS: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    comment: 'Timestamp of Record',
-  },
+  }
 }, {
-  tableName: 'GLACCOUNT_SEG',
-  timestamps: false,
-  freezeTableName: true,
+  timestamps: { 
+    createdAt: 'ROW_TS',
+    updatedAt: false 
+  },
+  collection: 'GLACCOUNT_SEG'
 });
 
-// Define associations (Optional if you want to explicitly define them)
-GLAccountSeg.belongsTo(GLAccount, { foreignKey: 'GL_ACCT_STRUCT_ID', targetKey: 'GLAccountNumber' });  // Match the foreign key with GLAccountNumber
-GLAccount.hasMany(GLAccountSeg, { foreignKey: 'GL_ACCT_STRUCT_ID' });
+// Auto-increment for GL_ACCT_SEG_ID
+GLAccountSegSchema.pre('save', async function(next) {
+  if (this.isNew) {
+    const lastDoc = await this.constructor.findOne({}, {}, { sort: { GL_ACCT_SEG_ID: -1 } });
+    this.GL_ACCT_SEG_ID = lastDoc ? lastDoc.GL_ACCT_SEG_ID + 1 : 1;
+  }
+  next();
+});
 
+const GLAccountSeg = mongoose.model('GLAccountSeg', GLAccountSegSchema);
 export default GLAccountSeg;

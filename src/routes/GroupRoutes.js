@@ -13,7 +13,9 @@ import {
   getPendingCreditApplications,
   getApprovedCreditApplications, 
   getRejectedCreditApplications ,
-  getGroupLoanPortfolio 
+  getGroupLoanPortfolio,
+  getGroupRepaymentCollectionSheet,
+  submitGroupCollections 
 } from '../controllers/GroupController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
@@ -42,5 +44,23 @@ router.get('/group-loans/rejected-credit-applications', authenticate, getRejecte
 router.get('/group-loans/:id', authenticate, getGroupLoan);
 router.patch('/group-loans/:id/approve', authenticate, approveGroupLoan);
 router.patch('/group-loans/:id/reject', authenticate, rejectGroupLoan);
+
+// //Group collection sheet route
+// router.get('/collection-sheet/:groupId', authenticate, getGroupRepaymentCollectionSheet);
+router.post('/submit-collections', authenticate, submitGroupCollections);
+
+// routes/loanCollectionRoutes.js - Add this route
+
+/**
+ * @route GET /api/collections/group-repayment/:groupId
+ * @description Get comprehensive repayment collection sheet for a group loan
+ * @param {string} groupId - Group loan ID
+ * @query {boolean} [includeHistory] - Include payment history (true/false)
+ * @query {string} [startDate] - Start date for history filter (YYYY-MM-DD)
+ * @query {string} [endDate] - End date for history filter (YYYY-MM-DD)
+ * @returns {Object} Group repayment collection sheet with detailed member status
+ */
+router.get('/group-repayment/:groupId', authenticate, getGroupRepaymentCollectionSheet);
+
 
 export default router;

@@ -9,13 +9,13 @@ const SubfolderSchema = new mongoose.Schema(
     },
     parentId: {
       type: Number,
-      required: true,
+      default: null, // Allow null for root folders
     },
     createdBy: {
       type: String,
       required: true,
       trim: true,
-      uppercase: true, // optional if you want consistency like CREATED_BY
+      uppercase: true,
     },
     ledgerNo: {
       type: String,
@@ -31,6 +31,11 @@ const SubfolderSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    description: { // Add this field since your function uses it
+      type: String,
+      default: '',
+      trim: true,
+    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -38,8 +43,8 @@ const SubfolderSchema = new mongoose.Schema(
   },
   {
     collection: 'subfolders',
-    timestamps: true, // adds createdAt and updatedAt automatically
-    versionKey: false, // removes __v
+    timestamps: true,
+    versionKey: false,
   }
 );
 

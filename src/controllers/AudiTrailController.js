@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import AuditTrail from '../models/AuditTrail.js';
 import logger from '../utils/logger.js';  // General ops logger
 import auditLogger from '../utils/AuditLogger.js';  // Hybrid audit logger (file + DB)
+import Branch from '../models/Branch.js'
 
 // 🔹 Generate a sequential event_id (kept for backward compat, but now internal to logAuditTrail)
 const generateEventID = async () => {
@@ -13,6 +14,7 @@ const generateEventID = async () => {
 export const addAuditTrail = async ({
   EVENT_TYPE,
   USER_ID,
+  BRANCH,
   ACTION,
   OLD_VALUE,
   NEW_VALUE,
@@ -23,8 +25,12 @@ export const addAuditTrail = async ({
   additional_info = {},  // New: For extras like outcome, details
 }) => {
   try {
+    console.log('Adding audit trail:', {
+      EVENT_TYPE,
+      USER_ID, });
+      
     if (!EVENT_TYPE || !USER_ID) {
-      logger.warn('Skipping audit trail: missing EVENT_TYPE or USER_ID', {
+      console.log('Skipping audit trail: missing EVENT_TYPE or USER_ID', {
         EVENT_TYPE,
         USER_ID,
       });
@@ -37,6 +43,7 @@ export const addAuditTrail = async ({
         entity_type: ENTITY_TYPE || 'general',
         entity_id: ENTITY_ID || null,
         user_id: USER_ID,
+        branch:BRANCH,
         action: ACTION,
         old_value: OLD_VALUE,
         new_value: NEW_VALUE,
@@ -49,14 +56,16 @@ export const addAuditTrail = async ({
       });
     });
 
+
+    console.log('Audit log result:', auditLogResult);
     // Extract DB entry (from transport's enrichment)
     const event_id = auditLogResult.event_id;
     const auditEntry = await AuditTrail.findOne({ event_id }).session(session);  // Fetch for return (if needed)
 
-    logger.info('Audit trail entry created', { event_id, EVENT_TYPE, USER_ID });
+    console.log('Audit trail entry created', { event_id, EVENT_TYPE, USER_ID });
     return auditEntry || { event_id, ...auditLogResult };  // Fallback to log info if fetch fails
   } catch (error) {
-    logger.error('Error creating audit trail', { error: error.message });
+    console.log('Error creating audit trail', { error: error.message });
     // Self-audit the failure
     auditLogger.error('Audit Event', {
       entity_type: 'audit_system',

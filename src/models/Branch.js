@@ -1,50 +1,56 @@
 import mongoose from 'mongoose';
 
-const branchSchema = new mongoose.Schema({
-  // Core new fields (required for new creates)
+const BranchSchema = new mongoose.Schema({
+  // === NEW REQUIRED FIELDS ===
   organizationName: {
     type: String,
+    required: true,
     trim: true,
-    uppercase: true, // Auto-uppercase for consistency
-    required: false // Make optional for legacy data; enforce in controller if needed
+    uppercase: true
+  },
+  organizationCode: {
+    type: Number,
+    required: true
   },
   branchName: {
     type: String,
-    required: true, // Always required; map from 'name' in legacy
+    required: true,
     trim: true,
-    uppercase: true // Auto-uppercase
+    uppercase: true
   },
   branchCode: {
     type: String,
-    required: false, // Optional for legacy; generate in migration/controller (e.g., '000' for Head Office)
+    required: true,
     trim: true,
     match: [/^\d{3}$/, 'Branch code must be a 3-digit number'],
-    index: true // For fast lookups
+    index: true
   },
-  // Add to branchSchema (after migration_id)
-legacyId: {
-  type: Number,
-  unique: true,
-  sparse: true, // Allow nulls/duplicates for non-legacy
-  index: true
-},
+  branchType: {
+    type: String,
+    enum: ['MAIN', 'REGIONAL', 'SUB', 'MOBILE'],
+    default: 'MAIN'
+  },
 
-  // Address field (aligned with BusinessUnit's ADDRESS; optional for legacy)
+  // === LEGACY FIELDS ===
+  legacyId: {
+    type: Number,
+    unique: true,
+    sparse: true,
+    index: true
+  },
   address: {
     type: String,
     trim: true,
     default: ''
   },
-
-  // Legacy migrated fields (optional; populate from existing data)
   external_id: {
     type: String,
     default: '',
     trim: true
   },
   parent: {
-    type: mongoose.Schema.Types.ObjectId, // Or Number if legacy is int (e.g., 1)
-    ref: 'ParentModel', // Adjust if parent is another model
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ParentModel',
     default: null
   },
   office_address: {
@@ -53,11 +59,11 @@ legacyId: {
     default: ''
   },
   country: {
-    type: Number, // Or ref to Country model
+    type: Number,
     default: null
   },
   state: {
-    type: Number, // Or ref
+    type: Number,
     default: null
   },
   city: {
@@ -86,36 +92,36 @@ legacyId: {
   },
   branch_type: {
     type: String,
-    enum: ['Yes', 'No'], // Based on legacy example
+    enum: ['Yes', 'No'],
     default: 'No'
   },
   status: {
     type: String,
-    enum: ['ACTIVE', 'INACTIVE'], // All caps to match uppercase: true
-    default: 'ACTIVE',  // All caps default
+    enum: ['ACTIVE', 'INACTIVE'],
+    default: 'ACTIVE',
     uppercase: true
   },
   created_by: {
-    type: mongoose.Schema.Types.ObjectId, // Or Number (legacy 1)
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     default: null
   },
   operational_model: {
     type: String,
-    default: 'Cash' // Legacy example
+    default: 'Cash'
   },
   approved_by: {
-    type: mongoose.Schema.Types.ObjectId, // Or Number (legacy 1)
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     default: null
   },
   migration_id: {
-    type: mongoose.Schema.Types.ObjectId, // For tracking original legacy _id
+    type: mongoose.Schema.Types.ObjectId,
     default: null,
-    index: true // Unique if needed for dedup
+    index: true
   },
 
-  // Timestamps (for both new and legacy)
+  // === TIMESTAMPS ===
   createdAt: {
     type: Date,
     default: Date.now
@@ -125,43 +131,150 @@ legacyId: {
     default: Date.now
   }
 }, {
-  strict: 'throw', // Strict mode, but legacy docs can be fetched; use migration to update
-  timestamps: false // Manual control via createdAt/updatedAt
+  timestamps: true, // Enable automatic timestamp management
+  collection: 'branches',
+  strict: 'throw' // Throw errors for fields not in schema
 });
 
-// Indexes for performance (align with queries in controller)
-branchSchema.index({ organizationName: 1, branchName: 1 });
-branchSchema.index({ branchCode: 1 });
-branchSchema.index({ status: 1 });
-branchSchema.index({ migration_id: 1 }); // For legacy lookup
+// === COMPREHENSIVE INDEXES ===
+BranchSchema.index({ organizationCode: 1, branchCode: 1 }, { unique: true });
+BranchSchema.index({ organizationName: 1 });
+BranchSchema.index({ branchCode: 1 });
+BranchSchema.index({ organizationCode: 1 });
+BranchSchema.index({ status: 1 });
+BranchSchema.index({ legacyId: 1 });
+BranchSchema.index({ migration_id: 1 });
+BranchSchema.index({ organizationCode: 1, status: 1 });
+BranchSchema.index({ branchName: 1, organizationCode: 1 });
 
-// Virtual or method to generate branchCode if missing (e.g., for Head Office)
-branchSchema.methods.generateBranchCode = function() {
-  if (this.branchCode) return this.branchCode;
-  // Simple mapping based on name (customize as needed)
-  const codeMap = {
-    'HEAD OFFICE': '000',
-    // Add more: 'FINANCE': '002', etc.
-  };
-  return codeMap[this.branchName.toUpperCase()] || '999'; // Fallback
-};
-
-// Pre-save hook to auto-generate branchCode if missing and set organizationName default
-branchSchema.pre('save', function(next) {
-  if (!this.organizationName) {
-    this.organizationName = 'DEFAULT_ORG'; // Or derive from other fields/context
+// === PRE-SAVE HOOKS ===
+BranchSchema.pre('save', function(next) {
+  // Auto-uppercase organizationName and branchName
+  if (this.organizationName) {
+    this.organizationName = this.organizationName.toUpperCase().trim();
   }
-  if (!this.branchCode) {
-    this.branchCode = this.generateBranchCode();
+  if (this.branchName) {
+    this.branchName = this.branchName.toUpperCase().trim();
   }
-  // Optional: Sync address from office_address if address is empty
+  
+  // Validate branchCode format
+  if (this.branchCode && !/^\d{3}$/.test(this.branchCode)) {
+    return next(new Error('Branch code must be a 3-digit number'));
+  }
+  
+  // Sync address from office_address if address is empty
   if (!this.address && this.office_address) {
     this.address = this.office_address.trim();
   }
+  
+  // Update timestamp
   if (this.isModified()) {
     this.updatedAt = new Date();
   }
+  
   next();
 });
 
-export default mongoose.model('Branch', branchSchema);
+// === VIRTUAL METHODS ===
+BranchSchema.virtual('fullBranchInfo').get(function() {
+  return {
+    organization: this.organizationName,
+    code: this.organizationCode,
+    branch: this.branchName,
+    branchCode: this.branchCode,
+    type: this.branchType
+  };
+});
+
+// === INSTANCE METHODS ===
+BranchSchema.methods.generateBranchCode = function() {
+  if (this.branchCode) return this.branchCode;
+  
+  const codeMap = {
+    'HEAD OFFICE': '000',
+    'MAIN BRANCH': '001',
+    'FINANCE': '002',
+  };
+  
+  return codeMap[this.branchName.toUpperCase()] || '999';
+};
+
+BranchSchema.methods.isActive = function() {
+  return this.status === 'ACTIVE';
+};
+
+BranchSchema.methods.getContactInfo = function() {
+  return {
+    phone: this.phone,
+    email: this.email,
+    address: this.address || this.office_address,
+    city: this.city,
+    branchManager: this.branch_manager
+  };
+};
+
+// === STATIC METHODS ===
+BranchSchema.statics.findByOrganization = function(organizationCode) {
+  return this.find({ 
+    organizationCode, 
+    status: 'ACTIVE' 
+  }).sort({ branchCode: 1 });
+};
+
+BranchSchema.statics.findByOrganizationAndBranch = function(organizationCode, branchCode) {
+  return this.findOne({ 
+    organizationCode, 
+    branchCode,
+    status: 'ACTIVE' 
+  });
+};
+
+BranchSchema.statics.getBranchSummary = async function(organizationCode) {
+  return this.aggregate([
+    {
+      $match: {
+        organizationCode,
+        status: 'ACTIVE'
+      }
+    },
+    {
+      $group: {
+        _id: '$branchType',
+        count: { $sum: 1 },
+        branches: {
+          $push: {
+            branchName: '$branchName',
+            branchCode: '$branchCode',
+            branchManager: '$branch_manager'
+          }
+        }
+      }
+    },
+    {
+      $project: {
+        branchType: '$_id',
+        count: 1,
+        branches: 1,
+        _id: 0
+      }
+    },
+    {
+      $sort: { branchType: 1 }
+    }
+  ]);
+};
+
+// === QUERY HELPERS ===
+BranchSchema.query.active = function() {
+  return this.where({ status: 'ACTIVE' });
+};
+
+BranchSchema.query.byOrganization = function(organizationCode) {
+  return this.where({ organizationCode });
+};
+
+BranchSchema.query.byBranchType = function(branchType) {
+  return this.where({ branchType });
+};
+
+export default mongoose.model('Branch', BranchSchema);

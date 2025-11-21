@@ -786,7 +786,11 @@ function calculateMaturityDate(startDate, termCode, termValue) {
       throw new Error(`Invalid term code: ${termCode}`);
   }
   return date;
-}
+};
+
+// Add this method to your LoanAccountController.js
+
+
 
 const LoanAccount = mongoose.models.LoanAccount ||
   mongoose.model('LoanAccount', loanAccountSchema);

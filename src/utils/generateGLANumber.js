@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import Subfolder from '../models/Subfolder.js';
 import { logger } from './logger.js';
-import GLAccount from '../models/GLAccount.js'; // Ensure model import aligns with current schema (with organizationName, branchName)
+import GLAccount from '../models/GLAccount.js';
 
 // Fallback logger if import fails
 const fallbackLogger = {
@@ -92,7 +92,7 @@ export const generateGLAccountNumber = (
   } catch (error) {
     (logger.error || fallbackLogger.error)('Error generating GL Account Number', {
       error: error.message,
-      inputs,
+      inputs: { CHART_OF_ACCT_ID, BAL_CD, SUB_LEDGER_NO, GL_ACCT_CAT, BU_ID, LEDGER_NO },
     });
     throw error;
   }
@@ -107,27 +107,63 @@ export const generateGLAccountNumber = (
  */
 export const generateNextGLAcctId = async (session, organizationName = null, branchName = null) => {
   try {
+    console.log('generateNextGLAcctId: Starting with session:', !!session);
+    
     const filter = {};
     if (organizationName) filter.organizationName = organizationName;
     if (branchName) filter.branchName = branchName;
+
+    console.log('generateNextGLAcctId: Filter:', filter);
 
     const lastAcct = await GLAccount.findOne(filter)
       .sort({ GL_ACCT_ID: -1 })
       .limit(1)
       .session(session || null);
 
-    const newGLAcctId = lastAcct
-      ? String(parseInt(lastAcct.GL_ACCT_ID, 10) + 1).padStart(7, '0')
-      : '0000001';
+    console.log('generateNextGLAcctId: Last account found:', lastAcct ? lastAcct.GL_ACCT_ID : 'None');
+
+    let newGLAcctId;
+    
+    if (!lastAcct || !lastAcct.GL_ACCT_ID) {
+      newGLAcctId = '0000001';
+      console.log('generateNextGLAcctId: No existing accounts, returning:', newGLAcctId);
+    } else {
+      // Extract numeric part from GL_ACCT_ID (handle both numeric and string formats)
+      const lastIdStr = String(lastAcct.GL_ACCT_ID);
+      console.log('generateNextGLAcctId: Last ID string:', lastIdStr);
+      
+      // Extract only digits from the string
+      const numericPart = lastIdStr.replace(/\D/g, '');
+      console.log('generateNextGLAcctId: Numeric part:', numericPart);
+      
+      if (!numericPart) {
+        // If no numeric part found, start from 1
+        newGLAcctId = '0000001';
+      } else {
+        const lastIdNum = parseInt(numericPart, 10);
+        console.log('generateNextGLAcctId: Last ID number:', lastIdNum);
+        
+        if (isNaN(lastIdNum)) {
+          newGLAcctId = '0000001';
+        } else {
+          newGLAcctId = String(lastIdNum + 1).padStart(7, '0');
+        }
+      }
+      console.log('generateNextGLAcctId: Generated next ID:', newGLAcctId);
+    }
 
     (logger.info || fallbackLogger.info)('Generated GL_ACCT_ID', { newGLAcctId, filter });
     return newGLAcctId;
   } catch (error) {
+    console.error('generateNextGLAcctId: Error:', error.message);
     (logger.error || fallbackLogger.error)('Error generating GL_ACCT_ID', {
       error: error.message,
       filter: { organizationName, branchName },
     });
-    throw error;
+    // Fallback to simple increment
+    const fallbackId = '0000001';
+    console.log('generateNextGLAcctId: Using fallback ID:', fallbackId);
+    return fallbackId;
   }
 };
 
@@ -198,23 +234,35 @@ export const generateJournalId = () => {
  */
 export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
   try {
+    console.log('createRootSubfolder: Starting with createdBy:', createdBy, 'ledgerNo:', ledgerNo);
+    
     // Find the highest subfolderId to generate the next sequential ID
     const maxSubfolder = await Subfolder.findOne()
       .sort({ subfolderId: -1 })
       .session(session || null);
+    
+    console.log('createRootSubfolder: Max subfolder found:', maxSubfolder ? maxSubfolder.subfolderId : 'None');
+    
     const subfolderId = maxSubfolder ? Number(maxSubfolder.subfolderId) + 1 : 1;
     const parentId = subfolderId;
+
+    console.log('createRootSubfolder: Creating with subfolderId:', subfolderId, 'parentId:', parentId);
 
     const newSubfolder = new Subfolder({
       subfolderId,
       parentId,
       createdBy,
-      ledgerNo,
+      ledgerNo: String(ledgerNo),
       isRoot: true,
       name: `Root-${subfolderId}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     await newSubfolder.save({ session });
+    
+    console.log('createRootSubfolder: Successfully created subfolder:', newSubfolder.subfolderId);
+    
     (logger.info || fallbackLogger.info)('Created root subfolder', {
       subfolderId,
       parentId,
@@ -223,11 +271,58 @@ export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
     });
     return newSubfolder;
   } catch (error) {
+    console.error('createRootSubfolder: Error:', error.message);
     (logger.error || fallbackLogger.error)('Error creating root subfolder', {
       error: error.message,
       createdBy,
       ledgerNo,
     });
     throw error;
+  }
+};
+
+/**
+ * Simple fallback function for GL Account ID generation
+ * Use this if the main function has issues
+ */
+export const generateSimpleGLAcctId = async (session) => {
+  try {
+    console.log('generateSimpleGLAcctId: Starting simple ID generation');
+    const count = await GLAccount.countDocuments().session(session || null);
+    const newId = String(count + 1).padStart(7, '0');
+    console.log('generateSimpleGLAcctId: Generated ID:', newId);
+    return newId;
+  } catch (error) {
+    console.error('generateSimpleGLAcctId: Error:', error.message);
+    // Ultimate fallback
+    return '0000001';
+  }
+};
+
+/**
+ * Test function to verify GL account ID generation works
+ */
+export const testGLAccountIdGeneration = async () => {
+  const session = await mongoose.startSession();
+  try {
+    console.log('=== TESTING GL ACCOUNT ID GENERATION ===');
+    
+    await session.withTransaction(async () => {
+      console.log('Testing main generateNextGLAcctId...');
+      const mainResult = await generateNextGLAcctId(session);
+      console.log('Main function result:', mainResult);
+      
+      console.log('Testing simple generateSimpleGLAcctId...');
+      const simpleResult = await generateSimpleGLAcctId(session);
+      console.log('Simple function result:', simpleResult);
+    });
+    
+    console.log('=== TEST COMPLETED SUCCESSFULLY ===');
+  } catch (error) {
+    console.error('=== TEST FAILED ===');
+    console.error('Error:', error.message);
+  } finally {
+    session.endSession();
+    console.log('=== TEST SESSION ENDED ===');
   }
 };

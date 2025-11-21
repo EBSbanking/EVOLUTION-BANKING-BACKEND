@@ -10,6 +10,8 @@ import {
   updateCustomer,
   rejectCustomer,
   batchUploadCustomers,
+  searchCustomers,
+  advancedSearchCustomers,
   createCustomer // ✅ Added createCustomer import
 } from '../controllers/CustomerController.js';
 import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
@@ -56,6 +58,18 @@ router.put('/reject/:customerId', rejectCustomer);
 
 // DEACTIVATE CUSTOMER
 router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
+
+
+//////////////////////////////////////////////////
+
+
+router.get('/search', searchCustomers);
+router.get('/advanced-search', advancedSearchCustomers);
+
+
+
+
+
 
 // GENERATE CUSTOMER NUMBER
 router.get('/generate-customer-number', async (req, res) => {
