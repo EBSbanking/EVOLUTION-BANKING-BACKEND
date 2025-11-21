@@ -132,13 +132,13 @@ export const validateLicenseFile = async (req, res) => {
     // Check if license exists and has been used
     const existing = await License.findOne({ encrypted_key });
 
-    if (existing && existing.is_used) {
-      return res.status(409).json({
-        message: 'This license key has already been used. Please acquire a new license.',
-        issued_to: existing.issued_to,
-        used_at: existing.used_at
-      });
-    }
+    // if (existing && existing.is_used) {
+    //   return res.status(409).json({
+    //     message: 'This license key has already been used. Please acquire a new license.',
+    //     issued_to: existing.issued_to,
+    //     used_at: existing.used_at
+    //   });
+    // }
 
     // Save or update usage
     await License.updateOne(
