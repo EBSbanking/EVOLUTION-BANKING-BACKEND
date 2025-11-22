@@ -34,7 +34,7 @@ router.get('/:id/business-units', getBranchBusinessUnits);
 
 // POST create new branch
 // URL: /api/branches
-router.post('/', createBranch);
+router.post('/branch', createBranch);
 
 // PUT update branch by ID
 // URL: /api/branches/507f1f77bcf86cd799439011
