@@ -496,7 +496,7 @@ app.use('/api/savings-product', SavingsProductsRoutes);
 app.use('/api/charges', ChargeRoutes);
 app.use('/api/identifiers', identifierRoutes);
 app.use('/api/gl-categories', glCategoriesRoutes);
-app.use('/api/branchs', BranchRoutes);
+app.use('/api/branches', BranchRoutes);
 app.use('/api/organization', OrganizationRoutes);
 
 app.use('/api/banking', BankRoutes);
