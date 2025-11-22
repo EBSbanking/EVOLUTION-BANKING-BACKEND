@@ -42,8 +42,8 @@ const calculateNextReviewDate = (rating, providedDate) => {
 
 // ===== Validation for Next of Kin =====
 const validateNextOfKin = (nextOfKinArray) => {
-  if (!Array.isArray(nextOfKinArray)) return "nextOfKin must be an array";
-
+  if (!(Array.isArray(nextOfKinArray))) return "nextOfKin must be an array";
+  console.log("✅ Next of Kin is an array with length:", nextOfKinArray.length);
   if (nextOfKinArray.length > 5) return "Maximum 5 next of kin allowed";
 
   // Ensure at least one primary
