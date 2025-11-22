@@ -134,11 +134,10 @@ export const createCustomer = async (req, res) => {
       IS_PEP,
       SANCTION_SCORE,
       DOCUMENT_VERIFICATION_STATUS,
-      nextOfKinTemp, // ✅ Next of Kin array (from model: nextOfKin array with NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY, CREATED_DT)
       REC_ST = "Pending",
     } = req.body;
 
-    const nextOfKin = nextOfKinTemp.map(nok => ({
+    const nextOfKin = req.body?.nextOfKin.map(nok => ({
       ...nok,
       IS_PRIMARY: nok.IS_PRIMARY === "Y" // Cast to boolean
     }));
