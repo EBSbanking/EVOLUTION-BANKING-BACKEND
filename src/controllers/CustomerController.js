@@ -47,7 +47,7 @@ const validateNextOfKin = (nextOfKinArray) => {
   if (nextOfKinArray.length > 5) return "Maximum 5 next of kin allowed";
 
   // Ensure at least one primary
-  const hasPrimary = nextOfKinArray.some((nok) => nok.IS_PRIMARY === true);
+  const hasPrimary = nextOfKinArray.some((nok) => nok.IS_PRIMARY === "Y");
   if (!hasPrimary && nextOfKinArray.length > 0) {
     return "At least one next of kin must be marked as primary";
   }
