@@ -185,7 +185,7 @@ export const createCustomer = async (req, res) => {
       session.endSession();
       return res.status(400).json({ message: nokValidationError });
     }
-
+    console.log("✅ Next of Kin validation passed");
     const existingCustomer = await Customer.findOne({
       $or: [{ CUST_NO: CUST_NO || "" }, { EMAIL_ADDRESS: EMAIL_ADDRESS || "" }],
     }).session(session);
@@ -199,7 +199,7 @@ export const createCustomer = async (req, res) => {
           message: "Customer with this CUST_NO or EMAIL_ADDRESS already exists",
         });
     }
-
+    
     // ===== Auto-generate Customer ID & Number if not provided =====
     const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } =
       await generateCustomerNumber();
@@ -266,6 +266,7 @@ export const createCustomer = async (req, res) => {
 
     // ===== Insert Customer =====
     const [newCustomer] = await Customer.create([customerData], { session });
+    console.log("✅Customer created with ID:", newCustomer.CUST_ID);
 
     // ===== Audit Log via hybrid logger =====
     auditLogger.info("Audit Event", {
