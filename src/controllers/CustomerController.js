@@ -146,7 +146,7 @@ export const createCustomer = async (req, res) => {
           message: "Create Customer Request Body",
           ip: ipAddress,
           pid: process.pid,
-          body: req.body,
+          body: Array.isArray(nextOfKin),
         })
       );
     } catch (logErr) {
