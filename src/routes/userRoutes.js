@@ -175,7 +175,7 @@ router.get(
 
 // 🔐 Password management - REMOVED PERMISSION REQUIREMENT
 router.post(
-  '/users/reset-password',
+  '/reset-password',
   verifyToken,
   resetPassword
 );
