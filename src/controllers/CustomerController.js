@@ -43,7 +43,7 @@ const calculateNextReviewDate = (rating, providedDate) => {
 // ===== Validation for Next of Kin =====
 const validateNextOfKin = (nextOfKinArray) => {
   if (!(Array.isArray(nextOfKinArray))) return "nextOfKin must be an array";
-  console.log("✅ Next of Kin is an array with length:", nextOfKinArray.length);
+  console.log("✅ Next of Kin is an array with length:", nextOfKinArray.length, nextOfKinArray);
   if (nextOfKinArray.length > 5) return "Maximum 5 next of kin allowed";
 
   // Ensure at least one primary
@@ -51,6 +51,7 @@ const validateNextOfKin = (nextOfKinArray) => {
   if (!hasPrimary && nextOfKinArray.length > 0) {
     return "At least one next of kin must be marked as primary";
   }
+  console.log("✅ Next of Kin primary check passed");
 
   // Validate required fields for each
   for (let i = 0; i < nextOfKinArray.length; i++) {
@@ -65,9 +66,12 @@ const validateNextOfKin = (nextOfKinArray) => {
         i + 1
       } missing required fields (NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, ADDRESS)`;
     }
+
+    console.log("✅ Next of Kin required fields check passed for NOK", i + 1);
     if (nok.PHONE_NO && !/^\+?\d{10,15}$/.test(nok.PHONE_NO)) {
       return `Invalid phone number format for next of kin ${i + 1}`;
     }
+    console.log("✅ Next of Kin phone format check passed for NOK", i + 1);
   }
 
   return null; // Valid
@@ -180,7 +184,7 @@ export const createCustomer = async (req, res) => {
 
     // ✅ Validation for Next of Kin (matches model fields: NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY)
     const nokValidationError = validateNextOfKin(nextOfKin);
-    if (nokValidationError) {
+    if (!!nokValidationError) {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ message: nokValidationError });
