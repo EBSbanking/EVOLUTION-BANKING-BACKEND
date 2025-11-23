@@ -1,4 +1,3 @@
-// In models/LoanAccount.js - Updated schema
 import mongoose from 'mongoose';
 import LoanFee from './LoanFee.js';
 import logger from '../utils/logger.js';
@@ -91,7 +90,7 @@ const loanAccountSchema = new mongoose.Schema(
         'LINE OF CREDIT',
         'SME LOAN',
         'GENERAL LOAN',
-        'GROUP_LOAN' // ADDED: Support for group loans
+        'GROUP_LOAN'
       ]
     },
     PROD_ID: {
@@ -99,7 +98,7 @@ const loanAccountSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator: function(v) {
-          const validProdIds = [1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399, 400]; // ADDED: 1 for group loans
+          const validProdIds = [1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399, 400];
           return validProdIds.includes(v);
         },
         message: props => `${props.value} is not a valid PROD_ID!`
@@ -191,7 +190,7 @@ const loanAccountSchema = new mongoose.Schema(
     TERM_CD: {
       type: String,
       required: true,
-      enum: ['D', 'W', 'M', 'Q', 'Y', 'MONTHLY', 'WEEKLY', 'YEARLY'] // ADDED: Full word values
+      enum: ['D', 'W', 'M', 'Q', 'Y', 'MONTHLY', 'WEEKLY', 'YEARLY']
     },
     TERM_VALUE: {
       type: Number,
@@ -203,7 +202,7 @@ const loanAccountSchema = new mongoose.Schema(
       required: true
     },
     INTEREST_RATE_ID: {
-      type: Number, // FIXED: Changed back to Number for legacy numeric IDs
+      type: Number,
       required: true,
       validate: {
         validator: function(v) {
@@ -411,7 +410,7 @@ const loanAccountSchema = new mongoose.Schema(
         min: 0
       }
     },
-    // NEW FIELDS FOR GROUP LOANS
+    // GROUP LOAN FIELDS
     groupLoan: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'GroupLoan',
@@ -450,6 +449,24 @@ const loanAccountSchema = new mongoose.Schema(
       accrualBasisType: { type: String, default: 'ACTUAL/360' },
       accrualFrequency: { type: String, default: 'DAILY' },
       fixedRate: { type: Boolean, default: true }
+    },
+    // NEW FIELDS FOR COLLECTION COMPATIBILITY
+    total_repayment: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => parseFloat(v.toString()),
+      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      default: '0.00',
+      min: 0
+    },
+    outstanding_balance: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => parseFloat(v.toString()),
+      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      default: '0.00',
+      min: 0
+    },
+    CLOSED_DATE: {
+      type: Date
     }
   },
   {
@@ -480,9 +497,12 @@ const loanAccountSchema = new mongoose.Schema(
           'FEE_DETAILS.totalFees',
           'FEE_DETAILS.upfrontInterest',
           'FEE_DETAILS.upfrontInterestPercentage',
-          'individualShare', // ADDED: For group loans
-          'installmentAmount' // ADDED: For group loans
+          'individualShare',
+          'installmentAmount',
+          'total_repayment',
+          'outstanding_balance'
         ];
+        
         decimalFields.forEach(field => {
           const parts = field.split('.');
           if (parts.length === 1) {
@@ -500,12 +520,14 @@ const loanAccountSchema = new mongoose.Schema(
             }
           }
         });
+        
         if (ret.FEE_DETAILS?.charges) {
           ret.FEE_DETAILS.charges = ret.FEE_DETAILS.charges.map(charge => ({
             ...charge,
             amount: charge.amount && typeof charge.amount === 'object' ? parseFloat(charge.amount.toString()) : charge.amount
           }));
         }
+        
         if (ret.paymentHistory) {
           ret.paymentHistory = ret.paymentHistory.map(payment => ({
             ...payment,
@@ -513,16 +535,18 @@ const loanAccountSchema = new mongoose.Schema(
             lateFee: payment.lateFee && typeof payment.lateFee === 'object' ? parseFloat(payment.lateFee.toString()) : payment.lateFee
           }));
         }
-        // NEW: Handle dailyAccruals in toJSON
+        
         if (ret.dailyAccruals) {
           ret.dailyAccruals = ret.dailyAccruals.map(accrual => ({
             ...accrual,
             amount: accrual.amount && typeof accrual.amount === 'object' ? parseFloat(accrual.amount.toString()) : accrual.amount
           }));
         }
+        
         if (ret._id) {
           ret._id = ret._id.toString();
         }
+        
         if (ret.Borrower_address) {
           ret.Borrower_address = {
             street: ret.Borrower_address.street,
@@ -532,6 +556,7 @@ const loanAccountSchema = new mongoose.Schema(
             country: ret.Borrower_address.country
           };
         }
+        
         return ret;
       }
     },
@@ -550,6 +575,12 @@ loanAccountSchema.virtual('nextAccrualDate').get(function () {
   if (!this.dailyAccruals || this.dailyAccruals.length === 0) return this.START_DT;
   const lastAccrual = this.dailyAccruals[this.dailyAccruals.length - 1].date;
   return lastAccrual ? new Date(lastAccrual.setDate(lastAccrual.getDate() + 1)) : this.START_DT;
+});
+
+loanAccountSchema.virtual('totalOutstanding').get(function () {
+  const principal = parseFloat(this.OUTSTANDING_PRINCIPAL?.toString() || '0');
+  const interest = parseFloat(this.TOTAL_INTEREST?.toString() || '0') - parseFloat(this.interestPaid?.toString() || '0');
+  return principal + Math.max(0, interest);
 });
 
 // Instance Methods
@@ -575,6 +606,38 @@ loanAccountSchema.methods.getInterestBreakdown = function() {
       (this.deductUpfrontInterest ? 100 : 0),
     disbursedAmount: parseFloat(this.ACTUAL_DISBURSEMENT.toString())
   };
+};
+
+loanAccountSchema.methods.updateBalances = function(principalAmount, interestAmount, totalAmount) {
+  const principalNum = parseFloat(principalAmount || '0');
+  const interestNum = parseFloat(interestAmount || '0');
+  const totalNum = parseFloat(totalAmount || '0');
+  
+  this.OUTSTANDING_PRINCIPAL = mongoose.Types.Decimal128.fromString(
+    Math.max(0, parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) - principalNum).toFixed(2)
+  );
+  this.principalPaid = mongoose.Types.Decimal128.fromString(
+    (parseFloat(this.principalPaid.toString()) + principalNum).toFixed(2)
+  );
+  this.interestPaid = mongoose.Types.Decimal128.fromString(
+    (parseFloat(this.interestPaid.toString()) + interestNum).toFixed(2)
+  );
+  this.TOTAL_REPAID_AMOUNT = mongoose.Types.Decimal128.fromString(
+    (parseFloat(this.TOTAL_REPAID_AMOUNT.toString()) + totalNum).toFixed(2)
+  );
+  this.total_repayment = mongoose.Types.Decimal128.fromString(
+    (parseFloat(this.total_repayment.toString()) + totalNum).toFixed(2)
+  );
+  this.outstanding_balance = mongoose.Types.Decimal128.fromString(
+    Math.max(0, parseFloat(this.outstanding_balance.toString()) - totalNum).toFixed(2)
+  );
+  
+  // Update loan status if fully paid
+  if (parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) <= 0) {
+    this.LOAN_STATUS = 'CLOSED';
+    this.CLOSURE_DATE = new Date();
+    this.CLOSED_DATE = new Date();
+  }
 };
 
 // Static Methods
@@ -647,22 +710,27 @@ loanAccountSchema.pre('save', async function(next) {
     if (!this.PROD_ID) {
       throw new Error('Could not determine product ID for this loan');
     }
+    
     logger.debug('Loan Account PROD_ID validation', {
       loanAccountId: this._id,
       PROD_ID: this.PROD_ID,
       timestamp: new Date()
     });
+    
     if (!this.ACCT_NO && this.PROD_ID) {
       this.ACCT_NO = String(await generateLoanAccountNumberByProdId(this.PROD_ID));
     }
+    
     if (!this.loanAccountId && this.ACCT_NO) {
       const numericPart = String(this.ACCT_NO).replace(/\D/g, '');
       this.loanAccountId = parseInt(numericPart, 10) || Date.now();
     }
+    
     // Set default workItemId if not provided
     if (!this.workItemId) {
-      this.workItemId = Date.now(); // Use timestamp as default workItemId
+      this.workItemId = Date.now();
     }
+    
     if (this.restrictMultipleDisbursements && ['APPROVED', 'ACTIVE'].includes(this.LOAN_STATUS)) {
       const existingLoan = await this.constructor.findOne({
         CUST_ID: this.CUST_ID,
@@ -676,13 +744,15 @@ loanAccountSchema.pre('save', async function(next) {
         return next(error);
       }
     }
+    
     if (this.isModified('TERM_CD') || this.isModified('TERM_VALUE') || this.isModified('START_DT')) {
       if (!this.TERM_CD || !this.TERM_VALUE || !this.START_DT) {
         throw new Error('TERM_CD, TERM_VALUE, and START_DT are required to compute MATURITY_DT');
       }
       this.MATURITY_DT = calculateMaturityDate(this.START_DT, this.TERM_CD, this.TERM_VALUE);
     }
-    // FIXED: Interest calc - Align with EMI (simple interest as placeholder; ideally pull from EMI result)
+    
+    // Interest calculation
     if (this.isModified('DISBURSEMENT_LIMIT') ||
         this.isModified('INTEREST_RATE') ||
         this.isModified('TERM_VALUE') ||
@@ -692,6 +762,7 @@ loanAccountSchema.pre('save', async function(next) {
         this.isModified('upfrontInterestPercentage')) {
       const principal = parseFloat(this.DISBURSEMENT_LIMIT?.toString() || '0');
       const rate = parseFloat(this.INTEREST_RATE?.toString() || '0') / 100;
+      
       if (principal <= 0 || rate <= 0) {
         this.TOTAL_INTEREST = mongoose.Types.Decimal128.fromString('0.00');
       } else {
@@ -703,7 +774,7 @@ loanAccountSchema.pre('save', async function(next) {
         const totalInterest = principal * rate * termInYears;
         this.TOTAL_INTEREST = mongoose.Types.Decimal128.fromString(totalInterest.toFixed(2));
       }
-      // FIXED: Null-safety for upfront/remaining
+      
       const totalInterestNum = parseFloat(this.TOTAL_INTEREST?.toString() || '0');
       if (this.deductUpfrontInterest) {
         this.upfrontInterestAmount = mongoose.Types.Decimal128.fromString(totalInterestNum.toFixed(2));
@@ -721,7 +792,8 @@ loanAccountSchema.pre('save', async function(next) {
         this.remainingInterestAmount = this.TOTAL_INTEREST;
       }
     }
-    // Calculate ACTUAL_DISBURSEMENT - FIXED null-safety
+    
+    // Calculate ACTUAL_DISBURSEMENT
     if (this.isModified('DISBURSEMENT_LIMIT') ||
         this.isModified('FEE_DETAILS') ||
         this.isModified('upfrontInterestAmount')) {
@@ -729,16 +801,27 @@ loanAccountSchema.pre('save', async function(next) {
       const totalFees = parseFloat(this.FEE_DETAILS?.totalFees?.toString() || '0');
       const upfrontInterest = parseFloat(this.upfrontInterestAmount?.toString() || '0');
       const actualDisbursement = principal - totalFees - upfrontInterest;
+      
       if (actualDisbursement < 0) {
         throw new Error('Actual disbursement cannot be negative');
       }
       this.ACTUAL_DISBURSEMENT = mongoose.Types.Decimal128.fromString(actualDisbursement.toFixed(2));
     }
+    
+    // Initialize new fields if not set
+    if (!this.total_repayment) {
+      this.total_repayment = mongoose.Types.Decimal128.fromString('0.00');
+    }
+    if (!this.outstanding_balance) {
+      this.outstanding_balance = this.OUTSTANDING_PRINCIPAL;
+    }
+    
     if (this.isModified('NEXT_PAYMENT_DATE') || this.isModified('LOAN_STATUS')) {
       if (this.isOverdue()) {
         this.LOAN_STATUS = 'OVERDUE';
       }
     }
+    
     this.lastUpdated = new Date();
     next();
   } catch (err) {
@@ -760,7 +843,6 @@ function calculateMaturityDate(startDate, termCode, termValue) {
   }
   const date = new Date(startDate);
  
-  // Handle both short codes and full words
   switch (termCode.toUpperCase()) {
     case 'D':
     case 'DAILY':
@@ -786,11 +868,7 @@ function calculateMaturityDate(startDate, termCode, termValue) {
       throw new Error(`Invalid term code: ${termCode}`);
   }
   return date;
-};
-
-// Add this method to your LoanAccountController.js
-
-
+}
 
 const LoanAccount = mongoose.models.LoanAccount ||
   mongoose.model('LoanAccount', loanAccountSchema);

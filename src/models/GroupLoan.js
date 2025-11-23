@@ -1,5 +1,16 @@
-// models/GroupLoan.js - Updated with safe field handling including approval/rejection
+// models/GroupLoan.js - Updated with collection tracking and safe field handling
 import mongoose from 'mongoose';
+
+// Safe number utility function
+const safeNumber = (value, defaultValue = 0) => {
+  if (value === null || value === undefined) return defaultValue;
+  if (typeof value === 'object' && value.toString) {
+    // Handle Decimal128 objects
+    return parseFloat(value.toString()) || defaultValue;
+  }
+  const num = Number(value);
+  return isNaN(num) ? defaultValue : num;
+};
 
 const groupLoanSchema = new mongoose.Schema({
   // Add loanId field for human-readable ID
@@ -136,6 +147,35 @@ const groupLoanSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  
+  // NEW: Collection tracking fields
+  lastCollectionDate: {
+    type: Date,
+    default: null
+  },
+  collectionHistory: [{
+    collectionDate: { type: Date, default: Date.now },
+    collectedBy: { type: String, required: true },
+    loanCollections: [{
+      accountNo: String,
+      amount: Number,
+      receiptNo: String,
+      installmentNo: Number
+    }],
+    savingsCollections: [{
+      accountNo: String,
+      amount: Number,
+      type: String // 'GROUP_SAVINGS' or 'INDIVIDUAL_SAVINGS'
+    }],
+    successfulCollections: { type: Number, default: 0 },
+    failedCollections: { type: Number, default: 0 },
+    savingsProcessed: { type: Number, default: 0 },
+    totalLoanCollected: { type: Number, default: 0 },
+    totalSavingsCollected: { type: Number, default: 0 },
+    repaymentSchedulesUpdated: { type: Number, default: 0 },
+    paymentMethod: { type: String, default: 'CASH' },
+    transactionReference: String
+  }],
   
   // Member tracking
   disbursedToMembers: [{
@@ -433,7 +473,7 @@ groupLoanSchema.pre('save', function (next) {
   
   // Safe calculations for financial fields
   this.totalRepayable = Number(this.totalAmount || 0) + Number(this.totalInterest || 0);
-  this.remainingBalance = Number(this.totalRepayable || 0) - Number(this.totalRepaid || 0);
+  this.remainingBalance = Math.max(0, Number(this.totalRepayable || 0) - Number(this.totalRepaid || 0));
   
   // Status validation logic - ONLY for existing documents with status changes
   if (!this.isNew && this.isModified('status')) {
@@ -457,7 +497,6 @@ groupLoanSchema.methods.safeToString = function(field) {
 };
 
 // Instance method to validate status transitions - FIXED
-// In your GroupLoan model - update the validateStatusTransition method
 groupLoanSchema.methods.validateStatusTransition = function() {
   const allowedTransitions = {
     'applied': ['approved', 'rejected', 'applied'], // Allow same status
@@ -483,6 +522,113 @@ groupLoanSchema.methods.validateStatusTransition = function() {
     throw new Error(`Invalid status transition from ${currentStatus} to ${newStatus}`);
   }
 };
+
+// ==================== COLLECTION-RELATED METHODS ====================
+
+// Method to update collection totals
+groupLoanSchema.methods.updateCollectionTotals = function(loanAmount, savingsAmount = 0) {
+  this.totalRepaid = safeNumber(this.totalRepaid) + safeNumber(loanAmount);
+  this.remainingBalance = Math.max(0, safeNumber(this.totalRepayable) - safeNumber(this.totalRepaid));
+  
+  // Update last collection date
+  this.lastCollectionDate = new Date();
+  
+  return this.save();
+};
+
+// Method to get collection summary
+groupLoanSchema.methods.getCollectionSummary = function() {
+  const totalExpected = safeNumber(this.totalRepayable);
+  const totalCollected = safeNumber(this.totalRepaid);
+  const collectionRate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
+  
+  return {
+    totalExpected,
+    totalCollected,
+    remainingBalance: safeNumber(this.remainingBalance),
+    collectionRate: Math.round(collectionRate * 100) / 100,
+    installmentsPaid: safeNumber(this.installmentsPaid),
+    lastCollectionDate: this.lastCollectionDate,
+    totalMembers: this.memberCount,
+    disbursedMembers: this.disbursedToMembers?.length || 0,
+    repaidMembers: this.repaidToMembers?.length || 0
+  };
+};
+
+// Method to add collection record to history
+groupLoanSchema.methods.addCollectionRecord = function(collectionData) {
+  if (!this.collectionHistory) {
+    this.collectionHistory = [];
+  }
+  
+  this.collectionHistory.push({
+    collectionDate: collectionData.collectionDate || new Date(),
+    collectedBy: collectionData.collectedBy,
+    loanCollections: collectionData.loanCollections || [],
+    savingsCollections: collectionData.savingsCollections || [],
+    successfulCollections: collectionData.successfulCollections || 0,
+    failedCollections: collectionData.failedCollections || 0,
+    savingsProcessed: collectionData.savingsProcessed || 0,
+    totalLoanCollected: collectionData.totalLoanCollected || 0,
+    totalSavingsCollected: collectionData.totalSavingsCollected || 0,
+    repaymentSchedulesUpdated: collectionData.repaymentSchedulesUpdated || 0,
+    paymentMethod: collectionData.paymentMethod || 'CASH',
+    transactionReference: collectionData.transactionReference
+  });
+  
+  // Update last collection date
+  this.lastCollectionDate = new Date();
+  
+  return this.save();
+};
+
+// Method to get collection performance
+groupLoanSchema.methods.getCollectionPerformance = function() {
+  const totalCollections = this.collectionHistory?.length || 0;
+  const totalLoanCollected = this.collectionHistory?.reduce((sum, record) => sum + (record.totalLoanCollected || 0), 0) || 0;
+  const totalSavingsCollected = this.collectionHistory?.reduce((sum, record) => sum + (record.totalSavingsCollected || 0), 0) || 0;
+  
+  const successfulCollections = this.collectionHistory?.reduce((sum, record) => sum + (record.successfulCollections || 0), 0) || 0;
+  const failedCollections = this.collectionHistory?.reduce((sum, record) => sum + (record.failedCollections || 0), 0) || 0;
+  const totalAttempted = successfulCollections + failedCollections;
+  
+  const successRate = totalAttempted > 0 ? (successfulCollections / totalAttempted) * 100 : 0;
+  
+  return {
+    totalCollections,
+    totalLoanCollected,
+    totalSavingsCollected,
+    successfulCollections,
+    failedCollections,
+    successRate: Math.round(successRate * 100) / 100,
+    averageLoanCollection: totalCollections > 0 ? totalLoanCollected / totalCollections : 0,
+    averageSavingsCollection: totalCollections > 0 ? totalSavingsCollected / totalCollections : 0
+  };
+};
+
+// Method to mark member as repaid
+groupLoanSchema.methods.markMemberAsRepaid = function(loanAccountId) {
+  if (!this.repaidToMembers) {
+    this.repaidToMembers = [];
+  }
+  
+  // Add to repaid members if not already there
+  if (!this.repaidToMembers.includes(loanAccountId)) {
+    this.repaidToMembers.push(loanAccountId);
+  }
+  
+  return this.save();
+};
+
+// Method to check if all members have repaid
+groupLoanSchema.methods.allMembersRepaid = function() {
+  const disbursedCount = this.disbursedToMembers?.length || 0;
+  const repaidCount = this.repaidToMembers?.length || 0;
+  
+  return disbursedCount > 0 && disbursedCount === repaidCount;
+};
+
+// ==================== STATIC METHODS ====================
 
 // Static method to safely update status
 groupLoanSchema.statics.safeStatusUpdate = async function(loanId, newStatus, userId = null) {
@@ -553,6 +699,73 @@ groupLoanSchema.statics.getStatusHistory = function(loanId) {
   ]);
 };
 
+// Static method to find groups with overdue collections
+groupLoanSchema.statics.findGroupsWithOverdueCollections = function(daysOverdue = 7) {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - daysOverdue);
+  
+  return this.find({
+    status: { $in: ['active', 'disbursed', 'partially_disbursed'] },
+    $or: [
+      { lastCollectionDate: { $lt: cutoffDate } },
+      { lastCollectionDate: { $exists: false } }
+    ]
+  }).populate('individualLoanAccounts');
+};
+
+// Static method to find groups by collection performance
+groupLoanSchema.statics.findByCollectionPerformance = function(minSuccessRate = 80) {
+  return this.aggregate([
+    {
+      $match: {
+        status: { $in: ['active', 'disbursed', 'partially_disbursed'] }
+      }
+    },
+    {
+      $addFields: {
+        collectionPerformance: {
+          $cond: {
+            if: { $gt: [{ $size: '$collectionHistory' }, 0] },
+            then: {
+              totalCollections: { $size: '$collectionHistory' },
+              totalLoanCollected: { $sum: '$collectionHistory.totalLoanCollected' },
+              successRate: {
+                $multiply: [
+                  {
+                    $divide: [
+                      { $sum: '$collectionHistory.successfulCollections' },
+                      { $add: [
+                        { $sum: '$collectionHistory.successfulCollections' },
+                        { $sum: '$collectionHistory.failedCollections' }
+                      ]}
+                    ]
+                  },
+                  100
+                ]
+              }
+            },
+            else: {
+              totalCollections: 0,
+              totalLoanCollected: 0,
+              successRate: 0
+            }
+          }
+        }
+      }
+    },
+    {
+      $match: {
+        'collectionPerformance.successRate': { $gte: minSuccessRate }
+      }
+    },
+    {
+      $sort: { 'collectionPerformance.successRate': -1 }
+    }
+  ]);
+};
+
+// ==================== VIRTUAL FIELDS ====================
+
 // Virtual for status timeline
 groupLoanSchema.virtual('statusTimeline').get(function() {
   return {
@@ -564,12 +777,56 @@ groupLoanSchema.virtual('statusTimeline').get(function() {
   };
 });
 
-// Indexes for better performance
+// Virtual for collection progress
+groupLoanSchema.virtual('collectionProgress').get(function() {
+  const totalExpected = safeNumber(this.totalRepayable);
+  const totalCollected = safeNumber(this.totalRepaid);
+  const progress = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
+  
+  return {
+    percentage: Math.round(progress * 100) / 100,
+    amountCollected: totalCollected,
+    amountRemaining: Math.max(0, totalExpected - totalCollected),
+    isComplete: totalCollected >= totalExpected
+  };
+});
+
+// Virtual for days since last collection
+groupLoanSchema.virtual('daysSinceLastCollection').get(function() {
+  if (!this.lastCollectionDate) return null;
+  const today = new Date();
+  const lastCollection = new Date(this.lastCollectionDate);
+  const diffTime = Math.abs(today - lastCollection);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+});
+
+// Virtual for collection frequency (average days between collections)
+groupLoanSchema.virtual('averageCollectionFrequency').get(function() {
+  if (!this.collectionHistory || this.collectionHistory.length < 2) return null;
+  
+  const sortedDates = this.collectionHistory
+    .map(record => new Date(record.collectionDate))
+    .sort((a, b) => a - b);
+  
+  let totalDays = 0;
+  for (let i = 1; i < sortedDates.length; i++) {
+    const diffTime = Math.abs(sortedDates[i] - sortedDates[i - 1]);
+    totalDays += Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+  
+  return Math.round(totalDays / (sortedDates.length - 1));
+});
+
+// ==================== INDEXES FOR PERFORMANCE ====================
+
 groupLoanSchema.index({ status: 1 });
 groupLoanSchema.index({ approvedAt: 1 });
 groupLoanSchema.index({ rejectedAt: 1 });
 groupLoanSchema.index({ disbursedAt: 1 });
 groupLoanSchema.index({ createdBy: 1 });
 groupLoanSchema.index({ groupCode: 1, status: 1 });
+groupLoanSchema.index({ lastCollectionDate: 1 });
+groupLoanSchema.index({ totalRepaid: 1 });
+groupLoanSchema.index({ remainingBalance: 1 });
 
 export default mongoose.model('GroupLoan', groupLoanSchema);
