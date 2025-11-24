@@ -182,10 +182,11 @@ const groupLoanSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'LoanAccount',
   }],
-  repaidToMembers: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'LoanAccount',
-  }],
+
+repaidToMembers: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'LoanAccount',
+}],
   
   // Audit fields - UPDATED to accept both ObjectId and String/Number
   createdBy: {

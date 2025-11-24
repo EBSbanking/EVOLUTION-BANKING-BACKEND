@@ -23,7 +23,7 @@ import Branch from '../models/Branch.js';
 import InterestRate from '../models/LoanInterestRate.js';
 import GLAccount from '../models/GLAccount.js';
 import {getLoanAccountDisbursementInfo} from '../controllers/LoanAccountSummaryController.js';
-
+import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 
 
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
@@ -3688,16 +3688,7 @@ function getNextInstallment(installments) {
   } : null;
 }
 
-// // Safe number conversion
-// function safeNumber(value, defaultValue = 0) {
-//   if (value === null || value === undefined) return defaultValue;
-//   if (typeof value === 'object' && value.toString) {
-//     // Handle Decimal128 objects
-//     return parseFloat(value.toString()) || defaultValue;
-//   }
-//   const num = Number(value);
-//   return isNaN(num) ? defaultValue : num;
-// }
+
 
 // Update LoanAccountSummary
 async function updateLoanAccountSummary(loanAccount, transaction, session) {
@@ -3754,171 +3745,9 @@ async function processGroupSavingsCollection(groupSavings, saving, groupId, coll
   }
 }
 
-// Calculate next payment date based on frequency
-function calculateNextPaymentDate(currentDate, frequency) {
-  const nextDate = new Date(currentDate);
-  switch (frequency) {
-    case 'DAILY':
-      nextDate.setDate(nextDate.getDate() + 1);
-      break;
-    case 'WEEKLY':
-      nextDate.setDate(nextDate.getDate() + 7);
-      break;
-    case 'MONTHLY':
-      nextDate.setMonth(nextDate.getMonth() + 1);
-      break;
-    case 'QUARTERLY':
-      nextDate.setMonth(nextDate.getMonth() + 3);
-      break;
-    case 'YEARLY':
-      nextDate.setFullYear(nextDate.getFullYear() + 1);
-      break;
-    default:
-      nextDate.setMonth(nextDate.getMonth() + 1);
-  }
-  return nextDate;
-};
+
 
 // ==================== HELPER FUNCTIONS ====================
-
-// // Helper function to calculate expected repayment amounts
-// const calculateExpectedRepayment = (groupLoan, paymentFrequency) => {
-//   console.log('=== CALCULATING EXPECTED REPAYMENT ===');
-//   console.log('Group Loan Total:', groupLoan.totalAmount);
-//   console.log('Interest Rate:', groupLoan.interestRate);
-//   console.log('Term Value:', groupLoan.termValue);
-//   console.log('Payment Frequency:', paymentFrequency);
-
-//   const principal = groupLoan.totalAmount || 0;
-//   const interestRate = groupLoan.interestRate || 0;
-//   const termValue = groupLoan.termValue || 12;
-  
-//   // Calculate total interest (simple interest for now)
-//   const totalInterest = principal * (interestRate / 100) * (termValue / 12);
-//   const totalRepayment = principal + totalInterest;
-  
-//   // Calculate installment amount based on payment frequency
-//   let installmentAmount = 0;
-//   let totalInstallments = termValue;
-  
-//   if (paymentFrequency.includes('WEEK')) {
-//     totalInstallments = termValue * 4; // Approximate weeks in month
-//     installmentAmount = totalRepayment / totalInstallments;
-//   } else if (paymentFrequency.includes('MONTH')) {
-//     installmentAmount = totalRepayment / totalInstallments;
-//   } else {
-//     // Default to monthly
-//     installmentAmount = totalRepayment / totalInstallments;
-//   }
-  
-//   const result = {
-//     principal,
-//     totalInterest,
-//     totalRepayment,
-//     installmentAmount: Math.round(installmentAmount * 100) / 100,
-//     totalInstallments,
-//     paymentFrequency
-//   };
-  
-//   console.log('Expected Repayment Calculation:', result);
-//   return result;
-// };
-
-// // Helper function to calculate accrued interest
-// const calculateAccruedInterest = (groupLoan, expectedRepaymentDetails) => {
-//   console.log('=== CALCULATING ACCRUED INTEREST ===');
-  
-//   const principal = groupLoan.totalAmount || 0;
-//   const interestRate = groupLoan.interestRate || 0;
-//   const totalInterest = expectedRepaymentDetails.totalInterest || 0;
-  
-//   // Simple calculation: assume interest accrues linearly
-//   const totalRepaid = groupLoan.totalRepaid || 0;
-//   const installmentsPaid = groupLoan.installmentsPaid || 0;
-//   const totalInstallments = expectedRepaymentDetails.totalInstallments || 12;
-  
-//   const accruedInterestPerInstallment = totalInterest / totalInstallments;
-//   const totalAccruedInterest = accruedInterestPerInstallment * installmentsPaid;
-  
-//   const result = {
-//     totalAccruedInterest: Math.round(totalAccruedInterest * 100) / 100,
-//     accruedInterestPerInstallment: Math.round(accruedInterestPerInstallment * 100) / 100,
-//     installmentsPaid,
-//     totalInstallments
-//   };
-  
-//   console.log('Accrued Interest Calculation:', result);
-//   return result;
-// };
-
-// // Calculate expected repayment for each member (spreadsheet view)
-// const calculateMemberExpectedRepayments = (groupLoan, expectedRepaymentDetails, accruedInterestDetails) => {
-//   const memberRepayments = [];
-  
-//   if (!groupLoan.individualLoanAccounts || groupLoan.individualLoanAccounts.length === 0) {
-//     // For legacy loans without individual accounts, distribute equally
-//     const groupMembers = groupLoan.group?.members || [];
-//     const memberCount = groupMembers.length;
-    
-//     if (memberCount > 0) {
-//       const memberShare = expectedRepaymentDetails.installmentAmount / memberCount;
-//       const principalShare = (groupLoan.totalAmount || 0) / memberCount;
-//       const interestShare = (expectedRepaymentDetails.totalInterest || 0) / memberCount;
-      
-//       groupMembers.forEach(member => {
-//         memberRepayments.push({
-//           memberId: member._id || member.CUST_ID,
-//           memberName: member.name || member.CUST_NM || 'Unknown Member',
-//           accountNumber: member.accountNumber || member.ACCT_NO || 'N/A',
-//           savingsAccountNo: member.savingsAccountNo || 'N/A',
-//           expectedAmount: memberShare,
-//           principalAmount: principalShare,
-//           interestAmount: interestShare,
-//           outstandingPrincipal: principalShare,
-//           outstandingInterest: interestShare,
-//           currentBalance: principalShare + interestShare,
-//           isLegacy: true
-//         });
-//       });
-//     }
-//   } else {
-//     // For modern loans with individual accounts
-//     const totalPrincipal = groupLoan.individualLoanAccounts.reduce((sum, account) => 
-//       sum + (account.OUTSTANDING_PRINCIPAL || account.DISBURSEMENT_LIMIT || 0), 0);
-    
-//     groupLoan.individualLoanAccounts.forEach(account => {
-//       const memberPrincipal = account.OUTSTANDING_PRINCIPAL || account.DISBURSEMENT_LIMIT || 0;
-//       const memberShare = totalPrincipal > 0 ? memberPrincipal / totalPrincipal : 0;
-      
-//       const expectedAmount = expectedRepaymentDetails.installmentAmount * memberShare;
-//       const principalAmount = (groupLoan.totalAmount || 0) * memberShare;
-//       const interestAmount = (expectedRepaymentDetails.totalInterest || 0) * memberShare;
-      
-//       // Calculate accrued interest for this member
-//       let memberAccruedInterest = account.interestOutstanding || 0;
-//       if (accruedInterestDetails && account.ORIGINAL_PRINCIPAL) {
-//         const memberAccruedShare = account.ORIGINAL_PRINCIPAL / accruedInterestDetails.totalPrincipal;
-//         memberAccruedInterest = Math.max(memberAccruedInterest, accruedInterestDetails.totalAccruedInterest * memberAccruedShare);
-//       }
-      
-//       memberRepayments.push({
-//         memberId: account.CUST_ID,
-//         memberName: account.ACCT_NM || 'Unknown Member',
-//         accountNumber: account.ACCT_NO,
-//         savingsAccountNo: account.savingsAccountNo,
-//         expectedAmount: expectedAmount,
-//         principalAmount: principalAmount,
-//         interestAmount: interestAmount,
-//         outstandingPrincipal: account.OUTSTANDING_PRINCIPAL || 0,
-//         outstandingInterest: memberAccruedInterest,
-//         currentBalance: account.outstanding_balance || account.OUTSTANDING_PRINCIPAL || 0,
-//         isLegacy: false
-//       });
-//     });
-//   }
-  
-//   return memberRepayments;
-// };
 
 // Payment frequency detection
 const getPaymentFrequency = (providedFrequency, groupLoan) => {
@@ -4306,12 +4135,12 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
 
   const {
     totalRepayAmount,
-    memberRepayments = [], // This should contain array of { memberId, loanAmount, savingsAmount, accountNumber }
+    memberRepayments = [],
     isInstallment,
     paymentMethod = 'CASH',
     transactionReference,
     isLegacyLoan = false,
-    repaymentType = 'both',
+    repaymentType = 'PRO_RATA', // FIXED: Default to valid enum value
     paymentFrequency
   } = req.body;
 
@@ -4346,7 +4175,7 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
 
   // FIXED: Enhanced group loan lookup - ONLY search by loanId, not _id
   let groupLoan = await GroupLoan.findOne({
-    loanId: groupLoanId // Only search by loanId field, not _id
+    loanId: groupLoanId
   })
   .populate('group', 'members groupCode groupName')
   .populate('individualLoanAccounts')
@@ -4360,7 +4189,7 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
     groupLoan = await GroupLoan.findOne({
       $or: [
         { groupCode: groupLoanId },
-        { _id: groupLoanId } // Only try _id if it's a valid ObjectId
+        { _id: groupLoanId }
       ]
     })
     .populate('group', 'members groupCode groupName')
@@ -4371,7 +4200,6 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   if (!groupLoan) {
     console.log(`❌ Group loan not found for any identifier: ${groupLoanId}`);
     
-    // Show available loans for debugging
     const allGroupLoans = await GroupLoan.find({}).select('loanId groupCode _id status').limit(10);
     const availableLoans = allGroupLoans.map(gl => ({
       loanId: gl.loanId, 
@@ -4391,8 +4219,6 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   }
 
   console.log(`✅ Found group loan: ${groupLoan.loanId}, Group Code: ${groupLoan.groupCode}, Status: ${groupLoan.status}`);
-  console.log(`👥 Group members:`, groupLoan.members?.length || 0);
-  console.log(`📊 Individual loan accounts:`, groupLoan.individualLoanAccounts?.length || 0);
 
   // Enhanced status validation
   const validRepaymentStatuses = [
@@ -4411,9 +4237,6 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   const finalPaymentFrequency = getPaymentFrequency(paymentFrequency, groupLoan);
   
   console.log('=== PAYMENT FREQUENCY DETECTION ===');
-  console.log('Provided frequency:', paymentFrequency);
-  console.log('Loan paymentFrequency:', groupLoan.paymentFrequency);
-  console.log('Loan loanTerm:', groupLoan.loanTerm);
   console.log('Final detected frequency:', finalPaymentFrequency);
 
   // Calculate expected repayment amounts with payment frequency
@@ -4433,14 +4256,7 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   memberExpectedRepayments.forEach((member, index) => {
     console.log(`Member ${index + 1}: ${member.memberName}`);
     console.log(`  Account: ${member.accountNumber}`);
-    console.log(`  Savings Account: ${member.savingsAccountNo || 'N/A'}`);
     console.log(`  Expected Amount: ${member.expectedAmount.toLocaleString()}`);
-    console.log(`  Principal: ${member.principalAmount.toLocaleString()}`);
-    console.log(`  Interest: ${member.interestAmount.toLocaleString()}`);
-    console.log(`  Outstanding Principal: ${member.outstandingPrincipal.toLocaleString()}`);
-    console.log(`  Outstanding Interest: ${member.outstandingInterest.toLocaleString()}`);
-    console.log(`  Current Balance: ${member.currentBalance.toLocaleString()}`);
-    console.log('---');
   });
 
   // Validate member repayments against expected amounts
@@ -4462,83 +4278,120 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
 
   const paymentDate = new Date();
   const oldTotalRepaid = groupLoan.totalRepaid || 0;
-  const repaidMembers = [];
+  const repaidMembers = []; // This will now contain LoanAccount ObjectIds
   const repaymentDetails = [];
+  
+  // FIXED: Use a single session for the entire operation
   const session = await mongoose.startSession();
-
+  
   try {
-    await session.withTransaction(async () => {
-      // Process individual member repayments
-      await processIndividualMemberRepayments(
-        groupLoan,
-        memberRepayments,
-        memberExpectedRepayments,
-        isInstallment,
-        paymentDate,
-        paymentMethod,
-        transactionReference,
-        req.user.id,
-        repaidMembers,
-        repaymentDetails,
-        session,
-        expectedRepaymentDetails,
-        repaymentType,
-        finalPaymentFrequency,
-        accruedInterestDetails
+    session.startTransaction();
+    
+    console.log('🔄 Starting transaction for group loan repayment...');
+
+    // FIXED: Pass the session to processIndividualMemberRepayments
+    await processIndividualMemberRepayments(
+      groupLoan,
+      memberRepayments,
+      memberExpectedRepayments,
+      isInstallment,
+      paymentDate,
+      paymentMethod,
+      transactionReference,
+      req.user?.id || 'system',
+      repaidMembers, // This will be populated with LoanAccount ObjectIds
+      repaymentDetails,
+      session, // Pass the session explicitly
+      expectedRepaymentDetails,
+      repaymentType,
+      finalPaymentFrequency,
+      accruedInterestDetails
+    );
+
+    // Calculate total repayment from member repayments
+    const calculatedTotalRepayAmount = memberRepayments.reduce((sum, member) => 
+      sum + (member.loanAmount || 0) + (member.savingsAmount || 0), 0
+    );
+
+    // Update group loan repayment totals
+    groupLoan.totalRepaid = (groupLoan.totalRepaid || 0) + calculatedTotalRepayAmount;
+    
+    // FIXED: Handle repaidToMembers properly - ensure we're using ObjectIds
+    console.log('📋 Repaid members (LoanAccount IDs):', repaidMembers);
+    
+    // Convert string IDs to ObjectIds if needed and add to repaidToMembers
+    if (repaidMembers && repaidMembers.length > 0) {
+      const repaidObjectIds = repaidMembers.map(id => {
+        if (typeof id === 'string' && mongoose.Types.ObjectId.isValid(id)) {
+          return new mongoose.Types.ObjectId(id);
+        }
+        return id; // If it's already an ObjectId
+      });
+      
+      // Create a Set to avoid duplicates and merge with existing
+      const existingRepaid = groupLoan.repaidToMembers || [];
+      const newRepaidSet = new Set([
+        ...existingRepaid.map(id => id.toString()),
+        ...repaidObjectIds.map(id => id.toString())
+      ]);
+      
+      // Convert back to ObjectIds
+      groupLoan.repaidToMembers = Array.from(newRepaidSet).map(id => 
+        new mongoose.Types.ObjectId(id)
       );
-
-      // Calculate total repayment from member repayments
-      const calculatedTotalRepayAmount = memberRepayments.reduce((sum, member) => 
-        sum + (member.loanAmount || 0) + (member.savingsAmount || 0), 0
+      
+      console.log(`✅ Updated repaidToMembers: ${groupLoan.repaidToMembers.length} members`);
+    }
+    
+    // Track installments paid at group level
+    if (isInstallment) {
+      groupLoan.installmentsPaid = (groupLoan.installmentsPaid || 0) + 1;
+      
+      // Update next due date based on payment frequency
+      groupLoan.nextDueDate = calculateNextDueDate(
+        paymentDate, 
+        finalPaymentFrequency, 
+        groupLoan.lastRepaymentDate
       );
+    }
+    
+    // Calculate total repayable amount
+    const totalRepayable = expectedRepaymentDetails.totalRepayment || 
+                          groupLoan.totalRepayable ||
+                          (groupLoan.totalAmount + accruedInterestDetails.totalAccruedInterest);
+    
+    // Check if group loan is fully repaid
+    if (groupLoan.totalRepaid >= totalRepayable) {
+      groupLoan.status = isLegacyLoan ? 'repaid_legacy' : 'repaid';
+      groupLoan.repaidAt = paymentDate;
+      groupLoan.remainingBalance = 0;
+    } else {
+      groupLoan.remainingBalance = totalRepayable - groupLoan.totalRepaid;
+    }
+    
+    // Update last repayment date
+    groupLoan.lastRepaymentDate = paymentDate;
+    
+    // Mark as migrated if this is a legacy loan's first repayment
+    if (isLegacyLoan && !groupLoan.migrationCompleted) {
+      groupLoan.migrationCompleted = true;
+      groupLoan.lastMigratedAt = paymentDate;
+    }
+    
+    // FIXED: Save with session
+    console.log('💾 Saving group loan updates...');
+    await groupLoan.save({ session });
+    console.log('✅ Group loan saved successfully');
 
-      // Update group loan repayment totals
-      groupLoan.totalRepaid = (groupLoan.totalRepaid || 0) + calculatedTotalRepayAmount;
-      groupLoan.repaidToMembers = [...new Set([...(groupLoan.repaidToMembers || []), ...repaidMembers])];
-      
-      // Track installments paid at group level
-      if (isInstallment) {
-        groupLoan.installmentsPaid = (groupLoan.installmentsPaid || 0) + 1;
-        
-        // Update next due date based on payment frequency
-        groupLoan.nextDueDate = calculateNextDueDate(
-          paymentDate, 
-          finalPaymentFrequency, 
-          groupLoan.lastRepaymentDate
-        );
-      }
-      
-      // Calculate total repayable amount
-      const totalRepayable = expectedRepaymentDetails.totalRepayment || 
-                            groupLoan.totalRepayable ||
-                            (groupLoan.totalAmount + accruedInterestDetails.totalAccruedInterest);
-      
-      // Check if group loan is fully repaid
-      if (groupLoan.totalRepaid >= totalRepayable) {
-        groupLoan.status = isLegacyLoan ? 'repaid_legacy' : 'repaid';
-        groupLoan.repaidAt = paymentDate;
-        groupLoan.remainingBalance = 0;
-      } else {
-        groupLoan.remainingBalance = totalRepayable - groupLoan.totalRepaid;
-      }
-      
-      // Update last repayment date
-      groupLoan.lastRepaymentDate = paymentDate;
-      
-      // Mark as migrated if this is a legacy loan's first repayment
-      if (isLegacyLoan && !groupLoan.migrationCompleted) {
-        groupLoan.migrationCompleted = true;
-        groupLoan.lastMigratedAt = paymentDate;
-      }
-      
-      await groupLoan.save({ session });
-    });
+    // Commit the transaction
+    await session.commitTransaction();
+    console.log('✅ Transaction committed successfully');
 
-    // Log audit trail
+    // Log audit trail (outside transaction)
     await logAuditTrail(
       'GroupLoan',
       groupLoan._id.toString(),
-      req.user.id,
+      req.user?.id || 'system',
       'REPAY',
       {
         totalRepaid: oldTotalRepaid,
@@ -4571,14 +4424,17 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       data: {
         groupLoan: {
           _id: groupLoan._id,
+          loanId: groupLoan.loanId,
           groupCode: groupLoan.groupCode,
+          groupName: groupLoan.groupName,
           status: groupLoan.status,
           totalRepaid: groupLoan.totalRepaid,
           remainingBalance: groupLoan.remainingBalance,
           installmentsPaid: groupLoan.installmentsPaid,
           nextDueDate: groupLoan.nextDueDate,
           paymentFrequency: finalPaymentFrequency,
-          isLegacyLoan
+          isLegacyLoan,
+          repaidMembersCount: groupLoan.repaidToMembers?.length || 0
         },
         repaymentSummary: {
           totalAmount: memberRepayments.reduce((sum, m) => sum + (m.loanAmount || 0) + (m.savingsAmount || 0), 0),
@@ -4593,35 +4449,18 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
           repaymentType,
           expectedInstallment: expectedRepaymentDetails.installmentAmount
         },
-        memberDetails: repaymentDetails,
-        memberSpreadsheet: {
-          summary: {
-            totalMembers: memberExpectedRepayments.length,
-            totalExpectedAmount: memberExpectedRepayments.reduce((sum, member) => sum + member.expectedAmount, 0),
-            totalOutstandingPrincipal: memberExpectedRepayments.reduce((sum, member) => sum + member.outstandingPrincipal, 0),
-            totalOutstandingInterest: memberExpectedRepayments.reduce((sum, member) => sum + member.outstandingInterest, 0),
-            paymentFrequency: finalPaymentFrequency,
-            installmentAmount: expectedRepaymentDetails.installmentAmount
-          },
-          members: memberExpectedRepayments.map(member => ({
-            memberId: member.memberId,
-            memberName: member.memberName,
-            loanAccountNo: member.accountNumber,
-            savingsAccountNo: member.savingsAccountNo,
-            expectedRepayment: member.expectedAmount,
-            outstandingPrincipal: member.outstandingPrincipal,
-            outstandingInterest: member.outstandingInterest,
-            currentBalance: member.currentBalance,
-            principalShare: member.principalAmount,
-            interestShare: member.interestAmount,
-            isLegacy: member.isLegacy
-          }))
-        }
+        memberDetails: repaymentDetails
       },
     });
+
   } catch (error) {
-    logger.error(`Error processing group loan repayment: ${error.message}`);
-    await session.abortTransaction();
+    console.error('💥 Error processing group loan repayment:', error);
+    
+    // FIXED: Only abort transaction if it hasn't been aborted already
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+      console.log('🔄 Transaction aborted');
+    }
    
     res.status(500).json({
       success: false,
@@ -4630,14 +4469,13 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       isLegacyLoan
     });
   } finally {
+    // FIXED: Always end the session
     await session.endSession();
+    console.log('🔚 Session ended');
   }
 });
 
-
-
-// Validate individual member repayments
-// Validate individual member repayments
+// Enhanced validation function with dynamic principal/interest checks
 const validateIndividualMemberRepayments = (memberRepayments, memberExpectedRepayments, groupLoan, expectedRepaymentDetails, paymentFrequency, repaymentType) => {
   let totalLoanAmount = 0;
   let totalSavingsAmount = 0;
@@ -4655,8 +4493,30 @@ const validateIndividualMemberRepayments = (memberRepayments, memberExpectedRepa
       };
     }
 
+    // Validate that principal + interest equals loan amount
+    const calculatedTotal = (memberRepayment.principal || 0) + (memberRepayment.interest || 0);
+    if (Math.abs(calculatedTotal - (memberRepayment.loanAmount || 0)) > 0.01) {
+      return {
+        valid: false,
+        message: `Principal (${memberRepayment.principal}) + Interest (${memberRepayment.interest}) = ${calculatedTotal} doesn't match loan amount ${memberRepayment.loanAmount} for member ${memberExpected.memberName}`
+      };
+    }
+
+    // Check if principal repayment is reasonable - use dynamic values from memberExpected
+    const maxReasonablePrincipal = memberExpected.originalPrincipal || 
+                                  memberExpected.loanAmount || 
+                                  memberExpected.outstandingPrincipal || 
+                                  (memberExpected.outstandingPrincipal + memberExpected.outstandingInterest);
+    
+    if (memberRepayment.principal > maxReasonablePrincipal) {
+      return {
+        valid: false,
+        message: `Principal repayment ${memberRepayment.principal} exceeds reasonable amount ${maxReasonablePrincipal} for member ${memberExpected.memberName}`
+      };
+    }
+
     // Validate loan amount doesn't exceed outstanding principal + interest
-    const maxLoanRepayment = memberExpected.outstandingPrincipal + memberExpected.outstandingInterest;
+    const maxLoanRepayment = (memberExpected.outstandingPrincipal || 0) + (memberExpected.outstandingInterest || 0);
     if (memberRepayment.loanAmount > maxLoanRepayment) {
       return {
         valid: false,
@@ -4669,9 +4529,9 @@ const validateIndividualMemberRepayments = (memberRepayments, memberExpectedRepa
   }
 
   // Validate installment amounts if this is an installment payment
-  if (expectedRepaymentDetails.installmentAmount) {
+  if (expectedRepaymentDetails && expectedRepaymentDetails.installmentAmount) {
     const tolerance = 0.01; // Allow small rounding differences
-    const totalExpected = memberExpectedRepayments.reduce((sum, m) => sum + m.expectedAmount, 0);
+    const totalExpected = memberExpectedRepayments.reduce((sum, m) => sum + (m.expectedAmount || 0), 0);
     
     if (Math.abs(totalLoanAmount - totalExpected) > tolerance) {
       return {
@@ -4684,182 +4544,53 @@ const validateIndividualMemberRepayments = (memberRepayments, memberExpectedRepa
   return { valid: true };
 };
 
-// Process individual member repayments
-const processIndividualMemberRepayments = async (
-  groupLoan,
-  memberRepayments,
-  memberExpectedRepayments,
-  isInstallment,
-  paymentDate,
-  paymentMethod,
-  transactionReference,
-  userId,
-  repaidMembers,
-  repaymentDetails,
-  session,
-  expectedRepaymentDetails,
-  repaymentType,
-  paymentFrequency,
-  accruedInterestDetails
-) => {
-  for (const memberRepayment of memberRepayments) {
-    const memberExpected = memberExpectedRepayments.find(m => 
-      m.memberId === memberRepayment.memberId || 
-      m.accountNumber === memberRepayment.accountNumber
-    );
+// Allocate repayment amount between principal and interest
+const allocateRepaymentAmount = (repaymentAmount, outstandingInterest, outstandingPrincipal, repaymentType) => {
+  let principal = 0;
+  let interest = 0;
 
-    if (!memberExpected) {
-      throw new Error(`Member not found: ${memberRepayment.memberId || memberRepayment.accountNumber}`);
-    }
-
-    const memberId = memberExpected.memberId;
-    const loanAccountNo = memberExpected.accountNumber;
+  switch (repaymentType) {
+    case 'INTEREST_FIRST':
+      // Pay interest first, then principal
+      interest = Math.min(repaymentAmount, outstandingInterest);
+      principal = Math.max(0, repaymentAmount - interest);
+      break;
     
-    console.log(`💳 Processing repayment for member: ${memberExpected.memberName}`);
-    console.log(`   Loan Amount: ${memberRepayment.loanAmount || 0}`);
-    console.log(`   Savings Amount: ${memberRepayment.savingsAmount || 0}`);
-    console.log(`   Account: ${loanAccountNo}`);
-
-    // Find the individual loan account
-    let loanAccount = await LoanAccount.findOne({ 
-      ACCT_NO: loanAccountNo 
-    }).session(session);
-
-    if (!loanAccount) {
-      throw new Error(`Loan account not found: ${loanAccountNo}`);
-    }
-
-    // Process loan repayment
-    if (memberRepayment.loanAmount > 0) {
-      await processMemberLoanRepayment(
-        loanAccount,
-        memberRepayment.loanAmount,
-        paymentDate,
-        paymentMethod,
-        transactionReference,
-        userId,
-        session,
-        repaymentType,
-        isInstallment
-      );
-    }
-
-    // Process savings payment (if any)
-    if (memberRepayment.savingsAmount > 0) {
-      await processMemberSavingsPayment(
-        memberExpected,
-        memberRepayment.savingsAmount,
-        paymentDate,
-        paymentMethod,
-        transactionReference,
-        userId,
-        session
-      );
-    }
-
-    // Update repayment tracking
-    repaidMembers.push(memberId);
-    repaymentDetails.push({
-      memberId,
-      memberName: memberExpected.memberName,
-      accountNumber: loanAccountNo,
-      loanAmount: memberRepayment.loanAmount || 0,
-      savingsAmount: memberRepayment.savingsAmount || 0,
-      totalAmount: (memberRepayment.loanAmount || 0) + (memberRepayment.savingsAmount || 0),
-      paymentDate,
-      paymentMethod,
-      transactionReference,
-      isInstallment,
-      repaymentType
-    });
-
-    console.log(`✅ Successfully processed repayment for ${memberExpected.memberName}`);
+    case 'PRINCIPAL_FIRST':
+      // Pay principal first, then interest
+      principal = Math.min(repaymentAmount, outstandingPrincipal);
+      interest = Math.max(0, repaymentAmount - principal);
+      break;
+    
+    case 'PRO_RATA':
+    default:
+      // Pay proportionally
+      const totalOutstanding = outstandingPrincipal + outstandingInterest;
+      if (totalOutstanding > 0) {
+        principal = (outstandingPrincipal / totalOutstanding) * repaymentAmount;
+        interest = (outstandingInterest / totalOutstanding) * repaymentAmount;
+        
+        // Round to 2 decimal places
+        principal = Math.round(principal * 100) / 100;
+        interest = Math.round(interest * 100) / 100;
+        
+        // Handle rounding differences
+        const totalAllocated = principal + interest;
+        if (totalAllocated < repaymentAmount) {
+          interest += (repaymentAmount - totalAllocated);
+        }
+      }
+      break;
   }
+
+  // Ensure we don't exceed outstanding amounts
+  principal = Math.min(principal, outstandingPrincipal);
+  interest = Math.min(interest, outstandingInterest);
+
+  return { principal, interest };
 };
 
-// Process individual member loan repayment
-const processMemberLoanRepayment = async (
-  loanAccount,
-  loanAmount,
-  paymentDate,
-  paymentMethod,
-  transactionReference,
-  userId,
-  session,
-  repaymentType,
-  isInstallment
-) => {
-  // Get current loan summary
-  let loanSummary = await LoanAccountSummary.findOne({
-    ACCT_ID: loanAccount._id
-  }).session(session);
-
-  if (!loanSummary) {
-    loanSummary = new LoanAccountSummary({
-      ACCT_ID: loanAccount._id,
-      ACCT_NO: loanAccount.ACCT_NO,
-      CUST_ID: loanAccount.CUST_ID,
-      TOTAL_PRINCIPAL: loanAccount.LOAN_AMOUNT || 0,
-      TOTAL_INTEREST: 0,
-      TOTAL_REPAID: 0,
-      OUTSTANDING_PRINCIPAL: loanAccount.LOAN_AMOUNT || 0,
-      OUTSTANDING_INTEREST: 0,
-      TOTAL_OVERDUE: 0,
-      LAST_REPAYMENT_DATE: null,
-      NEXT_DUE_DATE: loanAccount.DISBURSED_DT ? 
-        new Date(loanAccount.DISBURSED_DT.getTime() + 30 * 24 * 60 * 60 * 1000) : null // 30 days from disbursement
-    });
-  }
-
-  // Calculate allocation between principal and interest
-  const allocation = allocateRepaymentAmount(
-    loanAmount,
-    loanSummary.OUTSTANDING_INTEREST,
-    loanSummary.OUTSTANDING_PRINCIPAL,
-    repaymentType
-  );
-
-  // Update loan summary
-  loanSummary.TOTAL_REPAID += loanAmount;
-  loanSummary.OUTSTANDING_PRINCIPAL -= allocation.principal;
-  loanSummary.OUTSTANDING_INTEREST -= allocation.interest;
-  loanSummary.LAST_REPAYMENT_DATE = paymentDate;
-
-  // Update next due date for installments
-  if (isInstallment) {
-    loanSummary.NEXT_DUE_DATE = new Date(paymentDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days later
-  }
-
-  await loanSummary.save({ session });
-
-  // Create repayment transaction record
-  const repaymentTransaction = new LoanRepaymentTransaction({
-    ACCT_ID: loanAccount._id,
-    ACCT_NO: loanAccount.ACCT_NO,
-    CUST_ID: loanAccount.CUST_ID,
-    TRANSACTION_DATE: paymentDate,
-    TRANSACTION_TYPE: 'REPAYMENT',
-    AMOUNT: loanAmount,
-    PRINCIPAL_AMOUNT: allocation.principal,
-    INTEREST_AMOUNT: allocation.interest,
-    PAYMENT_METHOD: paymentMethod,
-    TRANSACTION_REFERENCE: transactionReference,
-    REPAYMENT_TYPE: repaymentType,
-    IS_INSTALLMENT: isInstallment,
-    CREATED_BY: userId,
-    STATUS: 'COMPLETED'
-  });
-
-  await repaymentTransaction.save({ session });
-
-  console.log(`📊 Loan account ${loanAccount.ACCT_NO} updated:`);
-  console.log(`   Principal repaid: ${allocation.principal}`);
-  console.log(`   Interest repaid: ${allocation.interest}`);
-  console.log(`   New outstanding principal: ${loanSummary.OUTSTANDING_PRINCIPAL}`);
-  console.log(`   New outstanding interest: ${loanSummary.OUTSTANDING_INTEREST}`);
-};
-
-//Process member savings payment
+// Process member savings payment
 const processMemberSavingsPayment = async (
   memberExpected,
   savingsAmount,
@@ -4902,291 +4633,453 @@ const processMemberSavingsPayment = async (
   }
 };
 
-// // Allocate repayment between principal and interest
-// const allocateRepaymentAmount = (amount, outstandingInterest, outstandingPrincipal, repaymentType) => {
-//   let principal = 0;
-//   let interest = 0;
 
-//   switch (repaymentType) {
-//     case 'interest_first':
-//       interest = Math.min(amount, outstandingInterest);
-//       principal = amount - interest;
-//       break;
-    
-//     case 'principal_first':
-//       principal = Math.min(amount, outstandingPrincipal);
-//       interest = amount - principal;
-//       break;
-    
-//     case 'both':
-//     default:
-//       // Proportional allocation
-//       const totalOutstanding = outstandingPrincipal + outstandingInterest;
-//       if (totalOutstanding > 0) {
-//         principal = (outstandingPrincipal / totalOutstanding) * amount;
-//         interest = (outstandingInterest / totalOutstanding) * amount;
-//       }
-//       break;
-//   }
+// Updated processMemberLoanRepayment with proper error handling and debugging
+const processMemberLoanRepayment = async (
+  loanAccount,
+  loanAmount,
+  principalAmount,
+  interestAmount,
+  paymentDate,
+  paymentMethod,
+  transactionReference,
+  userId,
+  session,
+  repaymentType,
+  isInstallment
+) => {
+  try {
+    console.log(`🔧 Starting loan repayment processing for account: ${loanAccount?.ACCT_NO}`);
+    console.log(`   Loan Amount: ${loanAmount}, Principal: ${principalAmount}, Interest: ${interestAmount}`);
+    console.log(`   Loan Account ID: ${loanAccount?._id}`);
 
-//   // Ensure we don't exceed outstanding amounts
-//   principal = Math.min(principal, outstandingPrincipal);
-//   interest = Math.min(interest, outstandingInterest);
+    // Get current loan summary
+    let loanSummary = await LoanAccountSummary.findOne({
+      ACCT_ID: loanAccount._id
+    }).session(session);
 
-//   return { principal, interest };
-// };
+    console.log(`📊 Found existing loan summary: ${!!loanSummary}`);
 
-// // Process individual member repayments
-// const processIndividualMemberRepayments = async (
-//   groupLoan,
-//   memberRepayments,
-//   memberExpectedRepayments,
-//   isInstallment,
-//   paymentDate,
-//   paymentMethod,
-//   transactionReference,
-//   userId,
-//   repaidMembers,
-//   repaymentDetails,
-//   session,
-//   expectedRepaymentDetails,
-//   repaymentType,
-//   paymentFrequency,
-//   accruedInterestDetails
-// ) => {
-//   for (const memberRepayment of memberRepayments) {
-//     const memberExpected = memberExpectedRepayments.find(m => 
-//       m.memberId === memberRepayment.memberId || 
-//       m.accountNumber === memberRepayment.accountNumber
-//     );
+    if (!loanSummary) {
+      console.log(`🆕 Creating new loan summary...`);
+      
+      // Safely parse values with proper null checks
+      const initialPrincipal = parseFloat(
+        (loanAccount?.LOAN_AMOUNT?.toString() || 
+         loanAccount?.ACTUAL_DISBURSEMENT?.toString() || 
+         '0').replace(/[^0-9.-]/g, '')
+      ) || 0;
 
-//     if (!memberExpected) {
-//       throw new Error(`Member not found: ${memberRepayment.memberId || memberRepayment.accountNumber}`);
-//     }
+      const initialInterest = parseFloat(
+        (loanAccount?.remainingInterestAmount?.toString() || 
+         loanAccount?.TOTAL_INTEREST?.toString() || 
+         '0').replace(/[^0-9.-]/g, '')
+      ) || 0;
+      
+      // Calculate required fields for LoanAccountSummary
+      const startDate = loanAccount?.START_DT || loanAccount?.DISBURSED_DT || new Date();
+      const maturityDate = loanAccount?.MATURITY_DT || calculateMaturityDate(loanAccount, startDate);
+      const nextPaymentDate = calculateNextPaymentDate(loanAccount, startDate);
+      const totalInstallments = calculateTotalInstallments(loanAccount);
+      const installmentAmount = calculateInstallmentAmount(loanAccount, initialPrincipal, totalInstallments);
 
-//     const memberId = memberExpected.memberId;
-//     const loanAccountNo = memberExpected.accountNumber;
-    
-//     console.log(`💳 Processing repayment for member: ${memberExpected.memberName}`);
-//     console.log(`   Loan Amount: ${memberRepayment.loanAmount || 0}`);
-//     console.log(`   Savings Amount: ${memberRepayment.savingsAmount || 0}`);
-//     console.log(`   Account: ${loanAccountNo}`);
-
-//     // Find the individual loan account
-//     let loanAccount = await LoanAccount.findOne({ 
-//       ACCT_NO: loanAccountNo 
-//     }).session(session);
-
-//     if (!loanAccount) {
-//       throw new Error(`Loan account not found: ${loanAccountNo}`);
-//     }
-
-//     // Process loan repayment
-//     if (memberRepayment.loanAmount > 0) {
-//       await processMemberLoanRepayment(
-//         loanAccount,
-//         memberRepayment.loanAmount,
-//         paymentDate,
-//         paymentMethod,
-//         transactionReference,
-//         userId,
-//         session,
-//         repaymentType,
-//         isInstallment
-//       );
-//     }
-
-//     // Process savings payment (if any)
-//     if (memberRepayment.savingsAmount > 0) {
-//       await processMemberSavingsPayment(
-//         memberExpected,
-//         memberRepayment.savingsAmount,
-//         paymentDate,
-//         paymentMethod,
-//         transactionReference,
-//         userId,
-//         session
-//       );
-//     }
-
-//     // Update repayment tracking
-//     repaidMembers.push(memberId);
-//     repaymentDetails.push({
-//       memberId,
-//       memberName: memberExpected.memberName,
-//       accountNumber: loanAccountNo,
-//       loanAmount: memberRepayment.loanAmount || 0,
-//       savingsAmount: memberRepayment.savingsAmount || 0,
-//       totalAmount: (memberRepayment.loanAmount || 0) + (memberRepayment.savingsAmount || 0),
-//       paymentDate,
-//       paymentMethod,
-//       transactionReference,
-//       isInstallment,
-//       repaymentType
-//     });
-
-//     console.log(`✅ Successfully processed repayment for ${memberExpected.memberName}`);
-//   }
-// };
-
-// // Process individual member loan repayment
-// const processMemberLoanRepayment = async (
-//   loanAccount,
-//   loanAmount,
-//   paymentDate,
-//   paymentMethod,
-//   transactionReference,
-//   userId,
-//   session,
-//   repaymentType,
-//   isInstallment
-// ) => {
-//   // Get current loan summary
-//   let loanSummary = await LoanAccountSummary.findOne({
-//     ACCT_ID: loanAccount._id
-//   }).session(session);
-
-//   if (!loanSummary) {
-//     loanSummary = new LoanAccountSummary({
-//       ACCT_ID: loanAccount._id,
-//       ACCT_NO: loanAccount.ACCT_NO,
-//       CUST_ID: loanAccount.CUST_ID,
-//       TOTAL_PRINCIPAL: loanAccount.LOAN_AMOUNT || 0,
-//       TOTAL_INTEREST: 0,
-//       TOTAL_REPAID: 0,
-//       OUTSTANDING_PRINCIPAL: loanAccount.LOAN_AMOUNT || 0,
-//       OUTSTANDING_INTEREST: 0,
-//       TOTAL_OVERDUE: 0,
-//       LAST_REPAYMENT_DATE: null,
-//       NEXT_DUE_DATE: loanAccount.DISBURSED_DT ? 
-//         new Date(loanAccount.DISBURSED_DT.getTime() + 30 * 24 * 60 * 60 * 1000) : null // 30 days from disbursement
-//     });
-//   }
-
-//   // Calculate allocation between principal and interest
-//   const allocation = allocateRepaymentAmount(
-//     loanAmount,
-//     loanSummary.OUTSTANDING_INTEREST,
-//     loanSummary.OUTSTANDING_PRINCIPAL,
-//     repaymentType
-//   );
-
-//   // Update loan summary
-//   loanSummary.TOTAL_REPAID += loanAmount;
-//   loanSummary.OUTSTANDING_PRINCIPAL -= allocation.principal;
-//   loanSummary.OUTSTANDING_INTEREST -= allocation.interest;
-//   loanSummary.LAST_REPAYMENT_DATE = paymentDate;
-
-//   // Update next due date for installments
-//   if (isInstallment) {
-//     loanSummary.NEXT_DUE_DATE = new Date(paymentDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days later
-//   }
-
-//   await loanSummary.save({ session });
-
-//   // Create repayment transaction record
-//   const repaymentTransaction = new LoanRepaymentTransaction({
-//     ACCT_ID: loanAccount._id,
-//     ACCT_NO: loanAccount.ACCT_NO,
-//     CUST_ID: loanAccount.CUST_ID,
-//     TRANSACTION_DATE: paymentDate,
-//     TRANSACTION_TYPE: 'REPAYMENT',
-//     AMOUNT: loanAmount,
-//     PRINCIPAL_AMOUNT: allocation.principal,
-//     INTEREST_AMOUNT: allocation.interest,
-//     PAYMENT_METHOD: paymentMethod,
-//     TRANSACTION_REFERENCE: transactionReference,
-//     REPAYMENT_TYPE: repaymentType,
-//     IS_INSTALLMENT: isInstallment,
-//     CREATED_BY: userId,
-//     STATUS: 'COMPLETED'
-//   });
-
-//   await repaymentTransaction.save({ session });
-
-//   console.log(`📊 Loan account ${loanAccount.ACCT_NO} updated:`);
-//   console.log(`   Principal repaid: ${allocation.principal}`);
-//   console.log(`   Interest repaid: ${allocation.interest}`);
-//   console.log(`   New outstanding principal: ${loanSummary.OUTSTANDING_PRINCIPAL}`);
-//   console.log(`   New outstanding interest: ${loanSummary.OUTSTANDING_INTEREST}`);
-// };
-
-// // Process member savings payment
-// const processMemberSavingsPayment = async (
-//   memberExpected,
-//   savingsAmount,
-//   paymentDate,
-//   paymentMethod,
-//   transactionReference,
-//   userId,
-//   session
-// ) => {
-//   // Find savings account
-//   const savingsAccount = await SavingsAccount.findOne({
-//     ACCT_NO: memberExpected.savingsAccountNo
-//   }).session(session);
-
-//   if (savingsAccount) {
-//     // Update savings account balance
-//     savingsAccount.CURRENT_BALANCE = (savingsAccount.CURRENT_BALANCE || 0) + savingsAmount;
-//     await savingsAccount.save({ session });
-
-//     // Create savings transaction
-//     const savingsTransaction = new SavingsTransaction({
-//       ACCT_ID: savingsAccount._id,
-//       ACCT_NO: savingsAccount.ACCT_NO,
-//       CUST_ID: savingsAccount.CUST_ID,
-//       TRANSACTION_DATE: paymentDate,
-//       TRANSACTION_TYPE: 'DEPOSIT',
-//       AMOUNT: savingsAmount,
-//       PAYMENT_METHOD: paymentMethod,
-//       TRANSACTION_REFERENCE: transactionReference,
-//       CREATED_BY: userId,
-//       STATUS: 'COMPLETED',
-//       DESCRIPTION: 'Group loan savings collection'
-//     });
-
-//     await savingsTransaction.save({ session });
-
-//     console.log(`💰 Savings account ${savingsAccount.ACCT_NO} updated: +${savingsAmount}`);
-//   } else {
-//     console.log(`⚠️ Savings account not found: ${memberExpected.savingsAccountNo}`);
-//   }
-// };
-
-// Allocate repayment between principal and interest
-const allocateRepaymentAmount = (amount, outstandingInterest, outstandingPrincipal, repaymentType) => {
-  let principal = 0;
-  let interest = 0;
-
-  switch (repaymentType) {
-    case 'interest_first':
-      interest = Math.min(amount, outstandingInterest);
-      principal = amount - interest;
-      break;
-    
-    case 'principal_first':
-      principal = Math.min(amount, outstandingPrincipal);
-      interest = amount - principal;
-      break;
-    
-    case 'both':
-    default:
-      // Proportional allocation
-      const totalOutstanding = outstandingPrincipal + outstandingInterest;
-      if (totalOutstanding > 0) {
-        principal = (outstandingPrincipal / totalOutstanding) * amount;
-        interest = (outstandingInterest / totalOutstanding) * amount;
+      // Validate all required fields are present
+      if (!loanAccount.ACCT_NO) {
+        throw new Error('ACCT_NO is required for loan account');
       }
+      if (!loanAccount.CUST_ID) {
+        throw new Error('CUST_ID is required for loan account');
+      }
+      if (!userId) {
+        throw new Error('userId is required for CREATED_BY field');
+      }
+
+      loanSummary = new LoanAccountSummary({
+        // Required fields from the schema
+        ACCT_ID: loanAccount._id,
+        ACCT_NO: loanAccount.ACCT_NO,
+        CUST_ID: loanAccount.CUST_ID,
+        ORIGINAL_PRINCIPAL: initialPrincipal,
+        OUTSTANDING_PRINCIPAL: initialPrincipal,
+        INSTALLMENT_AMOUNT: installmentAmount,
+        TOTAL_INSTALLMENTS: totalInstallments,
+        NEXT_PAYMENT_DT: nextPaymentDate,
+        MATURITY_DT: maturityDate,
+        START_DT: startDate,
+        CREATED_BY: userId,
+        
+        // Optional fields with defaults
+        TOTAL_INTEREST: initialInterest,
+        TOTAL_REPAYMENT: 0,
+        PAID_INSTALLMENTS: 0,
+        PAYMENT_FREQUENCY: loanAccount?.PAYMENT_FREQUENCY || 'MONTHLY',
+        LOAN_STATUS: loanAccount?.LOAN_STATUS || 'ACTIVE',
+        REC_ST: 'A',
+        PAID_INTEREST: 0,
+        LAST_PAYMENT_DT: null,
+        LAST_PAYMENT_AMOUNT: 0,
+        DELINQUENT_DAYS: 0,
+        CLEARED_BAL: 0,
+        CUR_PAYOFF: 0
+      });
+
+      console.log(`✅ New loan summary created successfully`);
+    }
+
+    console.log(`📊 Current loan summary for ${loanAccount.ACCT_NO}:`);
+    console.log(`   Outstanding Principal: ${loanSummary.OUTSTANDING_PRINCIPAL}`);
+    console.log(`   Total Interest: ${loanSummary.TOTAL_INTEREST}`);
+    console.log(`   Paid Interest: ${loanSummary.PAID_INTEREST}`);
+    console.log(`   Total Repayment: ${loanSummary.TOTAL_REPAYMENT}`);
+
+    // Safely handle all numeric values with defaults
+    const safePrincipalAmount = principalAmount || 0;
+    const safeInterestAmount = interestAmount || 0;
+    const safeLoanAmount = loanAmount || 0;
+    const safeOutstandingPrincipal = loanSummary.OUTSTANDING_PRINCIPAL || 0;
+    const safeTotalInterest = loanSummary.TOTAL_INTEREST || 0;
+    const safePaidInterest = loanSummary.PAID_INTEREST || 0;
+
+    // Validate that principal + interest equals total loan amount
+    const calculatedTotal = safePrincipalAmount + safeInterestAmount;
+    if (Math.abs(calculatedTotal - safeLoanAmount) > 0.01) {
+      console.warn(`⚠️ Principal (${safePrincipalAmount}) + Interest (${safeInterestAmount}) = ${calculatedTotal} doesn't match loan amount ${safeLoanAmount}. Using provided allocation.`);
+    }
+
+    // Handle case where outstanding principal is zero but we're trying to pay principal
+    let adjustedPrincipalAmount = safePrincipalAmount;
+    let adjustedInterestAmount = safeInterestAmount;
+
+    if (safePrincipalAmount > 0 && safeOutstandingPrincipal === 0) {
+      console.warn(`⚠️ Principal repayment requested but outstanding principal is 0. Reallocating to interest.`);
+      adjustedInterestAmount += adjustedPrincipalAmount;
+      adjustedPrincipalAmount = 0;
+    }
+
+    // Validate we don't overpay - with adjusted amounts
+    if (adjustedPrincipalAmount > safeOutstandingPrincipal) {
+      const excessPrincipal = adjustedPrincipalAmount - safeOutstandingPrincipal;
+      console.warn(`⚠️ Principal repayment ${adjustedPrincipalAmount} exceeds outstanding principal ${safeOutstandingPrincipal}. Moving ${excessPrincipal} to interest.`);
+      adjustedInterestAmount += excessPrincipal;
+      adjustedPrincipalAmount = safeOutstandingPrincipal;
+    }
+
+    // Calculate available interest (total interest minus paid interest)
+    const availableInterest = safeTotalInterest - safePaidInterest;
+    if (adjustedInterestAmount > availableInterest) {
+      console.warn(`⚠️ Interest repayment ${adjustedInterestAmount} exceeds available interest ${availableInterest}. Capping at ${availableInterest}.`);
+      adjustedInterestAmount = availableInterest;
+    }
+
+    // Final validation - ensure we're not trying to pay more than available
+    const totalPayment = adjustedPrincipalAmount + adjustedInterestAmount;
+    const maxAvailable = safeOutstandingPrincipal + availableInterest;
+    
+    if (totalPayment > maxAvailable) {
+      throw new Error(`Total payment ${totalPayment} exceeds maximum available ${maxAvailable}. Please adjust payment amounts.`);
+    }
+
+    // Update loan summary with safe values
+    loanSummary.TOTAL_REPAYMENT = (loanSummary.TOTAL_REPAYMENT || 0) + totalPayment;
+    loanSummary.OUTSTANDING_PRINCIPAL = safeOutstandingPrincipal - adjustedPrincipalAmount;
+    loanSummary.PAID_INTEREST = safePaidInterest + adjustedInterestAmount;
+    loanSummary.LAST_PAYMENT_DT = paymentDate;
+    loanSummary.LAST_PAYMENT_AMOUNT = totalPayment;
+    
+    // Increment paid installments if this is an installment payment
+    if (isInstallment) {
+      loanSummary.PAID_INSTALLMENTS = (loanSummary.PAID_INSTALLMENTS || 0) + 1;
+    }
+
+    // Update next due date for installments
+    if (isInstallment) {
+      loanSummary.NEXT_PAYMENT_DT = calculateNextPaymentDate(loanAccount, paymentDate);
+    }
+
+    // Update loan status if fully paid
+    if (loanSummary.OUTSTANDING_PRINCIPAL <= 0 && availableInterest <= 0) {
+      loanSummary.LOAN_STATUS = 'CLOSED';
+    }
+
+    // Update last customer activity date
+    loanSummary.LAST_CUST_ACTIVITY_DT = new Date();
+
+    console.log(`💾 Saving loan summary updates...`);
+    await loanSummary.save({ session });
+    console.log(`✅ Loan summary saved successfully`);
+
+    // Create repayment transaction record - CORRECTED FIELD NAMES
+    console.log(`📝 Creating repayment transaction...`);
+    
+    // Validate required fields for LoanRepaymentTransaction
+    if (!transactionReference) {
+      throw new Error('TRANSACTION_REFERENCE is required for LoanRepaymentTransaction');
+    }
+    if (!userId) {
+      throw new Error('userId (CREATED_BY) is required for LoanRepaymentTransaction');
+    }
+
+    const repaymentTransaction = new LoanRepaymentTransaction({
+      // Required fields for LoanRepaymentTransaction schema
+      ACCT_ID: loanAccount._id, // Required: ObjectId reference to LoanAccount
+      ACCT_NO: loanAccount.ACCT_NO, // Required: String
+      CUST_ID: loanAccount.CUST_ID, // Required: String
+      TRANSACTION_DATE: paymentDate, // Required: Date
+      TRANSACTION_TYPE: 'REPAYMENT', // Required: String with enum
+      AMOUNT: totalPayment, // Required: Number
+      PRINCIPAL_AMOUNT: adjustedPrincipalAmount, // Required: Number
+      INTEREST_AMOUNT: adjustedInterestAmount, // Required: Number
+      PAYMENT_METHOD: paymentMethod, // Required: String with enum
+      TRANSACTION_REFERENCE: transactionReference, // Required: String
+      REPAYMENT_TYPE: repaymentType, // Optional: String with enum
+      IS_INSTALLMENT: isInstallment, // Optional: Boolean
+      CREATED_BY: userId, // Required: String
+      STATUS: 'COMPLETED', // Optional: String with enum
+      RECEIPT_NO: transactionReference // Optional: String
+    });
+
+    console.log(`💾 Saving repayment transaction with reference: ${transactionReference}`);
+    await repaymentTransaction.save({ session });
+    console.log(`✅ Repayment transaction saved successfully`);
+
+    console.log(`📊 Loan account ${loanAccount.ACCT_NO} updated:`);
+    console.log(`   Principal repaid: ${adjustedPrincipalAmount}`);
+    console.log(`   Interest repaid: ${adjustedInterestAmount}`);
+    console.log(`   Total payment: ${totalPayment}`);
+    console.log(`   New outstanding principal: ${loanSummary.OUTSTANDING_PRINCIPAL}`);
+    console.log(`   New paid interest: ${loanSummary.PAID_INTEREST}`);
+    console.log(`   New total repayment: ${loanSummary.TOTAL_REPAYMENT}`);
+
+  } catch (error) {
+    console.error(`💥 ERROR in processMemberLoanRepayment for account ${loanAccount?.ACCT_NO}:`, error);
+    throw error;
+  }
+};
+
+// Helper function to calculate next payment date
+const calculateNextPaymentDate = (loanAccount, fromDate) => {
+  const nextDate = new Date(fromDate);
+  const paymentFrequency = loanAccount?.PAYMENT_FREQUENCY || 'MONTHLY';
+
+  switch (paymentFrequency.toUpperCase()) {
+    case 'DAILY':
+      nextDate.setDate(nextDate.getDate() + 1);
       break;
+    case 'WEEKLY':
+      nextDate.setDate(nextDate.getDate() + 7);
+      break;
+    case 'BI-WEEKLY':
+      nextDate.setDate(nextDate.getDate() + 14);
+      break;
+    case 'MONTHLY':
+      nextDate.setMonth(nextDate.getMonth() + 1);
+      break;
+    case 'QUARTERLY':
+      nextDate.setMonth(nextDate.getMonth() + 3);
+      break;
+    default:
+      nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+  
+  return nextDate;
+};
+
+// Helper function to calculate maturity date
+const calculateMaturityDate = (loanAccount, startDate) => {
+  const maturityDate = new Date(startDate);
+  const termValue = loanAccount?.TERM_VALUE || 12;
+  const termCode = loanAccount?.TERM_CD || 'M';
+
+  switch (termCode.toUpperCase()) {
+    case 'D': // Daily
+      maturityDate.setDate(maturityDate.getDate() + termValue);
+      break;
+    case 'W': // Weekly
+      maturityDate.setDate(maturityDate.getDate() + (termValue * 7));
+      break;
+    case 'M': // Monthly
+      maturityDate.setMonth(maturityDate.getMonth() + termValue);
+      break;
+    case 'Y': // Yearly
+      maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
+      break;
+    default:
+      maturityDate.setMonth(maturityDate.getMonth() + 12);
+  }
+  
+  return maturityDate;
+};
+
+// Helper function to calculate total installments
+const calculateTotalInstallments = (loanAccount) => {
+  const termValue = loanAccount?.TERM_VALUE || 12;
+  const termCode = loanAccount?.TERM_CD || 'M';
+  const paymentFrequency = loanAccount?.PAYMENT_FREQUENCY || 'MONTHLY';
+
+  let totalMonths = termValue;
+  if (termCode.toUpperCase() === 'W') {
+    totalMonths = Math.ceil(termValue * 7 / 30); // Convert weeks to approximate months
+  } else if (termCode.toUpperCase() === 'Y') {
+    totalMonths = termValue * 12;
   }
 
-  // Ensure we don't exceed outstanding amounts
-  principal = Math.min(principal, outstandingPrincipal);
-  interest = Math.min(interest, outstandingInterest);
-
-  return { principal, interest };
+  switch (paymentFrequency.toUpperCase()) {
+    case 'DAILY':
+      return totalMonths * 30; // Approximate
+    case 'WEEKLY':
+      return Math.ceil(totalMonths * 4.33);
+    case 'BI-WEEKLY':
+      return Math.ceil(totalMonths * 2.17);
+    case 'MONTHLY':
+      return totalMonths;
+    case 'QUARTERLY':
+      return Math.ceil(totalMonths / 3);
+    default:
+      return totalMonths;
+  }
 };
+
+// Helper function to calculate installment amount
+const calculateInstallmentAmount = (loanAccount, principal, totalInstallments) => {
+  // If loan account has installment amount, use it
+  if (loanAccount?.installmentAmount) {
+    return loanAccount.installmentAmount;
+  }
+  
+  // Calculate based on principal and installments
+  if (totalInstallments > 0) {
+    return principal / totalInstallments;
+  }
+  
+  // Default to 5% of principal
+  return principal * 0.05;
+};
+
+
+
+
+// In processIndividualMemberRepayments function, update the repayment tracking:
+const processIndividualMemberRepayments = async (
+  groupLoan,
+  memberRepayments,
+  memberExpectedRepayments,
+  isInstallment,
+  paymentDate,
+  paymentMethod,
+  transactionReference,
+  userId,
+  repaidMembers,
+  repaymentDetails,
+  session,
+  expectedRepaymentDetails,
+  repaymentType,
+  paymentFrequency,
+  accruedInterestDetails
+) => {
+  for (const memberRepayment of memberRepayments) {
+    const memberExpected = memberExpectedRepayments.find(m => 
+      m.memberId === memberRepayment.memberId || 
+      m.accountNumber === memberRepayment.accountNumber
+    );
+
+    if (!memberExpected) {
+      throw new Error(`Member not found: ${memberRepayment.memberId || memberRepayment.accountNumber}`);
+    }
+
+    const memberId = memberExpected.memberId;
+    const loanAccountNo = memberExpected.accountNumber;
+    
+    console.log(`💳 Processing repayment for member: ${memberExpected.memberName}`);
+    console.log(`   Loan Amount: ${memberRepayment.loanAmount || 0}`);
+    console.log(`   Savings Amount: ${memberRepayment.savingsAmount || 0}`);
+    console.log(`   Account: ${loanAccountNo}`);
+    console.log(`   Member ID: ${memberId}`);
+
+    // Find the individual loan account
+    let loanAccount = await LoanAccount.findOne({ 
+      ACCT_NO: loanAccountNo,
+      CUST_ID: memberId
+    }).session(session);
+
+    if (!loanAccount) {
+      // If not found with ACCT_NO, try with APPL_ID or other identifiers
+      loanAccount = await LoanAccount.findOne({
+        $or: [
+          { ACCT_NO: loanAccountNo },
+          { APPL_ID: memberExpected.applicationId },
+          { CUST_ID: memberId }
+        ]
+      }).session(session);
+    }
+
+    if (!loanAccount) {
+      console.error(`Loan account search details:`);
+      console.error(`- ACCT_NO: ${loanAccountNo}`);
+      console.error(`- CUST_ID: ${memberId}`);
+      console.error(`- APPL_ID: ${memberExpected.applicationId}`);
+      throw new Error(`Loan account not found for member ${memberExpected.memberName}. Searched with ACCT_NO: ${loanAccountNo}, CUST_ID: ${memberId}`);
+    }
+
+    console.log(`✅ Found loan account: ${loanAccount.ACCT_NO} for ${memberExpected.memberName}`);
+
+    // Process loan repayment using the provided principal and interest amounts
+    if (memberRepayment.loanAmount > 0) {
+      await processMemberLoanRepayment(
+        loanAccount,
+        memberRepayment.loanAmount,
+        memberRepayment.principal, // Use provided principal amount
+        memberRepayment.interest,  // Use provided interest amount
+        paymentDate,
+        paymentMethod,
+        transactionReference,
+        userId,
+        session,
+        repaymentType,
+        isInstallment
+      );
+    }
+
+    // Process savings payment (if any)
+    if (memberRepayment.savingsAmount > 0) {
+      await processMemberSavingsPayment(
+        memberExpected,
+        memberRepayment.savingsAmount,
+        paymentDate,
+        paymentMethod,
+        transactionReference,
+        userId,
+        session
+      );
+    }
+
+    // FIXED: Update repayment tracking - push LoanAccount ObjectId instead of memberId string
+    // Push the loanAccount._id (ObjectId) to repaidToMembers array
+    if (!repaidMembers.includes(loanAccount._id.toString())) {
+      repaidMembers.push(loanAccount._id.toString());
+    }
+
+    repaymentDetails.push({
+      memberId,
+      memberName: memberExpected.memberName,
+      accountNumber: loanAccountNo,
+      loanAccountId: loanAccount._id, // Include the ObjectId for reference
+      loanAmount: memberRepayment.loanAmount || 0,
+      savingsAmount: memberRepayment.savingsAmount || 0,
+      principal: memberRepayment.principal || 0,
+      interest: memberRepayment.interest || 0,
+      totalAmount: (memberRepayment.loanAmount || 0) + (memberRepayment.savingsAmount || 0),
+      paymentDate,
+      paymentMethod,
+      transactionReference,
+      receiptNo: memberRepayment.receiptNo,
+      isInstallment,
+      repaymentType
+    });
+
+    console.log(`✅ Successfully processed repayment for ${memberExpected.memberName}`);
+  }
+};
+
 
 // ==================== OTHER FUNCTIONS (KEEP ONLY ONE VERSION) ====================
 
@@ -5257,9 +5150,7 @@ export const getGroupLoanPortfolio = asyncHandler(async (req, res) => {
   }
 });
 
-// Remove duplicate function definitions below - only keep the ones above
 
-// Helper function to update repayment schedule
 // Helper function to update repayment schedule
 const updateRepaymentSchedule = async (loanAccount, amount, paymentDate, session) => {
   try {
@@ -5379,8 +5270,6 @@ const createRepaymentTransaction = async (loanAccount, amount, paymentMethod, re
   }
 };
 
-// Get group loan by ID - Updated with proper population
-// Get group loan by ID - Updated with BU_ID filtering
 // Get group loan by ID - Updated with BU_ID filtering
 export const getGroupLoan = asyncHandler(async (req, res) => {
   const { groupLoanId } = req.params;
@@ -5569,23 +5458,6 @@ export const getGroupLoan = asyncHandler(async (req, res) => {
   });
 });
 
-// // Safe number utility function
-// const safeNumber = (value, defaultValue = 0) => {
-//   if (value === null || value === undefined) return defaultValue;
-//   if (typeof value === 'object' && value.toString) {
-//     // Handle Decimal128 objects
-//     return parseFloat(value.toString()) || defaultValue;
-//   }
-//   const num = Number(value);
-//   return isNaN(num) ? defaultValue : num;
-// };
-
-// // Safe number utility function
-// const safeNumber = (value, defaultValue = 0) => {
-//   if (value === null || value === undefined) return defaultValue;
-//   const num = Number(value);
-//   return isNaN(num) ? defaultValue : num;
-// };
 
 // Delete group
 export const deleteGroup = asyncHandler(async (req, res) => {
@@ -5628,8 +5500,7 @@ export const deleteGroup = asyncHandler(async (req, res) => {
   });
 });
 
-//////////
-// controllers/loanCollectionController.js - Add this function
+
 
 /**
  * @desc Get comprehensive repayment collection sheet for a group loan
