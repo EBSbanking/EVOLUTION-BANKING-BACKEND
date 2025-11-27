@@ -1,4 +1,4 @@
-// server.js - Updated with Rate Limiting and API Root Endpoint
+// server.js - Fixed version with proper system status handling, date formatting, and EOD management
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -10,36 +10,23 @@ import connectDB from './config/db.js';
 import logger from './src/utils/logger.js';
 import initializeApplication from './src/utils/initializeApplication.js';
 import { initializeSystemDates } from './src/controllers/OsController.js';
-import { initializePermissionsCache } from './src/routes/config.js';
+import os from 'os';
 
-// ENHANCED ERROR SUPPRESSION: Handle specific MongoDB and audit logger errors
+// Error suppression
 const originalError = console.error;
 console.error = function(...args) {
-  // Suppress auditLogger error
   if (args[0] && typeof args[0] === 'string' && args[0].includes('auditLogger.info(...).catch is not a function')) {
     console.log('⚠️ Audit logger compatibility issue - continuing startup...');
-    return;
-  }
-  // Suppress MongoDB timeout errors
-  if (args[0] && args[0].includes('buffering timed out')) {
-    console.log('⚠️ MongoDB query timeout - connection may be slow, continuing...');
-    return;
-  }
-  // Suppress systemdates specific errors
-  if (args[0] && args[0].includes('systemdates.findOne()')) {
-    console.log('⚠️ System dates initialization delayed - server continuing...');
     return;
   }
   originalError.apply(console, args);
 };
 
-// Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-// ✅ IMMEDIATE FIX: Add API Root Endpoint FIRST
+// API Endpoints
 app.get('/api', (req, res) => {
   res.status(200).json({
     success: true,
@@ -50,7 +37,6 @@ app.get('/api', (req, res) => {
   });
 });
 
-// ✅ IMMEDIATE FIX: Add Health Check Endpoint
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
@@ -61,50 +47,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ✅ IMMEDIATE FIX: Simple Rate Limiting for API Root
-const requestCounts = new Map();
-app.use('/api', (req, res, next) => {
-  // Skip rate limiting for health checks
-  if (req.path === '/health') return next();
-  
-  const clientIP = req.ip;
-  const now = Date.now();
-  const windowMs = 60000; // 1 minute
-  
-  // Clean old entries
-  for (const [ip, data] of requestCounts.entries()) {
-    if (now - data.lastRequest > windowMs) {
-      requestCounts.delete(ip);
-    }
-  }
-  
-  const clientData = requestCounts.get(clientIP) || { count: 0, lastRequest: now };
-  
-  // Limit to 10 requests per minute for API root
-  if (req.path === '/' && clientData.count >= 10) {
-    console.log(`🛑 Rate limit exceeded for API root: ${clientIP}`);
-    return res.status(429).json({
-      success: false,
-      message: 'Too many requests to API root. Please wait a moment.'
-    });
-  }
-  
-  clientData.count++;
-  clientData.lastRequest = now;
-  requestCounts.set(clientIP, clientData);
-  
-  next();
-});
-
-// Enhanced CORS Configuration with debugging
+// CORS Configuration
 const allowedOrigins = [
   process.env.CLIENT_URL,
   process.env.CLIENT_URL_LOCAL,
   process.env.CLIENT_URL_NETWORK,
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'http://localhost:5173', // Vite default
-  'http://127.0.0.1:5173', // Vite alternative
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
 ].filter(Boolean);
 
 console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
@@ -112,14 +63,10 @@ console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, etc.)
       if (!origin) return callback(null, true);
-      
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        console.log('🚫 CORS Blocked Origin:', origin);
-        console.log('✅ Allowed Origins:', allowedOrigins);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -129,60 +76,129 @@ app.use(
   })
 );
 
-// ✅ ENHANCED: Request Debouncing Middleware
-const recentRequests = new Map();
-app.use((req, res, next) => {
-  const key = `${req.ip}-${req.method}-${req.url}`;
-  const now = Date.now();
-  
-  // Skip debouncing for health checks
-  if (req.url === '/api/health') return next();
-  
-  // Check if same request was made very recently (within 500ms)
-  if (recentRequests.has(key)) {
-    const lastRequestTime = recentRequests.get(key);
-    if (now - lastRequestTime < 500) { // 500ms debounce
-      console.log(`🛑 Debounced duplicate request: ${req.method} ${req.url} from ${req.ip}`);
-      return res.status(429).json({
+// ============================================
+// EOD MANAGEMENT ENDPOINTS
+// ============================================
+
+// EOD Processing Endpoint
+app.post('/api/system/eod/start', async (req, res) => {
+  try {
+    const { processedBy = 'admin' } = req.body;
+    
+    const { processEndOfDay } = await import('./src/controllers/OsController.js');
+    const result = await processEndOfDay(processedBy);
+    
+    res.json({
+      success: true,
+      message: 'EOD processing completed successfully',
+      data: result.data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// EOD Status Endpoint
+app.get('/api/system/eod/status', async (req, res) => {
+  try {
+    const SystemDate = (await import('./src/models/SystemDate.js')).default;
+    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    
+    if (!systemDate) {
+      return res.status(404).json({
         success: false,
-        message: 'Request too frequent. Please wait a moment.'
+        message: 'System date not found'
       });
     }
+    
+    res.json({
+      success: true,
+      data: {
+        currentBusinessDate: systemDate.currentBusinessDate,
+        previousBusinessDate: systemDate.previousBusinessDate,
+        nextBusinessDate: systemDate.nextBusinessDate,
+        eodStatus: systemDate.eodStatus,
+        lastUpdated: systemDate.lastUpdated,
+        eodHistory: systemDate.eodHistory.slice(-5) // Last 5 EOD operations
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
-  
-  // Store current request time
-  recentRequests.set(key, now);
-  
-  // Clean up old entries (older than 5 seconds)
-  setTimeout(() => {
-    recentRequests.delete(key);
-  }, 5000);
-  
-  next();
 });
 
-// ENHANCED: Global Unhandled Rejection Handler - Handle MongoDB timeouts gracefully
-process.on('unhandledRejection', (reason, promise) => {
-  // Check if it's a MongoDB timeout error and suppress it
-  if (reason?.name === 'MongooseError' && reason?.message?.includes('buffering timed out')) {
-    console.log('⚠️ MongoDB query timeout - connection may be slow, continuing...');
-    return;
+// Manual date adjustment (admin only)
+app.post('/api/system/date/manual-set', async (req, res) => {
+  try {
+    const { date, updatedBy = 'admin', reason = 'Manual adjustment' } = req.body;
+    
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date is required'
+      });
+    }
+    
+    const { setBusinessDateManually } = await import('./src/controllers/OsController.js');
+    const result = await setBusinessDateManually(date, updatedBy, reason);
+    
+    res.json({
+      success: true,
+      message: 'Business date updated manually',
+      data: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
-  
-  // Check if it's the specific systemdates error
-  if (reason?.message?.includes('systemdates.findOne()')) {
-    console.log('⚠️ System dates query timeout - retrying in background...');
-    return;
-  }
-
-  logger.error('💥 Unhandled Promise Rejection', {
-    reason: reason?.message || reason,
-    promise,
-  });
 });
 
-// MongoDB Connection Ready Check Helper
-const waitForMongoConnection = async (maxWaitTime = 15000) => {
+// System Date Information Endpoint
+app.get('/api/system/date/info', async (req, res) => {
+  try {
+    const SystemDate = (await import('./src/models/SystemDate.js')).default;
+    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    
+    if (!systemDate) {
+      return res.status(404).json({
+        success: false,
+        message: 'System date not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        currentBusinessDate: systemDate.currentBusinessDate,
+        previousBusinessDate: systemDate.previousBusinessDate,
+        nextBusinessDate: systemDate.nextBusinessDate,
+        eodStatus: systemDate.eodStatus,
+        lastUpdated: systemDate.lastUpdated,
+        updatedBy: systemDate.updatedBy
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================
+// SERVER CONFIGURATION
+// ============================================
+
+// MongoDB Connection Helper
+const waitForMongoConnection = async (maxWaitTime = 30000) => {
   const startTime = Date.now();
   
   return new Promise((resolve) => {
@@ -197,7 +213,7 @@ const waitForMongoConnection = async (maxWaitTime = 15000) => {
         console.log('⚠️ MongoDB connection timeout, but continuing...');
         resolve(false);
       } else {
-        setTimeout(checkConnection, 500);
+        setTimeout(checkConnection, 1000);
       }
     };
     
@@ -208,68 +224,18 @@ const waitForMongoConnection = async (maxWaitTime = 15000) => {
 // Test Database Connection
 const testDatabaseConnection = async () => {
   try {
-    console.log('🧪 Testing database connection with a simple query...');
+    console.log('🧪 Testing database connection...');
     const result = await mongoose.connection.db.admin().ping();
-
+    
     if (result.ok === 1) {
-      console.log('✅ Database connection test PASSED - MongoDB is responsive');
+      console.log('✅ Database connection test PASSED');
       return true;
     } else {
-      console.log('❌ Database connection test FAILED - MongoDB not responsive');
+      console.log('❌ Database connection test FAILED');
       return false;
     }
   } catch (error) {
     console.log('❌ Database connection test FAILED - Error:', error.message);
-    return false;
-  }
-};
-
-// FIXED: Test with actual systemdates query - Corrected import path
-const testModelReadiness = async () => {
-  try {
-    console.log('🧪 Testing model readiness with systemdates query...');
-    
-    let SystemDate;
-    let importPath = '';
-    
-    // Try multiple possible locations for SystemDate model
-    const possiblePaths = [
-      './src/models/SystemDate.js',
-      './models/SystemDate.js',
-      '../src/models/SystemDate.js',
-      '../models/SystemDate.js'
-    ];
-    
-    for (const path of possiblePaths) {
-      try {
-        const module = await import(path);
-        SystemDate = module.default;
-        importPath = path;
-        console.log(`✅ SystemDate model loaded from: ${path}`);
-        break;
-      } catch (e) {
-        // Continue to next path
-        console.log(`❌ Failed to load from ${path}: ${e.message}`);
-      }
-    }
-    
-    if (!SystemDate) {
-      console.log('⚠️ SystemDate model not found in any location, but continuing startup...');
-      return true;
-    }
-    
-    const result = await SystemDate.findOne({}).lean().limit(1);
-    console.log('✅ Model query test PASSED:', !!result);
-    return !!result || true;
-  } catch (error) {
-    console.log('❌ Model query test FAILED:', error.message);
-    
-    // If it's a model-related error, we can still continue
-    if (error.message.includes('SystemDate') || error.message.includes('model')) {
-      console.log('⚠️ SystemDate query failed, but continuing startup...');
-      return true;
-    }
-    
     return false;
   }
 };
@@ -279,7 +245,6 @@ const safeInitializeApplication = async () => {
   try {
     console.log('🛡️ Starting SAFE application initialization...');
 
-    // Wait for full connection
     const isConnected = await waitForMongoConnection(20000);
     
     if (!isConnected) {
@@ -287,27 +252,14 @@ const safeInitializeApplication = async () => {
       return;
     }
 
-    // Test the connection with a simple query
     const connectionTest = await testDatabaseConnection();
     if (!connectionTest) {
       console.log('⚠️ Database connection test failed, skipping application initialization');
       return;
     }
 
-    // Test with model query
-    const modelTest = await testModelReadiness();
-    if (!modelTest) {
-      console.log('⚠️ Model readiness test failed, retrying in 5s...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      const retryTest = await testModelReadiness();
-      if (!retryTest) {
-        console.log('⚠️ Model test failed on retry, skipping init');
-        return;
-      }
-    }
-
     console.log('⏳ Ensuring database is fully ready...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     console.log('✅ Database confirmed ready, initializing application...');
     await initializeApplication();
@@ -317,7 +269,6 @@ const safeInitializeApplication = async () => {
       error: error.message,
       dbState: getDbStateText(mongoose.connection.readyState),
     });
-    console.error('⚠️ Application initialization failed, but server will continue running');
   }
 };
 
@@ -329,39 +280,16 @@ const configureLogging = () => {
   try {
     if (!fs.existsSync(LOG_DIR)) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
-      console.log(`✅ Created log directory: ${LOG_DIR}`);
     }
     
-    fs.accessSync(LOG_DIR, fs.constants.W_OK | fs.constants.R_OK);
-    console.log(`✅ Log directory is writable: ${LOG_DIR}`);
+    const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a', encoding: 'utf8' });
+    console.log(`✅ Log file configured: ${LOG_FILE}`);
     
+    return { logStream, logFile: LOG_FILE };
   } catch (err) {
     console.warn(`⚠️ Cannot use log directory ${LOG_DIR}: ${err.message}`);
-    console.log('🔄 Falling back to current directory for logging...');
-    
-    LOG_DIR = '.';
-    LOG_FILE = 'server.log';
-  }
-
-  try {
-    const logStream = fs.createWriteStream(LOG_FILE, { 
-      flags: 'a', 
-      encoding: 'utf8', 
-      mode: 0o666 
-    });
-    
-    console.log(`✅ Log file configured: ${LOG_FILE}`);
     return {
-      logStream,
-      logFile: LOG_FILE,
-    };
-  } catch (streamErr) {
-    console.error('❌ Failed to create log stream:', streamErr.message);
-    return {
-      logStream: { 
-        write: () => {}, 
-        end: (cb) => cb && cb() 
-      },
+      logStream: { write: () => {}, end: (cb) => cb && cb() },
       logFile: null,
     };
   }
@@ -375,41 +303,12 @@ const configureShutdown = (server) => {
     console.log(`Shutdown signal received: ${signal}`);
     
     try {
-      const { logAuditTrail } = await import('./src/utils/auditHelper.js');
-      const auditResult = await logAuditTrail(
-        'system',
-        'server_shutdown',
-        'system',
-        'server_stop',
-        null,
-        {
-          status: 'stopped',
-          signal: signal,
-          timestamp: new Date().toISOString(),
-        },
-        'internal',
-        'SYSTEM_STOP',
-        { shutdown: true }
-      );
-      
-      if (auditResult && auditResult.success) {
-        console.log('✅ Shutdown audit logged successfully');
-      } else {
-        console.log('⚠️ Shutdown audit skipped');
-      }
-    } catch (auditError) {
-      console.warn('⚠️ Could not log shutdown audit:', auditError.message);
-    }
-
-    // Close MongoDB connection
-    try {
       await mongoose.connection.close();
       console.log('✅ MongoDB connection closed');
     } catch (dbError) {
       console.error('❌ Error closing MongoDB connection:', dbError.message);
     }
 
-    // Close log stream and exit
     logStream.end(() => {
       console.log('✅ Log stream closed');
       console.log('🛑 Shutdown completed');
@@ -421,6 +320,87 @@ const configureShutdown = (server) => {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 };
 
+// Helper function to get DB state text
+function getDbStateText(state) {
+  const states = {
+    0: '❌ Disconnected',
+    1: '✅ Connected',
+    2: '🔄 Connecting',
+    3: '⏳ Disconnecting',
+  };
+  return states[state] || `❓ Unknown (${state})`;
+}
+
+// Network IP Helper Function
+function getNetworkIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+// Helper function to format date for clean display
+const formatDateForDisplay = (date) => {
+  if (!date) return null;
+  
+  if (date instanceof Date) {
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD
+  } else if (typeof date === 'string') {
+    // If it's already a string but contains time, extract date part
+    if (date.includes('T')) {
+      return date.split('T')[0];
+    }
+    // If it's in wrong format like "Wed Nov 26 2025 16:00:00 GMT-0800", parse it
+    else if (date.includes('GMT')) {
+      try {
+        const parsedDate = new Date(date);
+        if (!isNaN(parsedDate.getTime())) {
+          return parsedDate.toISOString().split('T')[0];
+        }
+      } catch (e) {
+        // Keep original if parsing fails
+      }
+    }
+    // If it's already in YYYY-MM-DD format, return as is
+    return date;
+  }
+  return date;
+};
+
+// System status with fallback
+let systemStatus = { 
+  currentBusinessDate: null,
+  initialized: false 
+};
+
+// Safe system status getter - FIXED VERSION
+const getSystemStatus = () => {
+  if (!systemStatus || typeof systemStatus !== 'object') {
+    return {
+      currentBusinessDate: null,
+      initialized: false,
+      status: 'Not Initialized'
+    };
+  }
+  
+  // Format the date for clean display
+  const displayDate = formatDateForDisplay(systemStatus.currentBusinessDate);
+  
+  return {
+    currentBusinessDate: displayDate,
+    previousBusinessDate: formatDateForDisplay(systemStatus.previousBusinessDate),
+    nextBusinessDate: formatDateForDisplay(systemStatus.nextBusinessDate),
+    eodStatus: systemStatus.eodStatus || 'IDLE',
+    initialized: systemStatus.initialized,
+    status: systemStatus.currentBusinessDate ? 'Initialized' : 'Not Initialized'
+  };
+};
+
 // Start Backend Server
 const startServer = async () => {
   try {
@@ -430,78 +410,132 @@ const startServer = async () => {
 
     // STEP 1: Connect to MongoDB
     console.log('🔄 STEP 1: Connecting to MongoDB...');
-    console.log('📡 Connecting to MongoDB Atlas...');
     await connectDB();
 
-    // FIXED: Wait for connection before initializing
-    console.log('🔄 STEP 1.5: Waiting for MongoDB to be fully ready...');
-    await waitForMongoConnection(15000);
+    // STEP 1.5: Wait for connection
+    console.log('🔄 STEP 1.5: Waiting for MongoDB connection...');
+    await waitForMongoConnection(25000);
     await testDatabaseConnection();
-    await testModelReadiness();
 
-    // STEP 2: Start the server (ONLY SERVER STARTUP)
+    // STEP 1.6: Initialize System Dates (FIXED VERSION)
+    console.log('🔄 STEP 1.6: Initializing system dates...');
+    if (mongoose.connection.readyState === 1) {
+      try {
+        // Initialize system dates and get the result
+        const dateResult = await initializeSystemDates();
+        
+        // Use the result directly if available, otherwise create fallback
+        if (dateResult && dateResult.currentBusinessDate) {
+          systemStatus = dateResult;
+          
+          // Format the date for clean logging - FIXED VERSION
+          const displayDate = formatDateForDisplay(systemStatus.currentBusinessDate);
+          console.log(`✅ System dates initialized: ${displayDate}`);
+        } else {
+          // Try to get from import as fallback
+          try {
+            const osController = await import('./src/controllers/OsController.js');
+            if (osController.systemStatus) {
+              systemStatus = osController.systemStatus;
+              const displayDate = formatDateForDisplay(systemStatus.currentBusinessDate);
+              console.log(`✅ System dates initialized via import: ${displayDate}`);
+            }
+          } catch (importError) {
+            console.log('⚠️ Could not get systemStatus from import');
+          }
+          
+          // Final fallback
+          if (!systemStatus.currentBusinessDate) {
+            const fallbackDate = new Date().toISOString().split('T')[0];
+            systemStatus = {
+              currentBusinessDate: fallbackDate,
+              previousBusinessDate: fallbackDate,
+              nextBusinessDate: fallbackDate,
+              eodStatus: 'IDLE',
+              initialized: true
+            };
+            console.log(`✅ System dates set to fallback: ${fallbackDate}`);
+          }
+        }
+      } catch (dateError) {
+        console.log('⚠️ System dates initialization failed:', dateError.message);
+        const fallbackDate = new Date().toISOString().split('T')[0];
+        systemStatus = {
+          currentBusinessDate: fallbackDate,
+          previousBusinessDate: fallbackDate, 
+          nextBusinessDate: fallbackDate,
+          eodStatus: 'IDLE',
+          initialized: false
+        };
+      }
+    } else {
+      console.log('⚠️ Skipping system dates initialization - MongoDB not connected');
+      const fallbackDate = new Date().toISOString().split('T')[0];
+      systemStatus = {
+        currentBusinessDate: fallbackDate,
+        previousBusinessDate: fallbackDate, 
+        nextBusinessDate: fallbackDate,
+        eodStatus: 'IDLE',
+        initialized: false
+      };
+    }
+
+    // STEP 2: Start the server
     console.log('🔄 STEP 2: Starting HTTP server...');
     const PORT = process.env.PORT || 5000;
+    const HOST = process.env.HOST || '0.0.0.0';
 
-    const server = app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, HOST, () => {
       console.log('\n' + '='.repeat(60));
       console.log('✅ BACKEND SERVER RUNNING SUCCESSFULLY');
       console.log('='.repeat(60));
+      
+      const currentStatus = getSystemStatus();
+      const networkIP = getNetworkIP();
+      
+      // Format business date for display - FIXED VERSION
+      const businessDateDisplay = currentStatus.currentBusinessDate 
+        ? currentStatus.currentBusinessDate
+        : 'Not set';
+      
       console.log(`📍 Local URL: http://localhost:${PORT}`);
-      console.log(`🌐 Network URL: ${process.env.CLIENT_URL_NETWORK}:${PORT}`);
-      console.log(`🔧 API Base: ${process.env.CLIENT_URL_NETWORK}:${PORT}/api`);
-      console.log(`📱 Frontend: ${process.env.CLIENT_URL}`);
+      console.log(`🌐 Network URL: http://${networkIP}:${PORT}`);
+      console.log(`🔧 API Base: http://${networkIP}:${PORT}/api`);
+      console.log(`📱 Frontend: ${process.env.CLIENT_URL || 'Not specified'}`);
       console.log(`🗄️  Database: ${getDbStateText(mongoose.connection.readyState)}`);
-      console.log(`🧪 DB Test: ${testDatabaseConnection ? '✅ Responsive' : '❌ Not Responsive'}`);
+      console.log(`📅 Current Business Date: ${businessDateDisplay}`);
+      console.log(`📅 System Dates: ${currentStatus.status}`);
+      console.log(`🔄 EOD Status: ${currentStatus.eodStatus || 'IDLE'}`);
       console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🛡️  CORS Origins: ${allowedOrigins.length} configured`);
       console.log('='.repeat(60) + '\n');
 
       // STEP 3: Initialize application in background
-      console.log('🔄 STEP 3: Starting background application initialization...');
-      safeInitializeApplication().then(() => {
-        console.log('🎉 Application initialization completed!');
-      }).catch(err => {
-        console.log('⚠️ Application initialization continuing in background...');
-      });
+      if (mongoose.connection.readyState === 1) {
+        console.log('🔄 STEP 3: Starting background application initialization...');
+        safeInitializeApplication().then(() => {
+          console.log('🎉 Application initialization completed!');
+        });
+      } else {
+        console.log('⚠️ Skipping application initialization - MongoDB not connected');
+      }
     });
 
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use`, { error: err.message });
-        console.error(`❌ Port ${PORT} is already occupied. Please use a different port.`);
-        console.log(`💡 Try: PORT=${Number(PORT) + 1} npm start`);
+        console.error(`❌ Port ${PORT} is already in use`);
       } else {
-        console.error('Server error', { error: err.message });
+        console.error('Server error:', err.message);
       }
       process.exit(1);
     });
 
     configureShutdown(server);
   } catch (err) {
-    console.error('❌ SERVER STARTUP FAILED', {
-      error: err.message,
-      dbState: getDbStateText(mongoose.connection.readyState),
-    });
-    console.error('\n💥 SERVER STARTUP FAILED:');
-    console.error('   Error:', err.message);
-    console.error('   Database State:', getDbStateText(mongoose.connection.readyState));
-    console.error('   Check: MongoDB connection string and network access');
+    console.error('❌ SERVER STARTUP FAILED:', err.message);
     process.exit(1);
   }
 };
-
-// Helper function to get DB state text
-function getDbStateText(state) {
-  const states = {
-    0: '❌ Disconnected',
-    1: '✅ Connected',
-    2: '🔄 Connecting',
-    3: '⏳ Disconnecting',
-    99: '❓ Uninitialized',
-  };
-  return states[state] || `❓ Unknown (${state})`;
-}
 
 // Start the server
 startServer();

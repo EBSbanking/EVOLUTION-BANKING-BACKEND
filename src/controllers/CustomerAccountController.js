@@ -4,6 +4,7 @@ import Customer from '../models/Customer.js';
 import AuditTrail from '../models/AuditTrail.js';
 import logger from '../utils/logger.js';
 import SavingsProduct from '../models/SavingsProduct.js';
+import GLAccount from '../models/GLAccount.js';
 
 export const createCustomerAccount = async (req, res) => {
   const customerAccounts = req.body;
@@ -1387,3 +1388,4 @@ export const getAccountActivationHistory = async (req, res) => {
     });
   }
 };
+

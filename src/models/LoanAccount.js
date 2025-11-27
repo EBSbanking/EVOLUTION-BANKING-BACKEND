@@ -566,45 +566,92 @@ const loanAccountSchema = new mongoose.Schema(
 );
 
 // Virtual Fields
+// TEMPORARY FIX: Override problematic virtuals with safe versions
 loanAccountSchema.virtual('daysToMaturity').get(function () {
-  if (!this.MATURITY_DT || !(this.MATURITY_DT instanceof Date)) return null;
-  return Math.ceil((this.MATURITY_DT - new Date()) / (1000 * 60 * 60 * 24));
+  try {
+    if (!this.MATURITY_DT || !(this.MATURITY_DT instanceof Date)) return null;
+    return Math.ceil((this.MATURITY_DT - new Date()) / (1000 * 60 * 60 * 24));
+  } catch (error) {
+    return null;
+  }
 });
 
 loanAccountSchema.virtual('nextAccrualDate').get(function () {
-  if (!this.dailyAccruals || this.dailyAccruals.length === 0) return this.START_DT;
-  const lastAccrual = this.dailyAccruals[this.dailyAccruals.length - 1].date;
-  return lastAccrual ? new Date(lastAccrual.setDate(lastAccrual.getDate() + 1)) : this.START_DT;
+  // ✅ FIXED: Add null checking
+  if (!this.dailyAccruals || this.dailyAccruals.length === 0) {
+    return this.START_DT || new Date();
+  }
+  
+  const lastAccrual = this.dailyAccruals[this.dailyAccruals.length - 1];
+  if (!lastAccrual || !lastAccrual.date) {
+    return this.START_DT || new Date();
+  }
+  
+  const nextDate = new Date(lastAccrual.date);
+  nextDate.setDate(nextDate.getDate() + 1);
+  return nextDate;
 });
 
 loanAccountSchema.virtual('totalOutstanding').get(function () {
-  const principal = parseFloat(this.OUTSTANDING_PRINCIPAL?.toString() || '0');
-  const interest = parseFloat(this.TOTAL_INTEREST?.toString() || '0') - parseFloat(this.interestPaid?.toString() || '0');
+  // ✅ FIXED: Add null checking for Decimal128 fields
+  const principal = this.OUTSTANDING_PRINCIPAL ? 
+    parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) : 0;
+  
+  const totalInterest = this.TOTAL_INTEREST ?
+    parseFloat(this.TOTAL_INTEREST.toString()) : 0;
+  
+  const interestPaid = this.interestPaid ?
+    parseFloat(this.interestPaid.toString()) : 0;
+  
+  const interest = totalInterest - interestPaid;
   return principal + Math.max(0, interest);
 });
 
 // Instance Methods
+// FIXED Instance Methods - Add null checking
 loanAccountSchema.methods.isOverdue = function() {
-  if (!this.NEXT_PAYMENT_DATE || !(this.NEXT_PAYMENT_DATE instanceof Date) || this.LOAN_STATUS !== 'ACTIVE') {
+  // ✅ FIXED: Add comprehensive null checking
+  if (!this.NEXT_PAYMENT_DATE || 
+      !(this.NEXT_PAYMENT_DATE instanceof Date) || 
+      isNaN(this.NEXT_PAYMENT_DATE.getTime()) ||
+      this.LOAN_STATUS !== 'ACTIVE') {
     return false;
   }
   return this.NEXT_PAYMENT_DATE < new Date();
 };
 
 loanAccountSchema.methods.getDaysOverdue = function() {
+  // ✅ FIXED: Add null checking
   if (!this.isOverdue() || !this.NEXT_PAYMENT_DATE) return 0;
   return Math.ceil((new Date() - this.NEXT_PAYMENT_DATE) / (1000 * 60 * 60 * 24));
 };
 
+// Add this helper method to your LoanAccount.js
+loanAccountSchema.methods.safeDecimalToString = function(fieldName) {
+  const value = this[fieldName];
+  if (!value) return '0.00';
+  
+  try {
+    if (typeof value === 'object' && value.toString) {
+      return value.toString();
+    }
+    return String(value);
+  } catch (error) {
+    logger.warn(`Error converting ${fieldName} to string:`, { error: error.message });
+    return '0.00';
+  }
+};
+
 loanAccountSchema.methods.getInterestBreakdown = function() {
+  // ✅ FIXED: Add null checking for Decimal128 fields
   return {
-    totalInterest: parseFloat(this.TOTAL_INTEREST.toString()),
-    upfrontInterest: parseFloat(this.upfrontInterestAmount.toString()),
-    remainingInterest: parseFloat(this.remainingInterestAmount.toString()),
+    totalInterest: this.TOTAL_INTEREST ? parseFloat(this.TOTAL_INTEREST.toString()) : 0,
+    upfrontInterest: this.upfrontInterestAmount ? parseFloat(this.upfrontInterestAmount.toString()) : 0,
+    remainingInterest: this.remainingInterestAmount ? parseFloat(this.remainingInterestAmount.toString()) : 0,
     upfrontPercentage: this.partialUpfrontInterest ?
-      parseFloat(this.upfrontInterestPercentage.toString()) :
+      (this.upfrontInterestPercentage ? parseFloat(this.upfrontInterestPercentage.toString()) : 0) :
       (this.deductUpfrontInterest ? 100 : 0),
-    disbursedAmount: parseFloat(this.ACTUAL_DISBURSEMENT.toString())
+    disbursedAmount: this.ACTUAL_DISBURSEMENT ? parseFloat(this.ACTUAL_DISBURSEMENT.toString()) : 0
   };
 };
 
@@ -641,6 +688,7 @@ loanAccountSchema.methods.updateBalances = function(principalAmount, interestAmo
 };
 
 // Static Methods
+// FIXED Static Methods - Add null checking
 loanAccountSchema.statics.findOverdueLoans = async function() {
   try {
     const loans = await this.find({
@@ -651,12 +699,19 @@ loanAccountSchema.statics.findOverdueLoans = async function() {
         $exists: true
       }
     }).lean();
-    return loans.map(loan => ({
-      ...loan,
-      isOverdue: true,
-      daysOverdue: loan.NEXT_PAYMENT_DATE ?
-        Math.ceil((new Date() - loan.NEXT_PAYMENT_DATE) / (1000 * 60 * 60 * 24)) : 0
-    }));
+    
+    return loans.map(loan => {
+      // ✅ FIXED: Add null checking in mapping
+      const nextPaymentDate = loan.NEXT_PAYMENT_DATE ? new Date(loan.NEXT_PAYMENT_DATE) : null;
+      const daysOverdue = nextPaymentDate ? 
+        Math.ceil((new Date() - nextPaymentDate) / (1000 * 60 * 60 * 24)) : 0;
+      
+      return {
+        ...loan,
+        isOverdue: true,
+        daysOverdue: daysOverdue
+      };
+    });
   } catch (error) {
     logger.error('Error finding overdue loans:', {
       error: error.message,

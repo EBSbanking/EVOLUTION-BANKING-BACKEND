@@ -1,6 +1,10 @@
 // src/services/loanStatusService.js
 import LoanAccount from '../models/LoanAccount.js';
 import { checkIfLoanIsOverdue } from './loanOverdueChecker.js'; // Assuming this function checks a single loan
+import moment from 'moment';
+import RepaymentSchedules from '../models/RepaymentSchedules.js';
+import LoanRepayment from '../models/LoanRepayment.js';
+import GroupLoan from '../models/GroupLoan.js';
 
 /**
  * Function to update loan status based on various conditions

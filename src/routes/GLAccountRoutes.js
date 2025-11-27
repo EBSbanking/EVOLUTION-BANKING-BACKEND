@@ -11,14 +11,15 @@ router.post('/dynamic/create', asyncHandler(GLAccountController.createDynamicGLA
 router.post('/dynamic/bulk-create', asyncHandler(GLAccountController.createAllDynamicGLAccountsForBranch));
 router.post('/clone-branch', asyncHandler(GLAccountController.cloneGLAccountsForBranch));
 
+// ==================== COA-ALIGNED ACCOUNT ROUTES ====================
+router.post('/coa-aligned/create', asyncHandler(GLAccountController.createCOAAlignedGLAccount));
+router.post('/coa/migrate', asyncHandler(GLAccountController.migrateToCOAStructure));
+router.get('/coa/structure/:organizationCode', asyncHandler(GLAccountController.getCOAStructure));
+
 // ==================== BRANCH MANAGEMENT ROUTES ====================
 router.get('/branch/summary/:organizationCode/:branchCode', asyncHandler(GLAccountController.getBranchGLAccountSummary));
 router.get('/organization/:organizationCode', asyncHandler(GLAccountController.getOrganizationGLAccounts));
 router.get('/inter-branch/:organizationCode', asyncHandler(GLAccountController.getInterBranchAccounts));
-
-// ==================== TEMPLATE & TESTING ROUTES ====================
-// router.get('/dynamic/templates', asyncHandler(GLAccountController.getGLAccountTemplates));
-// router.get('/dynamic/test/:branchCode', asyncHandler(GLAccountController.testDynamicGLAccounts));
 
 // ==================== TRANSACTION PROCESSING ROUTES ====================
 router.post('/ledger-entry', asyncHandler(GLAccountController.createLedgerEntry));
@@ -33,5 +34,17 @@ router.get('/:GL_ACCT_NO', asyncHandler(GLAccountController.getGLAccountById));
 router.put('/:GL_ACCT_NO', asyncHandler(GLAccountController.updateGLAccount));
 router.patch('/:GL_ACCT_NO/status', asyncHandler(GLAccountController.updateGLAccountStatus));
 router.delete('/:GL_ACCT_NO', asyncHandler(GLAccountController.deleteGLAccount));
+
+
+// GL Account Activation Routes
+router.post('/initialize-activate', (GLAccountController.initializeAndActivateGLAccounts));
+router.get('/activation-status', (GLAccountController.getGLActivationStatus));
+router.post('/activate-specific', (GLAccountController.activateSpecificGLAccounts));
+router.post('/force-reactivate', (GLAccountController.forceReactivateGLAccounts));
+router.get('/by-number/:GL_ACCT_NO', asyncHandler(GLAccountController.getGLAccountByNumber));
+
+router.put('/coa/update/:GL_ACCT_NO', asyncHandler(GLAccountController.updateCOA));
+router.put('/coa/bulk-update', asyncHandler(GLAccountController.bulkUpdateCOA));
+router.get('/coa/settings/:organizationCode', asyncHandler(GLAccountController.getCOASettings));
 
 export default router;

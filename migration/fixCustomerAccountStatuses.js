@@ -1,6 +1,6 @@
 // migrations/fixAccountStatuses.js
 import mongoose from 'mongoose';
-import CustomerAccount from '../models/CustomerAccount.js';
+import CustomerAccount from '../src/models/CustomerAccount.js';
 import dotenv from 'dotenv';
 
 dotenv.config();

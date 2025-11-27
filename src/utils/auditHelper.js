@@ -4,7 +4,6 @@ import auditLogger from './AuditLogger.js';
 export const logAuditTrail = (
   entity_type,
   entity_id,
-  branch,
   user_id,
   action,
   old_value,
@@ -18,7 +17,6 @@ export const logAuditTrail = (
       auditLogger.info('Audit Event', {
         entity_type,
         entity_id,
-        branch,
         user_id,
         action,
         old_value,

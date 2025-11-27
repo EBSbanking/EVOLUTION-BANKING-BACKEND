@@ -1,4 +1,4 @@
-// migrate-groups-with-members-final.js
+// migrate-groups-with-members-and-collections.js
 import mysql from 'mysql2/promise';
 import { MongoClient, Decimal128 } from 'mongodb';
 
@@ -52,7 +52,36 @@ async function fetchGroupMembers(mysqlConnection, groupId) {
   }
 }
 
-// Enhanced mapping function for groups with members
+// Function to fetch group collections from collections table
+async function fetchGroupCollections(mysqlConnection, groupId) {
+  try {
+    const [collections] = await mysqlConnection.execute(`
+      SELECT 
+        id,
+        group_id,
+        created_by,
+        branch,
+        relationship_manager,
+        date,
+        total,
+        status,
+        currency,
+        last_updated,
+        offline_id,
+        channel
+      FROM collections 
+      WHERE group_id = ?
+      ORDER BY date ASC
+    `, [groupId]);
+
+    return collections;
+  } catch (error) {
+    console.log(`   ⚠️ Error fetching collections for group ${groupId}: ${error.message}`);
+    return [];
+  }
+}
+
+// Enhanced mapping function for groups with members AND collections
 async function mapGroupRowToMongoDoc(row, schema, mysqlConnection) {
   const groupCode = `GRP${String(row.id).padStart(3, '0')}`;
   
@@ -65,7 +94,10 @@ async function mapGroupRowToMongoDoc(row, schema, mysqlConnection) {
   // Fetch members for this group from customer table
   const mysqlMembers = await fetchGroupMembers(mysqlConnection, row.id);
   
-  console.log(`   👥 Group ${row.id} (${row.name}): Found ${mysqlMembers.length} members`);
+  // Fetch collections for this group from collections table
+  const mysqlCollections = await fetchGroupCollections(mysqlConnection, row.id);
+  
+  console.log(`   👥 Group ${row.id} (${row.name}): ${mysqlMembers.length} members, ${mysqlCollections.length} collections`);
   
   // Map members to MongoDB format
   const members = mysqlMembers.map(member => ({
@@ -102,12 +134,34 @@ async function mapGroupRowToMongoDoc(row, schema, mysqlConnection) {
     mysqlCustomerId: member.customer_id
   }));
 
+  // Map collections to MongoDB format
+  const collections = mysqlCollections.map(collection => ({
+    collectionId: collection.id,
+    amount: Number(collection.total),
+    currency: collection.currency || 'NGN',
+    collectionDate: collection.date ? new Date(collection.date) : new Date(),
+    status: collection.status?.toLowerCase() || 'approved',
+    branch: collection.branch,
+    relationshipManager: collection.relationship_manager,
+    createdBy: collection.created_by,
+    channel: collection.channel,
+    lastUpdated: collection.last_updated ? new Date(collection.last_updated) : new Date(),
+    offlineId: collection.offline_id,
+    mysqlCollectionId: collection.id
+  }));
+
+  // Calculate total collections amount
+  const totalCollections = collections.reduce((sum, collection) => sum + collection.amount, 0);
+
   return {
     // New schema fields
     groupCode: groupCode,
     groupName: row.name,
     members: members,
     memberCount: members.length,
+    collections: collections,
+    collectionCount: collections.length,
+    totalCollections: totalCollections,
     status: statusMap[row.status] || 'active',
     
     // Legacy fields
@@ -135,7 +189,7 @@ async function mapGroupRowToMongoDoc(row, schema, mysqlConnection) {
   };
 }
 
-async function migrateGroupsWithMembers() {
+async function migrateGroupsWithMembersAndCollections() {
   let mysqlConnection;
   let mongoClient;
   try {
@@ -149,7 +203,7 @@ async function migrateGroupsWithMembers() {
     const db = mongoClient.db(DB_NAME);
     console.log('✅ MongoDB connected.');
 
-    // Only migrate groups table with members
+    // Only migrate groups table with members and collections
     const tableName = 'groups';
     console.log(`\n🔄 Processing table: "${tableName}"`);
 
@@ -173,7 +227,7 @@ async function migrateGroupsWithMembers() {
       console.log(`   🗑️ Dropped existing "${tableName}" collection.`);
     }
 
-    // Process groups one by one to fetch members
+    // Process groups one by one to fetch members and collections
     const mongoDocs = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -182,7 +236,7 @@ async function migrateGroupsWithMembers() {
       mongoDocs.push(doc);
     }
 
-    // Insert all groups with their members
+    // Insert all groups with their members and collections
     if (mongoDocs.length > 0) {
       const collection = db.collection(tableName);
       const result = await collection.insertMany(mongoDocs, { ordered: false });
@@ -197,82 +251,93 @@ async function migrateGroupsWithMembers() {
     await collection.createIndex({ branch: 1 });
     await collection.createIndex({ status: 1 });
     await collection.createIndex({ "members.customerId": 1 });
+    await collection.createIndex({ "collections.collectionId": 1 });
+    await collection.createIndex({ "collections.collectionDate": 1 });
     console.log(`   🔧 Created indexes for groups table.`);
 
-    // Log detailed member statistics
+    // Log detailed statistics
     const groupStats = await collection.aggregate([
       {
         $group: {
           _id: null,
           totalGroups: { $sum: 1 },
           totalMembers: { $sum: "$memberCount" },
+          totalCollections: { $sum: "$collectionCount" },
+          totalCollectionAmount: { $sum: "$totalCollections" },
           groupsWithMembers: {
             $sum: {
               $cond: [{ $gt: ["$memberCount", 0] }, 1, 0]
             }
           },
-          groupsWithoutMembers: {
+          groupsWithCollections: {
             $sum: {
-              $cond: [{ $eq: ["$memberCount", 0] }, 1, 0]
+              $cond: [{ $gt: ["$collectionCount", 0] }, 1, 0]
             }
           },
           averageMembersPerGroup: { $avg: "$memberCount" },
-          maxMembers: { $max: "$memberCount" },
-          minMembers: { $min: "$memberCount" }
+          averageCollectionsPerGroup: { $avg: "$collectionCount" }
         }
       }
     ]).toArray();
     
     if (groupStats.length > 0) {
       const stats = groupStats[0];
-      console.log(`\n📊 GROUP MIGRATION SUMMARY:`);
+      console.log(`\n📊 COMPREHENSIVE MIGRATION SUMMARY:`);
       console.log(`   Total Groups: ${stats.totalGroups}`);
       console.log(`   Total Members: ${stats.totalMembers}`);
+      console.log(`   Total Collections: ${stats.totalCollections}`);
+      console.log(`   Total Collection Amount: ₦${stats.totalCollectionAmount?.toLocaleString() || 0}`);
       console.log(`   Groups with Members: ${stats.groupsWithMembers}`);
-      console.log(`   Groups without Members: ${stats.groupsWithoutMembers}`);
+      console.log(`   Groups with Collections: ${stats.groupsWithCollections}`);
       console.log(`   Average Members per Group: ${stats.averageMembersPerGroup?.toFixed(1) || 0}`);
-      console.log(`   Max Members in a Group: ${stats.maxMembers}`);
-      console.log(`   Min Members in a Group: ${stats.minMembers}`);
+      console.log(`   Average Collections per Group: ${stats.averageCollectionsPerGroup?.toFixed(1) || 0}`);
       
-      // Show groups with most members
-      if (stats.groupsWithMembers > 0) {
-        const groupsWithMembers = await collection.find({ memberCount: { $gt: 0 } })
-          .project({ groupCode: 1, groupName: 1, memberCount: 1, _id: 0 })
-          .sort({ memberCount: -1 })
-          .limit(10)
-          .toArray();
-        console.log(`\n🏆 TOP 10 GROUPS WITH MOST MEMBERS:`);
-        groupsWithMembers.forEach((group, index) => {
-          console.log(`   ${index + 1}. ${group.groupCode} - ${group.groupName}: ${group.memberCount} members`);
-        });
-      }
+      // Show groups with most collections
+      const topCollectionGroups = await collection.find({ collectionCount: { $gt: 0 } })
+        .project({ groupCode: 1, groupName: 1, collectionCount: 1, totalCollections: 1, _id: 0 })
+        .sort({ totalCollections: -1 })
+        .limit(10)
+        .toArray();
+      
+      console.log(`\n💰 TOP 10 GROUPS BY COLLECTION AMOUNT:`);
+      topCollectionGroups.forEach((group, index) => {
+        console.log(`   ${index + 1}. ${group.groupCode} - ${group.groupName}: ${group.collectionCount} collections, ₦${group.totalCollections?.toLocaleString() || 0}`);
+      });
 
-      // Show groups without members
-      if (stats.groupsWithoutMembers > 0) {
-        const emptyGroups = await collection.find({ memberCount: 0 })
-          .project({ groupCode: 1, groupName: 1, _id: 0 })
-          .sort({ groupCode: 1 })
-          .limit(10)
-          .toArray();
-        console.log(`\n📭 GROUPS WITHOUT MEMBERS (first 10):`);
-        emptyGroups.forEach(group => {
-          console.log(`   ${group.groupCode} - ${group.groupName}`);
-        });
-        if (stats.groupsWithoutMembers > 10) {
-          console.log(`   ... and ${stats.groupsWithoutMembers - 10} more`);
-        }
-      }
+      // Show groups with most members
+      const topMemberGroups = await collection.find({ memberCount: { $gt: 0 } })
+        .project({ groupCode: 1, groupName: 1, memberCount: 1, _id: 0 })
+        .sort({ memberCount: -1 })
+        .limit(10)
+        .toArray();
+      
+      console.log(`\n👥 TOP 10 GROUPS BY MEMBER COUNT:`);
+      topMemberGroups.forEach((group, index) => {
+        console.log(`   ${index + 1}. ${group.groupCode} - ${group.groupName}: ${group.memberCount} members`);
+      });
     }
 
-    // Verify specific groups we know have members
-    console.log(`\n🔍 VERIFYING SPECIFIC GROUPS:`);
-    const specificGroups = [176, 183]; // Groups we know have members
+    // Verify specific groups we know have collections
+    console.log(`\n🔍 VERIFYING SPECIFIC GROUPS WITH COLLECTIONS:`);
+    const specificGroups = [176, 183]; // Groups we know have collections
     for (const groupId of specificGroups) {
       const group = await collection.findOne({ mysqlId: groupId });
       if (group) {
-        console.log(`   Group ${groupId} (${group.groupName}): ${group.memberCount} members`);
+        console.log(`\n   Group ${groupId} (${group.groupName}):`);
+        console.log(`     Members: ${group.memberCount}`);
+        console.log(`     Collections: ${group.collectionCount}`);
+        console.log(`     Total Collection Amount: ₦${group.totalCollections?.toLocaleString() || 0}`);
+        
+        if (group.collectionCount > 0) {
+          console.log(`     Recent Collections:`);
+          group.collections.slice(0, 3).forEach((collection, index) => {
+            const date = collection.collectionDate.toISOString().split('T')[0];
+            console.log(`       ${index + 1}. ${date}: ₦${collection.amount.toLocaleString()} (${collection.status})`);
+          });
+        }
+        
         if (group.memberCount > 0) {
-          console.log(`     First 3 members:`);
+          console.log(`     Sample Members:`);
           group.members.slice(0, 3).forEach((member, index) => {
             console.log(`       ${index + 1}. ${member.customerName} (ID: ${member.customerId})`);
           });
@@ -280,7 +345,7 @@ async function migrateGroupsWithMembers() {
       }
     }
 
-    console.log(`\n🎉 Groups migration complete!`);
+    console.log(`\n🎉 COMPLETE! Groups migrated with members and collections!`);
 
   } catch (error) {
     console.error('❌ Migration failed:', error);
@@ -296,5 +361,5 @@ async function migrateGroupsWithMembers() {
   }
 }
 
-// Run the final migration
-migrateGroupsWithMembers().catch(console.error);
+// Run the comprehensive migration
+migrateGroupsWithMembersAndCollections().catch(console.error);

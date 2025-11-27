@@ -2,6 +2,9 @@ import mongoose from 'mongoose';
 import Subfolder from '../models/Subfolder.js';
 import { logger } from './logger.js';
 import GLAccount from '../models/GLAccount.js';
+import Branch from '../models/Branch.js';
+import Organization from '../models/organization.js';
+import { addAuditTrail } from '../controllers/AudiTrailController.js';
 
 // Fallback logger if import fails
 const fallbackLogger = {
@@ -22,6 +25,34 @@ const SEGMENT_CONFIG = {
   GL_ACCT_CAT: { min: 1, max: 3, pad: 3 },
   BU_ID: { min: 1, max: 3, pad: 3 }, // branchCode
   LEDGER_NO: { min: 1, max: 3, pad: 3 },
+};
+
+// GL Account Templates Configuration
+const GL_ACCOUNT_TEMPLATES = {
+  'INTER_BRANCH': {
+    template: 'GL-{branch}-{dept}-{product}-{seq}',
+    description: 'Inter-Branch Settlement Account',
+    transactionType: 'BOTH',
+    category: 'ASSET'
+  },
+  'INTER_BRANCH_PAYABLE': {
+    template: 'GL-{branch}-{dept}-{product}-{seq}',
+    description: 'Inter-Branch Payable Account',
+    transactionType: 'CREDIT',
+    category: 'LIABILITY'
+  },
+  'INTER_BRANCH_RECEIVABLE': {
+    template: 'GL-{branch}-{dept}-{product}-{seq}',
+    description: 'Inter-Branch Receivable Account',
+    transactionType: 'DEBIT',
+    category: 'ASSET'
+  },
+  'DEFAULT': {
+    template: 'GL-{branch}-{dept}-{product}-{seq}',
+    description: 'General Ledger Account',
+    transactionType: 'BOTH',
+    category: 'ASSET'
+  }
 };
 
 /**
@@ -99,71 +130,270 @@ export const generateGLAccountNumber = (
 };
 
 /**
+ * Template-based GL Account Generator for specific account types
+ * @param {string} template - Template string with placeholders
+ * @param {string} branchCode - Branch code
+ * @param {string} departmentCode - Department code (default: '001')
+ * @param {string} productCode - Product code (default: '800')
+ * @param {Object} options - Additional options for sequence generation
+ * @returns {string} Generated GL Account Number
+ */
+export const generateGLAccountFromTemplate = (
+  template, 
+  branchCode, 
+  departmentCode = '001', 
+  productCode = '800',
+  options = {}
+) => {
+  try {
+    const { sequenceLength = 4, useRandomSequence = true, customSequence } = options;
+    
+    let accountNo = template;
+    
+    // Replace template placeholders
+    accountNo = accountNo
+      .replace(/{branch}/g, String(branchCode).padStart(3, '0'))
+      .replace(/{dept}/g, String(departmentCode).padStart(3, '0'))
+      .replace(/{product}/g, String(productCode).padStart(4, '0'));
+    
+    // Handle sequence generation
+    if (accountNo.includes('{seq}')) {
+      let sequence;
+      if (customSequence) {
+        sequence = String(customSequence).padStart(sequenceLength, '0');
+      } else if (useRandomSequence) {
+        const min = Math.pow(10, sequenceLength - 1);
+        const max = Math.pow(10, sequenceLength) - 1;
+        sequence = String(Math.floor(min + Math.random() * (max - min + 1)));
+      } else {
+        sequence = '1'.padStart(sequenceLength, '0');
+      }
+      accountNo = accountNo.replace(/{seq}/g, sequence);
+    }
+    
+    (logger.info || fallbackLogger.info)('Generated GL Account from template', {
+      template,
+      branchCode,
+      departmentCode,
+      productCode,
+      generatedAccount: accountNo
+    });
+    
+    return accountNo;
+  } catch (error) {
+    (logger.error || fallbackLogger.error)('Error generating GL Account from template', {
+      error: error.message,
+      template,
+      branchCode
+    });
+    throw error;
+  }
+};
+
+// Determine GL account category based on account type
+export const determineCategoryFromAccountType = (accountType) => {
+  const categoryMap = {
+    'INTER_BRANCH': 'ASSET',
+    'INTER_BRANCH_PAYABLE': 'LIABILITY',
+    'INTER_BRANCH_RECEIVABLE': 'ASSET',
+    'CASH': 'ASSET',
+    'BANK': 'ASSET',
+    'RECEIVABLE': 'ASSET',
+    'PAYABLE': 'LIABILITY',
+    'EQUITY': 'EQUITY',
+    'REVENUE': 'REVENUE',
+    'EXPENSE': 'EXPENSE'
+  };
+  return categoryMap[accountType] || 'ASSET';
+};
+
+// Determine balance code (D for Debit, C for Credit)
+export const determineBalanceCode = (accountType) => {
+  const balanceCodeMap = {
+    'INTER_BRANCH': 'D',
+    'INTER_BRANCH_PAYABLE': 'C',
+    'INTER_BRANCH_RECEIVABLE': 'D',
+    'CASH': 'D',
+    'BANK': 'D',
+    'RECEIVABLE': 'D',
+    'PAYABLE': 'C',
+    'EQUITY': 'C',
+    'REVENUE': 'C',
+    'EXPENSE': 'D'
+  };
+  return balanceCodeMap[accountType] || 'D';
+};
+
+// Determine if credit transactions are allowed
+export const determineCreditAllowed = (accountType) => {
+  const creditAllowedMap = {
+    'INTER_BRANCH': true,
+    'INTER_BRANCH_PAYABLE': true,
+    'INTER_BRANCH_RECEIVABLE': false,
+    'CASH': true,
+    'BANK': true,
+    'RECEIVABLE': false,
+    'PAYABLE': true,
+    'EQUITY': true,
+    'REVENUE': true,
+    'EXPENSE': false
+  };
+  return creditAllowedMap[accountType] !== false;
+};
+
+// Determine if debit transactions are allowed
+export const determineDebitAllowed = (accountType) => {
+  const debitAllowedMap = {
+    'INTER_BRANCH': true,
+    'INTER_BRANCH_PAYABLE': false,
+    'INTER_BRANCH_RECEIVABLE': true,
+    'CASH': true,
+    'BANK': true,
+    'RECEIVABLE': true,
+    'PAYABLE': false,
+    'EQUITY': false,
+    'REVENUE': false,
+    'EXPENSE': true
+  };
+  return debitAllowedMap[accountType] !== false;
+};
+
+// Updated createInterBranchAccounts function using the new generator
+export const createInterBranchAccounts = async (organizationCode, branchCode, branchName, CREATED_BY, session) => {
+  const interBranchAccounts = [];
+  const interBranchTypes = ['INTER_BRANCH', 'INTER_BRANCH_PAYABLE', 'INTER_BRANCH_RECEIVABLE'];
+  
+  for (const accountType of interBranchTypes) {
+    const templateConfig = GL_ACCOUNT_TEMPLATES[accountType];
+    if (!templateConfig) {
+      (logger.warn || fallbackLogger.warn)(`No template configuration found for account type: ${accountType}`);
+      continue;
+    }
+
+    try {
+      // Use the enhanced template generator
+      const glAcctNo = generateGLAccountFromTemplate(
+        templateConfig.template, 
+        branchCode, 
+        '001', 
+        '800',
+        { sequenceLength: 4, useRandomSequence: true }
+      );
+      
+      const existingAccount = await GLAccount.findOne({ GL_ACCT_NO: glAcctNo }).session(session);
+      if (existingAccount) {
+        (logger.info || fallbackLogger.info)(`Inter-branch account ${glAcctNo} already exists, skipping creation`);
+        continue;
+      }
+
+      const newGLAccount = new GLAccount({
+        GL_ACCT_NO: glAcctNo,
+        GL_ACCT_ID: await generateNextGLAcctId(session),
+        CREATED_BY,
+        organizationName: branchName,
+        organizationCode: organizationCode,
+        branchName: branchName,
+        branchCode: branchCode,
+        branchType: 'MAIN',
+        ACCT_DESC: templateConfig.description,
+        GL_ACCT_CAT: determineCategoryFromAccountType(accountType),
+        BAL_CD: determineBalanceCode(accountType),
+        TRANSACTION_TYPE: templateConfig.transactionType,
+        CR_ALLOWED: determineCreditAllowed(accountType),
+        DR_ALLOWED: determineDebitAllowed(accountType),
+        REC_ST: 'Active',
+        POST_ALLOW: true,
+        LEDGER_BALANCE: 0,
+        AVAILABLE_BALANCE: 0,
+        CURRENCY_CODE: 'NGN',
+        SETTLEMENT_GL_ACCT_NO: glAcctNo,
+        level: 1,
+        metadata: {
+          accountType,
+          templateGenerated: true,
+          dynamicAccount: true,
+          branchSpecific: false,
+          consolidationRequired: true,
+          interBranch: true,
+          templateUsed: templateConfig.template,
+          createdAt: new Date()
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      await newGLAccount.save({ session });
+      interBranchAccounts.push(newGLAccount);
+      
+      (logger.info || fallbackLogger.info)(`Created inter-branch account: ${glAcctNo} for branch ${branchCode}`, {
+        accountType,
+        glAcctNo,
+        branchCode
+      });
+
+    } catch (error) {
+      (logger.error || fallbackLogger.error)(`Error creating inter-branch account of type ${accountType}`, {
+        error: error.message,
+        branchCode,
+        accountType
+      });
+      // Continue with other account types even if one fails
+      continue;
+    }
+  }
+  
+  (logger.info || fallbackLogger.info)(`Created ${interBranchAccounts.length} inter-branch accounts for branch ${branchCode}`);
+  return interBranchAccounts;
+};
+
+/**
  * Auto-generate next GL_ACCT_ID (7-digit string), scoped to organization/branch if provided.
  * @param {mongoose.ClientSession} session - MongoDB session for transaction
  * @param {string} [organizationName] - Optional filter for organization
  * @param {string} [branchName] - Optional filter for branch
  * @returns {string} - Next GL_ACCT_ID (e.g., '0000001')
  */
-export const generateNextGLAcctId = async (session, organizationName = null, branchName = null) => {
+/**
+ * Fixed version of generateNextGLAcctId to avoid "fn is not a function" error
+ */
+export const generateNextGLAcctId = async (session) => {
   try {
     console.log('generateNextGLAcctId: Starting with session:', !!session);
     
-    const filter = {};
-    if (organizationName) filter.organizationName = organizationName;
-    if (branchName) filter.branchName = branchName;
-
-    console.log('generateNextGLAcctId: Filter:', filter);
-
-    const lastAcct = await GLAccount.findOne(filter)
+    // Find the highest GL_ACCT_ID and increment
+    const lastAccount = await GLAccount.findOne()
       .sort({ GL_ACCT_ID: -1 })
       .limit(1)
       .session(session || null);
 
-    console.log('generateNextGLAcctId: Last account found:', lastAcct ? lastAcct.GL_ACCT_ID : 'None');
+    console.log('generateNextGLAcctId: Last account found:', lastAccount ? lastAccount.GL_ACCT_ID : 'None');
 
     let newGLAcctId;
     
-    if (!lastAcct || !lastAcct.GL_ACCT_ID) {
-      newGLAcctId = '0000001';
-      console.log('generateNextGLAcctId: No existing accounts, returning:', newGLAcctId);
+    if (!lastAccount || !lastAccount.GL_ACCT_ID) {
+      newGLAcctId = 1000; // Starting ID as number
     } else {
-      // Extract numeric part from GL_ACCT_ID (handle both numeric and string formats)
-      const lastIdStr = String(lastAcct.GL_ACCT_ID);
-      console.log('generateNextGLAcctId: Last ID string:', lastIdStr);
-      
-      // Extract only digits from the string
-      const numericPart = lastIdStr.replace(/\D/g, '');
-      console.log('generateNextGLAcctId: Numeric part:', numericPart);
-      
-      if (!numericPart) {
-        // If no numeric part found, start from 1
-        newGLAcctId = '0000001';
+      // Handle both string and number formats
+      const lastId = lastAccount.GL_ACCT_ID;
+      if (typeof lastId === 'string') {
+        const numericPart = lastId.replace(/\D/g, '');
+        newGLAcctId = numericPart ? parseInt(numericPart, 10) + 1 : 1000;
       } else {
-        const lastIdNum = parseInt(numericPart, 10);
-        console.log('generateNextGLAcctId: Last ID number:', lastIdNum);
-        
-        if (isNaN(lastIdNum)) {
-          newGLAcctId = '0000001';
-        } else {
-          newGLAcctId = String(lastIdNum + 1).padStart(7, '0');
-        }
+        newGLAcctId = lastId + 1;
       }
-      console.log('generateNextGLAcctId: Generated next ID:', newGLAcctId);
     }
 
-    (logger.info || fallbackLogger.info)('Generated GL_ACCT_ID', { newGLAcctId, filter });
+    console.log('generateNextGLAcctId: Generated next ID:', newGLAcctId);
+    
+    (logger.info || fallbackLogger.info)('Generated GL_ACCT_ID', { newGLAcctId });
     return newGLAcctId;
   } catch (error) {
     console.error('generateNextGLAcctId: Error:', error.message);
     (logger.error || fallbackLogger.error)('Error generating GL_ACCT_ID', {
       error: error.message,
-      filter: { organizationName, branchName },
     });
-    // Fallback to simple increment
-    const fallbackId = '0000001';
-    console.log('generateNextGLAcctId: Using fallback ID:', fallbackId);
-    return fallbackId;
+    // Fallback
+    return 1000;
   }
 };
 
@@ -326,3 +556,6 @@ export const testGLAccountIdGeneration = async () => {
     console.log('=== TEST SESSION ENDED ===');
   }
 };
+
+// Export GL_ACCOUNT_TEMPLATES for external use
+export { GL_ACCOUNT_TEMPLATES };

@@ -1,5 +1,8 @@
+// src/utils/dateUtils.js
 import Holiday from '../models/Holiday.js';
 import logger from './logger.js';
+
+// 1. Basic Date Validation Functions
 
 /**
  * Checks if a value is a valid date
@@ -7,8 +10,15 @@ import logger from './logger.js';
  * @returns {boolean} True if valid date
  */
 export const isValidDate = (date) => {
-  if (date instanceof Date) return !isNaN(date);
-  if (typeof date === 'string') return !isNaN(new Date(date));
+  if (date instanceof Date) return !isNaN(date.getTime());
+  if (typeof date === 'string') {
+    const parsed = new Date(date);
+    return !isNaN(parsed.getTime());
+  }
+  if (typeof date === 'number') {
+    const parsed = new Date(date);
+    return !isNaN(parsed.getTime());
+  }
   return false;
 };
 
@@ -44,8 +54,14 @@ export const isDateBetween = (date, startDate, endDate) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
   
-  return isValidDate(d) && d >= start && d <= end;
+  if (!isValidDate(d) || !isValidDate(start) || !isValidDate(end)) {
+    return false;
+  }
+  
+  return d >= start && d <= end;
 };
+
+// 2. Loan Calculation Functions
 
 /**
  * Calculates the maturity date based on start date, term code and term value
@@ -78,7 +94,7 @@ export const calculateMaturityDate = (startDate, termCode, termValue) => {
     case 'M': // Months
       result.setMonth(result.getMonth() + termValue);
       break;
-    case 'Q': // Quarters (FIXED: Added missing case)
+    case 'Q': // Quarters
       result.setMonth(result.getMonth() + (termValue * 3));
       break;
     case 'Y': // Years
@@ -121,6 +137,8 @@ export const getPaymentFrequency = (termCode, termValue) => {
   }
 };
 
+// 3. Business Date Calculation Functions
+
 /**
  * Calculates the next business date, skipping weekends and holidays
  * @param {Date} currentDate - The starting date
@@ -136,54 +154,242 @@ export const calculateNextBusinessDate = async (currentDate) => {
     let nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
     
-    // FIXED: Clone date for query to avoid mutation
-    const queryStart = new Date(nextDate);
-    queryStart.setHours(0, 0, 0, 0);
+    // Normalize to start of day for consistent comparison
+    const normalizeDate = (date) => {
+      const normalized = new Date(date);
+      normalized.setHours(0, 0, 0, 0);
+      return normalized;
+    };
+
+    let attempts = 0;
+    const maxAttempts = 365; // Prevent infinite loop - max 1 year
     
-    const queryEnd = new Date(queryStart);
-    queryEnd.setFullYear(queryEnd.getFullYear() + 1);
-    
-    // Fetch holidays for the next year to reduce queries
-    const holidays = await Holiday.find({
-      date: {
-        $gte: queryStart,
-        $lt: queryEnd,
-      },
-    });
-    
-    // FIXED: Map to timestamps consistently (avoid mutation)
-    const holidayTimestamps = holidays.map(h => {
-      const hDate = new Date(h.date);
-      hDate.setHours(0, 0, 0, 0);
-      return hDate.getTime();
-    });
-    
-    let isHolidayOrWeekend = true;
-    while (isHolidayOrWeekend) {
-      // FIXED: Clone and normalize without mutation
-      const normalizedDate = new Date(nextDate);
-      normalizedDate.setHours(0, 0, 0, 0);
+    while (attempts < maxAttempts) {
+      const checkDate = normalizeDate(nextDate);
       
-      const isWeekend = normalizedDate.getDay() === 0 || normalizedDate.getDay() === 6;
-      const isHoliday = holidayTimestamps.includes(normalizedDate.getTime());
+      // Check if weekend (Saturday = 6, Sunday = 0)
+      const dayOfWeek = checkDate.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
       
-      isHolidayOrWeekend = isHoliday || isWeekend;
-      if (isHolidayOrWeekend) {
-        nextDate = new Date(nextDate); // Clone
-        nextDate.setDate(nextDate.getDate() + 1);
+      let isHoliday = false;
+      
+      // Only check for holidays if not weekend
+      if (!isWeekend) {
+        try {
+          // Use the Holiday model's isHoliday static method
+          const holiday = await Holiday.isHoliday(checkDate);
+          isHoliday = !!holiday;
+          
+          if (isHoliday) {
+            logger.debug('Date is a holiday, skipping', {
+              date: checkDate.toISOString(),
+              holiday: holiday.description
+            });
+          }
+        } catch (holidayError) {
+          logger.warn('Holiday check failed, proceeding without holiday check', {
+            error: holidayError.message,
+            date: checkDate.toISOString()
+          });
+          // If holiday check fails, assume it's not a holiday and continue
+          isHoliday = false;
+        }
+      } else {
+        logger.debug('Date is weekend, skipping', {
+          date: checkDate.toISOString(),
+          dayOfWeek: dayOfWeek
+        });
       }
+      
+      // If not weekend and not holiday, we found our business date
+      if (!isWeekend && !isHoliday) {
+        logger.info('Next business date calculated', {
+          currentDate: normalizeDate(currentDate).toISOString(),
+          nextBusinessDate: checkDate.toISOString(),
+          attempts: attempts + 1
+        });
+        return checkDate;
+      }
+      
+      // Move to next day
+      nextDate.setDate(nextDate.getDate() + 1);
+      attempts++;
     }
     
-    // Ensure final date is at start of day
-    nextDate.setHours(0, 0, 0, 0);
-    return nextDate;
+    throw new Error('Could not find next business date within reasonable range (1 year)');
   } catch (error) {
-    logger.error('Failed to calculate next business date', { error: error.message, stack: error.stack });
+    logger.error('Failed to calculate next business date', {
+      error: error.message,
+      currentDate: currentDate?.toISOString(),
+      stack: error.stack
+    });
     throw new Error(`Failed to calculate next business date: ${error.message}`);
   }
 };
 
-// Default export for convenience (optional, since named exports are used)
+/**
+ * Alternative method using direct query (if isHoliday method has issues)
+ */
+export const calculateNextBusinessDateDirect = async (currentDate) => {
+  try {
+    if (!isValidDate(currentDate)) {
+      throw new Error('Invalid current date provided');
+    }
+
+    let nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    
+    const normalizeDate = (date) => {
+      const normalized = new Date(date);
+      normalized.setHours(0, 0, 0, 0);
+      return normalized;
+    };
+
+    let attempts = 0;
+    const maxAttempts = 365;
+    
+    while (attempts < maxAttempts) {
+      const checkDate = normalizeDate(nextDate);
+      const dayOfWeek = checkDate.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      
+      let isHoliday = false;
+      
+      if (!isWeekend) {
+        try {
+          // Direct query using your Holiday model structure
+          const startOfDay = new Date(checkDate);
+          const endOfDay = new Date(checkDate);
+          endOfDay.setHours(23, 59, 59, 999);
+          
+          const holiday = await Holiday.findOne({
+            date: { $gte: startOfDay, $lte: endOfDay }
+          });
+          
+          isHoliday = !!holiday;
+        } catch (error) {
+          logger.warn('Direct holiday query failed, continuing', { error: error.message });
+          isHoliday = false;
+        }
+      }
+      
+      if (!isWeekend && !isHoliday) {
+        logger.info('Next business date calculated (direct method)', {
+          currentDate: normalizeDate(currentDate).toISOString(),
+          nextBusinessDate: checkDate.toISOString(),
+          attempts: attempts + 1
+        });
+        return checkDate;
+      }
+      
+      nextDate.setDate(nextDate.getDate() + 1);
+      attempts++;
+    }
+    
+    throw new Error('Could not find next business date within reasonable range');
+  } catch (error) {
+    logger.error('Direct method failed to calculate next business date', {
+      error: error.message,
+      currentDate: currentDate?.toISOString()
+    });
+    throw error;
+  }
+};
+
+/**
+ * Safe version that returns a fallback date if calculation fails
+ */
+export const calculateNextBusinessDateSafe = async (currentDate) => {
+  try {
+    // Try the main method first
+    return await calculateNextBusinessDate(currentDate);
+  } catch (error) {
+    logger.warn('Main holiday method failed, trying direct method', { error: error.message });
+    
+    try {
+      // Try direct method
+      return await calculateNextBusinessDateDirect(currentDate);
+    } catch (directError) {
+      logger.warn('All holiday methods failed, using fallback weekend-only calculation', { 
+        error: directError.message 
+      });
+      
+      // Final fallback: simple weekend skipping without holiday check
+      let nextDate = new Date(currentDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+        nextDate.setDate(nextDate.getDate() + 1);
+      }
+      
+      nextDate.setHours(0, 0, 0, 0);
+      return nextDate;
+    }
+  }
+};
+
+/**
+ * Helper function to add business days to a date
+ * @param {Date} startDate - Starting date
+ * @param {number} businessDays - Number of business days to add
+ * @returns {Promise<Date>} Resulting date
+ */
+export const addBusinessDays = async (startDate, businessDays) => {
+  if (!isValidDate(startDate)) {
+    throw new Error('Invalid start date');
+  }
+  
+  if (typeof businessDays !== 'number' || businessDays < 0) {
+    throw new Error('Business days must be a non-negative number');
+  }
+
+  let result = new Date(startDate);
+  
+  for (let i = 0; i < businessDays; i++) {
+    result = await calculateNextBusinessDateSafe(result);
+  }
+  
+  return result;
+};
+
+/**
+ * Calculate the number of business days between two dates
+ * @param {Date} startDate - Start date
+ * @param {Date} endDate - End date
+ * @returns {Promise<number>} Number of business days
+ */
+export const getBusinessDaysBetween = async (startDate, endDate) => {
+  if (!isValidDate(startDate) || !isValidDate(endDate)) {
+    throw new Error('Invalid dates provided');
+  }
+
+  let count = 0;
+  let current = new Date(startDate);
+  current.setHours(0, 0, 0, 0);
+  
+  const end = new Date(endDate);
+  end.setHours(0, 0, 0, 0);
+
+  while (current <= end) {
+    const dayOfWeek = current.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not weekend
+      try {
+        const isHoliday = await Holiday.isHoliday(current);
+        if (!isHoliday) {
+          count++;
+        }
+      } catch (error) {
+        // If holiday check fails, count it as a business day
+        count++;
+      }
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return count;
+};
+
+// Default export for convenience
 export default {
   isValidDate,
   isFutureDate,
@@ -191,5 +397,9 @@ export default {
   isDateBetween,
   calculateMaturityDate,
   getPaymentFrequency,
-  calculateNextBusinessDate
+  calculateNextBusinessDate,
+  calculateNextBusinessDateDirect,
+  calculateNextBusinessDateSafe,
+  addBusinessDays,
+  getBusinessDaysBetween
 };

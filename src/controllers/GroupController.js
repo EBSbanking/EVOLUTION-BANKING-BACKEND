@@ -24,6 +24,7 @@ import InterestRate from '../models/LoanInterestRate.js';
 import GLAccount from '../models/GLAccount.js';
 import {getLoanAccountDisbursementInfo} from '../controllers/LoanAccountSummaryController.js';
 import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
+import Collection from '../models/Collection.js';
 
 
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
@@ -1559,73 +1560,6 @@ function calculateFlatRatePrecise({ principal, annualRate, termMonths, startDate
     emi: paymentAmount // Alias for EMI_AMOUNT field
   };
 };
-
-// // Add this precise calculation function
-// const calculateFlatRatePrecise = ({ principal, annualRate, termMonths, startDate, paymentFrequency }) => {
-//   // Convert everything to pennies to avoid floating-point errors
-//   const principalInCents = Math.round(principal * 100);
-//   const monthlyRate = annualRate / 100 / 12;
-//   const totalInterestInCents = Math.round(principalInCents * monthlyRate * termMonths);
-//   const totalRepaymentInCents = principalInCents + totalInterestInCents;
-  
-//   let totalInstallments;
-  
-//   if (paymentFrequency.includes('WEEK')) {
-//     totalInstallments = termMonths * 4;
-//   } else {
-//     totalInstallments = termMonths;
-//   }
-  
-//   const paymentInCents = Math.floor(totalRepaymentInCents / totalInstallments);
-//   const remainder = totalRepaymentInCents - (paymentInCents * totalInstallments);
-  
-//   const installments = [];
-//   let remainingBalanceInCents = totalRepaymentInCents;
-  
-//   for (let i = 1; i <= totalInstallments; i++) {
-//     const dueDate = new Date(startDate);
-//     if (paymentFrequency.includes('WEEK')) {
-//       dueDate.setDate(startDate.getDate() + (i * 7));
-//     } else {
-//       dueDate.setMonth(startDate.getMonth() + i);
-//     }
-    
-//     let paymentThisInstallment = paymentInCents;
-    
-//     // Add remainder to the first installment to distribute rounding difference
-//     if (i === 1) {
-//       paymentThisInstallment += remainder;
-//     }
-    
-//     const principalThisInstallment = Math.floor(principalInCents / totalInstallments);
-//     const interestThisInstallment = paymentThisInstallment - principalThisInstallment;
-    
-//     remainingBalanceInCents -= paymentThisInstallment;
-    
-//     // Ensure final balance is exactly zero
-//     if (i === totalInstallments) {
-//       remainingBalanceInCents = 0;
-//     }
-    
-//     installments.push({
-//       installmentNo: i,
-//       dueDate,
-//       principal: principalThisInstallment / 100,
-//       interest: interestThisInstallment / 100,
-//       totalPayment: paymentThisInstallment / 100,
-//       remainingBalance: Math.max(0, remainingBalanceInCents) / 100
-//     });
-//   }
-  
-//   return {
-//     principal: principalInCents / 100,
-//     totalInterest: totalInterestInCents / 100,
-//     totalRepayment: totalRepaymentInCents / 100,
-//     paymentAmount: paymentInCents / 100,
-//     totalInstallments,
-//     installments
-//   };
-// };
 
 
 // Helper function to get payment field name based on frequency
@@ -3177,7 +3111,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
         repaymentSchedulesUpdated: []
       };
 
-      // Get group loan details for validation - FIXED: Use _id or loanId based on your data
+      // Get group loan details for validation
       const groupLoan = await GroupLoan.findOne({ 
         $or: [
           { _id: groupId },
@@ -3190,7 +3124,28 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
       }
 
       console.log(`💰 Processing collections for group: ${groupLoan.groupName || groupId}`);
-      console.log(`📊 Loan collections: ${collections.length}, Savings collections: ${savings?.length || 0}`);
+
+      // STEP 0: CREATE COLLECTION DOCUMENT FIRST
+      const collectionDoc = new Collection({
+        groupId: groupLoan._id,
+        groupLoanId: groupLoan._id,
+        loanId: groupLoan.loanId,
+        groupCode: groupLoan.groupCode,
+        amount: collections.reduce((sum, col) => sum + (col.amount || 0), 0),
+        currency: 'NGN',
+        collectionDate: new Date(collectionDate || new Date()),
+        branch: groupLoan.branch || 100,
+        relationshipManager: groupLoan.primaryRelationshipManager || groupLoan.createdBy,
+        channel: 6, // Field collection channel
+        createdBy: collectedBy || 'FIELD_AGENT',
+        paymentMethod: paymentMethod,
+        transactionReference: transactionReference || `GRP_${groupId}_${Date.now()}`,
+        repaymentType: 'loan_repayment',
+        status: 'pending'
+      });
+
+      await collectionDoc.save({ session });
+      console.log(`📄 Collection document created: ${collectionDoc.collectionId}`);
 
       // STEP 1: Process loan repayments with installment servicing
       for (const collection of collections) {
@@ -3206,7 +3161,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
 
           console.log(`🔍 Processing loan collection for: ${collection.accountNo}, Amount: ${collection.amount}`);
 
-          // Find the loan account - FIXED: Handle both ACCT_NO and accountNumber
+          // Find the loan account
           loanAccount = await LoanAccount.findOne({ 
             $or: [
               { ACCT_NO: collection.accountNo },
@@ -3235,7 +3190,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             continue;
           }
 
-          // Find current/next installment - FIXED: Handle both status arrays and single status
+          // Find current/next installment
           const now = new Date();
           let currentInstallment;
           
@@ -3244,7 +3199,6 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
               inst.status === 'PENDING' || inst.status === 'OVERDUE' || inst.status === 'PARTIAL'
             );
           } else {
-            // Handle case where installments might not be an array
             console.warn('Repayment schedule installments is not an array:', repaymentSchedule.installments);
             results.failed.push({
               accountNo: collection.accountNo,
@@ -3262,7 +3216,6 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
           }
 
           console.log(`📅 Current installment: ${currentInstallment.installmentNo}, Due: ${currentInstallment.dueDate}`);
-          console.log(`💰 Expected: ${currentInstallment.totalPayment}, Paid: ${collection.amount}`);
 
           // Validate payment amount against installment
           const expectedAmount = safeNumber(currentInstallment.totalPayment);
@@ -3307,7 +3260,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             currentInstallment.isOverduePayment = true;
           }
 
-          // STEP 1B: Update loan account using the new method
+          // STEP 1B: Update loan account
           loanAccount.updateBalances(
             allocation.principal,
             allocation.interest,
@@ -3358,13 +3311,30 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
               isInstallment: isInstallment,
               principalAllocation: allocation.principal,
               interestAllocation: allocation.interest,
-              remainingPrincipal: parseFloat(loanAccount.OUTSTANDING_PRINCIPAL.toString())
+              remainingPrincipal: parseFloat(loanAccount.OUTSTANDING_PRINCIPAL.toString()),
+              collectionId: collectionDoc._id // Link to collection document
             }
           });
 
           await repaymentTransaction.save({ session });
 
-          // STEP 1D: Create loan event for audit trail
+          // STEP 1D: ADD LOAN REPAYMENT TO COLLECTION DOCUMENT
+          collectionDoc.loanRepayments.push({
+            loanAccountId: loanAccount._id,
+            loanAccountNumber: collection.accountNo,
+            customerId: loanAccount.CUST_ID,
+            customerName: loanAccount.ACCT_NM,
+            principalAmount: allocation.principal,
+            interestAmount: allocation.interest,
+            penaltyAmount: 0,
+            totalAmount: paidAmount,
+            installmentNumber: currentInstallment.installmentNo,
+            repaymentDate: new Date(collectionDate || new Date()),
+            transactionReference: repaymentTransaction.TRANSACTION_REFERENCE,
+            status: 'processed'
+          });
+
+          // STEP 1E: Create loan event for audit trail
           await LoanEvent.createServicingEvent({
             ACCT_NO: collection.accountNo,
             LOAN_ACCOUNT_ID: loanAccount._id,
@@ -3378,6 +3348,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             interestAmount: allocation.interest,
             transactionId: repaymentTransaction._id,
             repaymentScheduleId: repaymentSchedule._id,
+            collectionId: collectionDoc._id, // Link to collection
             details: {
               groupId: groupId,
               groupName: groupLoan.groupName,
@@ -3388,20 +3359,20 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
               previousStatus: currentInstallment.status,
               newStatus: currentInstallment.status,
               expectedAmount: expectedAmount,
-              paidAmount: paidAmount
+              paidAmount: paidAmount,
+              collectionId: collectionDoc.collectionId
             },
             createdBy: collectedBy || 'FIELD_AGENT',
             branchId: loanAccount.BU_ID
           });
 
-          // STEP 1E: Update repayment schedule status
+          // STEP 1F: Update repayment schedule status
           const allInstallmentsPaid = repaymentSchedule.installments.every(inst => 
             inst.status === 'PAID'
           );
 
           if (allInstallmentsPaid) {
             repaymentSchedule.STATUS = 'COMPLETED';
-            // Update loan account status if all installments are paid
             loanAccount.LOAN_STATUS = 'CLOSED';
             loanAccount.CLOSURE_DATE = new Date();
             loanAccount.CLOSED_DATE = new Date();
@@ -3412,10 +3383,10 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
 
           await repaymentSchedule.save({ session });
 
-          // STEP 1F: Update LoanAccountSummary if exists
+          // STEP 1G: Update LoanAccountSummary if exists
           await updateLoanAccountSummary(loanAccount, repaymentTransaction, session);
 
-          // STEP 1G: Update group loan totals
+          // STEP 1H: Update group loan totals
           groupLoan.totalRepaid = safeNumber(groupLoan.totalRepaid) + paidAmount;
           groupLoan.remainingBalance = Math.max(0, safeNumber(groupLoan.totalRepayable) - safeNumber(groupLoan.totalRepaid));
           groupLoan.installmentsPaid = safeNumber(groupLoan.installmentsPaid) + 1;
@@ -3431,7 +3402,8 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             transactionId: repaymentTransaction._id,
             remainingPrincipal: parseFloat(loanAccount.OUTSTANDING_PRINCIPAL.toString()),
             nextInstallment: getNextInstallment(repaymentSchedule.installments),
-            loanStatus: loanAccount.LOAN_STATUS
+            loanStatus: loanAccount.LOAN_STATUS,
+            collectionId: collectionDoc._id
           });
 
           results.repaymentSchedulesUpdated.push({
@@ -3455,6 +3427,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
               eventType: 'GROUP_COLLECTION',
               status: 'FAILED',
               errorMessage: error.message,
+              collectionId: collectionDoc._id,
               details: {
                 groupId: groupId,
                 collectionData: collection,
@@ -3471,7 +3444,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
         }
       }
 
-      // STEP 2: Process savings collections with GroupSavings integration
+      // STEP 2: Process savings collections
       if (savings && savings.length > 0) {
         for (const saving of savings) {
           try {
@@ -3494,6 +3467,17 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
               // Process as GroupSavings collection
               await processGroupSavingsCollection(groupSavings, saving, groupId, collectedBy, paymentMethod, transactionReference, collectionDate, session);
               
+              // ADD SAVINGS TO COLLECTION DOCUMENT
+              collectionDoc.savingsCollections.push({
+                accountNumber: saving.accountNo,
+                customerId: groupSavings.groupId,
+                customerName: groupSavings.groupName,
+                amount: saving.amount,
+                savingsType: 'GROUP_SAVINGS',
+                transactionReference: transactionReference,
+                status: 'processed'
+              });
+
               results.savingsProcessed.push({
                 accountNo: saving.accountNo,
                 amount: saving.amount,
@@ -3538,7 +3522,8 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
                 purpose: 'SAVINGS_COLLECTION',
                 groupId: groupId,
                 groupName: groupLoan.groupName,
-                collectionDate: collectionDate
+                collectionDate: collectionDate,
+                collectionId: collectionDoc._id
               }
             });
 
@@ -3553,6 +3538,17 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             }
 
             await savingsAccount.save({ session });
+
+            // ADD INDIVIDUAL SAVINGS TO COLLECTION DOCUMENT
+            collectionDoc.savingsCollections.push({
+              accountNumber: saving.accountNo,
+              customerId: savingsAccount.customer_id || savingsAccount.CUST_ID,
+              customerName: savingsAccount.account_name || savingsAccount.ACCT_NM,
+              amount: saving.amount,
+              savingsType: 'INDIVIDUAL_SAVINGS',
+              transactionReference: savingsTransaction.TRANSACTION_REFERENCE,
+              status: 'processed'
+            });
 
             results.savingsProcessed.push({
               accountNo: saving.accountNo,
@@ -3570,10 +3566,33 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
         }
       }
 
-      // STEP 3: Update group loan with comprehensive collection summary
+      // STEP 3: UPDATE COLLECTION DOCUMENT WITH FINAL STATUS
       const totalLoanCollected = results.successful.reduce((sum, s) => sum + s.amount, 0);
       const totalSavingsCollected = results.savingsProcessed.reduce((sum, s) => sum + s.amount, 0);
 
+      // Update collection document with processing summary
+      collectionDoc.processingSummary = {
+        totalLoanAmount: totalLoanCollected,
+        totalSavingsAmount: totalSavingsCollected,
+        totalFeesAmount: 0,
+        successfulLoanRepayments: results.successful.length,
+        failedLoanRepayments: results.failed.length,
+        successfulSavings: results.savingsProcessed.length,
+        failedSavings: 0,
+        repaymentSchedulesUpdated: results.repaymentSchedulesUpdated.length,
+        totalProcessedAmount: totalLoanCollected + totalSavingsCollected
+      };
+
+      // Update collection status based on results
+      if (results.successful.length > 0 || results.savingsProcessed.length > 0) {
+        collectionDoc.status = results.failed.length === 0 ? 'processed' : 'partially_processed';
+        collectionDoc.processedAt = new Date();
+        collectionDoc.processedBy = collectedBy;
+      }
+
+      await collectionDoc.save({ session });
+
+      // STEP 4: Update group loan with comprehensive collection summary
       if (!groupLoan.collectionHistory) {
         groupLoan.collectionHistory = [];
       }
@@ -3590,7 +3609,8 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
         totalSavingsCollected: totalSavingsCollected,
         repaymentSchedulesUpdated: results.repaymentSchedulesUpdated.length,
         paymentMethod: paymentMethod,
-        transactionReference: transactionReference
+        transactionReference: transactionReference,
+        collectionId: collectionDoc._id // Link to collection document
       });
 
       // Update group loan last collection date
@@ -3602,6 +3622,7 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
       console.log(`📊 Summary: ${results.successful.length} loan collections, ${results.savingsProcessed.length} savings collections`);
       console.log(`💰 Total Loan Collected: ₦${totalLoanCollected.toLocaleString()}`);
       console.log(`💰 Total Savings Collected: ₦${totalSavingsCollected.toLocaleString()}`);
+      console.log(`📄 Collection Document: ${collectionDoc.collectionId}`);
 
       res.status(200).json({
         success: true,
@@ -3615,10 +3636,19 @@ export const submitGroupCollections = asyncHandler(async (req, res) => {
             savingsCollections: results.savingsProcessed.length,
             repaymentSchedulesUpdated: results.repaymentSchedulesUpdated.length,
             groupName: groupLoan.groupName,
-            groupId: groupLoan.loanId || groupLoan._id
+            groupId: groupLoan.loanId || groupLoan._id,
+            collectionId: collectionDoc.collectionId
           },
           loanResults: results,
-          savingsResults: results.savingsProcessed
+          savingsResults: results.savingsProcessed,
+          collection: {
+            id: collectionDoc._id,
+            collectionId: collectionDoc.collectionId,
+            status: collectionDoc.status,
+            totalAmount: collectionDoc.amount,
+            loanRepayments: collectionDoc.loanRepayments.length,
+            savingsCollections: collectionDoc.savingsCollections.length
+          }
         }
       });
     });
@@ -4075,61 +4105,25 @@ const processLegacyGroupLoanRepayment = async (
   console.log(`✅ Legacy repayment processed for ${groupLoan.members.length} members`);
 };
 
-// // Helper function for audit trail
-// const logAuditTrail = async (
-//   entityType,
-//   entityId,
-//   userId,
-//   action,
-//   oldState,
-//   newState,
-//   ipAddress,
-//   eventType
-// ) => {
-//   try {
-//     console.log('=== AUDIT TRAIL ===');
-//     console.log('Entity:', entityType);
-//     console.log('Entity ID:', entityId);
-//     console.log('User:', userId);
-//     console.log('Action:', action);
-//     console.log('Old State:', oldState);
-//     console.log('New State:', newState);
-//     console.log('IP:', ipAddress);
-//     console.log('Event:', eventType);
-    
-//     // You can implement your audit trail logging here
-//     // This could save to an AuditTrail collection or log to a file
-//   } catch (error) {
-//     console.error('Error logging audit trail:', error);
-//   }
-// };
-
-// ==================== MAIN REPAYMENT FUNCTION ====================
 
 export const repayGroupLoan = asyncHandler(async (req, res) => {
-  // FIX: Get groupLoanId from multiple possible sources
   let groupLoanId = req.params.groupLoanId || req.params.id || req.body.groupLoanId;
   
   console.log('=== REPAYMENT REQUEST DETAILS ===');
-  console.log('Params:', req.params);
-  console.log('Body:', req.body);
-  console.log('Query:', req.query);
   console.log('Extracted groupLoanId:', groupLoanId);
 
-  // If still undefined, try to extract from URL
   if (!groupLoanId) {
     const urlParts = req.originalUrl.split('/');
-    const possibleId = urlParts[urlParts.length - 2]; // Second last part of URL
+    const possibleId = urlParts[urlParts.length - 2];
     if (possibleId && possibleId !== 'repayment') {
       groupLoanId = possibleId;
-      console.log('Extracted from URL:', groupLoanId);
     }
   }
 
   if (!groupLoanId) {
     return res.status(400).json({
       success: false,
-      message: 'Group loan ID is required. Please provide it in the URL path like: /api/group/group-loans/GL90659288STV3/repayment',
+      message: 'Group loan ID is required.',
     });
   }
 
@@ -4140,40 +4134,20 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
     paymentMethod = 'CASH',
     transactionReference,
     isLegacyLoan = false,
-    repaymentType = 'PRO_RATA', // FIXED: Default to valid enum value
-    paymentFrequency
+    repaymentType = 'PRO_RATA',
+    paymentFrequency,
+    collectedBy
   } = req.body;
-
-  console.log(`🔍 Looking for group loan with ID: ${groupLoanId}`);
-  console.log(`💰 Member repayments received:`, memberRepayments);
 
   // Validate member repayments array
   if (!memberRepayments || memberRepayments.length === 0) {
     return res.status(400).json({
       success: false,
-      message: 'Member repayments array is required with loanAmount and savingsAmount for each member.',
+      message: 'Member repayments array is required.',
     });
   }
 
-  // Validate each member repayment entry
-  for (const memberRepayment of memberRepayments) {
-    if (!memberRepayment.memberId && !memberRepayment.accountNumber) {
-      return res.status(400).json({
-        success: false,
-        message: 'Each member repayment must have either memberId or accountNumber.',
-      });
-    }
-    
-    if ((!memberRepayment.loanAmount || memberRepayment.loanAmount < 0) && 
-        (!memberRepayment.savingsAmount || memberRepayment.savingsAmount < 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Each member must have at least loanAmount or savingsAmount greater than 0.',
-      });
-    }
-  }
-
-  // FIXED: Enhanced group loan lookup - ONLY search by loanId, not _id
+  // Enhanced group loan lookup
   let groupLoan = await GroupLoan.findOne({
     loanId: groupLoanId
   })
@@ -4182,10 +4156,6 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   .populate('members.memberId');
 
   if (!groupLoan) {
-    console.log(`❌ Group loan not found for loanId: ${groupLoanId}`);
-    
-    // Try alternative search if needed
-    console.log(`🔍 Trying alternative search...`);
     groupLoan = await GroupLoan.findOne({
       $or: [
         { groupCode: groupLoanId },
@@ -4198,29 +4168,15 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   }
 
   if (!groupLoan) {
-    console.log(`❌ Group loan not found for any identifier: ${groupLoanId}`);
-    
-    const allGroupLoans = await GroupLoan.find({}).select('loanId groupCode _id status').limit(10);
-    const availableLoans = allGroupLoans.map(gl => ({
-      loanId: gl.loanId, 
-      groupCode: gl.groupCode, 
-      _id: gl._id, 
-      status: gl.status
-    }));
-    
-    console.log('Available group loans:', availableLoans);
-    
     return res.status(404).json({
       success: false,
-      message: `Group loan not found for ID: ${groupLoanId}.`,
-      availableLoans: availableLoans,
-      suggestion: 'Try using one of the available loan IDs shown above.'
+      message: `Group loan not found for ID: ${groupLoanId}.`
     });
   }
 
-  console.log(`✅ Found group loan: ${groupLoan.loanId}, Group Code: ${groupLoan.groupCode}, Status: ${groupLoan.status}`);
+  console.log(`✅ Found group loan: ${groupLoan.loanId}, Group Code: ${groupLoan.groupCode}`);
 
-  // Enhanced status validation
+  // Status validation
   const validRepaymentStatuses = [
     'disbursed', 'partially_disbursed', 'active',
     'disbursed_legacy', 'active_legacy', 'approved'
@@ -4233,55 +4189,6 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
     });
   }
 
-  // Payment frequency detection
-  const finalPaymentFrequency = getPaymentFrequency(paymentFrequency, groupLoan);
-  
-  console.log('=== PAYMENT FREQUENCY DETECTION ===');
-  console.log('Final detected frequency:', finalPaymentFrequency);
-
-  // Calculate expected repayment amounts with payment frequency
-  const expectedRepaymentDetails = calculateExpectedRepayment(groupLoan, finalPaymentFrequency);
-  
-  // Calculate accrued interest for proper allocation
-  const accruedInterestDetails = calculateAccruedInterest(groupLoan, expectedRepaymentDetails);
-  
-  // Calculate member expected repayments (spreadsheet view)
-  const memberExpectedRepayments = calculateMemberExpectedRepayments(
-    groupLoan, 
-    expectedRepaymentDetails, 
-    accruedInterestDetails
-  );
-
-  console.log('=== MEMBER EXPECTED REPAYMENTS (SPREADSHEET VIEW) ===');
-  memberExpectedRepayments.forEach((member, index) => {
-    console.log(`Member ${index + 1}: ${member.memberName}`);
-    console.log(`  Account: ${member.accountNumber}`);
-    console.log(`  Expected Amount: ${member.expectedAmount.toLocaleString()}`);
-  });
-
-  // Validate member repayments against expected amounts
-  const validationResult = validateIndividualMemberRepayments(
-    memberRepayments, 
-    memberExpectedRepayments,
-    groupLoan,
-    expectedRepaymentDetails,
-    finalPaymentFrequency,
-    repaymentType
-  );
-  
-  if (!validationResult.valid) {
-    return res.status(400).json({
-      success: false,
-      message: validationResult.message
-    });
-  }
-
-  const paymentDate = new Date();
-  const oldTotalRepaid = groupLoan.totalRepaid || 0;
-  const repaidMembers = []; // This will now contain LoanAccount ObjectIds
-  const repaymentDetails = [];
-  
-  // FIXED: Use a single session for the entire operation
   const session = await mongoose.startSession();
   
   try {
@@ -4289,78 +4196,145 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
     
     console.log('🔄 Starting transaction for group loan repayment...');
 
-    // FIXED: Pass the session to processIndividualMemberRepayments
+    // STEP 0: CREATE COLLECTION DOCUMENT
+    const totalCollectionAmount = memberRepayments.reduce((sum, member) => 
+      sum + (member.loanAmount || 0) + (member.savingsAmount || 0), 0
+    );
+
+    const collectionDoc = new Collection({
+      groupId: groupLoan._id,
+      groupLoanId: groupLoan._id,
+      loanId: groupLoan.loanId,
+      groupCode: groupLoan.groupCode,
+      amount: totalCollectionAmount,
+      currency: 'NGN',
+      collectionDate: new Date(),
+      branch: groupLoan.branch || 100,
+      relationshipManager: groupLoan.primaryRelationshipManager || groupLoan.createdBy,
+      channel: 6,
+      createdBy: collectedBy || req.user?.id || 'system',
+      paymentMethod: paymentMethod,
+      transactionReference: transactionReference || `GRP_REPAY_${groupLoan.loanId}_${Date.now()}`,
+      repaymentType: 'loan_repayment',
+      status: 'pending'
+    });
+
+    await collectionDoc.save({ session });
+    console.log(`📄 Collection document created: ${collectionDoc.collectionId}`);
+
+    const paymentDate = new Date();
+    const oldTotalRepaid = groupLoan.totalRepaid || 0;
+    const repaidMembers = [];
+    const repaymentDetails = [];
+
+    // Process individual member repayments (your existing logic)
     await processIndividualMemberRepayments(
       groupLoan,
       memberRepayments,
-      memberExpectedRepayments,
+      memberExpectedRepayments, // This should come from your calculation
       isInstallment,
       paymentDate,
       paymentMethod,
       transactionReference,
       req.user?.id || 'system',
-      repaidMembers, // This will be populated with LoanAccount ObjectIds
+      repaidMembers,
       repaymentDetails,
-      session, // Pass the session explicitly
+      session,
       expectedRepaymentDetails,
       repaymentType,
-      finalPaymentFrequency,
+      paymentFrequency,
       accruedInterestDetails
     );
 
-    // Calculate total repayment from member repayments
+    // ADD LOAN REPAYMENTS TO COLLECTION DOCUMENT
+    for (const repayment of repaymentDetails) {
+      if (repayment.loanAccountId) {
+        collectionDoc.loanRepayments.push({
+          loanAccountId: repayment.loanAccountId,
+          loanAccountNumber: repayment.accountNumber,
+          customerId: repayment.customerId,
+          customerName: repayment.customerName,
+          principalAmount: repayment.principalAmount || 0,
+          interestAmount: repayment.interestAmount || 0,
+          penaltyAmount: repayment.penaltyAmount || 0,
+          totalAmount: repayment.totalAmount || 0,
+          installmentNumber: repayment.installmentNumber,
+          repaymentDate: paymentDate,
+          transactionReference: repayment.transactionReference,
+          status: 'processed'
+        });
+      }
+    }
+
+    // ADD SAVINGS COLLECTIONS TO COLLECTION DOCUMENT
+    for (const member of memberRepayments) {
+      if (member.savingsAmount && member.savingsAmount > 0) {
+        collectionDoc.savingsCollections.push({
+          accountNumber: member.accountNumber || member.memberId,
+          customerId: member.customerId,
+          customerName: member.customerName,
+          amount: member.savingsAmount,
+          savingsType: 'INDIVIDUAL_SAVINGS',
+          transactionReference: transactionReference,
+          status: 'processed'
+        });
+      }
+    }
+
+    // UPDATE COLLECTION DOCUMENT STATUS
+    const successfulRepayments = repaymentDetails.filter(rd => rd.success).length;
+    collectionDoc.processingSummary = {
+      totalLoanAmount: repaymentDetails.reduce((sum, rd) => sum + (rd.totalAmount || 0), 0),
+      totalSavingsAmount: memberRepayments.reduce((sum, m) => sum + (m.savingsAmount || 0), 0),
+      totalFeesAmount: 0,
+      successfulLoanRepayments: successfulRepayments,
+      failedLoanRepayments: repaymentDetails.length - successfulRepayments,
+      successfulSavings: memberRepayments.filter(m => m.savingsAmount > 0).length,
+      failedSavings: 0,
+      repaymentSchedulesUpdated: successfulRepayments,
+      totalProcessedAmount: totalCollectionAmount
+    };
+
+    collectionDoc.status = successfulRepayments > 0 ? 'processed' : 'partially_processed';
+    collectionDoc.processedAt = new Date();
+    collectionDoc.processedBy = collectedBy || req.user?.id || 'system';
+
+    await collectionDoc.save({ session });
+
+    // Update group loan (your existing logic continues...)
     const calculatedTotalRepayAmount = memberRepayments.reduce((sum, member) => 
       sum + (member.loanAmount || 0) + (member.savingsAmount || 0), 0
     );
 
-    // Update group loan repayment totals
     groupLoan.totalRepaid = (groupLoan.totalRepaid || 0) + calculatedTotalRepayAmount;
     
-    // FIXED: Handle repaidToMembers properly - ensure we're using ObjectIds
-    console.log('📋 Repaid members (LoanAccount IDs):', repaidMembers);
-    
-    // Convert string IDs to ObjectIds if needed and add to repaidToMembers
+    // Handle repaidToMembers
     if (repaidMembers && repaidMembers.length > 0) {
       const repaidObjectIds = repaidMembers.map(id => {
         if (typeof id === 'string' && mongoose.Types.ObjectId.isValid(id)) {
           return new mongoose.Types.ObjectId(id);
         }
-        return id; // If it's already an ObjectId
+        return id;
       });
       
-      // Create a Set to avoid duplicates and merge with existing
       const existingRepaid = groupLoan.repaidToMembers || [];
       const newRepaidSet = new Set([
         ...existingRepaid.map(id => id.toString()),
         ...repaidObjectIds.map(id => id.toString())
       ]);
       
-      // Convert back to ObjectIds
       groupLoan.repaidToMembers = Array.from(newRepaidSet).map(id => 
         new mongoose.Types.ObjectId(id)
       );
-      
-      console.log(`✅ Updated repaidToMembers: ${groupLoan.repaidToMembers.length} members`);
     }
     
-    // Track installments paid at group level
     if (isInstallment) {
       groupLoan.installmentsPaid = (groupLoan.installmentsPaid || 0) + 1;
-      
-      // Update next due date based on payment frequency
-      groupLoan.nextDueDate = calculateNextDueDate(
-        paymentDate, 
-        finalPaymentFrequency, 
-        groupLoan.lastRepaymentDate
-      );
+      groupLoan.nextDueDate = calculateNextDueDate(paymentDate, paymentFrequency, groupLoan.lastRepaymentDate);
     }
     
-    // Calculate total repayable amount
-    const totalRepayable = expectedRepaymentDetails.totalRepayment || 
-                          groupLoan.totalRepayable ||
-                          (groupLoan.totalAmount + accruedInterestDetails.totalAccruedInterest);
+    const totalRepayable = groupLoan.totalRepayable || (groupLoan.totalAmount + (groupLoan.totalInterest || 0));
     
-    // Check if group loan is fully repaid
     if (groupLoan.totalRepaid >= totalRepayable) {
       groupLoan.status = isLegacyLoan ? 'repaid_legacy' : 'repaid';
       groupLoan.repaidAt = paymentDate;
@@ -4369,58 +4343,22 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
       groupLoan.remainingBalance = totalRepayable - groupLoan.totalRepaid;
     }
     
-    // Update last repayment date
     groupLoan.lastRepaymentDate = paymentDate;
     
-    // Mark as migrated if this is a legacy loan's first repayment
     if (isLegacyLoan && !groupLoan.migrationCompleted) {
       groupLoan.migrationCompleted = true;
       groupLoan.lastMigratedAt = paymentDate;
     }
     
-    // FIXED: Save with session
-    console.log('💾 Saving group loan updates...');
     await groupLoan.save({ session });
-    console.log('✅ Group loan saved successfully');
 
-    // Commit the transaction
+    // Commit transaction
     await session.commitTransaction();
     console.log('✅ Transaction committed successfully');
 
-    // Log audit trail (outside transaction)
-    await logAuditTrail(
-      'GroupLoan',
-      groupLoan._id.toString(),
-      req.user?.id || 'system',
-      'REPAY',
-      {
-        totalRepaid: oldTotalRepaid,
-        status: groupLoan.status,
-        isLegacyLoan
-      },
-      {
-        totalRepaid: groupLoan.totalRepaid,
-        isInstallment,
-        totalRepayAmount: memberRepayments.reduce((sum, m) => sum + (m.loanAmount || 0) + (m.savingsAmount || 0), 0),
-        memberRepaymentsCount: memberRepayments.length,
-        paymentMethod,
-        paymentFrequency: finalPaymentFrequency,
-        membersRepaid: repaidMembers.length,
-        loanType: isLegacyLoan ? 'legacy' : 'modern',
-        repaymentType
-      },
-      req.ip,
-      isLegacyLoan ? 'LEGACY_GROUP_LOAN_REPAYMENT' : 'GROUP_LOAN_REPAYMENT'
-    );
-
-    logger.info(`Group loan repayment processed: ${groupLoan._id}, Members: ${repaidMembers.length}, Frequency: ${finalPaymentFrequency}, RepaymentType: ${repaymentType}`);
-    
-    const installmentInfo = expectedRepaymentDetails.installmentAmount ? 
-      ` Expected ${finalPaymentFrequency.toLowerCase()} installment: ${expectedRepaymentDetails.installmentAmount.toLocaleString()}.` : '';
-
     res.status(200).json({
       success: true,
-      message: `Group loan repayment processed successfully for ${repaidMembers.length} members.${installmentInfo} Total repaid: ${groupLoan.totalRepaid.toLocaleString()}.`,
+      message: `Group loan repayment processed successfully for ${repaidMembers.length} members.`,
       data: {
         groupLoan: {
           _id: groupLoan._id,
@@ -4430,24 +4368,23 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
           status: groupLoan.status,
           totalRepaid: groupLoan.totalRepaid,
           remainingBalance: groupLoan.remainingBalance,
-          installmentsPaid: groupLoan.installmentsPaid,
-          nextDueDate: groupLoan.nextDueDate,
-          paymentFrequency: finalPaymentFrequency,
-          isLegacyLoan,
-          repaidMembersCount: groupLoan.repaidToMembers?.length || 0
+          installmentsPaid: groupLoan.installmentsPaid
         },
         repaymentSummary: {
-          totalAmount: memberRepayments.reduce((sum, m) => sum + (m.loanAmount || 0) + (m.savingsAmount || 0), 0),
+          totalAmount: calculatedTotalRepayAmount,
           totalLoanAmount: memberRepayments.reduce((sum, m) => sum + (m.loanAmount || 0), 0),
           totalSavingsAmount: memberRepayments.reduce((sum, m) => sum + (m.savingsAmount || 0), 0),
           membersRepaid: repaidMembers.length,
           paymentDate,
-          paymentMethod,
-          paymentFrequency: finalPaymentFrequency,
-          isInstallment,
-          isLegacyLoan,
-          repaymentType,
-          expectedInstallment: expectedRepaymentDetails.installmentAmount
+          paymentMethod
+        },
+        collection: {
+          id: collectionDoc._id,
+          collectionId: collectionDoc.collectionId,
+          status: collectionDoc.status,
+          totalAmount: collectionDoc.amount,
+          loanRepayments: collectionDoc.loanRepayments.length,
+          savingsCollections: collectionDoc.savingsCollections.length
         },
         memberDetails: repaymentDetails
       },
@@ -4456,22 +4393,17 @@ export const repayGroupLoan = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error('💥 Error processing group loan repayment:', error);
     
-    // FIXED: Only abort transaction if it hasn't been aborted already
     if (session.inTransaction()) {
       await session.abortTransaction();
-      console.log('🔄 Transaction aborted');
     }
    
     res.status(500).json({
       success: false,
       message: 'Failed to process group loan repayment.',
-      error: error.message,
-      isLegacyLoan
+      error: error.message
     });
   } finally {
-    // FIXED: Always end the session
     await session.endSession();
-    console.log('🔚 Session ended');
   }
 });
 

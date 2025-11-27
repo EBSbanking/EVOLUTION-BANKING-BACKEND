@@ -3,6 +3,7 @@ import LoanAccount from '../models/LoanAccount.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import LoanRepayment from '../models/LoanRepayment.js';  // <-- Add this import
 import moment from 'moment';
+import GroupLoan from '../models/GroupLoan.js';
 
 // Function to check and update overdue loans
 export const checkOverdueLoans = async () => {

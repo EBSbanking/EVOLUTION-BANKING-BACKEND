@@ -1,5 +1,9 @@
 // src/services/overdueLoanHandler.js
 import LoanAccount from '../models/LoanAccount.js';
+import RepaymentSchedules from '../models/RepaymentSchedules.js';
+import LoanRepayment from '../models/LoanRepayment.js';
+import moment from 'moment';
+import GroupLoan from '../models/GroupLoan.js';
 
 /**
  * Identify and update all overdue loans by using schema statics.
