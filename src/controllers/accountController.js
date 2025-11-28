@@ -10,7 +10,7 @@ export const getMigratedAccounts = async (req, res) => {
     const userFriendlyAccounts = accounts.map(account => ({
       id: account.GL_ACCT_NO,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.ACCT_DESC,
+      accountName: account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -50,7 +50,7 @@ export const getAllAccounts = async (req, res) => {
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.ACCT_DESC,
+      accountName: account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -95,7 +95,7 @@ export const getAccountByNumber = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.ACCT_DESC,
+        accountName: account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -137,7 +137,7 @@ export const getAccountById = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.ACCT_DESC,
+        accountName: account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -185,7 +185,7 @@ export const createAccount = async (req, res) => {
       data: {
         id: newAccount._id,
         accountNumber: newAccount.GL_ACCT_NO,
-        accountName: newAccount.ACCT_DESC,
+        accountName: newAccount.accountName,
         accountType: newAccount.metadata?.accountType,
         systemSource: newAccount.systemSource
       }
@@ -236,7 +236,7 @@ export const updateAccount = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.ACCT_DESC,
+        accountName: account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
         status: account.REC_ST
@@ -297,7 +297,7 @@ export const getAccountsByType = async (req, res) => {
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.ACCT_DESC,
+      accountName: account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -350,7 +350,7 @@ export const getAccountBalance = async (req, res) => {
       success: true,
       data: {
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.ACCT_DESC,
+        accountName: account.accountName,
         currentBalance: account.LEDGER_BALANCE,
         currency: 'NGN',
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
@@ -433,7 +433,7 @@ export const searchAccounts = async (req, res) => {
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.ACCT_DESC,
+      accountName: account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',

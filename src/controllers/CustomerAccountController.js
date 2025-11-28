@@ -290,48 +290,207 @@ export const getAllCustomerAccounts = async (req, res) => {
   }
 };
 
-export const getCustomerAccountById = async (req, res) => {
-  const { ACCT_NO } = req.params;
-  try {
-    if (!/^\d{10}$/.test(ACCT_NO)) {
-      return res.status(400).json({
-        success: false,
-        message: 'ACCT_NO must be a 10-digit number.',
-      });
+// Enhanced getCustomerAccountByCUST_ID that handles both legacy and new accounts
+export const getCustomerAccountByCUST_ID = async (req, res) => {
+    const { CUST_ID } = req.params;
+    
+    try {
+        if (!CUST_ID) {
+            return res.status(400).json({
+                success: false,
+                message: 'CUST_ID parameter is required',
+            });
+        }
+
+        console.log(`🔍 Searching for customer accounts with identifier: ${CUST_ID}`);
+        
+        // Generate multiple formats for searching
+        const originalId = CUST_ID.toString().trim();
+        const cleanId = originalId.replace(/^0+/, '');
+        const numericId = parseInt(cleanId, 10) || 0;
+        const paddedId = originalId.padStart(10, '0');
+
+        console.log(`📋 Search formats: original=${originalId}, clean=${cleanId}, numeric=${numericId}, padded=${paddedId}`);
+
+        // Build comprehensive search query for BOTH legacy and new account formats
+        const searchQuery = {
+            $or: [
+                // Legacy format searches (using CUST_ID as string/number)
+                { CUST_ID: originalId },
+                { CUST_ID: cleanId },
+                { CUST_ID: numericId.toString() },
+                { CUST_ID: paddedId },
+                
+                // New format searches (using customer_id as number)
+                { customer_id: numericId },
+                { customer_id: parseInt(originalId) || 0 },
+                
+                // Direct account number searches (if someone passes account number instead of customer ID)
+                { account_number: originalId },
+                { account_number: paddedId },
+                { ACCT_NO: originalId },
+                { ACCT_NO: paddedId }
+            ].filter(condition => {
+                const values = Object.values(condition);
+                return !values.some(val => val === null || val === undefined || (typeof val === 'number' && isNaN(val)));
+            })
+        };
+
+        console.log('🔎 Search query:', JSON.stringify(searchQuery, null, 2));
+
+        // Find all accounts for the given customer ID
+        const accounts = await CustomerAccount.find(searchQuery)
+            .select('account_number ACCT_NO ACCT_NM customer_id CUST_ID customer_code status REC_ST product_type PRODUCT_TYPE ACCOUNT_TYPE branch currency opening_amount cleared_balance ledger_balance LEDGER_BAL AVAILABLE_BALANCE CLEARED_BAL PRODUCT_DESC BU_ID OPENED_DT')
+            .lean();
+
+        console.log(`📊 Found ${accounts.length} accounts for customer ${CUST_ID}`);
+
+        if (!accounts || accounts.length === 0) {
+            // Enhanced debugging
+            const sampleAccounts = await CustomerAccount.aggregate([
+                { $sample: { size: 5 } },
+                { 
+                    $project: {
+                        account_number: 1,
+                        ACCT_NO: 1,
+                        customer_id: 1,
+                        CUST_ID: 1,
+                        ACCT_NM: 1,
+                        product_type: 1,
+                        status: 1,
+                        REC_ST: 1
+                    }
+                }
+            ]);
+
+            return res.status(404).json({
+                success: false,
+                message: `No accounts found for identifier: ${originalId}`,
+                searched_identifier: originalId,
+                sample_accounts: sampleAccounts,
+                troubleshooting: [
+                    'Check if customer has any accounts in the system',
+                    'Verify the customer ID format matches account records',
+                    'Try using customer_id as a number (without leading zeros)',
+                    'Check both customer_id (Number) and CUST_ID (String) fields'
+                ]
+            });
+        }
+
+        // Get customer details
+        const customerSearchQuery = {
+            $or: [
+                { CUST_ID: originalId },
+                { CUST_ID: cleanId },
+                { CUST_ID: numericId.toString() },
+                { CUST_ID: paddedId },
+                { customer_id: numericId },
+                { customer_id: parseInt(originalId) || 0 }
+            ].filter(condition => {
+                const values = Object.values(condition);
+                return !values.some(val => val === null || val === undefined || (typeof val === 'number' && isNaN(val)));
+            })
+        };
+
+        const customer = await Customer.findOne(customerSearchQuery)
+            .select('CUST_ID customer_id FIRST_NAME LAST_NAME email phone address')
+            .lean();
+
+        // Process accounts for consistent response format
+        const processedAccounts = accounts.map(account => {
+            // Determine account number (prioritize new format, fallback to legacy)
+            const accountNumber = account.account_number || account.ACCT_NO;
+            const accountName = account.ACCT_NM || 'Account';
+            
+            // Determine balances (handle both formats)
+            const ledgerBalance = parseFloat(account.ledger_balance || account.LEDGER_BAL || 0);
+            const availableBalance = parseFloat(account.available_balance || account.AVAILABLE_BALANCE || ledgerBalance);
+            const clearedBalance = parseFloat(account.cleared_balance || account.CLEARED_BAL || ledgerBalance);
+            
+            // Determine status
+            const status = account.status || account.REC_ST || 'Active';
+            
+            // Determine product type
+            const productType = account.product_type || account.PRODUCT_TYPE || account.ACCOUNT_TYPE || 'SAVINGS';
+            
+            return {
+                // Primary identifiers
+                account_number: accountNumber,
+                account_name: accountName,
+                customer_id: account.customer_id,
+                CUST_ID: account.CUST_ID,
+                
+                // Status and type
+                status: status,
+                product_type: productType,
+                product_description: account.PRODUCT_DESC,
+                
+                // Balances
+                ledger_balance: ledgerBalance,
+                available_balance: availableBalance,
+                cleared_balance: clearedBalance,
+                
+                // Additional info
+                branch: account.branch || account.BU_ID,
+                currency: account.currency || 'NGN',
+                opened_date: account.opened_date || account.OPENED_DT,
+                
+                // Source identification
+                is_legacy_account: !!account.ACCT_NO && !account.account_number,
+                is_new_account: !!account.account_number
+            };
+        });
+
+        // Calculate summary statistics
+        const totalBalance = processedAccounts.reduce((sum, account) => {
+            return sum + account.ledger_balance;
+        }, 0);
+
+        const activeAccounts = processedAccounts.filter(account => {
+            const status = account.status;
+            return ['ACTIVE', 'Active', 'active', 'A', 'OPEN'].includes(status);
+        });
+
+        // Group by account type
+        const accountsByType = processedAccounts.reduce((acc, account) => {
+            const type = account.product_type || 'Unknown';
+            if (!acc[type]) acc[type] = [];
+            acc[type].push(account);
+            return acc;
+        }, {});
+
+        return res.status(200).json({
+            success: true,
+            message: 'Customer accounts retrieved successfully',
+            count: processedAccounts.length,
+            summary: {
+                total_balance: totalBalance,
+                active_accounts: activeAccounts.length,
+                total_accounts: processedAccounts.length,
+                legacy_accounts: processedAccounts.filter(acc => acc.is_legacy_account).length,
+                new_accounts: processedAccounts.filter(acc => acc.is_new_account).length
+            },
+            customer: customer || null,
+            accounts: processedAccounts,
+            accounts_by_type: accountsByType,
+            search_details: {
+                searched_identifier: originalId,
+                actual_search_used: {
+                    as_number: numericId,
+                    as_string: originalId
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ Error fetching customer accounts:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'An error occurred while fetching customer accounts',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
-
-    // UPDATED: Explicitly select fields including ACCT_NM to ensure it's returned
-    const account = await CustomerAccount.findOne({ ACCT_NO })
-      .select('ACCT_NO ACCT_NM customer_id status product_type branch currency opening_amount cleared_balance ledger_balance REC_ST ACCOUNT_TYPE PRODUCT_DESC created_by last_updated')
-      .lean(); // Use lean() for better performance if full doc not needed
-
-    if (!account) {
-      return res.status(404).json({
-        success: false,
-        message: 'Customer account not found',
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Customer account retrieved successfully',
-      account,
-    });
-  } catch (error) {
-    logger.error('Error fetching customer account:', {
-      error: error.message,
-      stack: error.stack,
-      params: req.params,
-      timestamp: new Date(),
-    });
-    return res.status(500).json({
-      success: false,
-      message: 'An error occurred while fetching the customer account',
-      error: error.message,
-    });
-  }
 };
-
 
 
 // Update a customer account by account number
@@ -666,260 +825,7 @@ export const updateDormantAccounts = async () => {
 };
 
 
-export const getCustomerAccountByCUST_ID = async (req, res) => {
-    const { CUST_ID } = req.params;
-    
-    try {
-        if (!CUST_ID) {
-            return res.status(400).json({
-                success: false,
-                message: 'CUST_ID parameter is required',
-            });
-        }
 
-        console.log(`🔍 Searching for customer accounts with identifier: ${CUST_ID}`);
-        
-        // Generate multiple formats for searching - FIXED FOR NUMBER/STRING ISSUES
-        const originalId = CUST_ID.toString().trim();
-        const cleanId = originalId.replace(/^0+/, ''); // Remove leading zeros
-        const numericId = parseInt(cleanId, 10) || 0; // Convert to number, default to 0 if invalid
-        const paddedId = originalId.padStart(10, '0'); // Ensure 10-digit format
-        
-        console.log(`📋 Search formats: original=${originalId}, clean=${cleanId}, numeric=${numericId}, padded=${paddedId}`);
-
-        // Build comprehensive search query that handles Number/String types correctly
-        const searchQuery = {
-            $or: [
-                // Search by CUST_ID as String (if it exists as string in some docs)
-                { CUST_ID: originalId },
-                { CUST_ID: cleanId },
-                { CUST_ID: numericId.toString() },
-                { CUST_ID: paddedId },
-                
-                // Search by customer_id as Number (PRIMARY - matches your schema)
-                { customer_id: numericId },
-                // Also try parsing the original string as number
-                { customer_id: parseInt(originalId) || 0 },
-                
-                // Search by account_number directly
-                { account_number: originalId },
-                { account_number: paddedId },
-                
-                // Legacy field searches
-                { customer_code: originalId },
-                { customer_code: cleanId },
-                { customer_code: numericId.toString() }
-            ].filter(condition => {
-                // Filter out invalid conditions (like customer_id: NaN)
-                const values = Object.values(condition);
-                return !values.some(val => val === null || val === undefined || (typeof val === 'number' && isNaN(val)));
-            })
-        };
-
-        console.log('🔎 Search query:', JSON.stringify(searchQuery, null, 2));
-
-        // Find all accounts for the given customer ID in multiple formats
-        const accounts = await CustomerAccount.find(searchQuery)
-            .select('account_number ACCT_NO ACCT_NM customer_id CUST_ID customer_code status REC_ST product_type PRODUCT_TYPE ACCOUNT_TYPE branch currency opening_amount cleared_balance ledger_balance LEDGER_BAL AVAILABLE_BALANCE PRODUCT_DESC')
-            .lean();
-
-        if (!accounts || accounts.length === 0) {
-            // Enhanced debugging: Check what accounts exist in the database
-            const sampleAccounts = await CustomerAccount.find({})
-                .select('account_number ACCT_NO customer_id CUST_ID ACCT_NM product_type status REC_ST')
-                .limit(10)
-                .lean();
-            
-            console.log('📊 Sample accounts in database:', sampleAccounts);
-            
-            // Also check if any accounts exist with similar customer_id
-            const similarAccounts = await CustomerAccount.find({
-                $or: [
-                    { customer_id: { $gte: numericId - 100, $lte: numericId + 100 } },
-                    { CUST_ID: { $regex: cleanId.slice(-4), $options: 'i' } }
-                ]
-            })
-            .select('account_number ACCT_NO customer_id CUST_ID ACCT_NM')
-            .limit(5)
-            .lean();
-
-            return res.status(404).json({
-                success: false,
-                message: `No accounts found for identifier: ${originalId}`,
-                searched_identifier: originalId,
-                searched_formats: {
-                    as_string: [originalId, cleanId, numericId.toString(), paddedId],
-                    as_number: [numericId, parseInt(originalId) || 'invalid'],
-                    as_account_number: [originalId, paddedId]
-                },
-                sample_accounts: sampleAccounts,
-                similar_accounts_found: similarAccounts,
-                troubleshooting: [
-                    'Check if customer has any accounts',
-                    'Verify the identifier format matches account records',
-                    'Try using customer_id as a number (without leading zeros)',
-                    'Check both customer_id (Number) and CUST_ID (String) fields',
-                    'Search by account_number directly if known'
-                ]
-            });
-        }
-
-        // Determine which fields and formats were matched
-        const matchedFields = accounts.reduce((acc, account) => {
-            // Check customer_id matches (as number)
-            if (account.customer_id === numericId || account.customer_id === parseInt(originalId)) {
-                acc.customer_id = account.customer_id;
-            }
-            // Check CUST_ID matches (as string)
-            if (account.CUST_ID === originalId || account.CUST_ID === cleanId || account.CUST_ID === numericId.toString() || account.CUST_ID === paddedId) {
-                acc.CUST_ID = account.CUST_ID;
-            }
-            // Check account_number matches
-            if (account.account_number === originalId || account.account_number === paddedId) {
-                acc.account_number = account.account_number;
-            }
-            return acc;
-        }, {});
-
-        console.log(`✅ Found ${accounts.length} accounts`);
-        console.log(`📝 Matched fields:`, matchedFields);
-
-        // Get customer details from multiple identifier fields
-        const customerSearchQuery = {
-            $or: [
-                { CUST_ID: originalId },
-                { CUST_ID: cleanId },
-                { CUST_ID: numericId.toString() },
-                { CUST_ID: paddedId },
-                { customer_id: numericId },
-                { customer_id: parseInt(originalId) || 0 }
-            ].filter(condition => {
-                const values = Object.values(condition);
-                return !values.some(val => val === null || val === undefined || (typeof val === 'number' && isNaN(val)));
-            })
-        };
-
-        const customer = await Customer.findOne(customerSearchQuery)
-            .select('CUST_ID customer_id FIRST_NAME LAST_NAME email phone address')
-            .lean();
-
-        // Group accounts by matched field for better insight
-        const accountsByMatchedField = accounts.reduce((acc, account) => {
-            let matchedOn = [];
-            
-            // Check what field matched
-            if (account.customer_id === numericId || account.customer_id === parseInt(originalId)) {
-                matchedOn.push('customer_id');
-            }
-            if (account.CUST_ID === originalId || account.CUST_ID === cleanId || account.CUST_ID === numericId.toString() || account.CUST_ID === paddedId) {
-                matchedOn.push('CUST_ID');
-            }
-            if (account.account_number === originalId || account.account_number === paddedId) {
-                matchedOn.push('account_number');
-            }
-            
-            const key = matchedOn.join('_') || 'unknown';
-            if (!acc[key]) acc[key] = [];
-            
-            // Enhanced account information
-            const enhancedAccount = {
-                // Primary identifiers
-                account_number: account.account_number || account.ACCT_NO,
-                account_name: account.ACCT_NM,
-                customer_id: account.customer_id,
-                CUST_ID: account.CUST_ID,
-                
-                // Status and type
-                status: account.status || account.REC_ST,
-                product_type: account.product_type || account.PRODUCT_TYPE || account.ACCOUNT_TYPE,
-                
-                // Balances
-                ledger_balance: account.ledger_balance || account.LEDGER_BAL,
-                available_balance: account.AVAILABLE_BALANCE,
-                cleared_balance: account.cleared_balance,
-                
-                // Additional info
-                branch: account.branch,
-                currency: account.currency,
-                product_description: account.PRODUCT_DESC,
-                
-                // Match info
-                matched_fields: matchedOn
-            };
-            
-            acc[key].push(enhancedAccount);
-            return acc;
-        }, {});
-
-        // Group accounts by product type
-        const accountsByType = accounts.reduce((acc, account) => {
-            const type = account.product_type || account.PRODUCT_TYPE || account.ACCOUNT_TYPE || 'Unknown';
-            if (!acc[type]) acc[type] = [];
-            
-            acc[type].push({
-                account_number: account.account_number || account.ACCT_NO,
-                account_name: account.ACCT_NM,
-                status: account.status || account.REC_ST,
-                balance: account.ledger_balance || account.LEDGER_BAL,
-                currency: account.currency
-            });
-            return acc;
-        }, {});
-
-        // Calculate summary statistics
-        const totalBalance = accounts.reduce((sum, account) => {
-            return sum + (parseFloat(account.ledger_balance || account.LEDGER_BAL || 0));
-        }, 0);
-
-        const activeAccounts = accounts.filter(account => {
-            const status = account.status || account.REC_ST;
-            return ['ACTIVE', 'Active', 'active', 'A', 'OPEN'].includes(status);
-        });
-
-        return res.status(200).json({
-            success: true,
-            message: 'Customer accounts retrieved successfully',
-            count: accounts.length,
-            summary: {
-                total_balance: totalBalance,
-                active_accounts: activeAccounts.length,
-                total_accounts: accounts.length
-            },
-            customer: customer || null,
-            matched_fields: matchedFields,
-            accounts_by_matched_field: accountsByMatchedField,
-            accounts_by_type: accountsByType,
-            all_accounts: accounts.map(account => ({
-                account_number: account.account_number || account.ACCT_NO,
-                account_name: account.ACCT_NM,
-                customer_id: account.customer_id,
-                CUST_ID: account.CUST_ID,
-                status: account.status || account.REC_ST,
-                product_type: account.product_type || account.PRODUCT_TYPE,
-                balance: parseFloat(account.ledger_balance || account.LEDGER_BAL || 0),
-                available_balance: parseFloat(account.AVAILABLE_BALANCE || 0),
-                currency: account.currency,
-                branch: account.branch
-            })),
-            search_details: {
-                searched_identifier: originalId,
-                actual_search_used: {
-                    as_number: numericId,
-                    as_string: originalId
-                },
-                matched_fields: matchedFields
-            }
-        });
-    } catch (error) {
-        console.error('❌ Error fetching customer accounts:', error);
-        return res.status(500).json({
-            success: false,
-            message: 'An error occurred while fetching customer accounts',
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
-    }
-};
 
 // Account Activation Controller - UPDATED FOR BOTH LEGACY AND NEW ACCOUNT TYPES
 export const activateCustomerAccount = async (req, res) => {

@@ -27,29 +27,6 @@ import {
 import GLAccountSeg from '../models/GLAccountSeg.js';
 import AuditLogger from '../utils/AuditLogger.js'
 
-// Add these utility functions before your createInterBranchAccounts function
-
-
-// // Determine GL account category based on account type
-// const determineCategoryFromAccountType = (accountType) => {
-//   const categoryMap = {
-//     'INTER_BRANCH': 'ASSET',
-//     'INTER_BRANCH_PAYABLE': 'LIABILITY',
-//     'INTER_BRANCH_RECEIVABLE': 'ASSET'
-//   };
-//   return categoryMap[accountType] || 'ASSET';
-// };
-
-// // Determine balance code (D for Debit, C for Credit)
-// const determineBalanceCode = (accountType) => {
-//   const balanceCodeMap = {
-//     'INTER_BRANCH': 'D',
-//     'INTER_BRANCH_PAYABLE': 'C',
-//     'INTER_BRANCH_RECEIVABLE': 'D'
-//   };
-//   return balanceCodeMap[accountType] || 'D';
-// };
-
 // Determine if credit transactions are allowed
 const determineCreditAllowed = (accountType) => {
   const creditAllowedMap = {
@@ -69,25 +46,6 @@ const determineDebitAllowed = (accountType) => {
   };
   return debitAllowedMap[accountType] !== false;
 };
-
-// // GL Account Templates Configuration
-// const GL_ACCOUNT_TEMPLATES = {
-//   'INTER_BRANCH': {
-//     template: 'GL-{branch}-{dept}-{product}-{seq}',
-//     description: 'Inter-Branch Settlement Account',
-//     transactionType: 'BOTH'
-//   },
-//   'INTER_BRANCH_PAYABLE': {
-//     template: 'GL-{branch}-{dept}-{product}-{seq}',
-//     description: 'Inter-Branch Payable Account',
-//     transactionType: 'CREDIT'
-//   },
-//   'INTER_BRANCH_RECEIVABLE': {
-//     template: 'GL-{branch}-{dept}-{product}-{seq}',
-//     description: 'Inter-Branch Receivable Account',
-//     transactionType: 'DEBIT'
-//   }
-// };
 
 // Updated createInterBranchAccounts function
 const createInterBranchAccounts = async (organizationCode, branchCode, branchName, CREATED_BY, session) => {
@@ -169,26 +127,6 @@ const createInterBranchAccounts = async (organizationCode, branchCode, branchNam
   return interBranchAccounts;
 };
 
-// // Generate Next GL Account ID (make sure this exists)
-// const generateNextGLAcctId = async (session) => {
-//   try {
-//     // Find the highest GL_ACCT_ID and increment
-//     const lastAccount = await GLAccount.findOne()
-//       .sort({ GL_ACCT_ID: -1 })
-//       .session(session)
-//       .select('GL_ACCT_ID');
-    
-//     if (!lastAccount || !lastAccount.GL_ACCT_ID) {
-//       return 1000; // Starting ID
-//     }
-    
-//     return lastAccount.GL_ACCT_ID + 1;
-//   } catch (error) {
-//     logger.error('Error generating next GL account ID', { error: error.message });
-//     throw new Error('Failed to generate GL account ID');
-//   }
-// };
-
 // Utility: Generate Transaction ID (you already have this)
 const generateTransactionId = () => {
   const base = Date.now().toString();
@@ -199,7 +137,7 @@ const generateTransactionId = () => {
 };
 
 ///////////////////////////////////////////////////
-// COA HELPER FUNCTIONS
+// COA HELPER FUNCTIONS - UPDATED TO ALIGN WITH FRONTEND
 ///////////////////////////////////////////////////
 
 const generateCOAAccountNumber = ({ organizationCode, branchCode, accountClass, accountType, subAccount = '000' }) => {
@@ -225,36 +163,58 @@ const getAccountClassCode = (accountClass) => {
   return classMap[accountClass] || '999';
 };
 
+// UPDATED: getAccountTypeCode - INCLUDES ALL FRONTEND TYPES
 const getAccountTypeCode = (accountType) => {
   const typeMap = {
-    // Assets
+    // Assets - Frontend types
     'CURRENT_ASSET': '001',
+    'CUSTOMER_ACCOUNT': '001',
+    'CASH_ACCOUNT': '001', 
+    'BANK_ACCOUNT': '001',
+    'RECEIVABLE_ACCOUNT': '001',
     'FIXED_ASSET': '002',
-    'INTANGIBLE_ASSET': '003',
     'LOAN_ASSET': '004',
+    'INTANGIBLE_ASSET': '003',
     'OTHER_ASSET': '005',
+    'PROPERTY_PLANT_EQUIPMENT': '002',
+    'INVESTMENT_ASSET': '005',
     
-    // Liabilities
+    // Liabilities - Frontend types
     'CURRENT_LIABILITY': '101',
+    'LIABILITY_ACCOUNT': '101',
+    'PAYABLE_ACCOUNT': '101',
     'LONG_TERM_LIABILITY': '102',
+    'LOAN_LIABILITY': '102',
     'DEPOSITS_LIABILITY': '103',
     'OTHER_LIABILITY': '104',
     
-    // Equity
+    // Equity - Frontend types
     'SHARE_CAPITAL': '201',
+    'CAPITAL_ACCOUNT': '201',
     'RETAINED_EARNINGS': '202',
+    'EQUITY_ACCOUNT': '202',
     'OTHER_EQUITY': '203',
     
-    // Revenue
+    // Revenue - Frontend types
     'OPERATING_REVENUE': '301',
+    'REVENUE_ACCOUNT': '301',
+    'SERVICE_INCOME': '301',
     'INTEREST_INCOME': '302',
     'FEE_INCOME': '303',
+    'PROCESSING_FEE': '303',
+    'INSURANCE_FEE': '303',
+    'UPFRONT_INTEREST': '302',
+    'OTHER_FEES': '303',
     'OTHER_REVENUE': '304',
     
-    // Expenses
+    // Expenses - Frontend types
     'OPERATING_EXPENSE': '401',
+    'EXPENSE_ACCOUNT': '401',
+    'STAFF_EXPENSE': '401',
     'ADMINISTRATIVE_EXPENSE': '402',
+    'ADMIN_EXPENSE': '402',
     'FINANCE_COST': '403',
+    'INTEREST_EXPENSE': '403',
     'OTHER_EXPENSE': '404'
   };
   return typeMap[accountType] || '999';
@@ -269,36 +229,58 @@ const mapToFinancialStatementCategory = (accountClass, accountType) => {
   return 'BALANCE_SHEET';
 };
 
+// UPDATED: mapToFinancialStatementSubCategory - ALIGNED WITH FRONTEND
 const mapToFinancialStatementSubCategory = (accountClass, accountType) => {
   const mapping = {
     'ASSET': {
       'CURRENT_ASSET': 'CURRENT_ASSETS',
+      'CUSTOMER_ACCOUNT': 'CURRENT_ASSETS',
+      'CASH_ACCOUNT': 'CURRENT_ASSETS',
+      'BANK_ACCOUNT': 'CURRENT_ASSETS',
+      'RECEIVABLE_ACCOUNT': 'CURRENT_ASSETS',
       'FIXED_ASSET': 'FIXED_ASSETS',
-      'INTANGIBLE_ASSET': 'INTANGIBLE_ASSETS',
       'LOAN_ASSET': 'OTHER_ASSETS',
-      'OTHER_ASSET': 'OTHER_ASSETS'
+      'INTANGIBLE_ASSET': 'INTANGIBLE_ASSETS',
+      'OTHER_ASSET': 'OTHER_ASSETS',
+      'PROPERTY_PLANT_EQUIPMENT': 'FIXED_ASSETS',
+      'INVESTMENT_ASSET': 'OTHER_ASSETS'
     },
     'LIABILITY': {
       'CURRENT_LIABILITY': 'CURRENT_LIABILITIES',
+      'LIABILITY_ACCOUNT': 'CURRENT_LIABILITIES',
+      'PAYABLE_ACCOUNT': 'CURRENT_LIABILITIES',
       'LONG_TERM_LIABILITY': 'LONG_TERM_LIABILITIES',
+      'LOAN_LIABILITY': 'LONG_TERM_LIABILITIES',
       'DEPOSITS_LIABILITY': 'CURRENT_LIABILITIES',
       'OTHER_LIABILITY': 'OTHER_LIABILITIES'
     },
     'EQUITY': {
       'SHARE_CAPITAL': 'SHARE_CAPITAL',
+      'CAPITAL_ACCOUNT': 'SHARE_CAPITAL',
       'RETAINED_EARNINGS': 'RETAINED_EARNINGS',
+      'EQUITY_ACCOUNT': 'OTHER_EQUITY',
       'OTHER_EQUITY': 'OTHER_EQUITY'
     },
     'REVENUE': {
       'OPERATING_REVENUE': 'OPERATING_REVENUE',
+      'REVENUE_ACCOUNT': 'OPERATING_REVENUE',
+      'SERVICE_INCOME': 'OPERATING_REVENUE',
       'INTEREST_INCOME': 'OTHER_REVENUE',
       'FEE_INCOME': 'OPERATING_REVENUE',
+      'PROCESSING_FEE': 'OPERATING_REVENUE',
+      'INSURANCE_FEE': 'OPERATING_REVENUE',
+      'UPFRONT_INTEREST': 'OTHER_REVENUE',
+      'OTHER_FEES': 'OTHER_REVENUE',
       'OTHER_REVENUE': 'OTHER_REVENUE'
     },
     'EXPENSE': {
       'OPERATING_EXPENSE': 'OPERATING_EXPENSES',
+      'EXPENSE_ACCOUNT': 'OPERATING_EXPENSES',
+      'STAFF_EXPENSE': 'OPERATING_EXPENSES',
       'ADMINISTRATIVE_EXPENSE': 'ADMINISTRATIVE_EXPENSES',
+      'ADMIN_EXPENSE': 'ADMINISTRATIVE_EXPENSES',
       'FINANCE_COST': 'FINANCE_COSTS',
+      'INTEREST_EXPENSE': 'FINANCE_COSTS',
       'OTHER_EXPENSE': 'OTHER_EXPENSES'
     }
   };
@@ -306,34 +288,63 @@ const mapToFinancialStatementSubCategory = (accountClass, accountType) => {
   return mapping[accountClass]?.[accountType] || 'OTHER_ASSETS';
 };
 
+// UPDATED: mapToInternalAccountType - ALIGNED WITH FRONTEND
 const mapToInternalAccountType = (accountClass, accountType) => {
   const mapping = {
     'ASSET': {
-      'LOAN_ASSET': 'LOAN_ASSET',
+      'CURRENT_ASSET': 'CUSTOMER_ACCOUNT',
       'FIXED_ASSET': 'FIXED_ASSET',
-      'CURRENT_ASSET': 'CUSTOMER_ACCOUNT'
+      'LOAN_ASSET': 'LOAN_ASSET',
+      'INTANGIBLE_ASSET': 'FIXED_ASSET',
+      'OTHER_ASSET': 'OTHER_ASSET',
+      'CUSTOMER_ACCOUNT': 'CUSTOMER_ACCOUNT',
+      'CASH_ACCOUNT': 'CASH_ACCOUNT',
+      'BANK_ACCOUNT': 'BANK_ACCOUNT',
+      'RECEIVABLE_ACCOUNT': 'RECEIVABLE_ACCOUNT',
+      'PROPERTY_PLANT_EQUIPMENT': 'PROPERTY_PLANT_EQUIPMENT',
+      'INVESTMENT_ASSET': 'INVESTMENT_ASSET'
     },
     'LIABILITY': {
+      'CURRENT_LIABILITY': 'LIABILITY_ACCOUNT',
+      'LONG_TERM_LIABILITY': 'LOAN_LIABILITY',
       'DEPOSITS_LIABILITY': 'DEPOSITS_LIABILITY',
-      'CURRENT_LIABILITY': 'LIABILITY_ACCOUNT'
+      'OTHER_LIABILITY': 'LIABILITY_ACCOUNT',
+      'LIABILITY_ACCOUNT': 'LIABILITY_ACCOUNT',
+      'PAYABLE_ACCOUNT': 'PAYABLE_ACCOUNT',
+      'LOAN_LIABILITY': 'LOAN_LIABILITY'
     },
     'EQUITY': {
       'SHARE_CAPITAL': 'CAPITAL_ACCOUNT',
-      'RETAINED_EARNINGS': 'EQUITY_ACCOUNT'
+      'RETAINED_EARNINGS': 'RETAINED_EARNINGS',
+      'OTHER_EQUITY': 'EQUITY_ACCOUNT',
+      'CAPITAL_ACCOUNT': 'CAPITAL_ACCOUNT',
+      'EQUITY_ACCOUNT': 'EQUITY_ACCOUNT'
     },
     'REVENUE': {
+      'OPERATING_REVENUE': 'REVENUE_ACCOUNT',
       'INTEREST_INCOME': 'INTEREST_INCOME',
-      'FEE_INCOME': 'REVENUE_ACCOUNT',
-      'OPERATING_REVENUE': 'REVENUE_ACCOUNT'
+      'FEE_INCOME': 'FEE_INCOME',
+      'OTHER_REVENUE': 'OTHER_FEES',
+      'REVENUE_ACCOUNT': 'REVENUE_ACCOUNT',
+      'SERVICE_INCOME': 'SERVICE_INCOME',
+      'PROCESSING_FEE': 'PROCESSING_FEE',
+      'INSURANCE_FEE': 'INSURANCE_FEE',
+      'UPFRONT_INTEREST': 'UPFRONT_INTEREST',
+      'OTHER_FEES': 'OTHER_FEES'
     },
     'EXPENSE': {
-      'OPERATING_EXPENSE': 'EXPENSE_ACCOUNT',
-      'ADMINISTRATIVE_EXPENSE': 'OPERATING_EXPENSE',
-      'FINANCE_COST': 'EXPENSE_ACCOUNT'
+      'OPERATING_EXPENSE': 'OPERATING_EXPENSE',
+      'ADMINISTRATIVE_EXPENSE': 'ADMIN_EXPENSE',
+      'FINANCE_COST': 'INTEREST_EXPENSE',
+      'OTHER_EXPENSE': 'EXPENSE_ACCOUNT',
+      'EXPENSE_ACCOUNT': 'EXPENSE_ACCOUNT',
+      'INTEREST_EXPENSE': 'INTEREST_EXPENSE',
+      'STAFF_EXPENSE': 'STAFF_EXPENSE',
+      'ADMIN_EXPENSE': 'ADMIN_EXPENSE'
     }
   };
   
-  return mapping[accountClass]?.[accountType] || 'CUSTOMER_ACCOUNT';
+  return mapping[accountClass]?.[accountType] || accountType;
 };
 
 const determineAccountLevel = (isControlAccount, parentAccountNo) => {
@@ -343,7 +354,92 @@ const determineAccountLevel = (isControlAccount, parentAccountNo) => {
   return 4;
 };
 
-// COA-ALIGNED GL ACCOUNT CREATION
+// ADDED: MAPPING FUNCTIONS TO ALIGN FRONTEND WITH BACKEND
+const mapCategoryCodeToAccountClass = (categoryCode) => {
+  const mapping = {
+    '100': 'ASSET',
+    '200': 'ASSET', // Loan Asset is also ASSET
+    '150': 'ASSET', // Fixed Asset
+    '151': 'ASSET', // Property Plant Equipment
+    '152': 'ASSET', // Investment Asset
+    '300': 'LIABILITY', 
+    '301': 'LIABILITY', // Deposits Liability
+    '302': 'LIABILITY', // Payable Account
+    '303': 'LIABILITY', // Loan Liability
+    '400': 'REVENUE',
+    '500': 'EQUITY',
+    '501': 'EQUITY', // Capital Account
+    '502': 'EQUITY', // Retained Earnings
+    '600': 'EXPENSE',
+    '800': 'ASSET', // Inter-branch treated as asset
+    '900': 'ASSET', // Suspense account
+    '901': 'ASSET'  // Control account
+  };
+  return mapping[categoryCode] || 'ASSET';
+};
+
+const mapAccountClassToNormalBalance = (accountClass) => {
+  const mapping = {
+    'ASSET': 'DEBIT',
+    'LIABILITY': 'CREDIT',
+    'EQUITY': 'CREDIT',
+    'REVENUE': 'CREDIT',
+    'EXPENSE': 'DEBIT'
+  };
+  return mapping[accountClass] || 'DEBIT';
+};
+
+// UPDATED: Enhanced mapping function for frontend account types
+const mapMetadataAccountTypeToAccountType = (frontendAccountType) => {
+  const typeMap = {
+    // Frontend asset types to backend account types (using only schema enum values)
+    'CASH_ACCOUNT': 'CURRENT_ASSET',
+    'BANK_ACCOUNT': 'CURRENT_ASSET',
+    'RECEIVABLE_ACCOUNT': 'CURRENT_ASSET', // Changed from 'RECEIVABLE' to 'CURRENT_ASSET'
+    'CUSTOMER_ACCOUNT': 'CURRENT_ASSET',
+    'LOAN_ASSET': 'LOAN_ASSET',
+    'FIXED_ASSET': 'FIXED_ASSET',
+    'PROPERTY_PLANT_EQUIPMENT': 'FIXED_ASSET',
+    'INVESTMENT_ASSET': 'OTHER_ASSET', // Changed from 'INVESTMENT_ASSET' to 'OTHER_ASSET'
+    
+    // Frontend liability types
+    'LIABILITY_ACCOUNT': 'CURRENT_LIABILITY',
+    'DEPOSITS_LIABILITY': 'CURRENT_LIABILITY',
+    'PAYABLE_ACCOUNT': 'CURRENT_LIABILITY',
+    'LOAN_LIABILITY': 'LONG_TERM_LIABILITY',
+    
+    // Frontend equity types
+    'EQUITY_ACCOUNT': 'EQUITY',
+    'CAPITAL_ACCOUNT': 'EQUITY',
+    'RETAINED_EARNINGS': 'RETAINED_EARNINGS',
+    
+    // Frontend revenue types
+    'REVENUE_ACCOUNT': 'OPERATING_REVENUE',
+    'INTEREST_INCOME': 'INTEREST_INCOME',
+    'FEE_INCOME': 'FEE_INCOME',
+    'SERVICE_INCOME': 'OPERATING_REVENUE', // Changed from 'SERVICE_INCOME' to 'OPERATING_REVENUE'
+    'PROCESSING_FEE': 'FEE_INCOME',
+    'INSURANCE_FEE': 'FEE_INCOME',
+    'UPFRONT_INTEREST': 'INTEREST_INCOME',
+    'OTHER_FEES': 'OTHER_REVENUE',
+    
+    // Frontend expense types
+    'EXPENSE_ACCOUNT': 'OPERATING_EXPENSE',
+    'OPERATING_EXPENSE': 'OPERATING_EXPENSE',
+    'INTEREST_EXPENSE': 'FINANCE_COST', // Changed from 'INTEREST_EXPENSE' to 'FINANCE_COST'
+    'STAFF_EXPENSE': 'OPERATING_EXPENSE', // Changed from 'STAFF_EXPENSE' to 'OPERATING_EXPENSE'
+    'ADMIN_EXPENSE': 'ADMINISTRATIVE_EXPENSE',
+    
+    // Special accounts
+    'INTER_BRANCH': 'INTER_BRANCH',
+    'SUSPENSE_ACCOUNT': 'OTHER_ASSET', // Changed from 'SUSPENSE_ACCOUNT' to 'OTHER_ASSET'
+    'CONTROL_ACCOUNT': 'CURRENT_ASSET' // Changed from 'CONTROL_ACCOUNT' to 'CURRENT_ASSET'
+  };
+  
+  return typeMap[frontendAccountType] || 'CURRENT_ASSET';
+};
+
+// UPDATED: COA-ALIGNED GL ACCOUNT CREATION - WITH FRONTEND MAPPING
 export const createCOAAlignedGLAccount = async (req, res) => {
   const session = await mongoose.startSession();
   
@@ -354,21 +450,29 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         organizationName,
         branchCode,
         branchName,
-        accountClass,
-        accountType,
-        accountName,
-        normalBalance,
-        parentAccountNo,
-        isControlAccount = false,
-        subAccount = '000',
+        categoryCode,    // From request: "100"
+        categoryName,    // From request: "Current Assets"  
+        ACCT_DESC,       // From request: "Customer Account"
         level,
+        CHART_OF_ACCT_ID,
+        GL_ACCT_CAT,
+        BAL_CD,
+        SUB_LEDGER_NO,
         CREATED_BY,
+        SEG_NO,
+        subfolderId,
         metadata = {}
       } = req.body;
 
-      // Validate required fields
+      // MAP INCOMING FIELDS TO EXPECTED FIELDS
+      const accountClass = mapCategoryCodeToAccountClass(categoryCode);
+      const accountType = mapMetadataAccountTypeToAccountType(metadata.accountType);
+      const accountName = ACCT_DESC;
+      const normalBalance = mapAccountClassToNormalBalance(accountClass);
+
+      // Validate required fields with mapped values
       if (!organizationCode || !branchCode || !accountClass || !accountType || !accountName || !normalBalance || !CREATED_BY) {
-        throw new Error('Missing required fields: organizationCode, branchCode, accountClass, accountType, accountName, normalBalance, CREATED_BY');
+        throw new Error(`Missing required fields: organizationCode: ${organizationCode}, branchCode: ${branchCode}, accountClass: ${accountClass}, accountType: ${accountType}, accountName: ${accountName}, normalBalance: ${normalBalance}, CREATED_BY: ${CREATED_BY}`);
       }
 
       // Validate organization and branch
@@ -388,7 +492,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         branchCode,
         accountClass,
         accountType,
-        subAccount
+        subAccount: '000'
       });
 
       // Check for duplicate account
@@ -397,16 +501,52 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         throw new Error(`GL account ${glAcctNo} already exists`);
       }
 
-      // Determine COA structure
+      // Determine COA structure with validation
       const financialStatementType = mapToFinancialStatementCategory(accountClass, accountType);
       const financialStatementCategory = mapToFinancialStatementSubCategory(accountClass, accountType);
       const internalAccountType = mapToInternalAccountType(accountClass, accountType);
-      const accountLevel = level || determineAccountLevel(isControlAccount, parentAccountNo);
+      const accountLevel = level || 4;
+
+      // UPDATED: Validate enum values - accept all frontend account types
+      const validAccountTypes = [
+        // Basic account types
+        'ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE', 'CONTRA_ASSET', 'CONTRA_LIABILITY',
+        // Frontend asset types
+        'CUSTOMER_ACCOUNT', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 'RECEIVABLE_ACCOUNT', 'LOAN_ASSET', 
+        'FIXED_ASSET', 'PROPERTY_PLANT_EQUIPMENT', 'INVESTMENT_ASSET', 'OTHER_ASSET',
+        // Frontend liability types
+        'LIABILITY_ACCOUNT', 'DEPOSITS_LIABILITY', 'PAYABLE_ACCOUNT', 'LOAN_LIABILITY',
+        // Frontend equity types
+        'EQUITY_ACCOUNT', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS',
+        // Frontend revenue types
+        'REVENUE_ACCOUNT', 'INTEREST_INCOME', 'FEE_INCOME', 'SERVICE_INCOME', 'PROCESSING_FEE',
+        'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES',
+        // Frontend expense types
+        'EXPENSE_ACCOUNT', 'OPERATING_EXPENSE', 'INTEREST_EXPENSE', 'STAFF_EXPENSE', 'ADMIN_EXPENSE',
+        // Special accounts
+        'INTER_BRANCH', 'SUSPENSE_ACCOUNT', 'CONTROL_ACCOUNT'
+      ];
+      
+      if (!validAccountTypes.includes(internalAccountType)) {
+        throw new Error(`Invalid account type: ${internalAccountType}. Must be one of the supported account types`);
+      }
+
+      // Validate balance type and normal balance
+      const validBalanceTypes = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'];
+      const validNormalBalances = ['DEBIT', 'CREDIT'];
+      
+      if (!validBalanceTypes.includes(accountClass)) {
+        throw new Error(`Invalid balance type: ${accountClass}. Must be one of: ${validBalanceTypes.join(', ')}`);
+      }
+      
+      if (!validNormalBalances.includes(normalBalance)) {
+        throw new Error(`Invalid normal balance: ${normalBalance}. Must be one of: ${validNormalBalances.join(', ')}`);
+      }
 
       // Generate GL Account ID
       const glAcctId = await generateNextGLAcctId(session);
 
-      // Create COA-aligned GL Account
+      // Create COA-aligned GL Account with validated structure
       const newGLAccount = new GLAccount({
         GL_ACCT_NO: glAcctNo,
         GL_ACCT_ID: glAcctId,
@@ -429,7 +569,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
             branch: String(branchCode).padStart(3, '0'),
             accountClass: getAccountClassCode(accountClass),
             accountType: getAccountTypeCode(accountType),
-            subAccount: subAccount.padStart(3, '0')
+            subAccount: ''
           },
           financialStatement: {
             type: financialStatementType,
@@ -438,13 +578,13 @@ export const createCOAAlignedGLAccount = async (req, res) => {
           },
           hierarchy: {
             level: accountLevel,
-            parentAccountNo: parentAccountNo || null,
-            isControlAccount,
-            isSummaryAccount: isControlAccount,
+            parentAccountNo: null,
+            isControlAccount: false,
+            isSummaryAccount: false,
             childAccounts: []
           },
           accounting: {
-            normalBalance,
+            normalBalance: normalBalance,
             balanceType: accountClass,
             isTemporary: ['REVENUE', 'EXPENSE'].includes(accountClass),
             isPermanent: ['ASSET', 'LIABILITY', 'EQUITY'].includes(accountClass),
@@ -453,15 +593,15 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         },
         
         // Account Structure (legacy fields for compatibility)
-        categoryCode: getAccountClassCode(accountClass),
-        categoryName: `${accountClass} - ${accountType}`,
+        categoryCode: categoryCode,
+        categoryName: categoryName,
         level: accountLevel,
         LEDGER_NO: '001',
-        SUB_LEDGER_NO: '000',
-        CHART_OF_ACCT_ID: '001',
-        GL_ACCT_CAT: getAccountClassCode(accountClass),
-        BAL_CD: getAccountClassCode(accountClass),
-        subfolderId: `COA_${organizationCode}_${branchCode}`,
+        SUB_LEDGER_NO: SUB_LEDGER_NO || '',
+        CHART_OF_ACCT_ID: CHART_OF_ACCT_ID || '001',
+        GL_ACCT_CAT: GL_ACCT_CAT || categoryCode,
+        BAL_CD: BAL_CD || categoryCode,
+        subfolderId: subfolderId?.toString() || `COA_${organizationCode}_${branchCode}`,
         
         // Transaction Controls
         JOURNAL_ID: `JRN-COA-${Date.now()}`,
@@ -485,49 +625,38 @@ export const createCOAAlignedGLAccount = async (req, res) => {
           templateGenerated: false,
           dynamicAccount: true,
           branchSpecific: true,
-          consolidationRequired: !isControlAccount,
+          consolidationRequired: true,
           ...metadata
         }
       });
 
       await newGLAccount.save({ session });
 
-      // If this is a child account, update parent account
-      if (parentAccountNo) {
-        const parentAccount = await GLAccount.findOne({ GL_ACCT_NO: parentAccountNo }).session(session);
-        if (parentAccount) {
-          if (!parentAccount.coaStructure.hierarchy.childAccounts.includes(glAcctNo)) {
-            parentAccount.coaStructure.hierarchy.childAccounts.push(glAcctNo);
-            await parentAccount.save({ session });
-          }
-        }
-      }
-
-      // Audit trail - CORRECTED PARAMETERS
-      await addAuditTrail({
-        event_type: 'CREATE_COA_ALIGNED_ACCOUNT',
-        user_id: CREATED_BY,
-        action: 'CREATE',
-        new_value: {
-          GL_ACCT_NO: glAcctNo,
-          accountClass,
-          accountType,
-          financialStatement: financialStatementType,
-          normalBalance,
-          isControlAccount,
-          parentAccountNo
-        },
-        old_value: null,
-        ip_address: req.ip || '0.0.0.0',
-        entity_id: newGLAccount._id,
-        entity_type: 'GLAccount',
-        status: 'SUCCESS',
-        description: `Created COA-aligned account ${glAcctNo} - ${accountName}`,
-        reference_no: `COA-${newGLAccount._id}`,
-        account_no: glAcctNo,
-        additional_info: {},
-        session,
-      });
+      // Audit trail
+     await addAuditTrail({
+  event_type: 'CREATE_COA_ALIGNED_ACCOUNT', // Make sure this is defined
+  user_id: CREATED_BY || 'system', // Ensure this has a value
+  action: 'CREATE',
+  new_value: {
+    GL_ACCT_NO: glAcctNo,
+    accountClass,
+    accountType,
+    financialStatement: financialStatementType,
+    normalBalance,
+    isControlAccount: false,
+    parentAccountNo: null
+  },
+  old_value: null,
+  ip_address: req.ip || '0.0.0.0',
+  entity_id: newGLAccount._id,
+  entity_type: 'GLAccount',
+  status: 'SUCCESS',
+  description: `Created COA-aligned account ${glAcctNo} - ${accountName}`,
+  reference_no: `COA-${newGLAccount._id}`,
+  account_no: glAcctNo,
+  additional_info: {},
+  session,
+});
 
       return res.status(201).json({
         success: true,
@@ -898,6 +1027,8 @@ const determineBalanceCode = (accountType) => {
   };
   return balanceCodeMap[accountType] || '999';
 };
+
+
 
 
 ///////////////////////////////////////////////////
@@ -1925,643 +2056,6 @@ const cloneWithoutTransaction = async (req, res) => {
 };
 
 
-
-// // UPDATED: createGLAccount function with fixed audit trail
-// export const createGLAccount = async (req, res) => {
-//   logger.info('createGLAccount hit with body:', { body: req.body });
-//   const session = await mongoose.startSession();
-//   let result;
-  
-//   console.log('=== STARTING TRANSACTION ===');
-  
-//   try {
-//     await session.withTransaction(async () => {
-//       console.log('=== INSIDE TRANSACTION ===');
-      
-//       try {
-//         // STEP 1: Parse and validate required fields
-//         console.log('=== STEP 1: Parsing fields ===');
-//         const {
-//           organizationName,
-//           organizationCode,
-//           branchName,
-//           branchCode,
-//           categoryCode,
-//           categoryName,
-//           level,
-//           CHART_OF_ACCT_ID,
-//           ACCT_DESC,
-//           LEDGER_NO,
-//           GL_ACCT_CAT,
-//           BAL_CD,
-//           SUB_LEDGER_NO,
-//           CREATED_BY,
-//           SEG_NO,
-//           subfolderId,
-//           metadata = {}
-//         } = req.body;
-
-//         console.log('=== DEBUG: Critical fields ===');
-//         console.log('CHART_OF_ACCT_ID:', CHART_OF_ACCT_ID);
-//         console.log('ACCT_DESC:', ACCT_DESC);
-//         console.log('LEDGER_NO:', LEDGER_NO);
-//         console.log('GL_ACCT_CAT:', GL_ACCT_CAT);
-//         console.log('BAL_CD:', BAL_CD);
-//         console.log('SUB_LEDGER_NO:', SUB_LEDGER_NO);
-
-//         // Validate required fields
-//         console.log('=== STEP 2: Validating required fields ===');
-//         const requiredFields = {
-//           organizationName, organizationCode, branchName, branchCode,
-//           categoryCode, categoryName, level, CHART_OF_ACCT_ID,
-//           ACCT_DESC, LEDGER_NO, GL_ACCT_CAT, BAL_CD,
-//           SUB_LEDGER_NO, CREATED_BY, SEG_NO, subfolderId
-//         };
-
-//         const missingFields = Object.entries(requiredFields)
-//           .filter(([_, value]) => !value && value !== 0)
-//           .map(([key]) => key);
-
-//         if (missingFields.length > 0) {
-//           throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
-//         }
-//         console.log('✅ All required fields present');
-
-//         // STEP 2: Organization handling
-//         console.log('=== STEP 3: Organization handling ===');
-//         const orgCode = Number(organizationCode);
-//         if (isNaN(orgCode)) {
-//           throw new Error('Organization code must be a valid number');
-//         }
-
-//         const trimmedOrgName = organizationName.trim().toUpperCase();
-        
-//         let organization = await Organization.findOne({
-//           $or: [
-//             { organizationName: trimmedOrgName },
-//             { organizationCode: orgCode }
-//           ]
-//         }).session(session);
-
-//         if (!organization) {
-//           console.log('Creating new organization');
-//           organization = new Organization({
-//             organizationName: trimmedOrgName,
-//             organizationCode: orgCode,
-//             createdAt: new Date(),
-//             updatedAt: new Date(),
-//           });
-//           await organization.save({ session });
-//           console.log('✅ Organization created:', organization._id);
-//         } else {
-//           console.log('✅ Organization found:', organization._id);
-//         }
-
-//         // STEP 3: Branch handling
-//         console.log('=== STEP 4: Branch handling ===');
-//         let branch = await Branch.findOne({
-//           organizationCode: orgCode,
-//           branchCode,
-//         }).session(session);
-
-//         if (!branch) {
-//           console.log('Creating new branch');
-          
-//           const branchData = {
-//             organizationName: trimmedOrgName,
-//             organizationCode: orgCode,
-//             branchName: branchName.trim().toUpperCase(),
-//             branchCode: branchCode.trim(),
-//             branchType: 'MAIN',
-//             address: `${trimmedOrgName} ${branchName} Address`,
-//             status: 'ACTIVE'
-//           };
-
-//           console.log('Creating branch with data:', branchData);
-
-//           // Validate branch code format
-//           if (!/^\d{3}$/.test(branchCode)) {
-//             throw new Error('Branch code must be a 3-digit number');
-//           }
-
-//           branch = new Branch(branchData);
-//           await branch.save({ session });
-//           console.log('✅ Branch created:', branch._id);
-
-//           // FIXED: Branch audit trail with simple direct approach
-//           console.log('=== STEP 4a: Creating branch audit trail ===');
-//           try {
-//             await simpleAudit({
-//               EVENT_TYPE: 'CREATE_BRANCH',
-//               USER_ID: CREATED_BY,
-//               ACTION: 'CREATE',
-//               NEW_VALUE: branchData,
-//               OLD_VALUE: null,
-//               IP_ADDRESS: req.ip || '127.0.0.1',
-//               ENTITY_ID: branch._id,
-//               ENTITY_TYPE: 'Branch',
-//               STATUS: 'SUCCESS',
-//               DESCRIPTION: `Created branch: ${branch.branchName} (${branch.branchCode})`,
-//               REFERENCE_NO: `BRANCH-${branch._id}`
-//             }, session);
-//             console.log('✅ Branch audit trail created');
-//           } catch (auditError) {
-//             console.error('❌ Branch audit trail failed:', auditError.message);
-//             // Don't throw - continue with GL Account creation
-//           }
-//         } else {
-//           console.log('✅ Branch found:', branch._id);
-//         }
-
-//         // STEP 4: Generate GL Account Number
-//         console.log('=== STEP 5: Generating GL Account Number ===');
-//         const glAcctNo = [
-//           String(CHART_OF_ACCT_ID).padStart(2, '0'),
-//           String(branchCode).padStart(3, '0'),
-//           String(BAL_CD).padStart(3, '0'),
-//           String(GL_ACCT_CAT).padStart(3, '0'),
-//           String(LEDGER_NO).padStart(3, '0'),
-//           String(branchCode).padStart(3, '0'),
-//         ].join('-');
-
-//         console.log('✅ Generated GL_ACCT_NO:', glAcctNo);
-
-//         // STEP 5: Check for duplicates
-//         console.log('=== STEP 6: Checking for duplicates ===');
-//         const existingAccount = await GLAccount.findOne({ 
-//           GL_ACCT_NO: glAcctNo 
-//         }).session(session);
-
-//         if (existingAccount) {
-//           throw new Error(`GL account ${glAcctNo} already exists`);
-//         }
-//         console.log('✅ No duplicate found');
-
-//         // STEP 6: Generate GL Account ID
-//         console.log('=== STEP 7: Generating GL Account ID ===');
-//         let glAcctId;
-//         try {
-//           console.log('Calling generateNextGLAcctId...');
-//           glAcctId = await generateNextGLAcctId(session);
-//           console.log('✅ GL_ACCT_ID generated:', glAcctId);
-//         } catch (error) {
-//           console.log('❌ generateNextGLAcctId failed:', error.message);
-//           console.log('Falling back to simple ID generation...');
-//           const count = await GLAccount.countDocuments().session(session);
-//           glAcctId = String(count + 1).padStart(7, '0');
-//           console.log('✅ Fallback GL_ACCT_ID:', glAcctId);
-//         }
-
-//         // STEP 7: Create GL Account
-//         console.log('=== STEP 8: Creating GL Account object ===');
-//         const glAccountData = {
-//           GL_ACCT_NO: glAcctNo,
-//           GL_ACCT_ID: glAcctId,
-//           organizationName: trimmedOrgName,
-//           organizationCode: orgCode,
-//           branchName: branch.branchName,
-//           branchCode: branch.branchCode,
-//           branchType: branch.branchType,
-//           CREATED_BY,
-//           categoryCode,
-//           categoryName,
-//           level,
-//           LEDGER_NO,
-//           BAL_CD,
-//           SUB_LEDGER_NO,
-//           CHART_OF_ACCT_ID,
-//           ACCT_DESC,
-//           GL_ACCT_CAT: String(GL_ACCT_CAT).padStart(3, '0'),
-//           JOURNAL_ID: req.body.JOURNAL_ID || `JRN-${Date.now()}`,
-//           TRANSACTION_TYPE: req.body.TRANSACTION_TYPE || 'Asset Balance',
-//           CR_ALLOWED: req.body.CR_ALLOWED !== undefined ? req.body.CR_ALLOWED : true,
-//           DR_ALLOWED: req.body.DR_ALLOWED !== undefined ? req.body.DR_ALLOWED : true,
-//           REC_ST: req.body.REC_ST || 'Active',
-//           POST_ALLOW: req.body.POST_ALLOW !== undefined ? req.body.POST_ALLOW : true,
-//           SEG_NO: SEG_NO || 1,
-//           SEG_DESC: req.body.SEG_DESC || categoryName,
-//           LEDGER_BALANCE: 0,
-//           AVAILABLE_BALANCE: 0,
-//           CURRENCY_CODE: 'NGN',
-//           subfolderId: subfolderId,
-//           metadata: {
-//             accountType: metadata.accountType || 'CUSTOMER_ACCOUNT',
-//             branchSpecific: metadata.branchSpecific !== undefined ? metadata.branchSpecific : true,
-//             consolidationRequired: metadata.consolidationRequired !== undefined ? metadata.consolidationRequired : false,
-//             ...metadata
-//           },
-//           createdAt: new Date(),
-//           updatedAt: new Date()
-//         };
-
-//         console.log('GL Account data prepared with required fields:', {
-//           subfolderId: glAccountData.subfolderId,
-//           metadata: glAccountData.metadata
-//         });
-
-//         const newGLAccount = new GLAccount(glAccountData);
-        
-//         // Validate before saving
-//         console.log('=== STEP 9: Validating GL Account ===');
-//         const validationError = newGLAccount.validateSync();
-//         if (validationError) {
-//           console.log('❌ Validation errors:', validationError.errors);
-//           throw new Error(`GL Account validation failed: ${validationError.message}`);
-//         }
-//         console.log('✅ GL Account validation passed');
-
-//         console.log('=== STEP 10: Saving GL Account ===');
-//         await newGLAccount.save({ session });
-//         console.log('✅ GL Account saved successfully:', newGLAccount._id);
-
-//         // STEP 8: Create GL Account Segment (OPTIONAL - REMOVED FOR NOW)
-//         console.log('=== STEP 11: Skipping GL Account Segment (optional) ===');
-
-//         // STEP 9: GL Account audit trail
-//         console.log('=== STEP 12: Creating GL Account audit trail ===');
-//         try {
-//           await simpleAudit({
-//             EVENT_TYPE: 'CREATE_GL_ACCOUNT',
-//             USER_ID: CREATED_BY,
-//             ACTION: 'CREATE',
-//             NEW_VALUE: {
-//               GL_ACCT_NO: glAcctNo,
-//               GL_ACCT_ID: glAcctId,
-//               organizationName: trimmedOrgName,
-//               branchName: branch.branchName,
-//               ACCT_DESC: ACCT_DESC
-//             },
-//             OLD_VALUE: null,
-//             IP_ADDRESS: req.ip || '127.0.0.1',
-//             ENTITY_ID: newGLAccount._id,
-//             ENTITY_TYPE: 'GLAccount',
-//             STATUS: 'SUCCESS',
-//             DESCRIPTION: `Created GL account ${glAcctNo} - ${ACCT_DESC}`,
-//             REFERENCE_NO: `GL-${newGLAccount._id}`,
-//             ACCOUNT_NO: glAcctNo
-//           }, session);
-//           console.log('✅ GL Account audit trail created');
-//         } catch (auditError) {
-//           console.error('❌ GL Account audit trail failed:', auditError.message);
-//           // Don't throw - continue with success response
-//         }
-
-//         console.log('🎉 TRANSACTION COMPLETED SUCCESSFULLY 🎉');
-        
-//         // Set the result
-//         result = {
-//           success: true,
-//           message: 'GL account created successfully',
-//           data: newGLAccount,
-//         };
-
-//       } catch (innerError) {
-//         console.error('❌ INNER TRANSACTION ERROR:', innerError.message);
-//         console.error('Inner error stack:', innerError.stack);
-//         throw innerError;
-//       }
-//     });
-
-//     // If we get here, transaction was committed successfully
-//     console.log('=== TRANSACTION COMMITTED ===');
-//     return res.status(201).json(result);
-
-//   } catch (error) {
-//     console.error('❌ TRANSACTION FAILED:', error.message);
-//     console.error('Error stack:', error.stack);
-    
-//     logger.error('Error creating GL account', {
-//       error: error.message,
-//       stack: error.stack,
-//       body: req.body,
-//     });
-
-//     return res.status(400).json({
-//       success: false,
-//       message: 'Failed to create GL account',
-//       error: error.message,
-//       code: error.message.includes('Missing') || error.message.includes('Invalid') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
-//     });
-//   } finally {
-//     await session.endSession();
-//     console.log('=== SESSION ENDED ===');
-//   }
-// };
-
-// // SIMPLE AUDIT FUNCTION - Add this to the same file as createGLAccount
-// const simpleAudit = async (data, session = null) => {
-//   try {
-//     const AuditTrail = mongoose.model('AuditTrail');
-    
-//     // Generate event_id
-//     let event_id;
-//     try {
-//       const lastAudit = await AuditTrail.findOne().sort({ event_id: -1 });
-//       event_id = lastAudit && lastAudit.event_id ? lastAudit.event_id + 1 : 1;
-//     } catch (error) {
-//       event_id = Date.now();
-//     }
-
-//     console.log('🔍 Creating simple audit:', {
-//       EVENT_TYPE: data.EVENT_TYPE,
-//       USER_ID: data.USER_ID,
-//       ENTITY_TYPE: data.ENTITY_TYPE
-//     });
-
-//     const audit = new AuditTrail({
-//       event_id,
-//       event_type: data.EVENT_TYPE,
-//       user_id: data.USER_ID,
-//       action: data.ACTION,
-//       new_value: data.NEW_VALUE || {},
-//       old_value: data.OLD_VALUE || null,
-//       ip_address: String(data.IP_ADDRESS || '127.0.0.1'),
-//       entity_id: data.ENTITY_ID,
-//       entity_type: data.ENTITY_TYPE,
-//       status: data.STATUS || 'SUCCESS',
-//       description: data.DESCRIPTION,
-//       reference_no: data.REFERENCE_NO,
-//       account_no: data.ACCOUNT_NO,
-//       timestamp: new Date()
-//     });
-
-//     const options = session ? { session } : {};
-//     await audit.save(options);
-    
-//     console.log('✅ Simple audit created successfully:', data.EVENT_TYPE);
-//     return audit;
-//   } catch (error) {
-//     console.error('❌ Simple audit failed:', error.message);
-//     return null;
-//   }
-// };
-
-// // UPDATED: createDynamicGLAccount function with new schema support
-// export const createDynamicGLAccount = async (req, res) => {
-//   logger.info('createDynamicGLAccount hit with body:', { body: req.body });
-  
-//   const {
-//     organizationName,
-//     organizationCode,
-//     branchCode,
-//     branchType = 'MAIN',
-//     accountType,
-//     productType,
-//     CREATED_BY,
-//     ACCT_DESC,
-//     GL_ACCT_CAT,
-//     BAL_CD,
-//     level = 1,
-//     metadata = {}
-//   } = req.body;
-
-//   // Early validation with new required fields
-//   if (!organizationName || !organizationCode || !branchCode || !accountType || !CREATED_BY) {
-//     return res.status(400).json({
-//       success: false,
-//       message: 'Missing required fields: organizationName, organizationCode, branchCode, accountType, CREATED_BY',
-//       code: 'BAD_REQUEST'
-//     });
-//   }
-
-//   const session = await mongoose.startSession();
-//   let newGLAccount = null;
-//   let glAcctNo = null;
-//   let trimmedOrgNameLocal = null;
-//   let branchNameLocal = null;
-//   let categoryCodeLocal = null;
-//   let categoryNameLocal = null;
-//   let descriptionLocal = null;
-//   let success = false;
-
-//   try {
-//     await session.withTransaction(async () => {
-//       trimmedOrgNameLocal = organizationName.trim();
-
-//       // Infer categoryCode from accountType
-//       const categoryCode = determineCategoryFromAccountType(accountType);
-//       categoryCodeLocal = categoryCode;
-
-//       // Infer categoryName from categoryCode
-//       const categoryNameMap = {
-//         '100': 'Current Assets',
-//         '150': 'Fixed Assets',
-//         '200': 'Loan Assets',
-//         '300': 'Liabilities',
-//         '400': 'Income/Fees',
-//         '500': 'Equity',
-//         '600': 'Expenses',
-//         '700': 'Revenue',
-//         '800': 'Inter-Branch',
-//         '999': 'Other'
-//       };
-//       const categoryName = categoryNameMap[categoryCode] || 'Unknown Category';
-//       categoryNameLocal = categoryName;
-
-//       // Validate organization
-//       let organization = await Organization.findOne({
-//         $or: [
-//           { organizationName: trimmedOrgNameLocal },
-//           { organizationCode: organizationCode }
-//         ]
-//       }).session(session);
-      
-//       if (!organization) {
-//         logger.info('Organization not found, creating new', { organizationName: trimmedOrgNameLocal, organizationCode });
-//         organization = new Organization({
-//           organizationName: trimmedOrgNameLocal,
-//           organizationCode: organizationCode,
-//           createdAt: new Date(),
-//           updatedAt: new Date(),
-//         });
-//         await organization.save({ session });
-//       }
-
-//       // Find branch by code to get branchName
-//       const branch = await Branch.findOne({
-//         organizationCode: organizationCode,
-//         branchCode,
-//       }).session(session);
-      
-//       if (!branch) {
-//         throw new Error(`Branch with code "${branchCode}" not found in organization "${trimmedOrgNameLocal}"`);
-//       }
-
-//       branchNameLocal = branch.branchName;
-
-//       // Set defaults for required fields
-//       const LEDGER_NO = 1;
-//       const SUB_LEDGER_NO = 0;
-//       const CHART_OF_ACCT_ID = 1;
-
-//       // Create root subfolder
-//       const parentFolder = await createRootSubfolder(CREATED_BY, LEDGER_NO, { session });
-//       const resolvedSubfolderId = parentFolder.subfolderId;
-
-//       let glAcctNoLocal;
-//       let description;
-
-//       // Generate GL account number based on template
-//       if (accountType === 'LOAN_ASSET' && productType) {
-//         const template = LOAN_PRODUCT_TEMPLATES[productType];
-//         if (!template) {
-//           throw new Error(`Unknown product type: ${productType}`);
-//         }
-//         glAcctNoLocal = generateGLAccount(template, branchCode, '001', '100');
-//         description = ACCT_DESC || `${productType.replace('_', ' ')} Loan Assets`;
-//       } else {
-//         const templateConfig = GL_ACCOUNT_TEMPLATES[accountType];
-//         if (!templateConfig) {
-//           throw new Error(`Unknown account type: ${accountType}. Available types: ${Object.keys(GL_ACCOUNT_TEMPLATES).join(', ')}`);
-//         }
-//         glAcctNoLocal = generateGLAccount(templateConfig.template, branchCode, '001', '100');
-//         description = ACCT_DESC || templateConfig.description || `${accountType} Account`;
-//       }
-//       glAcctNo = glAcctNoLocal;
-//       descriptionLocal = description;
-
-//       // Check for duplicate GL account
-//       const existingAccount = await GLAccount.findOne({ GL_ACCT_NO: glAcctNo }).session(session);
-//       if (existingAccount) {
-//         logger.info('GL account already exists, returning existing account', { GL_ACCT_NO: glAcctNo });
-//         return res.status(200).json({
-//           success: true,
-//           message: 'GL account already exists',
-//           data: existingAccount,
-//         });
-//       }
-
-//       // Determine GL account category if not provided
-//       const resolvedGLAccountCat = GL_ACCT_CAT || categoryCode;
-
-//       // Create GL account with new schema
-//       const newGLAccountObject = new GLAccount({
-//         GL_ACCT_NO: glAcctNo,
-//         GL_ACCT_ID: await generateNextGLAcctId(session),
-//         CREATED_BY,
-//         organizationName: trimmedOrgNameLocal,
-//         organizationCode: organizationCode,
-//         branchName: branchNameLocal,
-//         branchCode,
-//         branchType,
-//         ACCT_DESC: description,
-//         GL_ACCT_CAT: resolvedGLAccountCat,
-//         BAL_CD: BAL_CD || categoryCode,
-//         JOURNAL_ID: generateJournalId(),
-//         LEDGER_NO,
-//         SUB_LEDGER_NO,
-//         CHART_OF_ACCT_ID,
-//         TRANSACTION_TYPE: GL_ACCOUNT_TEMPLATES[accountType]?.transactionType || 'GENERAL',
-//         CR_ALLOWED: determineCreditAllowed(accountType),
-//         DR_ALLOWED: determineDebitAllowed(accountType),
-//         REC_ST: 'Active',
-//         POST_ALLOW: true,
-//         POST_FG: false,
-//         CONTROL_ACCT_FG: false,
-//         SUSPENSE_ACCT_FG: false,
-//         ALLOW_BAL_SWING_FG: false,
-//         PARENT_ID: null,
-//         subfolderId: resolvedSubfolderId,
-//         SEG_VALUE: '',
-//         SEG_DESC: description,
-//         SEG_NO: 1,
-//         SEG_TY_CD: '',
-//         SEG_PLACEHLDR_ID: '',
-//         DELAY_GL_POSTING: false,
-//         LEDGER_BALANCE: 0,
-//         AVAILABLE_BALANCE: 0,
-//         CURRENCY_CODE: 'NGN',
-//         transactions: [],
-//         SETTLEMENT_GL_ACCT_NO: glAcctNo,
-//         branchTimezone: 'Africa/Lagos',
-//         level: Number(level),
-//         metadata: {
-//           accountType,
-//           productType: productType || null,
-//           categoryCode,
-//           categoryName,
-//           templateGenerated: true,
-//           dynamicAccount: true,
-//           branchSpecific: metadata.branchSpecific !== undefined ? metadata.branchSpecific : true,
-//           consolidationRequired: metadata.consolidationRequired !== undefined ? metadata.consolidationRequired : false,
-//           ...metadata
-//         }
-//       });
-
-//       await newGLAccountObject.save({ session });
-//       newGLAccount = newGLAccountObject;
-//       success = true;
-//       logger.info('Created new dynamic GL account', { GL_ACCT_NO: glAcctNo, accountType });
-
-//       return res.status(201).json({
-//         success: true,
-//         message: 'Dynamic GL account created successfully',
-//         data: newGLAccount,
-//       });
-//     });
-//   } catch (error) {
-//     if (session.inTransaction()) {
-//       await session.abortTransaction();
-//     }
-//     logger.error('Error creating dynamic GL account', {
-//       error: error.message,
-//       stack: error.stack,
-//       body: req.body,
-//       timestamp: new Date(),
-//     });
-    
-//     return res.status(400).json({
-//       success: false,
-//       message: 'Error creating dynamic GL account',
-//       error: error.message,
-//       code: error.message.includes('Missing') || error.message.includes('Unknown') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
-//     });
-//   } finally {
-//     session.endSession();
-//   }
-
-//   // Audit trail moved OUTSIDE transaction
-//   if (success && newGLAccount && CREATED_BY) {
-//     try {
-//       await addAuditTrail({
-//         EVENT_TYPE: 'CREATE_DYNAMIC_GL_ACCOUNT',
-//         USER_ID: CREATED_BY,
-//         ACTION: 'CREATE',
-//         NEW_VALUE: {
-//           GL_ACCT_NO: glAcctNo,
-//           accountType: accountType,
-//           productType: productType || null,
-//           organizationName: trimmedOrgNameLocal,
-//           organizationCode: organizationCode,
-//           branchName: branchNameLocal,
-//           branchCode: branchCode,
-//           branchType: branchType,
-//           categoryCode: categoryCodeLocal,
-//           categoryName: categoryNameLocal,
-//           level: level,
-//           description: descriptionLocal,
-//           metadata: newGLAccount.metadata
-//         },
-//         OLD_VALUE: null,
-//         IP_ADDRESS: req.ip || '0.0.0.0',
-//         ENTITY_ID: newGLAccount._id,
-//         ENTITY_TYPE: 'GLAccount',
-//         STATUS: 'SUCCESS',
-//         DESCRIPTION: `Created dynamic GL account ${glAcctNo} for ${accountType} in category ${categoryNameLocal}`,
-//         REFERENCE_NO: `GL-${newGLAccount._id}`,
-//         ACCOUNT_NO: glAcctNo,
-//         ADDITIONAL_INFO: {},
-//       });
-//       logger.info('Audit trail logged successfully for GL account creation', { GL_ACCT_NO: glAcctNo });
-//     } catch (auditError) {
-//       logger.warn('Audit trail failed after successful GL creation', {
-//         error: auditError.message,
-//         glAcctNo,
-//         CREATED_BY,
-//       });
-//     }
-//   }
-// };
 
 // Bulk create all dynamic GL accounts for a branch
 export const createAllDynamicGLAccountsForBranch = async (req, res) => {

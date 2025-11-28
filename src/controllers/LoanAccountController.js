@@ -3980,33 +3980,78 @@ This agreement constitutes a legally binding contract between the borrower and t
   // LOAN INFORMATION METHODS
   // =========================
 
-  async getLoanAccountByAcctNo(req, res) {
-    const { ACCT_NO } = req.params;
+async getLoanAccountByAcctNo(req, res) {
+  try {
+    // More robust way to get ACCT_NO from params
+    const ACCT_NO = req.params.ACCT_NO || req.params.acctNo || req.query.ACCT_NO;
+    
+    console.log('🔍 Received request for account:', ACCT_NO);
+    console.log('Full req.params:', req.params);
+    console.log('Full req.query:', req.query);
 
     if (!ACCT_NO) {
-      return res.status(400).json({ message: 'Account number is required' });
-    }
-
-    try {
-      const loanAccount = await LoanAccount.findOne({ ACCT_NO });
-      if (!loanAccount) {
-        return res.status(404).json({ message: 'Loan account not found' });
-      }
-
-      const loanAccountWithWorkItem = {
-        ...loanAccount.toObject(),
-        workItemId: 129
-      };
-
-      res.status(200).json({
-        message: 'Loan account retrieved successfully',
-        loanAccount: loanAccountWithWorkItem
+      return res.status(400).json({ 
+        success: false,
+        message: 'Account number is required',
+        receivedParams: req.params,
+        receivedQuery: req.query
       });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Error fetching loan account', error: error.message });
     }
-  },
+
+    // Safe conversion to string
+    const accountNumber = String(ACCT_NO).trim();
+    console.log('🔍 Searching for account number:', accountNumber);
+
+    // Search in LoanAccount model
+    const loanAccount = await LoanAccount.findOne({ 
+      ACCT_NO: accountNumber 
+    });
+    
+    console.log('Query result:', loanAccount);
+
+    if (!loanAccount) {
+      return res.status(404).json({ 
+        success: false,
+        message: `Loan account not found: ${accountNumber}`,
+        accountNumber: accountNumber
+      });
+    }
+
+    // Safe conversion to plain object
+    let loanAccountData;
+    if (typeof loanAccount.toObject === 'function') {
+      loanAccountData = loanAccount.toObject();
+    } else if (typeof loanAccount.get === 'function') {
+      // For Sequelize
+      loanAccountData = loanAccount.get({ plain: true });
+    } else {
+      loanAccountData = { ...loanAccount };
+    }
+
+    const loanAccountWithWorkItem = {
+      ...loanAccountData,
+      workItemId: 129
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Loan account retrieved successfully',
+      loanAccount: loanAccountWithWorkItem
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching loan account:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching loan account', 
+      error: error.message,
+      // Remove stack trace in production
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+},
+
 
   async getLoanAccountsByCustomerId(req, res) {
     const { custId } = req.params;

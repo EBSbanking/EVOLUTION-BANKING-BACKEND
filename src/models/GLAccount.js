@@ -305,70 +305,92 @@ const GLAccountSchema = new mongoose.Schema({
   },
 
   // ==================== METADATA ====================
-  metadata: {
-    accountType: { 
-      type: String, 
-      required: true,
-      enum: [
-        'LOAN_ASSET',
-        'PROCESSING_FEE',
-        'INSURANCE_FEE',
-        'UPFRONT_INTEREST',
-        'OTHER_FEES',
-        'CUSTOMER_ACCOUNT',
-        'LIABILITY_ACCOUNT',
-        'DEPOSITS_LIABILITY',
-        'EQUITY_ACCOUNT',
-        'CAPITAL_ACCOUNT',
-        'EXPENSE_ACCOUNT',
-        'OPERATING_EXPENSE',
-        'REVENUE_ACCOUNT',
-        'INTEREST_INCOME',
-        'FIXED_ASSET',
-        'PROPERTY_PLANT_EQUIPMENT',
-        'INTER_BRANCH'
-      ]
-    },
-    productType: { 
-      type: String,
-      enum: [
-        'PERSONAL_LOAN',
-        'BUSINESS_LOAN', 
-        'MORTGAGE_LOAN',
-        'AUTO_LOAN',
-        'EDUCATION_LOAN',
-        'CONSUMER_LOAN',
-        'SME_LOAN',
-        'AGRICULTURAL_LOAN'
-      ]
-    },
-    subBranchCode: { type: String },
-    accountSuffix: { type: String },
-    templateGenerated: { type: Boolean, default: false },
-    dynamicAccount: { type: Boolean, default: false },
-    bulkCreated: { type: Boolean, default: false },
-    branchSpecific: { type: Boolean, default: true },
-    consolidationRequired: { type: Boolean, default: false },
-    migrationFlags: {
-      requiresValidation: { type: Boolean, default: false },
-      validationPassed: { type: Boolean, default: false },
-      migrationNotes: String,
-      balanceValidated: { type: Boolean, default: false }
-    },
-    balanceSettings: {
-      allowNegative: { type: Boolean, default: false },
-      minimumBalance: { type: Number, default: 0 },
-      maximumBalance: { type: Number, default: 1000000000 },
-      autoReconcile: { type: Boolean, default: true }
-    }
+metadata: {
+  accountType: { 
+    type: String, 
+    required: true,
+    enum: [
+      // BASIC ACCOUNT TYPES
+      'ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE',
+      
+      // ASSET SUBTYPES
+      'CURRENT_ASSET', 'FIXED_ASSET', 'LOAN_ASSET', 'INTANGIBLE_ASSET', 'OTHER_ASSET',
+      'PROPERTY_PLANT_EQUIPMENT', 'CUSTOMER_ACCOUNT',
+      
+      // ⭐⭐⭐ ADD MISSING FRONTEND ASSET TYPES ⭐⭐⭐
+      'CASH_ACCOUNT', 'BANK_ACCOUNT', 'RECEIVABLE_ACCOUNT', 'INVESTMENT_ASSET',
+      
+      // LIABILITY SUBTYPES  
+      'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'DEPOSITS_LIABILITY', 'OTHER_LIABILITY',
+      'LIABILITY_ACCOUNT',
+      
+      // ⭐⭐⭐ ADD MISSING FRONTEND LIABILITY TYPES ⭐⭐⭐
+      'PAYABLE_ACCOUNT', 'LOAN_LIABILITY',
+      
+      // EQUITY SUBTYPES
+      'SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY', 'EQUITY_ACCOUNT', 'CAPITAL_ACCOUNT',
+      
+      // REVENUE SUBTYPES
+      'OPERATING_REVENUE', 'INTEREST_INCOME', 'FEE_INCOME', 'OTHER_REVENUE',
+      'REVENUE_ACCOUNT', 'PROCESSING_FEE', 'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES',
+      
+      // ⭐⭐⭐ ADD MISSING FRONTEND REVENUE TYPES ⭐⭐⭐
+      'SERVICE_INCOME',
+      
+      // EXPENSE SUBTYPES
+      'OPERATING_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 'FINANCE_COST', 'OTHER_EXPENSE',
+      'EXPENSE_ACCOUNT',
+      
+      // ⭐⭐⭐ ADD MISSING FRONTEND EXPENSE TYPES ⭐⭐⭐
+      'INTEREST_EXPENSE', 'STAFF_EXPENSE', 'ADMIN_EXPENSE',
+      
+      // SPECIAL TYPES
+      'INTER_BRANCH', 'CONTRA_ASSET', 'CONTRA_LIABILITY',
+      
+      // ⭐⭐⭐ ADD MISSING FRONTEND SPECIAL TYPES ⭐⭐⭐
+      'SUSPENSE_ACCOUNT', 'CONTROL_ACCOUNT'
+    ]
   },
-  
-  branchTimezone: { type: String, default: 'Africa/Lagos' },
+  productType: { 
+    type: String,
+    enum: [
+      'PERSONAL_LOAN',
+      'BUSINESS_LOAN', 
+      'MORTGAGE_LOAN',
+      'AUTO_LOAN',
+      'EDUCATION_LOAN',
+      'CONSUMER_LOAN',
+      'SME_LOAN',
+      'AGRICULTURAL_LOAN'
+    ]
+  },
+  subBranchCode: { type: String },
+  accountSuffix: { type: String },
+  templateGenerated: { type: Boolean, default: false },
+  dynamicAccount: { type: Boolean, default: false },
+  bulkCreated: { type: Boolean, default: false },
+  branchSpecific: { type: Boolean, default: true },
+  consolidationRequired: { type: Boolean, default: false },
+  migrationFlags: {
+    requiresValidation: { type: Boolean, default: false },
+    validationPassed: { type: Boolean, default: false },
+    migrationNotes: String,
+    balanceValidated: { type: Boolean, default: false }
+  },
+  balanceSettings: {
+    allowNegative: { type: Boolean, default: false },
+    minimumBalance: { type: Number, default: 0 },
+    maximumBalance: { type: Number, default: 1000000000 },
+    autoReconcile: { type: Boolean, default: true }
+  },
+},
+branchTimezone: { type: String, default: 'Africa/Lagos' },
   
 }, {
   timestamps: true,
   collection: 'gl_accounts',
 });
+
 
 // ==================== INDEXES ====================
 GLAccountSchema.index({ GL_ACCT_NO: 1 }, { unique: true });

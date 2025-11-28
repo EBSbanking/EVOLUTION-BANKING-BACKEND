@@ -1,6 +1,7 @@
 // routes/accountStatementRoutes.js
 import express from 'express';
-import { generateAccountStatement, exportCustomerAccounts } from '../controllers/AccountStatementController.js';
+// In your routes file
+import { generateAccountStatement, exportCustomerAccounts, debugAccount } from '../controllers/accountStatementController.js';
 
 const router = express.Router();
 
@@ -14,9 +15,12 @@ const router = express.Router();
  * @body {startDate: YYYY-MM-DD, endDate: YYYY-MM-DD}
  */
 router.get('/:acctNo/statement', generateAccountStatement);
-router.post('/:acctNo/statement', generateAccountStatement); // Add POST support
-
-
-router.get("/customer-accounts", exportCustomerAccounts);
+router.get('/export', exportCustomerAccounts);
+router.get('/debug/:acctNo', debugAccount); // Add this new route
 
 export default router;
+
+
+
+
+
