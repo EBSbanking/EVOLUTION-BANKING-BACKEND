@@ -395,7 +395,7 @@ import loanRepaymentTransactionRoutes from './routes/loanRepaymentTransactionRou
 import CollectionRoutes from './routes/CollectionRoutes.js';
 import AccountRoutes from './routes/AccountRoutes.js'
 import chartofAccountRoutes from './routes/chartofAccountRoutes.js';
-import AccountStatementRoutes from './routes/AccountStatementRoutes.js';
+import AccountStatementRoutes from './routes/accountStatementRoutes.js';
 
 // ----------------------------
 // Mount API Routes
