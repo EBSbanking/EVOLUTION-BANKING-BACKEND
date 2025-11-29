@@ -1,7 +1,7 @@
 // routes/accountStatementRoutes.js
 import express from 'express';
 // In your routes file
-import { generateAccountStatement, exportCustomerAccounts, debugAccount } from '../controllers/accountStatementController.js';
+import { generateAccountStatement, exportCustomerAccounts, debugAccount } from '../controllers/AccountStatementController.js';
 
 const router = express.Router();
 

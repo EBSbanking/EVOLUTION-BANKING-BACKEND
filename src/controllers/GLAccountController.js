@@ -140,16 +140,16 @@ const generateTransactionId = () => {
 // COA HELPER FUNCTIONS - UPDATED TO ALIGN WITH FRONTEND
 ///////////////////////////////////////////////////
 
-const generateCOAAccountNumber = ({ organizationCode, branchCode, accountClass, accountType, subAccount = '000' }) => {
-  const segments = [
-    String(organizationCode).padStart(2, '0'),
-    String(branchCode).padStart(3, '0'),
-    getAccountClassCode(accountClass),
-    getAccountTypeCode(accountType),
-    subAccount.padStart(3, '0')
-  ];
+
+// Make sure this helper function exists and uses normalized branch codes
+const generateCOAAccountNumber = ({ organizationCode, branchCode, accountClass, accountType, subAccount }) => {
+  const entity = String(organizationCode).padStart(2, '0');
+  const branch = String(branchCode).padStart(3, '0'); // Should already be normalized, but double-safe
+  const classCode = getAccountClassCode(accountClass);
+  const typeCode = getAccountTypeCode(accountType);
+  const subAcc = String(subAccount).padStart(3, '0');
   
-  return segments.join('-');
+  return `${entity}${branch}${classCode}${typeCode}${subAcc}`;
 };
 
 const getAccountClassCode = (accountClass) => {
@@ -439,7 +439,7 @@ const mapMetadataAccountTypeToAccountType = (frontendAccountType) => {
   return typeMap[frontendAccountType] || 'CURRENT_ASSET';
 };
 
-// UPDATED: COA-ALIGNED GL ACCOUNT CREATION - WITH FRONTEND MAPPING
+// UPDATED: COA-ALIGNED GL ACCOUNT CREATION - WITH PROPER SUB-ACCOUNT HANDLING
 export const createCOAAlignedGLAccount = async (req, res) => {
   const session = await mongoose.startSession();
   
@@ -464,6 +464,17 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         metadata = {}
       } = req.body;
 
+      // Utility function to normalize branch codes (001, 002 format)
+      const normalizeBranchCode = (branchCode) => {
+        if (!branchCode) return null;
+        const code = String(branchCode);
+        const digitsOnly = code.replace(/\D/g, '');
+        return digitsOnly.padStart(3, '0');
+      };
+
+      // Normalize branch code immediately to fix "000 not found" error
+      const normalizedBranchCode = normalizeBranchCode(branchCode);
+
       // MAP INCOMING FIELDS TO EXPECTED FIELDS
       const accountClass = mapCategoryCodeToAccountClass(categoryCode);
       const accountType = mapMetadataAccountTypeToAccountType(metadata.accountType);
@@ -475,24 +486,49 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         throw new Error(`Missing required fields: organizationCode: ${organizationCode}, branchCode: ${branchCode}, accountClass: ${accountClass}, accountType: ${accountType}, accountName: ${accountName}, normalBalance: ${normalBalance}, CREATED_BY: ${CREATED_BY}`);
       }
 
-      // Validate organization and branch
+      // Validate branch code format (001, 002, etc.) - FIXES THE "000" ERROR
+      if (!/^\d{3}$/.test(normalizedBranchCode)) {
+        throw new Error(`Invalid branch code format: ${branchCode}. Expected 3-digit format like 001, 002, etc.`);
+      }
+
+      // PREVENT BRANCH CODE 000 VALIDATION ERROR
+      if (normalizedBranchCode === '000') {
+        throw new Error('Branch code 000 is reserved and cannot be used. Please use valid branch codes like 001, 002, etc.');
+      }
+
+      // Validate organization and branch - ENHANCED WITH BETTER ERROR HANDLING
       const organization = await Organization.findOne({ organizationCode }).session(session);
       if (!organization) {
         throw new Error(`Organization with code ${organizationCode} not found`);
       }
 
-      const branch = await Branch.findOne({ organizationCode, branchCode }).session(session);
+      // ENHANCED BRANCH VALIDATION: Check if branch exists with NORMALIZED branch code
+      const branch = await Branch.findOne({ 
+        organizationCode, 
+        branchCode: normalizedBranchCode // Use normalized branch code for lookup
+      }).session(session);
+      
       if (!branch) {
-        throw new Error(`Branch with code ${branchCode} not found in organization ${organizationCode}`);
+        // Get available branches for better error message
+        const availableBranches = await Branch.find({ organizationCode })
+          .select('branchCode branchName')
+          .session(session);
+        
+        const availableBranchList = availableBranches.map(b => `${b.branchCode} (${b.branchName})`).join(', ');
+        
+        throw new Error(`Branch with code ${normalizedBranchCode} not found in organization ${organizationCode}. Available branches: ${availableBranchList || 'None found'}`);
       }
 
-      // Generate COA-compliant account number
+      // ✅ FIXED: Generate dynamic sub-account code instead of hardcoded '000'
+      const subAccountCode = generateSubAccountCode(accountClass, accountType, metadata);
+
+      // Generate COA-compliant account number with NORMALIZED branch code and DYNAMIC sub-account
       const glAcctNo = generateCOAAccountNumber({
         organizationCode,
-        branchCode,
+        branchCode: normalizedBranchCode,
         accountClass,
         accountType,
-        subAccount: '000'
+        subAccount: subAccountCode // Use dynamic sub-account code
       });
 
       // Check for duplicate account
@@ -546,7 +582,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       // Generate GL Account ID
       const glAcctId = await generateNextGLAcctId(session);
 
-      // Create COA-aligned GL Account with validated structure
+      // Create COA-aligned GL Account with validated structure and NORMALIZED branch code
       const newGLAccount = new GLAccount({
         GL_ACCT_NO: glAcctNo,
         GL_ACCT_ID: glAcctId,
@@ -556,7 +592,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         organizationName: organizationName || organization.organizationName,
         organizationCode,
         branchName: branchName || branch.branchName,
-        branchCode,
+        branchCode: normalizedBranchCode, // Store normalized branch code
         branchType: branch.branchType,
         
         // Account Description
@@ -566,10 +602,10 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         coaStructure: {
           segments: {
             entity: String(organizationCode).padStart(2, '0'),
-            branch: String(branchCode).padStart(3, '0'),
+            branch: normalizedBranchCode, // Already normalized to 3 digits
             accountClass: getAccountClassCode(accountClass),
             accountType: getAccountTypeCode(accountType),
-            subAccount: ''
+            subAccount: subAccountCode // Use dynamic sub-account code
           },
           financialStatement: {
             type: financialStatementType,
@@ -597,11 +633,11 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         categoryName: categoryName,
         level: accountLevel,
         LEDGER_NO: '001',
-        SUB_LEDGER_NO: SUB_LEDGER_NO || '',
+        SUB_LEDGER_NO: SUB_LEDGER_NO || subAccountCode, // Use sub-account code here too
         CHART_OF_ACCT_ID: CHART_OF_ACCT_ID || '001',
         GL_ACCT_CAT: GL_ACCT_CAT || categoryCode,
         BAL_CD: BAL_CD || categoryCode,
-        subfolderId: subfolderId?.toString() || `COA_${organizationCode}_${branchCode}`,
+        subfolderId: subfolderId?.toString() || `COA_${organizationCode}_${normalizedBranchCode}`,
         
         // Transaction Controls
         JOURNAL_ID: `JRN-COA-${Date.now()}`,
@@ -626,6 +662,9 @@ export const createCOAAlignedGLAccount = async (req, res) => {
           dynamicAccount: true,
           branchSpecific: true,
           consolidationRequired: true,
+          originalBranchCode: branchCode, // Store original for reference
+          normalizedBranchCode: normalizedBranchCode, // Store normalized version
+          subAccountCode: subAccountCode, // Store the generated sub-account code
           ...metadata
         }
       });
@@ -633,30 +672,37 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       await newGLAccount.save({ session });
 
       // Audit trail
-     await addAuditTrail({
-  event_type: 'CREATE_COA_ALIGNED_ACCOUNT', // Make sure this is defined
-  user_id: CREATED_BY || 'system', // Ensure this has a value
-  action: 'CREATE',
-  new_value: {
-    GL_ACCT_NO: glAcctNo,
-    accountClass,
-    accountType,
-    financialStatement: financialStatementType,
-    normalBalance,
-    isControlAccount: false,
-    parentAccountNo: null
-  },
-  old_value: null,
-  ip_address: req.ip || '0.0.0.0',
-  entity_id: newGLAccount._id,
-  entity_type: 'GLAccount',
-  status: 'SUCCESS',
-  description: `Created COA-aligned account ${glAcctNo} - ${accountName}`,
-  reference_no: `COA-${newGLAccount._id}`,
-  account_no: glAcctNo,
-  additional_info: {},
-  session,
-});
+      await addAuditTrail({
+        event_type: 'CREATE_COA_ALIGNED_ACCOUNT',
+        user_id: CREATED_BY || 'system',
+        action: 'CREATE',
+        new_value: {
+          GL_ACCT_NO: glAcctNo,
+          accountClass,
+          accountType,
+          financialStatement: financialStatementType,
+          normalBalance,
+          isControlAccount: false,
+          parentAccountNo: null,
+          branchCode: normalizedBranchCode,
+          subAccountCode: subAccountCode // Include sub-account in audit
+        },
+        old_value: null,
+        ip_address: req.ip || '0.0.0.0',
+        entity_id: newGLAccount._id,
+        entity_type: 'GLAccount',
+        status: 'SUCCESS',
+        description: `Created COA-aligned account ${glAcctNo} - ${accountName} for branch ${normalizedBranchCode}`,
+        reference_no: `COA-${newGLAccount._id}`,
+        account_no: glAcctNo,
+        additional_info: {
+          originalBranchCode: branchCode,
+          normalizedBranchCode: normalizedBranchCode,
+          branchName: branch.branchName,
+          subAccountCode: subAccountCode
+        },
+        session,
+      });
 
       return res.status(201).json({
         success: true,
@@ -677,12 +723,46 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       success: false,
       message: 'Failed to create COA-aligned GL account',
       error: error.message,
-      code: error.message.includes('Missing') || error.message.includes('not found') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
+      code: error.message.includes('Missing') || error.message.includes('not found') || error.message.includes('Invalid branch code') || error.message.includes('reserved') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
     });
   } finally {
     session.endSession();
   }
 };
+
+// ✅ ADD THIS FUNCTION: Generate meaningful sub-account codes
+const generateSubAccountCode = (accountClass, accountType, metadata = {}) => {
+  // Default to '001' instead of '000' to avoid conflicts
+  let baseCode = '001';
+  
+  // Generate based on account type for better organization
+  if (metadata.subAccountType) {
+    const subAccountMap = {
+      'MAIN': '001',
+      'CONTROL': '002', 
+      'DETAIL': '003',
+      'SUSPENSE': '004',
+      'CLEARING': '005',
+      'INTERBRANCH': '006'
+    };
+    baseCode = subAccountMap[metadata.subAccountType] || '001';
+  }
+  
+  // Or generate based on account class/type
+  if (accountClass === 'ASSET') {
+    if (accountType.includes('CASH')) return '010';
+    if (accountType.includes('BANK')) return '020';
+    if (accountType.includes('RECEIVABLE')) return '030';
+  }
+  
+  if (accountClass === 'LIABILITY') {
+    if (accountType.includes('DEPOSIT')) return '110';
+    if (accountType.includes('PAYABLE')) return '120';
+  }
+  
+  return baseCode;
+};
+
 
 // MIGRATE EXISTING ACCOUNTS TO COA STRUCTURE
 export const migrateToCOAStructure = async (req, res) => {

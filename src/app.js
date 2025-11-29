@@ -394,7 +394,8 @@ import LoanAccountSummaryRoutes from './routes/LoanAccountSummaryRoutes.js'
 import loanRepaymentTransactionRoutes from './routes/loanRepaymentTransactionRoutes.js';
 import CollectionRoutes from './routes/CollectionRoutes.js';
 import AccountRoutes from './routes/AccountRoutes.js'
-import chartofAccountRoutes from './routes/chartofAccountRoutes.js'
+import chartofAccountRoutes from './routes/chartofAccountRoutes.js';
+import AccountStatementRoutes from './routes/AccountStatementRoutes.js';
 
 // ----------------------------
 // Mount API Routes
@@ -529,6 +530,7 @@ app.use ('/api/loan-repayment-transaction', loanRepaymentTransactionRoutes);
 app.use('/api/collections', CollectionRoutes);
 app.use('/api/accounts', AccountRoutes);
 app.use('/api/chart-of-accounts', chartofAccountRoutes);
+app.use('/api/account-statements', AccountStatementRoutes);
 
 // ----------------------------
 // Static Files & React Build (Production Only)
