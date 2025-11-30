@@ -8,7 +8,7 @@ const loanProductSchema = new mongoose.Schema(
       unique: true,
       validate: {
         validator: function (v) {
-          const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 400, 499];
+          const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309,399, 400, 499];
           return validProdIds.includes(v);
         },
         message: props => `${props.value} is not a valid PROD_ID!`
@@ -57,7 +57,7 @@ const loanProductSchema = new mongoose.Schema(
       default: 'NGN'
     },
     
-    // UPDATED: BU_ID with wildcard support for multiple business units
+    // BU_ID with wildcard support for multiple business units
     BU_ID: {
       type: [String],
       required: true,
@@ -76,13 +76,13 @@ const loanProductSchema = new mongoose.Schema(
       }
     },
     
-    // NEW: Product visibility settings
+    // Product visibility settings
     isGlobalProduct: {
       type: Boolean,
       default: false
     },
     
-    // NEW: Track which BUs can access this product
+    // Track which BUs can access this product
     accessibleBUs: {
       type: [String],
       default: function() {
@@ -90,7 +90,7 @@ const loanProductSchema = new mongoose.Schema(
       }
     },
     
-    // NEW: Product visibility level
+    // Product visibility level
     visibility: {
       type: String,
       enum: ['GLOBAL', 'SELECTED_BUS', 'SPECIFIC_BRANCHES'],
@@ -144,49 +144,97 @@ const loanProductSchema = new mongoose.Schema(
       type: String,
       default: 'NGN'
     }],
-    // GL Accounts (without validation)
-    loanGLAccount: {
-      type: String,
-      required: true
+
+    // NEW: Branch-specific GL Accounts
+    branchGLAccounts: [{
+      branchCode: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      branchName: {
+        type: String,
+        required: true
+      },
+      // GL Accounts for this branch
+      loanGLAccount: String,
+      interestGLAccountNo: String,
+      interestPayableGLAccountNo: String,
+      withholdingTaxGLAccountNo: String,
+      suspenseGLAccountNo: String,
+      principalGLAccountNo: String,
+      chargeOffGLAccountNo: String,
+      loanChargeReceivableGLAccountNo: String,
+      contingentGLAccountNo: String,
+      delinquentGLAccountNo: String,
+      interestIncomeGLAccountNo: String,
+      interestReceivableGLAccountNo: String,
+      interestSuspenseGLAccountNo: String,
+      lateFeeSuspenseGLAccountNo: String,
+      maturityGLAccountNo: String,
+      nonAccrualGLAccountNo: String,
+      nonAccrualInterestOffsetGLAccountNo: String,
+      nonAccrualInterestReceivableGLAccountNo: String,
+      provisionReserveGLAccountNo: String,
+      provisionExpenseGLAccountNo: String,
+      recoveriesGLAccountNo: String,
+      repaymentControlGLAccountNo: String,
+      loanSuspenseGLAccountNo: String,
+      unappliedFundsGLAccountNo: String,
+      unclearedBalanceGLAccountNo: String,
+      unearnedInterestGLAccountNo: String,
+      interestCreditGLAccountNo: String,
+      interestDebitGLAccountNo: String,
+      processingFeeGLCode: String,
+      
+      // Status
+      isActive: {
+        type: Boolean,
+        default: true
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      }
+    }],
+
+    // RENAMED: Default GL Accounts (fallback)
+    defaultGLAccounts: {
+      loanGLAccount: {
+        type: String,
+        required: true
+      },
+      interestGLAccountNo: String,
+      interestPayableGLAccountNo: String,
+      withholdingTaxGLAccountNo: String,
+      suspenseGLAccountNo: String,
+      principalGLAccountNo: String,
+      chargeOffGLAccountNo: String,
+      loanChargeReceivableGLAccountNo: String,
+      contingentGLAccountNo: String,
+      delinquentGLAccountNo: String,
+      interestIncomeGLAccountNo: String,
+      interestReceivableGLAccountNo: String,
+      interestSuspenseGLAccountNo: String,
+      lateFeeSuspenseGLAccountNo: String,
+      maturityGLAccountNo: String,
+      nonAccrualGLAccountNo: String,
+      nonAccrualInterestOffsetGLAccountNo: String,
+      nonAccrualInterestReceivableGLAccountNo: String,
+      provisionReserveGLAccountNo: String,
+      provisionExpenseGLAccountNo: String,
+      recoveriesGLAccountNo: String,
+      repaymentControlGLAccountNo: String,
+      loanSuspenseGLAccountNo: String,
+      unappliedFundsGLAccountNo: String,
+      unclearedBalanceGLAccountNo: String,
+      unearnedInterestGLAccountNo: String,
+      interestCreditGLAccountNo: String,
+      interestDebitGLAccountNo: String,
+      processingFeeGLCode: String
     },
-    interestGLAccountNo: {
-      type: String
-    },
-    interestPayableGLAccountNo: {
-      type: String
-    },
-    withholdingTaxGLAccountNo: {
-      type: String
-    },
-    suspenseGLAccountNo: {
-      type: String
-    },
-    principalGLAccountNo: {
-      type: String
-    },
-    chargeOffGLAccountNo: { type: String },
-    loanChargeReceivableGLAccountNo: { type: String },
-    contingentGLAccountNo: { type: String },
-    delinquentGLAccountNo: { type: String },
-    interestIncomeGLAccountNo: { type: String },
-    interestReceivableGLAccountNo: { type: String },
-    interestSuspenseGLAccountNo: { type: String },
-    lateFeeSuspenseGLAccountNo: { type: String },
-    maturityGLAccountNo: { type: String },
-    nonAccrualGLAccountNo: { type: String },
-    nonAccrualInterestOffsetGLAccountNo: { type: String },
-    nonAccrualInterestReceivableGLAccountNo: { type: String },
-    provisionReserveGLAccountNo: { type: String },
-    provisionExpenseGLAccountNo: { type: String },
-    recoveriesGLAccountNo: { type: String },
-    repaymentControlGLAccountNo: { type: String },
-    loanSuspenseGLAccountNo: { type: String },
-    unappliedFundsGLAccountNo: { type: String },
-    unclearedBalanceGLAccountNo: { type: String },
-    unearnedInterestGLAccountNo: { type: String },
-    interestCreditGLAccountNo: { type: String },
-    interestDebitGLAccountNo: { type: String },
-    // Fee Structure (without GL validation)
+
+    // Fee Structure
     feeStructure: [{
       feeType: {
         type: String,
@@ -322,7 +370,7 @@ const loanProductSchema = new mongoose.Schema(
         default: false
       }
     },
-    // Charges Setup (without GL validation)
+    // Charges Setup
     chargesSetup: [{
       chargeType: {
         type: String,
@@ -396,6 +444,15 @@ const loanProductSchema = new mongoose.Schema(
           }));
         }
 
+        // Transform branchGLAccounts decimal fields
+        if (ret.branchGLAccounts) {
+          ret.branchGLAccounts = ret.branchGLAccounts.map(branch => {
+            const transformedBranch = { ...branch };
+            // Add any decimal transformations if needed for branch-specific amounts
+            return transformedBranch;
+          });
+        }
+
         if (ret._id) {
           ret._id = ret._id.toString();
         }
@@ -412,7 +469,7 @@ loanProductSchema.virtual('productId').get(function () {
   return this.PROD_ID;
 });
 
-// Pre-save Hook (GL validation removed)
+// Pre-save Hook
 loanProductSchema.pre('save', async function (next) {
   try {
     // Map productCode to PROD_ID and PROD_CD
@@ -424,7 +481,7 @@ loanProductSchema.pre('save', async function (next) {
     }
 
     // Validate PROD_ID
-    const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 400, 499];
+    const validProdIds = [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 399, 400, 499];
     if (!validProdIds.includes(this.PROD_ID)) {
       throw new Error(`${this.PROD_ID} is not a valid PROD_ID!`);
     }
@@ -454,11 +511,88 @@ loanProductSchema.pre('save', async function (next) {
       }
     }
 
+    // Validate that defaultGLAccounts has required loanGLAccount
+    if (!this.defaultGLAccounts || !this.defaultGLAccounts.loanGLAccount) {
+      throw new Error('Default loan GL account is required');
+    }
+
+    // Validate branchGLAccounts structure
+    if (this.branchGLAccounts && Array.isArray(this.branchGLAccounts)) {
+      for (const branchAccount of this.branchGLAccounts) {
+        if (!branchAccount.branchCode || !branchAccount.branchName) {
+          throw new Error('Each branch GL account must have branchCode and branchName');
+        }
+      }
+    }
+
     next();
   } catch (error) {
     next(error);
   }
 });
+
+// Static method to get GL account for a specific branch
+loanProductSchema.statics.getBranchGLAccount = function(productId, branchCode, accountType) {
+  return this.findOne({ PROD_ID: productId }).then(product => {
+    if (!product) {
+      throw new Error(`Loan product ${productId} not found`);
+    }
+
+    // Try to find branch-specific account first
+    const branchAccount = product.branchGLAccounts?.find(
+      account => account.branchCode === branchCode && account.isActive
+    );
+    
+    if (branchAccount && branchAccount[accountType]) {
+      return branchAccount[accountType];
+    }
+    
+    // Fall back to default account
+    return product.defaultGLAccounts?.[accountType];
+  });
+};
+
+// Instance method to get GL account for a specific branch
+loanProductSchema.methods.getGLAccountForBranch = function(branchCode, accountType) {
+  // Try to find branch-specific account first
+  const branchAccount = this.branchGLAccounts?.find(
+    account => account.branchCode === branchCode && account.isActive
+  );
+  
+  if (branchAccount && branchAccount[accountType]) {
+    return branchAccount[accountType];
+  }
+  
+  // Fall back to default account
+  return this.defaultGLAccounts?.[accountType];
+};
+
+// Instance method to add or update branch GL accounts
+loanProductSchema.methods.updateBranchGLAccounts = function(branchCode, branchName, glAccounts) {
+  if (!this.branchGLAccounts) {
+    this.branchGLAccounts = [];
+  }
+
+  const existingIndex = this.branchGLAccounts.findIndex(
+    account => account.branchCode === branchCode
+  );
+
+  const branchGLAccount = {
+    branchCode,
+    branchName,
+    ...glAccounts,
+    isActive: true,
+    createdAt: existingIndex === -1 ? new Date() : this.branchGLAccounts[existingIndex].createdAt
+  };
+
+  if (existingIndex === -1) {
+    this.branchGLAccounts.push(branchGLAccount);
+  } else {
+    this.branchGLAccounts[existingIndex] = branchGLAccount;
+  }
+
+  return this.save();
+};
 
 const LoanProduct = mongoose.models.LoanProduct || mongoose.model('LoanProduct', loanProductSchema);
 

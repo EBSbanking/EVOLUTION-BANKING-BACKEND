@@ -1,7 +1,7 @@
 import express from 'express';
 import {
   getMigratedAccounts,
-  getAllAccounts,
+  getAllAccounts, // This should handle the main accounts endpoint
   getAccountByNumber,
   getAccountById,
   createAccount,
@@ -18,7 +18,7 @@ const router = express.Router();
 
 // 🔍 GET Routes
 router.get('/migrated', getMigratedAccounts); // Get all migrated accounts
-router.get('/', getAllAccounts); // Get all accounts with pagination
+router.get('/', getAllAccounts); // Get all accounts with pagination & filtering
 router.get('/summary', getAccountsSummary); // Get accounts summary
 router.get('/migration-stats', getMigrationStatistics); // Get migration statistics
 router.get('/search', searchAccounts); // Search accounts

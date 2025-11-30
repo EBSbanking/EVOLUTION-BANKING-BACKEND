@@ -124,6 +124,9 @@ const GLAccountSchema = new mongoose.Schema({
   },
   CREATED_BY: { type: String, required: true },
   
+  // TEMPORARY: Add this field to stop the error
+  createdBy: { type: String }, // ← ADDED TEMPORARILY
+  
   // ==================== CHART OF ACCOUNTS STRUCTURE ====================
   coaStructure: {
     // Standard COA segments (Entity-Branch-Class-Type-SubAccount)
@@ -132,7 +135,7 @@ const GLAccountSchema = new mongoose.Schema({
       required: true
     },
     
-    // Financial statement classification
+    // Financial statement classification - UPDATED to match frontend
     financialStatement: {
       type: {
         type: String,
@@ -142,16 +145,24 @@ const GLAccountSchema = new mongoose.Schema({
       category: {
         type: String,
         enum: [
-          // Balance Sheet
+          // Balance Sheet - Enhanced
           'CURRENT_ASSETS', 'FIXED_ASSETS', 'INTANGIBLE_ASSETS', 'OTHER_ASSETS',
+          'LOAN_ASSETS', 'INVESTMENT_ASSETS', 'CASH_EQUIVALENTS', 'RECEIVABLE_ASSETS',
           'CURRENT_LIABILITIES', 'LONG_TERM_LIABILITIES', 'OTHER_LIABILITIES',
-          'SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY',
-          // Income Statement
-          'OPERATING_REVENUE', 'OTHER_REVENUE', 'COST_OF_SALES',
-          'OPERATING_EXPENSES', 'ADMINISTRATIVE_EXPENSES', 'FINANCE_COSTS',
-          'OTHER_EXPENSES', 'TAX_EXPENSE',
+          'DEPOSIT_LIABILITIES', 'BORROWED_FUNDS', 'PAYABLE_LIABILITIES',
+          'SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY', 'RESERVES', 'CAPITAL_ACCOUNTS',
+          
+          // Income Statement - Enhanced
+          'OPERATING_REVENUE', 'OTHER_REVENUE', 'INTEREST_INCOME', 'FEE_INCOME',
+          'COMMISSION_INCOME', 'INVESTMENT_INCOME', 'SERVICE_INCOME', 'SALES_REVENUE',
+          'OPERATING_EXPENSES', 'ADMINISTRATIVE_EXPENSES', 'FINANCE_COSTS', 'OTHER_EXPENSES',
+          'STAFF_EXPENSES', 'DEPRECIATION_EXPENSE', 'TAX_EXPENSE', 'PROVISION_EXPENSE',
+          
           // Cash Flow
-          'OPERATING_ACTIVITIES', 'INVESTING_ACTIVITIES', 'FINANCING_ACTIVITIES'
+          'OPERATING_ACTIVITIES', 'INVESTING_ACTIVITIES', 'FINANCING_ACTIVITIES',
+          
+          // Control & Suspense
+          'SUSPENSE_ACCOUNTS', 'CONTROL_ACCOUNTS', 'CLEARING_ACCOUNTS', 'INTERCOMPANY_ACCOUNTS'
         ],
         required: true
       },
@@ -304,91 +315,110 @@ const GLAccountSchema = new mongoose.Schema({
     lastReconciliationId: String
   },
 
-  // ==================== METADATA ====================
-metadata: {
-  accountType: { 
-    type: String, 
-    required: true,
-    enum: [
-      // BASIC ACCOUNT TYPES
-      'ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE',
-      
-      // ASSET SUBTYPES
-      'CURRENT_ASSET', 'FIXED_ASSET', 'LOAN_ASSET', 'INTANGIBLE_ASSET', 'OTHER_ASSET',
-      'PROPERTY_PLANT_EQUIPMENT', 'CUSTOMER_ACCOUNT',
-      
-      // ⭐⭐⭐ ADD MISSING FRONTEND ASSET TYPES ⭐⭐⭐
-      'CASH_ACCOUNT', 'BANK_ACCOUNT', 'RECEIVABLE_ACCOUNT', 'INVESTMENT_ASSET',
-      
-      // LIABILITY SUBTYPES  
-      'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'DEPOSITS_LIABILITY', 'OTHER_LIABILITY',
-      'LIABILITY_ACCOUNT',
-      
-      // ⭐⭐⭐ ADD MISSING FRONTEND LIABILITY TYPES ⭐⭐⭐
-      'PAYABLE_ACCOUNT', 'LOAN_LIABILITY',
-      
-      // EQUITY SUBTYPES
-      'SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY', 'EQUITY_ACCOUNT', 'CAPITAL_ACCOUNT',
-      
-      // REVENUE SUBTYPES
-      'OPERATING_REVENUE', 'INTEREST_INCOME', 'FEE_INCOME', 'OTHER_REVENUE',
-      'REVENUE_ACCOUNT', 'PROCESSING_FEE', 'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES',
-      
-      // ⭐⭐⭐ ADD MISSING FRONTEND REVENUE TYPES ⭐⭐⭐
-      'SERVICE_INCOME',
-      
-      // EXPENSE SUBTYPES
-      'OPERATING_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 'FINANCE_COST', 'OTHER_EXPENSE',
-      'EXPENSE_ACCOUNT',
-      
-      // ⭐⭐⭐ ADD MISSING FRONTEND EXPENSE TYPES ⭐⭐⭐
-      'INTEREST_EXPENSE', 'STAFF_EXPENSE', 'ADMIN_EXPENSE',
-      
-      // SPECIAL TYPES
-      'INTER_BRANCH', 'CONTRA_ASSET', 'CONTRA_LIABILITY',
-      
-      // ⭐⭐⭐ ADD MISSING FRONTEND SPECIAL TYPES ⭐⭐⭐
-      'SUSPENSE_ACCOUNT', 'CONTROL_ACCOUNT'
-    ]
+  // ==================== METADATA - FULLY UPDATED TO MATCH FRONTEND ====================
+  metadata: {
+    accountType: { 
+      type: String, 
+      required: true,
+      enum: [
+        // ==================== ASSETS ====================
+        'CURRENT_ASSET', 'CUSTOMER_ACCOUNT', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 
+        'RECEIVABLE_ACCOUNT', 'FIXED_ASSET', 'LOAN_ASSET', 'INTANGIBLE_ASSET', 
+        'OTHER_ASSET', 'PROPERTY_PLANT_EQUIPMENT', 'INVESTMENT_ASSET',
+        'LOAN_PORTFOLIO', 'LOAN_RECEIVABLE', 'INTEREST_RECEIVABLE', 'FEE_RECEIVABLE',
+        'ACCRUED_INTEREST', 'DUE_FROM_BANKS', 'TRADING_SECURITIES', 'HELD_TO_MATURITY_SECURITIES',
+        'INVENTORY', 'PREPAID_EXPENSE', 'DEFERRED_TAX_ASSET', 'GOODWILL', 'LEASE_ASSET',
+
+        // ==================== LIABILITIES ====================
+        'CURRENT_LIABILITY', 'LIABILITY_ACCOUNT', 'PAYABLE_ACCOUNT', 'LONG_TERM_LIABILITY', 
+        'LOAN_LIABILITY', 'DEPOSITS_LIABILITY', 'OTHER_LIABILITY',
+        'CUSTOMER_DEPOSITS', 'SAVINGS_DEPOSITS', 'TIME_DEPOSITS', 'INTEREST_PAYABLE',
+        'ACCRUED_EXPENSES', 'TAX_PAYABLE', 'DIVIDEND_PAYABLE', 'BORROWINGS', 'BONDS_PAYABLE',
+        'LEASE_LIABILITY', 'DEFERRED_TAX_LIABILITY', 'PROVISIONS', 'CONTINGENT_LIABILITY',
+
+        // ==================== EQUITY ====================
+        'SHARE_CAPITAL', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS', 'EQUITY_ACCOUNT', 
+        'OTHER_EQUITY',
+        'ADDITIONAL_PAID_IN_CAPITAL', 'TREASURY_STOCK', 'OTHER_COMPREHENSIVE_INCOME',
+        'DONATED_CAPITAL', 'REVALUATION_RESERVE', 'CAPITAL_RESERVE', 'STATUTORY_RESERVE',
+
+        // ==================== REVENUE ====================
+        'OPERATING_REVENUE', 'REVENUE_ACCOUNT', 'SERVICE_INCOME', 'INTEREST_INCOME', 
+        'FEE_INCOME', 'PROCESSING_FEE', 'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES', 
+        'OTHER_REVENUE',
+        'LOAN_INTEREST_INCOME', 'INVESTMENT_INTEREST_INCOME', 'COMMISSION_INCOME', 'TRADING_INCOME',
+        'DIVIDEND_INCOME', 'RENTAL_INCOME', 'LATE_FEE_INCOME', 'PENALTY_INCOME', 
+        'FOREIGN_EXCHANGE_GAIN', 'REALIZED_GAIN', 'UNREALIZED_GAIN', 'SALES_REVENUE',
+
+        // ==================== EXPENSES ====================
+        'OPERATING_EXPENSE', 'EXPENSE_ACCOUNT', 'STAFF_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 
+        'ADMIN_EXPENSE', 'FINANCE_COST', 'INTEREST_EXPENSE', 'OTHER_EXPENSE',
+        'SALARIES_WAGES', 'EMPLOYEE_BENEFITS', 'RENT_EXPENSE', 'UTILITIES_EXPENSE',
+        'DEPRECIATION_EXPENSE', 'AMORTIZATION_EXPENSE', 'PROFESSIONAL_FEES', 'MARKETING_EXPENSE',
+        'TRAVEL_EXPENSE', 'INSURANCE_EXPENSE', 'REPAIRS_MAINTENANCE', 'BAD_DEBT_EXPENSE',
+        'LOAN_LOSS_PROVISION', 'FOREIGN_EXCHANGE_LOSS', 'TAX_EXPENSE', 'BORROWING_COST',
+
+        // ==================== CONTROL & SUSPENSE ====================
+        'SUSPENSE_ACCOUNT', 'CLEARING_ACCOUNT', 'CONTROL_ACCOUNT', 'INTERCOMPANY_ACCOUNT',
+        'RECONCILIATION_ACCOUNT', 'LOAN_SUSPENSE', 'LOAN_DISBURSEMENT_CONTROL', 
+        'LOAN_REPAYMENT_CONTROL', 'INTEREST_SUSPENSE', 'FEE_SUSPENSE', 'UNAPPLIED_FUNDS',
+        'UNEARNED_INTEREST', 'LOAN_CHARGE_OFF', 'PROVISION_FOR_LOAN_LOSSES', 'RECOVERIES_ACCOUNT',
+        'DELINQUENT_LOAN_ACCOUNT', 'RESTRUCTURED_LOAN_ACCOUNT',
+
+        // ==================== TAX ACCOUNTS ====================
+        'WITHHOLDING_TAX_PAYABLE', 'VAT_PAYABLE', 'INCOME_TAX_PAYABLE', 'DEFERRED_TAX',
+
+        // ==================== SPECIAL PURPOSE ====================
+        'CONTINGENT_ACCOUNT', 'MEMORANDUM_ACCOUNT', 'OFF_BALANCE_SHEET_ACCOUNT', 
+        'NOSTRO_ACCOUNT', 'VOSTRO_ACCOUNT',
+
+        // ==================== SPECIAL TYPES ====================
+        'INTER_BRANCH', 'CONTRA_ASSET', 'CONTRA_LIABILITY'
+      ]
+    },
+    productType: { 
+      type: String,
+      enum: [
+        'PERSONAL_LOAN',
+        'BUSINESS_LOAN', 
+        'MORTGAGE_LOAN',
+        'AUTO_LOAN',
+        'EDUCATION_LOAN',
+        'CONSUMER_LOAN',
+        'SME_LOAN',
+        'AGRICULTURAL_LOAN'
+      ]
+    },
+    subBranchCode: { type: String },
+    accountSuffix: { type: String },
+    templateGenerated: { type: Boolean, default: false },
+    dynamicAccount: { type: Boolean, default: false },
+    bulkCreated: { type: Boolean, default: false },
+    branchSpecific: { type: Boolean, default: true },
+    consolidationRequired: { type: Boolean, default: false },
+    coaCompliant: { type: Boolean, default: true },
+    mappedAccountType: { type: String }, // For backward compatibility
+    accountClass: { type: String }, // Derived from accountType
+    normalBalance: { type: String, enum: ['DEBIT', 'CREDIT'] },
+    migrationFlags: {
+      requiresValidation: { type: Boolean, default: false },
+      validationPassed: { type: Boolean, default: false },
+      migrationNotes: String,
+      balanceValidated: { type: Boolean, default: false }
+    },
+    balanceSettings: {
+      allowNegative: { type: Boolean, default: false },
+      minimumBalance: { type: Number, default: 0 },
+      maximumBalance: { type: Number, default: 1000000000 },
+      autoReconcile: { type: Boolean, default: true }
+    },
   },
-  productType: { 
-    type: String,
-    enum: [
-      'PERSONAL_LOAN',
-      'BUSINESS_LOAN', 
-      'MORTGAGE_LOAN',
-      'AUTO_LOAN',
-      'EDUCATION_LOAN',
-      'CONSUMER_LOAN',
-      'SME_LOAN',
-      'AGRICULTURAL_LOAN'
-    ]
-  },
-  subBranchCode: { type: String },
-  accountSuffix: { type: String },
-  templateGenerated: { type: Boolean, default: false },
-  dynamicAccount: { type: Boolean, default: false },
-  bulkCreated: { type: Boolean, default: false },
-  branchSpecific: { type: Boolean, default: true },
-  consolidationRequired: { type: Boolean, default: false },
-  migrationFlags: {
-    requiresValidation: { type: Boolean, default: false },
-    validationPassed: { type: Boolean, default: false },
-    migrationNotes: String,
-    balanceValidated: { type: Boolean, default: false }
-  },
-  balanceSettings: {
-    allowNegative: { type: Boolean, default: false },
-    minimumBalance: { type: Number, default: 0 },
-    maximumBalance: { type: Number, default: 1000000000 },
-    autoReconcile: { type: Boolean, default: true }
-  },
-},
-branchTimezone: { type: String, default: 'Africa/Lagos' },
+  branchTimezone: { type: String, default: 'Africa/Lagos' },
   
 }, {
   timestamps: true,
   collection: 'gl_accounts',
+  strict: true // Ensure strict mode
 });
 
 
@@ -399,6 +429,7 @@ GLAccountSchema.index({ GL_ACCT_ID: 1 }, { unique: true });
 // COA Structure indexes
 GLAccountSchema.index({ 'coaStructure.segments.entity': 1, 'coaStructure.segments.branch': 1 });
 GLAccountSchema.index({ 'coaStructure.segments.accountClass': 1 });
+GLAccountSchema.index({ 'coaStructure.segments.accountType': 1 });
 GLAccountSchema.index({ 'coaStructure.financialStatement.type': 1 });
 GLAccountSchema.index({ 'coaStructure.financialStatement.category': 1 });
 GLAccountSchema.index({ 'coaStructure.hierarchy.level': 1 });
@@ -410,11 +441,13 @@ GLAccountSchema.index({ organizationCode: 1, branchCode: 1 });
 GLAccountSchema.index({ organizationName: 1, branchCode: 1, GL_ACCT_NO: 1 });
 GLAccountSchema.index({ organizationCode: 1, GL_ACCT_NO: 1, branchCode: 1 });
 
-// Account type and category indexes
+// Account type and category indexes - ENHANCED
 GLAccountSchema.index({ organizationCode: 1, branchCode: 1, 'metadata.accountType': 1 });
-GLAccountSchema.index({ organizationCode: 1, branchCode: 1, GL_ACCT_CAT: 1 });
 GLAccountSchema.index({ organizationCode: 1, 'metadata.accountType': 1 });
+GLAccountSchema.index({ 'metadata.accountType': 1 });
+GLAccountSchema.index({ organizationCode: 1, branchCode: 1, GL_ACCT_CAT: 1 });
 GLAccountSchema.index({ organizationCode: 1, 'metadata.branchSpecific': 1 });
+GLAccountSchema.index({ 'metadata.accountClass': 1 });
 
 // Status and operational indexes
 GLAccountSchema.index({ organizationCode: 1, branchCode: 1, REC_ST: 1 });
@@ -450,7 +483,21 @@ GLAccountSchema.index({
   'coaStructure.hierarchy.level': 1
 });
 
-// ==================== STATIC METHODS ====================
+// NEW: Enhanced compound indexes for frontend queries
+GLAccountSchema.index({ 
+  organizationCode: 1,
+  branchCode: 1,
+  'metadata.accountType': 1,
+  REC_ST: 1 
+});
+
+GLAccountSchema.index({ 
+  'metadata.accountType': 1,
+  'coaStructure.financialStatement.type': 1,
+  'coaStructure.accounting.balanceType': 1
+});
+
+// ==================== STATIC METHODS - ENHANCED ====================
 
 // Basic query methods
 GLAccountSchema.statics.findByBranch = function(organizationCode, branchCode) {
@@ -477,7 +524,36 @@ GLAccountSchema.statics.findByOrganizationAndType = function(organizationCode, a
   });
 };
 
-// NEW: COA-based query methods
+// NEW: Enhanced query methods for frontend compatibility
+GLAccountSchema.statics.findByAccountTypes = function(organizationCode, accountTypes = []) {
+  return this.find({ 
+    organizationCode, 
+    'metadata.accountType': { $in: accountTypes },
+    REC_ST: 'Active' 
+  });
+};
+
+GLAccountSchema.statics.findByAccountClass = function(organizationCode, accountClass) {
+  return this.find({ 
+    organizationCode, 
+    'metadata.accountClass': accountClass,
+    REC_ST: 'Active' 
+  });
+};
+
+GLAccountSchema.statics.findSuspenseAccounts = function(organizationCode) {
+  const suspenseTypes = [
+    'SUSPENSE_ACCOUNT', 'LOAN_SUSPENSE', 'INTEREST_SUSPENSE', 'FEE_SUSPENSE',
+    'CLEARING_ACCOUNT', 'UNAPPLIED_FUNDS'
+  ];
+  return this.find({ 
+    organizationCode, 
+    'metadata.accountType': { $in: suspenseTypes },
+    REC_ST: 'Active' 
+  });
+};
+
+// COA-based query methods
 GLAccountSchema.statics.findByCOASegments = function(entity, branch, accountClass = null, accountType = null) {
   const query = {
     'coaStructure.segments.entity': entity,
@@ -518,6 +594,7 @@ GLAccountSchema.statics.findChildAccounts = function(parentAccountNo) {
   });
 };
 
+// NEW: Enhanced COA structure analysis
 GLAccountSchema.statics.getCOAStructure = async function(organizationCode) {
   return this.aggregate([
     {
@@ -532,6 +609,7 @@ GLAccountSchema.statics.getCOAStructure = async function(organizationCode) {
           entity: '$coaStructure.segments.entity',
           accountClass: '$coaStructure.segments.accountClass',
           financialType: '$coaStructure.financialStatement.type',
+          accountType: '$metadata.accountType',
           level: '$coaStructure.hierarchy.level'
         },
         totalAccounts: { $sum: 1 },
@@ -550,7 +628,7 @@ GLAccountSchema.statics.getCOAStructure = async function(organizationCode) {
   ]);
 };
 
-// Legacy system methods (keep existing)
+// Legacy system methods
 GLAccountSchema.statics.findByLegacyId = function(legacyId) {
   return this.findOne({ 'legacyReference.legacyId': legacyId });
 };
@@ -580,6 +658,7 @@ GLAccountSchema.statics.getCOABalanceSummary = async function(organizationCode) 
         _id: {
           financialStatement: '$coaStructure.financialStatement.type',
           category: '$coaStructure.financialStatement.category',
+          accountType: '$metadata.accountType',
           normalBalance: '$coaStructure.accounting.normalBalance'
         },
         totalBalance: { $sum: '$LEDGER_BALANCE' },
@@ -594,6 +673,7 @@ GLAccountSchema.statics.getCOABalanceSummary = async function(organizationCode) 
       $project: {
         financialStatement: '$_id.financialStatement',
         category: '$_id.category',
+        accountType: '$_id.accountType',
         normalBalance: '$_id.normalBalance',
         totalBalance: 1,
         accountCount: 1,
@@ -601,7 +681,6 @@ GLAccountSchema.statics.getCOABalanceSummary = async function(organizationCode) 
         avgBalance: { $round: ['$avgBalance', 2] },
         maxBalance: 1,
         minBalance: 1,
-        // Calculate net balance (considering normal balance)
         netBalance: {
           $cond: {
             if: { $eq: ['$_id.normalBalance', 'CREDIT'] },
@@ -614,13 +693,65 @@ GLAccountSchema.statics.getCOABalanceSummary = async function(organizationCode) 
     {
       $sort: {
         financialStatement: 1,
-        category: 1
+        category: 1,
+        accountType: 1
       }
     }
   ]);
 };
 
-// Keep existing legacy methods (getOrganizationBalanceSummary, getBranchBalanceSummary, etc.)
+// NEW: Frontend-compatible balance summary
+GLAccountSchema.statics.getFrontendBalanceSummary = async function(organizationCode) {
+  return this.aggregate([
+    {
+      $match: {
+        organizationCode,
+        REC_ST: 'Active'
+      }
+    },
+    {
+      $group: {
+        _id: {
+          accountType: '$metadata.accountType',
+          accountClass: '$metadata.accountClass',
+          normalBalance: '$metadata.normalBalance',
+          branchCode: '$branchCode'
+        },
+        totalBalance: { $sum: '$LEDGER_BALANCE' },
+        accountCount: { $sum: 1 },
+        branchName: { $first: '$branchName' },
+        exampleAccounts: { $push: { GL_ACCT_NO: '$GL_ACCT_NO', ACCT_DESC: '$ACCT_DESC' } }
+      }
+    },
+    {
+      $project: {
+        accountType: '$_id.accountType',
+        accountClass: '$_id.accountClass',
+        normalBalance: '$_id.normalBalance',
+        branchCode: '$_id.branchCode',
+        branchName: 1,
+        totalBalance: 1,
+        accountCount: 1,
+        netBalance: {
+          $cond: {
+            if: { $eq: ['$_id.normalBalance', 'CREDIT'] },
+            then: { $multiply: ['$totalBalance', -1] },
+            else: '$totalBalance'
+          }
+        },
+        exampleAccounts: { $slice: ['$exampleAccounts', 3] } // Limit examples
+      }
+    },
+    {
+      $sort: {
+        accountClass: 1,
+        accountType: 1
+      }
+    }
+  ]);
+};
+
+// Keep existing legacy methods
 GLAccountSchema.statics.getOrganizationBalanceSummary = async function(organizationCode) {
   return this.aggregate([
     {
@@ -635,7 +766,7 @@ GLAccountSchema.statics.getOrganizationBalanceSummary = async function(organizat
           branchCode: '$branchCode',
           accountType: '$metadata.accountType',
           systemSource: '$systemSource',
-          financialType: '$coaStructure.financialStatement.type' // NEW: Include COA type
+          financialType: '$coaStructure.financialStatement.type'
         },
         totalBalance: { $sum: '$LEDGER_BALANCE' },
         totalLegacyBalance: { $sum: '$legacyReference.legacyBalance' },
@@ -646,7 +777,7 @@ GLAccountSchema.statics.getOrganizationBalanceSummary = async function(organizat
             $cond: [{ $eq: ['$legacyReference.balanceMigrated', true] }, 1, 0]
           }
         },
-        coaCategory: { $first: '$coaStructure.financialStatement.category' } // NEW
+        coaCategory: { $first: '$coaStructure.financialStatement.category' }
       }
     },
     {
@@ -662,8 +793,8 @@ GLAccountSchema.statics.getOrganizationBalanceSummary = async function(organizat
           $push: {
             accountType: '$_id.accountType',
             systemSource: '$_id.systemSource',
-            financialType: '$_id.financialType', // NEW
-            coaCategory: '$coaCategory', // NEW
+            financialType: '$_id.financialType',
+            coaCategory: '$coaCategory',
             balance: '$totalBalance',
             legacyBalance: '$totalLegacyBalance',
             difference: { $subtract: ['$totalBalance', '$totalLegacyBalance'] },
@@ -678,7 +809,7 @@ GLAccountSchema.statics.getOrganizationBalanceSummary = async function(organizat
   ]);
 };
 
-// ==================== INSTANCE METHODS ====================
+// ==================== INSTANCE METHODS - ENHANCED ====================
 
 // Basic methods
 GLAccountSchema.methods.canPost = function (type) {
@@ -701,7 +832,88 @@ GLAccountSchema.methods.getBranchInfo = function () {
   };
 };
 
-// NEW: COA-based methods
+// NEW: Frontend-compatible methods
+GLAccountSchema.methods.getFrontendData = function() {
+  return {
+    id: this._id,
+    GL_ACCT_NO: this.GL_ACCT_NO,
+    GL_ACCT_ID: this.GL_ACCT_ID,
+    ACCT_DESC: this.ACCT_DESC,
+    accountType: this.metadata.accountType,
+    accountClass: this.metadata.accountClass,
+    normalBalance: this.metadata.normalBalance,
+    organizationCode: this.organizationCode,
+    organizationName: this.organizationName,
+    branchCode: this.branchCode,
+    branchName: this.branchName,
+    LEDGER_BALANCE: this.LEDGER_BALANCE,
+    AVAILABLE_BALANCE: this.AVAILABLE_BALANCE,
+    CURRENCY_CODE: this.CURRENCY_CODE,
+    REC_ST: this.REC_ST,
+    coaStructure: this.coaStructure,
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt
+  };
+};
+
+GLAccountSchema.methods.isAssetAccount = function() {
+  const assetTypes = [
+    'CURRENT_ASSET', 'CUSTOMER_ACCOUNT', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 
+    'RECEIVABLE_ACCOUNT', 'FIXED_ASSET', 'LOAN_ASSET', 'INTANGIBLE_ASSET', 
+    'OTHER_ASSET', 'PROPERTY_PLANT_EQUIPMENT', 'INVESTMENT_ASSET',
+    'LOAN_PORTFOLIO', 'LOAN_RECEIVABLE', 'INTEREST_RECEIVABLE', 'FEE_RECEIVABLE',
+    'ACCRUED_INTEREST', 'DUE_FROM_BANKS', 'TRADING_SECURITIES', 'HELD_TO_MATURITY_SECURITIES',
+    'INVENTORY', 'PREPAID_EXPENSE', 'DEFERRED_TAX_ASSET', 'GOODWILL', 'LEASE_ASSET'
+  ];
+  return assetTypes.includes(this.metadata.accountType);
+};
+
+GLAccountSchema.methods.isLiabilityAccount = function() {
+  const liabilityTypes = [
+    'CURRENT_LIABILITY', 'LIABILITY_ACCOUNT', 'PAYABLE_ACCOUNT', 'LONG_TERM_LIABILITY', 
+    'LOAN_LIABILITY', 'DEPOSITS_LIABILITY', 'OTHER_LIABILITY',
+    'CUSTOMER_DEPOSITS', 'SAVINGS_DEPOSITS', 'TIME_DEPOSITS', 'INTEREST_PAYABLE',
+    'ACCRUED_EXPENSES', 'TAX_PAYABLE', 'DIVIDEND_PAYABLE', 'BORROWINGS', 'BONDS_PAYABLE',
+    'LEASE_LIABILITY', 'DEFERRED_TAX_LIABILITY', 'PROVISIONS', 'CONTINGENT_LIABILITY'
+  ];
+  return liabilityTypes.includes(this.metadata.accountType);
+};
+
+GLAccountSchema.methods.isEquityAccount = function() {
+  const equityTypes = [
+    'SHARE_CAPITAL', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS', 'EQUITY_ACCOUNT', 
+    'OTHER_EQUITY', 'ADDITIONAL_PAID_IN_CAPITAL', 'TREASURY_STOCK', 
+    'OTHER_COMPREHENSIVE_INCOME', 'DONATED_CAPITAL', 'REVALUATION_RESERVE', 
+    'CAPITAL_RESERVE', 'STATUTORY_RESERVE'
+  ];
+  return equityTypes.includes(this.metadata.accountType);
+};
+
+GLAccountSchema.methods.isRevenueAccount = function() {
+  const revenueTypes = [
+    'OPERATING_REVENUE', 'REVENUE_ACCOUNT', 'SERVICE_INCOME', 'INTEREST_INCOME', 
+    'FEE_INCOME', 'PROCESSING_FEE', 'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES', 
+    'OTHER_REVENUE', 'LOAN_INTEREST_INCOME', 'INVESTMENT_INTEREST_INCOME', 
+    'COMMISSION_INCOME', 'TRADING_INCOME', 'DIVIDEND_INCOME', 'RENTAL_INCOME', 
+    'LATE_FEE_INCOME', 'PENALTY_INCOME', 'FOREIGN_EXCHANGE_GAIN', 'REALIZED_GAIN', 
+    'UNREALIZED_GAIN', 'SALES_REVENUE'
+  ];
+  return revenueTypes.includes(this.metadata.accountType);
+};
+
+GLAccountSchema.methods.isExpenseAccount = function() {
+  const expenseTypes = [
+    'OPERATING_EXPENSE', 'EXPENSE_ACCOUNT', 'STAFF_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 
+    'ADMIN_EXPENSE', 'FINANCE_COST', 'INTEREST_EXPENSE', 'OTHER_EXPENSE',
+    'SALARIES_WAGES', 'EMPLOYEE_BENEFITS', 'RENT_EXPENSE', 'UTILITIES_EXPENSE',
+    'DEPRECIATION_EXPENSE', 'AMORTIZATION_EXPENSE', 'PROFESSIONAL_FEES', 'MARKETING_EXPENSE',
+    'TRAVEL_EXPENSE', 'INSURANCE_EXPENSE', 'REPAIRS_MAINTENANCE', 'BAD_DEBT_EXPENSE',
+    'LOAN_LOSS_PROVISION', 'FOREIGN_EXCHANGE_LOSS', 'TAX_EXPENSE', 'BORROWING_COST'
+  ];
+  return expenseTypes.includes(this.metadata.accountType);
+};
+
+// COA-based methods
 GLAccountSchema.methods.getCOAInfo = function() {
   return {
     fullAccountNumber: this.GL_ACCT_NO,
@@ -736,6 +948,7 @@ GLAccountSchema.methods.isDetailAccount = function() {
   return this.coaStructure.hierarchy.level === 5;
 };
 
+// Enhanced COA validation
 GLAccountSchema.methods.validateCOAStructure = function() {
   const errors = [];
   
@@ -748,37 +961,31 @@ GLAccountSchema.methods.validateCOAStructure = function() {
     errors.push('Branch segment does not match branch code');
   }
   
-  // Validate financial statement consistency
-  if (this.coaStructure.financialStatement.type === 'BALANCE_SHEET') {
-    const validCategories = ['CURRENT_ASSETS', 'FIXED_ASSETS', 'INTANGIBLE_ASSETS', 'OTHER_ASSETS', 
-                           'CURRENT_LIABILITIES', 'LONG_TERM_LIABILITIES', 'OTHER_LIABILITIES',
-                           'SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY'];
-    if (!validCategories.includes(this.coaStructure.financialStatement.category)) {
-      errors.push('Invalid category for balance sheet account');
-    }
+  // Validate account type consistency with COA structure
+  if (this.isAssetAccount() && this.coaStructure.accounting.balanceType !== 'ASSET') {
+    errors.push('Asset account type inconsistent with COA balance type');
   }
   
-  // Validate normal balance consistency
-  const assetCategories = ['CURRENT_ASSETS', 'FIXED_ASSETS', 'INTANGIBLE_ASSETS', 'OTHER_ASSETS'];
-  const liabilityCategories = ['CURRENT_LIABILITIES', 'LONG_TERM_LIABILITIES', 'OTHER_LIABILITIES'];
-  const equityCategories = ['SHARE_CAPITAL', 'RETAINED_EARNINGS', 'OTHER_EQUITY'];
-  const expenseCategories = ['OPERATING_EXPENSES', 'ADMINISTRATIVE_EXPENSES', 'FINANCE_COSTS', 'OTHER_EXPENSES', 'TAX_EXPENSE'];
-  
-  if (assetCategories.includes(this.coaStructure.financialStatement.category) && 
-      this.coaStructure.accounting.normalBalance !== 'DEBIT') {
-    errors.push('Asset accounts should have DEBIT normal balance');
+  if (this.isLiabilityAccount() && this.coaStructure.accounting.balanceType !== 'LIABILITY') {
+    errors.push('Liability account type inconsistent with COA balance type');
   }
   
-  if ((liabilityCategories.includes(this.coaStructure.financialStatement.category) || 
-       equityCategories.includes(this.coaStructure.financialStatement.category)) && 
-      this.coaStructure.accounting.normalBalance !== 'CREDIT') {
-    errors.push('Liability and Equity accounts should have CREDIT normal balance');
+  if (this.isEquityAccount() && this.coaStructure.accounting.balanceType !== 'EQUITY') {
+    errors.push('Equity account type inconsistent with COA balance type');
+  }
+  
+  if (this.isRevenueAccount() && this.coaStructure.accounting.balanceType !== 'REVENUE') {
+    errors.push('Revenue account type inconsistent with COA balance type');
+  }
+  
+  if (this.isExpenseAccount() && this.coaStructure.accounting.balanceType !== 'EXPENSE') {
+    errors.push('Expense account type inconsistent with COA balance type');
   }
   
   return errors;
 };
 
-// Legacy system methods (keep existing)
+// Legacy system methods
 GLAccountSchema.methods.requiresSync = function() {
   return this.systemSource === 'MIGRATED' && this.syncStatus.syncRequired;
 };
@@ -806,7 +1013,7 @@ GLAccountSchema.methods.completeSync = function(newBalance) {
   return this.save();
 };
 
-// Balance migration methods (keep existing)
+// Balance migration methods
 GLAccountSchema.methods.migrateBalance = async function(legacyBalance, transactionData = {}) {
   try {
     const previousBalance = this.LEDGER_BALANCE;
@@ -860,15 +1067,33 @@ GLAccountSchema.methods.migrateBalance = async function(legacyBalance, transacti
   }
 };
 
-// ==================== MIDDLEWARE ====================
+// ==================== MIDDLEWARE - ENHANCED ====================
 
 GLAccountSchema.pre('save', function(next) {
+  // Auto-populate derived fields
+  if (this.metadata.accountType && !this.metadata.accountClass) {
+    if (this.isAssetAccount()) this.metadata.accountClass = 'ASSET';
+    else if (this.isLiabilityAccount()) this.metadata.accountClass = 'LIABILITY';
+    else if (this.isEquityAccount()) this.metadata.accountClass = 'EQUITY';
+    else if (this.isRevenueAccount()) this.metadata.accountClass = 'REVENUE';
+    else if (this.isExpenseAccount()) this.metadata.accountClass = 'EXPENSE';
+  }
+  
+  // Auto-set normal balance
+  if (this.metadata.accountType && !this.metadata.normalBalance) {
+    if (this.isAssetAccount() || this.isExpenseAccount()) {
+      this.metadata.normalBalance = 'DEBIT';
+    } else {
+      this.metadata.normalBalance = 'CREDIT';
+    }
+  }
+  
   // Validate organization code format
   if (this.organizationCode && typeof this.organizationCode !== 'number') {
     return next(new Error('Organization code must be a number'));
   }
   
-  // NEW: Validate COA structure
+  // Validate COA structure
   if (this.coaStructure) {
     const coaErrors = this.validateCOAStructure();
     if (coaErrors.length > 0) {
@@ -905,7 +1130,7 @@ GLAccountSchema.post('save', function(doc) {
     console.log(`Balance change detected for ${doc.GL_ACCT_NO}: ${this._previousLedgerBalance} -> ${doc.LEDGER_BALANCE}`);
   }
   
-  console.log(`GL Account ${doc.GL_ACCT_NO} saved for organization ${doc.organizationCode}, COA: ${doc.coaStructure.financialStatement.type}, Balance: ${doc.LEDGER_BALANCE}`);
+  console.log(`GL Account ${doc.GL_ACCT_NO} saved for organization ${doc.organizationCode}, Account Type: ${doc.metadata.accountType}, Balance: ${doc.LEDGER_BALANCE}`);
 });
 
 GLAccountSchema.pre('remove', function(next) {

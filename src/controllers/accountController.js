@@ -33,46 +33,133 @@ export const getMigratedAccounts = async (req, res) => {
   }
 };
 
-// 🟢 GET ALL ACCOUNTS (with pagination)
+// 🟢 GET ALL ACCOUNTS (with pagination, filtering, and sorting)
 export const getAllAccounts = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const {
+      status,
+      accountType,
+      systemSource,
+      currency,
+      page = 1,
+      limit = 50,
+      sortBy = 'accountNumber',
+      sortOrder = 'asc',
+      search
+    } = req.query;
 
-    const accounts = await GLAccount.find()
+    // Build filter object
+    const filter = {};
+    
+    // Status filter
+    if (status) {
+      if (status === 'Active') filter.REC_ST = 'A';
+      else if (status === 'Inactive') filter.REC_ST = 'I';
+      else filter.REC_ST = status;
+    }
+    
+    // Account type filter
+    if (accountType) {
+      filter['metadata.accountType'] = accountType;
+    }
+    
+    // System source filter
+    if (systemSource) {
+      filter.systemSource = systemSource;
+    }
+    
+    // Currency filter
+    if (currency) {
+      filter.currency = currency;
+    }
+    
+    // Search filter
+    if (search) {
+      filter.$or = [
+        { GL_ACCT_NO: { $regex: search, $options: 'i' } },
+        { ACCT_DESC: { $regex: search, $options: 'i' } },
+        { accountName: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Build sort object
+    const sort = {};
+    const sortFieldMap = {
+      'accountNumber': 'GL_ACCT_NO',
+      'accountName': 'ACCT_DESC',
+      'currentBalance': 'LEDGER_BALANCE',
+      'status': 'REC_ST',
+      'createdAt': 'createdAt',
+      'lastUpdated': 'updatedAt'
+    };
+    
+    const actualSortField = sortFieldMap[sortBy] || 'GL_ACCT_NO';
+    sort[actualSortField] = sortOrder === 'desc' ? -1 : 1;
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Execute query
+    const accounts = await GLAccount.find(filter)
+      .sort(sort)
       .skip(skip)
-      .limit(limit)
-      .sort({ GL_ACCT_NO: 1 });
+      .limit(parseInt(limit))
+      .select('-__v');
 
-    const total = await GLAccount.countDocuments();
+    const total = await GLAccount.countDocuments(filter);
 
+    // Transform to user-friendly format
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.accountName,
+      accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
       systemSource: account.systemSource,
-      currency: 'NGN',
+      currency: account.currency || 'NGN',
       createdAt: account.createdAt,
-      lastUpdated: account.updatedAt
+      lastUpdated: account.updatedAt,
+      // Include additional fields for frontend compatibility
+      GL_ACCT_CAT: account.GL_ACCT_CAT,
+      BAL_CD: account.BAL_CD,
+      LEDGER_NO: account.LEDGER_NO,
+      SUB_LEDGER_NO: account.SUB_LEDGER_NO,
+      categoryCode: account.categoryCode,
+      categoryName: account.categoryName,
+      organizationName: account.organizationName,
+      organizationCode: account.organizationCode,
+      branchName: account.branchName,
+      branchCode: account.branchCode
     }));
 
     res.json({
       success: true,
       data: userFriendlyAccounts,
       pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalAccounts: total,
-        hasNext: page < Math.ceil(total / limit),
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+        hasNext: page < Math.ceil(total / parseInt(limit)),
         hasPrev: page > 1
-      }
+      },
+      filters: {
+        status,
+        accountType,
+        systemSource,
+        currency,
+        search
+      },
+      message: 'Accounts retrieved successfully'
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error fetching accounts:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching accounts',
+      error: error.message
+    });
   }
 };
 
@@ -95,15 +182,30 @@ export const getAccountByNumber = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.accountName,
+        accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
         systemSource: account.systemSource,
-        currency: 'NGN',
+        currency: account.currency || 'NGN',
         legacySystemId: account.legacyReference?.legacyId,
         createdAt: account.createdAt,
-        lastUpdated: account.updatedAt
+        lastUpdated: account.updatedAt,
+        // Include COA fields
+        GL_ACCT_CAT: account.GL_ACCT_CAT,
+        BAL_CD: account.BAL_CD,
+        LEDGER_NO: account.LEDGER_NO,
+        SUB_LEDGER_NO: account.SUB_LEDGER_NO,
+        categoryCode: account.categoryCode,
+        categoryName: account.categoryName,
+        organizationName: account.organizationName,
+        organizationCode: account.organizationCode,
+        branchName: account.branchName,
+        branchCode: account.branchCode,
+        CHART_OF_ACCT_ID: account.CHART_OF_ACCT_ID,
+        SEG_NO: account.SEG_NO,
+        level: account.level,
+        metadata: account.metadata
       }
     });
   } catch (error) {
@@ -137,15 +239,30 @@ export const getAccountById = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.accountName,
+        accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
         systemSource: account.systemSource,
-        currency: 'NGN',
+        currency: account.currency || 'NGN',
         legacySystemId: account.legacyReference?.legacyId,
         createdAt: account.createdAt,
-        lastUpdated: account.updatedAt
+        lastUpdated: account.updatedAt,
+        // Include COA fields
+        GL_ACCT_CAT: account.GL_ACCT_CAT,
+        BAL_CD: account.BAL_CD,
+        LEDGER_NO: account.LEDGER_NO,
+        SUB_LEDGER_NO: account.SUB_LEDGER_NO,
+        categoryCode: account.categoryCode,
+        categoryName: account.categoryName,
+        organizationName: account.organizationName,
+        organizationCode: account.organizationCode,
+        branchName: account.branchName,
+        branchCode: account.branchCode,
+        CHART_OF_ACCT_ID: account.CHART_OF_ACCT_ID,
+        SEG_NO: account.SEG_NO,
+        level: account.level,
+        metadata: account.metadata
       }
     });
   } catch (error) {
@@ -185,9 +302,11 @@ export const createAccount = async (req, res) => {
       data: {
         id: newAccount._id,
         accountNumber: newAccount.GL_ACCT_NO,
-        accountName: newAccount.accountName,
+        accountName: newAccount.ACCT_DESC || newAccount.accountName,
         accountType: newAccount.metadata?.accountType,
-        systemSource: newAccount.systemSource
+        systemSource: newAccount.systemSource,
+        currentBalance: newAccount.LEDGER_BALANCE,
+        status: newAccount.REC_ST === 'A' ? 'Active' : 'Inactive'
       }
     });
   } catch (error) {
@@ -236,10 +355,11 @@ export const updateAccount = async (req, res) => {
       data: {
         id: account._id,
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.accountName,
+        accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
-        status: account.REC_ST
+        status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+        systemSource: account.systemSource
       }
     });
   } catch (error) {
@@ -277,7 +397,7 @@ export const deleteAccount = async (req, res) => {
       message: 'Account deleted successfully',
       data: {
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.ACCT_DESC
+        accountName: account.ACCT_DESC || account.accountName
       }
     });
   } catch (error) {
@@ -289,27 +409,43 @@ export const deleteAccount = async (req, res) => {
 export const getAccountsByType = async (req, res) => {
   try {
     const { accountType } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+    const skip = (page - 1) * limit;
     
     const accounts = await GLAccount.find({ 
+      'metadata.accountType': accountType 
+    })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .sort({ GL_ACCT_NO: 1 });
+
+    const total = await GLAccount.countDocuments({ 
       'metadata.accountType': accountType 
     });
 
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.accountName,
+      accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
-      systemSource: account.systemSource
+      systemSource: account.systemSource,
+      currency: account.currency || 'NGN'
     }));
 
     res.json({
       success: true,
       data: userFriendlyAccounts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      },
       summary: {
         type: accountType,
-        totalAccounts: accounts.length,
+        totalAccounts: total,
         totalBalance: accounts.reduce((sum, acc) => sum + (acc.LEDGER_BALANCE || 0), 0)
       }
     });
@@ -327,7 +463,7 @@ export const getAccountBalance = async (req, res) => {
     
     // Support both MongoDB ObjectId and legacy numeric IDs
     if (mongoose.Types.ObjectId.isValid(id)) {
-      account = await GLAccount.findById(id).select('GL_ACCT_NO ACCT_DESC LEDGER_BALANCE REC_ST');
+      account = await GLAccount.findById(id).select('GL_ACCT_NO ACCT_DESC accountName LEDGER_BALANCE REC_ST currency');
     } else {
       // Handle legacy numeric account IDs (like "000834")
       account = await GLAccount.findOne({ 
@@ -336,7 +472,7 @@ export const getAccountBalance = async (req, res) => {
           { 'metadata.legacySystemId': id },
           { accountNumber: id }
         ]
-      }).select('GL_ACCT_NO ACCT_DESC LEDGER_BALANCE REC_ST');
+      }).select('GL_ACCT_NO ACCT_DESC accountName LEDGER_BALANCE REC_ST currency');
     }
     
     if (!account) {
@@ -350,9 +486,9 @@ export const getAccountBalance = async (req, res) => {
       success: true,
       data: {
         accountNumber: account.GL_ACCT_NO,
-        accountName: account.accountName,
+        accountName: account.ACCT_DESC || account.accountName,
         currentBalance: account.LEDGER_BALANCE,
-        currency: 'NGN',
+        currency: account.currency || 'NGN',
         status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
         lastUpdated: account.updatedAt
       }
@@ -385,6 +521,20 @@ export const getAccountsSummary = async (req, res) => {
 
     const totalBalance = balanceResult[0]?.totalBalance || 0;
 
+    // Get account type distribution
+    const typeDistribution = await GLAccount.aggregate([
+      {
+        $group: {
+          _id: '$metadata.accountType',
+          count: { $sum: 1 },
+          totalBalance: { $sum: '$LEDGER_BALANCE' }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
     res.json({
       success: true,
       data: {
@@ -398,7 +548,8 @@ export const getAccountsSummary = async (req, res) => {
         byStatus: {
           active: activeAccounts,
           inactive: inactiveAccounts
-        }
+        },
+        byType: typeDistribution
       }
     });
   } catch (error) {
@@ -409,14 +560,16 @@ export const getAccountsSummary = async (req, res) => {
 // 🟢 SEARCH ACCOUNTS
 export const searchAccounts = async (req, res) => {
   try {
-    const { q, type, status } = req.query;
+    const { q, type, status, systemSource, page = 1, limit = 20 } = req.query;
+    const skip = (page - 1) * limit;
     
     let query = {};
 
     if (q) {
       query.$or = [
         { GL_ACCT_NO: { $regex: q, $options: 'i' } },
-        { ACCT_DESC: { $regex: q, $options: 'i' } }
+        { ACCT_DESC: { $regex: q, $options: 'i' } },
+        { accountName: { $regex: q, $options: 'i' } }
       ];
     }
 
@@ -428,24 +581,40 @@ export const searchAccounts = async (req, res) => {
       query.REC_ST = status === 'active' ? 'A' : 'I';
     }
 
-    const accounts = await GLAccount.find(query).limit(20);
+    if (systemSource) {
+      query.systemSource = systemSource;
+    }
+
+    const accounts = await GLAccount.find(query)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .sort({ GL_ACCT_NO: 1 });
+
+    const total = await GLAccount.countDocuments(query);
 
     const userFriendlyAccounts = accounts.map(account => ({
       id: account._id,
       accountNumber: account.GL_ACCT_NO,
-      accountName: account.accountName,
+      accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
       status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
-      systemSource: account.systemSource
+      systemSource: account.systemSource,
+      currency: account.currency || 'NGN'
     }));
 
     res.json({
       success: true,
       data: userFriendlyAccounts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      },
       searchSummary: {
         query: q,
-        results: accounts.length
+        results: total
       }
     });
   } catch (error) {
@@ -477,11 +646,22 @@ export const getMigrationStatistics = async (req, res) => {
       }
     ]);
 
+    const statusStats = await GLAccount.aggregate([
+      {
+        $group: {
+          _id: '$REC_ST',
+          count: { $sum: 1 },
+          totalBalance: { $sum: '$LEDGER_BALANCE' }
+        }
+      }
+    ]);
+
     res.json({
       success: true,
       data: {
         bySource: migrationStats,
         byType: typeStats,
+        byStatus: statusStats,
         summary: {
           totalAccounts: await GLAccount.countDocuments(),
           migratedAccounts: await GLAccount.countDocuments({ systemSource: 'MIGRATED' }),
