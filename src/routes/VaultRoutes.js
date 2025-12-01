@@ -2,7 +2,7 @@ import express from 'express';
 import vaultController from '../controllers/vaultController.js';
 import VaultConfigController from '../controllers/vaultConfigController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
-import { checkPermissions, tempBypassPermissions } from '../constants/roleMapping.js'; // Added tempBypassPermissions
+import { checkPermissions, tempBypassPermissions } from '../constants/roleMapping.js';
 import Vault from '../models/Vault.js';
 import Drawer from '../models/Drawer.js';
 import mongoose from 'mongoose';
@@ -50,7 +50,13 @@ const VAULT_PERMISSIONS = {
   // Operational
   OPEN_VAULT: 'OPEN_VAULT',
   CLOSE_VAULT: 'CLOSE_VAULT',
-  VIEW_VAULT_STATUS: 'VIEW_VAULT_STATUS'
+  VIEW_VAULT_STATUS: 'VIEW_VAULT_STATUS',
+  
+  // ✅ NEW: Branch Operations
+  VIEW_BRANCH_VAULTS: 'VIEW_BRANCH_VAULTS',
+  VIEW_BRANCH_SUMMARY: 'VIEW_BRANCH_SUMMARY',
+  TRANSFER_BETWEEN_BRANCHES: 'TRANSFER_BETWEEN_BRANCHES',
+  BULK_BRANCH_AUTHORIZE: 'BULK_BRANCH_AUTHORIZE'
 };
 
 // =============================================
@@ -66,7 +72,6 @@ const VAULT_PERMISSIONS = {
 router.post(
   '/',
   [authenticate, checkPermissions('CREATE_VAULT')],
-  // [authenticate, tempBypassPermissions], // TEMPORARY: Use this for testing if permission issues persist
   vaultController.createVault
 );
 
@@ -128,6 +133,46 @@ router.delete(
   '/:id',
   [authenticate, checkPermissions('DEACTIVATE_VAULT')],
   vaultController.deactivateVault
+);
+
+// =============================================
+// ✅ NEW: BRANCH-SPECIFIC VAULT ROUTES
+// =============================================
+
+/**
+ * @route   GET /api/vaults/branch/:branchCode
+ * @desc    Get all vaults for a specific branch (Business Unit)
+ * @access  Branch Manager, Vault Manager, Regional Manager
+ * @permission VIEW_BRANCH_VAULTS
+ */
+router.get(
+  '/branch/:branchCode',
+  [authenticate, checkPermissions('VIEW_BRANCH_VAULTS')],
+  vaultController.getVaultByBU
+);
+
+/**
+ * @route   GET /api/vaults/branch/:branchCode/summary
+ * @desc    Get consolidated vault summary for a branch
+ * @access  Branch Manager, Vault Manager, Regional Manager
+ * @permission VIEW_BRANCH_SUMMARY
+ */
+router.get(
+  '/branch/:branchCode/summary',
+  [authenticate, checkPermissions('VIEW_BRANCH_SUMMARY')],
+  vaultController.getBranchVaultSummary
+);
+
+/**
+ * @route   POST /api/vaults/:vaultId/transfer-branch
+ * @desc    Transfer vault to another branch
+ * @access  Regional Manager, Head Office
+ * @permission TRANSFER_BETWEEN_BRANCHES
+ */
+router.post(
+  '/:vaultId/transfer-branch',
+  [authenticate, checkPermissions('TRANSFER_BETWEEN_BRANCHES')],
+  vaultController.transferVaultToBranch
 );
 
 // =============================================
@@ -247,6 +292,137 @@ router.get(
 );
 
 // =============================================
+// ✅ NEW: BULK BRANCH AUTHORIZATION
+// =============================================
+
+/**
+ * @route   POST /api/vaults/branch/:branchCode/bulk-authorize
+ * @desc    Bulk authorize personnel for all vaults in branch
+ * @access  Branch Manager, Regional Manager
+ * @permission BULK_BRANCH_AUTHORIZE
+ */
+router.post(
+  '/branch/:branchCode/bulk-authorize',
+  [authenticate, checkPermissions('BULK_BRANCH_AUTHORIZE')],
+  async (req, res) => {
+    const { branchCode } = req.params;
+    const { 
+      personnel_list, 
+      authorized_by, 
+      access_level = 'LIMITED',
+      notes = 'Bulk authorization for branch vaults'
+    } = req.body;
+    
+    const session = await mongoose.startSession();
+    
+    try {
+      session.startTransaction();
+      
+      if (!personnel_list || !Array.isArray(personnel_list) || !authorized_by) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields: personnel_list (array), authorized_by'
+        });
+      }
+      
+      // Get all vaults in the branch
+      const vaults = await Vault.find({
+        BRANCH_CODE: branchCode,
+        IS_ACTIVE: true
+      }).session(session);
+      
+      if (vaults.length === 0) {
+        await session.abortTransaction();
+        return res.status(404).json({
+          success: false,
+          message: `No active vaults found for branch ${branchCode}`
+        });
+      }
+      
+      const results = {
+        successful_vaults: [],
+        failed_vaults: [],
+        total_vaults_updated: 0
+      };
+      
+      // Process each vault
+      for (const vault of vaults) {
+        const vaultResults = {
+          vault_code: vault.VAULT_CD,
+          vault_name: vault.VAULT_NM,
+          authorized_count: 0,
+          failed_authorizations: []
+        };
+        
+        // Authorize personnel for this vault
+        for (const person of personnel_list) {
+          try {
+            // Use the vault's authorizePersonnel method
+            vault.authorizePersonnel(
+              person.user_id,
+              person.user_name,
+              person.user_role,
+              authorized_by,
+              access_level,
+              notes
+            );
+            vaultResults.authorized_count++;
+          } catch (error) {
+            vaultResults.failed_authorizations.push({
+              user_id: person.user_id,
+              error: error.message
+            });
+          }
+        }
+        
+        // Save vault if any authorizations were successful
+        if (vaultResults.authorized_count > 0) {
+          await vault.save({ session });
+          results.total_vaults_updated++;
+        }
+        
+        if (vaultResults.failed_authorizations.length === 0) {
+          results.successful_vaults.push(vault.VAULT_CD);
+        } else {
+          results.failed_vaults.push({
+            vault_code: vault.VAULT_CD,
+            failures: vaultResults.failed_authorizations
+          });
+        }
+      }
+      
+      await session.commitTransaction();
+      
+      res.json({
+        success: true,
+        message: 'Bulk branch authorization completed',
+        data: {
+          branch_code: branchCode,
+          results,
+          summary: {
+            total_vaults_processed: vaults.length,
+            vaults_updated: results.total_vaults_updated,
+            personnel_authorized: personnel_list.length * results.total_vaults_updated
+          }
+        }
+      });
+      
+    } catch (error) {
+      await session.abortTransaction();
+      console.error('Bulk branch authorize error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bulk authorize personnel for branch vaults',
+        error: error.message
+      });
+    } finally {
+      session.endSession();
+    }
+  }
+);
+
+// =============================================
 // APPROVAL WORKFLOW ROUTES
 // =============================================
 
@@ -296,7 +472,6 @@ router.get(
   '/approvals/pending',
   [authenticate, checkPermissions('VIEW_PENDING_APPROVALS')],
   (req, res, next) => {
-    // This would use a different controller method to get approvals by role
     const userRole = req.user.role;
     req.query.role = userRole;
     next();
@@ -512,6 +687,133 @@ router.get(
 );
 
 // =============================================
+// ✅ NEW: BRANCH VAULT REPORTS
+// =============================================
+
+/**
+ * @route   GET /api/vaults/branch/:branchCode/utilization
+ * @desc    Get branch vault utilization report
+ * @access  Branch Manager, Vault Manager
+ * @permission VIEW_VAULT_UTILIZATION
+ */
+router.get(
+  '/branch/:branchCode/utilization',
+  [authenticate, checkPermissions('VIEW_VAULT_UTILIZATION')],
+  async (req, res) => {
+    const { branchCode } = req.params;
+    
+    try {
+      // Get vaults by branch using the new controller
+      req.params.branchCode = branchCode;
+      const response = await vaultController.getVaultByBU(req, res, true); // Pass flag for internal call
+      
+      if (!response) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to fetch branch vault utilization'
+        });
+      }
+      
+    } catch (error) {
+      console.error('Get branch utilization error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch branch vault utilization',
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * @route   GET /api/vaults/branch/:branchCode/configuration
+ * @desc    Get branch vault configuration summary
+ * @access  Branch Manager, Vault Manager
+ * @permission VIEW_VAULT_CONFIG
+ */
+router.get(
+  '/branch/:branchCode/configuration',
+  [authenticate, checkPermissions('VIEW_VAULT_CONFIG')],
+  async (req, res) => {
+    const { branchCode } = req.params;
+    
+    try {
+      const vaults = await Vault.find({
+        BRANCH_CODE: branchCode,
+        IS_ACTIVE: true
+      }).populate('DRAWER_REF');
+      
+      const configSummary = {
+        branch_code: branchCode,
+        total_vaults: vaults.length,
+        security_features: {},
+        transaction_limits: {},
+        access_configuration: {}
+      };
+      
+      if (vaults.length === 0) {
+        return res.json({
+          success: true,
+          message: `No vaults found for branch ${branchCode}`,
+          data: configSummary
+        });
+      }
+      
+      // Aggregate security features
+      vaults.forEach(vault => {
+        vault.SECURITY_FEATURES?.forEach(feature => {
+          if (feature.is_active) {
+            if (!configSummary.security_features[feature.name]) {
+              configSummary.security_features[feature.name] = {
+                count: 0,
+                percentage: 0
+              };
+            }
+            configSummary.security_features[feature.name].count++;
+          }
+        });
+      });
+      
+      // Calculate percentages
+      Object.keys(configSummary.security_features).forEach(key => {
+        configSummary.security_features[key].percentage = 
+          vaults.length > 0 ? 
+          ((configSummary.security_features[key].count / vaults.length) * 100).toFixed(2) + '%' : 
+          '0%';
+      });
+      
+      // Get common transaction limits
+      const firstVault = vaults[0];
+      configSummary.transaction_limits = {
+        max_single_deposit: firstVault.TRANSACTION_LIMITS?.max_single_deposit?.toString() || 'Not configured',
+        max_single_withdrawal: firstVault.TRANSACTION_LIMITS?.max_single_withdrawal?.toString() || 'Not configured',
+        require_approval_amount: firstVault.TRANSACTION_LIMITS?.require_approval_amount?.toString() || 'Not configured'
+      };
+      
+      configSummary.access_configuration = {
+        requires_dual_control: vaults.filter(v => v.REQUIRES_DUAL_CONTROL).length,
+        average_authorized_personnel: vaults.length > 0 ? 
+          Math.round(vaults.reduce((sum, v) => sum + (v.AUTHORIZED_PERSONNEL?.length || 0), 0) / vaults.length) : 0,
+        has_access_schedule: vaults.filter(v => v.ACCESS_SCHEDULE).length
+      };
+      
+      res.json({
+        success: true,
+        data: configSummary
+      });
+      
+    } catch (error) {
+      console.error('Get branch configuration error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch branch vault configuration',
+        error: error.message
+      });
+    }
+  }
+);
+
+// =============================================
 // OPERATIONAL ROUTES
 // =============================================
 
@@ -567,11 +869,10 @@ router.post(
       if (vault.SECURITY_LEVEL === 'LEVEL_3' || vault.SECURITY_LEVEL === 'LEVEL_4' || 
           !isWithinOperatingHours(vault.ACCESS_SCHEDULE)) {
         
-        // Create approval request (you'll need to implement this method in your Vault model)
         const approvalRequest = {
           approval_id: `APPR-${Date.now()}`,
           type: 'ACCESS_REQUEST',
-          amount: 0, // No amount for access requests
+          amount: 0,
           requested_by,
           requested_role: req.user.role,
           priority: 'HIGH',
@@ -582,7 +883,6 @@ router.post(
         accessRequest.approval_required = true;
         accessRequest.approval_id = approvalRequest.approval_id;
         
-        // Add to vault's pending approvals
         if (!vault.PENDING_APPROVALS) vault.PENDING_APPROVALS = [];
         vault.PENDING_APPROVALS.push(approvalRequest);
       } else {
@@ -675,7 +975,6 @@ router.post(
         if (drawer) {
           drawer.CURRENT_BALANCE = mongoose.Types.Decimal128.fromString(final_balance.toString());
           
-          // Update currency breakdown if provided
           if (currency_breakdown) {
             drawer.CLOSING_CURRENCY = currency_breakdown;
           }
@@ -748,241 +1047,162 @@ router.get(
         });
       }
       
+      // Calculate utilization percentage if not already set
+      let utilizationPercentage = vault.utilizationPercentage;
+      let availableCapacity = vault.availableCapacity;
+      
+      if (!utilizationPercentage && vault.DRAWER_REF && vault.VAULT_CAPACITY) {
+        const currentBalance = parseFloat(vault.DRAWER_REF.CURRENT_BALANCE?.toString() || '0');
+        const vaultCapacity = parseFloat(vault.VAULT_CAPACITY.toString());
+        
+        utilizationPercentage = vaultCapacity > 0 
+          ? (currentBalance / vaultCapacity) * 100 
+          : 0;
+        
+        availableCapacity = vaultCapacity - currentBalance;
+      }
+      
+      // Get active authorized personnel count
+      const activeAuthorizedCount = await User.countDocuments({
+        vaultAccessPermissions: {
+          $elemMatch: {
+            vaultId: vault._id,
+            isActive: true,
+            permissions: { $in: ['ACCESS', 'MANAGE'] }
+          }
+        },
+        status: 'ACTIVE'
+      });
+      
+      // Get latest access log
+      const lastAccessLog = await AccessLog.findOne({
+        vaultId: vault._id,
+        accessType: { $in: ['ENTRY', 'WITHDRAWAL', 'DEPOSIT'] }
+      }).sort({ timestamp: -1 });
+      
+      // Get security breach count
+      const securityBreachCount = await SecurityLog.countDocuments({
+        vaultId: vault._id,
+        severity: { $in: ['HIGH', 'CRITICAL'] },
+        resolved: false
+      });
+      
       const statusInfo = {
         vault_info: {
           code: vault.VAULT_CD,
           name: vault.VAULT_NM,
           category: vault.VAULT_CATEGORY,
-          security_level: vault.SECURITY_LEVEL
+          security_level: vault.SECURITY_LEVEL,
+          location: vault.LOCATION,
+          description: vault.DESCRIPTION
         },
         operational_status: {
           vault_status: vault.VAULT_STATUS,
           is_active: vault.IS_ACTIVE,
           requires_dual_control: vault.REQUIRES_DUAL_CONTROL,
-          last_activity: vault.LAST_ACTIVITY_DATE
+          last_activity: vault.LAST_ACTIVITY_DATE,
+          operational_mode: vault.OPERATIONAL_MODE || 'NORMAL'
         },
         access_info: {
-          authorized_personnel_count: vault.activeAuthorizedCount || 0,
-          last_access: vault.LAST_ACCESS_LOG,
-          access_schedule: vault.ACCESS_SCHEDULE
+          authorized_personnel_count: activeAuthorizedCount || 0,
+          last_access: lastAccessLog ? {
+            timestamp: lastAccessLog.timestamp,
+            user: lastAccessLog.userId,
+            type: lastAccessLog.accessType,
+            amount: lastAccessLog.amount
+          } : null,
+          access_schedule: vault.ACCESS_SCHEDULE,
+          access_restrictions: vault.ACCESS_RESTRICTIONS || []
         },
         security_info: {
-          security_breach_count: vault.SECURITY_BREACH_COUNT || 0,
+          security_breach_count: securityBreachCount || 0,
           last_security_check: vault.LAST_SECURITY_CHECK,
           next_security_audit: vault.NEXT_SECURITY_AUDIT,
-          active_security_features: (vault.SECURITY_FEATURES || []).filter(f => f.is_active).length
+          active_security_features: (vault.SECURITY_FEATURES || []).filter(f => f.is_active).length,
+          security_alerts: vault.SECURITY_ALERTS || []
         },
         financial_info: {
           current_balance: vault.DRAWER_REF ? parseFloat(vault.DRAWER_REF.CURRENT_BALANCE?.toString() || '0') : 0,
           vault_capacity: parseFloat(vault.VAULT_CAPACITY?.toString() || '0'),
-          utilization_percentage: vault.utilizationPercentage || 0,
-          available_capacity: vault.availableCapacity || 0
+          utilization_percentage: parseFloat(utilizationPercentage.toFixed(2)),
+          available_capacity: parseFloat(availableCapacity.toFixed(2)),
+          currency: vault.CURRENCY || 'USD',
+          minimum_balance: vault.MINIMUM_BALANCE || 0,
+          maximum_capacity: vault.MAXIMUM_CAPACITY || vault.VAULT_CAPACITY
         },
         maintenance_info: {
           maintenance_status: vault.maintenanceStatus || 'UNKNOWN',
           last_maintenance: vault.MAINTENANCE_SCHEDULE?.last_maintenance,
-          next_maintenance: vault.MAINTENANCE_SCHEDULE?.next_maintenance
+          next_maintenance: vault.MAINTENANCE_SCHEDULE?.next_maintenance,
+          maintenance_history: vault.MAINTENANCE_HISTORY || [],
+          maintenance_required: vault.MAINTENANCE_REQUIRED || false
         },
-        compliance_info: vault.securityCompliance || {}
-      };
-      
-      res.json({
-        success: true,
-        data: statusInfo
-      });
-      
-    } catch (error) {
-      console.error('Get vault status error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch vault status',
-        error: error.message
-      });
-    }
-  }
-);
-
-// =============================================
-// BULK OPERATIONS ROUTES
-// =============================================
-
-/**
- * @route   GET /api/vaults/branch/:branchCode
- * @desc    Get all vaults for a specific branch
- * @access  Branch Manager, Vault Manager
- * @permission VIEW_VAULTS
- */
-router.get(
-  '/branch/:branchCode',
-  [authenticate, checkPermissions('VIEW_VAULTS')],
-  async (req, res) => {
-    const { branchCode } = req.params;
-    const { category, status } = req.query;
-    
-    try {
-      const filter = { 
-        IS_ACTIVE: true 
-      };
-      
-      if (category) filter.VAULT_CATEGORY = category;
-      if (status) filter.VAULT_STATUS = status;
-      
-      const vaults = await Vault.find(filter)
-        .populate({
-          path: 'DRAWER_REF',
-          match: { BRANCH_CODE: branchCode }
-        })
-        .exec();
-      
-      // Filter out vaults where DRAWER_REF is null (no branch match)
-      const branchVaults = vaults.filter(vault => vault.DRAWER_REF !== null);
-      
-      res.json({
-        success: true,
-        data: {
-          branch_code: branchCode,
-          vault_count: branchVaults.length,
-          vaults: branchVaults
+        compliance_info: {
+          ...vault.securityCompliance || {},
+          last_compliance_check: vault.LAST_COMPLIANCE_CHECK,
+          next_compliance_audit: vault.NEXT_COMPLIANCE_AUDIT,
+          compliance_score: vault.COMPLIANCE_SCORE || 0,
+          regulatory_requirements: vault.REGULATORY_REQUIREMENTS || []
+        },
+        audit_info: {
+          last_audit_date: vault.LAST_AUDIT_DATE,
+          audit_findings: vault.AUDIT_FINDINGS || [],
+          audit_resolution_status: vault.AUDIT_RESOLUTION_STATUS || 'PENDING'
+        },
+        metadata: {
+          created_at: vault.CREATED_AT,
+          updated_at: vault.UPDATED_AT,
+          created_by: vault.CREATED_BY,
+          last_modified_by: vault.LAST_MODIFIED_BY,
+          version: vault.__v
         }
-      });
-      
-    } catch (error) {
-      console.error('Get branch vaults error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch branch vaults',
-        error: error.message
-      });
-    }
-  }
-);
-
-// =============================================
-// HEALTH CHECK ROUTES
-// =============================================
-
-/**
- * @route   GET /api/vaults/health/status
- * @desc    Get system health status for all vaults
- * @access  System Administrators
- * @permission VIEW_VAULT_STATISTICS
- */
-router.get(
-  '/health/status',
-  [authenticate, checkPermissions('VIEW_VAULT_STATISTICS')],
-  async (req, res) => {
-    try {
-      const vaults = await Vault.find({ IS_ACTIVE: true }).populate('DRAWER_REF');
-      
-      const healthStatus = {
-        total_vaults: vaults.length,
-        operational: vaults.filter(v => v.VAULT_STATUS === 'OPERATIONAL').length,
-        maintenance: vaults.filter(v => v.VAULT_STATUS === 'MAINTENANCE').length,
-        emergency_lockdown: vaults.filter(v => v.VAULT_STATUS === 'EMERGENCY_LOCKDOWN').length,
-        inventory: vaults.filter(v => v.VAULT_STATUS === 'INVENTORY').length,
-        security_issues: vaults.filter(v => (v.SECURITY_BREACH_COUNT || 0) > 0).length,
-        maintenance_required: vaults.filter(v => v.maintenanceStatus === 'OVERDUE' || v.maintenanceStatus === 'DUE_SOON').length,
-        low_capacity: vaults.filter(v => parseFloat(v.utilizationPercentage || 0) > 90).length,
-        high_security_vaults: vaults.filter(v => v.SECURITY_LEVEL === 'LEVEL_3' || v.SECURITY_LEVEL === 'LEVEL_4').length
       };
       
       res.json({
         success: true,
-        data: healthStatus,
-        timestamp: new Date()
+        data: statusInfo,
+        timestamp: new Date().toISOString(),
+        request_id: req.requestId || Math.random().toString(36).substr(2, 9)
       });
       
     } catch (error) {
-      console.error('Health check error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch system health status',
-        error: error.message
-      });
-    }
-  }
-);
-
-// =============================================
-// HELPER FUNCTIONS
-// =============================================
-
-function isWithinOperatingHours(accessSchedule) {
-  if (!accessSchedule || !accessSchedule.opening_time || !accessSchedule.closing_time) {
-    return true; // Default to accessible if no schedule defined
-  }
-  
-  const now = new Date();
-  const currentTime = now.toTimeString().slice(0, 5); // HH:MM format
-  const currentDay = now.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
-  
-  // Check if current day is in operating days
-  if (accessSchedule.operating_days && !accessSchedule.operating_days.includes(currentDay)) {
-    return false;
-  }
-  
-  // Check if current time is within operating hours
-  return currentTime >= accessSchedule.opening_time && currentTime <= accessSchedule.closing_time;
-}
-
-// =============================================
-// DEBUG ROUTE FOR PERMISSION TESTING
-// =============================================
-
-/**
- * @route   GET /api/vaults/debug/permissions
- * @desc    Debug route to check user permissions for vault operations
- * @access  Authenticated users
- */
-router.get(
-  '/debug/permissions',
-  authenticate,
-  async (req, res) => {
-    try {
-      const userRoleId = req.user?.roleId || req.user?.BU_ROLE_ID;
+      console.error('Error fetching vault status:', error);
       
-      if (!userRoleId) {
-        return res.status(401).json({
+      // Handle specific error types
+      if (error.name === 'CastError') {
+        return res.status(400).json({
           success: false,
-          message: 'User role not found'
+          message: 'Invalid vault ID format',
+          error: error.message
         });
       }
       
-      // Check all vault permissions
-      const vaultPermissions = {};
-      for (const [key, permission] of Object.entries(VAULT_PERMISSIONS)) {
-        const hasPermission = await require('../constants/roleMapping.js').roleHasPermission(userRoleId, permission);
-        vaultPermissions[key] = {
-          permission,
-          hasAccess: hasPermission
-        };
+      if (error.name === 'ValidationError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          error: error.message
+        });
       }
       
-      res.json({
-        success: true,
-        user: {
-          id: req.user?.id,
-          username: req.user?.user_name,
-          role: req.user?.role,
-          roleId: userRoleId
-        },
-        vaultPermissions
-      });
+      // Handle database connection errors
+      if (error.name === 'MongoNetworkError' || error.name === 'MongoTimeoutError') {
+        return res.status(503).json({
+          success: false,
+          message: 'Database connection error. Please try again later.',
+          error: 'Service unavailable'
+        });
+      }
       
-    } catch (error) {
-      console.error('Debug permissions error:', error);
+      // Generic error response
       res.status(500).json({
         success: false,
-        message: 'Failed to check permissions',
-        error: error.message
+        message: 'Internal server error while fetching vault status',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }
 );
-
-// =============================================
-// EXPORT VAULT PERMISSIONS FOR INTEGRATION
-// =============================================
 
 export { VAULT_PERMISSIONS };
 
