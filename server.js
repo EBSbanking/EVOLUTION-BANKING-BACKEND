@@ -1,4 +1,4 @@
-// server.js - Fixed version with proper system status handling, date formatting, and EOD management
+// server.js - Fixed version with proper system status handling, date formatting, EOD management, and permission sync
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -401,6 +401,26 @@ const getSystemStatus = () => {
   };
 };
 
+// Permission Sync Helper
+const syncPermissionsToDatabase = async () => {
+  try {
+    console.log('🔄 Syncing permissions to database...');
+    
+    // Import the syncPermissions function
+    const { syncPermissions } = await import('./src/constants/roleMapping.js');
+    
+    // Run the sync
+    await syncPermissions();
+    
+    console.log('✅ Permissions synced to database successfully');
+    return true;
+  } catch (error) {
+    console.log('⚠️ Permissions sync failed:', error.message);
+    // Don't fail the entire startup if permissions sync fails
+    return false;
+  }
+};
+
 // Start Backend Server
 const startServer = async () => {
   try {
@@ -480,6 +500,19 @@ const startServer = async () => {
       };
     }
 
+    // STEP 1.7: Sync Permissions to Database (NEW STEP)
+    console.log('🔄 STEP 1.7: Syncing permissions to database...');
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await syncPermissionsToDatabase();
+      } catch (permissionError) {
+        console.log('⚠️ Permissions sync error:', permissionError.message);
+        // Continue startup even if permissions sync fails
+      }
+    } else {
+      console.log('⚠️ Skipping permissions sync - MongoDB not connected');
+    }
+
     // STEP 2: Start the server
     console.log('🔄 STEP 2: Starting HTTP server...');
     const PORT = process.env.PORT || 5000;
@@ -506,6 +539,7 @@ const startServer = async () => {
       console.log(`📅 Current Business Date: ${businessDateDisplay}`);
       console.log(`📅 System Dates: ${currentStatus.status}`);
       console.log(`🔄 EOD Status: ${currentStatus.eodStatus || 'IDLE'}`);
+      console.log(`📋 Permissions: Synced on startup`);
       console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🛡️  CORS Origins: ${allowedOrigins.length} configured`);
       console.log('='.repeat(60) + '\n');

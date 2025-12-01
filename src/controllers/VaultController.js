@@ -350,39 +350,58 @@ export const getAllVaults = async (req, res) => {
 /**
  * Get vault by ID
  */
-export const getVaultById = async (req, res) => {
+// In your VaultController.js, update the getVaultById function:
+async function getVaultById(req, res) {
   try {
     const { id } = req.params;
-
-    const vault = await Vault.findOne({
-      $or: [
-        { _id: id },
-        { VAULT_ID: parseInt(id) },
-        { VAULT_CD: id }
-      ]
-    }).populate('DRAWER_REF');
-
+    console.log('🔍 Fetching vault with ID:', id, 'Type:', typeof id);
+    
+    // Try to parse as number first (if it looks like VAULT_ID)
+    const numericId = parseInt(id);
+    
+    let query;
+    if (!isNaN(numericId) && numericId.toString() === id) {
+      // It's a pure number, search by VAULT_ID
+      console.log('🔍 Searching by VAULT_ID:', numericId);
+      query = { VAULT_ID: numericId };
+    } else if (mongoose.Types.ObjectId.isValid(id)) {
+      // It's a valid ObjectId
+      console.log('🔍 Searching by _id (ObjectId):', id);
+      query = { _id: id };
+    } else {
+      // Treat as VAULT_CD (vault code/string)
+      console.log('🔍 Searching by VAULT_CD:', id);
+      query = { VAULT_CD: id };
+    }
+    
+    console.log('🔍 Query:', query);
+    
+    const vault = await Vault.findOne(query)
+      .populate('DRAWER_REF')
+      .populate('BRANCH_REF')
+      .lean();
+    
     if (!vault) {
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
-
+    
     res.json({
       success: true,
       data: vault
     });
-
+    
   } catch (error) {
-    console.error('Get vault by ID error:', error);
+    console.error('Error fetching vault:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch vault',
       error: error.message
     });
   }
-};
+}
 
 /**
  * Update vault details

@@ -52,11 +52,75 @@ const VAULT_PERMISSIONS = {
   CLOSE_VAULT: 'CLOSE_VAULT',
   VIEW_VAULT_STATUS: 'VIEW_VAULT_STATUS',
   
-  // ✅ NEW: Branch Operations
+  // ✅ **ADDED: VIEW_BRANCH_VAULTS permission**
   VIEW_BRANCH_VAULTS: 'VIEW_BRANCH_VAULTS',
+  
+  // ✅ **EXISTING: Branch Operations**
   VIEW_BRANCH_SUMMARY: 'VIEW_BRANCH_SUMMARY',
   TRANSFER_BETWEEN_BRANCHES: 'TRANSFER_BETWEEN_BRANCHES',
-  BULK_BRANCH_AUTHORIZE: 'BULK_BRANCH_AUTHORIZE'
+  BULK_BRANCH_AUTHORIZE: 'BULK_BRANCH_AUTHORIZE',
+  
+  // ✅ **NEW: Additional Branch Vault Management Permissions**
+  MANAGE_BRANCH_VAULTS: 'MANAGE_BRANCH_VAULTS',
+  CONFIGURE_BRANCH_VAULT: 'CONFIGURE_BRANCH_VAULT',
+  VIEW_BRANCH_VAULT_STATUS: 'VIEW_BRANCH_VAULT_STATUS',
+  BRANCH_VAULT_ACCESS: 'BRANCH_VAULT_ACCESS',
+  
+  // ✅ **NEW: Financial Operations**
+  VAULT_DEPOSIT: 'VAULT_DEPOSIT',
+  VAULT_WITHDRAWAL: 'VAULT_WITHDRAWAL',
+  VAULT_TRANSFER: 'VAULT_TRANSFER',
+  VAULT_RECONCILIATION: 'VAULT_RECONCILIATION',
+  
+  // ✅ **NEW: Audit & Compliance**
+  VAULT_AUDIT: 'CONDUCT_VAULT_AUDIT',
+  VAULT_COMPLIANCE_CHECK: 'PERFORM_VAULT_COMPLIANCE_CHECK',
+  GENERATE_VAULT_REPORT: 'GENERATE_VAULT_REPORT',
+  
+  // ✅ **NEW: Emergency Operations**
+  EMERGENCY_VAULT_ACCESS: 'EMERGENCY_VAULT_ACCESS',
+  VAULT_LOCKDOWN: 'INITIATE_VAULT_LOCKDOWN',
+  VAULT_ALARM_CONTROL: 'CONTROL_VAULT_ALARM',
+  
+  // ✅ **NEW: Key Management**
+  MANAGE_VAULT_KEYS: 'MANAGE_VAULT_KEYS',
+  ISSUE_TEMP_ACCESS: 'ISSUE_TEMPORARY_ACCESS',
+  TRACK_KEY_USAGE: 'TRACK_KEY_USAGE',
+  
+  // ✅ **NEW: Capacity Management**
+  VIEW_VAULT_CAPACITY: 'VIEW_VAULT_CAPACITY',
+  UPDATE_VAULT_CAPACITY: 'UPDATE_VAULT_CAPACITY',
+  VAULT_SPACE_ALLOCATION: 'MANAGE_VAULT_SPACE_ALLOCATION',
+  
+  // ✅ **NEW: Inventory Management**
+  VAULT_INVENTORY_VIEW: 'VIEW_VAULT_INVENTORY',
+  VAULT_INVENTORY_UPDATE: 'UPDATE_VAULT_INVENTORY',
+  TRACK_VAULT_CONTENTS: 'TRACK_VAULT_CONTENTS',
+  
+  // ✅ **NEW: Schedule Management**
+  MANAGE_VAULT_SCHEDULE: 'MANAGE_VAULT_SCHEDULE',
+  VIEW_VAULT_CALENDAR: 'VIEW_VAULT_CALENDAR',
+  SET_VAULT_HOURS: 'SET_VAULT_OPERATING_HOURS',
+  
+  // ✅ **NEW: Multi-level Access**
+  TIER1_VAULT_ACCESS: 'TIER1_VAULT_ACCESS',
+  TIER2_VAULT_ACCESS: 'TIER2_VAULT_ACCESS',
+  TIER3_VAULT_ACCESS: 'TIER3_VAULT_ACCESS',
+  
+  // ✅ **NEW: Notification & Alerts**
+  VAULT_ALERTS: 'VIEW_VAULT_ALERTS',
+  CONFIGURE_VAULT_ALERTS: 'CONFIGURE_VAULT_ALERTS',
+  ACKNOWLEDGE_VAULT_ALERT: 'ACKNOWLEDGE_VAULT_ALERT',
+  
+  // ✅ **NEW: Documentation**
+  VAULT_DOCUMENTATION: 'VIEW_VAULT_DOCUMENTATION',
+  UPDATE_VAULT_DOCS: 'UPDATE_VAULT_DOCUMENTATION',
+  VAULT_POLICIES: 'VIEW_VAULT_POLICIES',
+  
+  // ✅ **NEW: Training & Certification**
+  VAULT_TRAINING: 'ACCESS_VAULT_TRAINING',
+  CERTIFY_PERSONNEL: 'CERTIFY_VAULT_PERSONNEL',
+  VIEW_CERTIFICATIONS: 'VIEW_VAULT_CERTIFICATIONS'
 };
 
 // =============================================
@@ -139,6 +203,10 @@ router.delete(
 // ✅ NEW: BRANCH-SPECIFIC VAULT ROUTES
 // =============================================
 
+// =============================================
+// ✅ NEW: BRANCH-SPECIFIC VAULT ROUTES
+// =============================================
+
 /**
  * @route   GET /api/vaults/branch/:branchCode
  * @desc    Get all vaults for a specific branch (Business Unit)
@@ -146,11 +214,46 @@ router.delete(
  * @permission VIEW_BRANCH_VAULTS
  */
 router.get(
-  '/branch/:branchCode',
+  '/branch/:branchId',
   [authenticate, checkPermissions('VIEW_BRANCH_VAULTS')],
-  vaultController.getVaultByBU
+  async (req, res) => {
+    try {
+      const { branchId } = req.params;
+      
+      // Get vaults for the specified branch
+      const vaults = await Vault.find({
+        BRANCH_CODE: branchId,
+        IS_ACTIVE: true
+      })
+      .populate('DRAWER_REF')
+      .sort({ VAULT_CD: 1 });
+      
+      if (vaults.length === 0) {
+        return res.json({
+          success: true,
+          message: `No active vaults found for branch ${branchId}`,
+          data: [],
+          count: 0
+        });
+      }
+      
+      res.json({
+        success: true,
+        data: vaults,
+        count: vaults.length,
+        branch: branchId
+      });
+      
+    } catch (error) {
+      console.error('Error fetching branch vaults:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch branch vaults',
+        error: error.message
+      });
+    }
+  }
 );
-
 /**
  * @route   GET /api/vaults/branch/:branchCode/summary
  * @desc    Get consolidated vault summary for a branch
