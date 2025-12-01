@@ -1,5 +1,5 @@
 import express from 'express';
-import vaultController from '../controllers/vaultController.js';
+import vaultController from '../controllers/VaultController.js';
 import VaultConfigController from '../controllers/vaultConfigController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 import { checkPermissions, tempBypassPermissions } from '../constants/roleMapping.js'; // Added tempBypassPermissions
