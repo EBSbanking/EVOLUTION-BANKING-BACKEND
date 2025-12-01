@@ -42,7 +42,8 @@ app.use(monitor());
 // Rate Limiting (bypass for development or login endpoint)
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
+  // max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 1000,
+  max:  1000,
   message: 'Too many requests from this IP, please try again later.',
   skip: (req) => {
     const isDev = process.env.NODE_ENV === 'development';

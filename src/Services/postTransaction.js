@@ -6,7 +6,7 @@ import AuditTrail from '../models/AuditTrail.js';
 import Drawer from '../models/Drawer.js';
 import { checkPolicy } from '../Services/transactionPolicyService.js';
 import logger from '../utils/logger.js';
-import { TransactionService } from '../services/transactionService.js';
+import { TransactionService } from '../Services/transactionService.js';
 
 const generateTransactionRef = () => {
   const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
