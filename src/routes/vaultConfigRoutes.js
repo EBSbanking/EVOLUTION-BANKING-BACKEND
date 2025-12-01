@@ -1,6 +1,6 @@
 // src/routes/vaultConfigRoutes.js - CORRECTED VERSION
 import express from 'express';
-import VaultConfigController from '../controllers/VaultConfigController.js';
+import VaultConfigController from '../controllers/vaultConfigController.js';
 import { authenticate, validatePermission } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
