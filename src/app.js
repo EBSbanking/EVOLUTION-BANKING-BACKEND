@@ -396,6 +396,8 @@ import CollectionRoutes from './routes/CollectionRoutes.js';
 import AccountRoutes from './routes/AccountRoutes.js'
 import chartofAccountRoutes from './routes/chartofAccountRoutes.js';
 import AccountStatementRoutes from './routes/accountStatementRoutes.js';
+import VaultRoutes from './routes/VaultRoutes.js';
+import vaultConfigRoutes from './routes/vaultConfigRoutes.js';
 
 // ----------------------------
 // Mount API Routes
@@ -531,6 +533,9 @@ app.use('/api/collections', CollectionRoutes);
 app.use('/api/accounts', AccountRoutes);
 app.use('/api/chart-of-accounts', chartofAccountRoutes);
 app.use('/api/account-statements', AccountStatementRoutes);
+
+app.use('/api/vault-config', vaultConfigRoutes);
+app.use('/api/vault', VaultRoutes);
 
 // ----------------------------
 // Static Files & React Build (Production Only)

@@ -4,6 +4,8 @@ import mongoose from 'mongoose';
 import AuditTrail from '../models/AuditTrail.js';
 import logger from '../utils/logger.js';
 import DrawerCurrencyDenomination from '../models/DrawerCurrencyDenomination.js';
+import Branch from '../models/Branch.js';
+
 
 // Calculate total amount from currency denominations
 const calculateTotalFromDenominations = (currency) => {
@@ -316,38 +318,48 @@ export const debugDrawerState = async (req, res) => {
   }
 };
 
-// Get a specific Drawer entry by ID or DRAWER_ID
+
+// Enhanced version with multiple search criteria
 export const getDrawerById = async (req, res) => {
   try {
     const { id } = req.params;
     
     let drawer;
-    
-    // Check if id is a valid MongoDB ObjectId (24 character hex string)
+
+    // Check if id is a valid MongoDB ObjectId
     if (mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
       drawer = await Drawer.findById(id);
     } else {
-      // Try to find by custom DRAWER_ID (numeric or string)
-      const numericId = parseInt(id, 10);
-      if (!isNaN(numericId)) {
-        drawer = await Drawer.findOne({ DRAWER_ID: numericId });
-      } else {
-        // Try by DRAWER_NO
-        drawer = await Drawer.findOne({ DRAWER_NO: id });
+      // Try multiple search criteria in order of likelihood
+      const searchCriteria = [
+        { DRAWER_NO: id },                    // Most likely: "1002"
+        { DRAWER_ID: parseInt(id) },          // If numeric: 2
+        { DRAWER_NM: { $regex: id, $options: 'i' } } // Name search
+      ];
+
+      // Try each search criteria until we find a match
+      for (const criteria of searchCriteria) {
+        drawer = await Drawer.findOne(criteria);
+        if (drawer) break;
       }
     }
 
     if (!drawer) {
-      return res.status(404).json({ message: 'Drawer entry not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: `Drawer entry not found for identifier: ${id}`,
+        suggestion: 'Try searching by DRAWER_NO (e.g., "1002"), DRAWER_ID (e.g., "2"), or MongoDB ObjectId'
+      });
     }
 
     res.status(200).json({
       success: true,
-      drawer
+      data: drawer
     });
   } catch (error) {
     console.error('Error retrieving drawer:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Error retrieving Drawer entry', 
       error: error.message 
     });
@@ -1072,13 +1084,44 @@ export const getDrawerOpeningReport = async (req, res) => {
   }
 };
 
-// ENHANCED: Process transaction against drawer with OPEN status validation
-// ENHANCED: Process transaction against drawer with OPEN status validation
-export const processDrawerTransaction = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+
+// Helper function to find drawer by multiple identifiers
+const findDrawerByIdentifier = async (identifier, session = null) => {
+  let drawer;
+  
+  // Check if identifier is a valid MongoDB ObjectId
+  if (mongoose.Types.ObjectId.isValid(identifier)) {
+    drawer = await Drawer.findById(identifier).session(session);
+    if (drawer) return drawer;
+  }
+  
+  // Try as DRAWER_NO (string)
+  drawer = await Drawer.findOne({ DRAWER_NO: identifier.toString() }).session(session);
+  if (drawer) return drawer;
+  
+  // Try as DRAWER_ID (numeric)
+  const numericId = parseInt(identifier);
+  if (!isNaN(numericId)) {
+    drawer = await Drawer.findOne({ DRAWER_ID: numericId }).session(session);
+    if (drawer) return drawer;
+  }
+  
+  return null;
+};
+
+// Main transaction processing function
+export const processDrawerTransaction = async (req, res, session = null) => {
+  let internalSession = session;
+  let shouldEndSession = false;
   
   try {
+    // If no session provided, create one
+    if (!internalSession) {
+      internalSession = await mongoose.startSession();
+      internalSession.startTransaction();
+      shouldEndSession = true;
+    }
+
     const { 
       drawerId, 
       transactionType, 
@@ -1091,33 +1134,42 @@ export const processDrawerTransaction = async (req, res) => {
 
     // Validate required fields
     if (!drawerId || !transactionType || !amount || amount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ 
+      if (shouldEndSession) await internalSession.abortTransaction();
+      return { 
+        success: false,
         message: 'Missing required fields: drawerId, transactionType, amount' 
-      });
+      };
     }
 
-    const drawer = await Drawer.findById(drawerId).session(session);
+    // Use the helper function to find drawer by multiple identifiers
+    const drawer = await findDrawerByIdentifier(drawerId, internalSession);
     if (!drawer) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: 'Drawer not found' });
+      if (shouldEndSession) await internalSession.abortTransaction();
+      return { 
+        success: false,
+        message: 'Drawer not found' 
+      };
     }
 
     // CRITICAL: Check if drawer is OPEN before processing transaction
     if (drawer.WF_STATUS !== 'OPEN') {
-      await session.abortTransaction();
-      return res.status(400).json({ 
+      if (shouldEndSession) await internalSession.abortTransaction();
+      return { 
+        success: false,
         message: 'Drawer is not open. Please open the drawer before processing transactions.',
         currentStatus: drawer.WF_STATUS,
         lastOpened: drawer.LAST_DRAWER_OPEN_DT,
         lastClosed: drawer.LAST_DRAWER_CLOSE_DT
-      });
+      };
     }
 
     // Check if drawer is active
     if (drawer.REC_ST !== 'A') {
-      await session.abortTransaction();
-      return res.status(400).json({ message: 'Drawer is not active' });
+      if (shouldEndSession) await internalSession.abortTransaction();
+      return { 
+        success: false,
+        message: 'Drawer is not active' 
+      };
     }
 
     let updatedBalance;
@@ -1129,46 +1181,54 @@ export const processDrawerTransaction = async (req, res) => {
     
     switch (normalizedType) {
       case 'DEPOSIT': 
+      case 'OPENING_DEPOSIT':
         // Customer DEPOSITS cash: CREDIT customer account, CREDIT drawer (cash IN)
-        updatedBalance = drawer.CURRENT_BALANCE + amount;
+        updatedBalance = parseFloat(drawer.CURRENT_BALANCE.toString()) + amount;
         transactionEffect = 'CREDIT';
-        transactionDescription = `Cash deposit from account ${customerAccount}`;
+        transactionDescription = normalizedType === 'OPENING_DEPOSIT' 
+          ? 'Opening cash deposit' 
+          : `Cash deposit from account ${customerAccount}`;
         break;
 
       case 'WITHDRAWAL': 
         // Customer WITHDRAWS cash: DEBIT customer account, DEBIT drawer (cash OUT)
-        if (drawer.CURRENT_BALANCE < amount) {
-          await session.abortTransaction();
-          return res.status(400).json({ 
-            message: `Insufficient drawer balance. Available: ${drawer.CURRENT_BALANCE}, Required: ${amount}` 
-          });
+        if (parseFloat(drawer.CURRENT_BALANCE.toString()) < amount) {
+          if (shouldEndSession) await internalSession.abortTransaction();
+          return { 
+            success: false,
+            message: `Insufficient drawer balance. Available: ₦${parseFloat(drawer.CURRENT_BALANCE.toString())}, Required: ₦${amount}` 
+          };
         }
-        updatedBalance = drawer.CURRENT_BALANCE - amount;
+        updatedBalance = parseFloat(drawer.CURRENT_BALANCE.toString()) - amount;
         transactionEffect = 'DEBIT';
         transactionDescription = `Cash withdrawal to account ${customerAccount}`;
         break;
 
       case 'CASH_RECEIPT': 
-        updatedBalance = drawer.CURRENT_BALANCE + amount;
+        updatedBalance = parseFloat(drawer.CURRENT_BALANCE.toString()) + amount;
         transactionEffect = 'CREDIT';
         transactionDescription = description || 'Cash receipt';
         break;
 
       case 'CASH_DISBURSEMENT': 
-        if (drawer.CURRENT_BALANCE < amount) {
-          await session.abortTransaction();
-          return res.status(400).json({ 
-            message: 'Insufficient drawer balance for disbursement' 
-          });
+        if (parseFloat(drawer.CURRENT_BALANCE.toString()) < amount) {
+          if (shouldEndSession) await internalSession.abortTransaction();
+          return { 
+            success: false,
+            message: `Insufficient drawer balance for disbursement. Available: ₦${parseFloat(drawer.CURRENT_BALANCE.toString())}, Required: ₦${amount}` 
+          };
         }
-        updatedBalance = drawer.CURRENT_BALANCE - amount;
+        updatedBalance = parseFloat(drawer.CURRENT_BALANCE.toString()) - amount;
         transactionEffect = 'DEBIT';
         transactionDescription = description || 'Cash disbursement';
         break;
 
       default:
-        await session.abortTransaction();
-        return res.status(400).json({ message: 'Invalid transaction type' });
+        if (shouldEndSession) await internalSession.abortTransaction();
+        return { 
+          success: false,
+          message: 'Invalid transaction type' 
+        };
     }
 
     // Check and update drawer limits
@@ -1181,15 +1241,16 @@ export const processDrawerTransaction = async (req, res) => {
     }
 
     // Update drawer balance and flags
-    const previousBalance = drawer.CURRENT_BALANCE;
-    drawer.CURRENT_BALANCE = updatedBalance;
+    const previousBalance = parseFloat(drawer.CURRENT_BALANCE.toString());
+    drawer.CURRENT_BALANCE = mongoose.Types.Decimal128.fromString(updatedBalance.toFixed(2));
     drawer.DRAWER_CASH_LIMIT_FG = limitFlag;
     drawer.VERSION_NO += 1;
+    drawer.updatedAt = new Date();
 
-    await drawer.save({ session });
+    await drawer.save({ session: internalSession });
 
     // ✅ ADDED: Verify the update immediately after save
-    const verifiedDrawer = await Drawer.findById(drawer._id).session(session);
+    const verifiedDrawer = await Drawer.findById(drawer._id).session(internalSession);
     console.log(`🔍 Drawer ${drawer.DRAWER_NO} balance after ${normalizedType}: ₦${parseFloat(verifiedDrawer.CURRENT_BALANCE.toString())}`);
 
     // Create transaction record
@@ -1205,14 +1266,17 @@ export const processDrawerTransaction = async (req, res) => {
       previousBalance,
       newBalance: updatedBalance,
       timestamp: new Date(),
-      userId: userId || req.user?.id,
+      userId: userId || 'system',
       status: 'COMPLETED',
-      drawerStatus: 'OPEN' // Track that drawer was open during transaction
+      drawerStatus: 'OPEN'
     };
 
-    await session.commitTransaction();
+    if (shouldEndSession) {
+      await internalSession.commitTransaction();
+    }
 
-    res.status(200).json({
+    return {
+      success: true,
       message: 'Transaction processed successfully',
       transaction: transactionRecord,
       drawer: {
@@ -1222,19 +1286,25 @@ export const processDrawerTransaction = async (req, res) => {
         newBalance: updatedBalance,
         transactionEffect,
         limitExceeded: limitFlag === 'Y',
-        status: drawer.WF_STATUS // Confirm drawer is still open
+        status: drawer.WF_STATUS,
+        CURRENT_BALANCE: updatedBalance
       }
-    });
+    };
 
   } catch (error) {
-    await session.abortTransaction();
+    if (shouldEndSession && internalSession) {
+      await internalSession.abortTransaction();
+    }
     console.error('Transaction processing error:', error);
-    res.status(500).json({ 
+    return { 
+      success: false,
       message: 'Error processing transaction', 
       error: error.message 
-    });
+    };
   } finally {
-    session.endSession();
+    if (shouldEndSession && internalSession) {
+      internalSession.endSession();
+    }
   }
 };
 
@@ -1797,4 +1867,1162 @@ export const getDrawerTransactionSummary = async (req, res) => {
       error: error.message 
     });
   }
+};
+
+// Get comprehensive drawer enquiry with detailed information
+export const getDrawerEnquiry = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { includeTransactions = 'false' } = req.query;
+
+    // Find drawer by DRAWER_ID or DRAWER_NO
+    let drawer;
+    const drawerIdNum = parseInt(id);
+    if (!isNaN(drawerIdNum)) {
+      drawer = await Drawer.findOne({ DRAWER_ID: drawerIdNum });
+    } else {
+      drawer = await Drawer.findOne({ DRAWER_NO: id });
+    }
+
+    if (!drawer) {
+      return res.status(404).json({ message: 'Drawer not found' });
+    }
+
+    // Basic drawer information
+    const enquiryData = {
+      drawerInfo: {
+        DRAWER_ID: drawer.DRAWER_ID,
+        DRAWER_NO: drawer.DRAWER_NO,
+        DRAWER_NM: drawer.DRAWER_NM,
+        DRAWER_TY_CD: drawer.DRAWER_TY_CD,
+        USER_ID: drawer.USER_ID,
+        BU_ID: drawer.BU_ID,
+        GL_ACCT_NO: drawer.GL_ACCT_NO,
+        STATUS: drawer.WF_STATUS,
+        REC_ST: drawer.REC_ST
+      },
+      balanceInfo: {
+        currentBalance: parseFloat(drawer.CURRENT_BALANCE.toString()),
+        minBalance: parseFloat(drawer.MIN_BAL.toString()),
+        maxBalance: parseFloat(drawer.MAX_BAL.toString()),
+        availableBalance: Math.max(0, parseFloat(drawer.CURRENT_BALANCE.toString()) - parseFloat(drawer.MIN_BAL.toString())),
+        totalInsuredAmt: parseFloat(drawer.TOTAL_INSURED_AMT.toString()),
+        overageAmt: parseFloat(drawer.OVERAGE_AMT.toString()),
+        shortageAmt: parseFloat(drawer.SHORTAGE_AMT.toString())
+      },
+      sessionInfo: {
+        lastOpened: drawer.LAST_DRAWER_OPEN_DT,
+        lastClosed: drawer.LAST_DRAWER_CLOSE_DT,
+        sessionStartBalance: parseFloat(drawer.SESSION_START_BALANCE?.toString() || '0'),
+        sessionEndBalance: parseFloat(drawer.SESSION_END_BALANCE?.toString() || '0'),
+        sessionDuration: calculateSessionDuration(drawer.LAST_DRAWER_OPEN_DT, drawer.LAST_DRAWER_CLOSE_DT)
+      },
+      limitsInfo: {
+        drawerCashLimitFlag: drawer.DRAWER_CASH_LIMIT_FG,
+        drawerLimitExceedCount: drawer.DRAWER_LIMIT_EXCEED_TM,
+        drawerInsuredLimitFlag: drawer.DRAWER_INSURED_LIMIT_FG,
+        isOverLimit: parseFloat(drawer.CURRENT_BALANCE.toString()) > parseFloat(drawer.MAX_BAL.toString()),
+        isUnderLimit: parseFloat(drawer.CURRENT_BALANCE.toString()) < parseFloat(drawer.MIN_BAL.toString())
+      },
+      currencyInfo: {
+        openingCurrency: drawer.OPENING_CURRENCY,
+        closingCurrency: drawer.CLOSING_CURRENCY
+      },
+      operationalInfo: {
+        canProcessTransactions: drawer.WF_STATUS === 'OPEN' && drawer.REC_ST === 'A',
+        requiresClosingDenomination: drawer.WF_STATUS === 'CLOSED' && drawer.LAST_DRAWER_CLOSE_DT && !drawer.CLOSING_CURRENCY_DENOMINATION,
+        versionNo: drawer.VERSION_NO,
+        createdDate: drawer.CREATE_DT,
+        lastUpdated: drawer.SYS_CREATE_TS
+      }
+    };
+
+    // Include recent transactions if requested
+    if (includeTransactions === 'true') {
+      const recentTransactions = await AuditTrail.find({
+        entity_type: 'Drawer',
+        entity_id: drawer._id,
+        event_type: { 
+          $in: [
+            'TRANSACTION_PROCESSED',
+            'DRAWER_TO_DRAWER_TRANSFER',
+            'DRAWER_TO_VAULT_TRANSFER',
+            'DRAWER_CURRENCY_ADJUSTMENT'
+          ]
+        }
+      })
+      .sort({ createDt: -1 })
+      .limit(10)
+      .lean();
+
+      enquiryData.recentTransactions = recentTransactions.map(txn => ({
+        timestamp: txn.createDt,
+        eventType: txn.event_type,
+        action: txn.action,
+        amount: txn.additional_info?.amount,
+        referenceNo: txn.reference_no,
+        description: txn.description
+      }));
+    }
+
+    res.status(200).json({
+      success: true,
+      enquiry: enquiryData,
+      timestamp: new Date()
+    });
+
+  } catch (error) {
+    console.error('Error in drawer enquiry:', error);
+    res.status(500).json({ 
+      message: 'Error retrieving drawer enquiry', 
+      error: error.message 
+    });
+  }
+};
+
+// Get multiple drawers enquiry for comparison
+export const getMultipleDrawersEnquiry = async (req, res) => {
+  try {
+    const { drawerIds } = req.body; // Array of drawer IDs/numbers
+    const { summaryOnly = 'false' } = req.query;
+
+    if (!drawerIds || !Array.isArray(drawerIds) || drawerIds.length === 0) {
+      return res.status(400).json({ message: 'drawerIds array is required' });
+    }
+
+    const drawersEnquiry = [];
+    
+    for (const drawerId of drawerIds) {
+      let drawer;
+      const drawerIdNum = parseInt(drawerId);
+      
+      if (!isNaN(drawerIdNum)) {
+        drawer = await Drawer.findOne({ DRAWER_ID: drawerIdNum });
+      } else {
+        drawer = await Drawer.findOne({ DRAWER_NO: drawerId });
+      }
+
+      if (drawer) {
+        drawersEnquiry.push({
+          DRAWER_ID: drawer.DRAWER_ID,
+          DRAWER_NO: drawer.DRAWER_NO,
+          DRAWER_NM: drawer.DRAWER_NM,
+          USER_ID: drawer.USER_ID,
+          STATUS: drawer.WF_STATUS,
+          currentBalance: parseFloat(drawer.CURRENT_BALANCE.toString()),
+          minBalance: parseFloat(drawer.MIN_BAL.toString()),
+          maxBalance: parseFloat(drawer.MAX_BAL.toString()),
+          availableBalance: Math.max(0, parseFloat(drawer.CURRENT_BALANCE.toString()) - parseFloat(drawer.MIN_BAL.toString())),
+          lastOpened: drawer.LAST_DRAWER_OPEN_DT,
+          lastClosed: drawer.LAST_DRAWER_CLOSE_DT,
+          canProcessTransactions: drawer.WF_STATUS === 'OPEN' && drawer.REC_ST === 'A'
+        });
+      }
+    }
+
+    // Calculate summary statistics
+    const summary = {
+      totalDrawers: drawersEnquiry.length,
+      openDrawers: drawersEnquiry.filter(d => d.STATUS === 'OPEN').length,
+      closedDrawers: drawersEnquiry.filter(d => d.STATUS === 'CLOSED').length,
+      totalBalance: drawersEnquiry.reduce((sum, d) => sum + d.currentBalance, 0),
+      totalAvailableBalance: drawersEnquiry.reduce((sum, d) => sum + d.availableBalance, 0),
+      averageBalance: drawersEnquiry.length > 0 ? 
+        drawersEnquiry.reduce((sum, d) => sum + d.currentBalance, 0) / drawersEnquiry.length : 0
+    };
+
+    const response = {
+      success: true,
+      count: drawersEnquiry.length,
+      summary,
+      timestamp: new Date()
+    };
+
+    if (summaryOnly !== 'true') {
+      response.drawers = drawersEnquiry;
+    }
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    console.error('Error in multiple drawers enquiry:', error);
+    res.status(500).json({ 
+      message: 'Error retrieving multiple drawers enquiry', 
+      error: error.message 
+    });
+  }
+};
+
+// =============================================
+// DRAWER TO DRAWER TRANSACTION
+// =============================================
+
+export const processDrawerToDrawerTransfer = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const {
+      sourceDrawerId,
+      targetDrawerId,
+      amount,
+      currencyBreakdown,
+      referenceNo,
+      description,
+      userId,
+      verifiedBy
+    } = req.body;
+
+    // Validate required fields
+    if (!sourceDrawerId || !targetDrawerId || !amount || amount <= 0 || !userId) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Missing required fields: sourceDrawerId, targetDrawerId, amount, userId' 
+      });
+    }
+
+    if (sourceDrawerId === targetDrawerId) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Source and target drawer cannot be the same' 
+      });
+    }
+
+    // Find both drawers
+    const sourceDrawer = await findDrawerByIdentifier(sourceDrawerId, session);
+    const targetDrawer = await findDrawerByIdentifier(targetDrawerId, session);
+
+    if (!sourceDrawer) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Source drawer not found' });
+    }
+
+    if (!targetDrawer) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Target drawer not found' });
+    }
+
+    // Validate drawer statuses
+    if (sourceDrawer.WF_STATUS !== 'OPEN') {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Source drawer must be open for transfer',
+        currentStatus: sourceDrawer.WF_STATUS
+      });
+    }
+
+    if (targetDrawer.WF_STATUS !== 'OPEN') {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Target drawer must be open for transfer',
+        currentStatus: targetDrawer.WF_STATUS
+      });
+    }
+
+    // Check source drawer balance
+    const sourceBalance = parseFloat(sourceDrawer.CURRENT_BALANCE.toString());
+    if (sourceBalance < amount) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: `Insufficient balance in source drawer. Available: ${sourceBalance}, Required: ${amount}` 
+      });
+    }
+
+    // Check target drawer limits
+    const targetBalance = parseFloat(targetDrawer.CURRENT_BALANCE.toString());
+    const targetMaxBalance = parseFloat(targetDrawer.MAX_BAL.toString());
+    if (targetBalance + amount > targetMaxBalance) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: `Transfer would exceed target drawer maximum balance. Current: ${targetBalance}, Max: ${targetMaxBalance}, After Transfer: ${targetBalance + amount}` 
+      });
+    }
+
+    // Store previous balances for audit
+    const sourcePreviousBalance = sourceBalance;
+    const targetPreviousBalance = targetBalance;
+
+    // Update balances
+    sourceDrawer.CURRENT_BALANCE = mongoose.Types.Decimal128.fromString((sourceBalance - amount).toFixed(2));
+    targetDrawer.CURRENT_BALANCE = mongoose.Types.Decimal128.fromString((targetBalance + amount).toFixed(2));
+
+    // Update version numbers
+    sourceDrawer.VERSION_NO += 1;
+    targetDrawer.VERSION_NO += 1;
+
+    // Check and update limit flags
+    updateDrawerLimitFlags(sourceDrawer);
+    updateDrawerLimitFlags(targetDrawer);
+
+    await sourceDrawer.save({ session });
+    await targetDrawer.save({ session });
+
+    // Get IP for audit
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+
+    // Create audit trails for both drawers
+    const auditTrails = [
+      // Source drawer audit
+      {
+        event_id: Date.now(),
+        user_id: userId,
+        event_type: 'DRAWER_TO_DRAWER_TRANSFER',
+        action: 'Drawer to Drawer Transfer - DEBIT',
+        old_value: {
+          balance: sourcePreviousBalance,
+          status: sourceDrawer.WF_STATUS
+        },
+        new_value: {
+          balance: sourceBalance - amount,
+          status: sourceDrawer.WF_STATUS
+        },
+        entity_type: 'Drawer',
+        entity_id: sourceDrawer._id,
+        description: `Transfer to drawer ${targetDrawer.DRAWER_NO}: ${description || 'Drawer to drawer transfer'}`,
+        reference_no: referenceNo || `D2D-${Date.now()}`,
+        additional_info: {
+          source_drawer_no: sourceDrawer.DRAWER_NO,
+          target_drawer_no: targetDrawer.DRAWER_NO,
+          amount: amount,
+          currency_breakdown: currencyBreakdown,
+          transfer_type: 'DEBIT',
+          verified_by: verifiedBy,
+          previous_balance: sourcePreviousBalance,
+          new_balance: sourceBalance - amount,
+          net_change: -amount
+        },
+        ip_address: ipAddress
+      },
+      // Target drawer audit
+      {
+        event_id: Date.now() + 1, // Ensure unique event_id
+        user_id: userId,
+        event_type: 'DRAWER_TO_DRAWER_TRANSFER',
+        action: 'Drawer to Drawer Transfer - CREDIT',
+        old_value: {
+          balance: targetPreviousBalance,
+          status: targetDrawer.WF_STATUS
+        },
+        new_value: {
+          balance: targetBalance + amount,
+          status: targetDrawer.WF_STATUS
+        },
+        entity_type: 'Drawer',
+        entity_id: targetDrawer._id,
+        description: `Transfer from drawer ${sourceDrawer.DRAWER_NO}: ${description || 'Drawer to drawer transfer'}`,
+        reference_no: referenceNo || `D2D-${Date.now()}`,
+        additional_info: {
+          source_drawer_no: sourceDrawer.DRAWER_NO,
+          target_drawer_no: targetDrawer.DRAWER_NO,
+          amount: amount,
+          currency_breakdown: currencyBreakdown,
+          transfer_type: 'CREDIT',
+          verified_by: verifiedBy,
+          previous_balance: targetPreviousBalance,
+          new_balance: targetBalance + amount,
+          net_change: amount
+        },
+        ip_address: ipAddress
+      }
+    ];
+
+    await AuditTrail.create(auditTrails, { session });
+
+    await session.commitTransaction();
+
+    // Log the transfer
+    logger.info(`Drawer to drawer transfer: ${sourceDrawer.DRAWER_NO} -> ${targetDrawer.DRAWER_NO}, Amount: ${amount}, User: ${userId}`);
+
+    res.status(200).json({
+      message: 'Drawer to drawer transfer completed successfully',
+      transfer: {
+        referenceNo: referenceNo || `D2D-${Date.now()}`,
+        timestamp: new Date(),
+        amount: amount,
+        sourceDrawer: {
+          drawerNo: sourceDrawer.DRAWER_NO,
+          previousBalance: sourcePreviousBalance,
+          newBalance: sourceBalance - amount,
+          netChange: -amount
+        },
+        targetDrawer: {
+          drawerNo: targetDrawer.DRAWER_NO,
+          previousBalance: targetPreviousBalance,
+          newBalance: targetBalance + amount,
+          netChange: amount
+        },
+        currencyBreakdown: currencyBreakdown,
+        verifiedBy: verifiedBy,
+        processedBy: userId
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error in drawer to drawer transfer:', error);
+    res.status(500).json({ 
+      message: 'Error processing drawer to drawer transfer', 
+      error: error.message 
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// =============================================
+// DRAWER TO VAULT TRANSACTION
+// =============================================
+
+export const processDrawerToVaultTransfer = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const {
+      drawerId,
+      vaultId, // Could be vault account number or identifier
+      amount,
+      transferType, // 'DEPOSIT' or 'WITHDRAWAL'
+      currencyBreakdown,
+      referenceNo,
+      description,
+      userId,
+      verifiedBy
+    } = req.body;
+
+    // Validate required fields
+    if (!drawerId || !vaultId || !amount || amount <= 0 || !transferType || !userId) {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Missing required fields: drawerId, vaultId, amount, transferType, userId' 
+      });
+    }
+
+    // Find drawer
+    const drawer = await findDrawerByIdentifier(drawerId, session);
+    if (!drawer) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Drawer not found' });
+    }
+
+    // Validate drawer status
+    if (drawer.WF_STATUS !== 'OPEN') {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Drawer must be open for vault transfer',
+        currentStatus: drawer.WF_STATUS
+      });
+    }
+
+    const drawerBalance = parseFloat(drawer.CURRENT_BALANCE.toString());
+    const previousBalance = drawerBalance;
+
+    let newBalance;
+    let transactionEffect;
+    let transferDescription;
+
+    // Process based on transfer type
+    if (transferType.toUpperCase() === 'DEPOSIT') {
+      // Drawer -> Vault: Decrease drawer balance
+      if (drawerBalance < amount) {
+        await session.abortTransaction();
+        return res.status(400).json({ 
+          message: `Insufficient drawer balance for vault deposit. Available: ${drawerBalance}, Required: ${amount}` 
+        });
+      }
+      newBalance = drawerBalance - amount;
+      transactionEffect = 'DEBIT';
+      transferDescription = `Vault deposit to ${vaultId}`;
+    } else if (transferType.toUpperCase() === 'WITHDRAWAL') {
+      // Vault -> Drawer: Increase drawer balance
+      const drawerMaxBalance = parseFloat(drawer.MAX_BAL.toString());
+      if (drawerBalance + amount > drawerMaxBalance) {
+        await session.abortTransaction();
+        return res.status(400).json({ 
+          message: `Vault withdrawal would exceed drawer maximum balance. Current: ${drawerBalance}, Max: ${drawerMaxBalance}, After Withdrawal: ${drawerBalance + amount}` 
+        });
+      }
+      newBalance = drawerBalance + amount;
+      transactionEffect = 'CREDIT';
+      transferDescription = `Vault withdrawal from ${vaultId}`;
+    } else {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Invalid transfer type. Must be DEPOSIT or WITHDRAWAL' 
+      });
+    }
+
+    // Update drawer balance
+    drawer.CURRENT_BALANCE = mongoose.Types.Decimal128.fromString(newBalance.toFixed(2));
+    drawer.VERSION_NO += 1;
+    updateDrawerLimitFlags(drawer);
+
+    await drawer.save({ session });
+
+    // Get IP for audit
+    const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
+
+    // Create audit trail
+    await AuditTrail.create([{
+      event_id: Date.now(),
+      user_id: userId,
+      event_type: 'DRAWER_TO_VAULT_TRANSFER',
+      action: `Drawer to Vault Transfer - ${transactionEffect}`,
+      old_value: {
+        balance: previousBalance,
+        status: drawer.WF_STATUS
+      },
+      new_value: {
+        balance: newBalance,
+        status: drawer.WF_STATUS
+      },
+      entity_type: 'Drawer',
+      entity_id: drawer._id,
+      description: `${transferDescription}: ${description || 'Drawer to vault transfer'}`,
+      reference_no: referenceNo || `D2V-${Date.now()}`,
+      additional_info: {
+        drawer_no: drawer.DRAWER_NO,
+        vault_id: vaultId,
+        amount: amount,
+        transfer_type: transferType.toUpperCase(),
+        transaction_effect: transactionEffect,
+        currency_breakdown: currencyBreakdown,
+        verified_by: verifiedBy,
+        previous_balance: previousBalance,
+        new_balance: newBalance,
+        net_change: transactionEffect === 'CREDIT' ? amount : -amount
+      },
+      ip_address: ipAddress
+    }], { session });
+
+    await session.commitTransaction();
+
+    // Log the vault transfer
+    logger.info(`Drawer to vault transfer: ${drawer.DRAWER_NO} <-> ${vaultId}, Type: ${transferType}, Amount: ${amount}, User: ${userId}`);
+
+    res.status(200).json({
+      message: `Drawer to vault ${transferType.toLowerCase()} completed successfully`,
+      transfer: {
+        referenceNo: referenceNo || `D2V-${Date.now()}`,
+        timestamp: new Date(),
+        amount: amount,
+        transferType: transferType.toUpperCase(),
+        transactionEffect: transactionEffect,
+        drawer: {
+          drawerNo: drawer.DRAWER_NO,
+          previousBalance: previousBalance,
+          newBalance: newBalance,
+          netChange: transactionEffect === 'CREDIT' ? amount : -amount
+        },
+        vault: {
+          vaultId: vaultId
+        },
+        currencyBreakdown: currencyBreakdown,
+        verifiedBy: verifiedBy,
+        processedBy: userId
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error in drawer to vault transfer:', error);
+    res.status(500).json({ 
+      message: 'Error processing drawer to vault transfer', 
+      error: error.message 
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// =============================================
+// HELPER FUNCTIONS
+// =============================================
+
+// // Helper function to find drawer by various identifiers
+// async function findDrawerByIdentifier(identifier, session = null) {
+//   let drawer;
+//   const options = session ? { session } : {};
+  
+//   // Try as DRAWER_ID (numeric)
+//   const drawerIdNum = parseInt(identifier);
+//   if (!isNaN(drawerIdNum)) {
+//     drawer = await Drawer.findOne({ DRAWER_ID: drawerIdNum }, null, options);
+//   }
+  
+//   // If not found, try as DRAWER_NO (string)
+//   if (!drawer) {
+//     drawer = await Drawer.findOne({ DRAWER_NO: identifier }, null, options);
+//   }
+  
+//   // If still not found, try as MongoDB ObjectId
+//   if (!drawer && mongoose.Types.ObjectId.isValid(identifier)) {
+//     drawer = await Drawer.findById(identifier, null, options);
+//   }
+  
+//   return drawer;
+// }
+
+// Helper function to update drawer limit flags
+function updateDrawerLimitFlags(drawer) {
+  const balance = parseFloat(drawer.CURRENT_BALANCE.toString());
+  const minBalance = parseFloat(drawer.MIN_BAL.toString());
+  const maxBalance = parseFloat(drawer.MAX_BAL.toString());
+  
+  if (balance > maxBalance) {
+    drawer.DRAWER_CASH_LIMIT_FG = 'Y';
+    drawer.DRAWER_LIMIT_EXCEED_TM += 1;
+  } else if (balance < minBalance) {
+    drawer.DRAWER_CASH_LIMIT_FG = 'Y';
+  } else {
+    drawer.DRAWER_CASH_LIMIT_FG = 'N';
+  }
+  
+  // Check insured amount limit
+  const insuredAmount = parseFloat(drawer.TOTAL_INSURED_AMT.toString());
+  if (balance > insuredAmount) {
+    drawer.DRAWER_INSURED_LIMIT_FG = 'Y';
+  } else {
+    drawer.DRAWER_INSURED_LIMIT_FG = 'N';
+  }
+}
+
+// =============================================
+// BULK DRAWER OPERATIONS
+// =============================================
+
+// Get summary of all drawers for dashboard
+export const getDrawersSummary = async (req, res) => {
+  try {
+    const { businessUnit, status } = req.query;
+    
+    const filter = {};
+    if (businessUnit) filter.BU_ID = businessUnit;
+    if (status) filter.WF_STATUS = status;
+    
+    const drawers = await Drawer.find(filter);
+    
+    const summary = {
+      totalDrawers: drawers.length,
+      openDrawers: drawers.filter(d => d.WF_STATUS === 'OPEN').length,
+      closedDrawers: drawers.filter(d => d.WF_STATUS === 'CLOSED').length,
+      totalBalance: drawers.reduce((sum, d) => sum + parseFloat(d.CURRENT_BALANCE.toString()), 0),
+      totalInsuredAmount: drawers.reduce((sum, d) => sum + parseFloat(d.TOTAL_INSURED_AMT.toString()), 0),
+      drawersExceedingLimit: drawers.filter(d => d.DRAWER_CASH_LIMIT_FG === 'Y').length,
+      businessUnit: businessUnit || 'All'
+    };
+    
+    // Add breakdown by user
+    const userBreakdown = {};
+    drawers.forEach(drawer => {
+      const userId = drawer.USER_ID;
+      if (!userBreakdown[userId]) {
+        userBreakdown[userId] = {
+          openDrawers: 0,
+          closedDrawers: 0,
+          totalBalance: 0
+        };
+      }
+      
+      userBreakdown[userId][drawer.WF_STATUS === 'OPEN' ? 'openDrawers' : 'closedDrawers'] += 1;
+      userBreakdown[userId].totalBalance += parseFloat(drawer.CURRENT_BALANCE.toString());
+    });
+    
+    summary.userBreakdown = userBreakdown;
+    
+    res.status(200).json({
+      success: true,
+      summary,
+      timestamp: new Date()
+    });
+    
+  } catch (error) {
+    console.error('Error retrieving drawers summary:', error);
+    res.status(500).json({ 
+      message: 'Error retrieving drawers summary', 
+      error: error.message 
+    });
+  }
+};
+
+
+// Update this function in your DrawerController.js
+export const postDrawerTransaction = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const {
+      drawerId,
+      transactionType,
+      amount,
+      customerAccount,
+      referenceNo,
+      description,
+      userId,
+      currencyCount,
+      businessUnit,
+      depositorName
+    } = req.body;
+
+    // Validate required fields
+    if (!drawerId || !transactionType || !amount || amount <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: drawerId, transactionType, amount'
+      });
+    }
+
+    let drawer;
+
+    // Handle different drawer ID formats
+    if (mongoose.Types.ObjectId.isValid(drawerId)) {
+      // Search by MongoDB ObjectId
+      drawer = await Drawer.findById(drawerId).session(session);
+    } else {
+      // Search by DRAWER_NO or DRAWER_ID
+      const numericId = parseInt(drawerId);
+      if (!isNaN(numericId)) {
+        // Try DRAWER_ID first (numeric)
+        drawer = await Drawer.findOne({ DRAWER_ID: numericId }).session(session);
+        
+        // If not found by DRAWER_ID, try DRAWER_NO
+        if (!drawer) {
+          drawer = await Drawer.findOne({ DRAWER_NO: drawerId.toString() }).session(session);
+        }
+      } else {
+        // Try DRAWER_NO (string)
+        drawer = await Drawer.findOne({ DRAWER_NO: drawerId }).session(session);
+      }
+    }
+
+    if (!drawer) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: `Drawer not found for identifier: ${drawerId}`,
+        suggestion: 'Use DRAWER_NO (e.g., "1001"), DRAWER_ID (e.g., 1), or MongoDB ObjectId'
+      });
+    }
+
+    console.log(`✅ Found drawer: ${drawer.DRAWER_NO} (${drawer.DRAWER_NM})`);
+
+    // Check if drawer is open and active
+    if (drawer.WF_STATUS !== 'OPEN') {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Drawer is not open. Please open the drawer before processing transactions.',
+        currentStatus: drawer.WF_STATUS,
+        drawerNo: drawer.DRAWER_NO
+      });
+    }
+
+    if (drawer.REC_ST !== 'A') {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Drawer is not active',
+        drawerNo: drawer.DRAWER_NO,
+        recordStatus: drawer.REC_ST
+      });
+    }
+
+    // Process the transaction using existing function
+    const transactionReq = {
+      body: {
+        drawerId: drawer._id.toString(), // Use the actual ObjectId
+        transactionType,
+        amount: parseFloat(amount),
+        customerAccount: customerAccount || null,
+        referenceNo: referenceNo || `DWTXN${Date.now()}`,
+        description: description || 'Drawer transaction',
+        userId: userId || req.user?.id || 'system',
+        currencyCount: currencyCount || null,
+        businessUnit: businessUnit || 'DEFAULT',
+        depositorName: depositorName || null
+      }
+    };
+
+    const result = await processDrawerTransaction(transactionReq, res, session);
+
+    if (result.success) {
+      await session.commitTransaction();
+      
+      res.status(200).json({
+        success: true,
+        message: 'Drawer transaction posted successfully',
+        data: {
+          transaction: result.transaction,
+          drawer: {
+            drawerId: drawer._id,
+            drawerNo: drawer.DRAWER_NO,
+            drawerName: drawer.DRAWER_NM,
+            previousBalance: result.drawer.previousBalance,
+            newBalance: result.drawer.newBalance,
+            transactionEffect: result.drawer.transactionEffect
+          },
+          referenceNo: transactionReq.body.referenceNo,
+          timestamp: new Date()
+        }
+      });
+    } else {
+      await session.abortTransaction();
+      res.status(400).json({
+        success: false,
+        message: result.message,
+        error: result.error
+      });
+    }
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error posting drawer transaction:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to post drawer transaction',
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// POST /api/drawer/transactions/post-bulk
+export const postBulkDrawerTransactions = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { transactions } = req.body;
+
+    if (!transactions || !Array.isArray(transactions) || transactions.length === 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Transactions array is required and cannot be empty'
+      });
+    }
+
+    if (transactions.length > 50) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum 50 transactions allowed per bulk request'
+      });
+    }
+
+    const results = {
+      successful: [],
+      failed: []
+    };
+
+    for (const [index, tx] of transactions.entries()) {
+      try {
+        const {
+          drawerId,
+          transactionType,
+          amount,
+          customerAccount,
+          referenceNo,
+          description,
+          userId,
+          currencyCount,
+          businessUnit,
+          depositorName
+        } = tx;
+
+        // Validate transaction
+        if (!drawerId || !transactionType || !amount || amount <= 0) {
+          results.failed.push({
+            index,
+            referenceNo: referenceNo || `BULK${index}`,
+            error: 'Missing required fields: drawerId, transactionType, amount'
+          });
+          continue;
+        }
+
+        // Process transaction
+        const transactionReq = {
+          body: {
+            drawerId,
+            transactionType,
+            amount: parseFloat(amount),
+            customerAccount: customerAccount || null,
+            referenceNo: referenceNo || `BULK${Date.now()}${index}`,
+            description: description || `Bulk transaction ${index + 1}`,
+            userId: userId || req.user?.id || 'system',
+            currencyCount: currencyCount || null,
+            businessUnit: businessUnit || 'DEFAULT',
+            depositorName: depositorName || null
+          }
+        };
+
+        const result = await processDrawerTransaction(transactionReq, res, session);
+
+        if (result.success) {
+          results.successful.push({
+            index,
+            referenceNo: transactionReq.body.referenceNo,
+            transaction: result.transaction,
+            drawer: result.drawer
+          });
+        } else {
+          results.failed.push({
+            index,
+            referenceNo: transactionReq.body.referenceNo,
+            error: result.message
+          });
+        }
+
+      } catch (txError) {
+        results.failed.push({
+          index,
+          referenceNo: tx.referenceNo || `BULK${index}`,
+          error: txError.message
+        });
+      }
+    }
+
+    // Commit transaction if there are successful transactions
+    if (results.successful.length > 0) {
+      await session.commitTransaction();
+      
+      res.status(207).json({
+        success: true,
+        message: `Processed ${results.successful.length} successful and ${results.failed.length} failed transactions`,
+        data: results
+      });
+    } else {
+      await session.abortTransaction();
+      res.status(400).json({
+        success: false,
+        message: 'No transactions were processed successfully',
+        data: results
+      });
+    }
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error posting bulk drawer transactions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process bulk drawer transactions',
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// GET /api/drawer/transactions/:transactionId
+export const getDrawerTransactionById = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+
+    // Search in AuditTrail for the transaction
+    const transaction = await AuditTrail.findOne({
+      $or: [
+        { reference_no: transactionId },
+        { 'additional_info.transactionId': transactionId },
+        { _id: transactionId }
+      ],
+      entity_type: 'Drawer'
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        transaction: {
+          id: transaction._id,
+          referenceNo: transaction.reference_no,
+          eventType: transaction.event_type,
+          action: transaction.action,
+          amount: transaction.additional_info?.amount,
+          description: transaction.description,
+          status: transaction.status,
+          timestamp: transaction.timestamp,
+          userId: transaction.user_id,
+          drawerId: transaction.entity_id,
+          oldValue: transaction.old_value,
+          newValue: transaction.new_value,
+          additionalInfo: transaction.additional_info
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching drawer transaction:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch drawer transaction',
+      error: error.message
+    });
+  }
+};
+
+// POST /api/drawer/transactions/:transactionId/reverse
+export const reverseDrawerTransaction = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { transactionId } = req.params;
+    const { reason, userId } = req.body;
+
+    if (!reason) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Reversal reason is required'
+      });
+    }
+
+    // Find the original transaction
+    const originalTransaction = await AuditTrail.findOne({
+      $or: [
+        { reference_no: transactionId },
+        { 'additional_info.transactionId': transactionId },
+        { _id: transactionId }
+      ],
+      entity_type: 'Drawer'
+    }).session(session);
+
+    if (!originalTransaction) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: 'Original transaction not found'
+      });
+    }
+
+    // Check if already reversed
+    const existingReversal = await AuditTrail.findOne({
+      'additional_info.reversedTransactionId': transactionId
+    }).session(session);
+
+    if (existingReversal) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: 'Transaction has already been reversed'
+      });
+    }
+
+    const drawer = await Drawer.findById(originalTransaction.entity_id).session(session);
+    if (!drawer) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: 'Drawer not found'
+      });
+    }
+
+    // Calculate reversal amount (opposite of original)
+    const originalAmount = parseFloat(originalTransaction.additional_info?.amount || 0);
+    const reversalAmount = -originalAmount;
+
+    // Determine reversal transaction type
+    const originalType = originalTransaction.event_type;
+    let reversalType = 'REVERSAL';
+    if (originalType.includes('DEPOSIT')) {
+      reversalType = 'REVERSAL_DEPOSIT';
+    } else if (originalType.includes('WITHDRAWAL')) {
+      reversalType = 'REVERSAL_WITHDRAWAL';
+    }
+
+    // Process reversal transaction
+    const reversalReq = {
+      body: {
+        drawerId: drawer._id.toString(),
+        transactionType: reversalType,
+        amount: Math.abs(reversalAmount),
+        customerAccount: originalTransaction.additional_info?.customerAccount,
+        referenceNo: `REV${originalTransaction.reference_no}`,
+        description: `Reversal: ${originalTransaction.description} - Reason: ${reason}`,
+        userId: userId || req.user?.id || 'system'
+      }
+    };
+
+    const reversalResult = await processDrawerTransaction(reversalReq, res, session);
+
+    if (!reversalResult.success) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: `Failed to process reversal: ${reversalResult.message}`
+      });
+    }
+
+    // Create reversal audit record
+    const reversalAudit = new AuditTrail({
+      event_id: Date.now(),
+      user_id: userId || req.user?.id || 'system',
+      event_type: `REVERSAL_${originalTransaction.event_type}`,
+      action: `Reversal: ${originalTransaction.action}`,
+      old_value: reversalResult.drawer ? { 
+        DRAWER_BALANCE: reversalResult.drawer.previousBalance 
+      } : {},
+      new_value: reversalResult.drawer ? { 
+        DRAWER_BALANCE: reversalResult.drawer.newBalance 
+      } : {},
+      ip_address: req.ip || 'unknown',
+      timestamp: new Date(),
+      entity_type: 'Drawer',
+      entity_id: drawer._id,
+      status: 'COMPLETED',
+      description: `Reversal of transaction ${originalTransaction.reference_no} - ${reason}`,
+      reference_no: reversalReq.body.referenceNo,
+      additional_info: {
+        originalTransactionId: transactionId,
+        originalReferenceNo: originalTransaction.reference_no,
+        reversalReason: reason,
+        amount: Math.abs(reversalAmount),
+        reversedBy: userId || req.user?.id || 'system'
+      }
+    });
+
+    await reversalAudit.save({ session });
+
+    await session.commitTransaction();
+
+    res.status(200).json({
+      success: true,
+      message: 'Transaction reversed successfully',
+      data: {
+        reversalTransaction: reversalResult.transaction,
+        drawer: reversalResult.drawer,
+        originalTransaction: {
+          referenceNo: originalTransaction.reference_no,
+          amount: originalAmount,
+          type: originalTransaction.event_type
+        }
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error reversing drawer transaction:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reverse transaction',
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// Export all new functions
+export {
+  findDrawerByIdentifier,
+  updateDrawerLimitFlags
 };

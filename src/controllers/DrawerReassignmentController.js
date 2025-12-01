@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
-import Drawer from '../models/Drawer.js';  // Adjust path
-import DrawerReassignment from '../models/DrawerReassignment.js';  // Adjust path
-import AuditTrail from '../models/AuditTrail.js';  // Adjust path
+import Drawer from '../models/Drawer.js';
+import DrawerReassignment from '../models/DrawerReassignment.js';
+import AuditTrail from '../models/AuditTrail.js';
 
 export const createDrawerReassignment = async (req, res) => {
   const session = await mongoose.startSession();
@@ -22,7 +22,7 @@ export const createDrawerReassignment = async (req, res) => {
       USER_ID,
       CREATED_BY,
       EFFECTIVE_FROM,
-      NEW_ASSIGNEE_NAME  // Explicitly destructure for use
+      NEW_ASSIGNEE_NAME
     } = req.body;
 
     // Auto-generate SESSION_ID
@@ -31,7 +31,7 @@ export const createDrawerReassignment = async (req, res) => {
     // Capture IP_ADDRESS from request
     const IP_ADDRESS = req.ip || req.connection.remoteAddress || 'unknown';
 
-    // Validate required fields (CURRENT_ASSIGNEE_ID optional for initial assignments)
+    // Validate required fields
     if (!DRAWER_REASSIGNMENT_ID || !DRAWER_ID || !BU_ID || 
         !NEW_ASSIGNEE_ID || !USER_ID || !CREATED_BY) {
       await session.abortTransaction();
@@ -47,16 +47,38 @@ export const createDrawerReassignment = async (req, res) => {
       return res.status(404).json({ message: 'Drawer not found' });
     }
 
-    // For initial assignments: Skip match if drawer is unassigned (CURRENT_ASSIGNEE_ID is null/0/undefined)
+    // CRITICAL: Check if drawer is CLOSED before allowing reassignment
+    if (drawer.WF_STATUS === 'OPEN') {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Drawer must be closed before reassignment',
+        currentStatus: drawer.WF_STATUS,
+        drawerNo: drawer.DRAWER_NO,
+        lastOpened: drawer.LAST_DRAWER_OPEN_DT,
+        lastClosed: drawer.LAST_DRAWER_CLOSE_DT,
+        instructions: 'Please close the drawer first before proceeding with reassignment'
+      });
+    }
+
+    // Check if drawer is active
+    if (drawer.REC_ST !== 'A') {
+      await session.abortTransaction();
+      return res.status(400).json({ 
+        message: 'Drawer is not active and cannot be reassigned',
+        currentRecordStatus: drawer.REC_ST
+      });
+    }
+
+    // Determine if this is an initial assignment or reassignment
     let effectiveCurrentAssignee = CURRENT_ASSIGNEE_ID || 0;
     let isInitial = false;
+    
     if (!drawer.CURRENT_ASSIGNEE_ID || drawer.CURRENT_ASSIGNEE_ID === 0) {
       isInitial = true;
       if (CURRENT_ASSIGNEE_ID && CURRENT_ASSIGNEE_ID !== 0) {
-        // Warn if provided but drawer unassigned (optional: make this an error)
         console.warn(`Initial assignment: Ignoring provided CURRENT_ASSIGNEE_ID ${CURRENT_ASSIGNEE_ID} as drawer is unassigned. Using 0.`);
       }
-      effectiveCurrentAssignee = 0;  // Use 0 for schema compatibility (assuming schema allows 0 but not null)
+      effectiveCurrentAssignee = 0;
     } else {
       // Standard reassignment: Verify match
       if (drawer.CURRENT_ASSIGNEE_ID !== CURRENT_ASSIGNEE_ID) {
@@ -64,7 +86,9 @@ export const createDrawerReassignment = async (req, res) => {
         return res.status(400).json({ 
           message: 'Current assignee does not match drawer assignment',
           expected: drawer.CURRENT_ASSIGNEE_ID,
-          provided: CURRENT_ASSIGNEE_ID
+          provided: CURRENT_ASSIGNEE_ID,
+          drawerNo: drawer.DRAWER_NO,
+          currentAssigneeName: drawer.CURRENT_ASSIGNEE_NAME
         });
       }
       effectiveCurrentAssignee = CURRENT_ASSIGNEE_ID;
@@ -82,24 +106,16 @@ export const createDrawerReassignment = async (req, res) => {
       });
     }
 
-    // For initial assignments, optionally skip creating reassignment record if schema doesn't allow CURRENT_ASSIGNEE_ID=0
-    // But assuming it does, proceed. If not, comment out the reassignment creation and just update drawer/audit.
-    if (isInitial) {
-      // Optional: If schema strictly requires a non-zero CURRENT_ASSIGNEE_ID, handle initial differently
-      // e.g., don't create reassignment, just update drawer and audit as 'ASSIGNMENT_CREATED'
-      // For now, create with 0
-    }
-
-    // Create reassignment record (use effectiveCurrentAssignee = 0 for initial)
+    // Create reassignment record
     const reassignment = new DrawerReassignment({
       DRAWER_REASSIGNMENT_ID,
       DRAWER_ID,
-      DRAWER_NO: drawer.DRAWER_NO, // Denormalize for easier queries
+      DRAWER_NO: drawer.DRAWER_NO,
       BU_ID,
-      CURRENT_ASSIGNEE_ID: effectiveCurrentAssignee,  // 0 for initial
+      CURRENT_ASSIGNEE_ID: effectiveCurrentAssignee,
       CURRENT_ASSIGNEE_NAME: effectiveCurrentAssignee && effectiveCurrentAssignee !== 0 ? drawer.CURRENT_ASSIGNEE_NAME : null,
       NEW_ASSIGNEE_ID,
-      NEW_ASSIGNEE_NAME: NEW_ASSIGNEE_NAME || 'Unknown', // Fallback if not provided
+      NEW_ASSIGNEE_NAME: NEW_ASSIGNEE_NAME || 'Unknown',
       RSN_ID,
       REMARKS,
       REASSIGNMENT_TYPE: REASSIGNMENT_TYPE || 'REGULAR',
@@ -109,9 +125,9 @@ export const createDrawerReassignment = async (req, res) => {
       EFFECTIVE_FROM: EFFECTIVE_FROM || new Date(),
       DRAWER_STATUS_AT_REASSIGNMENT: drawer.WF_STATUS,
       BALANCE_AT_REASSIGNMENT: drawer.CURRENT_BALANCE,
-      IP_ADDRESS, // Auto-captured
-      SESSION_ID, // Auto-generated
-      STATUS: 'COMPLETED', // Assuming immediate completion for now
+      IP_ADDRESS,
+      SESSION_ID,
+      STATUS: 'COMPLETED',
       REC_ST: 'A',
       VERSION_NO: 1,
       ROW_TS: new Date(),
@@ -129,38 +145,47 @@ export const createDrawerReassignment = async (req, res) => {
 
     await drawer.save({ session });
 
-    // Prepare change data for new_value (e.g., JSON of updated fields)
+    // Prepare change data for new_value
     const newValue = {
       assignee_id: NEW_ASSIGNEE_ID,
       assignee_name: NEW_ASSIGNEE_NAME || 'Unknown',
       reassignment_id: DRAWER_REASSIGNMENT_ID,
-      effective_from: EFFECTIVE_FROM || new Date().toISOString()
+      effective_from: EFFECTIVE_FROM || new Date().toISOString(),
+      drawer_status: drawer.WF_STATUS,
+      previous_assignee: effectiveCurrentAssignee
     };
 
-    // Audit trail (adjust description for initial vs. reassignment)
-    await AuditTrail.create([{
+    // FIXED: Always provide a valid entity_id for AuditTrail
+    const auditTrailData = {
       event_id: Date.now(),
       user_id: USER_ID,
       event_type: isInitial ? 'DRAWER_ASSIGNMENT_CREATED' : 'DRAWER_REASSIGNMENT_CREATED',
       action: isInitial ? 'Drawer Assignment' : 'Drawer Reassignment',
-      entity_type: isInitial ? 'DrawerAssignment' : 'DrawerReassignment',  // Adjust if separate model
-      entity_id: isInitial ? null : reassignment._id,  // No entity for initial if no record
+      entity_type: 'DrawerReassignment',
+      entity_id: reassignment._id,
       description: isInitial 
-        ? `Drawer ${drawer.DRAWER_NO} initially assigned to ${NEW_ASSIGNEE_ID}`
-        : `Drawer ${drawer.DRAWER_NO} reassigned from ${effectiveCurrentAssignee} to ${NEW_ASSIGNEE_ID}`,
+        ? `Drawer ${drawer.DRAWER_NO} initially assigned to ${NEW_ASSIGNEE_ID} (${NEW_ASSIGNEE_NAME}) - Status: ${drawer.WF_STATUS}`
+        : `Drawer ${drawer.DRAWER_NO} reassigned from ${effectiveCurrentAssignee} to ${NEW_ASSIGNEE_ID} (${NEW_ASSIGNEE_NAME}) - Status: ${drawer.WF_STATUS}`,
       reference_no: `REASSIGN-${DRAWER_REASSIGNMENT_ID}`,
-      ip_address: IP_ADDRESS,  // Added required field
-      new_value: JSON.stringify(newValue),  // Added required field as JSON string of changes
+      ip_address: IP_ADDRESS,
+      new_value: JSON.stringify(newValue),
       additional_info: {
         drawer_id: DRAWER_ID,
         drawer_no: drawer.DRAWER_NO,
+        drawer_status: drawer.WF_STATUS,
         previous_assignee: effectiveCurrentAssignee,
+        previous_assignee_name: drawer.CURRENT_ASSIGNEE_NAME,
         new_assignee: NEW_ASSIGNEE_ID,
+        new_assignee_name: NEW_ASSIGNEE_NAME,
         reassignment_type: REASSIGNMENT_TYPE,
         reason_code: REASON_CODE,
-        remarks: REMARKS
+        remarks: REMARKS,
+        is_initial_assignment: isInitial,
+        balance_at_reassignment: drawer.CURRENT_BALANCE
       }
-    }], { session });
+    };
+
+    await AuditTrail.create([auditTrailData], { session });
 
     await session.commitTransaction();
 
@@ -171,7 +196,14 @@ export const createDrawerReassignment = async (req, res) => {
         DRAWER_ID: drawer.DRAWER_ID,
         DRAWER_NO: drawer.DRAWER_NO,
         newAssignee: NEW_ASSIGNEE_ID,
-        status: drawer.WF_STATUS
+        newAssigneeName: NEW_ASSIGNEE_NAME,
+        status: drawer.WF_STATUS,
+        previousStatus: drawer.WF_STATUS,
+        balance: drawer.CURRENT_BALANCE
+      },
+      validation: {
+        drawerWasClosed: true,
+        allowedReassignment: true
       }
     });
 
@@ -186,7 +218,6 @@ export const createDrawerReassignment = async (req, res) => {
     session.endSession();
   }
 };
-
 
 // Get reassignment history for a drawer
 export const getDrawerReassignmentHistory = async (req, res) => {

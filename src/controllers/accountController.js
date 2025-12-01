@@ -13,7 +13,7 @@ export const getMigratedAccounts = async (req, res) => {
       accountName: account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
-      status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+      status: getAccountStatus(account.REC_ST), // Use helper function
       currency: 'NGN',
       legacySystemId: account.legacyReference?.legacyId,
       lastUpdated: account.updatedAt
@@ -51,11 +51,23 @@ export const getAllAccounts = async (req, res) => {
     // Build filter object
     const filter = {};
     
-    // Status filter
+    // Status filter - handle both 'A'/'I' and 'Active'/'Inactive'
     if (status) {
-      if (status === 'Active') filter.REC_ST = 'A';
-      else if (status === 'Inactive') filter.REC_ST = 'I';
-      else filter.REC_ST = status;
+      if (status === 'Active') {
+        filter.$or = [
+          { REC_ST: 'A' },
+          { REC_ST: 'Active' },
+          { REC_ST: 'ACTIVE' }
+        ];
+      } else if (status === 'Inactive') {
+        filter.$or = [
+          { REC_ST: 'I' },
+          { REC_ST: 'Inactive' },
+          { REC_ST: 'INACTIVE' }
+        ];
+      } else {
+        filter.REC_ST = status;
+      }
     }
     
     // Account type filter
@@ -115,7 +127,7 @@ export const getAllAccounts = async (req, res) => {
       accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
-      status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+      status: getAccountStatus(account.REC_ST), // Use helper function
       systemSource: account.systemSource,
       currency: account.currency || 'NGN',
       createdAt: account.createdAt,
@@ -185,7 +197,7 @@ export const getAccountByNumber = async (req, res) => {
         accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
-        status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+        status: getAccountStatus(account.REC_ST), // Use helper function
         systemSource: account.systemSource,
         currency: account.currency || 'NGN',
         legacySystemId: account.legacyReference?.legacyId,
@@ -242,7 +254,7 @@ export const getAccountById = async (req, res) => {
         accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
-        status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+        status: getAccountStatus(account.REC_ST), // Use helper function
         systemSource: account.systemSource,
         currency: account.currency || 'NGN',
         legacySystemId: account.legacyReference?.legacyId,
@@ -306,7 +318,7 @@ export const createAccount = async (req, res) => {
         accountType: newAccount.metadata?.accountType,
         systemSource: newAccount.systemSource,
         currentBalance: newAccount.LEDGER_BALANCE,
-        status: newAccount.REC_ST === 'A' ? 'Active' : 'Inactive'
+        status: getAccountStatus(newAccount.REC_ST) // Use helper function
       }
     });
   } catch (error) {
@@ -358,7 +370,7 @@ export const updateAccount = async (req, res) => {
         accountName: account.ACCT_DESC || account.accountName,
         accountType: account.metadata?.accountType,
         currentBalance: account.LEDGER_BALANCE,
-        status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+        status: getAccountStatus(account.REC_ST), // Use helper function
         systemSource: account.systemSource
       }
     });
@@ -429,7 +441,7 @@ export const getAccountsByType = async (req, res) => {
       accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
-      status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+      status: getAccountStatus(account.REC_ST), // Use helper function
       systemSource: account.systemSource,
       currency: account.currency || 'NGN'
     }));
@@ -489,7 +501,7 @@ export const getAccountBalance = async (req, res) => {
         accountName: account.ACCT_DESC || account.accountName,
         currentBalance: account.LEDGER_BALANCE,
         currency: account.currency || 'NGN',
-        status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+        status: getAccountStatus(account.REC_ST), // Use helper function
         lastUpdated: account.updatedAt
       }
     });
@@ -501,14 +513,29 @@ export const getAccountBalance = async (req, res) => {
 // 🟢 GET ACCOUNTS SUMMARY
 export const getAccountsSummary = async (req, res) => {
   try {
+    // Count active accounts - handle both 'A' and 'Active'
+    const activeAccounts = await GLAccount.countDocuments({
+      $or: [
+        { REC_ST: 'A' },
+        { REC_ST: 'Active' },
+        { REC_ST: 'ACTIVE' }
+      ]
+    });
+
+    // Count inactive accounts - handle both 'I' and 'Inactive'
+    const inactiveAccounts = await GLAccount.countDocuments({
+      $or: [
+        { REC_ST: 'I' },
+        { REC_ST: 'Inactive' },
+        { REC_ST: 'INACTIVE' }
+      ]
+    });
+
     const totalAccounts = await GLAccount.countDocuments();
     const migratedAccounts = await GLAccount.countDocuments({ systemSource: 'MIGRATED' });
     const manualAccounts = await GLAccount.countDocuments({ systemSource: 'MANUAL' });
     const newSystemAccounts = await GLAccount.countDocuments({ systemSource: 'NEW_SYSTEM' });
     
-    const activeAccounts = await GLAccount.countDocuments({ REC_ST: 'A' });
-    const inactiveAccounts = await GLAccount.countDocuments({ REC_ST: 'I' });
-
     // Get total balance
     const balanceResult = await GLAccount.aggregate([
       {
@@ -578,7 +605,22 @@ export const searchAccounts = async (req, res) => {
     }
 
     if (status) {
-      query.REC_ST = status === 'active' ? 'A' : 'I';
+      // Handle both 'active'/'inactive' and 'A'/'I'
+      if (status === 'active') {
+        query.$or = [
+          { REC_ST: 'A' },
+          { REC_ST: 'Active' },
+          { REC_ST: 'ACTIVE' }
+        ];
+      } else if (status === 'inactive') {
+        query.$or = [
+          { REC_ST: 'I' },
+          { REC_ST: 'Inactive' },
+          { REC_ST: 'INACTIVE' }
+        ];
+      } else {
+        query.REC_ST = status;
+      }
     }
 
     if (systemSource) {
@@ -598,7 +640,7 @@ export const searchAccounts = async (req, res) => {
       accountName: account.ACCT_DESC || account.accountName,
       accountType: account.metadata?.accountType,
       currentBalance: account.LEDGER_BALANCE,
-      status: account.REC_ST === 'A' ? 'Active' : 'Inactive',
+      status: getAccountStatus(account.REC_ST), // Use helper function
       systemSource: account.systemSource,
       currency: account.currency || 'NGN'
     }));
@@ -671,5 +713,44 @@ export const getMigrationStatistics = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// =============================================
+// HELPER FUNCTIONS
+// =============================================
+
+/**
+ * Helper function to determine account status from REC_ST field
+ * Supports both 'A'/'I' and 'Active'/'Inactive' formats
+ */
+const getAccountStatus = (recSt) => {
+  if (!recSt) return 'Unknown';
+  
+  const status = recSt.toString().toUpperCase();
+  
+  if (status === 'A' || status === 'ACTIVE') {
+    return 'Active';
+  } else if (status === 'I' || status === 'INACTIVE') {
+    return 'Inactive';
+  } else {
+    return recSt; // Return original value if not recognized
+  }
+};
+
+/**
+ * Helper function to normalize REC_ST for queries
+ */
+const normalizeRecSt = (recSt) => {
+  if (!recSt) return null;
+  
+  const status = recSt.toString().toUpperCase();
+  
+  if (status === 'A' || status === 'ACTIVE') {
+    return ['A', 'Active', 'ACTIVE'];
+  } else if (status === 'I' || status === 'INACTIVE') {
+    return ['I', 'Inactive', 'INACTIVE'];
+  } else {
+    return [recSt];
   }
 };

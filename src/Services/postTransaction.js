@@ -6,7 +6,7 @@ import AuditTrail from '../models/AuditTrail.js';
 import Drawer from '../models/Drawer.js';
 import { checkPolicy } from '../Services/transactionPolicyService.js';
 import logger from '../utils/logger.js';
-import { processDrawerTransaction } from '../controllers/DrawerController.js';
+import { TransactionService } from '../services/transactionService.js';
 
 const generateTransactionRef = () => {
   const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -130,83 +130,6 @@ const findAccountByNumber = async (accountNumber, session = null) => {
   
   console.log(`❌ Account not found in any model: ${accountNumber}`);
   return null;
-};
-
-// UPDATED: Function to update account balances in the correct model
-const updateAccountBalances = async (accountInfo, newBalances, session) => {
-  const { model, accountNumber, data } = accountInfo;
-  const { ledgerBalance, availableBalance, clearedBalance } = newBalances;
-  
-  console.log(`🔄 Updating account balances for ${accountNumber} in ${model}:`, {
-    ledgerBalance,
-    availableBalance,
-    clearedBalance
-  });
-  
-  const updateData = {
-    lastActivityDate: new Date(),
-    updatedAt: new Date()
-  };
-  
-  // Add balance fields based on model structure
-  switch (model) {
-    case 'CustomerAccount':
-      // For updated CustomerAccount schema with account_number field
-      updateData.ledger_balance = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-      updateData.available_balance = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-      updateData.cleared_balance = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
-      // Also update legacy fields if they exist
-      updateData.LEDGER_BAL = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-      updateData.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-      updateData.CLEARED_BAL = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
-      break;
-      
-    case 'DepositAccountApplication':
-      updateData.LEDGER_BAL = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-      updateData.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-      updateData.CLEARED_BAL = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
-      break;
-  }
-  
-  let updateResult;
-  
-  switch (model) {
-    case 'CustomerAccount':
-      // Try updating by account_number first, then by ACCT_NO
-      updateResult = await CustomerAccount.updateOne(
-        { account_number: accountNumber },
-        { $set: updateData },
-        { session }
-      );
-      
-      if (updateResult.matchedCount === 0) {
-        // Try with ACCT_NO for legacy accounts
-        updateResult = await CustomerAccount.updateOne(
-          { ACCT_NO: accountNumber },
-          { $set: updateData },
-          { session }
-        );
-      }
-      break;
-      
-    case 'DepositAccountApplication':
-      updateResult = await DepositAccountApplication.updateOne(
-        { ACCT_NO: accountNumber },
-        { $set: updateData },
-        { session }
-      );
-      break;
-  }
-  
-  if (updateResult.matchedCount === 0) {
-    throw new Error(`Account ${accountNumber} not found in ${model} during update`);
-  }
-  
-  if (updateResult.modifiedCount === 0) {
-    console.warn(`No changes made to account ${accountNumber} - balances may be the same`);
-  }
-  
-  return updateResult;
 };
 
 const postTransaction = async (req, res) => {
@@ -534,68 +457,69 @@ const postTransaction = async (req, res) => {
         });
       }
 
-      // UPDATED: Update account balances using the new function
-      await updateAccountBalances(accountInfo, {
+      // UPDATED: Update account balances using the TransactionService
+      await TransactionService.updateAccountBalances(accountInfo, {
         ledgerBalance: ledgerBal,
         availableBalance: availableBal,
         clearedBalance: clearedBal
       }, session);
     }
 
-    // Process drawer transaction for cash transactions
+    // NEW: Process drawer transaction using TransactionService
     let drawerNewBalance = drawerPreviousBalance;
     let drawerTransactionEffect = '';
+    let transactionResult = null;
     
     if (cashTransaction && drawer) {
       console.log(`💰 Processing CASH transaction - Type: ${normalizedTransactionType}, Amount: ₦${amount}`);
 
-      let mappedType;
-      if (isOpeningCashDeposit) {
-        mappedType = 'OPENING_DEPOSIT';
-      } else {
-        mappedType = normalizedTransactionType === 'DR' ? 'WITHDRAWAL' : 'DEPOSIT';
-      }
-
-      // Process drawer transaction
-      const mockReq = {
-        body: {
+      try {
+        // Use the TransactionService for unified processing
+        transactionResult = await TransactionService.processCashTransaction({
           drawerId: drawer._id.toString(),
-          transactionType: mappedType,
+          transactionType: normalizedTransactionType,
           amount,
           customerAccount: ACCT_NO || null,
           referenceNo,
           description: DESCRIPTION,
-          userId: req.user?.id || req.headers['x-user-id'] || 'system'
-        }
-      };
-      
-      try {
-        const drawerResult = await processDrawerTransaction(mockReq, {}, session);
-        if (drawerResult && drawerResult.success) {
-          drawerNewBalance = drawerResult.drawer ? parseFloat(drawerResult.drawer.CURRENT_BALANCE.toString()) : drawerPreviousBalance + amount;
-          drawerTransactionEffect = drawerResult.transaction ? drawerResult.transaction.effect : 'DEPOSIT';
+          userId: req.user?.id || req.headers['x-user-id'] || 'system',
+          accountInfo: !isOpeningCashDeposit ? accountInfo : null,
+          normalizedTransactionType,
+          isOpeningCashDeposit
+        }, session);
+
+        if (transactionResult.success) {
+          drawerNewBalance = transactionResult.drawer.newBalance;
+          drawerTransactionEffect = transactionResult.transaction.effect;
+          console.log(`✅ TransactionService: Drawer ${drawer.DRAWER_NO} = ₦${drawerNewBalance}`);
         } else {
-          // Fallback
-          drawerNewBalance = drawerPreviousBalance + amount;
-          drawerTransactionEffect = 'OPENING_DEPOSIT';
-          await Drawer.updateOne(
-            { _id: drawer._id },
-            { $inc: { CURRENT_BALANCE: mongoose.Types.Decimal128.fromString(amount.toFixed(2)) } },
-            { session }
-          );
+          throw new Error(transactionResult.message || 'Transaction service failed');
         }
-      } catch (drawerError) {
-        console.error('Error processing drawer transaction:', drawerError);
-        drawerNewBalance = drawerPreviousBalance + amount;
-        drawerTransactionEffect = 'DEPOSIT';
+      } catch (serviceError) {
+        console.error('Error in TransactionService:', serviceError);
+        
+        // Fallback: Manual processing
+        const amountChange = isOpeningCashDeposit ? amount : 
+                            (normalizedTransactionType === 'DR' ? -amount : amount);
+        
+        drawerNewBalance = drawerPreviousBalance + amountChange;
+        drawerTransactionEffect = isOpeningCashDeposit ? 'OPENING_DEPOSIT' : 
+                                 (normalizedTransactionType === 'DR' ? 'DEBIT' : 'CREDIT');
+        
         await Drawer.updateOne(
           { _id: drawer._id },
-          { $inc: { CURRENT_BALANCE: mongoose.Types.Decimal128.fromString(amount.toFixed(2)) } },
+          { 
+            $inc: { CURRENT_BALANCE: mongoose.Types.Decimal128.fromString(amountChange.toFixed(2)) },
+            $set: { 
+              VERSION_NO: drawer.VERSION_NO + 1,
+              updatedAt: new Date()
+            }
+          },
           { session }
         );
+        
+        console.log(`✅ Drawer updated (fallback): ${drawer.DRAWER_NO} = ₦${drawerNewBalance}`);
       }
-
-      console.log(`✅ Drawer updated: New Balance = ₦${drawerNewBalance}`);
     }
 
     // Enhanced Audit Trail with Drawer Information
@@ -651,6 +575,7 @@ const postTransaction = async (req, res) => {
         authorized_roles: authorizedRoles,
         transaction_mode: cashTransaction ? 'CASH' : 'TRANSFER',
         transaction_type: normalizedTransactionType,
+        service_used: transactionResult ? 'TransactionService' : 'Legacy',
         ...(cashTransaction && drawer && {
           drawer_id: drawer._id,
           drawer_no: drawer.DRAWER_NO,
@@ -684,6 +609,7 @@ const postTransaction = async (req, res) => {
       authorized_roles: authorizedRoles,
       transaction_mode: cashTransaction ? 'CASH' : 'TRANSFER',
       transaction_type: normalizedTransactionType,
+      service_used: transactionResult ? 'TransactionService' : 'Legacy'
     };
 
     // Add account info for standard transactions
@@ -729,7 +655,8 @@ const postTransaction = async (req, res) => {
       drawerPreviousBalance,
       drawerNewBalance,
       userId,
-      isOpeningCashDeposit
+      isOpeningCashDeposit,
+      serviceUsed: transactionResult ? 'TransactionService' : 'Legacy'
     });
 
     console.log(`🎉 Transaction COMPLETED: ${normalizedTransactionType} ₦${amount} - Account: ${ACCT_NO} - Drawer: ${drawer?.DRAWER_NO} = ₦${drawerNewBalance} ${isOpeningCashDeposit ? '(Opening Deposit)' : ''}`);

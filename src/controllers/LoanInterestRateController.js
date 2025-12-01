@@ -1,8 +1,8 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import InterestRate from '../models/LoanInterestRate.js';
+import LoanInterestRate from '../models/LoanInterestRate.js'; // ✅ FIXED IMPORT
 import RateIndex from '../models/Rate-Index.js';
-import LoanProduct from '../models/LoanProduct.js'; // Import LoanProduct model
+import LoanProduct from '../models/LoanProduct.js';
 
 // Utility function for EMI calculation - reducing balance method
 export const calculateEMI = ({
@@ -149,8 +149,8 @@ export const calculateEMIEndpoint = async (req, res) => {
       loanProductDetails = await LoanProduct.findOne({ PROD_ID });
       
       if (!loanProductDetails) {
-        // Fallback to InterestRate if not found in LoanProduct
-        loanProduct = await InterestRate.findOne({ PROD_ID });
+        // Fallback to LoanInterestRate if not found in LoanProduct
+        loanProduct = await LoanInterestRate.findOne({ PROD_ID }); // ✅ FIXED
         if (!loanProduct) {
           return res.status(404).json({ message: 'Loan product not found' });
         }
@@ -181,7 +181,7 @@ export const calculateEMIEndpoint = async (req, res) => {
       annualRate = parseFloat(rateIndex.INDEX_RATE);
       console.log(`Using RateIndex.INDEX_RATE: ${annualRate}% for INDEX_RATE_ID: ${INDEX_RATE_ID}`);
     } else if (loanProduct) {
-      // Get rate from loan product (check both InterestRate and LoanProduct fields)
+      // Get rate from loan product (check both LoanInterestRate and LoanProduct fields)
       annualRate = parseFloat(
         loanProduct.ABSOLUTE_RATE || 
         loanProduct.FIXED_RATE || 
@@ -272,8 +272,8 @@ export const calculateLoanRepaymentEndpoint = async (req, res) => {
       loanProductDetails = await LoanProduct.findOne({ PROD_ID });
       
       if (!loanProductDetails) {
-        // Fallback to InterestRate if not found in LoanProduct
-        loanProduct = await InterestRate.findOne({ PROD_ID });
+        // Fallback to LoanInterestRate if not found in LoanProduct
+        loanProduct = await LoanInterestRate.findOne({ PROD_ID }); // ✅ FIXED
         if (!loanProduct) {
           return res.status(404).json({ message: 'Loan product not found' });
         }
@@ -314,7 +314,7 @@ export const calculateLoanRepaymentEndpoint = async (req, res) => {
       annualRate = parseFloat(rateIndex.INDEX_RATE);
       console.log(`Using RateIndex.INDEX_RATE: ${annualRate}% for INDEX_RATE_ID: ${INDEX_RATE_ID}`);
     } else if (loanProduct) {
-      // Get rate from loan product (check both InterestRate and LoanProduct fields)
+      // Get rate from loan product (check both LoanInterestRate and LoanProduct fields)
       annualRate = parseFloat(
         loanProduct.ABSOLUTE_RATE || 
         loanProduct.FIXED_RATE || 
@@ -450,107 +450,158 @@ export const getLoanProduct = async (req, res) => {
   }
 };
 
+// Create Interest Rate
 export const createInterestRate = async (req, res) => {
-  const {
-    PROD_ID,
-    INDEX_RATE_ID,
-    RATE_CHANGE_ALLOWED,
-    TIME,
-    EFFECTIVE_DT,
-    INT_TY,
-    DR_CR_IND,
-    ACCRUAL_FREQ_VALUE,
-    ACCRUAL_FREQ_CD,
-    CREATED_BY,
-    USER_ID,
-    LOAN_PROUD_INT_ID,
-    RATE_TY,
-    MATURITY_INT_INDEX_ID,
-    ACCRUAL_BASIS_TY,
-    MIN_LOAN_TERM_MONTHS,
-    MAX_LOAN_TERM_MONTHS
-  } = req.body;
+    const session = await mongoose.startSession();
+    
+    try {
+        session.startTransaction();
+        
+        const {
+            PROD_ID,
+            INDEX_RATE_ID,
+            LOAN_PROUD_INT_ID,
+            RATE_TY,
+            INT_TY,
+            ACCRUAL_BASIS_TY,
+            ACCRUAL_FREQ_CD,
+            ACCRUAL_FREQ_VALUE,
+            FIXED_RATE,
+            ABSOLUTE_RATE,
+            DR_CR_IND,
+            MATURITY_INT_INDEX_ID,
+            EFFECTIVE_DT,
+            CREATED_BY,
+            USER_ID,
+            MIN_LOAN_TERM_MONTHS,
+            MAX_LOAN_TERM_MONTHS,
+            STATUS,
+            DAILY_ACCRUAL_CONFIG,
+            RATE_CHANGE_ALLOWED,
+            TIME
+        } = req.body;
 
-  try {
-    const missingFields = [];
+        console.log('🔍 Received request to create interest rate:', {
+            PROD_ID,
+            LOAN_PROUD_INT_ID,
+            RATE_TY,
+            DAILY_ACCRUAL_CONFIG
+        });
 
-    if (!PROD_ID) missingFields.push('PROD_ID');
-    if (!INDEX_RATE_ID) missingFields.push('INDEX_RATE_ID');
-    if (!EFFECTIVE_DT) missingFields.push('EFFECTIVE_DT');
-    if (!INT_TY) missingFields.push('INT_TY');
-    if (!DR_CR_IND) missingFields.push('DR_CR_IND');
-    if (!ACCRUAL_FREQ_VALUE) missingFields.push('ACCRUAL_FREQ_VALUE');
-    if (!ACCRUAL_FREQ_CD) missingFields.push('ACCRUAL_FREQ_CD');
-    if (!CREATED_BY) missingFields.push('CREATED_BY');
-    if (!USER_ID) missingFields.push('USER_ID');
-    if (!LOAN_PROUD_INT_ID) missingFields.push('LOAN_PROUD_INT_ID');
-    if (!RATE_TY) missingFields.push('RATE_TY');
-    if (!MATURITY_INT_INDEX_ID) missingFields.push('MATURITY_INT_INDEX_ID');
-    if (!ACCRUAL_BASIS_TY) missingFields.push('ACCRUAL_BASIS_TY');
-    if (!MIN_LOAN_TERM_MONTHS) missingFields.push('MIN_LOAN_TERM_MONTHS');
-    if (!MAX_LOAN_TERM_MONTHS) missingFields.push('MAX_LOAN_TERM_MONTHS');
+        // Validate required fields
+        const requiredFields = {
+            PROD_ID, INDEX_RATE_ID, LOAN_PROUD_INT_ID, RATE_TY, INT_TY,
+            ACCRUAL_BASIS_TY, ACCRUAL_FREQ_CD, ACCRUAL_FREQ_VALUE,
+            ABSOLUTE_RATE, DR_CR_IND, EFFECTIVE_DT, CREATED_BY, USER_ID,
+            MIN_LOAN_TERM_MONTHS, MAX_LOAN_TERM_MONTHS, STATUS
+        };
 
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        message: 'Missing required fields',
-        missingFields
-      });
+        const missingFields = Object.entries(requiredFields)
+            .filter(([_, value]) => !value)
+            .map(([field]) => field);
+
+        if (missingFields.length > 0) {
+            await session.abortTransaction();
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields',
+                missingFields
+            });
+        }
+
+        // Check for duplicate LOAN_PROUD_INT_ID
+        const existingRate = await LoanInterestRate.findOne({
+            LOAN_PROUD_INT_ID
+        }).session(session);
+
+        if (existingRate) {
+            await session.abortTransaction();
+            return res.status(409).json({
+                success: false,
+                message: 'Interest rate with this LOAN_PROUD_INT_ID already exists'
+            });
+        }
+
+        // Prepare the data with proper defaults
+        const interestRateData = {
+            PROD_ID: parseInt(PROD_ID),
+            INDEX_RATE_ID: parseInt(INDEX_RATE_ID),
+            LOAN_PROUD_INT_ID,
+            RATE_TY,
+            INT_TY,
+            ACCRUAL_BASIS_TY,
+            ACCRUAL_FREQ_CD,
+            ACCRUAL_FREQ_VALUE: parseInt(ACCRUAL_FREQ_VALUE),
+            FIXED_RATE: FIXED_RATE ? parseFloat(FIXED_RATE) : undefined,
+            ABSOLUTE_RATE: parseFloat(ABSOLUTE_RATE),
+            DR_CR_IND,
+            MATURITY_INT_INDEX_ID: MATURITY_INT_INDEX_ID ? parseInt(MATURITY_INT_INDEX_ID) : undefined,
+            EFFECTIVE_DT: new Date(EFFECTIVE_DT),
+            CREATED_BY,
+            USER_ID,
+            MIN_LOAN_TERM_MONTHS: parseInt(MIN_LOAN_TERM_MONTHS),
+            MAX_LOAN_TERM_MONTHS: parseInt(MAX_LOAN_TERM_MONTHS),
+            STATUS,
+            DAILY_ACCRUAL_CONFIG: {
+                GL_ACCOUNT: DAILY_ACCRUAL_CONFIG?.GL_ACCOUNT || '400100',
+                POSTING_FREQUENCY: DAILY_ACCRUAL_CONFIG?.POSTING_FREQUENCY || 'EOD'
+            },
+            RATE_CHANGE_ALLOWED: RATE_CHANGE_ALLOWED === true || RATE_CHANGE_ALLOWED === 'true',
+            TIME: TIME ? parseInt(TIME) : 12
+        };
+
+        console.log('📝 Creating interest rate with data:', interestRateData);
+
+        // Create new interest rate
+        const newInterestRate = new LoanInterestRate(interestRateData); // ✅ FIXED
+        await newInterestRate.save({ session });
+
+        await session.commitTransaction();
+
+        console.log('✅ Interest rate created successfully:', newInterestRate._id);
+
+        res.status(201).json({
+            success: true,
+            message: 'Interest rate created successfully',
+            data: newInterestRate
+        });
+
+    } catch (error) {
+        await session.abortTransaction();
+        console.error('❌ Error creating Interest Rate:', error);
+        
+        if (error.name === 'ValidationError') {
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: Object.values(error.errors).map(err => ({
+                    field: err.path,
+                    message: err.message
+                }))
+            });
+        }
+        
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: 'Duplicate interest rate ID'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: 'Failed to create Interest Rate',
+            error: error.message
+        });
+    } finally {
+        session.endSession();
     }
-
-    // Fetch INDEX_RATE from RateIndex
-    const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: parseInt(INDEX_RATE_ID) });
-    if (!rateIndex || !rateIndex.INDEX_RATE) {
-      return res.status(400).json({
-        message: `Rate index with ID ${INDEX_RATE_ID} not found or missing INDEX_RATE`
-      });
-    }
-    const indexRate = parseFloat(rateIndex.INDEX_RATE);
-    if (indexRate <= 0) {
-      return res.status(400).json({
-        message: 'INDEX_RATE must be a positive number'
-      });
-    }
-
-    const newInterestRate = new InterestRate({
-      PROD_ID,
-      INDEX_RATE_ID,
-      ABSOLUTE_RATE: indexRate,
-      FIXED_RATE: indexRate,
-      RATE_CHANGE_ALLOWED: RATE_CHANGE_ALLOWED || false,
-      TIME: TIME || 12,
-      EFFECTIVE_DT,
-      INT_TY,
-      DR_CR_IND,
-      ACCRUAL_FREQ_VALUE,
-      ACCRUAL_FREQ_CD,
-      CREATED_BY,
-      USER_ID,
-      LOAN_PROUD_INT_ID,
-      RATE_TY,
-      MATURITY_INT_INDEX_ID,
-      ACCRUAL_BASIS_TY,
-      MIN_LOAN_TERM_MONTHS,
-      MAX_LOAN_TERM_MONTHS
-    });
-
-    await newInterestRate.save();
-
-    res.status(201).json({
-      message: 'Interest Rate created successfully!',
-      data: newInterestRate
-    });
-  } catch (error) {
-    console.error('Error creating Interest Rate:', error);
-    res.status(500).json({
-      message: 'Failed to create Interest Rate',
-      error: error.message
-    });
-  }
 };
 
+// Get all interest rates
 export const getAllInterestRates = async (req, res) => {
   try {
-    const interestRates = await InterestRate.find();
+    const interestRates = await LoanInterestRate.find(); // ✅ FIXED
     
     if (!interestRates || interestRates.length === 0) {
       return res.status(404).json({ message: 'No Interest Rates found' });
@@ -569,11 +620,12 @@ export const getAllInterestRates = async (req, res) => {
   }
 };
 
+// Delete interest rate
 export const deleteInterestRate = async (req, res) => {
   const { PROD_ID } = req.params;
 
   try {
-    const deletedInterestRate = await InterestRate.findOneAndDelete({
+    const deletedInterestRate = await LoanInterestRate.findOneAndDelete({ // ✅ FIXED
       PROD_ID
     });
 
@@ -596,6 +648,7 @@ export const deleteInterestRate = async (req, res) => {
   }
 };
 
+// Update interest rate
 export const updateInterestRate = async (req, res) => {
   const { PROD_ID } = req.params;
   const {
@@ -613,7 +666,7 @@ export const updateInterestRate = async (req, res) => {
   } = req.body;
 
   try {
-    const interestRate = await InterestRate.findOne({ PROD_ID });
+    const interestRate = await LoanInterestRate.findOne({ PROD_ID }); // ✅ FIXED
 
     if (!interestRate) {
       return res.status(404).json({
@@ -666,11 +719,12 @@ export const updateInterestRate = async (req, res) => {
   }
 };
 
+// Get interest rate by PROD_ID
 export const getInterestRate = async (req, res) => {
   const { PROD_ID } = req.params;
 
   try {
-    const interestRate = await InterestRate.findOne({ PROD_ID });
+    const interestRate = await LoanInterestRate.findOne({ PROD_ID }); // ✅ FIXED
 
     if (!interestRate) {
       return res.status(404).json({
@@ -691,10 +745,12 @@ export const getInterestRate = async (req, res) => {
   }
 };
 
+// Calculate daily interest utility
 export const calculateDailyInterest = (principal, annualRate, days) => {
   return (principal * annualRate * days) / (100 * 360);
 };
 
+// Update capitalization status
 export const updateCapitalizationStatus = async (req, res) => {
   const { LOAN_PROUD_INT_ID } = req.params;
   const { status, updatedBy } = req.body;
@@ -707,7 +763,7 @@ export const updateCapitalizationStatus = async (req, res) => {
   }
 
   try {
-    const interestRate = await InterestRate.findOne({ LOAN_PROUD_INT_ID });
+    const interestRate = await LoanInterestRate.findOne({ LOAN_PROUD_INT_ID }); // ✅ FIXED
 
     if (!interestRate) {
       return res.status(404).json({
@@ -733,11 +789,12 @@ export const updateCapitalizationStatus = async (req, res) => {
   }
 };
 
+// Get capitalization status
 export const getCapitalizationStatus = async (req, res) => {
   const { LOAN_PROUD_INT_ID } = req.params;
 
   try {
-    const interestRate = await InterestRate.findOne({ LOAN_PROUD_INT_ID });
+    const interestRate = await LoanInterestRate.findOne({ LOAN_PROUD_INT_ID }); // ✅ FIXED
 
     if (!interestRate) {
       return res.status(404).json({
@@ -760,13 +817,13 @@ export const getCapitalizationStatus = async (req, res) => {
 };
 
 export default { 
-  calculateEMI,                    // Utility function - EMI only
-  calculateFlatRate,               // Utility function - Flat Rate only
-  calculateLoanRepayment,          // Utility function - Both methods
-  calculateEMIEndpoint,            // API endpoint - EMI only (backward compatible)
-  calculateLoanRepaymentEndpoint,  // API endpoint - Both methods
-  getLoanProducts,                 // New endpoint - Get all loan products
-  getLoanProduct,                  // New endpoint - Get specific loan product
+  calculateEMI,
+  calculateFlatRate,
+  calculateLoanRepayment,
+  calculateEMIEndpoint,
+  calculateLoanRepaymentEndpoint,
+  getLoanProducts,
+  getLoanProduct,
   calculateDailyInterest, 
   getInterestRate,
   updateInterestRate,
