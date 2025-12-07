@@ -2057,6 +2057,10 @@ export const getMultipleDrawersEnquiry = async (req, res) => {
 // DRAWER TO DRAWER TRANSACTION
 // =============================================
 
+// =============================================
+// DRAWER TO DRAWER TRANSACTION
+// =============================================
+
 export const processDrawerToDrawerTransfer = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -2160,11 +2164,14 @@ export const processDrawerToDrawerTransfer = async (req, res) => {
     // Get IP for audit
     const ipAddress = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
+    // Create unique event IDs
+    const baseEventId = Date.now();
+
     // Create audit trails for both drawers
     const auditTrails = [
       // Source drawer audit
       {
-        event_id: Date.now(),
+        event_id: baseEventId,
         user_id: userId,
         event_type: 'DRAWER_TO_DRAWER_TRANSFER',
         action: 'Drawer to Drawer Transfer - DEBIT',
@@ -2191,11 +2198,13 @@ export const processDrawerToDrawerTransfer = async (req, res) => {
           new_balance: sourceBalance - amount,
           net_change: -amount
         },
-        ip_address: ipAddress
+        ip_address: ipAddress,
+        created_at: new Date(),
+        updated_at: new Date()
       },
       // Target drawer audit
       {
-        event_id: Date.now() + 1, // Ensure unique event_id
+        event_id: baseEventId + 1,
         user_id: userId,
         event_type: 'DRAWER_TO_DRAWER_TRANSFER',
         action: 'Drawer to Drawer Transfer - CREDIT',
@@ -2222,11 +2231,14 @@ export const processDrawerToDrawerTransfer = async (req, res) => {
           new_balance: targetBalance + amount,
           net_change: amount
         },
-        ip_address: ipAddress
+        ip_address: ipAddress,
+        created_at: new Date(),
+        updated_at: new Date()
       }
     ];
 
-    await AuditTrail.create(auditTrails, { session });
+    // FIX: Added ordered: true to fix the session error
+    await AuditTrail.create(auditTrails, { session, ordered: true });
 
     await session.commitTransaction();
 
@@ -2260,9 +2272,18 @@ export const processDrawerToDrawerTransfer = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error('Error in drawer to drawer transfer:', error);
+    
+    // Log the full error for debugging
+    logger.error(`Drawer to drawer transfer error: ${error.message}`, {
+      error: error.stack,
+      body: req.body,
+      user: req.body?.userId
+    });
+    
     res.status(500).json({ 
       message: 'Error processing drawer to drawer transfer', 
-      error: error.message 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   } finally {
     session.endSession();

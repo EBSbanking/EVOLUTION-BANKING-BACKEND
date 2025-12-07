@@ -42,19 +42,36 @@ export const getProductTypeFallback = (prodId) => {
     '100': 'SAVINGS',
     '200': 'SAVINGS', 
     '201': 'TERM_DEPOSIT',
-    '300': 'BUSINESS TERM LOAN',
-    '301': 'INDIVIDUAL LOAN',
-    '302': 'CONSUMER LOAN',
-    '303': 'MORTGAGE',
-    '304': 'AUTO LOAN',
-    '305': 'PERSONAL LOAN',
-    '306': 'EDUCATION LOAN',
-    '307': 'CREDIT CARD',
-    '308': 'LINE OF CREDIT',
-    '309': 'SME LOAN',
+    '300': 'BUSINESS_TERM_LOAN',
+    '301': 'INDIVIDUAL_LOAN',
+    '302': 'CONSUMER_LOAN',
+    '303': 'MORTGAGE_LOAN',
+    '304': 'AUTO_LOAN',
+    '305': 'PERSONAL_LOAN',
+    '306': 'EDUCATION_LOAN',
+    '307': 'CREDIT_CARD',
+    '308': 'LINE_OF_CREDIT',
+    '309': 'SME_LOAN',
     '400': 'GROUP_LOAN',
     '500': 'SAVINGS'
   };
   
   return typeMap[prodIdStr] || 'SAVINGS';
+};
+
+// Optional: Combined function that tries DB first, then fallback
+export const getProductType = async (prodId) => {
+  try {
+    const result = await getProductTypeByProdIdInternal(prodId);
+    if (result) {
+      // Return the product type from the document
+      return result.PRODUCT_TYPE || result.product_type || 'SAVINGS';
+    }
+    
+    // Fallback to hardcoded mapping
+    return getProductTypeFallback(prodId);
+  } catch (error) {
+    console.error('Error getting product type, using fallback:', error);
+    return getProductTypeFallback(prodId);
+  }
 };

@@ -174,6 +174,20 @@ const VaultSchema = new Schema({
     ref: 'Drawer'
   },
 
+  // In your Vault model, add:
+BRANCH_REF: {
+  type: Schema.Types.ObjectId,
+  ref: 'BusinessUnit', // or whatever your branch model is called
+  validate: {
+    validator: async function(v) {
+      if (!v) return true;
+      const branch = await mongoose.model('BusinessUnit').findById(v);
+      return branch !== null;
+    },
+    message: 'Referenced branch does not exist'
+  }
+},
+
   // =============================================
   // VAULT CLASSIFICATION & SECURITY
   // =============================================

@@ -3,6 +3,27 @@ import LoanFee from './LoanFee.js';
 import logger from '../utils/logger.js';
 import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
 
+// Utility functions for safe Decimal128 handling
+const safeDecimalGetter = (v) => {
+  if (!v) return 0;
+  try {
+    return typeof v === 'object' && v.toString ? parseFloat(v.toString()) : parseFloat(v);
+  } catch (error) {
+    logger.warn(`Error in decimal getter: ${error.message}`, { value: v });
+    return 0;
+  }
+};
+
+const safeDecimalSetter = (v) => {
+  if (!v && v !== 0) return mongoose.Types.Decimal128.fromString('0.00');
+  try {
+    return mongoose.Types.Decimal128.fromString(v.toString());
+  } catch (error) {
+    logger.warn(`Error in decimal setter: ${error.message}`, { value: v });
+    return mongoose.Types.Decimal128.fromString('0.00');
+  }
+};
+
 const loanAccountSchema = new mongoose.Schema(
   {
     loanAccountId: {
@@ -30,8 +51,8 @@ const loanAccountSchema = new mongoose.Schema(
       },
       guaranteedAmount: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       }
@@ -79,18 +100,31 @@ const loanAccountSchema = new mongoose.Schema(
       required: true,
       trim: true,
       enum: [
-        'BUSINESS TERM LOAN',
-        'INDIVIDUAL LOAN',
-        'CONSUMER LOAN',
-        'MORTGAGE',
-        'AUTO LOAN',
-        'PERSONAL LOAN',
-        'EDUCATION LOAN',
-        'CREDIT CARD',
-        'LINE OF CREDIT',
-        'SME LOAN',
-        'GENERAL LOAN',
-        'GROUP_LOAN'
+        'PERSONAL_LOAN',
+        'BUSINESS_LOAN', 
+        'MORTGAGE_LOAN',
+        'AUTO_LOAN',
+        'EDUCATION_LOAN',
+        'CONSUMER_LOAN',
+        'SME_LOAN',
+        'AGRICULTURAL_LOAN',
+        'DAILY_LOAN',
+        'WEEKLY_LOAN',
+        'GROUP_LOAN',
+        'MONTHLY_LOAN',
+        'GROUP_MONTHLY_LOAN',
+        'ASSET_LOAN',
+        'SOLAR_LOAN',
+        'RAPID_CASH_LOAN',
+        'STAFF_SALARY_ADVANCE',
+        'STAFF_LOAN',
+        'INDIVIDUAL_LOAN',
+        'CORPORATE_LOAN',
+        'OVERDRAFT',
+        'HOME_IMPROVEMENT_LOAN',
+        'SMALL_MEDIUM_ENTERPRISE_LOAN',
+        'SCHOOL_IMPROVEMENT_LOAN',
+        'AGRICULTURE_LOAN',
       ]
     },
     PROD_ID: {
@@ -98,7 +132,10 @@ const loanAccountSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator: function(v) {
-          const validProdIds = [1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 399, 400];
+          const validProdIds = [
+            1, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 
+            310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 399, 400
+          ];
           return validProdIds.includes(v);
         },
         message: props => `${props.value} is not a valid PROD_ID!`
@@ -137,8 +174,8 @@ const loanAccountSchema = new mongoose.Schema(
     },
     upfrontInterestPercentage: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0,
       max: 100,
@@ -155,30 +192,30 @@ const loanAccountSchema = new mongoose.Schema(
     },
     upfrontInterestAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     remainingInterestAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     DISBURSEMENT_LIMIT: {
       type: mongoose.Schema.Types.Decimal128,
       required: true,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     ACTUAL_DISBURSEMENT: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
@@ -213,8 +250,8 @@ const loanAccountSchema = new mongoose.Schema(
     },
     INTEREST_RATE: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
@@ -223,8 +260,8 @@ const loanAccountSchema = new mongoose.Schema(
       amount: {
         type: mongoose.Schema.Types.Decimal128,
         required: true,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
@@ -256,8 +293,8 @@ const loanAccountSchema = new mongoose.Schema(
     },
     LAST_PAYMENT_AMOUNT: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
@@ -270,71 +307,72 @@ const loanAccountSchema = new mongoose.Schema(
     CLOSURE_DATE: { type: Date },
     TOTAL_REPAID_AMOUNT: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     OUTSTANDING_PRINCIPAL: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     principalPaid: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     interestPaid: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     feesPaid: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     outstandingBalance: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     TOTAL_INTEREST: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     TOTAL_REPAYMENT: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     lateFeePerDay: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     maxLateFee: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
+      default: '0.00',
       min: 0
     },
     restrictMultipleDisbursements: {
@@ -349,16 +387,16 @@ const loanAccountSchema = new mongoose.Schema(
       date: Date,
       amount: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
       installmentNo: Number,
       lateFee: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
@@ -369,16 +407,16 @@ const loanAccountSchema = new mongoose.Schema(
     FEE_DETAILS: {
       processingFee: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
       processingFeeGLCode: { type: String },
       totalFees: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
@@ -387,8 +425,8 @@ const loanAccountSchema = new mongoose.Schema(
         chargeCode: { type: String },
         amount: {
           type: mongoose.Schema.Types.Decimal128,
-          get: v => parseFloat(v.toString()),
-          set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+          get: safeDecimalGetter,
+          set: safeDecimalSetter,
           default: '0.00',
           min: 0
         },
@@ -397,20 +435,19 @@ const loanAccountSchema = new mongoose.Schema(
       }],
       upfrontInterest: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       },
       upfrontInterestPercentage: {
         type: mongoose.Schema.Types.Decimal128,
-        get: v => parseFloat(v.toString()),
-        set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+        get: safeDecimalGetter,
+        set: safeDecimalSetter,
         default: '0.00',
         min: 0
       }
     },
-    // GROUP LOAN FIELDS
     groupLoan: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'GroupLoan',
@@ -422,15 +459,15 @@ const loanAccountSchema = new mongoose.Schema(
     },
     individualShare: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     installmentAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
@@ -450,18 +487,17 @@ const loanAccountSchema = new mongoose.Schema(
       accrualFrequency: { type: String, default: 'DAILY' },
       fixedRate: { type: Boolean, default: true }
     },
-    // NEW FIELDS FOR COLLECTION COMPATIBILITY
     total_repayment: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
     outstanding_balance: {
       type: mongoose.Schema.Types.Decimal128,
-      get: v => parseFloat(v.toString()),
-      set: v => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: safeDecimalGetter,
+      set: safeDecimalSetter,
       default: '0.00',
       min: 0
     },
@@ -507,16 +543,37 @@ const loanAccountSchema = new mongoose.Schema(
           const parts = field.split('.');
           if (parts.length === 1) {
             if (ret[field] && typeof ret[field] === 'object') {
-              ret[field] = parseFloat(ret[field].toString());
+              try {
+                ret[field] = parseFloat(ret[field].toString());
+              } catch (error) {
+                logger.warn(`Error parsing decimal field ${field}: ${error.message}`);
+                ret[field] = 0;
+              }
+            } else if (ret[field] === undefined || ret[field] === null) {
+              ret[field] = 0;
             }
           } else {
             let obj = ret;
             for (let i = 0; i < parts.length - 1; i++) {
-              obj = obj[parts[i]] || {};
+              if (!obj || typeof obj !== 'object') {
+                obj = {};
+                break;
+              }
+              if (!obj[parts[i]]) {
+                obj[parts[i]] = {};
+              }
+              obj = obj[parts[i]];
             }
             const lastKey = parts[parts.length - 1];
-            if (obj[lastKey] && typeof obj[lastKey] === 'object') {
-              obj[lastKey] = parseFloat(obj[lastKey].toString());
+            if (obj && obj[lastKey] && typeof obj[lastKey] === 'object') {
+              try {
+                obj[lastKey] = parseFloat(obj[lastKey].toString());
+              } catch (error) {
+                logger.warn(`Error parsing nested decimal field ${field}: ${error.message}`);
+                obj[lastKey] = 0;
+              }
+            } else if (obj && (obj[lastKey] === undefined || obj[lastKey] === null)) {
+              obj[lastKey] = 0;
             }
           }
         });
@@ -524,22 +581,58 @@ const loanAccountSchema = new mongoose.Schema(
         if (ret.FEE_DETAILS?.charges) {
           ret.FEE_DETAILS.charges = ret.FEE_DETAILS.charges.map(charge => ({
             ...charge,
-            amount: charge.amount && typeof charge.amount === 'object' ? parseFloat(charge.amount.toString()) : charge.amount
+            amount: charge.amount && typeof charge.amount === 'object' ? 
+              (() => {
+                try {
+                  return parseFloat(charge.amount.toString());
+                } catch (error) {
+                  logger.warn(`Error parsing charge amount: ${error.message}`);
+                  return 0;
+                }
+              })() : 
+              charge.amount || 0
           }));
         }
         
         if (ret.paymentHistory) {
           ret.paymentHistory = ret.paymentHistory.map(payment => ({
             ...payment,
-            amount: payment.amount && typeof payment.amount === 'object' ? parseFloat(payment.amount.toString()) : payment.amount,
-            lateFee: payment.lateFee && typeof payment.lateFee === 'object' ? parseFloat(payment.lateFee.toString()) : payment.lateFee
+            amount: payment.amount && typeof payment.amount === 'object' ? 
+              (() => {
+                try {
+                  return parseFloat(payment.amount.toString());
+                } catch (error) {
+                  logger.warn(`Error parsing payment amount: ${error.message}`);
+                  return 0;
+                }
+              })() : 
+              payment.amount || 0,
+            lateFee: payment.lateFee && typeof payment.lateFee === 'object' ? 
+              (() => {
+                try {
+                  return parseFloat(payment.lateFee.toString());
+                } catch (error) {
+                  logger.warn(`Error parsing payment lateFee: ${error.message}`);
+                  return 0;
+                }
+              })() : 
+              payment.lateFee || 0
           }));
         }
         
         if (ret.dailyAccruals) {
           ret.dailyAccruals = ret.dailyAccruals.map(accrual => ({
             ...accrual,
-            amount: accrual.amount && typeof accrual.amount === 'object' ? parseFloat(accrual.amount.toString()) : accrual.amount
+            amount: accrual.amount && typeof accrual.amount === 'object' ? 
+              (() => {
+                try {
+                  return parseFloat(accrual.amount.toString());
+                } catch (error) {
+                  logger.warn(`Error parsing accrual amount: ${error.message}`);
+                  return 0;
+                }
+              })() : 
+              accrual.amount || 0
           }));
         }
         
@@ -549,11 +642,11 @@ const loanAccountSchema = new mongoose.Schema(
         
         if (ret.Borrower_address) {
           ret.Borrower_address = {
-            street: ret.Borrower_address.street,
-            state: ret.Borrower_address.state,
-            city: ret.Borrower_address.city,
-            zipCode: ret.Borrower_address.zipCode,
-            country: ret.Borrower_address.country
+            street: ret.Borrower_address.street || '',
+            state: ret.Borrower_address.state || '',
+            city: ret.Borrower_address.city || '',
+            zipCode: ret.Borrower_address.zipCode || '',
+            country: ret.Borrower_address.country || 'Nigeria'
           };
         }
         
@@ -566,129 +659,170 @@ const loanAccountSchema = new mongoose.Schema(
 );
 
 // Virtual Fields
-// TEMPORARY FIX: Override problematic virtuals with safe versions
 loanAccountSchema.virtual('daysToMaturity').get(function () {
   try {
     if (!this.MATURITY_DT || !(this.MATURITY_DT instanceof Date)) return null;
-    return Math.ceil((this.MATURITY_DT - new Date()) / (1000 * 60 * 60 * 24));
+    const maturityDate = new Date(this.MATURITY_DT);
+    const currentDate = new Date();
+    return Math.ceil((maturityDate - currentDate) / (1000 * 60 * 60 * 24));
   } catch (error) {
+    logger.warn(`Error calculating daysToMaturity: ${error.message}`);
     return null;
   }
 });
 
 loanAccountSchema.virtual('nextAccrualDate').get(function () {
-  // ✅ FIXED: Add null checking
-  if (!this.dailyAccruals || this.dailyAccruals.length === 0) {
+  try {
+    if (!this.dailyAccruals || this.dailyAccruals.length === 0) {
+      return this.START_DT || new Date();
+    }
+    
+    const lastAccrual = this.dailyAccruals[this.dailyAccruals.length - 1];
+    if (!lastAccrual || !lastAccrual.date) {
+      return this.START_DT || new Date();
+    }
+    
+    const nextDate = new Date(lastAccrual.date);
+    nextDate.setDate(nextDate.getDate() + 1);
+    return nextDate;
+  } catch (error) {
+    logger.warn(`Error calculating nextAccrualDate: ${error.message}`);
     return this.START_DT || new Date();
   }
-  
-  const lastAccrual = this.dailyAccruals[this.dailyAccruals.length - 1];
-  if (!lastAccrual || !lastAccrual.date) {
-    return this.START_DT || new Date();
-  }
-  
-  const nextDate = new Date(lastAccrual.date);
-  nextDate.setDate(nextDate.getDate() + 1);
-  return nextDate;
 });
 
 loanAccountSchema.virtual('totalOutstanding').get(function () {
-  // ✅ FIXED: Add null checking for Decimal128 fields
-  const principal = this.OUTSTANDING_PRINCIPAL ? 
-    parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) : 0;
-  
-  const totalInterest = this.TOTAL_INTEREST ?
-    parseFloat(this.TOTAL_INTEREST.toString()) : 0;
-  
-  const interestPaid = this.interestPaid ?
-    parseFloat(this.interestPaid.toString()) : 0;
-  
-  const interest = totalInterest - interestPaid;
-  return principal + Math.max(0, interest);
+  try {
+    const principal = this.OUTSTANDING_PRINCIPAL ? 
+      safeDecimalGetter(this.OUTSTANDING_PRINCIPAL) : 0;
+    
+    const totalInterest = this.TOTAL_INTEREST ?
+      safeDecimalGetter(this.TOTAL_INTEREST) : 0;
+    
+    const interestPaid = this.interestPaid ?
+      safeDecimalGetter(this.interestPaid) : 0;
+    
+    const interest = totalInterest - interestPaid;
+    return principal + Math.max(0, interest);
+  } catch (error) {
+    logger.warn(`Error calculating totalOutstanding: ${error.message}`);
+    return 0;
+  }
 });
 
 // Instance Methods
-// FIXED Instance Methods - Add null checking
 loanAccountSchema.methods.isOverdue = function() {
-  // ✅ FIXED: Add comprehensive null checking
-  if (!this.NEXT_PAYMENT_DATE || 
-      !(this.NEXT_PAYMENT_DATE instanceof Date) || 
-      isNaN(this.NEXT_PAYMENT_DATE.getTime()) ||
-      this.LOAN_STATUS !== 'ACTIVE') {
+  try {
+    if (!this.NEXT_PAYMENT_DATE || 
+        !(this.NEXT_PAYMENT_DATE instanceof Date) || 
+        isNaN(this.NEXT_PAYMENT_DATE.getTime()) ||
+        this.LOAN_STATUS !== 'ACTIVE') {
+      return false;
+    }
+    return this.NEXT_PAYMENT_DATE < new Date();
+  } catch (error) {
+    logger.warn(`Error in isOverdue method: ${error.message}`);
     return false;
   }
-  return this.NEXT_PAYMENT_DATE < new Date();
 };
 
 loanAccountSchema.methods.getDaysOverdue = function() {
-  // ✅ FIXED: Add null checking
-  if (!this.isOverdue() || !this.NEXT_PAYMENT_DATE) return 0;
-  return Math.ceil((new Date() - this.NEXT_PAYMENT_DATE) / (1000 * 60 * 60 * 24));
+  try {
+    if (!this.isOverdue() || !this.NEXT_PAYMENT_DATE) return 0;
+    return Math.ceil((new Date() - this.NEXT_PAYMENT_DATE) / (1000 * 60 * 60 * 24));
+  } catch (error) {
+    logger.warn(`Error in getDaysOverdue method: ${error.message}`);
+    return 0;
+  }
 };
 
-// Add this helper method to your LoanAccount.js
 loanAccountSchema.methods.safeDecimalToString = function(fieldName) {
-  const value = this[fieldName];
-  if (!value) return '0.00';
-  
   try {
+    const value = this[fieldName];
+    if (!value && value !== 0) return '0.00';
+    
     if (typeof value === 'object' && value.toString) {
-      return value.toString();
+      try {
+        return value.toString();
+      } catch (error) {
+        return '0.00';
+      }
     }
     return String(value);
   } catch (error) {
-    logger.warn(`Error converting ${fieldName} to string:`, { error: error.message });
+    logger.warn(`Error in safeDecimalToString for ${fieldName}: ${error.message}`);
     return '0.00';
   }
 };
 
 loanAccountSchema.methods.getInterestBreakdown = function() {
-  // ✅ FIXED: Add null checking for Decimal128 fields
-  return {
-    totalInterest: this.TOTAL_INTEREST ? parseFloat(this.TOTAL_INTEREST.toString()) : 0,
-    upfrontInterest: this.upfrontInterestAmount ? parseFloat(this.upfrontInterestAmount.toString()) : 0,
-    remainingInterest: this.remainingInterestAmount ? parseFloat(this.remainingInterestAmount.toString()) : 0,
-    upfrontPercentage: this.partialUpfrontInterest ?
-      (this.upfrontInterestPercentage ? parseFloat(this.upfrontInterestPercentage.toString()) : 0) :
-      (this.deductUpfrontInterest ? 100 : 0),
-    disbursedAmount: this.ACTUAL_DISBURSEMENT ? parseFloat(this.ACTUAL_DISBURSEMENT.toString()) : 0
-  };
+  try {
+    return {
+      totalInterest: this.TOTAL_INTEREST ? safeDecimalGetter(this.TOTAL_INTEREST) : 0,
+      upfrontInterest: this.upfrontInterestAmount ? safeDecimalGetter(this.upfrontInterestAmount) : 0,
+      remainingInterest: this.remainingInterestAmount ? safeDecimalGetter(this.remainingInterestAmount) : 0,
+      upfrontPercentage: this.partialUpfrontInterest ?
+        (this.upfrontInterestPercentage ? safeDecimalGetter(this.upfrontInterestPercentage) : 0) :
+        (this.deductUpfrontInterest ? 100 : 0),
+      disbursedAmount: this.ACTUAL_DISBURSEMENT ? safeDecimalGetter(this.ACTUAL_DISBURSEMENT) : 0
+    };
+  } catch (error) {
+    logger.warn(`Error in getInterestBreakdown: ${error.message}`);
+    return {
+      totalInterest: 0,
+      upfrontInterest: 0,
+      remainingInterest: 0,
+      upfrontPercentage: 0,
+      disbursedAmount: 0
+    };
+  }
 };
 
 loanAccountSchema.methods.updateBalances = function(principalAmount, interestAmount, totalAmount) {
-  const principalNum = parseFloat(principalAmount || '0');
-  const interestNum = parseFloat(interestAmount || '0');
-  const totalNum = parseFloat(totalAmount || '0');
-  
-  this.OUTSTANDING_PRINCIPAL = mongoose.Types.Decimal128.fromString(
-    Math.max(0, parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) - principalNum).toFixed(2)
-  );
-  this.principalPaid = mongoose.Types.Decimal128.fromString(
-    (parseFloat(this.principalPaid.toString()) + principalNum).toFixed(2)
-  );
-  this.interestPaid = mongoose.Types.Decimal128.fromString(
-    (parseFloat(this.interestPaid.toString()) + interestNum).toFixed(2)
-  );
-  this.TOTAL_REPAID_AMOUNT = mongoose.Types.Decimal128.fromString(
-    (parseFloat(this.TOTAL_REPAID_AMOUNT.toString()) + totalNum).toFixed(2)
-  );
-  this.total_repayment = mongoose.Types.Decimal128.fromString(
-    (parseFloat(this.total_repayment.toString()) + totalNum).toFixed(2)
-  );
-  this.outstanding_balance = mongoose.Types.Decimal128.fromString(
-    Math.max(0, parseFloat(this.outstanding_balance.toString()) - totalNum).toFixed(2)
-  );
-  
-  // Update loan status if fully paid
-  if (parseFloat(this.OUTSTANDING_PRINCIPAL.toString()) <= 0) {
-    this.LOAN_STATUS = 'CLOSED';
-    this.CLOSURE_DATE = new Date();
-    this.CLOSED_DATE = new Date();
+  try {
+    const principalNum = parseFloat(principalAmount || '0');
+    const interestNum = parseFloat(interestAmount || '0');
+    const totalNum = parseFloat(totalAmount || '0');
+    
+    const currentPrincipal = this.OUTSTANDING_PRINCIPAL ? safeDecimalGetter(this.OUTSTANDING_PRINCIPAL) : 0;
+    const currentPrincipalPaid = this.principalPaid ? safeDecimalGetter(this.principalPaid) : 0;
+    const currentInterestPaid = this.interestPaid ? safeDecimalGetter(this.interestPaid) : 0;
+    const currentTotalRepaid = this.TOTAL_REPAID_AMOUNT ? safeDecimalGetter(this.TOTAL_REPAID_AMOUNT) : 0;
+    const currentTotalRepayment = this.total_repayment ? safeDecimalGetter(this.total_repayment) : 0;
+    const currentOutstandingBalance = this.outstanding_balance ? safeDecimalGetter(this.outstanding_balance) : 0;
+    
+    this.OUTSTANDING_PRINCIPAL = safeDecimalSetter(
+      Math.max(0, currentPrincipal - principalNum).toFixed(2)
+    );
+    this.principalPaid = safeDecimalSetter(
+      (currentPrincipalPaid + principalNum).toFixed(2)
+    );
+    this.interestPaid = safeDecimalSetter(
+      (currentInterestPaid + interestNum).toFixed(2)
+    );
+    this.TOTAL_REPAID_AMOUNT = safeDecimalSetter(
+      (currentTotalRepaid + totalNum).toFixed(2)
+    );
+    this.total_repayment = safeDecimalSetter(
+      (currentTotalRepayment + totalNum).toFixed(2)
+    );
+    this.outstanding_balance = safeDecimalSetter(
+      Math.max(0, currentOutstandingBalance - totalNum).toFixed(2)
+    );
+    
+    // Update loan status if fully paid
+    if (safeDecimalGetter(this.OUTSTANDING_PRINCIPAL) <= 0) {
+      this.LOAN_STATUS = 'CLOSED';
+      this.CLOSURE_DATE = new Date();
+      this.CLOSED_DATE = new Date();
+    }
+  } catch (error) {
+    logger.error(`Error in updateBalances: ${error.message}`, { stack: error.stack });
+    throw error;
   }
 };
 
 // Static Methods
-// FIXED Static Methods - Add null checking
 loanAccountSchema.statics.findOverdueLoans = async function() {
   try {
     const loans = await this.find({
@@ -701,16 +835,24 @@ loanAccountSchema.statics.findOverdueLoans = async function() {
     }).lean();
     
     return loans.map(loan => {
-      // ✅ FIXED: Add null checking in mapping
-      const nextPaymentDate = loan.NEXT_PAYMENT_DATE ? new Date(loan.NEXT_PAYMENT_DATE) : null;
-      const daysOverdue = nextPaymentDate ? 
-        Math.ceil((new Date() - nextPaymentDate) / (1000 * 60 * 60 * 24)) : 0;
-      
-      return {
-        ...loan,
-        isOverdue: true,
-        daysOverdue: daysOverdue
-      };
+      try {
+        const nextPaymentDate = loan.NEXT_PAYMENT_DATE ? new Date(loan.NEXT_PAYMENT_DATE) : null;
+        const daysOverdue = nextPaymentDate ? 
+          Math.ceil((new Date() - nextPaymentDate) / (1000 * 60 * 60 * 24)) : 0;
+        
+        return {
+          ...loan,
+          isOverdue: true,
+          daysOverdue: daysOverdue
+        };
+      } catch (error) {
+        logger.warn(`Error processing loan ${loan._id}: ${error.message}`);
+        return {
+          ...loan,
+          isOverdue: false,
+          daysOverdue: 0
+        };
+      }
     });
   } catch (error) {
     logger.error('Error finding overdue loans:', {
@@ -748,15 +890,25 @@ loanAccountSchema.statics.markLoansAsOverdue = async function() {
 
 // Validation Middleware
 loanAccountSchema.pre('validate', function(next) {
-  if (this.deductUpfrontInterest && this.partialUpfrontInterest) {
-    this.invalidate('partialUpfrontInterest',
-      'Cannot have both full upfront and partial upfront interest enabled simultaneously');
+  try {
+    if (this.deductUpfrontInterest && this.partialUpfrontInterest) {
+      this.invalidate('partialUpfrontInterest',
+        'Cannot have both full upfront and partial upfront interest enabled simultaneously');
+    }
+    
+    if (this.partialUpfrontInterest) {
+      const upfrontPercentage = this.upfrontInterestPercentage ? safeDecimalGetter(this.upfrontInterestPercentage) : 0;
+      if (upfrontPercentage <= 0) {
+        this.invalidate('upfrontInterestPercentage',
+          'Upfront interest percentage must be greater than 0 for partial upfront interest');
+      }
+    }
+    
+    next();
+  } catch (error) {
+    logger.error(`Error in pre-validate hook: ${error.message}`);
+    next(error);
   }
-  if (this.partialUpfrontInterest && parseFloat(this.upfrontInterestPercentage.toString()) <= 0) {
-    this.invalidate('upfrontInterestPercentage',
-      'Upfront interest percentage must be greater than 0 for partial upfront interest');
-  }
-  next();
 });
 
 // Pre-save Hook
@@ -815,11 +967,12 @@ loanAccountSchema.pre('save', async function(next) {
         this.isModified('deductUpfrontInterest') ||
         this.isModified('partialUpfrontInterest') ||
         this.isModified('upfrontInterestPercentage')) {
-      const principal = parseFloat(this.DISBURSEMENT_LIMIT?.toString() || '0');
-      const rate = parseFloat(this.INTEREST_RATE?.toString() || '0') / 100;
+      
+      const principal = this.DISBURSEMENT_LIMIT ? safeDecimalGetter(this.DISBURSEMENT_LIMIT) : 0;
+      const rate = this.INTEREST_RATE ? safeDecimalGetter(this.INTEREST_RATE) / 100 : 0;
       
       if (principal <= 0 || rate <= 0) {
-        this.TOTAL_INTEREST = mongoose.Types.Decimal128.fromString('0.00');
+        this.TOTAL_INTEREST = safeDecimalSetter('0.00');
       } else {
         const termInYears = this.TERM_CD === 'M' ? this.TERM_VALUE / 12 :
                            this.TERM_CD === 'D' ? this.TERM_VALUE / 365 :
@@ -827,23 +980,24 @@ loanAccountSchema.pre('save', async function(next) {
                            this.TERM_CD === 'Q' ? this.TERM_VALUE / 4 :
                            this.TERM_VALUE;
         const totalInterest = principal * rate * termInYears;
-        this.TOTAL_INTEREST = mongoose.Types.Decimal128.fromString(totalInterest.toFixed(2));
+        this.TOTAL_INTEREST = safeDecimalSetter(totalInterest.toFixed(2));
       }
       
-      const totalInterestNum = parseFloat(this.TOTAL_INTEREST?.toString() || '0');
+      const totalInterestNum = this.TOTAL_INTEREST ? safeDecimalGetter(this.TOTAL_INTEREST) : 0;
+      
       if (this.deductUpfrontInterest) {
-        this.upfrontInterestAmount = mongoose.Types.Decimal128.fromString(totalInterestNum.toFixed(2));
-        this.remainingInterestAmount = mongoose.Types.Decimal128.fromString('0.00');
+        this.upfrontInterestAmount = safeDecimalSetter(totalInterestNum.toFixed(2));
+        this.remainingInterestAmount = safeDecimalSetter('0.00');
       } else if (this.partialUpfrontInterest) {
-        const percentage = parseFloat(this.upfrontInterestPercentage?.toString() || '0') / 100;
+        const percentage = this.upfrontInterestPercentage ? safeDecimalGetter(this.upfrontInterestPercentage) / 100 : 0;
         if (percentage <= 0 || percentage > 1) {
           throw new Error('Upfront interest percentage must be between 0-100%');
         }
         const upfrontAmount = totalInterestNum * percentage;
-        this.upfrontInterestAmount = mongoose.Types.Decimal128.fromString(upfrontAmount.toFixed(2));
-        this.remainingInterestAmount = mongoose.Types.Decimal128.fromString((totalInterestNum - upfrontAmount).toFixed(2));
+        this.upfrontInterestAmount = safeDecimalSetter(upfrontAmount.toFixed(2));
+        this.remainingInterestAmount = safeDecimalSetter((totalInterestNum - upfrontAmount).toFixed(2));
       } else {
-        this.upfrontInterestAmount = mongoose.Types.Decimal128.fromString('0.00');
+        this.upfrontInterestAmount = safeDecimalSetter('0.00');
         this.remainingInterestAmount = this.TOTAL_INTEREST;
       }
     }
@@ -852,23 +1006,24 @@ loanAccountSchema.pre('save', async function(next) {
     if (this.isModified('DISBURSEMENT_LIMIT') ||
         this.isModified('FEE_DETAILS') ||
         this.isModified('upfrontInterestAmount')) {
-      const principal = parseFloat(this.DISBURSEMENT_LIMIT?.toString() || '0');
-      const totalFees = parseFloat(this.FEE_DETAILS?.totalFees?.toString() || '0');
-      const upfrontInterest = parseFloat(this.upfrontInterestAmount?.toString() || '0');
+      
+      const principal = this.DISBURSEMENT_LIMIT ? safeDecimalGetter(this.DISBURSEMENT_LIMIT) : 0;
+      const totalFees = this.FEE_DETAILS?.totalFees ? safeDecimalGetter(this.FEE_DETAILS.totalFees) : 0;
+      const upfrontInterest = this.upfrontInterestAmount ? safeDecimalGetter(this.upfrontInterestAmount) : 0;
       const actualDisbursement = principal - totalFees - upfrontInterest;
       
       if (actualDisbursement < 0) {
         throw new Error('Actual disbursement cannot be negative');
       }
-      this.ACTUAL_DISBURSEMENT = mongoose.Types.Decimal128.fromString(actualDisbursement.toFixed(2));
+      this.ACTUAL_DISBURSEMENT = safeDecimalSetter(actualDisbursement.toFixed(2));
     }
     
     // Initialize new fields if not set
-    if (!this.total_repayment) {
-      this.total_repayment = mongoose.Types.Decimal128.fromString('0.00');
+    if (!this.total_repayment || safeDecimalGetter(this.total_repayment) === 0) {
+      this.total_repayment = safeDecimalSetter('0.00');
     }
-    if (!this.outstanding_balance) {
-      this.outstanding_balance = this.OUTSTANDING_PRINCIPAL;
+    if (!this.outstanding_balance || safeDecimalGetter(this.outstanding_balance) === 0) {
+      this.outstanding_balance = this.OUTSTANDING_PRINCIPAL || safeDecimalSetter('0.00');
     }
     
     if (this.isModified('NEXT_PAYMENT_DATE') || this.isModified('LOAN_STATUS')) {

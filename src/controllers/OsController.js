@@ -26,6 +26,9 @@ import mongoose from 'mongoose';
 // Utils
 import logger from '../utils/logger.js';
 
+// Import SystemDateController and its helper function
+import SystemDateController, { calculateNextBusinessDate } from './SystemDateController.js';
+
 // ==================== MISSING SERVICE FUNCTION PLACEHOLDERS ====================
 
 const updateLoanStatuses = async () => {
@@ -600,7 +603,7 @@ export const processReconciliation = async (session = null) => {
 
 // ==================== BUSINESS DATE FUNCTIONS ====================
 
-export const calculateNextBusinessDate = (currentDate) => {
+export const calculateNextBusinessDateOS = (currentDate) => {
     try {
         let nextDate = new Date(currentDate);
         nextDate.setDate(nextDate.getDate() + 1);
@@ -629,7 +632,7 @@ export const calculateNextBusinessDate = (currentDate) => {
     }
 };
 
-export const setNextBusinessDate = () => {
+export const setNextBusinessDateOS = () => {
     try {
         const currentDate = systemStatus.currentBusinessDate || new Date();
         const nextBusinessDate = calculateNextBusinessDate(currentDate);
@@ -652,7 +655,7 @@ export const setNextBusinessDate = () => {
     }
 };
 
-export const calculateNextBusinessDateWithHolidays = async (currentDate) => {
+export const calculateNextBusinessDateWithHolidaysOS = async (currentDate) => {
     try {
         let nextDate = new Date(currentDate);
         nextDate.setDate(nextDate.getDate() + 1);
@@ -857,9 +860,13 @@ const executeService = async (serviceName, serviceFn) => {
 
 export const triggerEndOfDayProcess = async (req, res) => {
     try {
-        const { skipServices = [], runServices = [] } = req.body;
+        const { skipServices = [], runServices = [], userId = 'system' } = req.body;
         
-        logger.info('Starting End of Day process');
+        logger.info('Starting End of Day process', {
+            userId,
+            skipServices,
+            runServices
+        });
 
         const validServices = [
             'loanProcessing', 'overdueLoans', 'processAutoCollections', 
@@ -905,15 +912,81 @@ export const triggerEndOfDayProcess = async (req, res) => {
             }
         }
 
-        const nextBusinessDate = setNextBusinessDate();
+        // Use the SystemDateController's processEOD method
+        // Get a valid user ID instead of "system"
+        let validUserId = userId;
+        
+        try {
+            // If userId is "system", try to find an admin user
+            if (userId === 'system') {
+                const User = (await import('../models/User.js')).default;
+                const adminUser = await User.findOne({ 
+                    primary_role: { $in: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
+                    status: 'ACTIVE'
+                });
+                
+                if (adminUser) {
+                    validUserId = adminUser._id.toString();
+                    logger.info(`Using admin user for EOD: ${adminUser.username} (${validUserId})`);
+                } else {
+                    // If no admin found, try any active user
+                    const anyUser = await User.findOne({ status: 'ACTIVE' });
+                    if (anyUser) {
+                        validUserId = anyUser._id.toString();
+                        logger.info(`Using active user for EOD: ${anyUser.username} (${validUserId})`);
+                    } else {
+                        logger.warn('No active users found in database, using "system" as userId');
+                    }
+                }
+            }
+        } catch (userError) {
+            logger.warn('Failed to find valid user for EOD, using provided userId:', {
+                userId,
+                error: userError.message
+            });
+        }
 
+        const mockRes = {
+            statusCode: 200,
+            data: null,
+            status: function(code) { 
+                this.statusCode = code; 
+                return this; 
+            }, 
+            json: function(data) { 
+                this.data = data; 
+                return data; 
+            }
+        };
+
+        const mockReq = { body: { userId: validUserId, force: false } };
+        
+        logger.info('Calling SystemDateController.processEOD with userId:', { userId: validUserId });
+        
+        await SystemDateController.processEOD(mockReq, mockRes);
+
+        // Update local system status
         systemStatus.lastEODRun = new Date();
-        systemStatus.nextBusinessDate = nextBusinessDate;
-        systemStatus.currentBusinessDate = nextBusinessDate;
+        
+        if (mockRes.data && mockRes.data.success) {
+            systemStatus.nextBusinessDate = mockRes.data.data?.nextBusinessDate || systemStatus.nextBusinessDate;
+            systemStatus.currentBusinessDate = mockRes.data.data?.currentBusinessDate || systemStatus.currentBusinessDate;
+            systemStatus.eodStatus = 'COMPLETED';
+            
+            logger.info('EOD processing completed successfully via SystemDateController', {
+                nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+                currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0]
+            });
+        } else {
+            systemStatus.eodStatus = 'FAILED';
+            logger.warn('EOD processing failed via SystemDateController', {
+                error: mockRes.data?.message || 'Unknown error'
+            });
+        }
 
         logger.info('End of Day processing completed successfully', {
             servicesExecuted: servicesToRun,
-            nextBusinessDate: nextBusinessDate.toISOString().split('T')[0],
+            nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
             totalServices: servicesToRun.length
         });
 
@@ -921,8 +994,9 @@ export const triggerEndOfDayProcess = async (req, res) => {
             success: true,
             message: 'End of Day processing completed successfully',
             results: serviceResults,
-            nextBusinessDate: nextBusinessDate.toISOString().split('T')[0],
-            currentBusinessDate: systemStatus.currentBusinessDate.toISOString().split('T')[0],
+            eodResult: mockRes.data,
+            nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+            currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
             servicesExecuted: servicesToRun,
             timestamp: new Date().toISOString()
         });
@@ -931,8 +1005,13 @@ export const triggerEndOfDayProcess = async (req, res) => {
         logger.error('EOD failed', { 
             error: error.message, 
             stack: error.stack,
-            skippedServices: req.body.skipServices || [] 
+            skippedServices: req.body.skipServices || [],
+            userId: req.body.userId || 'system'
         });
+        
+        // Update system status to failed
+        systemStatus.eodStatus = 'FAILED';
+        systemStatus.lastEODRun = new Date();
         
         return res.status(500).json({
             success: false,
@@ -945,17 +1024,23 @@ export const triggerEndOfDayProcess = async (req, res) => {
 
 // ==================== OTHER CONTROLLER FUNCTIONS ====================
 
-export const getCurrentBusinessDate = async (req, res) => {
+export const getCurrentBusinessDateOS = async (req, res) => {
   try {
-    const businessDate = await getBusinessDate();
+    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    if (!systemDate) {
+      return res.status(404).json({
+        success: false,
+        message: 'System date not found'
+      });
+    }
     
     systemStatus.serverTime = getServerTime();
     return res.status(200).json({
       success: true,
-      currentBusinessDate: businessDate.toISOString(),
-      nextBusinessDate: systemStatus.nextBusinessDate,
-      isEODProcessing: systemStatus.isEODProcessing,
-      eodStatus: systemStatus.eodStatus,
+      currentBusinessDate: systemDate.currentBusinessDate,
+      nextBusinessDate: systemDate.nextBusinessDate,
+      isEODProcessing: systemDate.isEODProcessing,
+      eodStatus: systemDate.eodStatus,
       timestamp: systemStatus.serverTime.toISOString(),
     });
   } catch (error) {
@@ -1016,198 +1101,67 @@ export const getDormantAccountsCount = async (req, res) => {
   }
 };
 
-export const processEndOfDay = async (processedBy = 'system') => {
+export const setBusinessDateManuallyOS = async (req, res) => {
   try {
-    logger.info('🏁 Starting End of Day processing', { processedBy });
-    
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-    if (!systemDate) {
-      throw new Error('System date not found. Please initialize system dates first.');
+    const { newDate, updatedBy = 'system', reason = 'Manual adjustment' } = req.body;
+
+    if (!newDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'New date is required'
+      });
     }
-    
-    if (systemDate.eodStatus === 'IN_PROGRESS') {
-      throw new Error('EOD processing is already in progress');
-    }
-    
-    if (systemDate.eodStatus === 'COMPLETED') {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (systemDate.currentBusinessDate >= today) {
-        throw new Error('EOD has already been completed for the current business date');
-      }
-    }
-    
-    systemDate.eodStatus = 'IN_PROGRESS';
-    systemDate.eodHistory.push({
-      startedAt: new Date(),
-      processedBy,
-      status: 'IN_PROGRESS'
-    });
-    await systemDate.save();
-    
-    logger.info('🔄 EOD Status set to IN_PROGRESS');
-    
-    logger.info('📊 Step 1: Processing daily interest...');
-    await postDailyAccruedInterest();
-    
-    logger.info('💰 Step 2: Updating account balances...');
-    await updateDormantAccounts();
-    
-    logger.info('📈 Step 3: Generating daily reports...');
-    
-    logger.info('🗄️ Step 4: Archiving transactions...');
-    
-    logger.info('📅 Step 5: Advancing business date...');
-    const previousBusinessDate = systemDate.currentBusinessDate;
-    const newCurrentBusinessDate = systemDate.nextBusinessDate;
-    const newNextBusinessDate = await calculateNextBusinessDateSafe(newCurrentBusinessDate);
-    
-    systemDate.previousBusinessDate = previousBusinessDate;
-    systemDate.currentBusinessDate = newCurrentBusinessDate;
-    systemDate.nextBusinessDate = newNextBusinessDate;
-    systemDate.eodStatus = 'COMPLETED';
-    systemDate.lastUpdated = new Date();
-    systemDate.updatedBy = processedBy;
-    
-    systemDate.eodHistory.push({
-      completedAt: new Date(),
-      processedBy,
-      status: 'COMPLETED',
-      previousDate: previousBusinessDate,
-      newDate: newCurrentBusinessDate
-    });
-    
-    await systemDate.save();
-    
-    systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
-    systemStatus.previousBusinessDate = systemDate.previousBusinessDate;
-    systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
-    systemStatus.eodStatus = systemDate.eodStatus;
-    systemStatus.initialized = true;
-    
-    logger.info('🎉 End of Day processing completed successfully', {
-      previousBusinessDate: previousBusinessDate.toISOString().split('T')[0],
-      newBusinessDate: newCurrentBusinessDate.toISOString().split('T')[0],
-      nextBusinessDate: newNextBusinessDate.toISOString().split('T')[0],
-      processedBy
-    });
-    
-    return {
-      success: true,
-      message: 'EOD processing completed successfully',
-      data: {
-        previousBusinessDate,
-        currentBusinessDate: newCurrentBusinessDate,
-        nextBusinessDate: newNextBusinessDate,
-        eodStatus: 'COMPLETED'
+
+    // Call the SystemDateController's setBusinessDate method
+    const mockRes = {
+      statusCode: 200,
+      data: null,
+      status: function(code) { 
+        this.statusCode = code; 
+        return this; 
+      }, 
+      json: function(data) { 
+        this.data = data; 
+        return data; 
       }
     };
+
+    const mockReq = { 
+      body: { 
+        businessDate: newDate, 
+        reason, 
+        userId: updatedBy 
+      } 
+    };
     
-  } catch (error) {
-    logger.error('❌ End of Day processing failed', {
-      error: error.message,
-      processedBy
+    await SystemDateController.setBusinessDate(mockReq, mockRes);
+    
+    systemStatus.serverTime = getServerTime();
+    return res.status(200).json({
+      success: true,
+      message: 'Business date set successfully',
+      data: mockRes.data,
+      timestamp: systemStatus.serverTime.toISOString()
     });
-    
-    try {
-      const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-      if (systemDate) {
-        systemDate.eodStatus = 'IDLE';
-        systemDate.eodHistory.push({
-          failedAt: new Date(),
-          processedBy,
-          status: 'FAILED',
-          error: error.message
-        });
-        await systemDate.save();
-      }
-    } catch (saveError) {
-      logger.error('❌ Failed to reset EOD status after failure', { error: saveError.message });
-    }
-    
-    throw error;
+  } catch (error) {
+    logger.error('Failed to set business date manually', { error: error.message });
+    systemStatus.serverTime = getServerTime();
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to set business date',
+      error: error.message,
+      timestamp: systemStatus.serverTime.toISOString()
+    });
   }
 };
 
-export const setBusinessDateManually = async (newDate, updatedBy = 'admin', reason = 'Manual adjustment') => {
-  try {
-    if (!newDate) {
-      throw new Error('New date is required');
-    }
-    
-    const date = new Date(newDate);
-    if (isNaN(date.getTime())) {
-      throw new Error('Invalid date format');
-    }
-    
-    let systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-    
-    if (!systemDate) {
-      const nextBusinessDate = await calculateNextBusinessDateSafe(date);
-      
-      systemDate = new SystemDate({
-        currentBusinessDate: date,
-        previousBusinessDate: date,
-        nextBusinessDate: nextBusinessDate,
-        eodStatus: 'IDLE',
-        eodHistory: [{
-          manualAdjustment: true,
-          adjustedAt: new Date(),
-          adjustedBy: updatedBy,
-          reason: reason,
-          newDate: date
-        }]
-      });
-    } else {
-      systemDate.previousBusinessDate = systemDate.currentBusinessDate;
-      systemDate.currentBusinessDate = date;
-      systemDate.nextBusinessDate = await calculateNextBusinessDateSafe(date);
-      systemDate.lastUpdated = new Date();
-      systemDate.updatedBy = updatedBy;
-      
-      systemDate.eodHistory.push({
-        manualAdjustment: true,
-        adjustedAt: new Date(),
-        adjustedBy: updatedBy,
-        reason: reason,
-        previousDate: systemDate.previousBusinessDate,
-        newDate: date
-      });
-    }
-    
-    await systemDate.save();
-    
-    systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
-    systemStatus.previousBusinessDate = systemDate.previousBusinessDate;
-    systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
-    systemStatus.eodStatus = systemDate.eodStatus;
-    systemStatus.initialized = true;
-    
-    logger.info('✅ Business date manually updated', {
-      previousDate: systemDate.previousBusinessDate.toISOString().split('T')[0],
-      newDate: systemDate.currentBusinessDate.toISOString().split('T')[0],
-      updatedBy,
-      reason
-    });
-    
-    return systemStatus;
-  } catch (error) {
-    logger.error('❌ Failed to manually update business date', {
-      error: error.message,
-      newDate,
-      updatedBy
-    });
-    throw error;
-  }
-};
-
-export const debugDateIssues = async () => {
+export const debugDateIssuesOS = async (req, res) => {
   try {
     const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
     const businessDate = getBusinessDate();
     const serverTime = getServerTime();
     
-    logger.info('Date Debug Information', {
+    const debugInfo = {
       systemDate: systemDate ? {
         currentBusinessDate: systemDate.currentBusinessDate,
         currentBusinessDateType: typeof systemDate.currentBusinessDate,
@@ -1226,137 +1180,9 @@ export const debugDateIssues = async () => {
         type: typeof serverTime,
         valid: serverTime instanceof Date && !isNaN(serverTime.getTime()),
       }
-    });
-    
-    return {
-      systemDate,
-      businessDate,
-      serverTime,
-      allValid: systemDate && 
-                systemDate.currentBusinessDate instanceof Date && 
-                !isNaN(systemDate.currentBusinessDate.getTime()) &&
-                businessDate instanceof Date &&
-                !isNaN(businessDate.getTime())
     };
-  } catch (error) {
-    logger.error('Error in debugDateIssues:', { error: error.message, stack: error.stack });
-    throw error;
-  }
-};
-
-export const initializeSystemDates = async (maxRetries = 3, retryDelay = 5000) => {
-  let retryCount = 0;
-  
-  while (retryCount < maxRetries) {
-    try {
-      logger.info(`📅 Initializing system dates (attempt ${retryCount + 1}/${maxRetries})`);
-      
-      if (mongoose.connection.readyState !== 1) {
-        logger.info('⏳ Waiting for MongoDB connection...');
-        await new Promise((resolve) => {
-          const checkConnection = () => {
-            if (mongoose.connection.readyState === 1) {
-              resolve();
-            } else {
-              setTimeout(checkConnection, 1000);
-            }
-          };
-          checkConnection();
-        });
-      }
-
-      const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-      
-      if (systemDate) {
-        systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
-        systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
-        systemStatus.eodStatus = systemDate.eodStatus || 'IDLE';
-        systemStatus.initialized = true;
-        
-        logger.info('✅ System dates loaded from database', {
-          currentBusinessDate: systemStatus.currentBusinessDate,
-          nextBusinessDate: systemStatus.nextBusinessDate,
-          eodStatus: systemStatus.eodStatus
-        });
-      } else {
-        const defaultStartDate = new Date('2025-01-01');
-        const currentBusinessDate = defaultStartDate;
-        const nextBusinessDate = await calculateNextBusinessDateSafe(currentBusinessDate);
-
-        const newSystemDate = new SystemDate({
-          currentBusinessDate,
-          nextBusinessDate,
-          eodStatus: 'IDLE',
-          eodHistory: [],
-        });
-
-        await newSystemDate.save();
-        systemStatus.currentBusinessDate = currentBusinessDate;
-        systemStatus.nextBusinessDate = nextBusinessDate;
-        systemStatus.eodStatus = 'IDLE';
-        systemStatus.initialized = true;
-        
-        logger.info('✅ Initial system date created', {
-          currentBusinessDate,
-          nextBusinessDate,
-        });
-      }
-
-      systemStatus.serverTime = new Date();
-      logger.info('🎉 System dates initialized successfully');
-      return systemStatus;
-    } catch (error) {
-      retryCount++;
-      logger.error(`❌ Failed to initialize system dates (attempt ${retryCount}/${maxRetries})`, {
-        error: error.message,
-        stack: error.stack,
-      });
-      
-      if (retryCount < maxRetries) {
-        logger.info(`⏳ Retrying in ${retryDelay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-      } else {
-        logger.error('💥 All retries failed for system dates initialization');
-        const fallbackDate = new Date('2025-01-01');
-        systemStatus.currentBusinessDate = fallbackDate;
-        systemStatus.nextBusinessDate = fallbackDate;
-        systemStatus.eodStatus = 'IDLE';
-        systemStatus.initialized = false;
-        systemStatus.error = error.message;
-        return systemStatus;
-      }
-    }
-  }
-};
-
-export const debugHolidaySystem = async () => {
-  try {
-    const holidays = await Holiday.find({}).limit(5);
-    const today = new Date();
-    const isHolidayToday = await Holiday.isHoliday(today);
     
-    logger.info('Holiday System Debug', {
-      totalHolidaysInDB: holidays.length,
-      sampleHolidays: holidays.map(h => ({
-        date: h.date,
-        description: h.description,
-        recurring: h.recurring
-      })),
-      isTodayHoliday: !!isHolidayToday,
-      today: today.toISOString()
-    });
-    
-    return { holidays, isHolidayToday };
-  } catch (error) {
-    logger.error('Holiday system debug failed:', { error: error.message });
-    throw error;
-  }
-};
-
-export const debugDates = async (req, res) => {
-  try {
-    const debugInfo = await debugDateIssues();
-    
+    systemStatus.serverTime = getServerTime();
     return res.status(200).json({
       success: true,
       debugInfo,
@@ -1366,19 +1192,22 @@ export const debugDates = async (req, res) => {
         serverTime: systemStatus.serverTime,
         isEODProcessing: systemStatus.isEODProcessing,
         eodStatus: systemStatus.eodStatus
-      }
+      },
+      timestamp: systemStatus.serverTime.toISOString()
     });
   } catch (error) {
     logger.error('Debug dates failed:', { error: error.message });
+    systemStatus.serverTime = getServerTime();
     return res.status(500).json({
       success: false,
       error: error.message,
-      systemStatus
+      systemStatus,
+      timestamp: systemStatus.serverTime.toISOString()
     });
   }
 };
 
-export const getStatus = async (req, res) => {
+export const getStatusOS = async (req, res) => {
   try {
     const dormantCount = await countDormantAccountsToUpdate();
     const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
@@ -1466,22 +1295,110 @@ export const getStatus = async (req, res) => {
   }
 };
 
-export const initializeSystemDatesManual = async (req, res) => {
+export const initializeSystemDatesOS = async (req, res) => {
   try {
-    await initializeSystemDates();
+    const { maxRetries = 3, retryDelay = 5000 } = req.body;
     
-    systemStatus.serverTime = getServerTime();
-    return res.status(200).json({
-      success: true,
-      message: 'System dates initialized successfully',
-      systemStatus: {
-        currentBusinessDate: systemStatus.currentBusinessDate,
-        nextBusinessDate: systemStatus.nextBusinessDate,
-        eodStatus: systemStatus.eodStatus,
-        serverTime: systemStatus.serverTime
-      },
-      timestamp: systemStatus.serverTime.toISOString(),
-    });
+    let retryCount = 0;
+    while (retryCount < maxRetries) {
+      try {
+        logger.info(`📅 Initializing system dates (attempt ${retryCount + 1}/${maxRetries})`);
+        
+        if (mongoose.connection.readyState !== 1) {
+          logger.info('⏳ Waiting for MongoDB connection...');
+          await new Promise((resolve) => {
+            const checkConnection = () => {
+              if (mongoose.connection.readyState === 1) {
+                resolve();
+              } else {
+                setTimeout(checkConnection, 1000);
+              }
+            };
+            checkConnection();
+          });
+        }
+
+        const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+        
+        if (systemDate) {
+          systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
+          systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
+          systemStatus.eodStatus = systemDate.eodStatus || 'IDLE';
+          systemStatus.initialized = true;
+          
+          logger.info('✅ System dates loaded from database', {
+            currentBusinessDate: systemStatus.currentBusinessDate,
+            nextBusinessDate: systemStatus.nextBusinessDate,
+            eodStatus: systemStatus.eodStatus
+          });
+        } else {
+          const defaultStartDate = new Date('2025-01-01');
+          const currentBusinessDate = defaultStartDate;
+          const nextBusinessDate = await calculateNextBusinessDateSafe(currentBusinessDate);
+
+          const newSystemDate = new SystemDate({
+            currentBusinessDate,
+            nextBusinessDate,
+            eodStatus: 'IDLE',
+            eodHistory: [],
+          });
+
+          await newSystemDate.save();
+          systemStatus.currentBusinessDate = currentBusinessDate;
+          systemStatus.nextBusinessDate = nextBusinessDate;
+          systemStatus.eodStatus = 'IDLE';
+          systemStatus.initialized = true;
+          
+          logger.info('✅ Initial system date created', {
+            currentBusinessDate,
+            nextBusinessDate,
+          });
+        }
+
+        systemStatus.serverTime = new Date();
+        logger.info('🎉 System dates initialized successfully');
+        
+        systemStatus.serverTime = getServerTime();
+        return res.status(200).json({
+          success: true,
+          message: 'System dates initialized successfully',
+          systemStatus: {
+            currentBusinessDate: systemStatus.currentBusinessDate,
+            nextBusinessDate: systemStatus.nextBusinessDate,
+            eodStatus: systemStatus.eodStatus,
+            serverTime: systemStatus.serverTime
+          },
+          timestamp: systemStatus.serverTime.toISOString(),
+        });
+      } catch (error) {
+        retryCount++;
+        logger.error(`❌ Failed to initialize system dates (attempt ${retryCount}/${maxRetries})`, {
+          error: error.message,
+          stack: error.stack,
+        });
+        
+        if (retryCount < maxRetries) {
+          logger.info(`⏳ Retrying in ${retryDelay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        } else {
+          logger.error('💥 All retries failed for system dates initialization');
+          const fallbackDate = new Date('2025-01-01');
+          systemStatus.currentBusinessDate = fallbackDate;
+          systemStatus.nextBusinessDate = fallbackDate;
+          systemStatus.eodStatus = 'IDLE';
+          systemStatus.initialized = false;
+          systemStatus.error = error.message;
+          
+          systemStatus.serverTime = getServerTime();
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to initialize system dates after all retries',
+            error: error.message,
+            timestamp: systemStatus.serverTime.toISOString(),
+          });
+        }
+      }
+    }
   } catch (error) {
     logger.error('Manual system dates initialization failed', { error: error.message });
     systemStatus.serverTime = getServerTime();
@@ -1494,7 +1411,7 @@ export const initializeSystemDatesManual = async (req, res) => {
   }
 };
 
-export const getSystemStatus = () => {
+export const getSystemStatusOS = () => {
   if (!systemStatus || typeof systemStatus !== 'object') {
     return {
       currentBusinessDate: null,
@@ -1518,82 +1435,87 @@ export const getSystemStatus = () => {
     status: systemStatus.currentBusinessDate ? 'Initialized' : 'Not Initialized'
   };
 };
+// Add this function somewhere in OsController.js before the exports:
 
-export const updateBusinessDate = async (newDate, updatedBy = 'admin') => {
+export const debugHolidaySystem = async (req, res) => {
   try {
-    if (!newDate) {
-      throw new Error('New date is required');
-    }
+    const Holiday = (await import('../models/Holiday.js')).default;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    let systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    const upcomingHolidays = await Holiday.find({
+      date: { $gte: today }
+    }).sort({ date: 1 }).limit(10);
     
-    if (!systemDate) {
-      const nextBusinessDate = await calculateNextBusinessDateSafe(new Date(newDate));
-      const nextBusinessDateString = nextBusinessDate.toISOString().split('T')[0];
-      
-      systemDate = new SystemDate({
-        currentBusinessDate: newDate,
-        previousBusinessDate: newDate,
-        nextBusinessDate: nextBusinessDateString,
-        lastUpdated: new Date(),
-        updatedBy: updatedBy
-      });
-    } else {
-      systemDate.previousBusinessDate = systemDate.currentBusinessDate;
-      systemDate.currentBusinessDate = newDate;
-      
-      const nextBusinessDate = await calculateNextBusinessDateSafe(new Date(newDate));
-      systemDate.nextBusinessDate = nextBusinessDate.toISOString().split('T')[0];
-      
-      systemDate.lastUpdated = new Date();
-      systemDate.updatedBy = updatedBy;
-    }
+    const currentYear = today.getFullYear();
+    const yearHolidays = await Holiday.find({
+      date: {
+        $gte: new Date(`${currentYear}-01-01`),
+        $lte: new Date(`${currentYear}-12-31`)
+      }
+    }).sort({ date: 1 });
     
-    await systemDate.save();
-    
-    systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
-    systemStatus.previousBusinessDate = systemDate.previousBusinessDate;
-    systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
-    systemStatus.initialized = true;
-    
-    logger.info('✅ Business date updated successfully', {
-      newDate,
-      updatedBy,
-      previousDate: systemDate.previousBusinessDate
+    return res.status(200).json({
+      success: true,
+      data: {
+        today: today.toISOString().split('T')[0],
+        isHolidayToday: upcomingHolidays.length > 0 && 
+                       upcomingHolidays[0].date.toISOString().split('T')[0] === today.toISOString().split('T')[0],
+        upcomingHolidays: upcomingHolidays.map(h => ({
+          date: h.date.toISOString().split('T')[0],
+          name: h.name,
+          description: h.description
+        })),
+        currentYearHolidays: yearHolidays.length,
+        holidayCount: await Holiday.countDocuments(),
+        nextBusinessDate: await calculateNextBusinessDateWithHolidaysOS(today)
+      }
     });
-    
-    return systemStatus;
   } catch (error) {
-    logger.error('❌ Failed to update business date', {
-      error: error.message,
-      newDate,
-      updatedBy
+    logger.error('Holiday system debug failed:', { error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to debug holiday system',
+      error: error.message
     });
-    throw error;
   }
 };
+
+// ==================== ADD NAMED EXPORTS ====================
+// Add these exports at the end of the file to fix the import error
+
+export {
+  // processLoanOverdueAndStatus,
+  // processEODGLTransactions,
+  // getCurrentBusinessDateOS as getCurrentBusinessDate,
+  // getStatusOS as getStatus,
+  // debugDateIssuesOS as debugDateIssues,
+  initializeSystemDatesOS as initializeSystemDates
+};
+
+// ==================== DEFAULT EXPORT ====================
 
 // ==================== EXPORTS ====================
 
 export default {
   triggerEndOfDayProcess,
-  getCurrentBusinessDate,
+  getCurrentBusinessDate: getCurrentBusinessDateOS,
   getServiceErrors,
   getDormantAccountsCount,
-  getStatus,
+  getStatus: getStatusOS,
   processReconciliation,
-  initializeSystemDates,
-  initializeSystemDatesManual,
-  debugDates,
+  initializeSystemDates: initializeSystemDatesOS,
+  debugDates: debugDateIssuesOS,
   debugHolidaySystem,
-  debugDateIssues,
+  // debugHolidaySystem: debugHolidaySystem, // REMOVE - function doesn't exist
+  debugDateIssues: debugDateIssuesOS,
   processLoanOverdueAndStatus,
   processEODGLTransactions,
-  getSystemStatus,
-  updateBusinessDate,
-  processEndOfDay,
-  setBusinessDateManually,
-  calculateNextBusinessDate,
-  calculateNextBusinessDateWithHolidays,
-  setNextBusinessDate
+  getSystemStatus: getSystemStatusOS,
+  updateBusinessDate: SystemDateController.updateBusinessDate,
+  processEndOfDay: SystemDateController.processEOD,
+  setBusinessDateManually: setBusinessDateManuallyOS,
+  calculateNextBusinessDate: calculateNextBusinessDateOS,
+  calculateNextBusinessDateWithHolidays: calculateNextBusinessDateWithHolidaysOS,
+  setNextBusinessDate: setNextBusinessDateOS
 };

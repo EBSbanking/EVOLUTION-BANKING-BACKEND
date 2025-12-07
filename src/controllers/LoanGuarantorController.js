@@ -25,7 +25,7 @@ import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
 // Utils
 import { 
   GenerateLoanContractFormId, 
-  generateAccountNumberByProdId,
+  generateAccountNumberForCustomer,
   generateTransactionIds 
 } from '../utils/generateAccountNumber.js';
 import { generateGuarantorId } from '../utils/generateGuarantorId.js';
@@ -262,7 +262,7 @@ export async function applyLoanWithGuarantorWorkflow(req, res) {
     const { loan, guarantor } = req.body;
 
     // Generate all IDs
-    const loanAccountNumber = await generateAccountNumberByProdId(loan.PROD_ID);
+    const loanAccountNumber = await generateAccountNumberForCustomer(loan.CUST_ID);
     const { 
       TRANSACTION_ID, 
       EVENT_ID, 

@@ -5,7 +5,7 @@ import {
   getGroups,
   addMemberToGroup,
   createGroupLoanApplication,
-  disburseGroupLoan,
+
   repayGroupLoan,
   getGroupLoan,
   approveGroupLoan,
@@ -18,6 +18,7 @@ import {
   submitGroupCollections 
 } from '../controllers/GroupController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
+import {  disburseGroupLoan} from '../Services/processGroupLoanDisbursement.js'
 
 const router = Router();
 

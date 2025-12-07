@@ -1,4 +1,3 @@
-// controllers/GroupSavingsController.js - UPDATED WITH SAFE HANDLING
 import GroupSavings from '../models/GroupSavings.js';
 import GroupSavingsContribution from '../models/GroupSavingsContribution.js';
 import GroupSavingsWithdrawal from '../models/GroupSavingsWithdrawal.js';
@@ -6,7 +5,7 @@ import Group from '../models/Group.js';
 import Customer from '../models/Customer.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';
-import { generateAccountNumber } from '../utils/generateAccountNumber.js';
+import { generateAccountNumberForGroup } from '../utils/generateAccountNumber.js';
 import logAuditTrail from '../Services/AuditService.js';
 import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
@@ -33,7 +32,7 @@ const safeParseFloat = (value, defaultValue = 0) => {
 const safeDecimal128 = (value, defaultValue = '0.00') => {
   try {
     if (!value && value !== 0) return mongoose.Types.Decimal128.fromString(defaultValue);
-    
+
     const numValue = safeParseFloat(value, parseFloat(defaultValue));
     return mongoose.Types.Decimal128.fromString(numValue.toFixed(2));
   } catch (error) {
@@ -53,11 +52,37 @@ const safeToString = (value, defaultValue = '') => {
   }
 };
 
-// ✅ CREATE GROUP SAVINGS - UPDATED WITH SAFE HANDLING
+// ✅ AUDIT TRAIL HELPER (SIMPLIFIED DIRECT APPROACH)
+const createDirectAuditTrail = async (data, session) => {
+  try {
+    const auditEntry = new AuditTrail({
+      entity_type: data.entity_type,
+      entity_id: data.entity_id,
+      user_id: data.user_id,
+      action: data.action,
+      old_value: data.old_value,
+      new_value: data.new_value,
+      ip_address: data.ip_address,
+      event_type: data.event_type,
+      account_no: data.account_no,
+      branch: data.branch,
+      description: data.description,
+      isGroupAccount: data.isGroupAccount,
+      groupCode: data.groupCode,
+      savingsType: data.savingsType
+    });
+    await auditEntry.save({ session });
+    console.log(`✅ Audit trail created for ${data.entity_type}: ${data.entity_id}`);
+  } catch (error) {
+    console.error('❌ Error creating direct audit trail:', error);
+    throw error;
+  }
+};
+
+// ✅ CREATE GROUP SAVINGS - FIXED WITH CORRECT ACCOUNT GENERATION
 export const createGroupSavings = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-
   try {
     const {
       groupCode,
@@ -68,16 +93,13 @@ export const createGroupSavings = async (req, res) => {
       managedBy,
       withdrawalRules
     } = req.body;
-
     console.log('=== STARTING GROUP SAVINGS CREATION ===');
     console.log('Received request:', { groupCode, savingsType, targetAmount, minimumContribution });
-
     // ✅ SAFE VALIDATION
     const safeGroupCode = safeToString(groupCode);
     const safeSavingsType = safeToString(savingsType);
     const safeTargetAmount = safeParseFloat(targetAmount, 0);
     const safeMinContribution = safeParseFloat(minimumContribution, 0);
-
     if (!safeGroupCode || !safeSavingsType) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -85,7 +107,6 @@ export const createGroupSavings = async (req, res) => {
         message: 'Required: groupCode, savingsType.',
       });
     }
-
     // Validate savings type
     const validSavingsTypes = ['union_purse', 'emergency_fund', 'project_fund', 'general_savings', 'project_savings'];
     if (!validSavingsTypes.includes(safeSavingsType)) {
@@ -95,11 +116,10 @@ export const createGroupSavings = async (req, res) => {
         message: `Invalid savings type. Must be one of: ${validSavingsTypes.join(', ')}`,
       });
     }
-
     // Validate contribution frequency
     const validFrequencies = ['daily', 'weekly', 'monthly', 'quarterly', 'custom'];
     let normalizedFrequency = 'monthly';
-    
+
     if (contributionFrequency) {
       normalizedFrequency = safeToString(contributionFrequency).toLowerCase();
       if (!validFrequencies.includes(normalizedFrequency)) {
@@ -110,7 +130,6 @@ export const createGroupSavings = async (req, res) => {
         });
       }
     }
-
     // ✅ VALIDATE GROUP EXISTS
     const group = await Group.findOne({ groupCode: safeGroupCode }).session(session);
     if (!group) {
@@ -120,14 +139,22 @@ export const createGroupSavings = async (req, res) => {
         message: 'Group not found.',
       });
     }
-
+    // ✅ COMPUTE GROUP CUST ID EARLY - FIXED
+    let groupCustId;
+    try {
+      const numericGroupCode = safeGroupCode.replace(/^GRP/i, '');
+      groupCustId = numericGroupCode && !isNaN(numericGroupCode) ? Number(numericGroupCode) : 99999;
+    } catch (error) {
+      groupCustId = 99999;
+    }
+    console.log('Computed groupCustId:', groupCustId);
     // ✅ CHECK FOR EXISTING SAVINGS
     const existingSavings = await GroupSavings.findOne({
       groupCode: safeGroupCode,
       savingsType: safeSavingsType,
       status: 'active'
     }).session(session);
-    
+
     if (existingSavings) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -135,22 +162,21 @@ export const createGroupSavings = async (req, res) => {
         message: `Group already has an active ${safeSavingsType} savings account.`,
       });
     }
-
     // ✅ SAFE MANAGERS VALIDATION
     let finalManagedBy = [];
     try {
       if (managedBy && Array.isArray(managedBy) && managedBy.length > 0) {
         // Filter out invalid managers and dedupe
-        finalManagedBy = [...new Set(managedBy.filter(custId => 
+        finalManagedBy = [...new Set(managedBy.filter(custId =>
           group.members && group.members.includes(custId)
         ))];
       }
-      
+
       // If no valid managers provided, use group members
       if (finalManagedBy.length === 0) {
         finalManagedBy = group.members ? [...new Set(group.members)] : [];
       }
-      
+
       if (finalManagedBy.length === 0) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -166,31 +192,30 @@ export const createGroupSavings = async (req, res) => {
         message: 'Invalid manager data provided.',
       });
     }
-
-    // ✅ GENERATE ACCOUNT NUMBER WITH SAFE HANDLING
+    // ✅ GENERATE ACCOUNT NUMBER WITH SAFE HANDLING - FIXED: Use generateAccountNumberForGroup
     let accountNumber;
     try {
       let attempts = 0;
       while (attempts < 5) {
-        const accountResult = await generateAccountNumber('ACCT_SAVINGS');
-        accountNumber = safeToString(accountResult?.formattedString);
-        
+        // FIXED: Use the new group-specific function
+        const accountResult = await generateAccountNumberForGroup(safeGroupCode);
+        accountNumber = safeToString(accountResult?.ACCT_NO);
+
         if (!accountNumber) {
           attempts++;
           continue;
         }
-
         // Check uniqueness in both collections
         const existingGS = await GroupSavings.findOne({ accountNumber }).session(session);
-        const existingCA = await CustomerAccount.findOne({ account_number: accountNumber }).session(session);
-        
+        const existingCA = await CustomerAccount.findOne({ ACCT_NO: accountNumber }).session(session);
+
         if (!existingGS && !existingCA) {
           break;
         }
         attempts++;
         console.log(`⚠️ Account number ${accountNumber} duplicate, retrying... (attempt ${attempts})`);
       }
-      
+
       if (!accountNumber) {
         throw new Error('Failed to generate account number');
       }
@@ -203,27 +228,25 @@ export const createGroupSavings = async (req, res) => {
         error: accountError.message,
       });
     }
-
     // ✅ SAFE SAVINGS PRODUCT HANDLING
     let savingsProduct;
     try {
       console.log('🔍 Finding/Creating SavingsProduct for group savings...');
-      
+
       const defaultProductCode = safeSavingsType.toUpperCase();
       savingsProduct = await SavingsProduct.findByProductCode(defaultProductCode);
-      
+
       if (!savingsProduct || !savingsProduct.isActive()) {
         console.log(`📝 No active default product found for "${defaultProductCode}", creating group-specific one...`);
-        
+
         let PROD_ID = await SavingsProduct.getNextProdId();
         if (!Number.isInteger(PROD_ID) || PROD_ID <= 0) {
           console.warn(`⚠️ Invalid PROD_ID: ${PROD_ID}, using timestamp fallback`);
           PROD_ID = Math.floor(Date.now() / 1000) % 1000000;
         }
-        
+
         const productCode = `GRP_${safeGroupCode}_${safeSavingsType.toUpperCase()}`;
         console.log(`✅ Using PROD_ID: ${PROD_ID}, Product Code: ${productCode}`);
-
         const savingsProductData = {
           PROD_ID: Number(PROD_ID),
           productCode: productCode,
@@ -240,7 +263,6 @@ export const createGroupSavings = async (req, res) => {
           PROD_DESC: `Group savings account for ${safeToString(group.groupName)}`,
           PRODUCT_TYPE: 'SAVINGS'
         };
-
         savingsProduct = new SavingsProduct(savingsProductData);
         await savingsProduct.save({ session });
         console.log('✅ Group-specific SavingsProduct created successfully');
@@ -255,7 +277,6 @@ export const createGroupSavings = async (req, res) => {
         message: `Failed to setup savings product: ${productError.message}`,
       });
     }
-
     // ✅ SAFE CREATEDBY HANDLING
     let createdById;
     try {
@@ -270,7 +291,6 @@ export const createGroupSavings = async (req, res) => {
       console.warn('Error processing createdBy, using system default:', error);
       createdById = new mongoose.Types.ObjectId('507f1f77bcf86cd799439011');
     }
-
     // ✅ SAFE WITHDRAWAL RULES
     const safeWithdrawalRules = {
       minWithdrawal: safeDecimal128(withdrawalRules?.minWithdrawal || 0),
@@ -279,60 +299,49 @@ export const createGroupSavings = async (req, res) => {
       minApprovers: Math.max(1, safeParseFloat(withdrawalRules?.minApprovers, 1)),
       withdrawalFrequency: safeToString(withdrawalRules?.withdrawalFrequency, 'anytime')
     };
-
     // ✅ CREATE GROUP SAVINGS ACCOUNT WITH SAFE BALANCES
     const newGroupSavings = new GroupSavings({
       // Group identification
       group: group._id,
       groupCode: safeGroupCode,
       groupName: safeToString(group.groupName, 'Unknown Group'),
-      
+
       // Savings configuration
       savingsType: safeSavingsType,
       accountNumber: accountNumber,
-      
+
       // Financial fields with safe defaults
       targetAmount: safeDecimal128(safeTargetAmount),
       minimumContribution: safeDecimal128(safeMinContribution),
-      
+
       // Balance fields with safe initialization
       LEDGER_BAL: safeDecimal128('0.00'),
       CLEARED_BAL: safeDecimal128('0.00'),
       AVAILABLE_BALANCE: safeDecimal128('0.00'),
       currentBalance: 0,
-      
+
       // Contribution settings
       contributionFrequency: normalizedFrequency,
-      
+
       // Management
       managedBy: finalManagedBy,
       members: group.members ? [...new Set(group.members)] : [],
-      
+
       // Withdrawal rules
       withdrawalRules: safeWithdrawalRules,
-      
+
       // Product linking
       linkedProductId: savingsProduct ? Number(savingsProduct.PROD_ID) : 0,
       linkedProductCode: savingsProduct ? savingsProduct.productCode : 'DEFAULT',
-      
+
       // Status and audit
       status: 'active',
       isActive: true,
       createdBy: createdById
     });
-
     const savedSavings = await newGroupSavings.save({ session });
     console.log('✅ GroupSavings created successfully:', savedSavings._id);
-
     // ✅ SAFE CUSTOMER ACCOUNT CREATION
-    let groupCustId;
-    try {
-      const numericGroupCode = safeGroupCode.replace(/^GRP/i, '');
-      groupCustId = numericGroupCode && !isNaN(numericGroupCode) ? Number(numericGroupCode) : 99999;
-    } catch (error) {
-      groupCustId = 99999;
-    }
-
     const groupCustomerAccount = new CustomerAccount({
       account_number: accountNumber,
       customer_id: groupCustId,
@@ -377,61 +386,62 @@ export const createGroupSavings = async (req, res) => {
       email_alert: 'No',
       disbursement_method: 'Cheque'
     });
-
     const savedCustomerAccount = await groupCustomerAccount.save({ session });
     console.log('✅ CustomerAccount created successfully:', savedCustomerAccount._id);
-
     // Link back to GroupSavings
     savedSavings.customerAccount = savedCustomerAccount._id;
     await savedSavings.save({ session });
-
-    // ✅ SAFE AUDIT TRAILS
+    // ✅ SAFE AUDIT TRAILS (USING SIMPLIFIED DIRECT APPROACH)
     try {
-      await logAuditTrail(
-        'GroupSavings',
-        savedSavings._id.toString(),
-        req.user?.id?.toString() || 'system',
-        'CREATE',
-        null,
-        { 
-          groupCode: safeGroupCode, 
-          savingsType: safeSavingsType, 
-          accountNumber,
-          targetAmount: safeTargetAmount, 
+      // Create audit trail for GroupSavings
+      await createDirectAuditTrail({
+        entity_type: 'GroupSavings',
+        entity_id: savedSavings._id.toString(),
+        user_id: req.user?.id?.toString() || 'system',
+        action: 'CREATE',
+        old_value: null,
+        new_value: {
+          groupCode: safeGroupCode,
+          savingsType: safeSavingsType,
+          accountNumber: accountNumber,
+          targetAmount: safeTargetAmount,
           managedBy: finalManagedBy,
-          customerAccountId: savedCustomerAccount._id,
+          customerAccountId: savedCustomerAccount._id.toString(),
           savingsProductId: savingsProduct ? savingsProduct.PROD_ID : 'N/A'
         },
-        req.ip,
-        'GROUP_SAVINGS_CREATED'
-      );
-
-      await AuditTrail.create([{
-        event_id: Date.now(),
+        ip_address: req.ip || '127.0.0.1',
+        event_type: 'GROUP_SAVINGS_CREATED',
+        account_no: accountNumber,
+        branch: 1,
+        description: `Created group savings account for ${safeToString(group.groupName)} - ${safeSavingsType}`,
+      }, session);
+      // Create audit trail for CustomerAccount
+      await createDirectAuditTrail({
+        entity_type: 'CustomerAccount',
+        entity_id: savedCustomerAccount._id.toString(),
         user_id: req.user?.id?.toString() || 'system',
-        event_type: 'CUSTOMER_ACCOUNT_CREATE',
-        action: 'Create Group Savings Account',
+        action: 'CREATE',
         old_value: null,
         new_value: savedCustomerAccount.toObject(),
-        ip_address: req.ip,
-        timestamp: new Date(),
-        entity_type: 'CustomerAccount',
-        entity_id: savedCustomerAccount._id,
-        status: 'SUCCESS',
+        ip_address: req.ip || '127.0.0.1',
+        event_type: 'CUSTOMER_ACCOUNT_CREATED',
         account_no: accountNumber,
-        description: `Created group savings account for ${safeToString(group.groupName)} - ${safeSavingsType}`,
-      }], { session });
+        branch: 1,
+        description: `Created customer account for group savings: ${safeToString(group.groupName)}`,
+        isGroupAccount: true,
+        groupCode: safeGroupCode,
+        savingsType: safeSavingsType
+      }, session);
+      console.log('✅ All audit trails created successfully');
     } catch (auditError) {
-      console.warn('⚠️ Audit trail creation failed (non-critical):', auditError);
+      console.warn('⚠️ Audit trail creation failed (non-critical):', auditError.message);
       // Continue with transaction - audit failures shouldn't block savings creation
     }
-
     // ✅ COMMIT TRANSACTION
     await session.commitTransaction();
     console.log('✅ Transaction committed successfully');
-
     logger.info(`Group savings created successfully: ${savedSavings._id} with account number: ${accountNumber}`);
-    
+
     res.status(201).json({
       success: true,
       message: 'Group savings account created successfully with linked CustomerAccount and SavingsProduct.',
@@ -449,12 +459,11 @@ export const createGroupSavings = async (req, res) => {
         } : null
       },
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error('❌ Error creating group savings:', error);
     logger.error('Error creating group savings:', error);
-    
+
     let errorMessage = 'Server error creating group savings.';
     if (error.name === 'ValidationError') {
       errorMessage = `Validation error: ${Object.values(error.errors).map(e => e.message).join(', ')}`;
@@ -463,7 +472,7 @@ export const createGroupSavings = async (req, res) => {
     } else if (error.code === 11000) {
       errorMessage = 'Duplicate entry found. Account number or product code already exists.';
     }
-    
+
     res.status(500).json({
       success: false,
       message: errorMessage,
@@ -475,34 +484,39 @@ export const createGroupSavings = async (req, res) => {
 };
 
 // ✅ UPDATED SYNC BALANCE FUNCTION WITH SAFE HANDLING
-export const syncGroupSavingsBalance = async (groupSavingsId, session = null) => {
+export const syncGroupSavingsBalance = asyncHandler(async (req, res) => {
   try {
+    const { groupSavingsId } = req.params;
     console.log('🔄 Syncing group savings balance for:', groupSavingsId);
-    
-    const groupSavings = await GroupSavings.findById(groupSavingsId).session(session);
+
+    const groupSavings = await GroupSavings.findById(groupSavingsId);
     if (!groupSavings) {
-      throw new Error('Group savings not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Group savings not found'
+      });
     }
-
     if (!groupSavings.customerAccount) {
-      throw new Error('No linked customer account found');
+      return res.status(404).json({
+        success: false,
+        message: 'No linked customer account found'
+      });
     }
-
-    const customerAccount = await CustomerAccount.findById(groupSavings.customerAccount).session(session);
+    const customerAccount = await CustomerAccount.findById(groupSavings.customerAccount);
     if (!customerAccount) {
-      throw new Error('Linked customer account not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Linked customer account not found'
+      });
     }
-
     // ✅ SAFE BALANCE COMPARISON
     const groupLedgerBal = safeParseFloat(groupSavings.LEDGER_BAL);
     const customerLedgerBal = safeParseFloat(customerAccount.LEDGER_BAL);
-
     console.log('Balance comparison:', {
       groupLedgerBal,
       customerLedgerBal,
       difference: Math.abs(groupLedgerBal - customerLedgerBal)
     });
-
     if (Math.abs(groupLedgerBal - customerLedgerBal) > 0.01) {
       // Update CustomerAccount balances to match GroupSavings safely
       customerAccount.LEDGER_BAL = safeDecimal128(groupSavings.LEDGER_BAL);
@@ -511,40 +525,63 @@ export const syncGroupSavingsBalance = async (groupSavingsId, session = null) =>
       customerAccount.ledger_balance = groupLedgerBal;
       customerAccount.cleared_balance = safeParseFloat(groupSavings.CLEARED_BAL);
       customerAccount.lastActivityDate = new Date();
+      await customerAccount.save();
 
-      await customerAccount.save({ session });
-      
       logger.info(`Synced balances for group savings ${groupSavingsId} to customer account ${customerAccount.ACCT_NO}`);
       console.log('✅ Balances synced successfully');
+      res.status(200).json({
+        success: true,
+        message: 'Balances synced successfully',
+        data: {
+          groupSavingsId,
+          customerAccountId: customerAccount._id,
+          syncedBalances: {
+            ledgerBalance: groupLedgerBal,
+            clearedBalance: safeParseFloat(groupSavings.CLEARED_BAL),
+            availableBalance: safeParseFloat(groupSavings.AVAILABLE_BALANCE)
+          }
+        }
+      });
     } else {
       console.log('✅ Balances already in sync');
+      res.status(200).json({
+        success: true,
+        message: 'Balances already in sync',
+        data: {
+          groupSavingsId,
+          customerAccountId: customerAccount._id,
+          currentBalances: {
+            ledgerBalance: groupLedgerBal,
+            clearedBalance: safeParseFloat(groupSavings.CLEARED_BAL),
+            availableBalance: safeParseFloat(groupSavings.AVAILABLE_BALANCE)
+          }
+        }
+      });
     }
-
-    return customerAccount;
   } catch (error) {
     console.error('❌ Error syncing group savings balance:', error);
     logger.error('Error syncing group savings balance:', error);
-    throw error;
+    res.status(500).json({
+      success: false,
+      message: 'Failed to sync balances',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
   }
-};
+});
 
 // ✅ ADD CONTRIBUTION WITH SAFE BALANCE HANDLING
 export const addContribution = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-
   try {
     const { groupSavingsId, amount, contributedBy, contributionDate, description } = req.body;
-
     console.log('=== PROCESSING GROUP SAVINGS CONTRIBUTION ===');
     console.log('Contribution details:', { groupSavingsId, amount, contributedBy });
-
     // ✅ SAFE VALIDATION
     const safeGroupSavingsId = safeToString(groupSavingsId);
     const safeAmount = safeParseFloat(amount, 0);
     const safeContributedBy = safeToString(contributedBy);
     const safeDescription = safeToString(description, 'Group savings contribution');
-
     if (!safeGroupSavingsId || !mongoose.Types.ObjectId.isValid(safeGroupSavingsId)) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -552,7 +589,6 @@ export const addContribution = asyncHandler(async (req, res) => {
         message: 'Valid groupSavingsId is required.',
       });
     }
-
     if (safeAmount <= 0) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -560,7 +596,6 @@ export const addContribution = asyncHandler(async (req, res) => {
         message: 'Contribution amount must be greater than 0.',
       });
     }
-
     // ✅ GET GROUP SAVINGS WITH SAFE HANDLING
     const groupSavings = await GroupSavings.findById(safeGroupSavingsId).session(session);
     if (!groupSavings) {
@@ -570,7 +605,6 @@ export const addContribution = asyncHandler(async (req, res) => {
         message: 'Group savings account not found.',
       });
     }
-
     if (groupSavings.status !== 'active') {
       await session.abortTransaction();
       return res.status(400).json({
@@ -578,20 +612,16 @@ export const addContribution = asyncHandler(async (req, res) => {
         message: 'Cannot contribute to inactive or closed group savings account.',
       });
     }
-
     // ✅ SAFE BALANCE UPDATE
     const currentBalance = safeParseFloat(groupSavings.AVAILABLE_BALANCE);
     const newBalance = currentBalance + safeAmount;
-
     // Update GroupSavings balances safely
     groupSavings.AVAILABLE_BALANCE = safeDecimal128(newBalance);
     groupSavings.LEDGER_BAL = safeDecimal128(newBalance);
     groupSavings.CLEARED_BAL = safeDecimal128(newBalance);
     groupSavings.currentBalance = newBalance;
-
     await groupSavings.save({ session });
     console.log('✅ GroupSavings balance updated');
-
     // ✅ CREATE CONTRIBUTION RECORD
     const contribution = new GroupSavingsContribution({
       groupSavings: groupSavings._id,
@@ -603,13 +633,10 @@ export const addContribution = asyncHandler(async (req, res) => {
       newBalance: safeDecimal128(newBalance),
       status: 'completed'
     });
-
     await contribution.save({ session });
     console.log('✅ Contribution record created');
-
     // ✅ SYNC TO CUSTOMER ACCOUNT
     await syncGroupSavingsBalance(groupSavings._id, session);
-
     // ✅ CREATE TRANSACTION RECORD
     try {
       await createGroupSavingsTransaction({
@@ -625,7 +652,6 @@ export const addContribution = asyncHandler(async (req, res) => {
       console.warn('⚠️ Transaction creation failed (non-critical):', transactionError);
       // Continue - transaction failure shouldn't block contribution
     }
-
     // ✅ AUDIT TRAIL
     try {
       await logAuditTrail(
@@ -634,7 +660,7 @@ export const addContribution = asyncHandler(async (req, res) => {
         req.user?.id?.toString() || 'system',
         'CONTRIBUTION',
         { previousBalance: currentBalance },
-        { 
+        {
           newBalance,
           amount: safeAmount,
           contributedBy: safeContributedBy,
@@ -646,11 +672,9 @@ export const addContribution = asyncHandler(async (req, res) => {
     } catch (auditError) {
       console.warn('⚠️ Audit trail creation failed (non-critical):', auditError);
     }
-
     // ✅ COMMIT TRANSACTION
     await session.commitTransaction();
     console.log('✅ Contribution transaction committed');
-
     res.status(201).json({
       success: true,
       message: 'Contribution added successfully.',
@@ -670,12 +694,11 @@ export const addContribution = asyncHandler(async (req, res) => {
         }
       }
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error('❌ Error adding contribution:', error);
     logger.error('Error adding contribution:', error);
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to add contribution.',
@@ -686,26 +709,59 @@ export const addContribution = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ GET GROUP SAVINGS BALANCE WITH SAFE HANDLING
+/**
+ * Get Group Savings Balance by multiple identifiers
+ * Supports: groupSavingsId, accountNumber, groupCode, or groupName
+ */
 export const getGroupSavingsBalance = asyncHandler(async (req, res) => {
   try {
-    const { groupSavingsId } = req.params;
+    const {
+      groupSavingsId,
+      accountNumber,
+      groupCode,
+      groupName,
+      savingsType
+    } = req.params;
+    // Build query based on provided parameters
+    let query = {};
 
-    if (!groupSavingsId || !mongoose.Types.ObjectId.isValid(groupSavingsId)) {
+    if (groupSavingsId && mongoose.Types.ObjectId.isValid(groupSavingsId)) {
+      // Search by MongoDB ObjectId
+      query._id = groupSavingsId;
+    } else if (accountNumber) {
+      // Search by account number
+      query.accountNumber = safeToString(accountNumber);
+    } else if (groupCode) {
+      // Search by group code
+      query.groupCode = safeToString(groupCode);
+
+      // If savings type is provided, include it in query
+      if (savingsType) {
+        query.savingsType = safeToString(savingsType);
+      }
+    } else if (groupName) {
+      // Search by group name (case-insensitive partial match)
+      query.groupName = { $regex: safeToString(groupName), $options: 'i' };
+
+      // If savings type is provided, include it in query
+      if (savingsType) {
+        query.savingsType = safeToString(savingsType);
+      }
+    } else {
       return res.status(400).json({
         success: false,
-        message: 'Valid groupSavingsId is required.',
+        message: 'Please provide one of: groupSavingsId, accountNumber, groupCode, or groupName.',
       });
     }
-
-    const groupSavings = await GroupSavings.findById(groupSavingsId);
+    // Find the group savings account
+    const groupSavings = await GroupSavings.findOne(query);
     if (!groupSavings) {
       return res.status(404).json({
         success: false,
         message: 'Group savings account not found.',
+        searchedBy: query,
       });
     }
-
     // ✅ SAFE BALANCE EXTRACTION
     const balances = {
       ledgerBalance: safeParseFloat(groupSavings.LEDGER_BAL),
@@ -716,27 +772,73 @@ export const getGroupSavingsBalance = asyncHandler(async (req, res) => {
       progressToTarget: groupSavings.progressToTarget,
       isTargetAchieved: groupSavings.isTargetAchieved
     };
-
+    // Get group details if needed
+    let groupDetails = null;
+    if (groupSavings.group) {
+      try {
+        groupDetails = await Group.findById(groupSavings.group).select('groupName groupCode memberCount members createdAt');
+      } catch (groupError) {
+        console.warn('Could not fetch group details:', groupError.message);
+      }
+    }
+    // Get recent contributions summary
+    const recentContributions = await GroupSavingsContribution.find({
+      groupSavings: groupSavings._id
+    })
+      .sort({ contributionDate: -1 })
+      .limit(5)
+      .select('amount contributedBy contributionDate description');
+    // Calculate total contributions
+    const contributionsSummary = await GroupSavingsContribution.aggregate([
+      { $match: { groupSavings: groupSavings._id } },
+      {
+        $group: {
+          _id: null,
+          totalContributions: { $sum: '$amount' },
+          contributionCount: { $sum: 1 },
+          lastContributionDate: { $max: '$contributionDate' }
+        }
+      }
+    ]);
+    // Get withdrawal requests summary
+    const pendingWithdrawals = await GroupSavingsWithdrawal.countDocuments({
+      groupSavings: groupSavings._id,
+      status: 'pending'
+    });
+    const responseData = {
+      groupSavings: {
+        _id: groupSavings._id,
+        groupCode: groupSavings.groupCode,
+        groupName: groupSavings.groupName,
+        accountNumber: groupSavings.accountNumber,
+        savingsType: groupSavings.savingsType,
+        status: groupSavings.status,
+        isActive: groupSavings.isActive,
+        createdAt: groupSavings.createdAt,
+        updatedAt: groupSavings.updatedAt,
+        contributionFrequency: groupSavings.contributionFrequency,
+        managedBy: groupSavings.managedBy,
+        withdrawalRules: groupSavings.withdrawalRules
+      },
+      balances,
+      groupDetails,
+      summary: {
+        totalContributions: contributionsSummary[0]?.totalContributions || 0,
+        contributionCount: contributionsSummary[0]?.contributionCount || 0,
+        lastContributionDate: contributionsSummary[0]?.lastContributionDate,
+        pendingWithdrawals,
+        recentContributions
+      }
+    };
     res.status(200).json({
       success: true,
       message: 'Group savings balance retrieved successfully.',
-      data: {
-        groupSavings: {
-          _id: groupSavings._id,
-          groupCode: groupSavings.groupCode,
-          groupName: groupSavings.groupName,
-          accountNumber: groupSavings.accountNumber,
-          savingsType: groupSavings.savingsType,
-          status: groupSavings.status
-        },
-        balances
-      }
+      data: responseData
     });
-
   } catch (error) {
     console.error('❌ Error retrieving group savings balance:', error);
     logger.error('Error retrieving group savings balance:', error);
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve group savings balance.',
@@ -744,15 +846,352 @@ export const getGroupSavingsBalance = asyncHandler(async (req, res) => {
     });
   }
 });
+
 /**
- * Get combined account information
+ * Get Group Savings Details by Group Code - Original function (for backward compatibility)
+ * This is different from getGroupSavingsBalanceByGroupCode - it returns more details
  */
+export const getGroupSavingsByGroupCode = asyncHandler(async (req, res) => {
+  const { groupCode } = req.params;
+  try {
+    if (!groupCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group code is required.',
+      });
+    }
+    // Find GroupSavings by groupCode
+    const groupSavings = await GroupSavings.findOne({ groupCode })
+      .populate('createdBy', 'name email');
+    if (!groupSavings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group savings account not found.',
+      });
+    }
+    // Manually find the associated group by groupCode for robustness
+    const group = await Group.findOne({ groupCode }).select('groupName groupCode memberCount members');
+    if (!group) {
+      logger.error(`Group not found for groupCode ${groupCode}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Associated group not found for this savings account.',
+      });
+    }
+    // Aggregate member savings if needed (optional - add if individual savings required)
+    const memberSavings = await CustomerAccount.find({
+      CUST_ID: { $in: group.members },
+      ACCOUNT_TYPE: 'SAVINGS',
+      REC_ST: 'ACTIVE',
+    }).populate('productCode', 'PROD_DESC');
+    const groupSavingsSummary = {
+      groupSavings: {
+        ...groupSavings.toObject(),
+        group: {
+          _id: group._id,
+          groupName: group.groupName,
+          groupCode: group.groupCode,
+          memberCount: group.memberCount || group.members.length,
+          members: group.members.length,
+        },
+      },
+      individualMemberSavings: {
+        totalAccounts: memberSavings.length,
+        totalBalance: 0,
+        totalAccruedInterest: 0,
+        averageBalance: 0,
+        accounts: memberSavings.map(account => ({
+          ACCT_NO: account.ACCT_NO,
+          CUST_ID: account.CUST_ID,
+          ACCT_NM: account.ACCT_NM,
+          PRODUCT_DESC: account.PRODUCT_DESC,
+          LEDGER_BALANCE: account.LEDGER_BALANCE,
+          ACCRUED_INTEREST: account.ACCRUED_INTEREST,
+          LAST_INTEREST_DATE: account.LAST_INTEREST_DATE,
+          REC_ST: account.REC_ST,
+        })),
+      },
+    };
+    // Calculate totals for individual savings
+    groupSavingsSummary.individualMemberSavings.totalBalance = memberSavings.reduce((sum, account) => sum + (account.LEDGER_BALANCE || 0), 0);
+    groupSavingsSummary.individualMemberSavings.totalAccruedInterest = memberSavings.reduce((sum, account) => sum + (account.ACCRUED_INTEREST || 0), 0);
+    groupSavingsSummary.individualMemberSavings.averageBalance = (group.memberCount || group.members.length) > 0 ? groupSavingsSummary.individualMemberSavings.totalBalance / (group.memberCount || group.members.length) : 0;
+    logger.info(`Group savings fetched for group ${groupCode}: Group balance ${groupSavings.currentBalance.toLocaleString()}, Individual accounts: ${memberSavings.length}, Total individual balance: ${groupSavingsSummary.individualMemberSavings.totalBalance.toLocaleString()}`);
+    res.status(200).json({
+      success: true,
+      message: 'Group savings retrieved successfully.',
+      data: groupSavingsSummary,
+    });
+  } catch (error) {
+    logger.error('Error fetching group savings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching group savings.',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * Get Group Savings Balance by Account Number
+ */
+export const getGroupSavingsBalanceByAccountNumber = asyncHandler(async (req, res) => {
+  try {
+    const { accountNumber } = req.params;
+    if (!accountNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account number is required.',
+      });
+    }
+    const groupSavings = await GroupSavings.findOne({
+      accountNumber: safeToString(accountNumber)
+    });
+    if (!groupSavings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group savings account not found.',
+      });
+    }
+    // Return balance (you can reuse the balance extraction logic from above)
+    return sendGroupSavingsResponse(res, groupSavings);
+  } catch (error) {
+    console.error('❌ Error retrieving group savings by account number:', error);
+    logger.error('Error retrieving group savings by account number:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve group savings.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+    });
+  }
+});
+
+/**
+ * Get Group Savings Balance by Group Code (and optionally savings type)
+ */
+export const getGroupSavingsBalanceByGroupCode = asyncHandler(async (req, res) => {
+  try {
+    const { groupCode, savingsType } = req.params;
+    if (!groupCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group code is required.',
+      });
+    }
+    let query = { groupCode: safeToString(groupCode) };
+
+    // If savings type is provided, filter by it
+    if (savingsType) {
+      query.savingsType = safeToString(savingsType);
+    }
+    const groupSavings = await GroupSavings.findOne(query);
+    if (!groupSavings) {
+      return res.status(404).json({
+        success: false,
+        message: savingsType
+          ? `No ${savingsType} savings account found for group ${groupCode}`
+          : `No savings account found for group ${groupCode}`,
+      });
+    }
+    // Return balance
+    return sendGroupSavingsResponse(res, groupSavings);
+  } catch (error) {
+    console.error('❌ Error retrieving group savings by group code:', error);
+    logger.error('Error retrieving group savings by group code:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve group savings.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+    });
+  }
+});
+
+/**
+ * Search Group Savings by Group Name (partial match)
+ */
+export const searchGroupSavingsByGroupName = asyncHandler(async (req, res) => {
+  try {
+    const { groupName } = req.params;
+    const {
+      savingsType,
+      page = 1,
+      limit = 10
+    } = req.query;
+    if (!groupName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group name is required.',
+      });
+    }
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    let query = {
+      groupName: { $regex: safeToString(groupName), $options: 'i' }
+    };
+    // Filter by savings type if provided
+    if (savingsType) {
+      query.savingsType = safeToString(savingsType);
+    }
+    // Get paginated results
+    const groupSavings = await GroupSavings.find(query)
+      .skip(skip)
+      .limit(limitNum)
+      .sort({ groupName: 1 });
+    const totalCount = await GroupSavings.countDocuments(query);
+    if (groupSavings.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No group savings accounts found matching the search criteria.',
+      });
+    }
+    // Get balances for each account
+    const accountsWithBalances = groupSavings.map(account => ({
+      _id: account._id,
+      groupCode: account.groupCode,
+      groupName: account.groupName,
+      accountNumber: account.accountNumber,
+      savingsType: account.savingsType,
+      status: account.status,
+      isActive: account.isActive,
+      createdAt: account.createdAt,
+      balances: {
+        ledgerBalance: safeParseFloat(account.LEDGER_BAL),
+        clearedBalance: safeParseFloat(account.CLEARED_BAL),
+        availableBalance: safeParseFloat(account.AVAILABLE_BALANCE),
+        currentBalance: safeParseFloat(account.currentBalance),
+        targetAmount: safeParseFloat(account.targetAmount)
+      }
+    }));
+    res.status(200).json({
+      success: true,
+      message: 'Group savings accounts retrieved successfully.',
+      data: {
+        accounts: accountsWithBalances,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(totalCount / limitNum),
+          totalCount,
+          hasNext: pageNum * limitNum < totalCount,
+          hasPrev: pageNum > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error searching group savings by name:', error);
+    logger.error('Error searching group savings by name:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search group savings.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+    });
+  }
+});
+
+/**
+ * Helper function to send standardized response
+ */
+const sendGroupSavingsResponse = async (res, groupSavings) => {
+  const balances = {
+    ledgerBalance: safeParseFloat(groupSavings.LEDGER_BAL),
+    clearedBalance: safeParseFloat(groupSavings.CLEARED_BAL),
+    availableBalance: safeParseFloat(groupSavings.AVAILABLE_BALANCE),
+    currentBalance: safeParseFloat(groupSavings.currentBalance),
+    targetAmount: safeParseFloat(groupSavings.targetAmount),
+    progressToTarget: groupSavings.progressToTarget,
+    isTargetAchieved: groupSavings.isTargetAchieved
+  };
+  // Get group details if available
+  let groupDetails = null;
+  if (groupSavings.group) {
+    try {
+      groupDetails = await Group.findById(groupSavings.group).select('groupName groupCode memberCount members');
+    } catch (error) {
+      console.warn('Could not fetch group details:', error.message);
+    }
+  }
+  res.status(200).json({
+    success: true,
+    message: 'Group savings balance retrieved successfully.',
+    data: {
+      groupSavings: {
+        _id: groupSavings._id,
+        groupCode: groupSavings.groupCode,
+        groupName: groupSavings.groupName,
+        accountNumber: groupSavings.accountNumber,
+        savingsType: groupSavings.savingsType,
+        status: groupSavings.status,
+        isActive: groupSavings.isActive,
+        createdAt: groupSavings.createdAt,
+        group: groupDetails
+      },
+      balances
+    }
+  });
+};
+
+/**
+ * Universal search endpoint that accepts query parameters
+ */
+export const searchGroupSavings = asyncHandler(async (req, res) => {
+  try {
+    const {
+      id,
+      accountNumber,
+      groupCode,
+      groupName,
+      savingsType,
+      status = 'active'
+    } = req.query;
+    let query = { status: safeToString(status) };
+    // Build query based on provided parameters
+    if (id && mongoose.Types.ObjectId.isValid(id)) {
+      query._id = id;
+    } else if (accountNumber) {
+      query.accountNumber = safeToString(accountNumber);
+    } else if (groupCode) {
+      query.groupCode = safeToString(groupCode);
+    } else if (groupName) {
+      query.groupName = { $regex: safeToString(groupName), $options: 'i' };
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide at least one search parameter: id, accountNumber, groupCode, or groupName.',
+      });
+    }
+    // Add savings type filter if provided
+    if (savingsType) {
+      query.savingsType = safeToString(savingsType);
+    }
+    const groupSavings = await GroupSavings.findOne(query);
+    if (!groupSavings) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group savings account not found.',
+      });
+    }
+    // Return the balance
+    return sendGroupSavingsResponse(res, groupSavings);
+  } catch (error) {
+    console.error('❌ Error searching group savings:', error);
+    logger.error('Error searching group savings:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search group savings.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+    });
+  }
+});
+
 export const getCombinedAccountInfo = async (accountNumber) => {
   try {
     // Try to find in CustomerAccount first
     let customerAccount = await CustomerAccount.findOne({ ACCT_NO: accountNumber });
     let groupSavings = null;
-
     if (customerAccount && customerAccount.isGroupAccount) {
       // If it's a group account, find the linked GroupSavings
       groupSavings = await GroupSavings.findOne({ customerAccount: customerAccount._id });
@@ -763,7 +1202,6 @@ export const getCombinedAccountInfo = async (accountNumber) => {
         customerAccount = await CustomerAccount.findById(groupSavings.customerAccount);
       }
     }
-
     return {
       customerAccount,
       groupSavings,
@@ -775,23 +1213,18 @@ export const getCombinedAccountInfo = async (accountNumber) => {
   }
 };
 
-
 // controllers/GroupSavingsController.js - CORRECTED VERSION
-export const addBulkContributionsWithIndividualTransactions = async (req, res) => {
+export const addBulkContributionsWithIndividualTransactions = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
-  
   try {
     const { accountNumber, contributions, period, notes } = req.body;
-
     console.log('Bulk contributions request:', { accountNumber, contributionsCount: contributions?.length });
-
     if (!accountNumber || !contributions || !Array.isArray(contributions) || contributions.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Group savings account number and contributions array are required.',
       });
     }
-
     // Validate each contribution
     for (const contribution of contributions) {
       if (!contribution.memberCustId || !contribution.amount || contribution.amount <= 0) {
@@ -801,10 +1234,8 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         });
       }
     }
-
     // Start transaction
     session.startTransaction();
-
     // Find group savings by account number
     const groupSavings = await GroupSavings.findOne({ accountNumber }).session(session);
     if (!groupSavings) {
@@ -814,7 +1245,6 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         message: 'Group savings account not found.',
       });
     }
-
     // Validate group exists
     const group = await Group.findById(groupSavings.group).session(session);
     if (!group) {
@@ -824,32 +1254,26 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         message: 'Group not found for this savings account.',
       });
     }
-
     // Get current user info
     const currentUser = req.user;
-
     // Store old balances for audit
     const oldLedgerBal = parseFloat(groupSavings.LEDGER_BAL?.toString() || '0');
     const oldClearedBal = parseFloat(groupSavings.CLEARED_BAL?.toString() || '0');
     const oldAvailableBalance = parseFloat(groupSavings.AVAILABLE_BALANCE?.toString() || '0');
     const oldCurrentBalance = groupSavings.currentBalance || 0;
-
     let totalAmount = 0;
     const contributionResults = [];
     const failedContributions = [];
     const transactions = [];
-
     // Process each contribution
     for (const contrib of contributions) {
       try {
         const { memberCustId, amount, contributionType, individualNotes } = contrib;
-
         // Validate member belongs to group
         if (!group.members.includes(memberCustId)) {
           failedContributions.push({ memberCustId, amount, error: 'Member does not belong to this group' });
           continue;
         }
-
         // Check minimum contribution
         const minimumContribution = groupSavings.minimumContribution || 0;
         if (amount < minimumContribution && minimumContribution > 0) {
@@ -860,9 +1284,7 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
           });
           continue;
         }
-
         totalAmount += amount;
-
         // Create contribution record
         const contribution = new GroupSavingsContribution({
           groupSavings: groupSavings._id,
@@ -876,7 +1298,6 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
           status: 'completed'
         });
         await contribution.save({ session });
-
         // Create individual transaction for each contribution - FIXED
         // Use the Transaction model directly instead of createGroupSavingsTransaction
         const transaction = new Transaction({
@@ -889,42 +1310,39 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
           AMOUNT: amount,
           TRANSACTION_TYPE: 'CREDIT',
           createdBy: currentUser.id,
-          
+
           // Additional fields
           description: `Cash contribution from member ${memberCustId} - ${contributionType || 'regular'}`,
           currency: 'NGN',
           status: 'COMPLETED',
           transaction_method: 'CASH',
-          
+
           // Balance information
           balance_after: oldAvailableBalance + totalAmount,
           ledger_balance_after: oldLedgerBal + totalAmount,
           cleared_balance_after: oldClearedBal + totalAmount,
-          
+
           // Group savings metadata
           transaction_category: 'GROUP_SAVINGS_CONTRIBUTION',
           member_cust_id: memberCustId,
           group_savings_id: groupSavings._id,
           contribution_id: contribution._id,
-          
+
           // ❌ DO NOT include these - let Transaction model hooks generate them:
           // TRANSACTION_ID: ...,
           // EVENT_ID: ...,
           // TRAN_JOURNAL_ID: ...,
           // REFERENCE: ...,
         });
-
         await transaction.save({ session });
-
         contributionResults.push(contribution);
         transactions.push(transaction);
-        
+
         console.log(`Created contribution and transaction for member ${memberCustId}`, {
           contributionId: contribution._id,
           transactionId: transaction.TRANSACTION_ID,
           reference: transaction.REFERENCE
         });
-
       } catch (error) {
         console.error(`Error processing contribution for member ${contrib.memberCustId}:`, error);
         failedContributions.push({
@@ -934,7 +1352,6 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         });
       }
     }
-
     // If all contributions failed, abort transaction
     if (contributionResults.length === 0 && failedContributions.length > 0) {
       await session.abortTransaction();
@@ -944,35 +1361,31 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         data: { failedContributions }
       });
     }
-
     // Update group savings balances with total amount
     const newLedgerBal = oldLedgerBal + totalAmount;
     const newClearedBal = oldClearedBal + totalAmount;
     const newAvailableBalance = oldAvailableBalance + totalAmount;
     const newCurrentBalance = oldCurrentBalance + totalAmount;
-
     groupSavings.LEDGER_BAL = mongoose.Types.Decimal128.fromString(newLedgerBal.toFixed(2));
     groupSavings.CLEARED_BAL = mongoose.Types.Decimal128.fromString(newClearedBal.toFixed(2));
     groupSavings.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(newAvailableBalance.toFixed(2));
     groupSavings.currentBalance = newCurrentBalance;
-    
+
     await groupSavings.save({ session });
-
     await session.commitTransaction();
-
     // Log audit trail
     await logAuditTrail(
       'GroupSavings',
       groupSavings._id.toString(),
       currentUser.id,
       'BULK_CASH_CONTRIBUTION_INDIVIDUAL_TXNS',
-      { 
+      {
         oldLedgerBal: oldLedgerBal,
         oldClearedBal: oldClearedBal,
         oldAvailableBalance: oldAvailableBalance,
         oldCurrentBalance: oldCurrentBalance
       },
-      { 
+      {
         newLedgerBal: newLedgerBal,
         newClearedBal: newClearedBal,
         newAvailableBalance: newAvailableBalance,
@@ -986,9 +1399,7 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
       req.ip,
       'GROUP_SAVINGS_BULK_CONTRIBUTION_INDIVIDUAL_TXNS'
     );
-
     logger.info(`Bulk contributions with individual transactions processed: ${contributionResults.length} successful, ${failedContributions.length} failed, Total: ${totalAmount}`);
-
     res.status(200).json({
       success: true,
       message: `Bulk contributions processed successfully with individual transactions. ${contributionResults.length} successful, ${failedContributions.length} failed.`,
@@ -1034,17 +1445,16 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
         }
       },
     });
-
   } catch (error) {
     await session.abortTransaction();
     logger.error('Error in addBulkContributionsWithIndividualTransactions:', error);
-    
+
     console.error('Detailed error:', {
       message: error.message,
       stack: error.stack,
       name: error.name
     });
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to process bulk contributions with individual transactions.',
@@ -1053,30 +1463,27 @@ export const addBulkContributionsWithIndividualTransactions = async (req, res) =
   } finally {
     session.endSession();
   }
-};
-
+});
 
 // In controllers/GroupSavingsController.js - ADD THIS FUNCTION
-export const getGroupContributions = async (req, res) => {
+export const getGroupContributions = asyncHandler(async (req, res) => {
   try {
     const { accountNumber } = req.params;
-    const { 
-      period, 
-      memberCustId, 
-      page = 1, 
+    const {
+      period,
+      memberCustId,
+      page = 1,
       limit = 10,
       startDate,
       endDate,
-      contributionType 
+      contributionType
     } = req.query;
-
     if (!accountNumber) {
       return res.status(400).json({
         success: false,
         message: 'Account number is required.',
       });
     }
-
     // Find group savings by account number
     const groupSavings = await GroupSavings.findOne({ accountNumber });
     if (!groupSavings) {
@@ -1085,36 +1492,31 @@ export const getGroupContributions = async (req, res) => {
         message: 'Group savings account not found.',
       });
     }
-
     // Build query
     const query = { groupSavings: groupSavings._id };
-    
+
     if (period) query.period = period;
     if (memberCustId) query.memberCustId = memberCustId;
     if (contributionType) query.contributionType = contributionType;
-    
+
     // Date range filtering
     if (startDate || endDate) {
       query.contributionDate = {};
       if (startDate) query.contributionDate.$gte = new Date(startDate);
       if (endDate) query.contributionDate.$lte = new Date(endDate);
     }
-
     // Parse pagination parameters
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
-
     // Get contributions with pagination and population
     const contributions = await GroupSavingsContribution.find(query)
       .populate('collectedBy', 'firstName lastName email') // Populate collector info if available
       .sort({ contributionDate: -1 })
       .limit(limitNum)
       .skip(skip);
-
     // Get total count for pagination
     const totalCount = await GroupSavingsContribution.countDocuments(query);
-
     // Calculate summary statistics
     const summaryStats = await GroupSavingsContribution.aggregate([
       { $match: query },
@@ -1136,14 +1538,12 @@ export const getGroupContributions = async (req, res) => {
         }
       }
     ]);
-
     // Get member details for the contributions
     const memberCustIds = [...new Set(contributions.map(contrib => contrib.memberCustId))];
     const memberDetails = await Customer.find(
       { CUST_ID: { $in: memberCustIds } },
       'CUST_ID FIRST_NAME LAST_NAME'
     );
-
     // Create a map for quick member lookup
     const memberMap = {};
     memberDetails.forEach(member => {
@@ -1152,15 +1552,13 @@ export const getGroupContributions = async (req, res) => {
         lastName: member.LAST_NAME
       };
     });
-
     // Enhance contributions with member names
     const enhancedContributions = contributions.map(contrib => ({
       ...contrib.toObject(),
-      memberName: memberMap[contrib.memberCustId] 
+      memberName: memberMap[contrib.memberCustId]
         ? `${memberMap[contrib.memberCustId].firstName} ${memberMap[contrib.memberCustId].lastName}`
         : 'Unknown Member'
     }));
-
     res.status(200).json({
       success: true,
       message: 'Contributions retrieved successfully.',
@@ -1187,7 +1585,6 @@ export const getGroupContributions = async (req, res) => {
         }
       },
     });
-
   } catch (error) {
     logger.error('Error fetching group contributions:', error);
     res.status(500).json({
@@ -1196,24 +1593,22 @@ export const getGroupContributions = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Request withdrawal from group savings - Updated with correct balance fields
-export const requestWithdrawal = async (req, res) => {
+export const requestWithdrawal = asyncHandler(async (req, res) => {
   try {
     const { accountNumber } = req.params; // Changed to accountNumber
     const {
       amount,
       purpose
     } = req.body;
-
     if (!amount || amount <= 0 || !purpose) {
       return res.status(400).json({
         success: false,
         message: 'Valid amount and purpose are required.',
       });
     }
-
     // Find group savings by account number
     const groupSavings = await GroupSavings.findOne({ accountNumber });
     if (!groupSavings) {
@@ -1222,7 +1617,6 @@ export const requestWithdrawal = async (req, res) => {
         message: 'Group savings account not found.',
       });
     }
-
     // Check if user is authorized to request withdrawal
     if (!groupSavings.managedBy.includes(req.user.custId)) {
       return res.status(403).json({
@@ -1230,7 +1624,6 @@ export const requestWithdrawal = async (req, res) => {
         message: 'You are not authorized to request withdrawals from this savings account.',
       });
     }
-
     // Check balance using AVAILABLE_BALANCE
     const availableBalance = parseFloat(groupSavings.AVAILABLE_BALANCE.toString());
     if (amount > availableBalance) {
@@ -1239,7 +1632,6 @@ export const requestWithdrawal = async (req, res) => {
         message: `Insufficient funds in group savings. Available balance: ${availableBalance}`,
       });
     }
-
     // Check withdrawal rules
     if (groupSavings.withdrawalRules.minWithdrawal > 0 && amount < groupSavings.withdrawalRules.minWithdrawal) {
       return res.status(400).json({
@@ -1247,14 +1639,12 @@ export const requestWithdrawal = async (req, res) => {
         message: `Withdrawal amount must be at least ${groupSavings.withdrawalRules.minWithdrawal}.`,
       });
     }
-
     if (groupSavings.withdrawalRules.maxWithdrawal > 0 && amount > groupSavings.withdrawalRules.maxWithdrawal) {
       return res.status(400).json({
         success: false,
         message: `Withdrawal amount cannot exceed ${groupSavings.withdrawalRules.maxWithdrawal}.`,
       });
     }
-
     const withdrawalRequest = new GroupSavingsWithdrawal({
       groupSavings: groupSavings._id,
       requestedBy: req.user.custId,
@@ -1266,9 +1656,7 @@ export const requestWithdrawal = async (req, res) => {
         status: 'pending'
       }))
     });
-
     await withdrawalRequest.save();
-
     // Log audit trail with account number
     await logAuditTrail(
       'GroupSavings',
@@ -1276,9 +1664,9 @@ export const requestWithdrawal = async (req, res) => {
       req.user.id,
       'WITHDRAWAL_REQUEST',
       null,
-      { 
-        amount, 
-        purpose, 
+      {
+        amount,
+        purpose,
         withdrawalRequestId: withdrawalRequest._id,
         accountNumber: groupSavings.accountNumber,
         availableBalance: availableBalance
@@ -1286,9 +1674,7 @@ export const requestWithdrawal = async (req, res) => {
       req.ip,
       'GROUP_SAVINGS_WITHDRAWAL_REQUEST'
     );
-
     logger.info(`Withdrawal requested: ${withdrawalRequest._id}, Account: ${groupSavings.accountNumber}, Amount: ${amount}`);
-
     res.status(201).json({
       success: true,
       message: 'Withdrawal request submitted successfully. Waiting for approvals.',
@@ -1305,43 +1691,38 @@ export const requestWithdrawal = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Approve/reject withdrawal request
-export const processWithdrawalApproval = async (req, res) => {
+export const processWithdrawalApproval = asyncHandler(async (req, res) => {
   try {
     const { withdrawalRequestId } = req.params;
     const { action, comments } = req.body;
-
     if (!action || !['approve', 'reject'].includes(action)) {
       return res.status(400).json({
         success: false,
         message: 'Valid action (approve/reject) is required.',
       });
     }
-
     const withdrawalRequest = await GroupSavingsWithdrawal.findById(withdrawalRequestId)
       .populate('groupSavings');
-    
+
     if (!withdrawalRequest) {
       return res.status(404).json({
         success: false,
         message: 'Withdrawal request not found.',
       });
     }
-
     // Check if user is authorized to approve
     const userApprover = withdrawalRequest.approvers.find(
       approver => approver.approverCustId === req.user.custId
     );
-
     if (!userApprover) {
       return res.status(403).json({
         success: false,
         message: 'You are not authorized to approve this withdrawal request.',
       });
     }
-
     // Check if already processed
     if (withdrawalRequest.status !== 'pending') {
       return res.status(400).json({
@@ -1349,16 +1730,13 @@ export const processWithdrawalApproval = async (req, res) => {
         message: `Withdrawal request is already ${withdrawalRequest.status}.`,
       });
     }
-
     // Update approver status
     userApprover.status = action === 'approve' ? 'approved' : 'rejected';
     userApprover.comments = comments;
     userApprover.approvedAt = new Date();
-
     if (action === 'approve') {
       withdrawalRequest.currentApprovals += 1;
     }
-
     // Check if request is fully approved
     if (withdrawalRequest.currentApprovals >= withdrawalRequest.requiredApprovals) {
       withdrawalRequest.status = 'approved';
@@ -1367,9 +1745,7 @@ export const processWithdrawalApproval = async (req, res) => {
       withdrawalRequest.status = 'rejected';
       withdrawalRequest.rejectionReason = comments;
     }
-
     await withdrawalRequest.save();
-
     // Log audit trail with account number
     await logAuditTrail(
       'GroupSavings',
@@ -1377,9 +1753,9 @@ export const processWithdrawalApproval = async (req, res) => {
       req.user.id,
       `WITHDRAWAL_${action.toUpperCase()}`,
       null,
-      { 
-        withdrawalRequestId, 
-        action, 
+      {
+        withdrawalRequestId,
+        action,
         comments,
         accountNumber: withdrawalRequest.groupSavings.accountNumber,
         currentApprovals: withdrawalRequest.currentApprovals,
@@ -1388,9 +1764,7 @@ export const processWithdrawalApproval = async (req, res) => {
       req.ip,
       'GROUP_SAVINGS_WITHDRAWAL_APPROVAL'
     );
-
     logger.info(`Withdrawal request ${action}d: ${withdrawalRequestId} for account: ${withdrawalRequest.groupSavings.accountNumber}`);
-
     res.status(200).json({
       success: true,
       message: `Withdrawal request ${action}d successfully.`,
@@ -1407,32 +1781,28 @@ export const processWithdrawalApproval = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Disburse approved withdrawal - Updated with correct balance fields
-export const disburseWithdrawal = async (req, res) => {
+export const disburseWithdrawal = asyncHandler(async (req, res) => {
   try {
     const { withdrawalRequestId } = req.params;
-
     const withdrawalRequest = await GroupSavingsWithdrawal.findById(withdrawalRequestId)
       .populate('groupSavings');
-    
+
     if (!withdrawalRequest) {
       return res.status(404).json({
         success: false,
         message: 'Withdrawal request not found.',
       });
     }
-
     if (withdrawalRequest.status !== 'approved') {
       return res.status(400).json({
         success: false,
         message: 'Only approved withdrawal requests can be disbursed.',
       });
     }
-
     const groupSavings = withdrawalRequest.groupSavings;
-
     // Check balance again using AVAILABLE_BALANCE
     const availableBalance = parseFloat(groupSavings.AVAILABLE_BALANCE.toString());
     if (withdrawalRequest.amount > availableBalance) {
@@ -1441,18 +1811,15 @@ export const disburseWithdrawal = async (req, res) => {
         message: `Insufficient funds in group savings. Available balance: ${availableBalance}`,
       });
     }
-
     // Start transaction for withdrawal disbursement
     const session = await mongoose.startSession();
     session.startTransaction();
-
     try {
       // Store old balances for audit
       const oldLedgerBal = groupSavings.LEDGER_BAL;
       const oldClearedBal = groupSavings.CLEARED_BAL;
       const oldAvailableBalance = groupSavings.AVAILABLE_BALANCE;
       const oldCurrentBalance = groupSavings.currentBalance;
-
       // Update all balance fields
       groupSavings.LEDGER_BAL = mongoose.Types.Decimal128.fromString(
         (parseFloat(oldLedgerBal.toString()) - withdrawalRequest.amount).toFixed(2)
@@ -1464,16 +1831,13 @@ export const disburseWithdrawal = async (req, res) => {
         (parseFloat(oldAvailableBalance.toString()) - withdrawalRequest.amount).toFixed(2)
       );
       groupSavings.currentBalance = parseFloat(groupSavings.AVAILABLE_BALANCE.toString());
-
       await groupSavings.save({ session });
-
       // Update withdrawal request
       withdrawalRequest.status = 'disbursed';
       withdrawalRequest.disbursedAt = new Date();
       withdrawalRequest.disbursedBy = req.user.id;
       withdrawalRequest.transactionReference = `GSW-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       await withdrawalRequest.save({ session });
-
       // Create transaction record
       const transaction = new Transaction({
         account_no: groupSavings.accountNumber,
@@ -1492,9 +1856,7 @@ export const disburseWithdrawal = async (req, res) => {
         status: 'COMPLETED'
       });
       await transaction.save({ session });
-
       await session.commitTransaction();
-
       // Log audit trail
       await logAuditTrail(
         'GroupSavings',
@@ -1507,7 +1869,7 @@ export const disburseWithdrawal = async (req, res) => {
           oldAvailableBalance: parseFloat(oldAvailableBalance.toString()),
           oldCurrentBalance: oldCurrentBalance
         },
-        { 
+        {
           newLedgerBal: parseFloat(groupSavings.LEDGER_BAL.toString()),
           newClearedBal: parseFloat(groupSavings.CLEARED_BAL.toString()),
           newAvailableBalance: parseFloat(groupSavings.AVAILABLE_BALANCE.toString()),
@@ -1519,9 +1881,7 @@ export const disburseWithdrawal = async (req, res) => {
         req.ip,
         'GROUP_SAVINGS_WITHDRAWAL_DISBURSED'
       );
-
       logger.info(`Withdrawal disbursed: ${withdrawalRequestId}, Account: ${groupSavings.accountNumber}, Amount: ${withdrawalRequest.amount}`);
-
       res.status(200).json({
         success: true,
         message: 'Withdrawal disbursed successfully.',
@@ -1543,7 +1903,6 @@ export const disburseWithdrawal = async (req, res) => {
           }
         },
       });
-
     } catch (transactionError) {
       await session.abortTransaction();
       logger.error('Transaction failed during withdrawal disbursement:', transactionError);
@@ -1551,7 +1910,6 @@ export const disburseWithdrawal = async (req, res) => {
     } finally {
       session.endSession();
     }
-
   } catch (error) {
     logger.error('Error disbursing withdrawal:', error);
     res.status(500).json({
@@ -1560,49 +1918,42 @@ export const disburseWithdrawal = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Get group savings details with contributions and withdrawals
-export const getGroupSavingsById = async (req, res) => {
+export const getGroupSavingsById = asyncHandler(async (req, res) => {
   try {
     const { groupSavingsId } = req.params;
-
     const groupSavings = await GroupSavings.findById(groupSavingsId)
       .populate('group', 'groupName members groupCode')
       .populate('createdBy', 'name email');
-
     if (!groupSavings) {
       return res.status(404).json({
         success: false,
         message: 'Group savings account not found.',
       });
     }
-
     // Get recent contributions
     const contributions = await GroupSavingsContribution.find({
       groupSavings: groupSavingsId
     })
       .sort({ contributionDate: -1 })
       .limit(10);
-
     // Get pending withdrawal requests
     const pendingWithdrawals = await GroupSavingsWithdrawal.find({
       groupSavings: groupSavingsId,
       status: 'pending'
     });
-
     // Get approved withdrawal requests
     const approvedWithdrawals = await GroupSavingsWithdrawal.find({
       groupSavings: groupSavingsId,
       status: 'approved'
     });
-
     // Get member details
     const memberDetails = await Customer.find(
       { CUST_ID: { $in: groupSavings.managedBy } },
       'CUST_ID FIRST_NAME LAST_NAME'
     );
-
     const responseData = {
       ...groupSavings.toObject(),
       recentContributions: contributions,
@@ -1610,7 +1961,6 @@ export const getGroupSavingsById = async (req, res) => {
       approvedWithdrawals,
       managers: memberDetails
     };
-
     res.status(200).json({
       success: true,
       data: responseData,
@@ -1623,57 +1973,49 @@ export const getGroupSavingsById = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
-// Get group savings by account number
-export const getGroupSavingsByAccountNumber = async (req, res) => {
+// Get group savings by account number - DETAILS
+export const getGroupSavingsByAccountNumber = asyncHandler(async (req, res) => {
   try {
     const { accountNumber } = req.params;
-
     if (!accountNumber) {
       return res.status(400).json({
         success: false,
         message: 'Account number is required.',
       });
     }
-
     const groupSavings = await GroupSavings.findOne({ accountNumber })
       .populate('group', 'groupName members groupCode')
       .populate('createdBy', 'name email');
-
     if (!groupSavings) {
       return res.status(404).json({
         success: false,
         message: 'Group savings account not found.',
       });
     }
-
     // Get recent contributions
     const contributions = await GroupSavingsContribution.find({
       groupSavings: groupSavings._id
     })
       .sort({ contributionDate: -1 })
       .limit(10);
-
     // Get pending withdrawal requests
     const pendingWithdrawals = await GroupSavingsWithdrawal.find({
       groupSavings: groupSavings._id,
       status: 'pending'
     });
-
     // Get member details
     const memberDetails = await Customer.find(
       { CUST_ID: { $in: groupSavings.managedBy } },
       'CUST_ID FIRST_NAME LAST_NAME'
     );
-
     const responseData = {
       ...groupSavings.toObject(),
       recentContributions: contributions,
       pendingWithdrawals,
       managers: memberDetails
     };
-
     res.status(200).json({
       success: true,
       data: responseData,
@@ -1686,24 +2028,21 @@ export const getGroupSavingsByAccountNumber = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Get all group savings accounts for a group
-export const getGroupSavingsByGroup = async (req, res) => {
+export const getGroupSavingsByGroup = asyncHandler(async (req, res) => {
   try {
     const { groupCode } = req.params;
-
     const groupSavings = await GroupSavings.find({ groupCode, isActive: true })
       .populate('group', 'groupName members')
       .sort({ createdAt: -1 });
-
     if (!groupSavings || groupSavings.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'No active group savings accounts found for this group.',
       });
     }
-
     res.status(200).json({
       success: true,
       count: groupSavings.length,
@@ -1717,10 +2056,10 @@ export const getGroupSavingsByGroup = async (req, res) => {
       error: error.message,
     });
   }
-};
+});
 
 // Update group savings account
-export const updateGroupSavings = async (req, res) => {
+export const updateGroupSavings = asyncHandler(async (req, res) => {
   try {
     const { groupSavingsId } = req.params;
     const {
@@ -1731,7 +2070,6 @@ export const updateGroupSavings = async (req, res) => {
       withdrawalRules,
       isActive
     } = req.body;
-
     const groupSavings = await GroupSavings.findById(groupSavingsId);
     if (!groupSavings) {
       return res.status(404).json({
@@ -1739,7 +2077,6 @@ export const updateGroupSavings = async (req, res) => {
         message: 'Group savings account not found.',
       });
     }
-
     // Validate managers if provided
     if (managedBy && managedBy.length > 0) {
       const group = await Group.findById(groupSavings.group);
@@ -1751,7 +2088,6 @@ export const updateGroupSavings = async (req, res) => {
         });
       }
     }
-
     // Store old values for audit
     const oldValues = {
       targetAmount: groupSavings.targetAmount,
@@ -1761,7 +2097,6 @@ export const updateGroupSavings = async (req, res) => {
       withdrawalRules: { ...groupSavings.withdrawalRules },
       isActive: groupSavings.isActive
     };
-
     // Update fields
     if (targetAmount !== undefined) groupSavings.targetAmount = targetAmount;
     if (minimumContribution !== undefined) groupSavings.minimumContribution = minimumContribution;
@@ -1769,11 +2104,8 @@ export const updateGroupSavings = async (req, res) => {
     if (managedBy !== undefined) groupSavings.managedBy = managedBy;
     if (withdrawalRules !== undefined) groupSavings.withdrawalRules = withdrawalRules;
     if (isActive !== undefined) groupSavings.isActive = isActive;
-
     groupSavings.updatedAt = new Date();
-
     const updatedSavings = await groupSavings.save();
-
     // Log audit trail with account number
     await logAuditTrail(
       'GroupSavings',
@@ -1793,9 +2125,7 @@ export const updateGroupSavings = async (req, res) => {
       req.ip,
       'GROUP_SAVINGS_UPDATED'
     );
-
     logger.info(`Group savings updated successfully: ${groupSavingsId}, Account: ${groupSavings.accountNumber}`);
-
     res.status(200).json({
       success: true,
       message: 'Group savings account updated successfully.',
@@ -1809,98 +2139,7 @@ export const updateGroupSavings = async (req, res) => {
       error: error.message,
     });
   }
-};
-
-// Get Group Savings by Group Code - Updated to Use GroupSavings Model for Group-Level Savings
-export const getGroupSavingsByGroupCode = asyncHandler(async (req, res) => {
-  const { groupCode } = req.params;
-  try {
-    if (!groupCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Group code is required.',
-      });
-    }
-
-    // Find GroupSavings by groupCode
-    const groupSavings = await GroupSavings.findOne({ groupCode })
-      .populate('createdBy', 'name email');
-
-    if (!groupSavings) {
-      return res.status(404).json({
-        success: false,
-        message: 'Group savings account not found.',
-      });
-    }
-
-    // Manually find the associated group by groupCode for robustness
-    const group = await Group.findOne({ groupCode }).select('groupName groupCode memberCount members');
-    if (!group) {
-      logger.error(`Group not found for groupCode ${groupCode}`);
-      return res.status(404).json({
-        success: false,
-        message: 'Associated group not found for this savings account.',
-      });
-    }
-
-    // Aggregate member savings if needed (optional - add if individual savings required)
-    const memberSavings = await CustomerAccount.find({
-      CUST_ID: { $in: group.members },
-      ACCOUNT_TYPE: 'SAVINGS',
-      REC_ST: 'ACTIVE',
-    }).populate('productCode', 'PROD_DESC');
-
-    const groupSavingsSummary = {
-      groupSavings: {
-        ...groupSavings.toObject(),
-        group: {
-          _id: group._id,
-          groupName: group.groupName,
-          groupCode: group.groupCode,
-          memberCount: group.memberCount || group.members.length,
-          members: group.members.length,
-        },
-      },
-      individualMemberSavings: {
-        totalAccounts: memberSavings.length,
-        totalBalance: 0,
-        totalAccruedInterest: 0,
-        averageBalance: 0,
-        accounts: memberSavings.map(account => ({
-          ACCT_NO: account.ACCT_NO,
-          CUST_ID: account.CUST_ID,
-          ACCT_NM: account.ACCT_NM,
-          PRODUCT_DESC: account.PRODUCT_DESC,
-          LEDGER_BALANCE: account.LEDGER_BALANCE,
-          ACCRUED_INTEREST: account.ACCRUED_INTEREST,
-          LAST_INTEREST_DATE: account.LAST_INTEREST_DATE,
-          REC_ST: account.REC_ST,
-        })),
-      },
-    };
-
-    // Calculate totals for individual savings
-    groupSavingsSummary.individualMemberSavings.totalBalance = memberSavings.reduce((sum, account) => sum + (account.LEDGER_BALANCE || 0), 0);
-    groupSavingsSummary.individualMemberSavings.totalAccruedInterest = memberSavings.reduce((sum, account) => sum + (account.ACCRUED_INTEREST || 0), 0);
-    groupSavingsSummary.individualMemberSavings.averageBalance = (group.memberCount || group.members.length) > 0 ? groupSavingsSummary.individualMemberSavings.totalBalance / (group.memberCount || group.members.length) : 0;
-
-    logger.info(`Group savings fetched for group ${groupCode}: Group balance ${groupSavings.currentBalance.toLocaleString()}, Individual accounts: ${memberSavings.length}, Total individual balance: ${groupSavingsSummary.individualMemberSavings.totalBalance.toLocaleString()}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Group savings retrieved successfully.',
-      data: groupSavingsSummary,
-    });
-  } catch (error) {
-    logger.error('Error fetching group savings:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error fetching group savings.',
-      error: error.message,
-    });
-  }
 });
-
 
 // FIXED: Add getGroupSavings function
 export const getGroupSavings = asyncHandler(async (req, res) => {
@@ -1912,7 +2151,6 @@ export const getGroupSavings = asyncHandler(async (req, res) => {
         message: 'Group code is required.',
       });
     }
-
     const group = await Group.findOne({ groupCode });
     if (!group) {
       return res.status(404).json({
@@ -1920,21 +2158,18 @@ export const getGroupSavings = asyncHandler(async (req, res) => {
         message: 'Group not found.',
       });
     }
-
     // Find all savings accounts for group members
     const memberSavings = await CustomerAccount.find({
       CUST_ID: { $in: group.members },
       ACCOUNT_TYPE: 'SAVINGS',
       REC_ST: 'ACTIVE',
     }).populate('productCode', 'PROD_DESC');
-
     if (!memberSavings || memberSavings.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'No active savings accounts found for group members.',
       });
     }
-
     // Aggregate group savings totals
     const groupSavingsSummary = {
       totalMembers: group.members.length,
@@ -1953,14 +2188,11 @@ export const getGroupSavings = asyncHandler(async (req, res) => {
         REC_ST: account.REC_ST,
       })),
     };
-
     // Calculate totals
     groupSavingsSummary.totalBalance = memberSavings.reduce((sum, account) => sum + (account.LEDGER_BALANCE || 0), 0);
     groupSavingsSummary.totalAccruedInterest = memberSavings.reduce((sum, account) => sum + (account.ACCRUED_INTEREST || 0), 0);
     groupSavingsSummary.averageBalance = groupSavingsSummary.totalMembers > 0 ? groupSavingsSummary.totalBalance / groupSavingsSummary.totalMembers : 0;
-
     logger.info(`Group savings fetched for group ${groupCode}: ${memberSavings.length} accounts, total balance: ${groupSavingsSummary.totalBalance.toLocaleString()}`);
-
     res.status(200).json({
       success: true,
       message: 'Group savings retrieved successfully.',
@@ -1979,7 +2211,7 @@ export const getGroupSavings = asyncHandler(async (req, res) => {
       success: false,
       message: 'Server error fetching group savings.',
       error: error.message,
-   });
+    });
   }
 });
 
@@ -1987,16 +2219,13 @@ export const getGroupSavings = asyncHandler(async (req, res) => {
 export const getAccountByNumber = asyncHandler(async (req, res) => {
   try {
     const { accountNumber } = req.params;
-
     const accountInfo = await getCombinedAccountInfo(accountNumber);
-
     if (!accountInfo.customerAccount && !accountInfo.groupSavings) {
       return res.status(404).json({
         success: false,
         message: 'Account not found.',
       });
     }
-
     res.status(200).json({
       success: true,
       message: 'Account retrieved successfully.',

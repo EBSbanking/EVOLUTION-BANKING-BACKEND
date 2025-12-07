@@ -22,6 +22,34 @@ export const getProductTypeByProdIdInternal = async (prodId) => {
   return mapping;
 };
 
+// Helper function to get account prefix based on product type
+const getPrefixForProductType = (productType) => {
+  const prefixMap = {
+    'BUSINESS_TERM_LOAN': 'BTL',
+    'INDIVIDUAL_LOAN': 'IL',
+    'CONSUMER_LOAN': 'CL',
+    'MORTGAGE': 'MTG',
+    'AUTO_LOAN': 'AL',
+    'PERSONAL_LOAN': 'PL',
+    'EDUCATION_LOAN': 'EL',
+    'CREDIT_CARD': 'CC',
+    'LINE_OF_CREDIT': 'LOC',
+    'SME_LOAN': 'SME',
+    'GENERAL_LOAN': 'GL',
+    'GROUP_LOAN': 'GLN',
+    'MONTHLY_LOAN': 'MOL',
+    'ASSET_LOAN': 'ASL',
+    'RAPID_CASH_LOAN': 'RCL',
+    'STAFF_LOAN': 'STL',
+    'STAFF_SALARY_ADVANCE': 'SSA',
+    'GROUP_MONTHLY_LOAN': 'GML',
+    'SOLAR_LOAN': 'SOL',
+    'DAILY_LOAN': 'DLN'
+  };
+  
+  return prefixMap[productType] || 'DF';
+};
+
 /**
  * =========================
  * API Handlers
@@ -81,59 +109,94 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // If PRODUCT_TYPE not provided or needs determination, use PROD_CD and PROD_DESC
     if (!finalProductType || finalProductType === 'UNKNOWN') {
+      // Fix: Removed extra comma after the switch statement block
       switch (String(finalPROD_CD)) {
         case '200': finalProductType = 'SAVINGS'; break;
         case '201': finalProductType = 'TERM_DEPOSIT'; break;
-        case '300': finalProductType = 'BUSINESS TERM LOAN'; break;
-        case '301': finalProductType = 'INDIVIDUAL LOAN'; break;
-        case '302': finalProductType = 'CONSUMER LOAN'; break;
+        case '300': finalProductType = 'BUSINESS_TERM_LOAN'; break;
+        case '301': finalProductType = 'INDIVIDUAL_LOAN'; break;
+        case '302': finalProductType = 'CONSUMER_LOAN'; break;
         case '303': finalProductType = 'MORTGAGE'; break;
-        case '304': finalProductType = 'AUTO LOAN'; break;
-        case '305': finalProductType = 'PERSONAL LOAN'; break;
-        case '306': finalProductType = 'EDUCATION LOAN'; break;
-        case '307': finalProductType = 'CREDIT CARD'; break;
-        case '308': finalProductType = 'LINE OF CREDIT'; break;
-        case '309': finalProductType = 'SME LOAN'; break;
+        case '304': finalProductType = 'AUTO_LOAN'; break;
+        case '305': finalProductType = 'PERSONAL_LOAN'; break;
+        case '306': finalProductType = 'EDUCATION_LOAN'; break;
+        case '307': finalProductType = 'CREDIT_CARD'; break;
+        case '308': finalProductType = 'LINE_OF_CREDIT'; break;
+        case '309': finalProductType = 'SME_LOAN'; break;
+        // Add more cases for new product codes if needed
+        case '310': finalProductType = 'GROUP_LOAN'; break;
+        case '311': finalProductType = 'MONTHLY_LOAN'; break;
+        case '312': finalProductType = 'ASSET_LOAN'; break;
+        case '313': finalProductType = 'RAPID_CASH_LOAN'; break;
+        case '314': finalProductType = 'STAFF_LOAN'; break;
+        case '315': finalProductType = 'STAFF_SALARY_ADVANCE'; break;
+        case '316': finalProductType = 'GROUP_MONTHLY_LOAN'; break;
+        case '317': finalProductType = 'SOLAR_LOAN'; break;
+        case '318': finalProductType = 'DAILY_LOAN'; break;
+        case '319': finalProductType = 'GENERAL_LOAN'; break;
         default:
           const lowerDesc = finalPROD_DESC.toLowerCase();
-          if (/individual\s*loan/i.test(lowerDesc)) finalProductType = 'INDIVIDUAL LOAN';
+          if (/individual\s*loan/i.test(lowerDesc)) finalProductType = 'INDIVIDUAL_LOAN';
           else if (/term\s*deposit/i.test(lowerDesc)) finalProductType = 'TERM_DEPOSIT';
           else if (/savings?/i.test(lowerDesc)) finalProductType = 'SAVINGS';
-          else if (/business\s*term\s*loan/i.test(lowerDesc)) finalProductType = 'BUSINESS TERM LOAN';
-          else if (/consumer\s*loan/i.test(lowerDesc)) finalProductType = 'CONSUMER LOAN';
+          else if (/business\s*term\s*loan/i.test(lowerDesc)) finalProductType = 'BUSINESS_TERM_LOAN';
+          else if (/consumer\s*loan/i.test(lowerDesc)) finalProductType = 'CONSUMER_LOAN';
           else if (/mortgage/i.test(lowerDesc)) finalProductType = 'MORTGAGE';
-          else if (/auto\s*loan/i.test(lowerDesc)) finalProductType = 'AUTO LOAN';
-          else if (/personal\s*loan/i.test(lowerDesc)) finalProductType = 'PERSONAL LOAN';
-          else if (/education\s*loan/i.test(lowerDesc)) finalProductType = 'EDUCATION LOAN';
-          else if (/credit\s*card/i.test(lowerDesc)) finalProductType = 'CREDIT CARD';
-          else if (/line\s*of\s*credit/i.test(lowerDesc)) finalProductType = 'LINE OF CREDIT';
-          else if (/sme\s*loan/i.test(lowerDesc)) finalProductType = 'SME LOAN';
-          else finalProductType = 'GENERAL LOAN';
+          else if (/auto\s*loan/i.test(lowerDesc)) finalProductType = 'AUTO_LOAN';
+          else if (/personal\s*loan/i.test(lowerDesc)) finalProductType = 'PERSONAL_LOAN';
+          else if (/education\s*loan/i.test(lowerDesc)) finalProductType = 'EDUCATION_LOAN';
+          else if (/credit\s*card/i.test(lowerDesc)) finalProductType = 'CREDIT_CARD';
+          else if (/line\s*of\s*credit/i.test(lowerDesc)) finalProductType = 'LINE_OF_CREDIT';
+          else if (/sme\s*loan/i.test(lowerDesc)) finalProductType = 'SME_LOAN';
+          else if (/group\s*loan/i.test(lowerDesc)) finalProductType = 'GROUP_LOAN';
+          else if (/monthly/i.test(lowerDesc)) finalProductType = 'MONTHLY_LOAN';
+          else if (/asset\s*loan/i.test(lowerDesc)) finalProductType = 'ASSET_LOAN';
+          else if (/rapid\s*cash\s*loan/i.test(lowerDesc)) finalProductType = 'RAPID_CASH_LOAN';
+          else if (/staff\s*loan/i.test(lowerDesc)) finalProductType = 'STAFF_LOAN';
+          else if (/staff\s*salary\s*advance/i.test(lowerDesc)) finalProductType = 'STAFF_SALARY_ADVANCE';
+          else if (/group\s*monthly\s*loan/i.test(lowerDesc)) finalProductType = 'GROUP_MONTHLY_LOAN';
+          else if (/solar\s*loan/i.test(lowerDesc)) finalProductType = 'SOLAR_LOAN';
+          else if (/daily\s*loan/i.test(lowerDesc)) finalProductType = 'DAILY_LOAN';
+          else finalProductType = 'GENERAL_LOAN';
       }
     }
 
     // Validate PRODUCT_TYPE against schema enum
     const validProductTypes = [
-      'SAVINGS',
-      'TERM_DEPOSIT',
-      'BUSINESS TERM LOAN',
-      'INDIVIDUAL LOAN',
-      'CONSUMER LOAN',
+      'BUSINESS_TERM_LOAN',
+      'INDIVIDUAL_LOAN',
+      'CONSUMER_LOAN',
       'MORTGAGE',
-      'AUTO LOAN',
-      'PERSONAL LOAN',
-      'EDUCATION LOAN',
-      'CREDIT CARD',
-      'LINE OF CREDIT',
-      'SME LOAN',
-      'GENERAL LOAN',
-      'UNKNOWN',
+      'AUTO_LOAN',
+      'PERSONAL_LOAN',
+      'EDUCATION_LOAN',
+      'CREDIT_CARD',
+      'LINE_OF_CREDIT',
+      'SME_LOAN',
+      'GENERAL_LOAN',
+      'GROUP_LOAN',
+      'MONTHLY_LOAN',
+      'ASSET_LOAN',
+      'RAPID_CASH_LOAN',
+      'STAFF_LOAN',
+      'STAFF_SALARY_ADVANCE',
+      'GROUP_MONTHLY_LOAN',
+      'SOLAR_LOAN',
+      'DAILY_LOAN'
     ];
 
     if (!validProductTypes.includes(finalProductType)) {
+      // Handle special cases
+      if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid PRODUCT_TYPE: ${finalProductType}. Deposit products (SAVINGS, TERM_DEPOSIT) are not valid loan products.`
+        });
+      }
+      
       return res.status(400).json({
         success: false,
-        message: `Invalid PRODUCT_TYPE: ${finalProductType}. Must be one of ${validProductTypes.join(', ')}`
+        message: `Invalid PRODUCT_TYPE: ${finalProductType}. Must be one of: ${validProductTypes.join(', ')}`
       });
     }
 
@@ -191,7 +254,7 @@ export const createOrUpdateMapping = async (req, res) => {
     const updatedGLAccounts = glAccounts || {};
 
     // Validate GL accounts based on product type
-    if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
+    if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT_CARD') {
       // Require loanGLAccount for loan products
       if (!updatedGLAccounts.loanGLAccount) {
         return res.status(400).json({
@@ -352,7 +415,7 @@ export const createOrUpdateMapping = async (req, res) => {
 
     } 
     // Handle Loan Products
-    else if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
+    else if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT_CARD') {
       const loanProductData = {
         ...productData,
         productCode: String(finalProductCode), // ✅ Ensure string type for productCode
@@ -392,7 +455,7 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // Generate loan account number (if applicable)
     let generatedAccountNumber = null;
-    if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT CARD') {
+    if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT_CARD') {
       try {
         generatedAccountNumber = await generateLoanAccountNumberByProdId(finalProdId);
         console.log(`Generated loan account number for PROD_ID ${finalProdId}: ${generatedAccountNumber}`);
@@ -462,27 +525,6 @@ export const createOrUpdateMapping = async (req, res) => {
       error: error.message || 'Unexpected error'
     });
   }
-};
-
-// Helper function to get account prefix based on product type
-const getPrefixForProductType = (productType) => {
-  const prefixMap = {
-    'SAVINGS': 'SV',
-    'TERM_DEPOSIT': 'TD',
-    'BUSINESS TERM LOAN': 'BTL',
-    'INDIVIDUAL LOAN': 'IL',
-    'CONSUMER LOAN': 'CL',
-    'MORTGAGE': 'MTG',
-    'AUTO LOAN': 'AL',
-    'PERSONAL LOAN': 'PL',
-    'EDUCATION LOAN': 'EL',
-    'CREDIT CARD': 'CC',
-    'LINE OF CREDIT': 'LOC',
-    'SME LOAN': 'SME',
-    'GENERAL LOAN': 'GL'
-  };
-  
-  return prefixMap[productType] || 'DF';
 };
 
 /**

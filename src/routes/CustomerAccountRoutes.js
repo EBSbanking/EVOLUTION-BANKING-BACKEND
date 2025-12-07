@@ -2,23 +2,20 @@ import express from 'express';
 import { 
   createCustomerAccount, 
   getAllCustomerAccounts, 
-  
   updateCustomerAccount, 
   deleteCustomerAccount,
   getCustomerAccountByCUST_ID,
-  updateDormantAccounts // Make sure this is imported
-} from '../controllers/CustomerAccountController.js';
-
-// ADD THE ACCOUNT ACTIVATION CONTROLLERS
-import { 
+  updateDormantAccounts,
+  searchCustomerAccounts,
+  getAccountByNumber,
   activateCustomerAccount, 
   bulkActivateAccounts, 
   getAccountActivationHistory 
 } from '../controllers/CustomerAccountController.js';
 
-import postTransaction  from '../Services/postTransaction.js'; // default import
+import postTransaction  from '../Services/postTransaction.js';
 import logger from '../utils/logger.js'; 
-import AuditTrail from '../models/AuditTrail.js'; // Make sure the import path is correct
+import AuditTrail from '../models/AuditTrail.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 
 const router = express.Router();
@@ -79,8 +76,14 @@ router.get('/debug-all-accounts', async (req, res) => {
   }
 });
 
+// SINGLE ROUTE for getting account by number - REMOVE THE DUPLICATE BELOW
+router.get('/accounts/:accountNumber', getAccountByNumber);
 
-// Updated retrieval endpoint that handles both migrated and new accounts
+// Add search route
+router.get('/search', searchCustomerAccounts);
+
+// REMOVE THIS DUPLICATE ROUTE - IT'S OVERRIDING THE ABOVE ONE
+/*
 router.get('/accounts/:accountNumber', async (req, res) => {
   try {
     const { accountNumber } = req.params;
@@ -161,12 +164,12 @@ router.get('/accounts/:accountNumber', async (req, res) => {
     });
   }
 });
+*/
 
 //====================ROUTES=======================
 
 router.post('/accounts', createCustomerAccount);
 router.get('/accounts', getAllCustomerAccounts);
-// router.get('/accounts/:identifier', getCustomerAccountById);
 router.put('/accounts/:ACCT_NO', updateCustomerAccount);
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount);
 router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
@@ -184,16 +187,6 @@ router.get('/accounts/:ACCT_NO/activation-history', getAccountActivationHistory)
 // ==================== TRANSACTION ROUTES ====================
 // Post Transaction
 router.post('/transactions', postTransaction);
-
-// //=========== routes/transactionRoutes.js =================================================
-// router.post('/opening/transactions', (req, res) => {
-//   const { TRANSACTION_TYPE } = req.body;
-//   if (TRANSACTION_TYPE && TRANSACTION_TYPE.toUpperCase() === 'OPENING_CASH_DEPOSIT') {
-//     return postOpeningCashDeposit(req, res);
-//   }
-//   return postTransaction(req, res);
-// });
-// //==========================================================================================
 
 router.get('/transactions/:ACCT_NO', async (req, res) => {
   const { ACCT_NO } = req.params;

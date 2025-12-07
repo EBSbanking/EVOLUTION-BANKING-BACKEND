@@ -1,15 +1,15 @@
-// models/GroupLoan.js - Updated with collection tracking and safe field handling
+// models/GroupLoan.js - Updated with Decimal128 for monetary fields, safe handling, and unified structure
 import mongoose from 'mongoose';
 
-// Safe number utility function
-const safeNumber = (value, defaultValue = 0) => {
-  if (value === null || value === undefined) return defaultValue;
+// Safe decimal utility function
+const safeDecimal = (value, defaultValue = '0.00') => {
+  if (value === null || value === undefined) return mongoose.Types.Decimal128.fromString(defaultValue);
   if (typeof value === 'object' && value.toString) {
-    // Handle Decimal128 objects
-    return parseFloat(value.toString()) || defaultValue;
+    // Handle existing Decimal128 or other numeric objects
+    return mongoose.Types.Decimal128.fromString(value.toString());
   }
-  const num = Number(value);
-  return isNaN(num) ? defaultValue : num;
+  const numStr = Number(value).toFixed(2);
+  return mongoose.Types.Decimal128.fromString(isNaN(Number(numStr)) ? defaultValue : numStr);
 };
 
 const groupLoanSchema = new mongoose.Schema({
@@ -40,13 +40,17 @@ const groupLoanSchema = new mongoose.Schema({
     trim: true,
   },
   totalAmount: {
-    type: Number,
+    type: mongoose.Schema.Types.Decimal128,
     required: [true, 'Total amount is required'],
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
     min: [0, 'Total amount must be positive'],
   },
   individualShare: {
-    type: Number,
+    type: mongoose.Schema.Types.Decimal128,
     required: [true, 'Individual share is required (auto-calculated)'],
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
     min: [0, 'Individual share must be positive'],
   },
   memberCount: {
@@ -66,8 +70,10 @@ const groupLoanSchema = new mongoose.Schema({
       trim: true 
     },
     individualAmount: { 
-      type: Number, 
+      type: mongoose.Schema.Types.Decimal128,
       required: true, 
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
       min: 0 
     },
   }],
@@ -158,20 +164,38 @@ const groupLoanSchema = new mongoose.Schema({
     collectedBy: { type: String, required: true },
     loanCollections: [{
       accountNo: String,
-      amount: Number,
+      amount: {
+        type: mongoose.Schema.Types.Decimal128,
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => safeDecimal(v),
+      },
       receiptNo: String,
       installmentNo: Number
     }],
     savingsCollections: [{
       accountNo: String,
-      amount: Number,
+      amount: {
+        type: mongoose.Schema.Types.Decimal128,
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => safeDecimal(v),
+      },
       type: String // 'GROUP_SAVINGS' or 'INDIVIDUAL_SAVINGS'
     }],
     successfulCollections: { type: Number, default: 0 },
     failedCollections: { type: Number, default: 0 },
     savingsProcessed: { type: Number, default: 0 },
-    totalLoanCollected: { type: Number, default: 0 },
-    totalSavingsCollected: { type: Number, default: 0 },
+    totalLoanCollected: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    totalSavingsCollected: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
     repaymentSchedulesUpdated: { type: Number, default: 0 },
     paymentMethod: { type: String, default: 'CASH' },
     transactionReference: String
@@ -183,10 +207,10 @@ const groupLoanSchema = new mongoose.Schema({
     ref: 'LoanAccount',
   }],
 
-repaidToMembers: [{
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'LoanAccount',
-}],
+  repaidToMembers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LoanAccount',
+  }],
   
   // Audit fields - UPDATED to accept both ObjectId and String/Number
   createdBy: {
@@ -217,9 +241,11 @@ repaidToMembers: [{
     default: '' 
   },
   interestRate: { 
-    type: Number, 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
     min: 0,
-    default: 0 
+    default: '0.00' 
   },
   loanTerm: {
     type: String,
@@ -246,8 +272,10 @@ repaidToMembers: [{
     default: null 
   },
   savingsCollateral: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   
   // Financial fields with proper defaults
@@ -256,24 +284,34 @@ repaidToMembers: [{
     ref: 'LoanAccount',
   }],
   totalInterest: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   totalRepayable: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   totalRepaid: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   remainingBalance: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   installmentAmount: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   numPeriods: { 
     type: Number, 
@@ -284,20 +322,28 @@ repaidToMembers: [{
     default: 0 
   },
   netDisbursementAmount: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   totalFees: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   upfrontInterestAmount: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   remainingInterestAmount: { 
-    type: Number, 
-    default: 0 
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00' 
   },
   feesCollected: { 
     type: Boolean, 
@@ -313,8 +359,18 @@ repaidToMembers: [{
       insufficientFunds: { type: Number, default: 0 },
       skipped: { type: Number, default: 0 },
       validationErrors: { type: Number, default: 0 },
-      totalDisbursed: { type: Number, default: 0 },
-      totalFeesCollected: { type: Number, default: 0 },
+      totalDisbursed: {
+        type: mongoose.Schema.Types.Decimal128,
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => safeDecimal(v),
+        default: '0.00'
+      },
+      totalFeesCollected: {
+        type: mongoose.Schema.Types.Decimal128,
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => safeDecimal(v),
+        default: '0.00'
+      },
       disbursementDate: { type: Date, default: null },
       processedBy: { 
         type: mongoose.Schema.Types.Mixed, // Allow both ObjectId and String/Number
@@ -328,9 +384,24 @@ repaidToMembers: [{
         name: { type: String, default: '' },
         loanAccountId: { type: mongoose.Schema.Types.ObjectId, default: null },
         loanAccountNumber: { type: String, default: '' },
-        loanAmount: { type: Number, default: 0 },
-        feesPaid: { type: Number, default: 0 },
-        netReceived: { type: Number, default: 0 },
+        loanAmount: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        feesPaid: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        netReceived: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
         accountNumber: { type: String, default: '' },
         customerAccount: { type: String, default: '' },
         disbursementDate: { type: Date, default: null },
@@ -351,33 +422,98 @@ repaidToMembers: [{
         custId: { type: String, default: '' },
         name: { type: String, default: '' },
         loanAccountNumber: { type: String, default: '' },
-        totalFees: { type: Number, default: 0 },
+        totalFees: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
         feeBreakdown: {
-          processingFee: { type: Number, default: 0 },
-          adminFee: { type: Number, default: 0 },
-          insuranceFee: { type: Number, default: 0 },
-          otherFees: { type: Number, default: 0 },
-          upfrontInterest: { type: Number, default: 0 }
+          processingFee: {
+            type: mongoose.Schema.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : 0,
+            set: v => safeDecimal(v),
+            default: '0.00'
+          },
+          adminFee: {
+            type: mongoose.Schema.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : 0,
+            set: v => safeDecimal(v),
+            default: '0.00'
+          },
+          insuranceFee: {
+            type: mongoose.Schema.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : 0,
+            set: v => safeDecimal(v),
+            default: '0.00'
+          },
+          otherFees: {
+            type: mongoose.Schema.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : 0,
+            set: v => safeDecimal(v),
+            default: '0.00'
+          },
+          upfrontInterest: {
+            type: mongoose.Schema.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : 0,
+            set: v => safeDecimal(v),
+            default: '0.00'
+          }
         },
         accountDebited: { type: String, default: '' },
-        previousBalance: { type: Number, default: 0 },
-        newBalance: { type: Number, default: 0 }
+        previousBalance: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        newBalance: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        }
       }],
       insuranceActivated: [{
         custId: { type: String, default: '' },
         name: { type: String, default: '' },
         loanAccountNumber: { type: String, default: '' },
-        premium: { type: Number, default: 0 },
-        coverage: { type: Number, default: 0 },
+        premium: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        coverage: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
         policyNumber: { type: String, default: '' }
       }],
       insufficientFunds: [{
         custId: { type: String, default: '' },
         name: { type: String, default: '' },
         loanAccountNumber: { type: String, default: '' },
-        requiredFees: { type: Number, default: 0 },
-        availableBalance: { type: Number, default: 0 },
-        shortfall: { type: Number, default: 0 },
+        requiredFees: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        availableBalance: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
+        shortfall: {
+          type: mongoose.Schema.Types.Decimal128,
+          get: v => v ? parseFloat(v.toString()) : 0,
+          set: v => safeDecimal(v),
+          default: '0.00'
+        },
         customerAccount: { type: String, default: '' }
       }],
       skipped: [{
@@ -397,30 +533,90 @@ repaidToMembers: [{
   
   // Fee summary structure with defaults
   feeSummary: {
-    processingFee: { type: Number, default: 0 },
-    adminFee: { type: Number, default: 0 },
-    insuranceFee: { type: Number, default: 0 },
-    otherFees: { type: Number, default: 0 },
-    totalCharges: { type: Number, default: 0 },
-    totalFees: { type: Number, default: 0 },
+    processingFee: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    adminFee: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    insuranceFee: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    otherFees: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    totalCharges: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    totalFees: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
     charges: [{
       chargeId: { type: Number, default: 0 },
       chargeCode: { type: String, default: '' },
       name: { type: String, default: '' },
-      amount: { type: Number, default: 0 },
+      amount: {
+        type: mongoose.Schema.Types.Decimal128,
+        get: v => v ? parseFloat(v.toString()) : 0,
+        set: v => safeDecimal(v),
+        default: '0.00'
+      },
       glAccountCode: { type: String, default: '' },
       chargeType: { type: String, default: '' },
       isUpfront: { type: Boolean, default: false }
     }],
-    upfrontInterestPercentage: { type: Number, default: 0 },
-    processingFeePercentage: { type: Number, default: 0 },
-    adminFeeAmount: { type: Number, default: 0 }
+    upfrontInterestPercentage: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    processingFeePercentage: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    adminFeeAmount: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    }
   },
   
   // Insurance details with defaults
   insuranceDetails: {
-    totalPremium: { type: Number, default: 0 },
-    totalCoverage: { type: Number, default: 0 },
+    totalPremium: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
+    totalCoverage: {
+      type: mongoose.Schema.Types.Decimal128,
+      get: v => v ? parseFloat(v.toString()) : 0,
+      set: v => safeDecimal(v),
+      default: '0.00'
+    },
     coverageType: { type: String, default: 'LOAN_PROTECTION' },
     provider: { type: String, default: 'DEFAULT_INSURER' },
     policyNumber: { type: String, default: '' },
@@ -443,9 +639,172 @@ repaidToMembers: [{
   rateChangeAllowed: { type: Boolean, default: false },
   rateChangeNoticeDays: { type: Number, default: 30 },
   upfrontInterest: { type: Boolean, default: false },
-  upfrontInterestPercentage: { type: Number, default: 0 }
+  upfrontInterestPercentage: {
+    type: mongoose.Schema.Types.Decimal128,
+    get: v => v ? parseFloat(v.toString()) : 0,
+    set: v => safeDecimal(v),
+    default: '0.00'
+  }
 }, {
-  timestamps: false
+  timestamps: false,
+  toJSON: {
+    getters: true,
+    virtuals: true,
+    transform: function (doc, ret) {
+      // Transform Decimal128 fields to floats
+      const decimalFields = [
+        'totalAmount', 'individualShare', 'interestRate', 'savingsCollateral',
+        'totalInterest', 'totalRepayable', 'totalRepaid', 'remainingBalance',
+        'installmentAmount', 'netDisbursementAmount', 'totalFees', 'upfrontInterestAmount',
+        'remainingInterestAmount'
+      ];
+
+      decimalFields.forEach(field => {
+        if (ret[field] && typeof ret[field] === 'object') {
+          ret[field] = parseFloat(ret[field].toString());
+        }
+      });
+
+      // Handle nested Decimal128 in members
+      if (ret.members) {
+        ret.members = ret.members.map(member => ({
+          ...member,
+          individualAmount: member.individualAmount && typeof member.individualAmount === 'object' 
+            ? parseFloat(member.individualAmount.toString()) 
+            : member.individualAmount
+        }));
+      }
+
+      // Handle collectionHistory Decimal128
+      if (ret.collectionHistory) {
+        ret.collectionHistory = ret.collectionHistory.map(record => ({
+          ...record,
+          totalLoanCollected: record.totalLoanCollected && typeof record.totalLoanCollected === 'object' 
+            ? parseFloat(record.totalLoanCollected.toString()) 
+            : record.totalLoanCollected,
+          totalSavingsCollected: record.totalSavingsCollected && typeof record.totalSavingsCollected === 'object' 
+            ? parseFloat(record.totalSavingsCollected.toString()) 
+            : record.totalSavingsCollected,
+          loanCollections: record.loanCollections?.map(coll => ({
+            ...coll,
+            amount: coll.amount && typeof coll.amount === 'object' 
+              ? parseFloat(coll.amount.toString()) 
+              : coll.amount
+          })) || [],
+          savingsCollections: record.savingsCollections?.map(sav => ({
+            ...sav,
+            amount: sav.amount && typeof sav.amount === 'object' 
+              ? parseFloat(sav.amount.toString()) 
+              : sav.amount
+          })) || []
+        }));
+      }
+
+      // Handle disbursementResults Decimal128
+      if (ret.disbursementResults) {
+        const dr = ret.disbursementResults;
+        if (dr.summary) {
+          dr.summary.totalDisbursed = dr.summary.totalDisbursed && typeof dr.summary.totalDisbursed === 'object' 
+            ? parseFloat(dr.summary.totalDisbursed.toString()) 
+            : dr.summary.totalDisbursed;
+          dr.summary.totalFeesCollected = dr.summary.totalFeesCollected && typeof dr.summary.totalFeesCollected === 'object' 
+            ? parseFloat(dr.summary.totalFeesCollected.toString()) 
+            : dr.summary.totalFeesCollected;
+        }
+        if (dr.details) {
+          const details = dr.details;
+          if (details.successful) {
+            details.successful = details.successful.map(s => ({
+              ...s,
+              loanAmount: s.loanAmount && typeof s.loanAmount === 'object' ? parseFloat(s.loanAmount.toString()) : s.loanAmount,
+              feesPaid: s.feesPaid && typeof s.feesPaid === 'object' ? parseFloat(s.feesPaid.toString()) : s.feesPaid,
+              netReceived: s.netReceived && typeof s.netReceived === 'object' ? parseFloat(s.netReceived.toString()) : s.netReceived
+            }));
+          }
+          if (details.feesCollected) {
+            details.feesCollected = details.feesCollected.map(f => ({
+              ...f,
+              totalFees: f.totalFees && typeof f.totalFees === 'object' ? parseFloat(f.totalFees.toString()) : f.totalFees,
+              feeBreakdown: {
+                ...f.feeBreakdown,
+                processingFee: f.feeBreakdown.processingFee && typeof f.feeBreakdown.processingFee === 'object' 
+                  ? parseFloat(f.feeBreakdown.processingFee.toString()) : f.feeBreakdown.processingFee,
+                adminFee: f.feeBreakdown.adminFee && typeof f.feeBreakdown.adminFee === 'object' 
+                  ? parseFloat(f.feeBreakdown.adminFee.toString()) : f.feeBreakdown.adminFee,
+                insuranceFee: f.feeBreakdown.insuranceFee && typeof f.feeBreakdown.insuranceFee === 'object' 
+                  ? parseFloat(f.feeBreakdown.insuranceFee.toString()) : f.feeBreakdown.insuranceFee,
+                otherFees: f.feeBreakdown.otherFees && typeof f.feeBreakdown.otherFees === 'object' 
+                  ? parseFloat(f.feeBreakdown.otherFees.toString()) : f.feeBreakdown.otherFees,
+                upfrontInterest: f.feeBreakdown.upfrontInterest && typeof f.feeBreakdown.upfrontInterest === 'object' 
+                  ? parseFloat(f.feeBreakdown.upfrontInterest.toString()) : f.feeBreakdown.upfrontInterest
+              },
+              previousBalance: f.previousBalance && typeof f.previousBalance === 'object' 
+                ? parseFloat(f.previousBalance.toString()) : f.previousBalance,
+              newBalance: f.newBalance && typeof f.newBalance === 'object' 
+                ? parseFloat(f.newBalance.toString()) : f.newBalance
+            }));
+          }
+          if (details.insuranceActivated) {
+            details.insuranceActivated = details.insuranceActivated.map(i => ({
+              ...i,
+              premium: i.premium && typeof i.premium === 'object' ? parseFloat(i.premium.toString()) : i.premium,
+              coverage: i.coverage && typeof i.coverage === 'object' ? parseFloat(i.coverage.toString()) : i.coverage
+            }));
+          }
+          if (details.insufficientFunds) {
+            details.insufficientFunds = details.insufficientFunds.map(ifund => ({
+              ...ifund,
+              requiredFees: ifund.requiredFees && typeof ifund.requiredFees === 'object' 
+                ? parseFloat(ifund.requiredFees.toString()) : ifund.requiredFees,
+              availableBalance: ifund.availableBalance && typeof ifund.availableBalance === 'object' 
+                ? parseFloat(ifund.availableBalance.toString()) : ifund.availableBalance,
+              shortfall: ifund.shortfall && typeof ifund.shortfall === 'object' 
+                ? parseFloat(ifund.shortfall.toString()) : ifund.shortfall
+            }));
+          }
+        }
+      }
+
+      // Handle feeSummary Decimal128
+      if (ret.feeSummary) {
+        const fs = ret.feeSummary;
+        ['processingFee', 'adminFee', 'insuranceFee', 'otherFees', 'totalCharges', 'totalFees', 
+         'upfrontInterestPercentage', 'processingFeePercentage', 'adminFeeAmount'].forEach(key => {
+          if (fs[key] && typeof fs[key] === 'object') {
+            fs[key] = parseFloat(fs[key].toString());
+          }
+        });
+        if (fs.charges) {
+          fs.charges = fs.charges.map(charge => ({
+            ...charge,
+            amount: charge.amount && typeof charge.amount === 'object' 
+              ? parseFloat(charge.amount.toString()) : charge.amount
+          }));
+        }
+      }
+
+      // Handle insuranceDetails Decimal128
+      if (ret.insuranceDetails) {
+        const id = ret.insuranceDetails;
+        id.totalPremium = id.totalPremium && typeof id.totalPremium === 'object' 
+          ? parseFloat(id.totalPremium.toString()) : id.totalPremium;
+        id.totalCoverage = id.totalCoverage && typeof id.totalCoverage === 'object' 
+          ? parseFloat(id.totalCoverage.toString()) : id.totalCoverage;
+      }
+
+      // Handle upfrontInterestPercentage
+      if (ret.upfrontInterestPercentage && typeof ret.upfrontInterestPercentage === 'object') {
+        ret.upfrontInterestPercentage = parseFloat(ret.upfrontInterestPercentage.toString());
+      }
+
+      if (ret._id) {
+        ret._id = ret._id.toString();
+      }
+
+      return ret;
+    }
+  },
+  toObject: { getters: true, virtuals: true }
 });
 
 // Pre-save hook with safe calculations and status validation - FIXED
@@ -453,8 +812,9 @@ groupLoanSchema.pre('save', function (next) {
   // Set timestamps
   if (this.isNew) {
     // Safe calculation of individualShare
-    if (!this.individualShare && this.memberCount > 0 && this.totalAmount > 0) {
-      this.individualShare = this.totalAmount / this.memberCount;
+    if (!this.individualShare && this.memberCount > 0 && this.totalAmount) {
+      const total = parseFloat(this.totalAmount.toString());
+      this.individualShare = mongoose.Types.Decimal128.fromString((total / this.memberCount).toFixed(2));
     }
     
     // Ensure application date is set
@@ -472,9 +832,15 @@ groupLoanSchema.pre('save', function (next) {
   // Always update updatedAt safely
   this.updatedAt = new Date();
   
-  // Safe calculations for financial fields
-  this.totalRepayable = Number(this.totalAmount || 0) + Number(this.totalInterest || 0);
-  this.remainingBalance = Math.max(0, Number(this.totalRepayable || 0) - Number(this.totalRepaid || 0));
+  // Safe calculations for financial fields using Decimal128
+  const totalAmountNum = parseFloat(this.totalAmount?.toString() || '0');
+  const totalInterestNum = parseFloat(this.totalInterest?.toString() || '0');
+  const totalRepaidNum = parseFloat(this.totalRepaid?.toString() || '0');
+  
+  this.totalRepayable = mongoose.Types.Decimal128.fromString((totalAmountNum + totalInterestNum).toFixed(2));
+  const repayableNum = totalAmountNum + totalInterestNum;
+  const remainingNum = Math.max(0, repayableNum - totalRepaidNum);
+  this.remainingBalance = mongoose.Types.Decimal128.fromString(remainingNum.toFixed(2));
   
   // Status validation logic - ONLY for existing documents with status changes
   if (!this.isNew && this.isModified('status')) {
@@ -526,10 +892,16 @@ groupLoanSchema.methods.validateStatusTransition = function() {
 
 // ==================== COLLECTION-RELATED METHODS ====================
 
-// Method to update collection totals
-groupLoanSchema.methods.updateCollectionTotals = function(loanAmount, savingsAmount = 0) {
-  this.totalRepaid = safeNumber(this.totalRepaid) + safeNumber(loanAmount);
-  this.remainingBalance = Math.max(0, safeNumber(this.totalRepayable) - safeNumber(this.totalRepaid));
+// Method to update collection totals - Updated for Decimal128
+groupLoanSchema.methods.updateCollectionTotals = function(loanAmount, savingsAmount = '0.00') {
+  const currentRepaid = parseFloat(this.totalRepaid?.toString() || '0');
+  const loanNum = parseFloat(loanAmount?.toString() || '0');
+  const newRepaidNum = currentRepaid + loanNum;
+  this.totalRepaid = mongoose.Types.Decimal128.fromString(newRepaidNum.toFixed(2));
+  
+  const repayableNum = parseFloat(this.totalRepayable?.toString() || '0');
+  const remainingNum = Math.max(0, repayableNum - newRepaidNum);
+  this.remainingBalance = mongoose.Types.Decimal128.fromString(remainingNum.toFixed(2));
   
   // Update last collection date
   this.lastCollectionDate = new Date();
@@ -537,18 +909,18 @@ groupLoanSchema.methods.updateCollectionTotals = function(loanAmount, savingsAmo
   return this.save();
 };
 
-// Method to get collection summary
+// Method to get collection summary - Updated for Decimal128
 groupLoanSchema.methods.getCollectionSummary = function() {
-  const totalExpected = safeNumber(this.totalRepayable);
-  const totalCollected = safeNumber(this.totalRepaid);
+  const totalExpected = parseFloat(this.totalRepayable?.toString() || '0');
+  const totalCollected = parseFloat(this.totalRepaid?.toString() || '0');
   const collectionRate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
   
   return {
     totalExpected,
     totalCollected,
-    remainingBalance: safeNumber(this.remainingBalance),
+    remainingBalance: parseFloat(this.remainingBalance?.toString() || '0'),
     collectionRate: Math.round(collectionRate * 100) / 100,
-    installmentsPaid: safeNumber(this.installmentsPaid),
+    installmentsPaid: this.installmentsPaid || 0,
     lastCollectionDate: this.lastCollectionDate,
     totalMembers: this.memberCount,
     disbursedMembers: this.disbursedToMembers?.length || 0,
@@ -556,7 +928,7 @@ groupLoanSchema.methods.getCollectionSummary = function() {
   };
 };
 
-// Method to add collection record to history
+// Method to add collection record to history - Updated for Decimal128
 groupLoanSchema.methods.addCollectionRecord = function(collectionData) {
   if (!this.collectionHistory) {
     this.collectionHistory = [];
@@ -570,8 +942,8 @@ groupLoanSchema.methods.addCollectionRecord = function(collectionData) {
     successfulCollections: collectionData.successfulCollections || 0,
     failedCollections: collectionData.failedCollections || 0,
     savingsProcessed: collectionData.savingsProcessed || 0,
-    totalLoanCollected: collectionData.totalLoanCollected || 0,
-    totalSavingsCollected: collectionData.totalSavingsCollected || 0,
+    totalLoanCollected: safeDecimal(collectionData.totalLoanCollected),
+    totalSavingsCollected: safeDecimal(collectionData.totalSavingsCollected),
     repaymentSchedulesUpdated: collectionData.repaymentSchedulesUpdated || 0,
     paymentMethod: collectionData.paymentMethod || 'CASH',
     transactionReference: collectionData.transactionReference
@@ -583,14 +955,18 @@ groupLoanSchema.methods.addCollectionRecord = function(collectionData) {
   return this.save();
 };
 
-// Method to get collection performance
+// Method to get collection performance - Updated for Decimal128
 groupLoanSchema.methods.getCollectionPerformance = function() {
   const totalCollections = this.collectionHistory?.length || 0;
-  const totalLoanCollected = this.collectionHistory?.reduce((sum, record) => sum + (record.totalLoanCollected || 0), 0) || 0;
-  const totalSavingsCollected = this.collectionHistory?.reduce((sum, record) => sum + (record.totalSavingsCollected || 0), 0) || 0;
+  const totalLoanCollected = this.collectionHistory?.reduce((sum, record) => 
+    sum + parseFloat(record.totalLoanCollected?.toString() || '0'), 0) || 0;
+  const totalSavingsCollected = this.collectionHistory?.reduce((sum, record) => 
+    sum + parseFloat(record.totalSavingsCollected?.toString() || '0'), 0) || 0;
   
-  const successfulCollections = this.collectionHistory?.reduce((sum, record) => sum + (record.successfulCollections || 0), 0) || 0;
-  const failedCollections = this.collectionHistory?.reduce((sum, record) => sum + (record.failedCollections || 0), 0) || 0;
+  const successfulCollections = this.collectionHistory?.reduce((sum, record) => 
+    sum + (record.successfulCollections || 0), 0) || 0;
+  const failedCollections = this.collectionHistory?.reduce((sum, record) => 
+    sum + (record.failedCollections || 0), 0) || 0;
   const totalAttempted = successfulCollections + failedCollections;
   
   const successRate = totalAttempted > 0 ? (successfulCollections / totalAttempted) * 100 : 0;
@@ -729,7 +1105,9 @@ groupLoanSchema.statics.findByCollectionPerformance = function(minSuccessRate = 
             if: { $gt: [{ $size: '$collectionHistory' }, 0] },
             then: {
               totalCollections: { $size: '$collectionHistory' },
-              totalLoanCollected: { $sum: '$collectionHistory.totalLoanCollected' },
+              totalLoanCollected: { 
+                $sum: '$collectionHistory.totalLoanCollected' 
+              },
               successRate: {
                 $multiply: [
                   {
@@ -747,7 +1125,7 @@ groupLoanSchema.statics.findByCollectionPerformance = function(minSuccessRate = 
             },
             else: {
               totalCollections: 0,
-              totalLoanCollected: 0,
+              totalLoanCollected: mongoose.Types.Decimal128.fromString('0.00'),
               successRate: 0
             }
           }
@@ -778,10 +1156,10 @@ groupLoanSchema.virtual('statusTimeline').get(function() {
   };
 });
 
-// Virtual for collection progress
+// Virtual for collection progress - Updated for Decimal128
 groupLoanSchema.virtual('collectionProgress').get(function() {
-  const totalExpected = safeNumber(this.totalRepayable);
-  const totalCollected = safeNumber(this.totalRepaid);
+  const totalExpected = parseFloat(this.totalRepayable?.toString() || '0');
+  const totalCollected = parseFloat(this.totalRepaid?.toString() || '0');
   const progress = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
   
   return {
@@ -830,4 +1208,4 @@ groupLoanSchema.index({ lastCollectionDate: 1 });
 groupLoanSchema.index({ totalRepaid: 1 });
 groupLoanSchema.index({ remainingBalance: 1 });
 
-export default mongoose.model('GroupLoan', groupLoanSchema);
+export default mongoose.models.GroupLoan || mongoose.model('GroupLoan', groupLoanSchema);

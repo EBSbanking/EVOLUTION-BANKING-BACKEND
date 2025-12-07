@@ -17,8 +17,6 @@ class AuditTrailTransport extends winston.Transport {
       return callback(null, info);
     }
 
-    
-
     // Check if MongoDB is connected
     if (mongoose.connection.readyState !== 1) { // 1 = connected
       console.warn('⚠️ MongoDB not connected, skipping audit log');
@@ -46,6 +44,8 @@ class AuditTrailTransport extends winston.Transport {
     if (!entity_type || !user_id || !action) {
       const err = new Error('Missing required audit fields: entity_type, user_id, action');
       console.error('❌ Audit validation failed:', err.message);
+      info.audit_validation_failed = true;
+      info.audit_error = err.message;
       return callback(null, info);
     }
 
@@ -59,12 +59,12 @@ class AuditTrailTransport extends winston.Transport {
       modelLogAuditTrail(
         entity_type,
         entity_id,
-        branch,
+        branch || 1, // Provide default branch if not specified - FIXED
         user_id,
         action,
         old_value,
         new_value,
-        ip_address,
+        ip_address || '127.0.0.1',
         event_type,
         { ...extraFields, timestamp: info.timestamp }
       ),
@@ -75,6 +75,7 @@ class AuditTrailTransport extends winston.Transport {
           // Enrich the log with DB ID for file output
           info.audit_db_id = auditLog._id;
           info.event_id = auditLog.event_id;
+          info.audit_db_success = true;
         } else {
           // Log was not saved to DB but don't fail the transport
           info.audit_db_skipped = true;
@@ -124,7 +125,7 @@ const auditLogger = winston.createLogger({
   )
 });
 
-// Named export for backward compatibility
+// Named export for backward compatibility - UPDATED TO INCLUDE BRANCH PARAMETER
 export const logAuditTrail = async (
   entity_type,
   entity_id,
@@ -137,6 +138,9 @@ export const logAuditTrail = async (
   additional_info = null
 ) => {
   return new Promise((resolve, reject) => {
+    // Ensure branch is included in the additional_info or provide default
+    const branch = additional_info?.branch || 1;
+    
     auditLogger.info('Audit Event', {
       entity_type,
       entity_id,
@@ -144,12 +148,53 @@ export const logAuditTrail = async (
       action,
       old_value,
       new_value,
-      ip_address,
+      ip_address: ip_address || '127.0.0.1',
       event_type,
+      branch, // Include branch in the log data
+      ...additional_info // Spread additional info (branch might be here too, which is fine)
+    }, (err, result) => {
+      if (err) {
+        console.error('❌ Audit logger transport error:', err);
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    });
+  });
+};
+
+// Alternative simplified logAuditTrail function that includes branch explicitly
+export const logAuditTrailWithBranch = async (
+  entity_type,
+  entity_id,
+  user_id,
+  action,
+  old_value,
+  new_value,
+  ip_address,
+  event_type = 'GENERAL',
+  branch = 1,
+  additional_info = null
+) => {
+  return new Promise((resolve, reject) => {
+    auditLogger.info('Audit Event', {
+      entity_type,
+      entity_id,
+      user_id,
+      action,
+      old_value,
+      new_value,
+      ip_address: ip_address || '127.0.0.1',
+      event_type,
+      branch,
       ...additional_info
     }, (err, result) => {
-      if (err) reject(err);
-      else resolve(result);
+      if (err) {
+        console.error('❌ Audit logger transport error:', err);
+        reject(err);
+      } else {
+        resolve(result);
+      }
     });
   });
 };
