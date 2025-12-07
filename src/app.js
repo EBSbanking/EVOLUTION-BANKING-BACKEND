@@ -516,6 +516,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Start Everything
-startServer();
+// startServer();
 
 export default app;
