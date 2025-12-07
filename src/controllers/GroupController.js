@@ -24,8 +24,8 @@ import GLAccount from '../models/GLAccount.js';
 import {getLoanAccountDisbursementInfo} from '../controllers/LoanAccountSummaryController.js';
 import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 import Collection from '../models/Collection.js';
-import {  calculateInterestByProductType } from '../services/InterestCalculationService.js';
-import InterestCalculationService from '../services/InterestCalculationService.js';
+import {  calculateInterestByProductType } from '../Services/InterestCalculationService.js';
+import InterestCalculationService from '../Services/InterestCalculationService.js';
 import { processGroupLoanDisbursement,
   updateLoanPortfolioForGroupDisbursement,
   processSingleGroupMemberDisbursement,
