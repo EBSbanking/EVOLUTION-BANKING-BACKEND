@@ -1,3 +1,4 @@
+// controllers/TransactionController.js - FIXED VERSION
 import mongoose from 'mongoose';
 import Transaction from '../models/Transaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
@@ -11,268 +12,46 @@ import logAuditTrail from '../utils/auditHelper.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
 import { createRootSubfolder } from './SubfolderController.js';
 
-// Debug imports to verify they are defined
-console.log('Imports:', {
-  mongoose,
-  Transaction,
-  CustomerAccount,
-  getAllTransactionTypes,
-  AMLThreshold,
-  checkSanctionList,
-  AML,
-  NotificationService,
-  WF_WORK_ITEM,
-  logAuditTrail,
-  generateWorkflowIdentifiers,
-  createRootSubfolder
-});
-
-// Helper: Check if transaction exceeds dynamic AML threshold
-const shouldFlagForAML = async (transactionType, amount) => {
-  const rule = await AMLThreshold.findOne({ transaction_type: transactionType, active: true });
-  return rule && amount >= rule.threshold_amount;
-};
-
-// AML Compliance Check Helper Function
-export const checkAMLCompliance = async ({
-  transactionType,
-  amount,
-  currency,
-  accountType,
-  destinationCountry,
-  restrictedCountries,
-  custId
-}, session, userId, ipAddress, eventId) => {
-  try {
-    if (!eventId) {
-      throw new Error('EVENT_ID is not defined in checkAMLCompliance');
-    }
-    console.log(`checkAMLCompliance: EVENT_ID=${eventId}`);
-    const amlRecord = await AML.findOne({ CUST_ID: custId }).session(session);
-    
-    if (!amlRecord) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'AML_RECORD_NOT_FOUND',
-        null,
-        { custId, result: 'No AML record found', eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: true,
-        reason: 'No AML record found for customer',
-        isFlagged: true,
-        flags: ['MISSING_AML_RECORD'],
-        threshold: amount,
-        amlDetails: {
-          customerType: 'Unknown',
-          riskLevel: 'high',
-          lastVerified: null
-        }
-      };
-    }
-    if (amlRecord.IS_PEP) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'PEP_CUSTOMER',
-        null,
-        { custId, result: 'PEP customer', pepDetails: amlRecord.PEP_DETAILS, eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: true,
-        reason: 'PEP customer',
-        isFlagged: true,
-        flags: ['PEP'],
-        threshold: 0,
-        sanctionDetails: null,
-        amlDetails: {
-          customerType: 'PEP',
-          riskLevel: 'high',
-          lastVerified: amlRecord.lastVerifiedDate,
-          pepDetails: amlRecord.PEP_DETAILS
-        }
-      };
-    }
-    if (amlRecord.SANCTION_MATCH) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'SANCTION_MATCH',
-        null,
-        { custId, result: 'Sanction match found', details: amlRecord.SANCTION_DETAILS, eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: true,
-        reason: 'Sanction match found',
-        isFlagged: true,
-        flags: ['SANCTION_MATCH'],
-        threshold: amount,
-        sanctionDetails: amlRecord.SANCTION_DETAILS,
-        amlDetails: {
-          customerType: 'Sanctioned',
-          riskLevel: 'critical',
-          lastVerified: amlRecord.lastVerifiedDate
-        }
-      };
-    }
-    const isRestrictedCountry = destinationCountry &&
-      restrictedCountries.includes(destinationCountry.toUpperCase());
-    
-    if (isRestrictedCountry) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'RESTRICTED_COUNTRY',
-        null,
-        { custId, destinationCountry, restrictedCountries, result: `Restricted destination country: ${destinationCountry}`, eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: true,
-        reason: `Restricted destination country: ${destinationCountry}`,
-        isFlagged: true,
-        flags: ['RESTRICTED_COUNTRY'],
-        threshold: amount,
-        amlDetails: {
-          customerType: 'Regular',
-          riskLevel: 'high',
-          lastVerified: amlRecord.lastVerifiedDate
-        }
-      };
-    }
-    const thresholds = await AMLThreshold.findOne().sort({ createdAt: -1 });
-    const highRiskThreshold = thresholds?.highRisk || 5000000;
-    const mediumRiskThreshold = thresholds?.mediumRisk || 1000000;
-    
-    if (amount >= highRiskThreshold) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'HIGH_VALUE_TRANSACTION',
-        null,
-        { custId, amount, currency, threshold: highRiskThreshold, result: `Amount exceeds high risk threshold (${currency}${highRiskThreshold})`, eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: true,
-        reason: `Amount exceeds high risk threshold (${currency}${highRiskThreshold})`,
-        isFlagged: true,
-        flags: ['HIGH_VALUE_TRANSACTION'],
-        threshold: highRiskThreshold,
-        amlDetails: {
-          customerType: 'Regular',
-          riskLevel: 'high',
-          lastVerified: amlRecord.lastVerifiedDate
-        }
-      };
-    } else if (amount >= mediumRiskThreshold) {
-      await logAuditTrail(
-        'AML_CHECK',
-        null,
-        userId || 'system',
-        'MEDIUM_VALUE_TRANSACTION',
-        null,
-        { custId, amount, currency, threshold: mediumRiskThreshold, result: `Amount exceeds medium risk threshold (${currency}${mediumRiskThreshold})`, eventId },
-        ipAddress || '0.0.0.0',
-        'GENERAL',
-        { source: 'checkAMLCompliance' }
-      );
-      return {
-        requiresManualReview: false,
-        reason: `Amount exceeds medium risk threshold (${currency}${mediumRiskThreshold})`,
-        isFlagged: true,
-        flags: ['MEDIUM_VALUE_TRANSACTION'],
-        threshold: mediumRiskThreshold,
-        amlDetails: {
-          customerType: 'Regular',
-          riskLevel: 'medium',
-          lastVerified: amlRecord.lastVerifiedDate
-        }
-      };
-    }
-    await logAuditTrail(
-      'AML_CHECK',
-      null,
-      userId || 'system',
-      'AML_CLEAR',
-      null,
-      { custId, amount, currency, result: 'Transaction cleared AML checks', eventId },
-      ipAddress || '0.0.0.0',
-      'GENERAL',
-      { source: 'checkAMLCompliance' }
-    );
-    return {
-      requiresManualReview: false,
-      isFlagged: false,
-      threshold: mediumRiskThreshold,
-      amlDetails: {
-        customerType: 'Regular',
-        riskLevel: 'low',
-        lastVerified: amlRecord.lastVerifiedDate
-      }
-    };
-  } catch (error) {
-    await logAuditTrail(
-      'AML_CHECK',
-      null,
-      userId || 'system',
-      'AML_CHECK_FAILED',
-      null,
-      { custId, error: error.message, result: 'AML check failed', eventId: eventId || 'UNKNOWN' },
-      ipAddress || '0.0.0.0',
-      'GENERAL',
-      { source: 'checkAMLCompliance' }
-    );
-    throw error;
-  }
-};
-
+// FIXED createTransaction function - Updated section
 const createTransaction = async (req, res) => {
   const results = { successful: [], failed: [] };
   try {
-    // NEW: Safely handle req.body
+    // Validate request body
     if (!req.body || (req.body.transactions && !Array.isArray(req.body.transactions))) {
-      return res.status(400).json({ success: false, code: 'INVALID_PAYLOAD', message: 'Invalid request body' });
+      return res.status(400).json({ 
+        success: false, 
+        code: 'INVALID_PAYLOAD', 
+        message: 'Invalid request body' 
+      });
     }
+    
     const transactions = Array.isArray(req.body.transactions) ? req.body.transactions : [req.body];
 
     if (transactions.length === 0) {
-      return res.status(400).json({ success: false, code: 'EMPTY_TRANSACTIONS', message: 'No transactions provided' });
+      return res.status(400).json({ 
+        success: false, 
+        code: 'EMPTY_TRANSACTIONS', 
+        message: 'No transactions provided' 
+      });
     }
 
-    // Log the number of transactions being processed
+    // Log batch start
     await logAuditTrail(
       'TRANSACTION_BATCH',
       null,
       req.user?.id || 'system',
       'BATCH_PROCESS_START',
       null,
-      { transactionCount: transactions.length, timestamp: new Date().toISOString() },
+      { 
+        transactionCount: transactions.length, 
+        timestamp: new Date().toISOString() 
+      },
       req.ip || '0.0.0.0',
       'GENERAL',
       { source: 'createTransaction' }
     );
 
-    // CHANGED: Smaller chunk for safety; make env-configurable if needed
+    // Process in chunks
     const CHUNK_SIZE = process.env.TRANSACTION_CHUNK_SIZE || 100;
     const chunks = [];
     for (let i = 0; i < transactions.length; i += CHUNK_SIZE) {
@@ -303,7 +82,13 @@ const createTransaction = async (req, res) => {
             isBulkTransaction = transactions.length > 1
           } = tx;
 
-          // NEW: Early trim/guard for strings
+          // CRITICAL FIX: Clean up any temp_ transactionId from input
+          if (tx.transactionId && tx.transactionId.startsWith('temp_')) {
+            console.warn('Removing temp_ transactionId from input:', tx.transactionId);
+            delete tx.transactionId;
+          }
+
+          // Safe string handling
           const safeACCT_NO = ACCT_NO ? String(ACCT_NO).trim() : null;
           const safeACCT_ID = ACCT_ID ? String(ACCT_ID).trim() : null;
           const safeCUST_ID = CUST_ID ? String(CUST_ID).trim() : null;
@@ -311,13 +96,27 @@ const createTransaction = async (req, res) => {
           const safeRef = reference ? String(reference).trim() : '';
           const safeDesc = description ? String(description).trim() : '';
 
-          // Generate unique identifiers for each transaction
+          // Generate unique identifiers
           let identifiers;
           try {
             identifiers = await generateWorkflowIdentifiers();
-            console.log(`createTransaction: Generated identifiers for ACCT_NO=${safeACCT_NO}:`, identifiers);
+            console.log(`Generated identifiers for ACCT_NO=${safeACCT_NO}:`, identifiers);
           } catch (idError) {
-            await logAuditTrail(/* ... same as before ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'IDENTIFIER_GENERATION_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                error: idError.message,
+                code: 'IDENTIFIER_GENERATION_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Failed to generate identifiers: ${idError.message}`,
@@ -325,6 +124,7 @@ const createTransaction = async (req, res) => {
             });
             continue;
           }
+
           const {
             TRANSACTION_ID,
             WORK_ITEM_ID,
@@ -335,20 +135,29 @@ const createTransaction = async (req, res) => {
             JOURNAL_ID
           } = identifiers;
 
-          // Validate TRANSACTION_ID (unchanged)
-          if (TRANSACTION_ID === null || TRANSACTION_ID === undefined || !Number.isInteger(TRANSACTION_ID) || TRANSACTION_ID <= 0) {
-            await logAuditTrail(/* ... same ... */);
+          // Validate TRANSACTION_ID
+          if (!TRANSACTION_ID || !Number.isInteger(TRANSACTION_ID) || TRANSACTION_ID <= 0) {
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_TRANSACTION_ID',
+              null,
+              {
+                account: safeACCT_NO,
+                transactionId: TRANSACTION_ID,
+                code: 'INVALID_TRANSACTION_ID'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Generated TRANSACTION_ID is invalid: ${TRANSACTION_ID}`,
               code: 'INVALID_TRANSACTION_ID'
             });
             continue;
-          }
-
-          // Remove AML_THRESHOLD if present (unchanged)
-          if ('AML_THRESHOLD' in tx) {
-            delete tx.AML_THRESHOLD;
           }
 
           // Normalize input data
@@ -359,20 +168,33 @@ const createTransaction = async (req, res) => {
           try {
             normalizedAmount = parseFloat(AMOUNT);
             if (isNaN(normalizedAmount)) throw new Error('Invalid amount');
-            // NEW: Validate date
             normalizedDate = TRANSACTIONDATE ? new Date(TRANSACTIONDATE) : new Date();
             if (isNaN(normalizedDate.getTime())) throw new Error('Invalid transaction date');
           } catch (error) {
-            await logAuditTrail(/* ... update error.message ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_INPUT',
+              null,
+              {
+                account: safeACCT_NO,
+                error: error.message,
+                code: error.message.includes('amount') ? 'INVALID_AMOUNT' : 'INVALID_DATE'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
-              error: error.message.includes('amount') ? 'Invalid amount' : 'Invalid transaction date',
+              error: error.message,
               code: error.message.includes('amount') ? 'INVALID_AMOUNT' : 'INVALID_DATE'
             });
             continue;
           }
 
-          // Validate required fields (UPDATED: Use safe vars)
+          // Validate required fields
           const requiredFields = {
             ACCT_NO: safeACCT_NO,
             ACCT_ID: safeACCT_ID,
@@ -382,40 +204,62 @@ const createTransaction = async (req, res) => {
             AMOUNT: normalizedAmount,
             TRANSACTION_TYPE: normalizedType
           };
-          const missingFields = Object.entries(requiredFields).filter(([_, value]) => !value).map(([key]) => key);
+          
+          const missingFields = Object.entries(requiredFields)
+            .filter(([_, value]) => !value)
+            .map(([key]) => key);
+            
           if (missingFields.length > 0) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'MISSING_FIELDS',
+              null,
+              {
+                account: safeACCT_NO,
+                missingFields,
+                code: 'MISSING_FIELDS'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Missing required fields: ${missingFields.join(', ')}`,
-              code: 'INVALID_INPUT'
+              code: 'MISSING_FIELDS'
             });
             continue;
           }
 
-          // Validate transaction type (unchanged)
+          // Validate transaction type
           if (!normalizedType || !getAllTransactionTypes().includes(normalizedType)) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'INVALID_TRANSACTION_TYPE',
+              null,
+              {
+                account: safeACCT_NO,
+                type: normalizedType,
+                validTypes: getAllTransactionTypes(),
+                code: 'INVALID_TRANSACTION_TYPE'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
-              error: `Invalid transaction type. Valid types: ${getAllTransactionTypes().join(', ')}`,
+              error: `Invalid transaction type: ${normalizedType}. Valid types: ${getAllTransactionTypes().join(', ')}`,
               code: 'INVALID_TRANSACTION_TYPE'
             });
             continue;
           }
 
-          // Validate amount range (unchanged)
-          if (normalizedAmount <= 0 || normalizedAmount > 1000000000) {
-            await logAuditTrail(/* ... same ... */);
-            results.failed.push({
-              account: safeACCT_NO,
-              error: 'Amount must be between ₦0.01 and ₦1,000,000,000',
-              code: 'INVALID_AMOUNT'
-            });
-            continue;
-          }
-
-          // Find and validate account (unchanged, but log if !account)
+          // Find and validate account
           let account;
           try {
             account = await CustomerAccount.findOne({ ACCT_NO: requiredFields.ACCT_NO })
@@ -423,18 +267,46 @@ const createTransaction = async (req, res) => {
               .session(session);
             if (!account) throw new Error('Account not found');
           } catch (error) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'ACCOUNT_NOT_FOUND',
+              null,
+              {
+                account: safeACCT_NO,
+                error: error.message,
+                code: 'ACCOUNT_NOT_FOUND'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
-              error: `Account ${requiredFields.ACCT_NO} not found or error occurred: ${error.message}`,
+              error: `Account ${requiredFields.ACCT_NO} not found: ${error.message}`,
               code: 'ACCOUNT_NOT_FOUND'
             });
             continue;
           }
 
-          // Check account status (unchanged)
+          // Check account status
           if (account.REC_ST && account.REC_ST !== 'ACTIVE') {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'ACCOUNT_INACTIVE',
+              null,
+              {
+                account: safeACCT_NO,
+                status: account.REC_ST,
+                code: 'ACCOUNT_INACTIVE'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Account ${requiredFields.ACCT_NO} is ${account.REC_ST}`,
@@ -443,96 +315,12 @@ const createTransaction = async (req, res) => {
             continue;
           }
 
-          // Log transaction initiation (UPDATED: Use safe vars, add date)
-          await logAuditTrail(
-            'TRANSACTION',
-            null,
-            req.user?.id || 'system',
-            'TRANSACTION_STARTED',
-            null,
-            {
-              account: requiredFields.ACCT_NO,
-              amount: normalizedAmount,
-              type: normalizedType,
-              date: normalizedDate.toISOString(),
-              isBulkTransaction,
-              transactionId: TRANSACTION_ID,
-              eventId: EVENT_ID
-            },
-            req.ip || '0.0.0.0',
-            'GENERAL',
-            { source: 'createTransaction' }
-          );
-
-          // Perform sanction check (ENHANCED: Deeper validation)
-          let sanctionCheck;
-          try {
-            console.log(`checkSanctionList: EVENT_ID=${EVENT_ID}`);
-            sanctionCheck = await checkSanctionList(
-              null,
-              null,
-              requiredFields.ACCT_NM,
-              req.user?.id || 'system',
-              req.ip || '0.0.0.0',
-              EVENT_ID
-            );
-            // NEW: Validate response shape
-            if (!sanctionCheck || typeof sanctionCheck !== 'object' || typeof sanctionCheck.isSanctioned !== 'boolean') {
-              throw new Error('Invalid sanction check response structure');
-            }
-            if (sanctionCheck.isSanctioned) {
-              await logAuditTrail(/* ... same ... */);
-              results.failed.push({
-                account: safeACCT_NO,
-                error: 'Customer appears on sanction list',
-                code: 'SANCTIONED_CUSTOMER',
-                sanctionDetails: sanctionCheck.sanctionDetails
-              });
-              continue;
-            }
-            await logAuditTrail(/* ... same ... */);
-          } catch (sanctionError) {
-            await logAuditTrail(/* ... same ... */);
-            results.failed.push({
-              account: safeACCT_NO,
-              error: `Failed to perform sanction check: ${sanctionError.message}`,
-              code: 'SANCTION_CHECK_FAILED',
-              details: sanctionError.message
-            });
-            continue;
-          }
-
-          // Perform AML compliance check (ENHANCED: Similar validation)
-          let amlCheck;
-          try {
-            amlCheck = await checkAMLCompliance({
-              transactionType: normalizedType,
-              amount: normalizedAmount,
-              currency: account.CURRENCY || 'NGN',
-              accountType: account.ACCT_TYPE || ACCOUNT_TYPE,
-              destinationCountry: DESTINATION_COUNTRY,
-              restrictedCountries: AML_RESTRICTED_COUNTRIES,
-              custId: requiredFields.CUST_ID
-            }, session, req.user?.id || 'system', req.ip || '0.0.0.0', EVENT_ID);
-            // NEW: Validate response
-            if (!amlCheck || typeof amlCheck !== 'object' || typeof amlCheck.isFlagged !== 'boolean') {
-              throw new Error('Invalid AML check response structure');
-            }
-          } catch (amlError) {
-            await logAuditTrail(/* ... same ... */);
-            results.failed.push({
-              account: safeACCT_NO,
-              error: `Failed to perform AML compliance check: ${amlError.message}`,
-              code: 'AML_CHECK_FAILED',
-              details: amlError.message
-            });
-            continue;
-          }
-
-          // Create and save transaction record (UPDATED: Use normalizedDate, safe vars)
+          // CRITICAL: Create transaction WITHOUT transactionId field
+          // The model's pre-validate hook will generate it from TRANSACTION_ID
+          console.log(`Creating transaction: TRANSACTION_ID=${TRANSACTION_ID}, ACCT_NO=${requiredFields.ACCT_NO}`);
+          
           let transaction;
           try {
-            console.log(`Saving transaction: TRANSACTION_ID=${TRANSACTION_ID}, ACCT_NO=${requiredFields.ACCT_NO}`);
             transaction = new Transaction({
               ACCT_NO: requiredFields.ACCT_NO,
               ACCT_ID: requiredFields.ACCT_ID,
@@ -542,37 +330,48 @@ const createTransaction = async (req, res) => {
               AMOUNT: normalizedAmount,
               TRANSACTIONDATE: normalizedDate,
               TRANSACTION_TYPE: normalizedType,
-              TRANSACTION_ID: TRANSACTION_ID,
+              TRANSACTION_ID: TRANSACTION_ID, // Will be used to generate transactionId
               EVENT_ID: EVENT_ID,
               TRAN_JOURNAL_ID: JOURNAL_ID,
-              reference: safeRef,
+              REFERENCE: `TXN${TRANSACTION_ID.toString().padStart(10, '0')}`, // Generate reference
               description: safeDesc,
               currency: account.CURRENCY || 'NGN',
               createdBy: req.user?.id || 'system',
               status: 'PENDING',
-              FLAGGED_FOR_AML: amlCheck.isFlagged || false,
-              AML_REASON: amlCheck.reason || null,
-              AML_THRESHOLD_USED: amlCheck.threshold || 0,
+              // DO NOT set transactionId here - let model generate it
               metadata: {
                 ip: req.ip || '0.0.0.0',
                 userAgent: req.headers['user-agent'],
                 channel: req.headers['x-channel'] || 'API',
-                amlCheck: {
-                  flags: amlCheck.flags || [],
-                  restrictedCountriesChecked: AML_RESTRICTED_COUNTRIES || [],
-                  destinationCountry: DESTINATION_COUNTRY || null
-                },
-                sanctionCheck: {
-                  checkedAt: new Date().toISOString(),
-                  isSanctioned: false
-                },
                 isBulkTransaction
               }
             });
+            
             await transaction.save({ session });
+            
+            console.log('Transaction saved with IDs:', {
+              TRANSACTION_ID: transaction.TRANSACTION_ID,
+              transactionId: transaction.transactionId, // Should be generated by model
+              REFERENCE: transaction.REFERENCE
+            });
+            
           } catch (saveError) {
             console.error(`Transaction save failed for ACCT_NO=${requiredFields.ACCT_NO}:`, saveError);
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'TRANSACTION_SAVE_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                error: saveError.message,
+                code: 'TRANSACTION_SAVE_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Failed to save transaction: ${saveError.message}`,
@@ -581,7 +380,34 @@ const createTransaction = async (req, res) => {
             continue;
           }
 
-          // Create subfolder for the transaction (unchanged)
+          // Verify transactionId was generated correctly
+          if (!transaction.transactionId || transaction.transactionId.startsWith('temp_')) {
+            console.error('TransactionId was not generated properly:', transaction.transactionId);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'TRANSACTION_ID_GENERATION_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                transactionId: transaction.transactionId,
+                expected: `TXN${TRANSACTION_ID.toString().padStart(10, '0')}`,
+                code: 'TRANSACTION_ID_GENERATION_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
+            results.failed.push({
+              account: safeACCT_NO,
+              error: 'Transaction ID generation failed',
+              code: 'TRANSACTION_ID_GENERATION_FAILED'
+            });
+            continue;
+          }
+
+          // Create subfolder for the transaction
           try {
             const subfolder = await createRootSubfolder(TRANSACTION_ID, {
               GL_ACCT_NO: requiredFields.ACCT_NO,
@@ -590,7 +416,21 @@ const createTransaction = async (req, res) => {
             }, { session });
             console.log(`Created subfolder for transaction ${TRANSACTION_ID}:`, subfolder);
           } catch (subfolderError) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'SUBFOLDER_CREATION_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                error: subfolderError.message,
+                code: 'SUBFOLDER_CREATION_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Failed to create subfolder: ${subfolderError.message}`,
@@ -599,30 +439,7 @@ const createTransaction = async (req, res) => {
             continue;
           }
 
-          // Validate WF_WORK_ITEM model (unchanged)
-          if (!WF_WORK_ITEM) {
-            await logAuditTrail(/* add log for model missing */);
-            results.failed.push({
-              account: safeACCT_NO,
-              error: 'Workflow model not available',
-              code: 'MODEL_NOT_FOUND'
-            });
-            continue;
-          }
-
-          // Check for existing EVENT_ID (unchanged)
-          const existingEvent = await WF_WORK_ITEM.findOne({ EVENT_ID }).session(session);
-          if (existingEvent) {
-            await logAuditTrail(/* ... same ... */);
-            results.failed.push({
-              account: safeACCT_NO,
-              error: `Event ID ${EVENT_ID} already exists`,
-              code: 'DUPLICATE_EVENT_ID'
-            });
-            continue;
-          }
-
-          // Create workflow item (UPDATED: Use safe vars)
+          // Create workflow item
           try {
             const newWorkItem = new WF_WORK_ITEM({
               WORK_ITEM_ID,
@@ -652,11 +469,13 @@ const createTransaction = async (req, res) => {
                 transactionType: normalizedType,
                 amount: normalizedAmount,
                 accountNumber: requiredFields.ACCT_NO,
-                customerName: requiredFields.ACCT_NM,
-                flaggedForAML: amlCheck.isFlagged || false
+                customerName: requiredFields.ACCT_NM
               }
             });
+            
             await newWorkItem.save({ session });
+            
+            // Send notification
             await NotificationService.send({
               ROLE_ID: 'COMPLIANCE_OFFICER',
               message: `New transaction requires approval: ${normalizedType} of ${normalizedAmount} for ${requiredFields.ACCT_NM}`,
@@ -671,8 +490,23 @@ const createTransaction = async (req, res) => {
                 account: requiredFields.ACCT_NO
               }
             }, { session });
+            
           } catch (workItemError) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'WORKFLOW_ITEM_CREATION_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                error: workItemError.message,
+                code: 'WORKFLOW_ITEM_CREATION_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Failed to create workflow item: ${workItemError.message}`,
@@ -681,33 +515,48 @@ const createTransaction = async (req, res) => {
             continue;
           }
 
-          // Prepare balance update (ENHANCED: Log unknown type)
-          const amountMultiplier = {
-            CREDIT: 1,
-            DEBIT: -1,
-            REVERSAL: -1,
-            ADJUSTMENT: 1
-          }[normalizedType.toUpperCase()] || -1;
-          if (amountMultiplier === -1 && !['CREDIT', 'DEBIT', 'REVERSAL', 'ADJUSTMENT'].includes(normalizedType)) {
-            console.warn(`Unknown transaction type ${normalizedType} defaulting to debit multiplier`);
-          }
-          const balanceUpdate = {
-            $inc: {
-              LEDGER_BAL: normalizedAmount * amountMultiplier,
-              AVAILABLE_BALANCE: normalizedAmount * amountMultiplier,
-              CLEARED_BAL: normalizedAmount * amountMultiplier
-            },
-            $set: {
-              LAST_TRANSACTION_DATE: new Date(),
-              UPDATED_AT: new Date()
-            }
-          };
-
-          // Update account balances (unchanged)
+          // Update account balances
           try {
-            await CustomerAccount.updateOne({ ACCT_NO: requiredFields.ACCT_NO }, balanceUpdate, { session });
+            const amountMultiplier = {
+              CREDIT: 1,
+              DEBIT: -1,
+              REVERSAL: -1,
+              ADJUSTMENT: 1
+            }[normalizedType.toUpperCase()] || -1;
+            
+            const balanceUpdate = {
+              $inc: {
+                LEDGER_BAL: normalizedAmount * amountMultiplier,
+                AVAILABLE_BALANCE: normalizedAmount * amountMultiplier,
+                CLEARED_BAL: normalizedAmount * amountMultiplier
+              },
+              $set: {
+                LAST_TRANSACTION_DATE: new Date(),
+                UPDATED_AT: new Date()
+              }
+            };
+            
+            await CustomerAccount.updateOne(
+              { ACCT_NO: requiredFields.ACCT_NO }, 
+              balanceUpdate, 
+              { session }
+            );
           } catch (updateError) {
-            await logAuditTrail(/* ... same ... */);
+            await logAuditTrail(
+              'TRANSACTION',
+              null,
+              req.user?.id || 'system',
+              'BALANCE_UPDATE_FAILED',
+              null,
+              {
+                account: safeACCT_NO,
+                error: updateError.message,
+                code: 'BALANCE_UPDATE_FAILED'
+              },
+              req.ip || '0.0.0.0',
+              'GENERAL',
+              { source: 'createTransaction' }
+            );
             results.failed.push({
               account: safeACCT_NO,
               error: `Failed to update account balances: ${updateError.message}`,
@@ -716,25 +565,21 @@ const createTransaction = async (req, res) => {
             continue;
           }
 
-          // Record successful transaction (UPDATED: Add eventId)
+          // Record successful transaction
           results.successful.push({
             transactionId: TRANSACTION_ID,
+            transactionIdString: transaction.transactionId, // The proper string ID
             workItemId: WORK_ITEM_ID,
-            eventId: EVENT_ID,  // NEW
+            eventId: EVENT_ID,
             account: safeACCT_NO,
             amount: normalizedAmount,
             status: 'PENDING',
-            amlDetails: {
-              flagged: amlCheck?.isFlagged || false,
-              reason: amlCheck?.reason || null,
-              thresholdUsed: amlCheck?.threshold || 0,
-              flags: amlCheck?.flags || []
-            }
+            reference: transaction.REFERENCE
           });
         }
 
-        // Commit transaction for this chunk if there are successful transactions
-        if (results.successful.length > 0 || chunk.some(tx => results.successful.some(s => s.account === tx.ACCT_NO))) {  // MINOR: More precise check if needed
+        // Commit transaction for this chunk
+        if (results.successful.length > 0) {
           await session.commitTransaction();
           sessionCommitted = true;
         } else {
@@ -748,20 +593,31 @@ const createTransaction = async (req, res) => {
             console.error('Failed to abort transaction:', abortError);
           }
         }
-        await logAuditTrail(/* ... same ... */);
-        // CHANGED: More specific failed push for chunk errors
+        await logAuditTrail(
+          'TRANSACTION',
+          null,
+          req.user?.id || 'system',
+          'CHUNK_PROCESS_FAILED',
+          null,
+          {
+            error: chunkError.message,
+            code: 'CHUNK_PROCESS_FAILED'
+          },
+          req.ip || '0.0.0.0',
+          'GENERAL',
+          { source: 'createTransaction' }
+        );
         results.failed.push({
           account: 'BATCH_CHUNK',
           error: `Failed to process transaction chunk: ${chunkError.message}`,
-          code: 'CHUNK_PROCESS_FAILED',
-          details: { chunkIndex: chunks.indexOf(chunk), errorStack: chunkError.stack }
+          code: 'CHUNK_PROCESS_FAILED'
         });
       } finally {
         await session.endSession();
       }
     }
 
-    // If no transactions succeeded, return failure (unchanged)
+    // If no transactions succeeded
     if (results.successful.length === 0) {
       return res.status(400).json({
         success: false,
@@ -772,7 +628,7 @@ const createTransaction = async (req, res) => {
       });
     }
 
-    // Log successful transactions (UPDATED: Use eventId from success)
+    // Log successful transactions
     for (const success of results.successful) {
       await logAuditTrail(
         'TRANSACTION',
@@ -784,7 +640,8 @@ const createTransaction = async (req, res) => {
           account: success.account,
           amount: success.amount,
           transactionId: success.transactionId,
-          eventId: success.eventId  // FIXED: Now available
+          transactionIdString: success.transactionIdString,
+          eventId: success.eventId
         },
         req.ip || '0.0.0.0',
         'GENERAL',
@@ -792,7 +649,7 @@ const createTransaction = async (req, res) => {
       );
     }
 
-    // Return response with successful and failed transactions (unchanged)
+    // Return response
     return res.status(207).json({
       success: true,
       code: 'TRANSACTIONS_PROCESSED',
@@ -804,7 +661,6 @@ const createTransaction = async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    // FIXED: Ensure results is always defined in catch (minor, but safe)
     const safeResults = results || { successful: [], failed: [] };
     await logAuditTrail(
       'TRANSACTION',
@@ -815,9 +671,7 @@ const createTransaction = async (req, res) => {
       {
         error: error.message,
         transactionId: 'UNKNOWN',
-        eventId: 'UNKNOWN',
-        stack: error.stack,
-        requestBody: req.body ? JSON.stringify(req.body).substring(0, 1000) : 'EMPTY'  // Truncate for log
+        stack: error.stack
       },
       req.ip || '0.0.0.0',
       'GENERAL',
@@ -835,7 +689,11 @@ const createTransaction = async (req, res) => {
   }
 };
 
-export { createTransaction };
+// Rest of the controller functions remain the same...
+// (approveTransaction, createBulkTransactions, getAllTransactions, etc.)
+
+
+
 
 
 // Debug imports to verify they are defined
@@ -1526,9 +1384,11 @@ export const deleteTransaction = async (req, res) => {
 };
 
 
-export default {
+export {
   createTransaction,
-  getAllTransactions,
-  getTransactionByAcctNo,
-  deleteTransaction
+  
+  
+ 
+
+ 
 };

@@ -30,7 +30,7 @@ import { processGroupLoanDisbursement,
   updateLoanPortfolioForGroupDisbursement,
   processSingleGroupMemberDisbursement,
   getGLAccountsFromProduct,
-  disburseGroupLoan} from '../Services/processGroupLoanDisbursement.js';
+ } from '../Services/processGroupLoanDisbursement.js';
 
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
 export const GL_ACCOUNT_TEMPLATES = {
@@ -1352,6 +1352,42 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
       }
     }
 
+    // ========== HELPER FUNCTIONS ==========
+    function generateNumericInterestRateId(prodId) {
+      const timestamp = Date.now();
+      const randomNum = Math.floor(Math.random() * 1000);
+      const numericId = Number(`${prodId}${timestamp.toString().slice(-9)}${randomNum}`);
+      return numericId;
+    }
+
+    function mapPaymentFrequencyToTermType(paymentFrequency) {
+      const freq = paymentFrequency.toUpperCase();
+      switch(freq) {
+        case 'DAILY': return 'D';
+        case 'WEEKLY': return 'W';
+        case 'BIWEEKLY': return 'BW';
+        case 'MONTHLY': return 'M';
+        case 'QUARTERLY': return 'Q';
+        case 'YEARLY': return 'Y';
+        default: return 'M';
+      }
+    }
+
+    function mapPaymentFrequencyToSchema(paymentFrequency) {
+      const freq = paymentFrequency.toUpperCase();
+      switch(freq) {
+        case 'DAILY': return 'DAILY';
+        case 'WEEKLY': return 'WEEKLY';
+        case 'BIWEEKLY': return 'BIWEEKLY';
+        case 'MONTHLY': return 'MONTHLY';
+        case 'QUARTERLY': return 'QUARTERLY';
+        case 'YEARLY':
+        case 'ANNUALLY': return 'YEARLY';
+        default: return 'MONTHLY';
+      }
+    }
+    // ========== END HELPER FUNCTIONS ==========
+
     // ==================== CREATE LOAN ACCOUNTS (NON-DISBURSED) ====================
     const individualLoanIds = [];
     const memberRepaymentSchedules = [];
@@ -1483,6 +1519,25 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
       });
 
       // ==================== CREATE LOAN ACCOUNT WITH ZERO BALANCE ====================
+      // Get member's address from savings account or customer record
+      let memberAddress = {
+        street: 'Group Loan Address', // Provide default value
+        city: 'Lagos',
+        state: 'Lagos',
+        zipCode: '100001',
+        country: 'Nigeria'
+      };
+
+      // Try to get customer address if available
+      const customer = await Customer.findOne({ CUST_ID: normalizeCustomerId(mem.memberId) }).session(session);
+      if (customer && customer.HOME_ADDRESS) {
+        memberAddress.street = customer.HOME_ADDRESS;
+      }
+      
+      // Generate a NUMERIC interest rate ID
+      const interestRateId = generateNumericInterestRateId(loanProduct.PROD_ID);
+      console.log(`Generated numeric INTEREST_RATE_ID: ${interestRateId}`);
+
       const newLoanAcc = new LoanAccount({
         CUST_ID: normalizeCustomerId(mem.memberId),
         ACCT_NM: mem.name,
@@ -1497,6 +1552,7 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
         PRIMARY_OFFICER_ID: primaryRelationshipManager,
 
         INTEREST_RATE: effectiveInterestRate,
+        INTEREST_RATE_ID: interestRateId, // CRITICAL FIX: Now a NUMBER, not string
         INTEREST_CALCULATION_METHOD: 'flat',
         DAY_COUNT_CONVENTION: dayCountConvention,
         CAPITALIZE_INTEREST: capitalizeInterest,
@@ -1528,12 +1584,13 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
         PENALTY_ACCRUED: 0.00,
         TOTAL_DUE: 0.00,
 
+        // CRITICAL FIX: Add required Borrower_address field
         Borrower_address: {
-          street: '',
-          city: 'Lagos',
-          state: 'Lagos',
-          zipCode: '100001',
-          country: 'Nigeria'
+          street: memberAddress.street, // Required field
+          city: memberAddress.city,
+          state: memberAddress.state,
+          zipCode: memberAddress.zipCode,
+          country: memberAddress.country
         },
 
         loanPurpose,
@@ -1718,6 +1775,124 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
 });
 
 // ==================== HELPER FUNCTIONS ====================
+
+ /**
+ * Main group loan disbursement controller - REMOVED ASYNC HANDLER
+ */
+export const disburseGroupLoan = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.withTransaction(async () => {
+      // FIX 1: Debug what's in the request
+      console.log('🔍 Request params:', req.params);
+      console.log('🔍 Request body:', req.body);
+      console.log('🔍 Full URL:', req.originalUrl);
+      
+      // FIX 2: Try multiple ways to get the group loan ID
+      let groupLoanId = req.params.groupLoanId || 
+                       req.params.loanId || 
+                       req.params.id ||
+                       req.body.groupLoanId || 
+                       req.body.loanId;
+      
+      // FIX 3: Extract from URL if not found
+      if (!groupLoanId) {
+        const urlParts = req.originalUrl.split('/');
+        const loanIdIndex = urlParts.indexOf('group-loans') + 1;
+        if (loanIdIndex < urlParts.length) {
+          groupLoanId = urlParts[loanIdIndex];
+          // Remove any query parameters
+          groupLoanId = groupLoanId.split('?')[0];
+        }
+      }
+      
+      if (!groupLoanId) {
+        throw new Error('Group loan ID is required');
+      }
+
+      console.log(`=== PROCESSING GROUP LOAN DISBURSEMENT: ${groupLoanId} ===`);
+
+      // Rest of your code remains the same...
+      // 1. Fetch group loan with all related loan accounts
+      const groupLoan = await GroupLoan.findOne({ loanId: groupLoanId })
+        .populate('individualLoanAccounts')
+        .session(session);
+
+      if (!groupLoan) {
+        throw new Error(`Group loan ${groupLoanId} not found`);
+      }
+
+      if (groupLoan.status === 'disbursed') {
+        throw new Error(`Group loan ${groupLoanId} is already disbursed`);
+      }
+
+      if (groupLoan.status !== 'approved') {
+        throw new Error(`Group loan ${groupLoanId} is not approved. Current status: ${groupLoan.status}`);
+      }
+
+      // 2. Get all loan accounts for this group
+      const loanAccounts = await LoanAccount.find({
+        _id: { $in: groupLoan.individualLoanAccounts },
+        LOAN_STATUS: 'APPROVED', // Only disburse approved loans
+        IS_DISBURSED: false
+      }).session(session);
+
+      if (loanAccounts.length === 0) {
+        throw new Error('No approved loan accounts found for disbursement');
+      }
+
+      console.log(`Found ${loanAccounts.length} loan accounts to disburse`);
+
+      // 3. Process disbursement using dedicated group loan function
+      const result = await processGroupLoanDisbursement({
+        session,
+        loanAccounts,
+        groupLoan,
+        createdBy: req.user?._id || 'SYSTEM',
+        disbursementDate: new Date(),
+        branchId: groupLoan.branch || 1
+      });
+
+      // 4. Prepare response
+      const response = {
+        success: result.success,
+        message: result.successful === loanAccounts.length 
+          ? `Group loan ${groupLoanId} fully disbursed to ${result.successful} members`
+          : `Group loan ${groupLoanId} partially disbursed (${result.successful}/${loanAccounts.length} members)`,
+        data: {
+          groupLoanId,
+          totalMembers: loanAccounts.length,
+          successful: result.successful,
+          failed: result.failed,
+          totalDisbursed: result.totalDisbursed,
+          portfolioUpdated: result.portfolioUpdated,
+          disbursementDate: new Date(),
+          newStatus: groupLoan.status,
+          glAccounts: result.glAccounts,
+          productDetails: result.productDetails
+        }
+      };
+
+      if (result.successful === 0) {
+        throw new Error('Disbursement failed for all members');
+      }
+
+      res.status(200).json(response);
+
+    });
+  } catch (error) {
+    console.error('Group loan disbursement failed:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  } finally {
+    await session.endSession();
+  }
+};
+
 
 /**
  * Generate flat rate schedule
@@ -6058,5 +6233,7 @@ export default {
   repayGroupLoan,
   getGroupLoan,
   deleteGroup,
+  
+
    getPendingCreditApplications
 };

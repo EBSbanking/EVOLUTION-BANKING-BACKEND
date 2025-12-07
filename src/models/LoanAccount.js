@@ -147,11 +147,11 @@ const loanAccountSchema = new mongoose.Schema(
       default: 'NGN'
     },
     Borrower_address: {
-      street: { type: String, required: true },
-      state: { type: String, required: true },
-      city: { type: String, required: true },
-      zipCode: { type: String, required: true },
-      country: { type: String, required: true, default: 'Nigeria' }
+      street: { type: String },
+      state: { type: String },
+      city: { type: String},
+      zipCode: { type: String },
+      country: { type: String, default: 'Nigeria' }
     },
     BU_ID: {
       type: String,

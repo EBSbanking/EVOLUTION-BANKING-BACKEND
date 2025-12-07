@@ -117,7 +117,7 @@ const RepaymentScheduleSchema = new mongoose.Schema({
   }],
   STATUS: {
     type: String,
-    enum: ['PENDING', 'ACTIVE', 'COMPLETED', 'CANCELLED'],
+    enum: ['PENDING', 'ACTIVE', 'COMPLETED', 'CANCELLED',`PENDING_DISBURSEMENT`],
     default: 'PENDING'
   },
   TOTAL_INTEREST: {

@@ -290,12 +290,13 @@ offline_id: { // Maps to MySQL: offline_id (bigint)
     },
 
     // Status Fields (Aligned with MySQL: status, substatus)
-    status: { // Maps to MySQL: status (varchar) - default 'Active', enum
-      type: String,
-      required: true,
-      enum: ["Active", "Closed", "Pending", "Rejected"],
-      default: "Active",
-    },
+  // In CustomerAccount model, update the REC_ST field:
+REC_ST: { // Retained, aligned with status - UPDATED: Added "PENDING" to enum
+  type: String,
+  enum: ["ACTIVE", "DORMANT", "SUSPENDED", "CLOSED", "INACTIVE", "PENDING"],
+  default: "PENDING", // CHANGED: Default to PENDING instead of ACTIVE
+  uppercase: true,
+},
     substatus: { // Maps to MySQL: substatus (varchar) - default 'Active'
       type: String,
       default: "Active",

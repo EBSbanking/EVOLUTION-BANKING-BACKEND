@@ -629,100 +629,7 @@ async function updateLoanPortfolioForGroupDisbursement({
   }
 }
 
-/**
- * Main group loan disbursement controller - REMOVED ASYNC HANDLER
- */
-const disburseGroupLoan = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    await session.withTransaction(async () => {
-      const groupLoanId = req.params.groupLoanId || req.body.loanId;
-      
-      if (!groupLoanId) {
-        throw new Error('Group loan ID is required');
-      }
 
-      console.log(`=== PROCESSING GROUP LOAN DISBURSEMENT: ${groupLoanId} ===`);
-
-      // 1. Fetch group loan with all related loan accounts
-      const groupLoan = await GroupLoan.findOne({ loanId: groupLoanId })
-        .populate('individualLoanAccounts')
-        .session(session);
-
-      if (!groupLoan) {
-        throw new Error(`Group loan ${groupLoanId} not found`);
-      }
-
-      if (groupLoan.status === 'disbursed') {
-        throw new Error(`Group loan ${groupLoanId} is already disbursed`);
-      }
-
-      if (groupLoan.status !== 'approved') {
-        throw new Error(`Group loan ${groupLoanId} is not approved. Current status: ${groupLoan.status}`);
-      }
-
-      // 2. Get all loan accounts for this group
-      const loanAccounts = await LoanAccount.find({
-        _id: { $in: groupLoan.individualLoanAccounts },
-        LOAN_STATUS: 'APPROVED', // Only disburse approved loans
-        IS_DISBURSED: false
-      }).session(session);
-
-      if (loanAccounts.length === 0) {
-        throw new Error('No approved loan accounts found for disbursement');
-      }
-
-      console.log(`Found ${loanAccounts.length} loan accounts to disburse`);
-
-      // 3. Process disbursement using dedicated group loan function
-      const result = await processGroupLoanDisbursement({
-        session,
-        loanAccounts,
-        groupLoan,
-        createdBy: req.user?._id || 'SYSTEM',
-        disbursementDate: new Date(),
-        branchId: groupLoan.branch || 1
-      });
-
-      // 4. Prepare response
-      const response = {
-        success: result.success,
-        message: result.successful === loanAccounts.length 
-          ? `Group loan ${groupLoanId} fully disbursed to ${result.successful} members`
-          : `Group loan ${groupLoanId} partially disbursed (${result.successful}/${loanAccounts.length} members)`,
-        data: {
-          groupLoanId,
-          totalMembers: loanAccounts.length,
-          successful: result.successful,
-          failed: result.failed,
-          totalDisbursed: result.totalDisbursed,
-          portfolioUpdated: result.portfolioUpdated,
-          disbursementDate: new Date(),
-          newStatus: groupLoan.status,
-          glAccounts: result.glAccounts,
-          productDetails: result.productDetails
-        }
-      };
-
-      if (result.successful === 0) {
-        throw new Error('Disbursement failed for all members');
-      }
-
-      res.status(200).json(response);
-
-    });
-  } catch (error) {
-    console.error('Group loan disbursement failed:', error);
-    res.status(400).json({
-      success: false,
-      message: error.message,
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  } finally {
-    await session.endSession();
-  }
-};
 
 // Export functions
 export {
@@ -730,5 +637,5 @@ export {
   updateLoanPortfolioForGroupDisbursement,
   processSingleGroupMemberDisbursement,
   getGLAccountsFromProduct,
-  disburseGroupLoan
+ 
 };
