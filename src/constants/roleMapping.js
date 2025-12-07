@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import BusinessUnit from '../models/BusinessUnit.js';
 import Permissions from '../models/Permissions.js';
+import UserRole from '../models/UserRole.js'; // ✅ Added UserRole import if needed for sync
 import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
@@ -12,6 +13,16 @@ function safeGetPermissions(permissionGroup) {
   return permissionGroup && typeof permissionGroup === 'object' ? Object.values(permissionGroup).filter(p => typeof p === 'string') : [];
 }
 
+// ✅ Helper to filter out undefined permissions during validation
+function filterValidPermissions(permissionsArray, groupName) {
+  return permissionsArray.filter(permission => {
+    if (permission === undefined) {
+      logger.warn(`Undefined permission found in ${groupName}, skipping`);
+      return false;
+    }
+    return true;
+  });
+}
 
 // ======================
 // ROLE PERMISSION MAPPING
@@ -57,7 +68,7 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 4. Senior Financial Accountant
-4: {
+  4: {
     permissions: {
       POSTING_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.POSTING),
       REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW, PERMISSIONS.REPORT.EXPORT],
@@ -176,7 +187,7 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 12. Financial Accountant
- 12: {
+  12: {
     permissions: {
       POSTING_ACCESS_LEVEL: [PERMISSIONS.POSTING.CUSTOMER_POSTING, PERMISSIONS.POSTING.GL_POSTING],
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
@@ -240,7 +251,7 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 14. Chief Financial Officer
- 14: {
+  14: {
     permissions: {
       POSTING_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.POSTING),
       REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
@@ -318,7 +329,7 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 19. Branch Manager - UPDATED WITH VAULT PERMISSIONS
-19: {
+  19: {
     permissions: {
       CUSTOMER_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.CUSTOMER),
       ACCOUNT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.ACCOUNT),
@@ -367,12 +378,18 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.VAULT.OPEN_VAULT,
         PERMISSIONS.VAULT.CLOSE_VAULT,
         PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
-        // ✅ ADDED: Branch Vault Permissions for Branch Manager
+        // ✅ ADDED: Branch Vault Permissions for Branch Manager (deduplicated)
         PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
         PERMISSIONS.VAULT.MANAGE_BRANCH_VAULTS,
         PERMISSIONS.VAULT.CONFIGURE_BRANCH_VAULT,
         PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
-        PERMISSIONS.VAULT.BRANCH_VAULT_ACCESS,
+        PERMISSIONS.VAULT.VAULT_DEPOSIT,
+        PERMISSIONS.VAULT.VAULT_WITHDRAWAL,
+        PERMISSIONS.VAULT.VAULT_TRANSFER,
+        PERMISSIONS.VAULT.VAULT_RECONCILIATION,
+        PERMISSIONS.VAULT.VIEW_VAULT_TRANSACTIONS,
+        PERMISSIONS.VAULT.CANCEL_VAULT_TRANSACTION,
+        PERMISSIONS.VAULT.EXPORT_VAULT_TRANSACTIONS,
       ],
     },
   },
@@ -580,7 +597,7 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 30. Head Teller - UPDATED WITH VAULT PERMISSIONS
- 30: {
+  30: {
     permissions: {
       DRAWER_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DRAWER),
       CUSTOMER_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.CUSTOMER),
@@ -622,6 +639,13 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
         // ✅ ADDED: Branch Vault Permission
         PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
+        PERMISSIONS.VAULT.VAULT_DEPOSIT,
+        PERMISSIONS.VAULT.VAULT_WITHDRAWAL,
+        PERMISSIONS.VAULT.VAULT_TRANSFER,
+        PERMISSIONS.VAULT.VAULT_RECONCILIATION,
+        PERMISSIONS.VAULT.VIEW_VAULT_TRANSACTIONS,
+        PERMISSIONS.VAULT.CANCEL_VAULT_TRANSACTION,
+        PERMISSIONS.VAULT.EXPORT_VAULT_TRANSACTIONS,
       ],
     },
   },
@@ -706,6 +730,80 @@ export const ROLE_PERMISSION_MAPPING = {
       ],
     },
   },
+  // 38. Vault Manager/Specialist - NEW ROLE
+  38: {
+    permissions: {
+      // Focused on vault operations
+      VAULT_ACCESS_LEVEL: [
+        // Full Vault Management
+        PERMISSIONS.VAULT.CREATE_VAULT,
+        PERMISSIONS.VAULT.VIEW_VAULTS,
+        PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
+        PERMISSIONS.VAULT.CONFIGURE_VAULT,
+        PERMISSIONS.VAULT.UPDATE_VAULT,
+        PERMISSIONS.VAULT.DEACTIVATE_VAULT,
+        
+        // Full Access Control
+        PERMISSIONS.VAULT.MANAGE_VAULT_ACCESS,
+        PERMISSIONS.VAULT.AUTHORIZE_PERSONNEL,
+        PERMISSIONS.VAULT.REVOKE_AUTHORIZATION,
+        PERMISSIONS.VAULT.VIEW_AUTHORIZED_PERSONNEL,
+        
+        // Full Transaction Permissions
+        PERMISSIONS.VAULT.VAULT_DEPOSIT,
+        PERMISSIONS.VAULT.VAULT_WITHDRAWAL,
+        PERMISSIONS.VAULT.VAULT_TRANSFER,
+        PERMISSIONS.VAULT.VAULT_RECONCILIATION,
+        PERMISSIONS.VAULT.VIEW_VAULT_TRANSACTIONS,
+        PERMISSIONS.VAULT.CANCEL_VAULT_TRANSACTION,
+        PERMISSIONS.VAULT.EXPORT_VAULT_TRANSACTIONS,
+        
+        // Full Security & Maintenance
+        PERMISSIONS.VAULT.LOG_ACCESS_ATTEMPT,
+        PERMISSIONS.VAULT.RECORD_MAINTENANCE,
+        PERMISSIONS.VAULT.UPDATE_SECURITY_FEATURES,
+        PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
+        
+        // Full Operational Access
+        PERMISSIONS.VAULT.OPEN_VAULT,
+        PERMISSIONS.VAULT.CLOSE_VAULT,
+        PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
+        
+        // All Branch Vault Permissions
+        PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
+        PERMISSIONS.VAULT.MANAGE_BRANCH_VAULTS,
+        PERMISSIONS.VAULT.CONFIGURE_BRANCH_VAULT,
+        PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
+        PERMISSIONS.VAULT.BRANCH_VAULT_ACCESS,
+        PERMISSIONS.VAULT.TRANSFER_BETWEEN_BRANCHES,
+        
+        // Additional Vault Permissions
+        PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
+        PERMISSIONS.VAULT.UPDATE_VAULT_CAPACITY,
+        PERMISSIONS.VAULT.VAULT_SPACE_ALLOCATION,
+        PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
+        PERMISSIONS.VAULT.VAULT_INVENTORY_UPDATE,
+        PERMISSIONS.VAULT.TRACK_VAULT_CONTENTS,
+        PERMISSIONS.VAULT.GENERATE_VAULT_REPORT,
+        PERMISSIONS.VAULT.VAULT_AUDIT,
+        PERMISSIONS.VAULT.VAULT_COMPLIANCE_CHECK,
+        PERMISSIONS.VAULT.EMERGENCY_VAULT_ACCESS,
+        PERMISSIONS.VAULT.VAULT_LOCKDOWN,
+        PERMISSIONS.VAULT.MANAGE_VAULT_SCHEDULE,
+        PERMISSIONS.VAULT.VIEW_VAULT_CALENDAR,
+        PERMISSIONS.VAULT.SET_VAULT_HOURS,
+      ],
+      // Supporting permissions
+      REPORT_ACCESS_LEVEL: [
+        PERMISSIONS.REPORT.VIEW,
+        PERMISSIONS.REPORT.EXPORT,
+      ],
+      DASHBOARD_ACCESS_LEVEL: [
+        PERMISSIONS.DASHBOARD.VIEW,
+        PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
+      ],
+    },
+  },
 };
 
 // Complete Role Mapping with Permissions
@@ -733,7 +831,7 @@ export const ROLE_MAPPING = Object.fromEntries(
     20: { id: 20, ROLE_NM: 'Branch Operation Supervisor' },
     21: { id: 21, ROLE_NM: 'Chief Operation Officer' },
     22: { id: 22, ROLE_NM: 'Marketing Manager' },
-    23: { id: 23, ROLE_NM: 'Payment and Reconciliation USD' },
+    23: { id: 23, ROLE_NM: 'Payment and Reconciliation NGN' },
     24: { id: 24, ROLE_NM: 'EOD Operator' },
     25: { id: 25, ROLE_NM: 'Recovery Officer' },
     26: { id: 26, ROLE_NM: 'Relationship Development Officer' },
@@ -748,6 +846,7 @@ export const ROLE_MAPPING = Object.fromEntries(
     35: { id: 35, ROLE_NM: 'Head of Digital Banking' },
     36: { id: 36, ROLE_NM: 'Agency Banking Officer' },
     37: { id: 37, ROLE_NM: 'Channel Manager' },
+    38: { id: 38, ROLE_NM: 'Vault Manager' },
   }).map(([id, role]) => [
     id,
     {
@@ -881,45 +980,6 @@ export function getRoleWithPermissions(roleId) {
     throw error;
   }
 }
-
-// // Check if role has specific permission
-// export async function roleHasPermission(roleId, permission) {
-//   try {
-//     if (parseInt(roleId) === 1) {
-//       logger.info('Administrator role detected, granting all permissions', { roleId, permission });
-//       return true;
-//     }
-
-//     const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
-//     if (dbPermissions) {
-//       // Flatten all permission arrays from the document (excluding non-permission fields)
-//       const allPermissions = [];
-//       Object.entries(dbPermissions).forEach(([key, value]) => {
-//         if (Array.isArray(value)) {
-//           allPermissions.push(...value.filter(p => typeof p === 'string'));
-//         }
-//       });
-//       return allPermissions.includes(permission);
-//     }
-
-//     const role = ROLE_MAPPING[roleId];
-//     if (!role) {
-//       logger.warn(`Role ${roleId} not found in ROLE_MAPPING`, { permission });
-//       return false;
-//     }
-
-//     const rolePermissions = Object.values(role.permissions).flat();
-//     return rolePermissions.includes(permission);
-//   } catch (error) {
-//     logger.error('Permission check failed', {
-//       error: error.message,
-//       roleId,
-//       permission,
-//       stack: error.stack,
-//     });
-//     return false;
-//   }
-// }
 
 // Verify Administrator has all permissions
 export async function verifyAdministratorPermissions() {
@@ -1249,6 +1309,10 @@ export const MODULE_PERMISSIONS = {
   VAULT_TRANSFER: PERMISSIONS.VAULT.VAULT_TRANSFER,
   VAULT_RECONCILIATION: PERMISSIONS.VAULT.VAULT_RECONCILIATION,
   
+  VIEW_VAULT_TRANSACTIONS: PERMISSIONS.VAULT.VIEW_VAULT_TRANSACTIONS,
+  CANCEL_VAULT_TRANSACTION: PERMISSIONS.VAULT.CANCEL_VAULT_TRANSACTION,
+  EXPORT_VAULT_TRANSACTIONS: PERMISSIONS.VAULT.EXPORT_VAULT_TRANSACTIONS,
+  
   // Audit & Compliance
   VAULT_AUDIT: PERMISSIONS.VAULT.VAULT_AUDIT,
   VAULT_COMPLIANCE_CHECK: PERMISSIONS.VAULT.VAULT_COMPLIANCE_CHECK,
@@ -1462,6 +1526,43 @@ export async function roleHasPermission(roleId, permission) {
   }
 }
 
+/////////////////////////////////////////////////////////////////
+/// VAULT TRANSACTION TEST
+////////////////////////////////////////////////////////////////
+
+// Test function to verify vault transaction permissions
+export async function testVaultTransactionPermissions() {
+  const testRoles = [19, 20, 29, 30, 38]; // Roles that should have vault access
+  
+  console.log('🔍 Testing Vault Transaction Permissions ==================');
+  
+  for (const roleId of testRoles) {
+    const role = ROLE_MAPPING[roleId];
+    console.log(`\n📋 Testing Role: ${role?.ROLE_NM} (ID: ${roleId})`);
+    
+    // Test vault transaction permissions
+    const vaultPermissions = role?.permissions?.VAULT_ACCESS_LEVEL || [];
+    
+    console.log('📊 Vault Permissions Count:', vaultPermissions.length);
+    
+    // Check specific transaction permissions
+    const requiredPermissions = [
+      'VAULT_DEPOSIT',
+      'VAULT_WITHDRAWAL', 
+      'VAULT_TRANSFER',
+      'VIEW_VAULT_TRANSACTIONS'
+    ];
+    
+    for (const perm of requiredPermissions) {
+      const hasPerm = vaultPermissions.includes(perm);
+      console.log(`  ${hasPerm ? '✅' : '❌'} ${perm}: ${hasPerm}`);
+    }
+  }
+  
+  console.log('\n✅ Vault Transaction Permissions Test Complete');
+}
+//////////////////////////////////////////////////////////////////
+
 function deriveModuleKey(path, method) {
   const pathParts = path.split('/').filter(part => part);
   const lastPart = pathParts[pathParts.length - 1];
@@ -1497,6 +1598,54 @@ export const tempBypassPermissions = (req, res, next) => {
   next();
 };
 
+// Enhanced sync with validation including vault transaction testing
+export async function syncPermissionsWithValidation() {
+  try {
+    console.log('🔄 Starting enhanced permission sync with validation...');
+    await syncPermissions();
+    const adminValid = await verifyAdministratorPermissions();
+    if (!adminValid) {
+      throw new Error('Administrator permission validation failed');
+    }
+    await testVaultTransactionPermissions();
+    const structureValid = validatePermissions();
+    if (!structureValid) {
+      throw new Error('Permission structure validation failed');
+    }
+    console.log('✅ Enhanced permission sync with validation completed successfully');
+  } catch (error) {
+    console.error('❌ Enhanced sync failed:', error.message);
+    throw error;
+  }
+}
+
+// Quick permission check for fallback
+export async function quickPermissionCheck() {
+  try {
+    console.log('🔍 Running quick permission check...');
+    const count = await Permissions.countDocuments();
+    console.log(`📊 Found ${count} permission records in DB`);
+    
+    if (count === 0) {
+      console.warn('⚠️ No permissions found in DB - full sync required');
+      return false;
+    }
+    
+    const adminValid = await verifyAdministratorPermissions();
+    console.log(`👑 Admin permissions valid: ${adminValid}`);
+    
+    const structureValid = validatePermissions();
+    console.log(`🔧 Structure valid: ${structureValid}`);
+    
+    const overallValid = adminValid && structureValid;
+    console.log(`✅ Quick check ${overallValid ? 'PASSED' : 'FAILED'}`);
+    return overallValid;
+  } catch (error) {
+    console.error('❌ Quick permission check failed:', error.message);
+    return false;
+  }
+}
+
 // Call during application startup
 validatePermissions();
 
@@ -1513,6 +1662,9 @@ export default {
   getRolePermissionsGrouped,
   canPerformAction,
   validatePermissions,
-  checkPermissions,  // Add this line!
+  checkPermissions,
   tempBypassPermissions,
+  testVaultTransactionPermissions,
+  syncPermissionsWithValidation,
+  quickPermissionCheck,
 };

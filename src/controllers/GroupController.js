@@ -15,8 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 import logAuditTrail from '../Services/AuditService.js';
 import LoanInterestRate from '../models/LoanInterestRate.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
-import { 
-   calculateLoanRepayment } from '../controllers/LoanInterestRateController.js';
+import { calculateLoanRepayment } from './LoanProductController.js';
 import Transaction from '../models/Transaction.js';
 import LoanAccountSummary from '../models/LoanAccountSummary.js';
 import Branch from '../models/Branch.js';
@@ -25,7 +24,13 @@ import GLAccount from '../models/GLAccount.js';
 import {getLoanAccountDisbursementInfo} from '../controllers/LoanAccountSummaryController.js';
 import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 import Collection from '../models/Collection.js';
-
+import {  calculateInterestByProductType } from '../services/InterestCalculationService.js';
+import InterestCalculationService from '../services/InterestCalculationService.js';
+import { processGroupLoanDisbursement,
+  updateLoanPortfolioForGroupDisbursement,
+  processSingleGroupMemberDisbursement,
+  getGLAccountsFromProduct,
+  disburseGroupLoan} from '../Services/processGroupLoanDisbursement.js';
 
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
 export const GL_ACCOUNT_TEMPLATES = {
@@ -460,25 +465,47 @@ export const getGroups = asyncHandler(async (req, res) => {
     branch,
     status,
     groupType,
-    legacyId
+    legacyId,
+    mysqlId,
+    page = 1,
+    limit = 20,
+    populateMembers = 'true'
   } = req.query;
+
   // Build dynamic filter
   const filter = {};
+  
   if (id) {
-    filter._id = id;
+    try {
+      filter._id = new mongoose.Types.ObjectId(id);
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid group ID format'
+      });
+    }
   }
+  
   if (legacyId) {
     filter.legacyId = Number(legacyId);
   }
+  
+  if (mysqlId) {
+    filter.mysqlId = Number(mysqlId);
+  }
+  
   if (branch) {
     filter.branch = Number(branch);
   }
+  
   if (status) {
     filter.status = status;
   }
+  
   if (groupType) {
     filter.groupType = groupType;
   }
+  
   // Support case-insensitive search for groupCode and groupName
   if (groupCode || groupName) {
     filter.$or = [];
@@ -489,39 +516,264 @@ export const getGroups = asyncHandler(async (req, res) => {
       filter.$or.push({ groupName: { $regex: groupName, $options: 'i' } });
     }
   }
-  // Fetch matching groups
-  const groups = await Group.find(filter).lean();
-  if (!groups || groups.length === 0) {
-    return res.status(404).json({
+
+  try {
+    // Pagination
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    
+    // Execute query with pagination
+    const [groups, total] = await Promise.all([
+      Group.find(filter)
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Group.countDocuments(filter)
+    ]);
+    
+    if (!groups || groups.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No groups found',
+        data: [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: 0,
+          pages: 0
+        }
+      });
+    }
+
+    // Check if we should populate member details
+    const shouldPopulate = populateMembers === 'true';
+    
+    if (!shouldPopulate) {
+      // Return groups without populating member details
+      return res.status(200).json({
+        success: true,
+        count: groups.length,
+        total,
+        data: groups.map(group => ({
+          ...group,
+          members: Array.isArray(group.members) ? group.members : []
+        })),
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum)
+        }
+      });
+    }
+    
+    // ==================== FIX: Handle different member structures ====================
+    
+    // Collect all unique member CUST_IDs - handle both string and object formats
+    const allMemberIds = groups.flatMap(group => {
+      if (!group.members || !Array.isArray(group.members)) {
+        return [];
+      }
+      
+      return group.members.map(member => {
+        try {
+          // Case 1: member is already a string (CUST_ID)
+          if (typeof member === 'string') {
+            // Validate it's a valid CUST_ID format
+            return member.trim() || null;
+          }
+          
+          // Case 2: member is an object
+          if (typeof member === 'object' && member !== null) {
+            // Try to extract CUST_ID from different possible field names
+            const custId = member.CUST_ID || 
+                          member.customerId || 
+                          member.custId || 
+                          member.memberId || 
+                          member.id;
+            
+            // Return as string if found
+            if (custId) {
+              return String(custId).trim();
+            }
+            
+            // If no CUST_ID but has customerId or other ID fields
+            if (member.customerId) {
+              return String(member.customerId).trim();
+            }
+            
+            // Last resort: if member has a toString method
+            if (typeof member.toString === 'function') {
+              return member.toString().trim();
+            }
+          }
+          
+          return null;
+        } catch (error) {
+          console.warn('Error extracting member ID:', error.message, { member });
+          return null;
+        }
+      }).filter(id => id !== null && id !== ''); // Remove null/empty values
+    });
+
+    // Remove duplicates
+    const uniqueMemberIds = [...new Set(allMemberIds)];
+    
+    console.log('Total groups found:', groups.length);
+    console.log('Unique member IDs to fetch:', uniqueMemberIds.length);
+    
+    if (uniqueMemberIds.length > 0) {
+      console.log('Sample member IDs:', uniqueMemberIds.slice(0, 5));
+    } else {
+      console.log('No valid member IDs found in groups');
+    }
+
+    // ==================== Fetch member details ====================
+    let memberLookup = {};
+    
+    if (uniqueMemberIds.length > 0) {
+      try {
+        // Try to fetch from Customer model
+        const membersData = await Customer.find(
+          { CUST_ID: { $in: uniqueMemberIds } },
+          'CUST_ID FIRST_NAME LAST_NAME GENDER EMAIL PHONE_NUMBER ACCT_NO'
+        ).lean();
+        
+        // Build lookup map
+        memberLookup = membersData.reduce((acc, member) => {
+          if (member.CUST_ID) {
+            acc[member.CUST_ID] = {
+              CUST_ID: member.CUST_ID,
+              CUST_NAME: `${member.FIRST_NAME || ''} ${member.LAST_NAME || ''}`.trim() || 'Unknown Customer',
+              GENDER: member.GENDER || '',
+              EMAIL: member.EMAIL || '',
+              PHONE_NUMBER: member.PHONE_NUMBER || '',
+              ACCT_NO: member.ACCT_NO || ''
+            };
+          }
+          return acc;
+        }, {});
+        
+        console.log('Successfully fetched member details:', membersData.length);
+      } catch (error) {
+        console.error('Error fetching member details:', error.message);
+        // Don't fail the whole request if member fetch fails
+      }
+    }
+
+    // ==================== Populate groups with member details ====================
+    const populatedGroups = groups.map(group => {
+      const groupMembers = [];
+      
+      if (Array.isArray(group.members)) {
+        group.members.forEach(member => {
+          try {
+            let custId = null;
+            let memberDetails = null;
+            
+            // Extract CUST_ID
+            if (typeof member === 'string') {
+              custId = member.trim();
+            } else if (typeof member === 'object' && member !== null) {
+              custId = member.CUST_ID || member.customerId || member.custId || member.memberId || member.id;
+              if (custId) custId = String(custId).trim();
+              
+              // If member object has details, use them
+              if (member.customerName || member.firstName) {
+                memberDetails = {
+                  CUST_ID: custId || 'N/A',
+                  CUST_NAME: member.customerName || `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Unknown Customer',
+                  GENDER: member.gender || '',
+                  EMAIL: member.email || '',
+                  PHONE_NUMBER: member.phoneNumber || '',
+                  ACCT_NO: member.membershipNumber || ''
+                };
+              }
+            }
+            
+            if (custId) {
+              // Use fetched details if available, otherwise use extracted details or minimal info
+              if (memberLookup[custId]) {
+                groupMembers.push(memberLookup[custId]);
+              } else if (memberDetails) {
+                groupMembers.push(memberDetails);
+              } else {
+                groupMembers.push({
+                  CUST_ID: custId,
+                  CUST_NAME: 'Unknown Customer (ID only)',
+                  GENDER: '',
+                  EMAIL: '',
+                  PHONE_NUMBER: '',
+                  ACCT_NO: ''
+                });
+              }
+            }
+          } catch (memberError) {
+            console.warn('Error processing member:', memberError.message, { member });
+          }
+        });
+      }
+      
+      // Return group with cleaned data
+      return {
+        _id: group._id,
+        groupCode: group.groupCode || '',
+        groupName: group.groupName || '',
+        members: groupMembers,
+        memberCount: groupMembers.length,
+        branch: group.branch || 0,
+        status: group.status || 'active',
+        groupType: group.groupType || 'Union',
+        legacyId: group.legacyId,
+        mysqlId: group.mysqlId,
+        relationshipManager: group.relationshipManager || 0,
+        regDate: group.regDate,
+        meetingDay: group.meetingDay,
+        meetingFrequency: group.meetingFrequency,
+        unionAddress: group.unionAddress,
+        createdBy: group.createdBy,
+        offlineId: group.offlineId,
+        unionPurseAccount: group.unionPurseAccount,
+        migrationId: group.migrationId,
+        originalData: group.originalData,
+        createdAt: group.createdAt,
+        updatedAt: group.updatedAt,
+        // Virtual field
+        displayName: `${group.groupCode || ''} - ${group.groupName || ''}`.trim()
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: populatedGroups.length,
+      total,
+      data: populatedGroups,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum)
+      },
+      memberFetchStats: {
+        uniqueMemberIds: uniqueMemberIds.length,
+        memberDetailsFetched: Object.keys(memberLookup).length,
+        groupsWithMembers: populatedGroups.filter(g => g.members.length > 0).length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in getGroups:', error);
+    return res.status(500).json({
       success: false,
-      message: 'No groups found matching your search criteria.',
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
     });
   }
-  // Collect all unique member CUST_IDs
-  const allMemberIds = [...new Set(groups.flatMap(g => g.members))];
-  // Fetch member details from Customer
-  const membersData = await Customer.find(
-    { CUST_ID: { $in: allMemberIds } },
-    'CUST_ID FIRST_NAME LAST_NAME'
-  ).lean();
-  // Build a quick lookup map for names
-  const memberLookup = membersData.reduce((acc, member) => {
-    acc[member.CUST_ID] = `${member.FIRST_NAME} ${member.LAST_NAME}`.trim();
-    return acc;
-  }, {});
-  // Populate group members with names
-  const populatedGroups = groups.map(group => ({
-    ...group,
-    members: group.members.map(custId => ({
-      CUST_ID: custId,
-      CUST_NAME: memberLookup[custId] || 'Unknown Customer',
-    })),
-  }));
-  res.status(200).json({
-    success: true,
-    count: populatedGroups.length,
-    data: populatedGroups,
-  });
 });
 
 
@@ -911,8 +1163,8 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
   session.startTransaction();
 
   try {
-    console.log('=== STARTING GROUP LOAN CREATION (FULL DISBURSEMENT + FEES FROM SAVINGS + REPAYMENT SCHEDULE) ===');
-
+    console.log('=== STARTING GROUP LOAN CREATION (NON-DISBURSED) ===');
+    
     const {
       groupCode,
       totalAmount,
@@ -923,38 +1175,54 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
       disbursementMethod = 'CASH',
       members = [],
       processingFee = 3,
-      adminFee = 1000
+      adminFee = "",
+      interestRate,
+      termValue,
+      paymentFrequency,
+      capitalizeInterest = false,
+      capitalizationFrequency = 'MONTHLY',
+      capitalizationThreshold = 0,
+      deductUpfrontInterest = false,
+      upfrontInterestPercentage = 0,
+      penaltyRate = 5,
+      dayCountConvention = 'ACTUAL/365'
     } = req.body;
 
+    // Validate required fields
     if (!groupCode || !primaryRelationshipManager || !loanPurpose || !savingsAccount || members.length === 0) {
       throw new Error('Missing required fields: groupCode, primaryRelationshipManager, loanPurpose, savingsAccount, and members are required');
     }
 
+    // Fetch group
     const group = await Group.findOne({ groupCode }).session(session);
     if (!group) throw new Error('Group not found');
 
+    // Check for existing active loan
     const existing = await GroupLoan.findOne({
       groupCode,
       status: { $in: ['applied', 'approved', 'disbursed', 'partially_disbursed'] }
     }).session(session);
     if (existing) throw new Error(`Group already has active loan: ${existing.loanId}`);
 
+    // Fetch loan product
     const loanProduct = await LoanProduct.findOne({ PROD_ID: productId }).session(session);
     if (!loanProduct) throw new Error(`Loan product with PROD_ID ${productId} not found`);
 
+    // Generate loan ID and get creator
     const loanId = await generateGroupLoanId();
     const createdBy = req.user?._id || (await User.findOne({ employeeId: 'SYSTEM' }))?._id;
 
     let computedTotal = 0;
     const processedMembers = [];
     let totalFeesCollected = 0;
+    let totalUpfrontInterest = 0;
 
-    // Validate members
+    // ==================== MEMBER VALIDATION ====================
     for (const m of members) {
       const memberId = safeToString(m.memberId);
       const amount = safeNumber(m.individualAmount);
       const savingsAccNo = safeToString(m.savingsAccountNo);
-      const name = safeToString(m.name, 'Unknown Member');
+      const name = safeToString(m.name, `Member ${memberId}`);
 
       if (!memberId || amount <= 0 || !savingsAccNo) {
         throw new Error(`Invalid member data for ${name}: memberId, individualAmount, and savingsAccountNo are required`);
@@ -996,66 +1264,60 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
       throw new Error(`Total amount mismatch: Calculated ${computedTotal} vs Provided ${finalTotal}`);
     }
 
-    // Dynamic values from product
-    const termValue = safeNumber(req.body.termValue) || loanProduct.maxTerm || 12;
-    const paymentFrequency = loanProduct.PAYMENT_FREQUENCY || 'WEEKLY';
-    const interestRate = parseFloat(loanProduct.interestRate?.toString() || '6.5');
+    // ==================== INTEREST CALCULATION PARAMETERS ====================
+    const effectiveInterestRate = interestRate || parseFloat(loanProduct.interestRate?.toString() || '6.5');
+    const effectiveTermValue = termValue || safeNumber(loanProduct.maxTerm) || 12;
+    const effectivePaymentFrequency = paymentFrequency || loanProduct.PAYMENT_FREQUENCY || 'WEEKLY';
+    const productType = loanProduct.PRODUCT_TYPE || 'GROUP_LOAN';
 
-    // Maturity date
-    const startDate = new Date();
-    const maturityDate = new Date(startDate);
-    if (paymentFrequency.includes('WEEK')) {
-      maturityDate.setDate(startDate.getDate() + termValue * 7);
-    } else {
-      maturityDate.setMonth(startDate.getMonth() + termValue);
-    }
-
-    console.log('=== LOAN PARAMETERS ===');
+    console.log('=== GROUP LOAN APPLICATION PARAMETERS ===');
+    console.log('Members:', processedMembers.length);
     console.log('Total Amount:', finalTotal);
-    console.log('Interest Rate:', interestRate + '%');
-    console.log('Term Value:', termValue);
-    console.log('Payment Frequency:', paymentFrequency);
-    console.log('Maturity Date:', maturityDate.toISOString().split('T')[0]);
+    console.log('Interest Rate:', effectiveInterestRate + '%');
+    console.log('Term:', effectiveTermValue);
+    console.log('Payment Frequency:', effectivePaymentFrequency);
 
-    // === CREATE LOAN ACCOUNTS + DEBIT FEES + CREATE REPAYMENT SCHEDULE ===
-    const individualLoanIds = [];
-    const memberRepaymentSchedules = [];
+    // ==================== CALCULATE LOAN TERMS ====================
+    const startDate = new Date();
+    let maturityDate = calculateMaturityDate(startDate, effectiveTermValue, effectivePaymentFrequency);
 
+    // ==================== DEBIT FEES AND UPFRONT INTEREST ONLY ====================
     for (const mem of processedMembers) {
-      const loanAccNo = await generateLoanAccountNumberByProdId(productId);
-      
-      console.log(`Processing member ${mem.memberId} with loan account ${loanAccNo}`);
-
-      // Fees calculation
       const processingFeeAmount = mem.individualAmount * (safeNumber(processingFee) / 100);
       const adminFeeAmount = safeNumber(adminFee);
       const memberTotalFees = processingFeeAmount + adminFeeAmount;
       totalFeesCollected += memberTotalFees;
 
-      // DEBIT FEES FROM SAVINGS
-      if (memberTotalFees > 0) {
+      let memberUpfrontInterest = 0;
+      if (deductUpfrontInterest && upfrontInterestPercentage > 0) {
+        memberUpfrontInterest = mem.individualAmount * (upfrontInterestPercentage / 100);
+        totalUpfrontInterest += memberUpfrontInterest;
+      }
+
+      const totalDebit = memberTotalFees + memberUpfrontInterest;
+      
+      if (totalDebit > 0) {
         const available = safeNumber(mem.savingsAccount.AVAILABLE_BALANCE || mem.savingsAccount.ledger_balance || 0);
-        if (available < memberTotalFees) {
-          throw new Error(`Member ${mem.name} insufficient balance for fees. Available: ₦${available}, Required: ₦${memberTotalFees}`);
+        if (available < totalDebit) {
+          throw new Error(`Member ${mem.name} insufficient balance for fees + upfront interest. Available: ₦${available}, Required: ₦${totalDebit}`);
         }
 
         // Update savings account balance
-        mem.savingsAccount.AVAILABLE_BALANCE = available - memberTotalFees;
+        mem.savingsAccount.AVAILABLE_BALANCE = available - totalDebit;
         if (mem.savingsAccount.ledger_balance !== undefined) {
-          mem.savingsAccount.ledger_balance -= memberTotalFees;
+          mem.savingsAccount.ledger_balance -= totalDebit;
         }
         await mem.savingsAccount.save({ session });
 
-        // Get account details for transaction
+        // Record transaction for fees and upfront interest only
         const accountNumber = mem.savingsAccount.account_number || mem.savingsAccount.ACCT_NO;
         const accountName = mem.savingsAccount.ACCT_NM || mem.savingsAccount.account_name || mem.name;
         const customerId = mem.savingsAccount.CUST_ID || mem.savingsAccount.customer_id || mem.memberId;
         const businessUnit = mem.savingsAccount.BU_ID || group.branch || '100';
 
-        // Record fee transaction with all required fields
         const feeTransaction = new Transaction({
           TRANSACTION_TYPE: 'DEBIT',
-          AMOUNT: parseFloat(memberTotalFees),
+          AMOUNT: parseFloat(totalDebit),
           ACCT_NM: accountName,
           CUST_ID: normalizeCustomerId(customerId),
           BU_ID: businessUnit,
@@ -1063,108 +1325,211 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
           ACCT_NO: accountNumber,
           account_number: accountNumber,
           transaction_type: 'DEBIT',
-          amount: parseFloat(memberTotalFees),
-          description: `Group loan fees - Processing ₦${processingFeeAmount.toFixed(2)} + Admin ₦${adminFeeAmount.toFixed(2)}`,
-          reference: `FEE_${loanAccNo}_${Date.now()}`,
-          TRAN_PARTICULARS: `Loan processing and admin fees for group loan ${loanId}`,
-          TRAN_REFERENCE: `GL_FEE_${loanId}_${mem.memberId}`,
+          amount: parseFloat(totalDebit),
+          description: `Group loan application fees`,
+          reference: `GL_FEE_${loanId}_${mem.memberId}_${Date.now()}`,
+          TRAN_PARTICULARS: `Fees for group loan application ${loanId}`,
           transaction_date: new Date(),
           TRAN_DATE: new Date(),
           VALUE_DATE: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
           STATUS: 'COMPLETED',
           REC_ST: 'A',
-          TRAN_STATUS: 'SUCCESS',
           createdBy: createdBy,
           branch: group.branch || 1,
           CREATED_BY: createdBy?.toString() || 'SYSTEM',
-          BALANCE: available - memberTotalFees,
-          AVAILABLE_BALANCE: available - memberTotalFees,
-          LEDGER_BALANCE: (mem.savingsAccount.ledger_balance || available) - memberTotalFees,
+          BALANCE: available - totalDebit,
+          AVAILABLE_BALANCE: available - totalDebit,
           metadata: { 
-            purpose: 'GROUP_LOAN_FEES', 
+            purpose: 'GROUP_LOAN_APPLICATION_FEES', 
             loanId, 
             memberId: mem.memberId,
-            processingFee: processingFeeAmount,
-            adminFee: adminFeeAmount,
-            totalFees: memberTotalFees,
-            loanAccountNo: loanAccNo
+            applicationOnly: true,
+            disbursementPending: true
           }
         });
 
         await feeTransaction.save({ session });
+      }
+    }
 
-        console.log(`✅ Debited fees ₦${memberTotalFees} from ${accountNumber} for member ${mem.memberId}`);
+    // ==================== CREATE LOAN ACCOUNTS (NON-DISBURSED) ====================
+    const individualLoanIds = [];
+    const memberRepaymentSchedules = [];
+    const memberInterestCalculations = [];
+
+    for (const mem of processedMembers) {
+      const loanAccNo = await generateLoanAccountNumberByProdId(productId);
+      
+      console.log(`\n=== Creating NON-DISBURSED loan account ${loanAccNo} for member ${mem.memberId} ===`);
+
+      // Calculate fees and upfront interest for this member
+      const processingFeeAmount = mem.individualAmount * (safeNumber(processingFee) / 100);
+      const adminFeeAmount = safeNumber(adminFee);
+      const memberTotalFees = processingFeeAmount + adminFeeAmount;
+      
+      let memberUpfrontInterest = 0;
+      if (deductUpfrontInterest && upfrontInterestPercentage > 0) {
+        memberUpfrontInterest = mem.individualAmount * (upfrontInterestPercentage / 100);
       }
 
-      // Calculate member's repayment schedule with precise calculation
-      const memberRepayment = calculateFlatRatePrecise({
+      // ==================== CORRECT FLAT RATE INTEREST CALCULATION ====================
+      const principal = mem.individualAmount;
+      const annualInterestRate = effectiveInterestRate;
+      const termMonths = effectiveTermValue;
+      
+      // Calculate total interest
+      const totalInterest = (principal * annualInterestRate * termMonths) / (12 * 100);
+      const totalRepayment = principal + totalInterest;
+      
+      // Determine number of installments
+      let numberOfInstallments = 0;
+      switch(effectivePaymentFrequency.toUpperCase()) {
+        case 'DAILY':
+          numberOfInstallments = termMonths * 30;
+          break;
+        case 'WEEKLY':
+          numberOfInstallments = termMonths * 4;
+          break;
+        case 'BIWEEKLY':
+          numberOfInstallments = termMonths * 2;
+          break;
+        case 'MONTHLY':
+          numberOfInstallments = termMonths;
+          break;
+        case 'QUARTERLY':
+          numberOfInstallments = Math.ceil(termMonths / 3);
+          break;
+        default:
+          numberOfInstallments = termMonths;
+      }
+      
+      const installmentAmount = totalRepayment / numberOfInstallments;
+      const interestPerInstallment = totalInterest / numberOfInstallments;
+      const principalPerInstallment = principal / numberOfInstallments;
+
+      // ==================== GENERATE REPAYMENT SCHEDULE ====================
+      const memberInstallments = [];
+      let remainingBalance = principal;
+      
+      for (let i = 0; i < numberOfInstallments; i++) {
+        const dueDate = new Date(startDate);
+        
+        switch(effectivePaymentFrequency.toUpperCase()) {
+          case 'DAILY':
+            dueDate.setDate(startDate.getDate() + (i + 1));
+            break;
+          case 'WEEKLY':
+            dueDate.setDate(startDate.getDate() + ((i + 1) * 7));
+            break;
+          case 'BIWEEKLY':
+            dueDate.setDate(startDate.getDate() + ((i + 1) * 14));
+            break;
+          case 'MONTHLY':
+            dueDate.setMonth(startDate.getMonth() + (i + 1));
+            break;
+          case 'QUARTERLY':
+            dueDate.setMonth(startDate.getMonth() + ((i + 1) * 3));
+            break;
+          default:
+            dueDate.setMonth(startDate.getMonth() + (i + 1));
+        }
+        
+        const isLastInstallment = i === numberOfInstallments - 1;
+        const installmentPrincipal = isLastInstallment ? 
+          remainingBalance : principalPerInstallment;
+        const installmentInterest = isLastInstallment ? 
+          (installmentAmount - installmentPrincipal) : interestPerInstallment;
+        
+        remainingBalance -= installmentPrincipal;
+        
+        memberInstallments.push({
+          installmentNo: i + 1,
+          dueDate: dueDate,
+          principal: safeNumber(installmentPrincipal.toFixed(2)),
+          interest: safeNumber(installmentInterest.toFixed(2)),
+          totalPayment: safeNumber(installmentAmount.toFixed(2)),
+          remainingBalance: safeNumber(remainingBalance.toFixed(2)),
+          status: 'PENDING',
+          amountPaid: 0,
+          principalPaid: 0,
+          interestPaid: 0,
+          penaltyAccrued: 0,
+          capitalizedInterest: 0,
+          paymentDate: null,
+          isEarlyPayment: false,
+          isOverduePayment: false,
+          lateFeeCharged: 0
+        });
+      }
+
+      // Store interest calculation
+      memberInterestCalculations.push({
+        memberId: mem.memberId,
+        memberName: mem.name,
         principal: mem.individualAmount,
-        annualRate: interestRate,
-        termMonths: termValue,
-        startDate,
-        paymentFrequency
+        interestCalculation: {
+          totalInterest: totalInterest,
+          totalRepayment: totalRepayment,
+          installmentAmount: installmentAmount,
+          numberOfInstallments: numberOfInstallments,
+          calculationMethod: 'flat'
+        },
+        upfrontInterest: memberUpfrontInterest,
+        fees: {
+          processingFee: processingFeeAmount,
+          adminFee: adminFeeAmount,
+          total: memberTotalFees
+        }
       });
 
-      // Validate final balance is zero
-      const finalInstallment = memberRepayment.installments[memberRepayment.installments.length - 1];
-      if (Math.abs(finalInstallment.remainingBalance) > 0.01) {
-        console.warn(`Final balance not zero for member ${mem.memberId}: ${finalInstallment.remainingBalance}. Adjusting...`);
-        // Force final balance to zero and adjust the last payment
-        const adjustment = finalInstallment.remainingBalance;
-        memberRepayment.installments[memberRepayment.installments.length - 1].remainingBalance = 0;
-        memberRepayment.installments[memberRepayment.installments.length - 1].totalPayment += adjustment;
-        memberRepayment.installments[memberRepayment.installments.length - 1].interest += adjustment;
-      }
-
-      if (!memberRepayment.installments || !Array.isArray(memberRepayment.installments)) {
-        throw new Error(`Failed to generate repayment schedule for member ${mem.memberId}`);
-      }
-
-      // Verify the schedule totals
-      const totalCalculated = memberRepayment.installments.reduce((sum, inst) => sum + inst.totalPayment, 0);
-      const expectedTotal = memberRepayment.totalRepayment;
-      if (Math.abs(totalCalculated - expectedTotal) > 0.01) {
-        console.warn(`Schedule total mismatch for member ${mem.memberId}: Calculated ${totalCalculated} vs Expected ${expectedTotal}`);
-      }
-
-      console.log(`✅ Generated repayment schedule for ${mem.memberId}: ${memberRepayment.installments.length} installments, Final Balance: ${memberRepayment.installments[memberRepayment.installments.length - 1].remainingBalance}`);
-
-      // Create loan account
+      // ==================== CREATE LOAN ACCOUNT WITH ZERO BALANCE ====================
       const newLoanAcc = new LoanAccount({
         CUST_ID: normalizeCustomerId(mem.memberId),
         ACCT_NM: mem.name,
         ACCT_NO: loanAccNo,
-        LOAN_STATUS: 'PENDING',
+        LOAN_STATUS: 'APPROVED',
         PRODUCT_TYPE: 'GROUP_LOAN',
 
         PROD_ID: loanProduct.PROD_ID,
         BU_ID: loanProduct.BU_ID[0] || '100',
-        PAYMENT_FREQUENCY: paymentFrequency,
+        PAYMENT_FREQUENCY: effectivePaymentFrequency,
         TERM_CD: loanProduct.TERM_CD || 'W',
         PRIMARY_OFFICER_ID: primaryRelationshipManager,
 
-        loanGLAccount: loanProduct.loanGLAccount,
-        principalGLAccountNo: loanProduct.principalGLAccountNo,
-        interestGLAccountNo: loanProduct.interestGLAccountNo,
-        SETTLEMENT_GL_ACCT_NO: loanProduct.SETTLEMENT_GL_ACCT_NO,
+        INTEREST_RATE: effectiveInterestRate,
+        INTEREST_CALCULATION_METHOD: 'flat',
+        DAY_COUNT_CONVENTION: dayCountConvention,
+        CAPITALIZE_INTEREST: capitalizeInterest,
+        CAPITALIZATION_FREQUENCY: capitalizationFrequency,
+        CAPITALIZATION_THRESHOLD: capitalizationThreshold,
 
-        INTEREST_RATE_ID: 1,
-        INTEREST_RATE: interestRate,
+        PENALTY_RATE: penaltyRate,
+        DEDUCT_UPFRONT_INTEREST: deductUpfrontInterest,
+        UPFRONT_INTEREST_PERCENTAGE: upfrontInterestPercentage,
+        UPFRONT_INTEREST_AMOUNT: memberUpfrontInterest,
 
         APPL_ID: `APP_${loanId}_${mem.memberId}`,
         JOURNAL_ID: `JNL_${loanId}_${Date.now()}`,
 
         MATURITY_DT: maturityDate,
-        TERM_VALUE: termValue,
+        TERM_VALUE: effectiveTermValue,
 
         DISBURSEMENT_LIMIT: mem.individualAmount,
-        OUTSTANDING_PRINCIPAL: mem.individualAmount,
+        
+        // CRITICAL: ALL BALANCES ARE 0.00 - LOAN NOT DISBURSED
+        OUTSTANDING_PRINCIPAL: 0.00,
         ORIGINAL_PRINCIPAL: mem.individualAmount,
+        CURRENT_BALANCE: 0.00,
+        LEDGER_BALANCE: 0.00,
+        AVAILABLE_BALANCE: 0.00,
+        ARREARS_AMOUNT: 0.00,
+        ACCRUED_INTEREST: 0.00,
+        CAPITALIZED_INTEREST: 0.00,
+        PENALTY_ACCRUED: 0.00,
+        TOTAL_DUE: 0.00,
 
         Borrower_address: {
-          street: 'Group Member Residence',
+          street: '',
           city: 'Lagos',
           state: 'Lagos',
           zipCode: '100001',
@@ -1178,16 +1543,21 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
           processingFee: processingFeeAmount,
           adminFee: adminFeeAmount,
           totalFees: memberTotalFees,
+          upfrontInterest: memberUpfrontInterest,
           feesCollectedFromSavings: true,
           collectionDate: new Date()
         },
-        PAYMENT_SCHEDULE: memberRepayment.installments
+        PAYMENT_SCHEDULE: memberInstallments,
+        
+        DISBURSEMENT_STATUS: 'PENDING',
+        DISBURSEMENT_DATE: null,
+        IS_DISBURSED: false,
       });
 
       const savedLoanAcc = await newLoanAcc.save({ session });
       individualLoanIds.push(savedLoanAcc._id);
 
-      // === CREATE REPAYMENT SCHEDULE DOCUMENT - FIXED TO MATCH SCHEMA ===
+      // ==================== CREATE REPAYMENT SCHEDULE ====================
       const repaymentScheduleData = {
         LOAN_ACCOUNT_ID: savedLoanAcc._id,
         ACCT_NO: loanAccNo,
@@ -1195,45 +1565,29 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
         START_DATE: startDate,
         MATURITY_DATE: maturityDate,
         PRINCIPAL_AMOUNT: mem.individualAmount,
-        INTEREST_RATE: interestRate,
-        TERM: termValue,
-        TERM_TYPE: mapPaymentFrequencyToTermType(paymentFrequency), // Map to D, W, BW, M, Y
-        paymentFrequency: mapPaymentFrequencyToSchema(paymentFrequency), // Map to DAILY, WEEKLY, BI_WEEKLY, etc.
-        installments: memberRepayment.installments.map(inst => ({
-          installmentNo: inst.installmentNo || inst.installmentNumber, // Handle both field names
-          dueDate: inst.dueDate,
-          principal: inst.principal,
-          interest: inst.interest,
-          totalPayment: inst.totalPayment,
-          remainingBalance: inst.remainingBalance,
-          status: 'PENDING',
-          amountPaid: 0,
-          principalPaid: 0,
-          interestPaid: 0,
-          paymentDate: null,
-          isEarlyPayment: false,
-          isOverduePayment: false,
-          lateFeeCharged: 0
-        })),
-        TOTAL_INTEREST: memberRepayment.totalInterest,
-        TOTAL_REPAYMENT: memberRepayment.totalRepayment,
+        INTEREST_RATE: effectiveInterestRate,
+        TERM: effectiveTermValue,
+        TERM_TYPE: mapPaymentFrequencyToTermType(effectivePaymentFrequency),
+        paymentFrequency: mapPaymentFrequencyToSchema(effectivePaymentFrequency),
+        DAY_COUNT_CONVENTION: dayCountConvention,
+        CAPITALIZATION_ENABLED: capitalizeInterest,
+        CAPITALIZATION_FREQUENCY: capitalizationFrequency,
+        installments: memberInstallments,
+        TOTAL_INTEREST: totalInterest,
+        TOTAL_REPAYMENT: totalRepayment,
+        INTEREST_CALCULATION_METHOD: 'flat',
         TRANSACTION_ID: `TXN_${loanId}_${mem.memberId}`,
         EVENT_ID: `EVT_${loanId}_${Date.now()}`,
         CREATED_BY: createdBy.toString(),
-        STATUS: 'PENDING',
-        EMI_AMOUNT: memberRepayment.paymentAmount || memberRepayment.emi,
-        // Optional fields with defaults
+        STATUS: 'PENDING_DISBURSEMENT', // NOT ACTIVE
+        EMI_AMOUNT: installmentAmount,
         UPFRONT_INTEREST: {
-          type: 'NONE',
-          amount: 0,
-          percentage: 0
+          type: deductUpfrontInterest ? 'UPFRONT' : 'NONE',
+          amount: memberUpfrontInterest,
+          percentage: upfrontInterestPercentage
         },
-        GUARANTOR_ID: null,
-        GUARANTEED_AMOUNT: 0
+        DISBURSEMENT_STATUS: 'PENDING'
       };
-
-      // Validate the repayment schedule data before creation
-      validateRepaymentScheduleData(repaymentScheduleData);
 
       const repaymentSchedule = new RepaymentSchedule(repaymentScheduleData);
       const savedSchedule = await repaymentSchedule.save({ session });
@@ -1243,30 +1597,15 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
         memberName: mem.name,
         loanAccountId: savedLoanAcc._id,
         repaymentScheduleId: savedSchedule._id,
-        loanAccountNo: loanAccNo,
-        schedule: memberRepayment
+        loanAccountNo: loanAccNo
       });
-
-      console.log(`✅ Created loan account ${loanAccNo} for member ${mem.memberId} with ${memberRepayment.installments.length} installments`);
-      console.log(`✅ Created repayment schedule for ${loanAccNo} with status: ${savedSchedule.STATUS}`);
     }
 
-    // === CREATE GROUP LOAN ===
-    const groupLoanInterest = calculateFlatRatePrecise({
-      principal: finalTotal,
-      annualRate: interestRate,
-      termMonths: termValue,
-      startDate,
-      paymentFrequency
-    });
+    // ==================== CALCULATE GROUP SUMMARY ====================
+    const totalInterest = (finalTotal * effectiveInterestRate * effectiveTermValue) / (12 * 100);
+    const totalRepayment = finalTotal + totalInterest;
 
-    // Validate group loan final balance
-    const groupFinalInstallment = groupLoanInterest.installments[groupLoanInterest.installments.length - 1];
-    if (Math.abs(groupFinalInstallment.remainingBalance) > 0.01) {
-      console.warn(`Group loan final balance not zero: ${groupFinalInstallment.remainingBalance}. Adjusting...`);
-      groupLoanInterest.installments[groupLoanInterest.installments.length - 1].remainingBalance = 0;
-    }
-
+    // ==================== CREATE GROUP LOAN ====================
     const newGroupLoan = new GroupLoan({
       loanId,
       group: group._id,
@@ -1285,9 +1624,9 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
       primaryRelationshipManager,
       loanPurpose,
       savingsAccount,
-      interestRate,
-      loanTerm: paymentFrequency.toLowerCase(),
-      termValue,
+      interestRate: effectiveInterestRate,
+      loanTerm: effectivePaymentFrequency.toLowerCase(),
+      termValue: effectiveTermValue,
       productId: loanProduct.PROD_ID,
       individualLoanAccounts: individualLoanIds,
       memberRepaymentSchedules: memberRepaymentSchedules.map(rs => ({
@@ -1298,25 +1637,30 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
         loanAccountNo: rs.loanAccountNo
       })),
       createdBy,
-      status: 'applied',
+      status: 'approved', // Approved but not disbursed
       totalFeesCollected,
+      totalUpfrontInterestCollected: totalUpfrontInterest,
       netDisbursementAmount: finalTotal,
-      interestDetails: {
-        totalInterest: groupLoanInterest.totalInterest,
-        totalRepayment: groupLoanInterest.totalRepayment,
-        paymentAmount: groupLoanInterest.paymentAmount,
+      interestConfiguration: {
         calculationMethod: 'flat',
-        paymentFrequency: paymentFrequency,
-        totalInstallments: groupLoanInterest.totalInstallments
+        dayCountConvention: dayCountConvention,
+        capitalizationEnabled: capitalizeInterest,
+        capitalizationFrequency: capitalizationFrequency,
+        capitalizationThreshold: capitalizationThreshold,
+        penaltyRate: penaltyRate,
+        deductUpfrontInterest: deductUpfrontInterest,
+        upfrontInterestPercentage: upfrontInterestPercentage
       },
-      paymentSchedule: groupLoanInterest.installments.map(i => ({
-        installmentNo: i.installmentNo,
-        dueDate: i.dueDate,
-        principal: i.principal,
-        interest: i.interest,
-        totalPayment: i.totalPayment,
-        remainingBalance: i.remainingBalance
-      }))
+      interestCalculations: memberInterestCalculations,
+      interestDetails: {
+        totalInterest: totalInterest,
+        totalRepayment: totalRepayment,
+        paymentFrequency: effectivePaymentFrequency,
+        totalInstallments: effectiveTermValue,
+        interestRate: effectiveInterestRate
+      },
+      DISBURSEMENT_STATUS: 'PENDING',
+      DISBURSEMENT_DATE: null
     });
 
     await newGroupLoan.save({ session });
@@ -1337,49 +1681,26 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
 
     await session.commitTransaction();
 
-    console.log(`✅ Group loan ${loanId} created successfully with ${processedMembers.length} members`);
-    console.log(`   Total Fees Collected: ₦${totalFeesCollected.toLocaleString()}`);
-    console.log(`   Total Loan Amount: ₦${finalTotal.toLocaleString()}`);
-    console.log(`   Repayment Schedules Created: ${memberRepaymentSchedules.length}`);
-    
-    // Final validation
-    let allBalancesZero = true;
-    for (const ms of memberRepaymentSchedules) {
-      const finalBalance = ms.schedule.installments[ms.schedule.installments.length - 1].remainingBalance;
-      if (Math.abs(finalBalance) > 0.01) {
-        console.warn(`Member ${ms.memberId} final balance: ${finalBalance}`);
-        allBalancesZero = false;
-      }
-    }
-    console.log(`   All final balances zero: ${allBalancesZero}`);
+    console.log(`\n✅ GROUP LOAN ${loanId} APPROVED SUCCESSFULLY ===`);
+    console.log(`   Members: ${processedMembers.length}`);
+    console.log(`   Total Amount: ₦${finalTotal.toLocaleString()}`);
+    console.log(`   Status: APPROVED (Not Disbursed)`);
+    console.log(`   Loan Portfolio: NOT UPDATED (Will update on disbursement)`);
 
     res.status(201).json({
       success: true,
-      message: `Group loan ${loanId} created successfully. ₦${totalFeesCollected.toLocaleString()} fees collected from savings accounts.`,
+      message: `Group loan ${loanId} approved successfully. Funds not disbursed.`,
       data: {
         loanId,
         totalAmount: finalTotal,
         totalFeesCollected,
-        netDisbursed: finalTotal,
+        totalUpfrontInterestCollected: totalUpfrontInterest,
+        netDisbursed: 0.00, // NOT DISBURSED
+        pendingDisbursement: finalTotal,
         memberCount: processedMembers.length,
-        repaymentSchedulesCreated: memberRepaymentSchedules.length,
-        interestRate: interestRate + '%',
-        paymentFrequency: paymentFrequency,
-        termValue: termValue,
-        interestDetails: {
-          totalInterest: groupLoanInterest.totalInterest,
-          paymentAmount: groupLoanInterest.paymentAmount,
-          totalRepayment: groupLoanInterest.totalRepayment,
-          totalInstallments: groupLoanInterest.totalInstallments
-        },
-        memberAccounts: memberRepaymentSchedules.map(ms => ({
-          memberId: ms.memberId,
-          memberName: ms.memberName,
-          loanAccountNo: ms.loanAccountNo,
-          installmentAmount: ms.schedule.paymentAmount,
-          totalInstallments: ms.schedule.totalInstallments,
-          finalBalance: ms.schedule.installments[ms.schedule.installments.length - 1].remainingBalance
-        }))
+        loanStatus: 'APPROVED',
+        disbursementStatus: 'PENDING',
+        note: 'Loan portfolio will be updated upon disbursement'
       }
     });
 
@@ -1398,72 +1719,146 @@ export const createGroupLoanApplication = asyncHandler(async (req, res) => {
 
 // ==================== HELPER FUNCTIONS ====================
 
-// Map payment frequency to TERM_TYPE (D, W, BW, M, Y)
-function mapPaymentFrequencyToTermType(paymentFrequency) {
-  const mapping = {
-    'DAILY': 'D',
-    'WEEKLY': 'W', 
-    'BI_WEEKLY': 'BW',
-    'BIWEEKLY': 'BW',
-    'MONTHLY': 'M',
-    'QUARTERLY': 'M', // Map quarterly to monthly term type
-    'YEARLY': 'Y'
-  };
+/**
+ * Generate flat rate schedule
+ */
+function generateFlatRateSchedule({
+  principal,
+  interestRate,
+  termValue,
+  paymentAmount,
+  totalInstallments,
+  paymentFrequency,
+  startDate,
+  precision = 2
+}) {
+  const schedule = [];
+  let remainingBalance = principal;
+  const totalInterest = principal * (interestRate / 100) * (termValue / 12);
+  const totalRepayment = principal + totalInterest;
   
-  return mapping[paymentFrequency?.toUpperCase()] || 'W';
+  // Calculate equal principal and interest portions
+  const equalPrincipal = principal / totalInstallments;
+  const equalInterest = totalInterest / totalInstallments;
+
+  for (let i = 1; i <= totalInstallments; i++) {
+    const dueDate = calculateDueDate(startDate, i, paymentFrequency);
+    
+    // For the last installment, adjust to ensure zero balance
+    let principalPortion = equalPrincipal;
+    let interestPortion = equalInterest;
+    let totalPayment = paymentAmount;
+    
+    if (i === totalInstallments) {
+      // Final installment - adjust to clear remaining balance
+      principalPortion = remainingBalance;
+      interestPortion = totalPayment - principalPortion;
+    } else {
+      remainingBalance -= principalPortion;
+    }
+    
+    schedule.push({
+      installmentNo: i,
+      dueDate,
+      principal: parseFloat(principalPortion.toFixed(precision)),
+      interest: parseFloat(interestPortion.toFixed(precision)),
+      totalPayment: parseFloat(totalPayment.toFixed(precision)),
+      remainingBalance: parseFloat(remainingBalance.toFixed(precision))
+    });
+  }
+
+  return schedule;
 }
 
-// Map payment frequency to schema enum (DAILY, WEEKLY, BI_WEEKLY, MONTHLY, QUARTERLY, YEARLY)
+/**
+ * Calculate due date based on payment frequency
+ */
+function calculateDueDate(startDate, periodNumber, paymentFrequency) {
+  const date = new Date(startDate);
+  
+  switch (paymentFrequency.toUpperCase()) {
+    case 'DAILY':
+      date.setDate(date.getDate() + periodNumber);
+      break;
+    case 'WEEKLY':
+      date.setDate(date.getDate() + (periodNumber * 7));
+      break;
+    case 'BIWEEKLY':
+      date.setDate(date.getDate() + (periodNumber * 14));
+      break;
+    case 'MONTHLY':
+      date.setMonth(date.getMonth() + periodNumber);
+      break;
+    case 'QUARTERLY':
+      date.setMonth(date.getMonth() + (periodNumber * 3));
+      break;
+    case 'SEMI_ANNUAL':
+      date.setMonth(date.getMonth() + (periodNumber * 6));
+      break;
+    case 'ANNUAL':
+      date.setFullYear(date.getFullYear() + periodNumber);
+      break;
+    default:
+      // Default to monthly
+      date.setMonth(date.getMonth() + periodNumber);
+  }
+  
+  return date.toISOString().split('T')[0];
+}
+
+
+/**
+ * Map payment frequency to schema format
+ */
 function mapPaymentFrequencyToSchema(paymentFrequency) {
   const mapping = {
     'DAILY': 'DAILY',
     'WEEKLY': 'WEEKLY',
-    'BI_WEEKLY': 'BI_WEEKLY', 
     'BIWEEKLY': 'BI_WEEKLY',
     'MONTHLY': 'MONTHLY',
     'QUARTERLY': 'QUARTERLY',
-    'YEARLY': 'YEARLY'
+    'SEMI_ANNUAL': 'SEMI_ANNUAL',
+    'ANNUAL': 'ANNUAL'
   };
   
-  return mapping[paymentFrequency?.toUpperCase()] || 'WEEKLY';
+  return mapping[paymentFrequency.toUpperCase()] || 'MONTHLY';
 }
 
-// Validate repayment schedule data before creation
+/**
+ * Validate repayment schedule data
+ */
 function validateRepaymentScheduleData(data) {
   const requiredFields = [
-    'LOAN_ACCOUNT_ID', 'ACCT_NO', 'CUST_ID', 'START_DATE', 'MATURITY_DATE',
-    'PRINCIPAL_AMOUNT', 'INTEREST_RATE', 'TERM', 'TERM_TYPE', 'paymentFrequency',
-    'TOTAL_INTEREST', 'TOTAL_REPAYMENT', 'TRANSACTION_ID', 'EVENT_ID', 'CREATED_BY', 'EMI_AMOUNT'
+    'LOAN_ACCOUNT_ID',
+    'ACCT_NO',
+    'CUST_ID',
+    'START_DATE',
+    'MATURITY_DATE',
+    'PRINCIPAL_AMOUNT',
+    'INTEREST_RATE',
+    'TERM',
+    'TERM_TYPE',
+    'paymentFrequency',
+    'installments',
+    'TOTAL_INTEREST',
+    'TOTAL_REPAYMENT',
+    'TRANSACTION_ID',
+    'EVENT_ID',
+    'CREATED_BY',
+    'STATUS'
   ];
   
   const missingFields = requiredFields.filter(field => !data[field]);
+  
   if (missingFields.length > 0) {
-    throw new Error(`Missing required fields for repayment schedule: ${missingFields.join(', ')}`);
+    throw new Error(`Missing required fields in repayment schedule: ${missingFields.join(', ')}`);
   }
   
-  // Validate installments array
-  if (!data.installments || !Array.isArray(data.installments) || data.installments.length === 0) {
-    throw new Error('Repayment schedule must have at least one installment');
+  if (!Array.isArray(data.installments) || data.installments.length === 0) {
+    throw new Error('Installments array is required and must not be empty');
   }
-  
-  // Validate each installment
-  data.installments.forEach((installment, index) => {
-    const requiredInstallmentFields = [
-      'installmentNo', 'dueDate', 'principal', 'interest', 
-      'totalPayment', 'remainingBalance'
-    ];
-    
-    const missingInstallmentFields = requiredInstallmentFields.filter(field => 
-      installment[field] === undefined || installment[field] === null
-    );
-    
-    if (missingInstallmentFields.length > 0) {
-      throw new Error(`Installment ${index + 1} missing fields: ${missingInstallmentFields.join(', ')}`);
-    }
-  });
-  
-  console.log('✅ Repayment schedule data validation passed');
-}
+};
+
 
 // Enhanced calculateFlatRatePrecise function to ensure proper field names
 function calculateFlatRatePrecise({ principal, annualRate, termMonths, startDate, paymentFrequency }) {
@@ -2030,517 +2425,6 @@ export const getRejectedCreditApplications = asyncHandler(async (req, res) => {
   }
 });
 
-// Updated disburseGroupLoan function
-export const disburseGroupLoan = asyncHandler(async (req, res) => {
-  let groupLoanId = req.params.groupLoanId || req.params.id || req.body.loanId;
-
-  if (!groupLoanId) {
-    return res.status(400).json({
-      success: false,
-      message: "Group loan ID is required (e.g., GL000123)"
-    });
-  }
-
-  groupLoanId = groupLoanId.toString().trim().toUpperCase();
-  console.log(`=== STARTING DISBURSEMENT FOR GROUP LOAN: ${groupLoanId} ===`);
-
-  const session = await mongoose.startSession();
-
-  const results = {
-    successful: [],
-    failed: [],
-    feesCollected: [],
-    insufficientFunds: [],
-    missingSavingsAccounts: [],
-    invalidLoanAccounts: [],
-    validationErrors: [],
-    repaymentSchedulesActivated: []
-  };
-
-  const safeNumber = (v, def = 0) => (isNaN(Number(v)) ? def : Number(v));
-
-  try {
-    await session.withTransaction(async () => {
-      // STEP 1: Find the group loan with repayment schedules
-      console.log(`🔍 Looking for group loan: ${groupLoanId}`);
-      const groupLoan = await GroupLoan.findOne({ loanId: groupLoanId })
-        .populate('individualLoanAccounts')
-        .populate('members.memberId')
-        .populate('memberRepaymentSchedules.repaymentScheduleId') // Populate repayment schedules
-        .session(session);
-
-      if (!groupLoan) {
-        throw new Error(`Group loan with ID ${groupLoanId} not found`);
-      }
-
-      console.log(`✅ Found group loan: ${groupLoan.loanId}, Status: ${groupLoan.status}, Members: ${groupLoan.members?.length || 0}`);
-      console.log(`📊 Repayment schedules: ${groupLoan.memberRepaymentSchedules?.length || 0}`);
-
-      // Check if already disbursed
-      if (['disbursed', 'partially_disbursed', 'active'].includes(groupLoan.status)) {
-        throw new Error(`Cannot disburse: loan ${groupLoan.loanId} has already been disbursed. Current status: ${groupLoan.status}`);
-      }
-
-      if (groupLoan.status !== 'approved') {
-        throw new Error(`Loan ${groupLoan.loanId} is not approved. Current status: ${groupLoan.status}`);
-      }
-
-      // STEP 2: Get loan accounts
-      console.log(`🔍 Looking for loan accounts for group loan: ${groupLoan._id}`);
-      const loanAccounts = await LoanAccount.find({
-        groupLoan: groupLoan._id
-      }).session(session);
-
-      console.log(`📊 Found ${loanAccounts.length} loan accounts total`);
-
-      // Filter eligible loan accounts
-      const eligibleLoanAccounts = loanAccounts.filter(acc => {
-        const status = (acc.LOAN_STATUS || '').toString().toUpperCase();
-        const eligibleStatuses = ['APPROVED', 'APPROVED_PENDING_DISBURSAL', 'PENDING', 'approved', 'pending'];
-        const isEligible = eligibleStatuses.includes(status);
-        
-        if (!isEligible) {
-          console.log(`❌ Loan account ${acc.ACCT_NO} has ineligible status: ${status}`);
-        }
-        
-        return isEligible;
-      });
-
-      console.log(`✅ ${eligibleLoanAccounts.length} loan accounts eligible for disbursement`);
-
-      if (eligibleLoanAccounts.length === 0) {
-        throw new Error('No eligible loan accounts found for disbursement');
-      }
-
-      const disbursementDate = new Date(); // Actual disbursement date
-
-      // STEP 3: Process each loan account
-      for (const loanAcc of eligibleLoanAccounts) {
-        console.log(`\n--- Processing loan account: ${loanAcc.ACCT_NO} ---`);
-        
-        try {
-          // Validate loan account
-          if (!loanAcc.ACCT_NO || loanAcc.ACCT_NO.toString().length < 5) {
-            const errorMsg = `Invalid loan account number: ${loanAcc.ACCT_NO}`;
-            console.log(`❌ ${errorMsg}`);
-            results.invalidLoanAccounts.push({
-              custId: loanAcc.CUST_ID,
-              name: loanAcc.ACCT_NM,
-              loanAccountNo: loanAcc.ACCT_NO,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          // Find repayment schedule for this loan account
-          const repaymentSchedule = await RepaymentSchedule.findOne({
-            LOAN_ACCOUNT_ID: loanAcc._id
-          }).session(session);
-
-          if (!repaymentSchedule) {
-            const errorMsg = `No repayment schedule found for loan account ${loanAcc.ACCT_NO}`;
-            console.log(`❌ ${errorMsg}`);
-            results.validationErrors.push({
-              custId: loanAcc.CUST_ID,
-              loanAccountNo: loanAcc.ACCT_NO,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          console.log(`📅 Found repayment schedule with ${repaymentSchedule.installments?.length || 0} installments`);
-
-          // Determine savings account number
-          const savingsAccNo = loanAcc.savingsAccountNo || groupLoan.savingsAccount;
-          if (!savingsAccNo) {
-            const errorMsg = 'No savings account specified';
-            console.log(`❌ ${errorMsg}`);
-            results.missingSavingsAccounts.push({
-              custId: loanAcc.CUST_ID,
-              name: loanAcc.ACCT_NM,
-              loanAccountNo: loanAcc.ACCT_NO,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          console.log(`💳 Savings account to use: ${savingsAccNo}`);
-
-          // Determine loan amount - MUST match repayment schedule principal
-          const loanAmount = safeNumber(
-            loanAcc.DISBURSEMENT_LIMIT || 
-            loanAcc.ORIGINAL_PRINCIPAL || 
-            groupLoan.individualShare || 
-            (groupLoan.totalAmount / groupLoan.memberCount)
-          );
-
-          // Validate loan amount matches repayment schedule principal
-          const schedulePrincipal = safeNumber(repaymentSchedule.PRINCIPAL_AMOUNT);
-          if (Math.abs(loanAmount - schedulePrincipal) > 0.01) {
-            const errorMsg = `Loan amount (${loanAmount}) does not match repayment schedule principal (${schedulePrincipal})`;
-            console.log(`❌ ${errorMsg}`);
-            results.validationErrors.push({
-              custId: loanAcc.CUST_ID,
-              loanAccountNo: loanAcc.ACCT_NO,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          if (loanAmount <= 0) {
-            const errorMsg = `Invalid loan amount: ${loanAmount}`;
-            console.log(`❌ ${errorMsg}`);
-            results.validationErrors.push({
-              custId: loanAcc.CUST_ID,
-              loanAccountNo: loanAcc.ACCT_NO,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          console.log(`💰 Loan amount: ₦${loanAmount} (matches repayment schedule)`);
-
-          // Find savings account
-          console.log(`🔍 Searching for savings account by account_number: ${savingsAccNo}`);
-          let savingsAccount = await CustomerAccount.findOne({
-            account_number: savingsAccNo
-          }).session(session);
-
-          if (!savingsAccount) {
-            // Try alternative search if account_number doesn't work
-            console.log(`🔍 Trying alternative search for savings account: ${savingsAccNo}`);
-            savingsAccount = await CustomerAccount.findOne({
-              $or: [
-                { ACCT_NO: savingsAccNo },
-                { account_no: savingsAccNo }
-              ]
-            }).session(session);
-
-            if (!savingsAccount) {
-              const errorMsg = `Savings account ${savingsAccNo} not found`;
-              console.log(`❌ ${errorMsg}`);
-              results.missingSavingsAccounts.push({
-                custId: loanAcc.CUST_ID,
-                name: loanAcc.ACCT_NM,
-                loanAccountNo: loanAcc.ACCT_NO,
-                savingsAccountNo: savingsAccNo,
-                reason: errorMsg
-              });
-              continue;
-            }
-          }
-
-          console.log(`✅ Found savings account: ${savingsAccount.account_number || savingsAccount.ACCT_NO}`);
-
-          // Check account status
-          const accountStatus = (savingsAccount.status || savingsAccount.REC_ST || '').toString().toUpperCase();
-          console.log(`📊 Savings account status: ${accountStatus}`);
-          
-          const activeStatuses = ['ACTIVE', 'A', 'OPEN', 'LIVE'];
-          if (!activeStatuses.includes(accountStatus)) {
-            const errorMsg = `Savings account not active. Status: ${accountStatus}`;
-            console.log(`❌ ${errorMsg}`);
-            results.validationErrors.push({
-              custId: loanAcc.CUST_ID,
-              loanAccountNo: loanAcc.ACCT_NO,
-              savingsAccountNo: savingsAccNo,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          // Check available balance
-          const availableBalance = safeNumber(
-            savingsAccount.AVAILABLE_BALANCE || 
-            savingsAccount.ledger_balance || 
-            savingsAccount.cleared_balance ||
-            savingsAccount.balance ||
-            0
-          );
-
-          console.log(`💵 Available balance: ₦${availableBalance}`);
-
-          // Check fees
-          const totalFees = safeNumber(loanAcc.FEE_DETAILS?.totalFees || 0);
-          console.log(`💸 Total fees: ₦${totalFees}`);
-
-          if (totalFees > 0 && availableBalance < totalFees) {
-            const errorMsg = `Insufficient funds for fees. Required: ₦${totalFees}, Available: ₦${availableBalance}`;
-            console.log(`❌ ${errorMsg}`);
-            results.insufficientFunds.push({
-              custId: loanAcc.CUST_ID,
-              loanAccountNo: loanAcc.ACCT_NO,
-              savingsAccountNo: savingsAccNo,
-              required: totalFees,
-              available: availableBalance,
-              shortfall: totalFees - availableBalance,
-              reason: errorMsg
-            });
-            continue;
-          }
-
-          // === PROCESS DISBURSEMENT ===
-          console.log(`🔄 Starting disbursement process...`);
-
-          // STEP 1: Deduct fees if any
-          if (totalFees > 0) {
-            console.log(`💳 Deducting fees: ₦${totalFees}`);
-            savingsAccount.AVAILABLE_BALANCE = availableBalance - totalFees;
-            if (savingsAccount.ledger_balance !== undefined) {
-              savingsAccount.ledger_balance -= totalFees;
-            }
-            if (savingsAccount.cleared_balance !== undefined) {
-              savingsAccount.cleared_balance -= totalFees;
-            }
-            await savingsAccount.save({ session });
-
-            // Create fee transaction
-            const feeTransaction = new Transaction({
-              ACCT_NO: savingsAccNo,
-              ACCT_ID: savingsAccount._id?.toString() || savingsAccount.ACCT_ID || savingsAccNo,
-              ACCT_NM: savingsAccount.account_name || savingsAccount.ACCT_NM || loanAcc.ACCT_NM,
-              CUST_ID: savingsAccount.customer_id || savingsAccount.CUST_ID || loanAcc.CUST_ID,
-              TRANSACTION_TYPE: 'DEBIT',
-              AMOUNT: totalFees,
-              BU_ID: Number(savingsAccount.branch?.toString() || groupLoan.branch?.toString() || '100'),
-              description: `Loan fees for ${groupLoan.loanId}`,
-              status: 'COMPLETED',
-              createdBy: req.user?._id?.toString() || 'SYSTEM',
-              currency: 'NGN',
-              metadata: { 
-                purpose: 'LOAN_FEES', 
-                loanId: groupLoan.loanId,
-                loanAccountNo: loanAcc.ACCT_NO,
-                memberId: loanAcc.CUST_ID
-              }
-            });
-
-            await feeTransaction.save({ session });
-            results.feesCollected.push({
-              custId: loanAcc.CUST_ID,
-              name: loanAcc.ACCT_NM,
-              amount: totalFees,
-              loanAccountNo: loanAcc.ACCT_NO,
-              savingsAccountNo: savingsAccNo
-            });
-            console.log(`✅ Fees deducted successfully`);
-          }
-
-          // STEP 2: Credit loan amount to savings
-          const currentBalance = safeNumber(
-            savingsAccount.AVAILABLE_BALANCE || 
-            savingsAccount.ledger_balance || 
-            savingsAccount.cleared_balance || 
-            0
-          );
-          
-          console.log(`💰 Crediting loan amount: ₦${loanAmount} to savings account`);
-          
-          savingsAccount.AVAILABLE_BALANCE = currentBalance + loanAmount;
-          if (savingsAccount.ledger_balance !== undefined) {
-            savingsAccount.ledger_balance += loanAmount;
-          }
-          if (savingsAccount.cleared_balance !== undefined) {
-            savingsAccount.cleared_balance += loanAmount;
-          }
-          await savingsAccount.save({ session });
-
-          // Create credit transaction
-          const creditTransaction = new Transaction({
-            ACCT_NO: savingsAccNo,
-            ACCT_ID: savingsAccount._id?.toString() || savingsAccount.ACCT_ID || savingsAccNo,
-            ACCT_NM: savingsAccount.account_name || savingsAccount.ACCT_NM || loanAcc.ACCT_NM,
-            CUST_ID: savingsAccount.customer_id || savingsAccount.CUST_ID || loanAcc.CUST_ID,
-            TRANSACTION_TYPE: 'CREDIT',
-            AMOUNT: loanAmount,
-            BU_ID: Number(savingsAccount.branch?.toString() || groupLoan.branch?.toString() || '100'),
-            description: `Loan disbursement - ${groupLoan.loanId}`,
-            status: 'COMPLETED',
-            createdBy: req.user?._id?.toString() || 'SYSTEM',
-            currency: 'NGN',
-            metadata: { 
-              purpose: 'LOAN_DISBURSEMENT', 
-              loanId: groupLoan.loanId,
-              loanAccountNo: loanAcc.ACCT_NO,
-              memberId: loanAcc.CUST_ID
-            }
-          });
-
-          await creditTransaction.save({ session });
-          console.log(`✅ Loan amount credited to savings account`);
-
-          // STEP 3: Update loan account
-          console.log(`📝 Updating loan account status...`);
-          loanAcc.LOAN_STATUS = 'ACTIVE';
-          loanAcc.ACTUAL_DISBURSEMENT = loanAmount;
-          loanAcc.disbursedAt = disbursementDate;
-          loanAcc.START_DT = disbursementDate; // Set actual start date
-          loanAcc.OUTSTANDING_PRINCIPAL = loanAmount;
-          loanAcc.ledger_balance = -loanAmount;
-          loanAcc.outstanding_balance = loanAmount;
-          loanAcc.AVAILABLE_BALANCE = 0;
-          loanAcc.REC_ST = 'A';
-
-          await loanAcc.save({ session });
-          console.log(`✅ Loan account updated successfully`);
-
-          // STEP 4: ACTIVATE REPAYMENT SCHEDULE
-          console.log(`📅 Activating repayment schedule...`);
-          
-          // Update repayment schedule with actual disbursement date
-          repaymentSchedule.START_DATE = disbursementDate;
-          repaymentSchedule.STATUS = 'ACTIVE';
-          
-          // Update installment due dates based on actual disbursement
-          repaymentSchedule.installments = repaymentSchedule.installments.map((installment, index) => {
-            const dueDate = calculateDueDateFromDisbursement(
-              disbursementDate, 
-              index + 1, 
-              repaymentSchedule.paymentFrequency
-            );
-            
-            return {
-              ...installment,
-              dueDate: dueDate,
-              status: index === 0 ? 'PENDING' : 'PENDING' // First installment becomes due
-            };
-          });
-
-          await repaymentSchedule.save({ session });
-          console.log(`✅ Repayment schedule activated with ${repaymentSchedule.installments.length} installments`);
-
-          // Record success with repayment schedule info
-          results.successful.push({
-            custId: loanAcc.CUST_ID,
-            name: loanAcc.ACCT_NM,
-            loanAccountNo: loanAcc.ACCT_NO,
-            savingsAccountNo: savingsAccNo,
-            loanAmount: loanAmount,
-            feesDeducted: totalFees,
-            netReceived: loanAmount - totalFees,
-            savingsBalanceBefore: currentBalance,
-            savingsBalanceAfter: currentBalance + loanAmount - totalFees,
-            repaymentSchedule: {
-              scheduleId: repaymentSchedule._id,
-              totalInstallments: repaymentSchedule.installments.length,
-              firstDueDate: repaymentSchedule.installments[0]?.dueDate,
-              emiAmount: repaymentSchedule.EMI_AMOUNT,
-              totalRepayment: repaymentSchedule.TOTAL_REPAYMENT
-            }
-          });
-
-          results.repaymentSchedulesActivated.push({
-            loanAccountNo: loanAcc.ACCT_NO,
-            scheduleId: repaymentSchedule._id,
-            installments: repaymentSchedule.installments.length,
-            firstDueDate: repaymentSchedule.installments[0]?.dueDate
-          });
-
-          console.log(`🎉 SUCCESS: Disbursement completed for ${loanAcc.ACCT_NM}`);
-          console.log(`📅 First installment due: ${repaymentSchedule.installments[0]?.dueDate}`);
-
-        } catch (error) {
-          console.error(`💥 ERROR processing ${loanAcc.ACCT_NO}:`, error.message);
-          results.failed.push({
-            custId: loanAcc.CUST_ID,
-            loanAccountNo: loanAcc.ACCT_NO,
-            name: loanAcc.ACCT_NM,
-            savingsAccountNo: loanAcc.savingsAccountNo,
-            reason: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-          });
-        }
-      }
-
-      // STEP 4: Update group loan status
-      console.log(`\n=== DISBURSEMENT SUMMARY ===`);
-      console.log(`Successful: ${results.successful.length}`);
-      console.log(`Failed: ${results.failed.length}`);
-      console.log(`Repayment Schedules Activated: ${results.repaymentSchedulesActivated.length}`);
-      console.log(`Missing Savings: ${results.missingSavingsAccounts.length}`);
-      console.log(`Insufficient Funds: ${results.insufficientFunds.length}`);
-      console.log(`Invalid Accounts: ${results.invalidLoanAccounts.length}`);
-
-      if (results.successful.length === eligibleLoanAccounts.length) {
-        groupLoan.status = 'disbursed';
-        console.log(`✅ All disbursements successful - marking as DISBURSED`);
-      } else if (results.successful.length > 0) {
-        groupLoan.status = 'partially_disbursed';
-        console.log(`⚠️ Partial disbursement - marking as PARTIALLY_DISBURSED`);
-      } else {
-        groupLoan.status = 'approved';
-        console.log(`❌ All disbursements failed - keeping as APPROVED`);
-      }
-
-      groupLoan.disbursedAt = disbursementDate;
-      groupLoan.actualDisbursementDate = disbursementDate;
-      groupLoan.disbursementResults = {
-        summary: {
-          totalMembers: eligibleLoanAccounts.length,
-          successful: results.successful.length,
-          failed: results.failed.length,
-          insufficientFunds: results.insufficientFunds.length,
-          missingSavingsAccounts: results.missingSavingsAccounts.length,
-          invalidLoanAccounts: results.invalidLoanAccounts.length,
-          validationErrors: results.validationErrors.length,
-          repaymentSchedulesActivated: results.repaymentSchedulesActivated.length,
-          totalDisbursed: results.successful.reduce((sum, s) => sum + s.loanAmount, 0),
-          totalFeesCollected: results.feesCollected.reduce((sum, f) => sum + f.amount, 0),
-          disbursementDate: disbursementDate,
-          processedBy: req.user?._id || 'SYSTEM'
-        },
-        details: results
-      };
-
-      await groupLoan.save({ session });
-      console.log(`💾 Group loan status updated to: ${groupLoan.status}`);
-    });
-
-    // Prepare final response
-    const totalProcessed = results.successful.length + results.failed.length + 
-                         results.missingSavingsAccounts.length + results.invalidLoanAccounts.length +
-                         results.validationErrors.length;
-
-    const response = {
-      success: results.successful.length > 0,
-      message: results.successful.length > 0 
-        ? `Disbursement completed for ${results.successful.length}/${totalProcessed} members. ${results.repaymentSchedulesActivated.length} repayment schedules activated.` 
-        : 'Disbursement failed for all members',
-      summary: {
-        totalProcessed,
-        successful: results.successful.length,
-        failed: results.failed.length,
-        repaymentSchedulesActivated: results.repaymentSchedulesActivated.length,
-        missingSavingsAccounts: results.missingSavingsAccounts.length,
-        invalidLoanAccounts: results.invalidLoanAccounts.length,
-        validationErrors: results.validationErrors.length,
-        insufficientFunds: results.insufficientFunds.length,
-        feesCollected: results.feesCollected.length,
-        totalDisbursed: results.successful.reduce((sum, s) => sum + s.loanAmount, 0),
-        totalFees: results.feesCollected.reduce((sum, f) => sum + f.amount, 0),
-        disbursementDate: new Date()
-      },
-      details: results
-    };
-
-    if (results.successful.length === 0) {
-      return res.status(400).json(response);
-    }
-
-    res.status(200).json(response);
-
-  } catch (error) {
-    console.error('💥 DISBURSEMENT FAILED:', error.message);
-    res.status(400).json({
-      success: false,
-      message: error.message || 'Disbursement failed',
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  } finally {
-    await session.endSession();
-    console.log(`=== DISBURSEMENT PROCESS COMPLETED ===`);
-  }
-});
 
 // Helper function to calculate due dates from disbursement date
 function calculateDueDateFromDisbursement(disbursementDate, installmentNumber, paymentFrequency) {
@@ -6171,7 +6055,6 @@ export default {
   getGroupByLegacyId,
   getGroupsByBranch,
   createGroupLoanApplication,
-  disburseGroupLoan,
   repayGroupLoan,
   getGroupLoan,
   deleteGroup,

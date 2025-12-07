@@ -2012,6 +2012,8 @@ export const transferVaultToBranch = async (req, res) => {
   }
 };
 
+
+
 // Update the default export to include new functions
 export default {
   createVault,

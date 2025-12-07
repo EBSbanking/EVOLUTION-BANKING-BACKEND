@@ -11,7 +11,7 @@ export const CORE_TX_TYPES = [
 export const LOAN_TX_TYPES = [
   'LOAN_DISBURSEMENT', 'LOAN_REPAYMENT', 'LOAN_INTEREST',
   'LOAN_FEE', 'LOAN_PENALTY', 'LOAN_REFINANCE', 'LOAN_WRITEOFF',
-  'LOAN_RECOVERY', 'LOAN_RESCHEDULE', 'ADJUSTMENT', 'FEE',
+  'LOAN_RECOVERY', 'LOAN_RESCHEDULE', 'LOAN_ADJUSTMENT',
   'LOAN_PROCESSING_FEE', 'LOAN_LIABILITY'
 ];
 
@@ -45,6 +45,11 @@ export const THRIFT_TX_TYPES = [
   'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'BANK_PAYMENT'
 ];
 
+// Processing Fee Transaction (Add this missing constant)
+export const PROCESSING_FEE_TYPES = [
+  'PROCESSING_FEE'
+];
+
 // Investment Account Transactions
 export const INVESTMENT_ACCOUNT_TX_TYPES = [
   ...INVESTMENT_TX_TYPES,
@@ -56,6 +61,9 @@ export const INVESTMENT_ACCOUNT_TX_TYPES = [
 // Loan Account Transactions
 export const LOAN_ACCOUNT_TX_TYPES = [...LOAN_TX_TYPES];
 
+// General Transaction Types
+export const GENERAL_TX_TYPES = ['DEPOSIT', 'WITHDRAWAL', 'FOREIGN_EXCHANGE', 'TRANSFER', 'DEBIT', 'CREDIT', 'FEE'];
+
 // Get all available transaction types
 export const getAllTransactionTypes = () => [
   ...new Set([
@@ -65,15 +73,11 @@ export const getAllTransactionTypes = () => [
     ...CARD_TX_TYPES,
     ...DIGITAL_TX_TYPES,
     ...SPECIAL_TX_TYPES,
-    ...THRIFT_TX_TYPES
+    ...THRIFT_TX_TYPES,
+    ...PROCESSING_FEE_TYPES, // Fixed: Use PROCESSING_FEE_TYPES instead of PROCESSING_FEE
+    ...GENERAL_TX_TYPES
   ])
 ];
-
-// constants/transactionTypes.js
-
-export const GENERAL_TX_TYPES = ['DEPOSIT', 'WITHDRAWAL', 'FOREIGN_EXCHANGE', 'TRANSFER', 'DEBIT', 'CREDIT', 'FEE'];
-
-
 
 // Export everything together for easy default import
 const allTransactionTypes = {
@@ -84,6 +88,7 @@ const allTransactionTypes = {
   DIGITAL_TX_TYPES,
   SPECIAL_TX_TYPES,
   THRIFT_TX_TYPES,
+  PROCESSING_FEE_TYPES, // Fixed
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,

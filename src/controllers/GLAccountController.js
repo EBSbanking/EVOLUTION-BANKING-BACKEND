@@ -36,187 +36,8 @@ const generateCOAAccountNumber = ({ organizationCode, branchCode, accountClass, 
   const subAcc = String(subAccount).padStart(3, '0');
   return `${entity}${branch}${classCode}${typeCode}${subAcc}`;
 };
-// UPDATED: Enhanced account class mapping - ALIGNED WITH FRONTEND
-const getAccountClassCode = (accountClass) => {
-  const classMap = {
-    'ASSET': '001',
-    'LIABILITY': '101',
-    'EQUITY': '201',
-    'REVENUE': '301',
-    'EXPENSE': '401',
-    'CONTROL_SUSPENSE': '501',
-    'TAX': '601',
-    'SPECIAL_PURPOSE': '701',
-    'OTHER': '999'
-  };
-  return classMap[accountClass] || '999';
-};
-// UPDATED: Enhanced account type mapping - FULLY ALIGNED WITH FRONTEND ENUM
-const getAccountTypeCode = (accountType) => {
-  const typeMap = {
-    // Assets - Frontend types
-    'CURRENT_ASSET': '001',
-    'CUSTOMER_ACCOUNT': '002',
-    'CASH_ACCOUNT': '003',
-    'BANK_ACCOUNT': '004',
-    'RECEIVABLE_ACCOUNT': '005',
-    'FIXED_ASSET': '006',
-    'LOAN_ASSET': '007',
-    'INTANGIBLE_ASSET': '008',
-    'OTHER_ASSET': '009',
-    'PROPERTY_PLANT_EQUIPMENT': '010',
-    'INVESTMENT_ASSET': '011',
-  
-    // NEW: Enhanced Asset Types
-    'LOAN_PORTFOLIO': '012',
-    'LOAN_RECEIVABLE': '013',
-    'INTEREST_RECEIVABLE': '014',
-    'FEE_RECEIVABLE': '015',
-    'ACCRUED_INTEREST': '016',
-    'DUE_FROM_BANKS': '017',
-    'TRADING_SECURITIES': '018',
-    'HELD_TO_MATURITY_SECURITIES': '019',
-    'INVENTORY': '020',
-    'PREPAID_EXPENSE': '021',
-    'DEFERRED_TAX_ASSET': '022',
-    'GOODWILL': '023',
-    'LEASE_ASSET': '024',
-  
-    // Liabilities - Frontend types
-    'CURRENT_LIABILITY': '101',
-    'LIABILITY_ACCOUNT': '102',
-    'PAYABLE_ACCOUNT': '103',
-    'LONG_TERM_LIABILITY': '104',
-    'LOAN_LIABILITY': '105',
-    'DEPOSITS_LIABILITY': '106',
-    'OTHER_LIABILITY': '107',
-  
-    // NEW: Enhanced Liability Types
-    'CUSTOMER_DEPOSITS': '108',
-    'SAVINGS_DEPOSITS': '109',
-    'TIME_DEPOSITS': '110',
-    'INTEREST_PAYABLE': '111',
-    'ACCRUED_EXPENSES': '112',
-    'TAX_PAYABLE': '113',
-    'DIVIDEND_PAYABLE': '114',
-    'BORROWINGS': '115',
-    'BONDS_PAYABLE': '116',
-    'LEASE_LIABILITY': '117',
-    'DEFERRED_TAX_LIABILITY': '118',
-    'PROVISIONS': '119',
-    'CONTINGENT_LIABILITY': '120',
-  
-    // Equity - Frontend types
-    'SHARE_CAPITAL': '201',
-    'CAPITAL_ACCOUNT': '202',
-    'RETAINED_EARNINGS': '203',
-    'EQUITY_ACCOUNT': '204',
-    'OTHER_EQUITY': '205',
-  
-    // NEW: Enhanced Equity Types
-    'ADDITIONAL_PAID_IN_CAPITAL': '206',
-    'TREASURY_STOCK': '207',
-    'OTHER_COMPREHENSIVE_INCOME': '208',
-    'DONATED_CAPITAL': '209',
-    'REVALUATION_RESERVE': '210',
-    'CAPITAL_RESERVE': '211',
-    'STATUTORY_RESERVE': '212',
-  
-    // Revenue - Frontend types
-    'OPERATING_REVENUE': '301',
-    'REVENUE_ACCOUNT': '302',
-    'SERVICE_INCOME': '303',
-    'INTEREST_INCOME': '304',
-    'FEE_INCOME': '305',
-    'PROCESSING_FEE': '306',
-    'INSURANCE_FEE': '307',
-    'UPFRONT_INTEREST': '308',
-    'OTHER_FEES': '309',
-    'OTHER_REVENUE': '310',
-  
-    // NEW: Enhanced Revenue Types
-    'LOAN_INTEREST_INCOME': '311',
-    'INVESTMENT_INTEREST_INCOME': '312',
-    'COMMISSION_INCOME': '313',
-    'TRADING_INCOME': '314',
-    'DIVIDEND_INCOME': '315',
-    'RENTAL_INCOME': '316',
-    'LATE_FEE_INCOME': '317',
-    'PENALTY_INCOME': '318',
-    'FOREIGN_EXCHANGE_GAIN': '319',
-    'REALIZED_GAIN': '320',
-    'UNREALIZED_GAIN': '321',
-    'SALES_REVENUE': '322',
-  
-    // Expenses - Frontend types
-    'OPERATING_EXPENSE': '401',
-    'EXPENSE_ACCOUNT': '402',
-    'STAFF_EXPENSE': '403',
-    'ADMINISTRATIVE_EXPENSE': '404',
-    'ADMIN_EXPENSE': '405',
-    'FINANCE_COST': '406',
-    'INTEREST_EXPENSE': '407',
-    'OTHER_EXPENSE': '408',
-  
-    // NEW: Enhanced Expense Types
-    'SALARIES_WAGES': '409',
-    'EMPLOYEE_BENEFITS': '410',
-    'RENT_EXPENSE': '411',
-    'UTILITIES_EXPENSE': '412',
-    'DEPRECIATION_EXPENSE': '413',
-    'AMORTIZATION_EXPENSE': '414',
-    'PROFESSIONAL_FEES': '415',
-    'MARKETING_EXPENSE': '416',
-    'TRAVEL_EXPENSE': '417',
-    'INSURANCE_EXPENSE': '418',
-    'REPAIRS_MAINTENANCE': '419',
-    'BAD_DEBT_EXPENSE': '420',
-    'LOAN_LOSS_PROVISION': '421',
-    'FOREIGN_EXCHANGE_LOSS': '422',
-    'TAX_EXPENSE': '423',
-    'BORROWING_COST': '424',
-  
-    // NEW: Control & Suspense Accounts
-    'SUSPENSE_ACCOUNT': '501',
-    'CLEARING_ACCOUNT': '502',
-    'CONTROL_ACCOUNT': '503',
-    'INTERCOMPANY_ACCOUNT': '504',
-    'RECONCILIATION_ACCOUNT': '505',
-  
-    // NEW: Loan Specific Accounts
-    'LOAN_SUSPENSE': '506',
-    'LOAN_DISBURSEMENT_CONTROL': '507',
-    'LOAN_REPAYMENT_CONTROL': '508',
-    'INTEREST_SUSPENSE': '509',
-    'FEE_SUSPENSE': '510',
-    'UNAPPLIED_FUNDS': '511',
-    'UNEARNED_INTEREST': '512',
-    'LOAN_CHARGE_OFF': '513',
-    'PROVISION_FOR_LOAN_LOSSES': '514',
-    'RECOVERIES_ACCOUNT': '515',
-    'DELINQUENT_LOAN_ACCOUNT': '516',
-    'RESTRUCTURED_LOAN_ACCOUNT': '517',
-  
-    // NEW: Tax Accounts
-    'WITHHOLDING_TAX_PAYABLE': '601',
-    'VAT_PAYABLE': '602',
-    'INCOME_TAX_PAYABLE': '603',
-    'DEFERRED_TAX': '604',
-  
-    // NEW: Special Purpose Accounts
-    'CONTINGENT_ACCOUNT': '701',
-    'MEMORANDUM_ACCOUNT': '702',
-    'OFF_BALANCE_SHEET_ACCOUNT': '703',
-    'NOSTRO_ACCOUNT': '704',
-    'VOSTRO_ACCOUNT': '705',
-  
-    // Special Types
-    'INTER_BRANCH': '801',
-    'CONTRA_ASSET': '802',
-    'CONTRA_LIABILITY': '803'
-  };
-  return typeMap[accountType] || '999';
-};
+
+
 // UPDATED: Helper function to detect account class from type code
 const getAccountClassFromTypeCode = (typeCode) => {
   const code = parseInt(typeCode);
@@ -402,6 +223,7 @@ const normalizeAccountType = (frontendAccountType) => {
   };
   return specialMappings[frontendAccountType] || frontendAccountType;
 };
+
 // UPDATED: Enhanced branch code normalization
 const normalizeBranchCode = (branchCode) => {
   if (!branchCode) return null;
@@ -433,20 +255,7 @@ const generateSubAccountCode = (accountClass, accountType, metadata = {}) => {
   };
   return subAccountMap[accountType] || '001';
 };
-// UPDATED: Enhanced normal balance determination
-const getNormalBalance = (accountClass) => {
-  const normalBalanceMap = {
-    'ASSET': 'DEBIT',
-    'LIABILITY': 'CREDIT',
-    'EQUITY': 'CREDIT',
-    'REVENUE': 'CREDIT',
-    'EXPENSE': 'DEBIT',
-    'CONTROL_SUSPENSE': 'DEBIT', // Most control accounts are debit normal
-    'TAX': 'CREDIT', // Most tax accounts are liabilities
-    'SPECIAL_PURPOSE': 'DEBIT'
-  };
-  return normalBalanceMap[accountClass] || 'DEBIT';
-};
+
 // UPDATED: Enhanced account level determination
 const determineAccountLevel = (level, isControlAccount, parentAccountNo) => {
   if (isControlAccount && !parentAccountNo) return 1; // Top-level control account
@@ -455,60 +264,15 @@ const determineAccountLevel = (level, isControlAccount, parentAccountNo) => {
   return 4; // Standalone detail account
 };
 // UPDATED: Enhanced account class and type validation
-const validateAccountClassType = (accountClass, accountType) => {
-  const validCombinations = {
-    'ASSET': [
-      'CURRENT_ASSET', 'CUSTOMER_ACCOUNT', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 'RECEIVABLE_ACCOUNT',
-      'FIXED_ASSET', 'LOAN_ASSET', 'INTANGIBLE_ASSET', 'OTHER_ASSET', 'PROPERTY_PLANT_EQUIPMENT',
-      'INVESTMENT_ASSET', 'LOAN_PORTFOLIO', 'LOAN_RECEIVABLE', 'INTEREST_RECEIVABLE', 'FEE_RECEIVABLE',
-      'ACCRUED_INTEREST', 'DUE_FROM_BANKS', 'TRADING_SECURITIES', 'HELD_TO_MATURITY_SECURITIES',
-      'INVENTORY', 'PREPAID_EXPENSE', 'DEFERRED_TAX_ASSET', 'GOODWILL', 'LEASE_ASSET'
-    ],
-    'LIABILITY': [
-      'CURRENT_LIABILITY', 'LIABILITY_ACCOUNT', 'PAYABLE_ACCOUNT', 'LONG_TERM_LIABILITY', 'LOAN_LIABILITY',
-      'DEPOSITS_LIABILITY', 'OTHER_LIABILITY', 'CUSTOMER_DEPOSITS', 'SAVINGS_DEPOSITS', 'TIME_DEPOSITS',
-      'INTEREST_PAYABLE', 'ACCRUED_EXPENSES', 'TAX_PAYABLE', 'DIVIDEND_PAYABLE', 'BORROWINGS', 'BONDS_PAYABLE',
-      'LEASE_LIABILITY', 'DEFERRED_TAX_LIABILITY', 'PROVISIONS', 'CONTINGENT_LIABILITY'
-    ],
-    'EQUITY': [
-      'SHARE_CAPITAL', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS', 'EQUITY_ACCOUNT', 'OTHER_EQUITY',
-      'ADDITIONAL_PAID_IN_CAPITAL', 'TREASURY_STOCK', 'OTHER_COMPREHENSIVE_INCOME', 'DONATED_CAPITAL',
-      'REVALUATION_RESERVE', 'CAPITAL_RESERVE', 'STATUTORY_RESERVE'
-    ],
-    'REVENUE': [
-      'OPERATING_REVENUE', 'REVENUE_ACCOUNT', 'SERVICE_INCOME', 'INTEREST_INCOME', 'FEE_INCOME', 'PROCESSING_FEE',
-      'INSURANCE_FEE', 'UPFRONT_INTEREST', 'OTHER_FEES', 'OTHER_REVENUE', 'LOAN_INTEREST_INCOME', 'INVESTMENT_INTEREST_INCOME',
-      'COMMISSION_INCOME', 'TRADING_INCOME', 'DIVIDEND_INCOME', 'RENTAL_INCOME', 'LATE_FEE_INCOME', 'PENALTY_INCOME',
-      'FOREIGN_EXCHANGE_GAIN', 'REALIZED_GAIN', 'UNREALIZED_GAIN', 'SALES_REVENUE'
-    ],
-    'EXPENSE': [
-      'OPERATING_EXPENSE', 'EXPENSE_ACCOUNT', 'STAFF_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 'ADMIN_EXPENSE', 'FINANCE_COST',
-      'INTEREST_EXPENSE', 'OTHER_EXPENSE', 'SALARIES_WAGES', 'EMPLOYEE_BENEFITS', 'RENT_EXPENSE', 'UTILITIES_EXPENSE',
-      'DEPRECIATION_EXPENSE', 'AMORTIZATION_EXPENSE', 'PROFESSIONAL_FEES', 'MARKETING_EXPENSE', 'TRAVEL_EXPENSE',
-      'INSURANCE_EXPENSE', 'REPAIRS_MAINTENANCE', 'BAD_DEBT_EXPENSE', 'LOAN_LOSS_PROVISION', 'FOREIGN_EXCHANGE_LOSS',
-      'TAX_EXPENSE', 'BORROWING_COST'
-    ],
-    'CONTROL_SUSPENSE': [
-      'SUSPENSE_ACCOUNT', 'CLEARING_ACCOUNT', 'CONTROL_ACCOUNT', 'INTERCOMPANY_ACCOUNT', 'RECONCILIATION_ACCOUNT',
-      'LOAN_SUSPENSE', 'LOAN_DISBURSEMENT_CONTROL', 'LOAN_REPAYMENT_CONTROL', 'INTEREST_SUSPENSE', 'FEE_SUSPENSE',
-      'UNAPPLIED_FUNDS', 'UNEARNED_INTEREST', 'LOAN_CHARGE_OFF', 'PROVISION_FOR_LOAN_LOSSES', 'RECOVERIES_ACCOUNT',
-      'DELINQUENT_LOAN_ACCOUNT', 'RESTRUCTURED_LOAN_ACCOUNT'
-    ],
-    'TAX': [
-      'WITHHOLDING_TAX_PAYABLE', 'VAT_PAYABLE', 'INCOME_TAX_PAYABLE', 'DEFERRED_TAX'
-    ],
-    'SPECIAL_PURPOSE': [
-      'CONTINGENT_ACCOUNT', 'MEMORANDUM_ACCOUNT', 'OFF_BALANCE_SHEET_ACCOUNT', 'NOSTRO_ACCOUNT', 'VOSTRO_ACCOUNT'
-    ]
-  };
-  if (!validCombinations[accountClass]?.includes(accountType)) {
-    throw new Error(`Invalid account type '${accountType}' for account class '${accountClass}'`);
-  }
-};
-// ==================== ENHANCED COA ACCOUNT CREATION ====================
+
 const createCOAAlignedGLAccount = async (req, res) => {
   const session = await mongoose.startSession();
+  
   try {
+    console.log('🔵 Starting GL account creation transaction...');
+
+    let createdAccount = null;
+
     await session.withTransaction(async () => {
       const {
         organizationCode,
@@ -533,23 +297,32 @@ const createCOAAlignedGLAccount = async (req, res) => {
         metadata = {}
       } = req.body;
 
-      // Resolve accountClass and accountType from metadata if not at root
-      const resolvedAccountClass = accountClass || metadata.accountClass;
-      const resolvedAccountType = accountType || metadata.accountType;
-
-      // Validate required fields using resolved values
-      if (!organizationCode || !branchCode || !resolvedAccountClass || !resolvedAccountType || !ACCT_DESC || !CREATED_BY) {
-        throw new Error(`Missing required fields: organizationCode, branchCode, accountClass, accountType, ACCT_DESC, CREATED_BY`);
+      // ==================== VALIDATION ====================
+      if (!organizationCode || !branchCode || !ACCT_DESC || !CREATED_BY) {
+        const missingFields = [];
+        if (!organizationCode) missingFields.push('organizationCode');
+        if (!branchCode) missingFields.push('branchCode');
+        if (!ACCT_DESC) missingFields.push('ACCT_DESC');
+        if (!CREATED_BY) missingFields.push('CREATED_BY');
+        
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
 
-      // Use resolved values going forward
+      // Resolve accountClass and accountType
+      const resolvedAccountClass = (accountClass || metadata.accountClass || '').toUpperCase();
+      const resolvedAccountType = accountType || metadata.accountType;
+
+      if (!resolvedAccountClass || !resolvedAccountType) {
+        throw new Error('Missing accountClass or accountType');
+      }
+
       const finalAccountClass = resolvedAccountClass;
       const finalAccountType = resolvedAccountType;
 
       // Normalize and validate branch code
       const normalizedBranchCode = normalizeBranchCode(branchCode);
 
-      // Normalize account type to ensure compatibility
+      // Normalize account type
       const normalizedAccountType = normalizeAccountType(finalAccountType);
 
       // Validate account class and type consistency
@@ -560,6 +333,7 @@ const createCOAAlignedGLAccount = async (req, res) => {
       if (!organization) {
         throw new Error(`Organization with code ${organizationCode} not found`);
       }
+      
       const branch = await Branch.findOne({
         organizationCode,
         branchCode: normalizedBranchCode
@@ -588,9 +362,12 @@ const createCOAAlignedGLAccount = async (req, res) => {
       }
 
       // Determine COA structure
-      const financialStatementType = mapToFinancialStatementCategory(finalAccountClass, normalizedAccountType);
-      const financialStatementCategory = mapToFinancialStatementSubCategory(finalAccountClass, normalizedAccountType);
+      const { financialStatementType, financialStatementCategory } = getFinancialStatementInfo(finalAccountClass, normalizedAccountType);
     
+      if (!financialStatementType || !financialStatementCategory) {
+        throw new Error('Could not determine financial statement info');
+      }
+
       // Determine normal balance based on account class
       const normalBalance = getNormalBalance(finalAccountClass);
     
@@ -599,6 +376,9 @@ const createCOAAlignedGLAccount = async (req, res) => {
 
       // Generate GL Account ID
       const glAcctId = await generateNextGLAcctId(session);
+
+      // Map account type to internal format if needed
+      const internalAccountType = mapMetadataAccountTypeToAccountType(normalizedAccountType);
 
       // Create COA-aligned GL Account
       const newGLAccount = new GLAccount({
@@ -617,19 +397,19 @@ const createCOAAlignedGLAccount = async (req, res) => {
         // Account Description
         ACCT_DESC,
       
-        // ==================== ENHANCED COA STRUCTURE ====================
+        // COA Structure
         coaStructure: {
           segments: {
             entity: String(organizationCode).padStart(2, '0'),
             branch: normalizedBranchCode,
             accountClass: getAccountClassCode(finalAccountClass),
-            accountType: getAccountTypeCode(normalizedAccountType),
+            accountType: getAccountTypeCode(internalAccountType),
             subAccount: subAccountCode
           },
           financialStatement: {
             type: financialStatementType,
             category: financialStatementCategory,
-            subCategory: `${finalAccountClass}_${normalizedAccountType}`
+            subCategory: internalAccountType
           },
           hierarchy: {
             level: accountLevel,
@@ -640,16 +420,16 @@ const createCOAAlignedGLAccount = async (req, res) => {
           },
           accounting: {
             normalBalance: normalBalance,
-            balanceType: finalAccountClass,
+            balanceType: getCOABalanceType(finalAccountClass, normalizedAccountType),
             isTemporary: ['REVENUE', 'EXPENSE'].includes(finalAccountClass),
-            isPermanent: ['ASSET', 'LIABILITY', 'EQUITY', 'CONTROL_SUSPENSE', 'TAX', 'SPECIAL_PURPOSE'].includes(finalAccountClass),
+            isPermanent: ['ASSET', 'LIABILITY', 'EQUITY', 'CONTROL', 'SUSPENSE', 'TAX'].includes(finalAccountClass),
             requiresClosing: ['REVENUE', 'EXPENSE'].includes(finalAccountClass)
           }
         },
       
         // Account Structure (legacy compatibility)
         categoryCode: getAccountClassCode(finalAccountClass),
-        categoryName: `${finalAccountClass} - ${normalizedAccountType}`,
+        categoryName: `${finalAccountClass} - ${internalAccountType}`,
         level: accountLevel,
         LEDGER_NO: '001',
         SUB_LEDGER_NO: subAccountCode,
@@ -676,9 +456,10 @@ const createCOAAlignedGLAccount = async (req, res) => {
         CURRENT_BALANCE: openingBalance,
         CURRENCY_CODE: 'NGN',
       
-        // ==================== ENHANCED METADATA ====================
+        // Metadata
         metadata: {
           accountType: normalizedAccountType,
+          internalAccountType: internalAccountType,
           accountClass: finalAccountClass,
           normalBalance: normalBalance,
           coaCompliant: true,
@@ -698,72 +479,951 @@ const createCOAAlignedGLAccount = async (req, res) => {
         }
       });
 
+      // Save the account
       await newGLAccount.save({ session });
 
-      // If this is a control account, update parent-child relationships
+      // Update parent-child relationships if needed
       if (isControlAccount && parentAccountNo) {
         await updateParentChildRelationship(parentAccountNo, glAcctNo, session);
       }
 
-      // Enhanced audit trail
-      await addAuditTrail({
-        event_type: 'CREATE_COA_ALIGNED_ACCOUNT',
-        user_id: CREATED_BY,
-        action: 'CREATE',
-        new_value: {
-          GL_ACCT_NO: glAcctNo,
-          accountClass: finalAccountClass,
-          accountType: normalizedAccountType,
-          financialStatement: financialStatementType,
-          normalBalance,
-          isControlAccount,
-          parentAccountNo,
-          branchCode: normalizedBranchCode,
-          subAccountCode
-        },
-        old_value: null,
-        ip_address: req.ip || '0.0.0.0',
-        entity_id: newGLAccount._id,
-        entity_type: 'GLAccount',
-        status: 'SUCCESS',
-        description: `Created COA-aligned account ${glAcctNo} - ${ACCT_DESC} for branch ${normalizedBranchCode}`,
-        reference_no: `COA-${newGLAccount._id}`,
-        account_no: glAcctNo,
-        additional_info: {
-          originalBranchCode: branchCode,
-          normalizedBranchCode: normalizedBranchCode,
-          branchName: branch.branchName,
-          subAccountCode: subAccountCode,
-          accountLevel: accountLevel
-        },
-        session,
-      });
+      // Enhanced audit trail - FIXED PARAMETERS
+      try {
+        // Make sure all parameters are correct
+        const auditParams = {
+          EVENT_TYPE: 'CREATE_COA_ALIGNED_ACCOUNT',
+          USER_ID: CREATED_BY,
+          ACTION: 'CREATE',
+          NEW_VALUE: {
+            GL_ACCT_NO: glAcctNo,
+            accountClass: finalAccountClass,
+            accountType: internalAccountType,
+            financialStatement: {
+              type: financialStatementType,
+              category: financialStatementCategory
+            },
+            normalBalance,
+            isControlAccount,
+            parentAccountNo,
+            branchCode: normalizedBranchCode,
+            subAccountCode
+          },
+          OLD_VALUE: null,
+          IP_ADDRESS: req.ip || '0.0.0.0',
+          ENTITY_ID: newGLAccount._id,
+          ENTITY_TYPE: 'GLAccount',
+          STATUS: 'SUCCESS',
+          DESCRIPTION: `Created COA-aligned account ${glAcctNo} - ${ACCT_DESC} for branch ${normalizedBranchCode}`,
+          REFERENCE_NO: `COA-${newGLAccount._id}`,
+          ACCOUNT_NO: glAcctNo,
+          ADDITIONAL_INFO: {
+            originalBranchCode: branchCode,
+            normalizedBranchCode: normalizedBranchCode,
+            branchName: branch.branchName,
+            subAccountCode: subAccountCode,
+            accountLevel: accountLevel,
+            organizationCode: organizationCode,
+            organizationName: organization.organizationName
+          },
+          session,
+        };
 
-      return res.status(201).json({
-        success: true,
-        message: 'COA-aligned GL account created successfully',
-        data: newGLAccount.getFrontendData() // Use the instance method from your model
-      });
+        console.log('📝 Audit trail params:', JSON.stringify(auditParams, null, 2));
+        await addAuditTrail(auditParams);
+        console.log('✅ Audit trail created successfully');
+      } catch (auditError) {
+        console.warn('⚠️ Audit trail creation failed (non-critical):', auditError.message);
+        // Don't throw - audit failure shouldn't fail the transaction
+      }
+
+      // Store the created account for response
+      createdAccount = newGLAccount;
+      console.log('✅ Transaction operations completed successfully');
     });
+
+    // ==================== SEND RESPONSE AFTER TRANSACTION ====================
+    if (createdAccount) {
+      console.log('📤 Preparing success response...');
+      
+      const frontendData = createdAccount.getFrontendData ? 
+        createdAccount.getFrontendData() : {
+          GL_ACCT_NO: createdAccount.GL_ACCT_NO,
+          GL_ACCT_ID: createdAccount.GL_ACCT_ID,
+          ACCT_DESC: createdAccount.ACCT_DESC,
+          organizationName: createdAccount.organizationName,
+          organizationCode: createdAccount.organizationCode,
+          branchName: createdAccount.branchName,
+          branchCode: createdAccount.branchCode,
+          accountClass: createdAccount.metadata?.accountClass || 'REVENUE',
+          accountType: createdAccount.metadata?.internalAccountType || createdAccount.metadata?.accountType,
+          normalBalance: createdAccount.metadata?.normalBalance || 'CREDIT',
+          openingBalance: createdAccount.OPENING_BALANCE,
+          currentBalance: createdAccount.CURRENT_BALANCE,
+          ledgerBalance: createdAccount.LEDGER_BALANCE,
+          availableBalance: createdAccount.AVAILABLE_BALANCE,
+          status: createdAccount.REC_ST,
+          createdAt: createdAccount.createdAt || new Date().toISOString(),
+          metadata: createdAccount.metadata || {}
+        };
+
+      const responseData = {
+        success: true,
+        status: 'success',
+        message: 'COA-aligned GL account created successfully',
+        data: frontendData,
+        timestamp: new Date().toISOString()
+      };
+
+      console.log('✅ Transaction committed successfully');
+      console.log('🚀 Sending success response to frontend:', JSON.stringify(responseData, null, 2));
+      return res.status(201).json(responseData);
+    } else {
+      throw new Error('Account creation failed - no account returned');
+    }
+
   } catch (error) {
+    console.error('❌ Error in GL account creation:', error.message);
+    
+    // Only abort if we're still in a transaction
     if (session.inTransaction()) {
       await session.abortTransaction();
+      console.log('🔄 Transaction aborted due to error');
     }
-    logger.error('Error creating COA-aligned GL account', {
-      error: error.message,
-      body: req.body,
-    });
-  
-    return res.status(400).json({
+
+    const errorResponse = {
       success: false,
+      status: 'error',
       message: 'Failed to create COA-aligned GL account',
       error: error.message,
-      code: error.message.includes('Missing') || error.message.includes('not found') || error.message.includes('Invalid branch code') || error.message.includes('reserved') || error.message.includes('Invalid account type') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
-    });
+      details: {
+        code: error.message.includes('Missing') || 
+              error.message.includes('not found') || 
+              error.message.includes('Invalid branch code') || 
+              error.message.includes('reserved') || 
+              error.message.includes('Invalid account type') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    console.log('📤 Sending error response:', errorResponse);
+    return res.status(400).json(errorResponse);
+
   } finally {
-    session.endSession();
+    // Always end the session
+    if (session) {
+      await session.endSession();
+      console.log('🔚 Session ended');
+    }
   }
 };
+
+// ==================== ENHANCED COA ACCOUNT CREATION ====================
+
+
+// ==================== UPDATED HELPER FUNCTIONS ====================
+
+/**
+ * Get financial statement information for COA structure
+ */
+// utils/coaHelpers.js - SIMPLE WORKING VERSION
+// utils/coaHelpers.js - With debug logging
+const getFinancialStatementInfo = (accountClass, accountType) => {
+  const normalizedAccountClass = accountClass?.toUpperCase() || '';
+  const normalizedAccountType = accountType?.toUpperCase() || '';
+  
+  console.log('DEBUG getFinancialStatementInfo called with:', {
+    accountClass: normalizedAccountClass,
+    accountType: normalizedAccountType
+  });
+
+  // SIMPLE MAPPING - This will work for sure
+  if (normalizedAccountClass === 'TAX' && normalizedAccountType === 'WITHHOLDING_TAX_PAYABLE') {
+    console.log('DEBUG: Matched TAX/WITHHOLDING_TAX_PAYABLE');
+    return {
+      financialStatementType: 'BALANCE_SHEET', // Changed from 'type' to 'financialStatementType'
+      financialStatementCategory: 'WITHHOLDING_TAX_PAYABLE' // Changed from 'category' to 'financialStatementCategory'
+    };
+  }
+
+  // Default mapping for other cases
+  const typeMap = {
+    'ASSET': 'BALANCE_SHEET',
+    'LIABILITY': 'BALANCE_SHEET', 
+    'EQUITY': 'BALANCE_SHEET',
+    'TAX': 'BALANCE_SHEET',
+    'CONTROL': 'BALANCE_SHEET',
+    'SUSPENSE': 'BALANCE_SHEET',
+    'REVENUE': 'INCOME_STATEMENT',
+    'EXPENSE': 'INCOME_STATEMENT'
+  };
+
+  const categoryMap = {
+    'ASSET': 'CURRENT_ASSET',
+    'LIABILITY': 'CURRENT_LIABILITY',
+    'EQUITY': 'SHARE_CAPITAL',
+    'TAX': 'WITHHOLDING_TAX_PAYABLE',
+    'REVENUE': 'INTEREST_INCOME',
+    'EXPENSE': 'INTEREST_EXPENSE',
+    'CONTROL': 'CONTROL_ACCOUNTS',
+    'SUSPENSE': 'SUSPENSE_ACCOUNTS'
+  };
+
+  const result = {
+    financialStatementType: typeMap[normalizedAccountClass] || 'BALANCE_SHEET',
+    financialStatementCategory: categoryMap[normalizedAccountClass] || 'OTHER_ASSETS'
+  };
+
+  console.log('DEBUG getFinancialStatementInfo returning:', result);
+  return result;
+};
+
+// // Simple helper functions
+// export const getAccountTypeCode = (accountTypeString) => {
+//   // For WITHHOLDING_TAX_PAYABLE
+//   if (accountTypeString === 'WITHHOLDING_TAX_PAYABLE') return '601';
+//   return '999'; // Default
+// };
+
+// export const getAccountClassCode = (accountClass) => {
+//   const classMap = {
+//     'ASSET': '100',
+//     'LIABILITY': '200',
+//     'EQUITY': '300',
+//     'REVENUE': '400',
+//     'EXPENSE': '500',
+//     'TAX': '600',
+//     'CONTROL': '700',
+//     'SUSPENSE': '701'
+//   };
+//   return classMap[accountClass] || '999';
+// };
+
+
+// export const getNormalBalance = (accountClass) => {
+//   const normalBalanceMap = {
+//     'ASSET': 'DEBIT',
+//     'LIABILITY': 'CREDIT',
+//     'EQUITY': 'CREDIT',
+//     'REVENUE': 'CREDIT',
+//     'EXPENSE': 'DEBIT',
+//     'TAX': 'CREDIT', // Tax accounts have credit normal balance
+//     'CONTROL': 'DEBIT',
+//     'SUSPENSE': 'DEBIT'
+//   };
+//   return normalBalanceMap[accountClass] || 'DEBIT';
+// };
+
+/**
+ * Helper function to determine asset category
+ */
+const getAssetCategory = (accountType) => {
+  // Current assets
+  if (accountType.includes('CURRENT_ASSET') || 
+      accountType.includes('CASH') || 
+      accountType.includes('BANK') || 
+      accountType.includes('RECEIVABLE') ||
+      accountType.includes('TRADING_SECURITIES') ||
+      accountType.includes('DERIVATIVE_ASSETS') ||
+      accountType.includes('INVENTORY') ||
+      accountType.includes('PREPAID') ||
+      accountType.includes('ACCUMULATED_INCOME') ||
+      accountType.includes('INTEREST_RECEIVABLE') ||
+      accountType.includes('FEE_RECEIVABLE')) {
+    return 'CURRENT_ASSET';
+  }
+  
+  // Non-current assets
+  if (accountType.includes('NON_CURRENT_ASSET') || 
+      accountType.includes('FIXED_ASSET') || 
+      accountType.includes('PROPERTY') || 
+      accountType.includes('INTANGIBLE') ||
+      accountType.includes('GOODWILL') ||
+      accountType.includes('INVESTMENT') ||
+      accountType.includes('LEASE_ASSET') ||
+      accountType.includes('RIGHT_OF_USE') ||
+      accountType.includes('DEFERRED_TAX_ASSET')) {
+    return 'NON_CURRENT_ASSET';
+  }
+  
+  // Default to asset
+  return 'ASSET';
+};
+
+/**
+ * Helper function to determine liability category
+ */
+const getLiabilityCategory = (accountType) => {
+  // Current liabilities
+  if (accountType.includes('CURRENT_LIABILITY') || 
+      accountType.includes('PAYABLE') || 
+      accountType.includes('DEPOSIT') || 
+      accountType.includes('TAX_PAYABLE') ||
+      accountType.includes('INTEREST_PAYABLE') ||
+      accountType.includes('ACCRUED') ||
+      accountType.includes('DIVIDEND_PAYABLE') ||
+      accountType.includes('WITHHOLDING_TAX_PAYABLE') ||
+      accountType.includes('UNEARNED_REVENUE') ||
+      accountType.includes('CUSTOMER_DEPOSITS') ||
+      accountType.includes('SAVINGS_DEPOSITS')) {
+    return 'CURRENT_LIABILITY';
+  }
+  
+  // Non-current liabilities
+  if (accountType.includes('NON_CURRENT_LIABILITY') || 
+      accountType.includes('LONG_TERM') || 
+      accountType.includes('LOAN_LIABILITY') || 
+      accountType.includes('BORROWING') ||
+      accountType.includes('BONDS_PAYABLE') ||
+      accountType.includes('SUBORDINATED_DEBT') ||
+      accountType.includes('LEASE_LIABILITY') ||
+      accountType.includes('DEFERRED_TAX_LIABILITY')) {
+    return 'NON_CURRENT_LIABILITY';
+  }
+  
+  // Default to liability
+  return 'LIABILITY';
+};
+
+/**
+ * Helper function to determine tax category
+ */
+const getTaxCategory = (accountType) => {
+  if (accountType.includes('PAYABLE')) {
+    return 'CURRENT_LIABILITY';
+  }
+  if (accountType.includes('ASSET')) {
+    return 'CURRENT_ASSET';
+  }
+  return 'LIABILITY';
+};
+
+/**
+ * Helper function to determine control category
+ */
+const getControlCategory = (accountType) => {
+  if (accountType.includes('LIABILITY')) {
+    return 'CURRENT_LIABILITY';
+  }
+  return 'ASSET';
+};
+
+/**
+ * Get COA balance type
+ */
+const getCOABalanceType = (accountClass, accountType) => {
+  const normalizedAccountClass = accountClass.toUpperCase();
+  const normalizedAccountType = accountType.toUpperCase();
+  
+  logger.debug('Getting COA balance type for:', {
+    accountClass: normalizedAccountClass,
+    accountType: normalizedAccountType
+  });
+
+  // Convert account class to valid COA balance type
+  const balanceTypeMapping = {
+    'ASSET': 'ASSET',
+    'LIABILITY': 'LIABILITY',
+    'EQUITY': 'EQUITY',
+    'REVENUE': 'REVENUE',
+    'EXPENSE': 'EXPENSE',
+    'TAX': getTaxBalanceType(normalizedAccountType),
+    'CONTROL': getControlBalanceType(normalizedAccountType),
+    'SUSPENSE': 'SUSPENSE'
+  };
+
+  const result = balanceTypeMapping[normalizedAccountClass] || 'ASSET';
+  
+  logger.debug('COA balance type result:', result);
+  return result;
+};
+
+/**
+ * Helper function to determine tax balance type
+ */
+const getTaxBalanceType = (accountType) => {
+  if (accountType.includes('PAYABLE')) {
+    return 'LIABILITY';
+  }
+  if (accountType.includes('ASSET') || accountType.includes('RECEIVABLE')) {
+    return 'ASSET';
+  }
+  if (accountType.includes('EXPENSE')) {
+    return 'EXPENSE';
+  }
+  return 'LIABILITY'; // Default for tax
+};
+
+/**
+ * Helper function to determine control balance type
+ */
+const getControlBalanceType = (accountType) => {
+  if (accountType.includes('LIABILITY') || accountType.includes('PAYABLE')) {
+    return 'LIABILITY';
+  }
+  return 'ASSET';
+};
+
+/**
+ * Get normal balance based on account class
+ */
+const getNormalBalance = (accountClass) => {
+  const normalizedAccountClass = accountClass.toUpperCase();
+  
+  logger.debug('Getting normal balance for:', normalizedAccountClass);
+
+  const debitAccounts = ['ASSET', 'EXPENSE', 'CONTROL', 'SUSPENSE'];
+  const creditAccounts = ['LIABILITY', 'EQUITY', 'REVENUE', 'TAX'];
+  
+  let result;
+  if (debitAccounts.includes(normalizedAccountClass)) {
+    result = 'DEBIT';
+  } else if (creditAccounts.includes(normalizedAccountClass)) {
+    result = 'CREDIT';
+  } else {
+    result = 'DEBIT';
+  }
+  
+  logger.debug('Normal balance result:', result);
+  return result;
+};
+
+/**
+ * Validate account class and type consistency
+ */
+/**
+ * Validate account class and type consistency - UPDATED
+ */
+const validateAccountClassType = (accountClass, accountType) => {
+  const normalizedAccountClass = accountClass.toUpperCase();
+  const normalizedAccountType = accountType.toUpperCase();
+  
+  logger.debug('Validating account class and type:', {
+    accountClass: normalizedAccountClass,
+    accountType: normalizedAccountType
+  });
+
+  // Allowed combinations - expanded to include all frontend types
+  const validCombinations = {
+    'ASSET': [
+      'CASH_AND_CASH_EQUIVALENTS', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 'DUE_FROM_BANKS',
+      'TRADING_SECURITIES', 'DERIVATIVE_ASSETS', 'LOANS_AND_ADVANCES', 'LOAN_PORTFOLIO_GROSS',
+      'LOAN_PORTFOLIO', 'NET_LOANS_AND_ADVANCES', 'LOAN_ASSET', 'LOAN_RECEIVABLE',
+      'CUSTOMER_ACCOUNT', 'INVESTMENT_SECURITIES_HTM', 'INVESTMENT_SECURITIES_AFS',
+      'INVESTMENT_SECURITIES_FVPL', 'INVESTMENT_ASSET', 'INVESTMENTS_IN_SUBSIDIARIES',
+      'INVESTMENTS_IN_ASSOCIATES', 'INVESTMENT_PROPERTY', 'PROPERTY_PLANT_AND_EQUIPMENT',
+      'FIXED_ASSET', 'RIGHT_OF_USE_ASSETS', 'LEASE_ASSET', 'INTANGIBLE_ASSETS',
+      'INTANGIBLE_ASSET', 'GOODWILL', 'DEFERRED_TAX_ASSETS', 'DEFERRED_TAX_ASSET',
+      'INTEREST_RECEIVABLE', 'ACCRUED_INTEREST', 'FEE_AND_COMMISSION_RECEIVABLE',
+      'FEE_RECEIVABLE', 'RECEIVABLE_ACCOUNT', 'PREPAYMENTS_AND_OTHER_ASSETS',
+      'PREPAID_EXPENSE', 'INVENTORY', 'FORECLOSURE_ASSETS', 'OTHER_ASSETS',
+      'OTHER_ASSET', 'CURRENT_ASSET', 'SUSPENSE_ASSETS', 'CLEARING_AND_SETTLEMENT_ASSETS',
+      'INTERBRANCH_ASSETS', 'INTER_BRANCH'
+    ],
+    'LIABILITY': [
+      'CUSTOMER_DEPOSITS', 'SAVINGS_DEPOSITS', 'CURRENT_AND_DEMAND_DEPOSITS',
+      'TIME_AND_FIXED_DEPOSITS', 'TIME_DEPOSITS', 'DEPOSITS_LIABILITY', 'DUE_TO_BANKS',
+      'BORROWINGS_FROM_CENTRAL_BANK', 'BORROWINGS_FROM_OTHER_BANKS', 'BORROWINGS',
+      'LOAN_LIABILITY', 'SUBORDINATED_DEBT', 'DEBT_SECURITIES_ISSUED', 'BONDS_PAYABLE',
+      'DERIVATIVE_LIABILITIES', 'INTEREST_PAYABLE', 'ACCRUED_EXPENSES_PAYABLE',
+      'ACCRUED_EXPENSES', 'DIVIDENDS_PAYABLE', 'DIVIDEND_PAYABLE', 'TAX_PAYABLE',
+      'DEFERRED_TAX_LIABILITIES', 'DEFERRED_TAX_LIABILITY', 'LEASE_LIABILITIES',
+      'LEASE_LIABILITY', 'PROVISIONS_AND_CONTINGENCIES', 'PROVISIONS',
+      'EMPLOYEE_BENEFIT_LIABILITIES', 'UNEARNED_REVENUE', 'PAYABLE_ACCOUNT',
+      'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'OTHER_LIABILITIES', 'OTHER_LIABILITY',
+      'LIABILITY_ACCOUNT', 'SUSPENSE_LIABILITIES', 'CLEARING_AND_SETTLEMENT_LIABILITIES',
+      'INTERBRANCH_LIABILITIES', 'WITHHOLDING_TAX_PAYABLE', 'VAT_PAYABLE', 'INCOME_TAX_PAYABLE'
+    ],
+    'EQUITY': [
+      'SHARE_CAPITAL', 'SHARE_PREMIUM', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS',
+      'STATUTORY_RESERVE', 'GENERAL_RISK_RESERVE', 'REVALUATION_RESERVE',
+      'FAIR_VALUE_RESERVE', 'FOREIGN_CURRENCY_TRANSLATION_RESERVE',
+      'OTHER_COMPREHENSIVE_INCOME', 'TREASURY_SHARES', 'TREASURY_STOCK',
+      'CAPITAL_RESERVE', 'DONATED_CAPITAL', 'OTHER_EQUITY_COMPONENTS',
+      'OTHER_EQUITY', 'EQUITY_ACCOUNT', 'ADDITIONAL_PAID_IN_CAPITAL'
+    ],
+    'REVENUE': [
+      'INTEREST_INCOME_LOANS', 'INTEREST_INCOME_INVESTMENTS', 'INTEREST_INCOME_PLACEMENTS',
+      'LOAN_INTEREST_INCOME', 'INVESTMENT_INTEREST_INCOME', 'INTEREST_INCOME',
+      'FEE_AND_COMMISSION_INCOME', 'FEE_INCOME', 'PROCESSING_FEE', 'INSURANCE_FEE',
+      'UPFRONT_INTEREST', 'OTHER_FEES', 'COMMISSION_INCOME', 'TRADING_INCOME',
+      'FOREIGN_EXCHANGE_INCOME', 'FOREIGN_EXCHANGE_GAIN', 'DIVIDEND_INCOME',
+      'RENTAL_INCOME', 'GAIN_ON_SALE_OF_ASSETS', 'REALIZED_GAIN', 'UNREALIZED_GAIN',
+      'RECOVERIES_ON_LOANS_WRITTEN_OFF', 'LATE_FEE_INCOME', 'PENALTY_INCOME',
+      'SERVICE_INCOME', 'SALES_REVENUE', 'OTHER_OPERATING_INCOME', 'OTHER_REVENUE',
+      'OPERATING_REVENUE', 'REVENUE_ACCOUNT', 'NON_OPERATING_INCOME'
+    ],
+    'EXPENSE': [
+      'INTEREST_EXPENSE_DEPOSITS', 'INTEREST_EXPENSE_BORROWINGS', 'INTEREST_EXPENSE',
+      'FEE_AND_COMMISSION_EXPENSE', 'LOAN_LOSS_PROVISION_EXPENSE', 'IMPAIRMENT_LOSSES',
+      'LOAN_LOSS_PROVISION', 'BAD_DEBT_EXPENSE', 'STAFF_COSTS', 'STAFF_EXPENSE',
+      'SALARIES_WAGES', 'EMPLOYEE_BENEFITS', 'DEPRECIATION_EXPENSE', 'AMORTIZATION_EXPENSE',
+      'OCCUPANCY_COSTS', 'RENT_EXPENSE', 'UTILITIES_EXPENSE', 'IT_AND_COMMUNICATION_EXPENSES',
+      'MARKETING_AND_ADVERTISING', 'MARKETING_EXPENSE', 'PROFESSIONAL_AND_LEGAL_FEES',
+      'PROFESSIONAL_FEES', 'TRAVEL_AND_ENTERTAINMENT', 'TRAVEL_EXPENSE',
+      'INSURANCE_EXPENSE', 'REPAIRS_AND_MAINTENANCE', 'REPAIRS_MAINTENANCE',
+      'ADMINISTRATIVE_EXPENSES', 'ADMINISTRATIVE_EXPENSE', 'ADMIN_EXPENSE',
+      'OTHER_OPERATING_EXPENSES', 'OTHER_EXPENSE', 'FINANCE_COST', 'BORROWING_COST',
+      'FOREIGN_EXCHANGE_LOSS', 'LOSS_ON_SALE_OF_ASSETS', 'TAX_EXPENSE',
+      'NON_OPERATING_EXPENSES', 'OPERATING_EXPENSE', 'EXPENSE_ACCOUNT'
+    ],
+    'TAX': [
+      'WITHHOLDING_TAX_PAYABLE', 'VAT_PAYABLE', 'INCOME_TAX_PAYABLE',
+      'DEFERRED_TAX_PAYABLE', 'DEFERRED_TAX', 'TAX_EXPENSE_ACCOUNTS', 'OTHER_TAX_ACCOUNTS'
+    ],
+    'CONTROL': [
+      'CONTROL_ACCOUNTS', 'CONTROL_ACCOUNT', 'SUSPENSE_ACCOUNTS', 'SUSPENSE_ACCOUNT',
+      'CLEARING_ACCOUNTS', 'CLEARING_ACCOUNT', 'TRANSIT_ACCOUNTS', 'INTERCOMPANY_ACCOUNTS',
+      'INTERCOMPANY_ACCOUNT', 'RECONCILIATION_ACCOUNTS', 'RECONCILIATION_ACCOUNT',
+      'UNAPPLIED_FUNDS', 'UNCLEARED_EFFECTS', 'LOAN_SUSPENSE', 'INTEREST_SUSPENSE',
+      'FEE_SUSPENSE', 'UNEARNED_INTEREST', 'LOAN_DISBURSEMENT_CONTROL', 'LOAN_REPAYMENT_CONTROL',
+      'LOAN_CHARGE_OFF', 'PROVISION_FOR_LOAN_LOSSES', 'RECOVERIES_ACCOUNT',
+      'DELINQUENT_LOAN_ACCOUNT', 'RESTRUCTURED_LOAN_ACCOUNT', 'HEAD_OFFICE_BRANCH_ACCOUNT'
+    ],
+    'SUSPENSE': [
+      'SUSPENSE_ACCOUNTS', 'SUSPENSE_ACCOUNT', 'SUSPENSE_ASSETS', 'SUSPENSE_LIABILITIES'
+    ],
+    // ADDED: 'OTHER' account class for miscellaneous accounts
+    'OTHER': [
+      'OTHER_ASSET', 'OTHER_LIABILITY', 'OTHER_EQUITY', 'OTHER_REVENUE', 'OTHER_EXPENSE',
+      'GENERAL_ACCOUNT', 'MISCELLANEOUS_ACCOUNT', 'SUNDRY_ACCOUNT'
+    ]
+  };
+
+  // ADDED: Validate OTHER account class
+  if (!validCombinations[normalizedAccountClass]) {
+    // Try to map OTHER to appropriate class based on account type
+    if (normalizedAccountClass === 'OTHER') {
+      logger.info(`Processing 'OTHER' account class for type: ${accountType}`);
+      
+      // Map OTHER to appropriate class based on account type patterns
+      const typePatterns = {
+        'ASSET': /ASSET|CASH|BANK|RECEIVABLE|LOAN|INVENTORY|FIXED|INVESTMENT|PROPERTY|INTANGIBLE/i,
+        'LIABILITY': /LIABILITY|PAYABLE|DEPOSIT|BORROWING|LOAN_LIABILITY|TAX_PAYABLE/i,
+        'EQUITY': /EQUITY|CAPITAL|RETAINED|RESERVE/i,
+        'REVENUE': /REVENUE|INCOME|FEE|COMMISSION|INTEREST_INCOME/i,
+        'EXPENSE': /EXPENSE|COST|LOSS|PROVISION|DEPRECIATION|STAFF|SALARY/i,
+        'CONTROL': /CONTROL|SUSPENSE|CLEARING|INTERBRANCH/i
+      };
+      
+      for (const [targetClass, pattern] of Object.entries(typePatterns)) {
+        if (pattern.test(normalizedAccountType)) {
+          logger.info(`Mapped 'OTHER' with type '${accountType}' to '${targetClass}'`);
+          // Update the account class
+          accountClass = targetClass;
+          return targetClass; // Return mapped class instead of throwing error
+        }
+      }
+      
+      // If no pattern matches, allow it as OTHER but log warning
+      logger.warn(`Account type '${accountType}' with class 'OTHER' - allowing with default validation`);
+      validCombinations[normalizedAccountClass] = ['OTHER_ASSET', 'OTHER_LIABILITY', 'OTHER_EQUITY', 'OTHER_REVENUE', 'OTHER_EXPENSE'];
+    } else {
+      throw new Error(`Invalid account class: ${accountClass}`);
+    }
+  }
+
+  // Check if account type is in the allowed list
+  const allowedTypes = validCombinations[normalizedAccountClass];
+  const isExactMatch = allowedTypes.includes(normalizedAccountType);
+  
+  if (!isExactMatch) {
+    // Check for partial match (e.g., WITHHOLDING_TAX_PAYABLE contains TAX_PAYABLE)
+    const isPartialMatch = allowedTypes.some(allowedType => 
+      normalizedAccountType.includes(allowedType) || allowedType.includes(normalizedAccountType)
+    );
+    
+    if (!isPartialMatch) {
+      logger.warn(`Account type '${accountType}' may not be valid for account class '${accountClass}', but proceeding anyway`);
+    }
+  }
+  
+  return accountClass; // Return (possibly mapped) account class
+};
+
+/**
+ * Get account class code (3-digit) - UPDATED
+ */
+const getAccountClassCode = (accountClass) => {
+  const mapping = {
+    'ASSET': '001',
+    'LIABILITY': '101',
+    'EQUITY': '201',
+    'REVENUE': '301',
+    'EXPENSE': '401',
+    'TAX': '501',
+    'CONTROL': '601',
+    'SUSPENSE': '701',
+    'OTHER': '999' // ADDED: Code for OTHER accounts
+  };
+  
+  const normalizedAccountClass = accountClass.toUpperCase();
+  const result = mapping[normalizedAccountClass] || '999';
+  
+  logger.debug('Account class code for', normalizedAccountClass, ':', result);
+  return result;
+};
+
+
+/**
+ * Get account type code (2-digit) - updated with frontend types
+ */
+/**
+ * Get account type code (3-digit) - FIXED to return 3-digit codes
+ */
+const getAccountTypeCode = (accountType) => {
+  // Convert to uppercase for consistent matching
+  const normalizedAccountType = accountType.toUpperCase();
+  
+  // Comprehensive 3-digit type codes for ALL frontend account types
+  const typeCodes = {
+    // ===================================================================
+    // ASSETS (001-099)
+    // ===================================================================
+    'CASH_AND_CASH_EQUIVALENTS': '001',
+    'CASH_ACCOUNT': '002',
+    'BANK_ACCOUNT': '003',
+    'DUE_FROM_BANKS': '004',
+    'TRADING_SECURITIES': '005',
+    'DERIVATIVE_ASSETS': '006',
+    'LOANS_AND_ADVANCES': '007',
+    'LOAN_PORTFOLIO_GROSS': '008',
+    'LOAN_PORTFOLIO': '009',
+    'NET_LOANS_AND_ADVANCES': '010',
+    'LOAN_ASSET': '011',
+    'LOAN_RECEIVABLE': '012',
+    'CUSTOMER_ACCOUNT': '013',
+    'INVESTMENT_SECURITIES_HTM': '014',
+    'INVESTMENT_SECURITIES_AFS': '015',
+    'INVESTMENT_SECURITIES_FVPL': '016',
+    'INVESTMENT_ASSET': '017',
+    'INVESTMENTS_IN_SUBSIDIARIES': '018',
+    'INVESTMENTS_IN_ASSOCIATES': '019',
+    'INVESTMENT_PROPERTY': '020',
+    'PROPERTY_PLANT_AND_EQUIPMENT': '021',
+    'FIXED_ASSET': '022',
+    'RIGHT_OF_USE_ASSETS': '023',
+    'LEASE_ASSET': '024',
+    'INTANGIBLE_ASSETS': '025',
+    'INTANGIBLE_ASSET': '026',
+    'GOODWILL': '027',
+    'DEFERRED_TAX_ASSETS': '028',
+    'DEFERRED_TAX_ASSET': '029',
+    'ACCRUED_INCOME_RECEIVABLE': '030',
+    'INTEREST_RECEIVABLE': '031',
+    'ACCRUED_INTEREST': '032',
+    'FEE_AND_COMMISSION_RECEIVABLE': '033',
+    'FEE_RECEIVABLE': '034',
+    'RECEIVABLE_ACCOUNT': '035',
+    'PREPAYMENTS_AND_OTHER_ASSETS': '036',
+    'PREPAID_EXPENSE': '037',
+    'INVENTORY': '038',
+    'FORECLOSURE_ASSETS': '039',
+    'OTHER_ASSETS': '040',
+    'OTHER_ASSET': '041',
+    'CURRENT_ASSET': '042',
+    'SUSPENSE_ASSETS': '043',
+    'CLEARING_AND_SETTLEMENT_ASSETS': '044',
+    'INTERBRANCH_ASSETS': '045',
+    'INTER_BRANCH': '046',
+
+    // ===================================================================
+    // LIABILITIES (101-199)
+    // ===================================================================
+    'CUSTOMER_DEPOSITS': '101',
+    'SAVINGS_DEPOSITS': '102',
+    'CURRENT_AND_DEMAND_DEPOSITS': '103',
+    'TIME_AND_FIXED_DEPOSITS': '104',
+    'TIME_DEPOSITS': '105',
+    'DEPOSITS_LIABILITY': '106',
+    'DUE_TO_BANKS': '107',
+    'BORROWINGS_FROM_CENTRAL_BANK': '108',
+    'BORROWINGS_FROM_OTHER_BANKS': '109',
+    'BORROWINGS': '110',
+    'LOAN_LIABILITY': '111',
+    'SUBORDINATED_DEBT': '112',
+    'DEBT_SECURITIES_ISSUED': '113',
+    'BONDS_PAYABLE': '114',
+    'DERIVATIVE_LIABILITIES': '115',
+    'INTEREST_PAYABLE': '116',
+    'ACCRUED_EXPENSES_PAYABLE': '117',
+    'ACCRUED_EXPENSES': '118',
+    'DIVIDENDS_PAYABLE': '119',
+    'DIVIDEND_PAYABLE': '120',
+    'TAX_PAYABLE': '121',
+    'DEFERRED_TAX_LIABILITIES': '122',
+    'DEFERRED_TAX_LIABILITY': '123',
+    'LEASE_LIABILITIES': '124',
+    'LEASE_LIABILITY': '125',
+    'PROVISIONS_AND_CONTINGENCIES': '126',
+    'PROVISIONS': '127',
+    'EMPLOYEE_BENEFIT_LIABILITIES': '128',
+    'UNEARNED_REVENUE': '129',
+    'PAYABLE_ACCOUNT': '130',
+    'CURRENT_LIABILITY': '131',
+    'LONG_TERM_LIABILITY': '132',
+    'OTHER_LIABILITIES': '133',
+    'OTHER_LIABILITY': '134',
+    'LIABILITY_ACCOUNT': '135',
+    'SUSPENSE_LIABILITIES': '136',
+    'CLEARING_AND_SETTLEMENT_LIABILITIES': '137',
+    'INTERBRANCH_LIABILITIES': '138',
+    'WITHHOLDING_TAX_PAYABLE': '139',
+    'VAT_PAYABLE': '140',
+    'INCOME_TAX_PAYABLE': '141',
+
+    // ===================================================================
+    // EQUITY (201-299)
+    // ===================================================================
+    'SHARE_CAPITAL': '201',
+    'SHARE_PREMIUM': '202',
+    'CAPITAL_ACCOUNT': '203',
+    'RETAINED_EARNINGS': '204',
+    'STATUTORY_RESERVE': '205',
+    'GENERAL_RISK_RESERVE': '206',
+    'REVALUATION_RESERVE': '207',
+    'FAIR_VALUE_RESERVE': '208',
+    'FOREIGN_CURRENCY_TRANSLATION_RESERVE': '209',
+    'OTHER_COMPREHENSIVE_INCOME': '210',
+    'TREASURY_SHARES': '211',
+    'TREASURY_STOCK': '212',
+    'CAPITAL_RESERVE': '213',
+    'DONATED_CAPITAL': '214',
+    'OTHER_EQUITY_COMPONENTS': '215',
+    'OTHER_EQUITY': '216',
+    'EQUITY_ACCOUNT': '217',
+    'ADDITIONAL_PAID_IN_CAPITAL': '218',
+
+    // ===================================================================
+    // REVENUE (301-399)
+    // ===================================================================
+    'INTEREST_INCOME_LOANS': '301',
+    'INTEREST_INCOME_INVESTMENTS': '302',
+    'INTEREST_INCOME_PLACEMENTS': '303',
+    'LOAN_INTEREST_INCOME': '304',
+    'INVESTMENT_INTEREST_INCOME': '305',
+    'INTEREST_INCOME': '306',
+    'FEE_AND_COMMISSION_INCOME': '307',
+    'FEE_INCOME': '308',
+    'PROCESSING_FEE': '309',
+    'INSURANCE_FEE': '310',
+    'UPFRONT_INTEREST': '311',
+    'OTHER_FEES': '312',
+    'COMMISSION_INCOME': '313',
+    'TRADING_INCOME': '314',
+    'FOREIGN_EXCHANGE_INCOME': '315',
+    'FOREIGN_EXCHANGE_GAIN': '316',
+    'DIVIDEND_INCOME': '317',
+    'RENTAL_INCOME': '318',
+    'GAIN_ON_SALE_OF_ASSETS': '319',
+    'REALIZED_GAIN': '320',
+    'UNREALIZED_GAIN': '321',
+    'RECOVERIES_ON_LOANS_WRITTEN_OFF': '322',
+    'LATE_FEE_INCOME': '323',
+    'PENALTY_INCOME': '324',
+    'SERVICE_INCOME': '325',
+    'SALES_REVENUE': '326',
+    'OTHER_OPERATING_INCOME': '327',
+    'OTHER_REVENUE': '328',
+    'OPERATING_REVENUE': '329',
+    'REVENUE_ACCOUNT': '330',
+    'NON_OPERATING_INCOME': '331',
+
+    // ===================================================================
+    // EXPENSES (401-499)
+    // ===================================================================
+    'INTEREST_EXPENSE_DEPOSITS': '401',
+    'INTEREST_EXPENSE_BORROWINGS': '402',
+    'INTEREST_EXPENSE': '403',
+    'FEE_AND_COMMISSION_EXPENSE': '404',
+    'LOAN_LOSS_PROVISION_EXPENSE': '405',
+    'IMPAIRMENT_LOSSES': '406',
+    'LOAN_LOSS_PROVISION': '407',
+    'BAD_DEBT_EXPENSE': '408',
+    'STAFF_COSTS': '409',
+    'STAFF_EXPENSE': '410',
+    'SALARIES_WAGES': '411',
+    'EMPLOYEE_BENEFITS': '412',
+    'DEPRECIATION_EXPENSE': '413',
+    'AMORTIZATION_EXPENSE': '414',
+    'OCCUPANCY_COSTS': '415',
+    'RENT_EXPENSE': '416',
+    'UTILITIES_EXPENSE': '417',
+    'IT_AND_COMMUNICATION_EXPENSES': '418',
+    'MARKETING_AND_ADVERTISING': '419',
+    'MARKETING_EXPENSE': '420',
+    'PROFESSIONAL_AND_LEGAL_FEES': '421',
+    'PROFESSIONAL_FEES': '422',
+    'TRAVEL_AND_ENTERTAINMENT': '423',
+    'TRAVEL_EXPENSE': '424',
+    'INSURANCE_EXPENSE': '425',
+    'REPAIRS_AND_MAINTENANCE': '426',
+    'REPAIRS_MAINTENANCE': '427',
+    'ADMINISTRATIVE_EXPENSES': '428',
+    'ADMINISTRATIVE_EXPENSE': '429',
+    'ADMIN_EXPENSE': '430',
+    'OTHER_OPERATING_EXPENSES': '431',
+    'OTHER_EXPENSE': '432',
+    'FINANCE_COST': '433',
+    'BORROWING_COST': '434',
+    'FOREIGN_EXCHANGE_LOSS': '435',
+    'LOSS_ON_SALE_OF_ASSETS': '436',
+    'TAX_EXPENSE': '437',
+    'NON_OPERATING_EXPENSES': '438',
+    'OPERATING_EXPENSE': '439',
+    'EXPENSE_ACCOUNT': '440',
+
+    // ===================================================================
+    // CONTROL, SUSPENSE & SPECIAL (501-599)
+    // ===================================================================
+    'CONTROL_ACCOUNTS': '501',
+    'CONTROL_ACCOUNT': '502',
+    'SUSPENSE_ACCOUNTS': '503',
+    'SUSPENSE_ACCOUNT': '504',
+    'CLEARING_ACCOUNTS': '505',
+    'CLEARING_ACCOUNT': '506',
+    'TRANSIT_ACCOUNTS': '507',
+    'INTERCOMPANY_ACCOUNTS': '508',
+    'INTERCOMPANY_ACCOUNT': '509',
+    'RECONCILIATION_ACCOUNTS': '510',
+    'RECONCILIATION_ACCOUNT': '511',
+    'UNAPPLIED_FUNDS': '512',
+    'UNCLEARED_EFFECTS': '513',
+    'LOAN_SUSPENSE': '514',
+    'INTEREST_SUSPENSE': '515',
+    'FEE_SUSPENSE': '516',
+    'UNEARNED_INTEREST': '517',
+    'LOAN_DISBURSEMENT_CONTROL': '518',
+    'LOAN_REPAYMENT_CONTROL': '519',
+    'LOAN_CHARGE_OFF': '520',
+    'PROVISION_FOR_LOAN_LOSSES': '521',
+    'RECOVERIES_ACCOUNT': '522',
+    'DELINQUENT_LOAN_ACCOUNT': '523',
+    'RESTRUCTURED_LOAN_ACCOUNT': '524',
+    'HEAD_OFFICE_BRANCH_ACCOUNT': '525',
+    'NOSTRO_ACCOUNTS': '526',
+    'NOSTRO_ACCOUNT': '527',
+    'VOSTRO_ACCOUNTS': '528',
+    'VOSTRO_ACCOUNT': '529',
+    'MEMORANDUM_ACCOUNTS': '530',
+    'MEMORANDUM_ACCOUNT': '531',
+    'OFF_BALANCE_SHEET_COMMITMENTS': '532',
+    'OFF_BALANCE_SHEET_ACCOUNT': '533',
+    'CONTINGENT_LIABILITIES': '534',
+    'CONTINGENT_ACCOUNT': '535',
+
+    // ===================================================================
+    // TAX & REGULATORY (601-699)
+    // ===================================================================
+    'WITHHOLDING_TAX_PAYABLE': '601',
+    'VAT_PAYABLE': '602',
+    'INCOME_TAX_PAYABLE': '603',
+    'DEFERRED_TAX_PAYABLE': '604',
+    'DEFERRED_TAX': '605',
+    'TAX_EXPENSE_ACCOUNTS': '606',
+    'OTHER_TAX_ACCOUNTS': '607',
+    'REGULATORY_RESERVE_ACCOUNTS': '608',
+    'CAPITAL_ADEQUACY_RESERVE': '609',
+    'CREDIT_RISK_RESERVE': '610',
+    'LIQUIDITY_RESERVE': '611',
+    'STATUTORY_DEPOSITS_WITH_CBN': '612',
+    'CBN_CRR_ACCOUNT': '613',
+    'CBN_LIQUIDITY_RATIO_ACCOUNT': '614',
+    'OTHER_REGULATORY_ACCOUNTS': '615',
+
+    // ===================================================================
+    // CONTRA ACCOUNTS (701-799)
+    // ===================================================================
+    'LOAN_LOSS_PROVISIONS': '701',
+    'CONTRA_ASSET_ACCOUNTS': '702',
+    'CONTRA_LIABILITY_ACCOUNTS': '703',
+    'CONTRA_ASSET': '704',
+    'CONTRA_LIABILITY': '705',
+
+    // ===================================================================
+    // CASH FLOW (801-899)
+    // ===================================================================
+    'CASH_FLOWS_FROM_OPERATING_ACTIVITIES': '801',
+    'CASH_FLOWS_FROM_INVESTING_ACTIVITIES': '802',
+    'CASH_FLOWS_FROM_FINANCING_ACTIVITIES': '803'
+  };
+
+  // Try exact match first
+  let result = typeCodes[normalizedAccountType];
+  
+  // If not found, try to match by keyword (case-insensitive)
+  if (!result) {
+    for (const [key, value] of Object.entries(typeCodes)) {
+      if (normalizedAccountType.includes(key) || key.includes(normalizedAccountType)) {
+        result = value;
+        logger.debug(`Matched '${normalizedAccountType}' to '${key}' with code ${value}`);
+        break;
+      }
+    }
+  }
+
+  // Default to 999 if not found
+  result = result || '999';
+  
+  // Validate 3 digits
+  if (result.length !== 3) {
+    logger.error(`Account type code not 3 digits: ${result} for ${accountType}`);
+    return '999';
+  }
+  
+  logger.debug('Account type code for', normalizedAccountType, ':', result);
+  return result;
+};
+
+// UPDATED: Enhanced mapping function for frontend account types
+const mapMetadataAccountTypeToAccountType = (frontendAccountType) => {
+  const typeMap = {
+    // Frontend asset types to backend account types (using only schema enum values)
+    'CASH_ACCOUNT': 'CURRENT_ASSET',
+    'BANK_ACCOUNT': 'CURRENT_ASSET',
+    'RECEIVABLE_ACCOUNT': 'CURRENT_ASSET', // Changed from 'RECEIVABLE' to 'CURRENT_ASSET'
+    'CUSTOMER_ACCOUNT': 'CURRENT_ASSET',
+    'LOAN_ASSET': 'LOAN_ASSET',
+    'FIXED_ASSET': 'FIXED_ASSET',
+    'PROPERTY_PLANT_EQUIPMENT': 'FIXED_ASSET',
+    'INVESTMENT_ASSET': 'OTHER_ASSET', // Changed from 'INVESTMENT_ASSET' to 'OTHER_ASSET'
+  
+    // Frontend liability types
+    'LIABILITY_ACCOUNT': 'CURRENT_LIABILITY',
+    'DEPOSITS_LIABILITY': 'CURRENT_LIABILITY',
+    'PAYABLE_ACCOUNT': 'CURRENT_LIABILITY',
+    'LOAN_LIABILITY': 'LONG_TERM_LIABILITY',
+  
+    // Frontend equity types
+    'EQUITY_ACCOUNT': 'EQUITY',
+    'CAPITAL_ACCOUNT': 'EQUITY',
+    'RETAINED_EARNINGS': 'RETAINED_EARNINGS',
+  
+    // Frontend revenue types
+    'REVENUE_ACCOUNT': 'OPERATING_REVENUE',
+    'INTEREST_INCOME': 'INTEREST_INCOME',
+    'FEE_INCOME': 'FEE_INCOME',
+    'SERVICE_INCOME': 'OPERATING_REVENUE', // Changed from 'SERVICE_INCOME' to 'OPERATING_REVENUE'
+    'PROCESSING_FEE': 'FEE_INCOME',
+    'INSURANCE_FEE': 'FEE_INCOME',
+    'UPFRONT_INTEREST': 'INTEREST_INCOME',
+    'OTHER_FEES': 'OTHER_REVENUE',
+  
+    // Frontend expense types
+    'EXPENSE_ACCOUNT': 'OPERATING_EXPENSE',
+    'OPERATING_EXPENSE': 'OPERATING_EXPENSE',
+    'INTEREST_EXPENSE': 'FINANCE_COST', // Changed from 'INTEREST_EXPENSE' to 'FINANCE_COST'
+    'STAFF_EXPENSE': 'OPERATING_EXPENSE', // Changed from 'STAFF_EXPENSE' to 'OPERATING_EXPENSE'
+    'ADMIN_EXPENSE': 'ADMINISTRATIVE_EXPENSE',
+  
+    // Special accounts
+    'INTER_BRANCH': 'INTER_BRANCH',
+    'SUSPENSE_ACCOUNT': 'OTHER_ASSET', // Changed from 'SUSPENSE_ACCOUNT' to 'OTHER_ASSET'
+    'CONTROL_ACCOUNT': 'CURRENT_ASSET' // Changed from 'CONTROL_ACCOUNT' to 'CURRENT_ASSET'
+  };
+  return typeMap[frontendAccountType] || 'CURRENT_ASSET';
+};
+
+
 
 // Helper function to update parent-child relationships
 const updateParentChildRelationship = async (parentAccountNo, childAccountNo, session) => {
@@ -1085,54 +1745,9 @@ const mapAccountClassToNormalBalance = (accountClass) => {
   };
   return mapping[accountClass] || 'DEBIT';
 };
-// UPDATED: Enhanced mapping function for frontend account types
-const mapMetadataAccountTypeToAccountType = (frontendAccountType) => {
-  const typeMap = {
-    // Frontend asset types to backend account types (using only schema enum values)
-    'CASH_ACCOUNT': 'CURRENT_ASSET',
-    'BANK_ACCOUNT': 'CURRENT_ASSET',
-    'RECEIVABLE_ACCOUNT': 'CURRENT_ASSET', // Changed from 'RECEIVABLE' to 'CURRENT_ASSET'
-    'CUSTOMER_ACCOUNT': 'CURRENT_ASSET',
-    'LOAN_ASSET': 'LOAN_ASSET',
-    'FIXED_ASSET': 'FIXED_ASSET',
-    'PROPERTY_PLANT_EQUIPMENT': 'FIXED_ASSET',
-    'INVESTMENT_ASSET': 'OTHER_ASSET', // Changed from 'INVESTMENT_ASSET' to 'OTHER_ASSET'
-  
-    // Frontend liability types
-    'LIABILITY_ACCOUNT': 'CURRENT_LIABILITY',
-    'DEPOSITS_LIABILITY': 'CURRENT_LIABILITY',
-    'PAYABLE_ACCOUNT': 'CURRENT_LIABILITY',
-    'LOAN_LIABILITY': 'LONG_TERM_LIABILITY',
-  
-    // Frontend equity types
-    'EQUITY_ACCOUNT': 'EQUITY',
-    'CAPITAL_ACCOUNT': 'EQUITY',
-    'RETAINED_EARNINGS': 'RETAINED_EARNINGS',
-  
-    // Frontend revenue types
-    'REVENUE_ACCOUNT': 'OPERATING_REVENUE',
-    'INTEREST_INCOME': 'INTEREST_INCOME',
-    'FEE_INCOME': 'FEE_INCOME',
-    'SERVICE_INCOME': 'OPERATING_REVENUE', // Changed from 'SERVICE_INCOME' to 'OPERATING_REVENUE'
-    'PROCESSING_FEE': 'FEE_INCOME',
-    'INSURANCE_FEE': 'FEE_INCOME',
-    'UPFRONT_INTEREST': 'INTEREST_INCOME',
-    'OTHER_FEES': 'OTHER_REVENUE',
-  
-    // Frontend expense types
-    'EXPENSE_ACCOUNT': 'OPERATING_EXPENSE',
-    'OPERATING_EXPENSE': 'OPERATING_EXPENSE',
-    'INTEREST_EXPENSE': 'FINANCE_COST', // Changed from 'INTEREST_EXPENSE' to 'FINANCE_COST'
-    'STAFF_EXPENSE': 'OPERATING_EXPENSE', // Changed from 'STAFF_EXPENSE' to 'OPERATING_EXPENSE'
-    'ADMIN_EXPENSE': 'ADMINISTRATIVE_EXPENSE',
-  
-    // Special accounts
-    'INTER_BRANCH': 'INTER_BRANCH',
-    'SUSPENSE_ACCOUNT': 'OTHER_ASSET', // Changed from 'SUSPENSE_ACCOUNT' to 'OTHER_ASSET'
-    'CONTROL_ACCOUNT': 'CURRENT_ASSET' // Changed from 'CONTROL_ACCOUNT' to 'CURRENT_ASSET'
-  };
-  return typeMap[frontendAccountType] || 'CURRENT_ASSET';
-};
+
+
+
 // MIGRATE EXISTING ACCOUNTS TO COA STRUCTURE
 const migrateToCOAStructure = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1245,6 +1860,7 @@ const migrateToCOAStructure = async (req, res) => {
     session.endSession();
   }
 };
+
 // Helper function to map legacy accounts to COA
 const mapLegacyAccountToCOA = (legacyAccount) => {
   const accountMappings = {
@@ -1266,7 +1882,37 @@ const mapLegacyAccountToCOA = (legacyAccount) => {
     },
     'Salaries and Allowances': {
       accountClass: 'EXPENSE',
+      accountType: 'STAFF_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Staff Cost': {
+      accountClass: 'EXPENSE',
+      accountType: 'STAFF_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Utilities': {
+      accountClass: 'EXPENSE',
       accountType: 'OPERATING_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Rent Expense': {
+      accountClass: 'EXPENSE',
+      accountType: 'RENT_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Depreciation': {
+      accountClass: 'EXPENSE',
+      accountType: 'DEPRECIATION_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Loan Loss Provision': {
+      accountClass: 'EXPENSE',
+      accountType: 'LOAN_LOSS_PROVISION',
+      normalBalance: 'DEBIT'
+    },
+    'Bad Debt Expense': {
+      accountClass: 'EXPENSE',
+      accountType: 'BAD_DEBT_EXPENSE',
       normalBalance: 'DEBIT'
     },
   
@@ -1286,6 +1932,31 @@ const mapLegacyAccountToCOA = (legacyAccount) => {
       accountType: 'FEE_INCOME',
       normalBalance: 'CREDIT'
     },
+    'Processing Fee': {
+      accountClass: 'REVENUE',
+      accountType: 'PROCESSING_FEE',
+      normalBalance: 'CREDIT'
+    },
+    'Insurance Fee': {
+      accountClass: 'REVENUE',
+      accountType: 'INSURANCE_FEE',
+      normalBalance: 'CREDIT'
+    },
+    'Late Fee Income': {
+      accountClass: 'REVENUE',
+      accountType: 'LATE_FEE_INCOME',
+      normalBalance: 'CREDIT'
+    },
+    'Commission Income': {
+      accountClass: 'REVENUE',
+      accountType: 'COMMISSION_INCOME',
+      normalBalance: 'CREDIT'
+    },
+    'Interest Income': {
+      accountClass: 'REVENUE',
+      accountType: 'INTEREST_INCOME',
+      normalBalance: 'CREDIT'
+    },
   
     // Asset Accounts
     'Loan Balances': {
@@ -1295,12 +1966,47 @@ const mapLegacyAccountToCOA = (legacyAccount) => {
     },
     'Cash Balances': {
       accountClass: 'ASSET',
-      accountType: 'CURRENT_ASSET',
+      accountType: 'CASH_AND_CASH_EQUIVALENTS',
       normalBalance: 'DEBIT'
     },
     'Fixed Asset': {
       accountClass: 'ASSET',
       accountType: 'FIXED_ASSET',
+      normalBalance: 'DEBIT'
+    },
+    'Bank Account': {
+      accountClass: 'ASSET',
+      accountType: 'BANK_ACCOUNT',
+      normalBalance: 'DEBIT'
+    },
+    'Cash on Hand': {
+      accountClass: 'ASSET',
+      accountType: 'CASH_ACCOUNT',
+      normalBalance: 'DEBIT'
+    },
+    'Accounts Receivable': {
+      accountClass: 'ASSET',
+      accountType: 'RECEIVABLE_ACCOUNT',
+      normalBalance: 'DEBIT'
+    },
+    'Loan Receivable': {
+      accountClass: 'ASSET',
+      accountType: 'LOAN_RECEIVABLE',
+      normalBalance: 'DEBIT'
+    },
+    'Interest Receivable': {
+      accountClass: 'ASSET',
+      accountType: 'INTEREST_RECEIVABLE',
+      normalBalance: 'DEBIT'
+    },
+    'Prepaid Expenses': {
+      accountClass: 'ASSET',
+      accountType: 'PREPAID_EXPENSE',
+      normalBalance: 'DEBIT'
+    },
+    'Inventory': {
+      accountClass: 'ASSET',
+      accountType: 'INVENTORY',
       normalBalance: 'DEBIT'
     },
   
@@ -1312,74 +2018,705 @@ const mapLegacyAccountToCOA = (legacyAccount) => {
     },
     'Borrowed Fund': {
       accountClass: 'LIABILITY',
-      accountType: 'CURRENT_LIABILITY',
+      accountType: 'LOAN_LIABILITY',
       normalBalance: 'CREDIT'
+    },
+    'Accounts Payable': {
+      accountClass: 'LIABILITY',
+      accountType: 'PAYABLE_ACCOUNT',
+      normalBalance: 'CREDIT'
+    },
+    'Interest Payable': {
+      accountClass: 'LIABILITY',
+      accountType: 'INTEREST_PAYABLE',
+      normalBalance: 'CREDIT'
+    },
+    'Tax Payable': {
+      accountClass: 'LIABILITY',
+      accountType: 'TAX_PAYABLE',
+      normalBalance: 'CREDIT'
+    },
+    'Customer Deposits': {
+      accountClass: 'LIABILITY',
+      accountType: 'CUSTOMER_DEPOSITS',
+      normalBalance: 'CREDIT'
+    },
+    'Time Deposits': {
+      accountClass: 'LIABILITY',
+      accountType: 'TIME_DEPOSITS',
+      normalBalance: 'CREDIT'
+    },
+    'Accrued Expenses': {
+      accountClass: 'LIABILITY',
+      accountType: 'ACCRUED_EXPENSES',
+      normalBalance: 'CREDIT'
+    },
+  
+    // Equity Accounts
+    'Share Capital': {
+      accountClass: 'EQUITY',
+      accountType: 'SHARE_CAPITAL',
+      normalBalance: 'CREDIT'
+    },
+    'Retained Earnings': {
+      accountClass: 'EQUITY',
+      accountType: 'RETAINED_EARNINGS',
+      normalBalance: 'CREDIT'
+    },
+    'Capital Account': {
+      accountClass: 'EQUITY',
+      accountType: 'CAPITAL_ACCOUNT',
+      normalBalance: 'CREDIT'
+    },
+    'Statutory Reserve': {
+      accountClass: 'EQUITY',
+      accountType: 'STATUTORY_RESERVE',
+      normalBalance: 'CREDIT'
+    },
+  
+    // Special/Control Accounts
+    'Suspense Account': {
+      accountClass: 'CONTROL',
+      accountType: 'SUSPENSE_ACCOUNT',
+      normalBalance: 'DEBIT'
+    },
+    'Inter-branch': {
+      accountClass: 'CONTROL',
+      accountType: 'INTER_BRANCH',
+      normalBalance: 'DEBIT'
+    },
+    'Control Account': {
+      accountClass: 'CONTROL',
+      accountType: 'CONTROL_ACCOUNT',
+      normalBalance: 'DEBIT'
+    },
+    'Clearing Account': {
+      accountClass: 'CONTROL',
+      accountType: 'SUSPENSE_ACCOUNT',
+      normalBalance: 'DEBIT'
     }
   };
-  const mapping = accountMappings[legacyAccount.ACCT_DESC] ||
-                 inferCOAMappingFromMetadata(legacyAccount) ||
-                 inferCOAMappingFromAccountType(legacyAccount) ||
-                 {
-                   accountClass: 'ASSET',
-                   accountType: 'OTHER_ASSET',
-                   normalBalance: 'DEBIT'
-                 };
-  const financialStatementType = mapToFinancialStatementCategory(mapping.accountClass, mapping.accountType);
-  const financialStatementCategory = mapToFinancialStatementSubCategory(mapping.accountClass, mapping.accountType);
+  
+  // Try to get mapping from legacy account description
+  let mapping = accountMappings[legacyAccount.ACCT_DESC];
+  
+  // If not found, try other methods
+  if (!mapping) {
+    mapping = inferCOAMappingFromMetadata(legacyAccount);
+  }
+  
+  if (!mapping) {
+    mapping = inferCOAMappingFromAccountType(legacyAccount);
+  }
+  
+  // Default fallback
+  if (!mapping) {
+    mapping = {
+      accountClass: 'ASSET',
+      accountType: 'OTHER_ASSET',
+      normalBalance: 'DEBIT'
+    };
+  }
+  
+  // Get COA classification using new functions
+  const coaCategory = getValidCOACategory(mapping.accountType);
+  const classCode = determineCategoryFromAccountType(mapping.accountType);
+  
+  // Map to financial statement categories
+  const financialStatementType = mapToFinancialStatementCategory(coaCategory);
+  const financialStatementCategory = mapToFinancialStatementSubCategory(coaCategory);
+  
   return {
     coaStructure: {
       segments: {
-        entity: String(legacyAccount.organizationCode).padStart(2, '0'),
-        branch: legacyAccount.branchCode.padStart(3, '0'),
-        accountClass: getAccountClassCode(mapping.accountClass),
+        entity: String(legacyAccount.organizationCode || '01').padStart(2, '0'),
+        branch: (legacyAccount.branchCode || '000').padStart(3, '0'),
+        accountClass: classCode, // Use 3-digit class code
         accountType: getAccountTypeCode(mapping.accountType),
         subAccount: '000'
       },
+      accountNumber: generateAccountNumber(
+        classCode,
+        legacyAccount.branchCode || '000',
+        legacyAccount.sequence || '0001'
+      ),
       financialStatement: {
         type: financialStatementType,
         category: financialStatementCategory,
-        subCategory: `${mapping.accountClass}_${mapping.accountType}`
+        subCategory: mapping.accountType,
+        coaCategory: coaCategory // Add COA category
       },
       hierarchy: {
         level: legacyAccount.level || 4,
-        parentAccountNo: null,
-        isControlAccount: false,
-        isSummaryAccount: false,
-        childAccounts: []
+        parentAccountNo: legacyAccount.parentAccountNo || null,
+        isControlAccount: mapping.accountClass === 'CONTROL',
+        isSummaryAccount: legacyAccount.isSummaryAccount || false,
+        childAccounts: legacyAccount.childAccounts || []
       },
       accounting: {
         normalBalance: mapping.normalBalance,
         balanceType: mapping.accountClass,
         isTemporary: ['REVENUE', 'EXPENSE'].includes(mapping.accountClass),
-        isPermanent: ['ASSET', 'LIABILITY', 'EQUITY'].includes(mapping.accountClass),
-        requiresClosing: ['REVENUE', 'EXPENSE'].includes(mapping.accountClass)
+        isPermanent: ['ASSET', 'LIABILITY', 'EQUITY', 'CONTROL'].includes(mapping.accountClass),
+        requiresClosing: ['REVENUE', 'EXPENSE'].includes(mapping.accountClass),
+        isActive: legacyAccount.isActive !== false
+      },
+      metadata: {
+        legacyId: legacyAccount._id || legacyAccount.ACCT_NO,
+        legacyDescription: legacyAccount.ACCT_DESC,
+        migratedDate: new Date().toISOString(),
+        sourceSystem: 'LEGACY'
       }
     }
   };
 };
+
+
+// const getAccountTypeCode = (accountType) => {
+//   // Create a 2-digit code based on account type
+//   // This is a simplified version - you might want a more comprehensive mapping
+//   const typeCodes = {
+//     // Assets
+//     'LOAN_ASSET': '01',
+//     'CASH_AND_CASH_EQUIVALENTS': '02',
+//     'BANK_ACCOUNT': '03',
+//     'RECEIVABLE_ACCOUNT': '04',
+//     'FIXED_ASSET': '05',
+//     'INTANGIBLE_ASSET': '06',
+//     'INVENTORY': '07',
+//     'PREPAID_EXPENSE': '08',
+//     // Liabilities
+//     'DEPOSITS_LIABILITY': '09',
+//     'LOAN_LIABILITY': '10',
+//     'PAYABLE_ACCOUNT': '11',
+//     'INTEREST_PAYABLE': '12',
+//     'TAX_PAYABLE': '13',
+//     // Equity
+//     'SHARE_CAPITAL': '14',
+//     'RETAINED_EARNINGS': '15',
+//     'CAPITAL_ACCOUNT': '16',
+//     // Revenue
+//     'INTEREST_INCOME': '17',
+//     'FEE_INCOME': '18',
+//     'PROCESSING_FEE': '19',
+//     'COMMISSION_INCOME': '20',
+//     // Expense
+//     'OPERATING_EXPENSE': '21',
+//     'STAFF_EXPENSE': '22',
+//     'ADMINISTRATIVE_EXPENSE': '23',
+//     'LOAN_LOSS_PROVISION': '24',
+//     'DEPRECIATION_EXPENSE': '25',
+//     // Control
+//     'SUSPENSE_ACCOUNT': '26',
+//     'INTER_BRANCH': '27',
+//     'CONTROL_ACCOUNT': '28'
+//   };
+//   return typeCodes[accountType] || '99';
+// };
+
+const generateAccountNumber = (classCode, branchCode, sequence) => {
+  // Format: ClassCode(3) + BranchCode(3) + Sequence(4)
+  const paddedBranch = String(branchCode).padStart(3, '0');
+  const paddedSequence = String(sequence).padStart(4, '0');
+  return `${classCode}${paddedBranch}${paddedSequence}`;
+};
+
+// const inferCOAMappingFromAccountType = (account) => {
+//   // Fallback function if no other mapping is found
+//   const accountType = account.ACCT_DESC || account.accountName || '';
+  
+//   if (!accountType) return null;
+  
+//   // Simple keyword matching for fallback
+//   const accountKeywords = {
+//     // Assets
+//     'LOAN': { accountClass: 'ASSET', accountType: 'LOAN_ASSET', normalBalance: 'DEBIT' },
+//     'CASH': { accountClass: 'ASSET', accountType: 'CASH_AND_CASH_EQUIVALENTS', normalBalance: 'DEBIT' },
+//     'BANK': { accountClass: 'ASSET', accountType: 'BANK_ACCOUNT', normalBalance: 'DEBIT' },
+//     'RECEIVABLE': { accountClass: 'ASSET', accountType: 'RECEIVABLE_ACCOUNT', normalBalance: 'DEBIT' },
+//     'INVENTORY': { accountClass: 'ASSET', accountType: 'INVENTORY', normalBalance: 'DEBIT' },
+//     'FIXED': { accountClass: 'ASSET', accountType: 'FIXED_ASSET', normalBalance: 'DEBIT' },
+    
+//     // Liabilities
+//     'DEPOSIT': { accountClass: 'LIABILITY', accountType: 'DEPOSITS_LIABILITY', normalBalance: 'CREDIT' },
+//     'PAYABLE': { accountClass: 'LIABILITY', accountType: 'PAYABLE_ACCOUNT', normalBalance: 'CREDIT' },
+//     'LOAN_LIABILITY': { accountClass: 'LIABILITY', accountType: 'LOAN_LIABILITY', normalBalance: 'CREDIT' },
+//     'BORROW': { accountClass: 'LIABILITY', accountType: 'LOAN_LIABILITY', normalBalance: 'CREDIT' },
+//     'TAX': { accountClass: 'LIABILITY', accountType: 'TAX_PAYABLE', normalBalance: 'CREDIT' },
+    
+//     // Equity
+//     'CAPITAL': { accountClass: 'EQUITY', accountType: 'SHARE_CAPITAL', normalBalance: 'CREDIT' },
+//     'EQUITY': { accountClass: 'EQUITY', accountType: 'RETAINED_EARNINGS', normalBalance: 'CREDIT' },
+//     'RESERVE': { accountClass: 'EQUITY', accountType: 'STATUTORY_RESERVE', normalBalance: 'CREDIT' },
+    
+//     // Revenue
+//     'INCOME': { accountClass: 'REVENUE', accountType: 'FEE_INCOME', normalBalance: 'CREDIT' },
+//     'INTEREST': { accountClass: 'REVENUE', accountType: 'INTEREST_INCOME', normalBalance: 'CREDIT' },
+//     'FEE': { accountClass: 'REVENUE', accountType: 'FEE_INCOME', normalBalance: 'CREDIT' },
+//     'COMMISSION': { accountClass: 'REVENUE', accountType: 'COMMISSION_INCOME', normalBalance: 'CREDIT' },
+    
+//     // Expense
+//     'EXPENSE': { accountClass: 'EXPENSE', accountType: 'OPERATING_EXPENSE', normalBalance: 'DEBIT' },
+//     'SALARY': { accountClass: 'EXPENSE', accountType: 'STAFF_EXPENSE', normalBalance: 'DEBIT' },
+//     'STAFF': { accountClass: 'EXPENSE', accountType: 'STAFF_EXPENSE', normalBalance: 'DEBIT' },
+//     'ADMIN': { accountClass: 'EXPENSE', accountType: 'ADMINISTRATIVE_EXPENSE', normalBalance: 'DEBIT' },
+//     'RENT': { accountClass: 'EXPENSE', accountType: 'RENT_EXPENSE', normalBalance: 'DEBIT' },
+//     'DEPRECIATION': { accountClass: 'EXPENSE', accountType: 'DEPRECIATION_EXPENSE', normalBalance: 'DEBIT' },
+    
+//     // Control
+//     'SUSPENSE': { accountClass: 'CONTROL', accountType: 'SUSPENSE_ACCOUNT', normalBalance: 'DEBIT' },
+//     'CONTROL': { accountClass: 'CONTROL', accountType: 'CONTROL_ACCOUNT', normalBalance: 'DEBIT' },
+//     'CLEARING': { accountClass: 'CONTROL', accountType: 'SUSPENSE_ACCOUNT', normalBalance: 'DEBIT' }
+//   };
+  
+//   // Find matching keyword
+//   for (const [keyword, mapping] of Object.entries(accountKeywords)) {
+//     if (accountType.toUpperCase().includes(keyword)) {
+//       return mapping;
+//     }
+//   }
+  
+//   return null;
+// };
+
 // Helper function to infer COA mapping from metadata
 const inferCOAMappingFromMetadata = (account) => {
   if (!account.metadata) return null;
+  
   const metadataMapping = {
-    'LOAN_ASSET': { accountClass: 'ASSET', accountType: 'LOAN_ASSET', normalBalance: 'DEBIT' },
-    'PROCESSING_FEE': { accountClass: 'REVENUE', accountType: 'FEE_INCOME', normalBalance: 'CREDIT' },
-    'INSURANCE_FEE': { accountClass: 'REVENUE', accountType: 'FEE_INCOME', normalBalance: 'CREDIT' },
-    'OTHER_FEES': { accountClass: 'REVENUE', accountType: 'FEE_INCOME', normalBalance: 'CREDIT' },
-    'CUSTOMER_ACCOUNT': { accountClass: 'ASSET', accountType: 'CURRENT_ASSET', normalBalance: 'DEBIT' },
-    'LIABILITY_ACCOUNT': { accountClass: 'LIABILITY', accountType: 'CURRENT_LIABILITY', normalBalance: 'CREDIT' },
-    'DEPOSITS_LIABILITY': { accountClass: 'LIABILITY', accountType: 'DEPOSITS_LIABILITY', normalBalance: 'CREDIT' },
-    'EQUITY_ACCOUNT': { accountClass: 'EQUITY', accountType: 'RETAINED_EARNINGS', normalBalance: 'CREDIT' },
-    'CAPITAL_ACCOUNT': { accountClass: 'EQUITY', accountType: 'SHARE_CAPITAL', normalBalance: 'CREDIT' },
-    'EXPENSE_ACCOUNT': { accountClass: 'EXPENSE', accountType: 'OPERATING_EXPENSE', normalBalance: 'DEBIT' },
-    'OPERATING_EXPENSE': { accountClass: 'EXPENSE', accountType: 'OPERATING_EXPENSE', normalBalance: 'DEBIT' },
-    'REVENUE_ACCOUNT': { accountClass: 'REVENUE', accountType: 'OPERATING_REVENUE', normalBalance: 'CREDIT' },
-    'INTEREST_INCOME': { accountClass: 'REVENUE', accountType: 'INTEREST_INCOME', normalBalance: 'CREDIT' },
-    'FIXED_ASSET': { accountClass: 'ASSET', accountType: 'FIXED_ASSET', normalBalance: 'DEBIT' },
-    'PROPERTY_PLANT_EQUIPMENT': { accountClass: 'ASSET', accountType: 'FIXED_ASSET', normalBalance: 'DEBIT' },
-    'INTER_BRANCH': { accountClass: 'ASSET', accountType: 'CURRENT_ASSET', normalBalance: 'DEBIT' }
+    // ASSET ACCOUNTS
+    'LOAN_ASSET': { 
+      accountClass: 'ASSET', 
+      accountType: 'LOAN_ASSET', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'CUSTOMER_ACCOUNT': { 
+      accountClass: 'ASSET', 
+      accountType: 'CURRENT_ASSET', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'CASH_ACCOUNT': { 
+      accountClass: 'ASSET', 
+      accountType: 'CASH_AND_CASH_EQUIVALENTS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'BANK_ACCOUNT': { 
+      accountClass: 'ASSET', 
+      accountType: 'CASH_AND_CASH_EQUIVALENTS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'FIXED_ASSET': { 
+      accountClass: 'ASSET', 
+      accountType: 'PROPERTY_PLANT_AND_EQUIPMENT', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'NON_CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'PROPERTY_PLANT_EQUIPMENT': { 
+      accountClass: 'ASSET', 
+      accountType: 'PROPERTY_PLANT_AND_EQUIPMENT', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'NON_CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'INTANGIBLE_ASSET': { 
+      accountClass: 'ASSET', 
+      accountType: 'INTANGIBLE_ASSETS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'NON_CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'RECEIVABLE_ACCOUNT': { 
+      accountClass: 'ASSET', 
+      accountType: 'RECEIVABLE_ACCOUNT', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'INVESTMENT_ASSET': { 
+      accountClass: 'ASSET', 
+      accountType: 'INVESTMENT_ASSET', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'LOAN_RECEIVABLE': { 
+      accountClass: 'ASSET', 
+      accountType: 'LOAN_RECEIVABLE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'INTEREST_RECEIVABLE': { 
+      accountClass: 'ASSET', 
+      accountType: 'INTEREST_RECEIVABLE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    
+    // LIABILITY ACCOUNTS
+    'LIABILITY_ACCOUNT': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'CURRENT_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'DEPOSITS_LIABILITY': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'DEPOSITS_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'CURRENT_LIABILITY': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'CURRENT_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'LONG_TERM_LIABILITY': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'LONG_TERM_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'NON_CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'LOAN_LIABILITY': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'LOAN_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'PAYABLE_ACCOUNT': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'PAYABLE_ACCOUNT', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'INTEREST_PAYABLE': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'INTEREST_PAYABLE', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'WITHHOLDING_TAX_PAYABLE': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'WITHHOLDING_TAX_PAYABLE', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    
+    // EQUITY ACCOUNTS
+    'EQUITY_ACCOUNT': { 
+      accountClass: 'EQUITY', 
+      accountType: 'RETAINED_EARNINGS', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'EQUITY',
+      classCode: '201'
+    },
+    'CAPITAL_ACCOUNT': { 
+      accountClass: 'EQUITY', 
+      accountType: 'SHARE_CAPITAL', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'EQUITY',
+      classCode: '201'
+    },
+    'SHARE_CAPITAL': { 
+      accountClass: 'EQUITY', 
+      accountType: 'SHARE_CAPITAL', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'EQUITY',
+      classCode: '201'
+    },
+    'RETAINED_EARNINGS': { 
+      accountClass: 'EQUITY', 
+      accountType: 'RETAINED_EARNINGS', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'EQUITY',
+      classCode: '201'
+    },
+    
+    // REVENUE ACCOUNTS
+    'PROCESSING_FEE': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'INSURANCE_FEE': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'UPFRONT_INTEREST': { 
+      accountClass: 'REVENUE', 
+      accountType: 'INTEREST_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'OTHER_FEES': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'REVENUE_ACCOUNT': { 
+      accountClass: 'REVENUE', 
+      accountType: 'OPERATING_REVENUE', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'INTEREST_INCOME': { 
+      accountClass: 'REVENUE', 
+      accountType: 'INTEREST_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'SERVICE_INCOME': { 
+      accountClass: 'REVENUE', 
+      accountType: 'SERVICE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'FEE_INCOME': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'LATE_FEE_INCOME': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'COMMISSION_INCOME': { 
+      accountClass: 'REVENUE', 
+      accountType: 'FEE_INCOME', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    
+    // EXPENSE ACCOUNTS
+    'EXPENSE_ACCOUNT': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'OPERATING_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'OPERATING_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'OPERATING_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'STAFF_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'STAFF_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'ADMINISTRATIVE_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'ADMINISTRATIVE_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'ADMIN_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'ADMINISTRATIVE_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'FINANCE_COST': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'FINANCE_COST', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'INTEREST_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'INTEREST_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'LOAN_LOSS_PROVISION': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'LOAN_LOSS_PROVISION', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'BAD_DEBT_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'BAD_DEBT_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'DEPRECIATION_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'DEPRECIATION_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    
+    // SPECIAL/CONTROL ACCOUNTS
+    'INTER_BRANCH': { 
+      accountClass: 'CONTROL', 
+      accountType: 'INTERBRANCH_ASSETS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '501'
+    },
+    'SUSPENSE_ACCOUNT': { 
+      accountClass: 'CONTROL', 
+      accountType: 'SUSPENSE_ASSETS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '501'
+    },
+    'CONTROL_ACCOUNT': { 
+      accountClass: 'CONTROL', 
+      accountType: 'CONTROL_ACCOUNT', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '501'
+    },
+    'SUSPENSE_ASSETS': { 
+      accountClass: 'CONTROL', 
+      accountType: 'SUSPENSE_ASSETS', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '501'
+    },
+    'SUSPENSE_LIABILITIES': { 
+      accountClass: 'CONTROL', 
+      accountType: 'SUSPENSE_LIABILITIES', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '501'
+    },
+    
+    // OTHER ACCOUNTS
+    'OTHER_ASSET': { 
+      accountClass: 'ASSET', 
+      accountType: 'OTHER_ASSET', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'CURRENT_ASSETS',
+      classCode: '001'
+    },
+    'OTHER_LIABILITY': { 
+      accountClass: 'LIABILITY', 
+      accountType: 'OTHER_LIABILITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'CURRENT_LIABILITIES',
+      classCode: '101'
+    },
+    'OTHER_REVENUE': { 
+      accountClass: 'REVENUE', 
+      accountType: 'OTHER_REVENUE', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'INCOME',
+      classCode: '301'
+    },
+    'OTHER_EXPENSE': { 
+      accountClass: 'EXPENSE', 
+      accountType: 'OTHER_EXPENSE', 
+      normalBalance: 'DEBIT',
+      coaCategory: 'EXPENSE',
+      classCode: '401'
+    },
+    'OTHER_EQUITY': { 
+      accountClass: 'EQUITY', 
+      accountType: 'OTHER_EQUITY', 
+      normalBalance: 'CREDIT',
+      coaCategory: 'EQUITY',
+      classCode: '201'
+    }
   };
-  return metadataMapping[account.metadata.accountType] || null;
+
+  // Try to get mapping from metadata accountType
+  const mapping = metadataMapping[account.metadata.accountType];
+  
+  if (mapping) return mapping;
+  
+  // Fallback: Use the classification functions if no direct mapping
+  const { getValidCOACategory, determineCategoryFromAccountType } = require('./coaUtils');
+  const accountType = account.metadata.accountType;
+  
+  return {
+    accountClass: getAccountClassFromType(accountType),
+    accountType: accountType,
+    normalBalance: getNormalBalanceFromType(accountType),
+    coaCategory: getValidCOACategory(accountType),
+    classCode: determineCategoryFromAccountType(accountType)
+  };
 };
+
+// Helper functions for fallback
+const getAccountClassFromType = (accountType) => {
+  const assetKeywords = ['ASSET', 'RECEIVABLE', 'CASH', 'BANK', 'FIXED', 'INTANGIBLE', 'INVENTORY', 'INVESTMENT'];
+  const liabilityKeywords = ['LIABILITY', 'PAYABLE', 'DEPOSIT', 'BORROWING', 'LOAN_LIABILITY'];
+  const equityKeywords = ['EQUITY', 'CAPITAL', 'RETAINED', 'RESERVE'];
+  const revenueKeywords = ['REVENUE', 'INCOME', 'FEE', 'COMMISSION', 'INTEREST_INCOME'];
+  const expenseKeywords = ['EXPENSE', 'COST', 'LOSS', 'PROVISION', 'DEPRECIATION', 'AMORTIZATION'];
+  const controlKeywords = ['SUSPENSE', 'CONTROL', 'CLEARING', 'INTERBRANCH'];
+  
+  if (assetKeywords.some(keyword => accountType.includes(keyword))) return 'ASSET';
+  if (liabilityKeywords.some(keyword => accountType.includes(keyword))) return 'LIABILITY';
+  if (equityKeywords.some(keyword => accountType.includes(keyword))) return 'EQUITY';
+  if (revenueKeywords.some(keyword => accountType.includes(keyword))) return 'REVENUE';
+  if (expenseKeywords.some(keyword => accountType.includes(keyword))) return 'EXPENSE';
+  if (controlKeywords.some(keyword => accountType.includes(keyword))) return 'CONTROL';
+  
+  return 'OTHER';
+};
+
+const getNormalBalanceFromType = (accountType) => {
+  const creditTypes = ['LIABILITY', 'EQUITY', 'REVENUE', 'INCOME', 'PAYABLE', 'DEPOSIT', 'CAPITAL'];
+  const debitTypes = ['ASSET', 'EXPENSE', 'RECEIVABLE', 'CASH', 'BANK', 'FIXED', 'INTANGIBLE'];
+  
+  if (creditTypes.some(keyword => accountType.includes(keyword))) return 'CREDIT';
+  if (debitTypes.some(keyword => accountType.includes(keyword))) return 'DEBIT';
+  
+  return 'DEBIT'; // Default to debit
+};
+
 // Helper function to infer COA mapping from account type patterns
 const inferCOAMappingFromAccountType = (account) => {
   const desc = account.ACCT_DESC?.toLowerCase() || '';
@@ -1420,6 +2757,17 @@ const determineCategoryFromAccountType = (accountType) => {
     'SERVICE_INCOME': '301',
     'FEE_INCOME': '301',
     'OTHER_REVENUE': '301',
+    'COMMISSION_INCOME': '301',
+    'TRADING_INCOME': '301',
+    'FOREIGN_EXCHANGE_INCOME': '301',
+    'DIVIDEND_INCOME': '301',
+    'RENTAL_INCOME': '301',
+    'LATE_FEE_INCOME': '301',
+    'PENALTY_INCOME': '301',
+    'SALES_REVENUE': '301',
+    'OPERATING_REVENUE': '301',
+    'NON_OPERATING_INCOME': '301',
+    
     // Asset types -> '001'
     'CUSTOMER_ACCOUNT': '001',
     'LOAN_ASSET': '001',
@@ -1432,6 +2780,16 @@ const determineCategoryFromAccountType = (accountType) => {
     'INTANGIBLE_ASSET': '001',
     'OTHER_ASSET': '001',
     'INVESTMENT_ASSET': '001',
+    'LOAN_RECEIVABLE': '001',
+    'INTEREST_RECEIVABLE': '001',
+    'FEE_RECEIVABLE': '001',
+    'PREPAID_EXPENSE': '001',
+    'DEFERRED_TAX_ASSET': '001',
+    'CASH_AND_CASH_EQUIVALENTS': '001',
+    'LOANS_AND_ADVANCES': '001',
+    'INVENTORY': '001',
+    'FORECLOSURE_ASSETS': '001',
+    
     // Liability types -> '101'
     'LIABILITY_ACCOUNT': '101',
     'DEPOSITS_LIABILITY': '101',
@@ -1440,12 +2798,28 @@ const determineCategoryFromAccountType = (accountType) => {
     'LONG_TERM_LIABILITY': '101',
     'LOAN_LIABILITY': '101',
     'OTHER_LIABILITY': '101',
+    'INTEREST_PAYABLE': '101',
+    'TAX_PAYABLE': '101',
+    'WITHHOLDING_TAX_PAYABLE': '101',
+    'VAT_PAYABLE': '101',
+    'INCOME_TAX_PAYABLE': '101',
+    'DEFERRED_TAX_LIABILITY': '101',
+    'LEASE_LIABILITY': '101',
+    'CUSTOMER_DEPOSITS': '101',
+    'BORROWINGS': '101',
+    'BONDS_PAYABLE': '101',
+    
     // Equity types -> '201'
     'EQUITY_ACCOUNT': '201',
     'CAPITAL_ACCOUNT': '201',
     'SHARE_CAPITAL': '201',
     'RETAINED_EARNINGS': '201',
     'OTHER_EQUITY': '201',
+    'SHARE_PREMIUM': '201',
+    'STATUTORY_RESERVE': '201',
+    'GENERAL_RISK_RESERVE': '201',
+    'REVALUATION_RESERVE': '201',
+    
     // Expense types -> '401'
     'EXPENSE_ACCOUNT': '401',
     'OPERATING_EXPENSE': '401',
@@ -1455,13 +2829,33 @@ const determineCategoryFromAccountType = (accountType) => {
     'FINANCE_COST': '401',
     'INTEREST_EXPENSE': '401',
     'OTHER_EXPENSE': '401',
-    // Special/Control types -> '501' or '999'
-    'INTER_BRANCH': '501', // Treated as control/suspense for legacy alignment
+    'LOAN_LOSS_PROVISION': '401',
+    'BAD_DEBT_EXPENSE': '401',
+    'DEPRECIATION_EXPENSE': '401',
+    'AMORTIZATION_EXPENSE': '401',
+    'RENT_EXPENSE': '401',
+    'MARKETING_EXPENSE': '401',
+    'PROFESSIONAL_FEES': '401',
+    'TRAVEL_EXPENSE': '401',
+    'INSURANCE_EXPENSE': '401',
+    'REPAIRS_MAINTENANCE': '401',
+    'TAX_EXPENSE': '401',
+    
+    // Special/Control types -> '501' (Suspense/Control accounts)
+    'INTER_BRANCH': '501',
     'SUSPENSE_ACCOUNT': '501',
-    'CONTROL_ACCOUNT': '501'
+    'CONTROL_ACCOUNT': '501',
+    'SUSPENSE_ASSETS': '501',
+    'SUSPENSE_LIABILITIES': '501',
+    'CLEARING_AND_SETTLEMENT_ASSETS': '501',
+    'CLEARING_AND_SETTLEMENT_LIABILITIES': '501',
+    'INTERBRANCH_ASSETS': '501',
+    'INTERBRANCH_LIABILITIES': '501'
   };
+
   return classCodeMap[accountType] || '999';
 };
+
 const determineBalanceCode = (accountType) => {
   // BAL_CD aligns with category code in the new system, so reuse the same mapping
   // (avoids repetition; both derive from modern COA class codes like '001', '301', etc.)
@@ -2022,29 +3416,125 @@ const cloneGLAccountsForBranch = async (req, res) => {
       }
 
       // FIX: Map account types to valid COA categories
-      const getValidCOACategory = (accountType) => {
-        const categoryMap = {
-          // Map metadata.accountType to valid coaStructure.financialStatement.category
-          'CUSTOMER_ACCOUNT': 'CURRENT_ASSETS',
-          'DEPOSITS_LIABILITY': 'DEPOSIT_LIABILITIES', 
-          'PROPERTY_PLANT_EQUIPMENT': 'FIXED_ASSETS',
-          'LOAN_ASSET': 'LOAN_ASSETS',
-          'INTEREST_INCOME': 'INTEREST_INCOME',
-          'FEE_INCOME': 'FEE_INCOME',
-          'OPERATING_EXPENSE': 'OPERATING_EXPENSES',
-          'STAFF_EXPENSE': 'STAFF_EXPENSES',
-          'ADMIN_EXPENSE': 'ADMINISTRATIVE_EXPENSES',
-          'BANK_ACCOUNT': 'CASH_EQUIVALENTS',
-          'CASH_ACCOUNT': 'CASH_EQUIVALENTS',
-          'RECEIVABLE_ACCOUNT': 'RECEIVABLE_ASSETS',
-          'PAYABLE_ACCOUNT': 'PAYABLE_LIABILITIES',
-          'EQUITY_ACCOUNT': 'SHARE_CAPITAL',
-          'RETAINED_EARNINGS': 'RETAINED_EARNINGS'
-        };
-        
-        // Use mapped value or default to CURRENT_ASSETS
-        return categoryMap[accountType] || 'CURRENT_ASSETS';
-      };
+    /**
+ * Maps an accountType to its correct high-level COA category
+ * Used for financial statement grouping (Balance Sheet / Income Statement)
+ *
+ * @param {string} accountType
+ * @returns {string} One of: 'CURRENT_ASSETS', 'NON_CURRENT_ASSETS', 'CURRENT_LIABILITIES',
+ *          'NON_CURRENT_LIABILITIES', 'EQUITY', 'INCOME', 'EXPENSE', 'OTHER'}
+ */
+const getValidCOACategory = (accountType) => {
+  // Early exit for undefined/null
+  if (!accountType) return 'OTHER';
+
+  const assetTypes = new Set([
+    // Cash & Equivalents
+    'CASH_AND_CASH_EQUIVALENTS', 'CASH_ACCOUNT', 'BANK_ACCOUNT', 'DUE_FROM_BANKS',
+
+    // Loans & Receivables
+    'LOANS_AND_ADVANCES', 'LOAN_PORTFOLIO_GROSS', 'LOAN_PORTFOLIO', 'NET_LOANS_AND_ADVANCES',
+    'LOAN_ASSET', 'LOAN_RECEIVABLE', 'CUSTOMER_ACCOUNT',
+
+    // Investments
+    'TRADING_SECURITIES', 'DERIVATIVE_ASSETS',
+    'INVESTMENT_SECURITIES_HTM', 'INVESTMENT_SECURITIES_AFS', 'INVESTMENT_SECURITIES_FVPL',
+    'INVESTMENT_ASSET', 'INVESTMENTS_IN_SUBSIDIARIES', 'INVESTMENTS_IN_ASSOCIATES',
+
+    // Fixed Assets
+    'INVESTMENT_PROPERTY', 'PROPERTY_PLANT_AND_EQUIPMENT', 'FIXED_ASSET',
+    'RIGHT_OF_USE_ASSETS', 'LEASE_ASSET', 'INTANGIBLE_ASSETS', 'INTANGIBLE_ASSET', 'GOODWILL',
+
+    // Other Assets
+    'DEFERRED_INTEREST', 'INTEREST_RECEIVABLE', 'FEE_AND_COMMISSION_RECEIVABLE', 'FEE_RECEIVABLE',
+    'RECEIVABLE_ACCOUNT', 'PREPAYMENTS_AND_OTHER_ASSETS', 'PREPAID_EXPENSE',
+    'INVENTORY', 'FORECLOSURE_ASSETS', 'OTHER_ASSETS', 'OTHER_ASSET',
+    'CURRENT_ASSET', 'SUSPENSE_ASSETS', 'CLEARING_AND_SETTLEMENT_ASSETS',
+    'INTERBRANCH_ASSETS', 'INTER_BRANCH',
+
+    // Deferred & Tax
+    'DEFERRED_TAX_ASSETS', 'DEFERRED_TAX_ASSET',
+  ]);
+
+  const liabilityTypes = new Set([
+    'CUSTOMER_DEPOSITS', 'SAVINGS_DEPOSITS', 'CURRENT_AND_DEMAND_DEPOSITS',
+    'TIME_AND_FIXED_DEPOSITS', 'TIME_DEPOSITS', 'DEPOSITS_LIABILITY',
+    'DUE_TO_BANKS', 'BORROWINGS_FROM_CENTRAL_BANK', 'BORROWINGS_FROM_OTHER_BANKS',
+    'BORROWINGS', 'LOAN_LIABILITY', 'SUBORDINATED_DEBT', 'DEBT_SECURITIES_ISSUED',
+    'BONDS_PAYABLE', 'DERIVATIVE_LIABILITIES', 'INTEREST_PAYABLE',
+    'ACCRUED_EXPENSES_PAYABLE', 'ACCRUED_EXPENSES', 'DIVIDENDS_PAYABLE', 'DIVIDEND_PAYABLE',
+    'TAX_PAYABLE', 'DEFERRED_TAX_LIABILITIES', 'DEFERRED_TAX_LIABILITY',
+    'LEASE_LIABILITIES', 'LEASE_LIABILITY', 'PROVISIONS_AND_CONTINGENCIES', 'PROVISIONS',
+    'EMPLOYEE_BENEFIT_LIABILITIES', 'UNEARNED_REVENUE', 'PAYABLE_ACCOUNT',
+    'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'OTHER_LIABILITIES', 'OTHER_LIABILITY',
+    'LIABILITY_ACCOUNT', 'SUSPENSE_LIABILITIES', 'CLEARING_AND_SETTLEMENT_LIABILITIES',
+    'INTERBRANCH_LIABILITIES', 'WITHHOLDING_TAX_PAYABLE', 'VAT_PAYABLE', 'INCOME_TAX_PAYABLE',
+  ]);
+
+  const equityTypes = new Set([
+    'SHARE_CAPITAL', 'SHARE_PREMIUM', 'CAPITAL_ACCOUNT', 'RETAINED_EARNINGS',
+    'STATUTORY_RESERVE', 'GENERAL_RISK_RESERVE', 'REVALUATION_RESERVE',
+    'FAIR_VALUE_RESERVE', 'FOREIGN_CURRENCY_TRANSLATION_RESERVE',
+    'OTHER_COMPREHENSIVE_INCOME', 'TREASURY_SHARES', 'TREASURY_STOCK',
+    'CAPITAL_RESERVE', 'DONATED_CAPITAL', 'OTHER_EQUITY_COMPONENTS',
+    'OTHER_EQUITY', 'EQUITY_ACCOUNT', 'ADDITIONAL_PAID_IN_CAPITAL',
+  ]);
+
+  const incomeTypes = new Set([
+    'INTEREST_INCOME_LOANS', 'INTEREST_INCOME_INVESTMENTS', 'INTEREST_INCOME_PLACEMENTS',
+    'LOAN_INTEREST_INCOME', 'INVESTMENT_INTEREST_INCOME', 'INTEREST_INCOME',
+    'FEE_AND_COMMISSION_INCOME', 'FEE_INCOME', 'PROCESSING_FEE', 'INSURANCE_FEE',
+    'UPFRONT_INTEREST', 'OTHER_FEES', 'COMMISSION_INCOME', 'TRADING_INCOME',
+    'FOREIGN_EXCHANGE_INCOME', 'FOREIGN_EXCHANGE_GAIN', 'DIVIDEND_INCOME',
+    'RENTAL_INCOME', 'GAIN_ON_SALE_OF_ASSETS', 'REALIZED_GAIN', 'UNREALIZED_GAIN',
+    'RECOVERIES_ON_LOANS_WRITTEN_OFF', 'LATE_FEE_INCOME', 'PENALTY_INCOME',
+    'SERVICE_INCOME', 'SALES_REVENUE', 'OTHER_OPERATING_INCOME', 'OTHER_REVENUE',
+    'OPERATING_REVENUE', 'REVENUE_ACCOUNT', 'NON_OPERATING_INCOME',
+  ]);
+
+  const expenseTypes = new Set([
+    'INTEREST_EXPENSE_DEPOSITS', 'INTEREST_EXPENSE_BORROWINGS', 'INTEREST_EXPENSE',
+    'FEE_AND_COMMISSION_EXPENSE', 'LOAN_LOSS_PROVISION_EXPENSE', 'IMPAIRMENT_LOSSES',
+    'LOAN_LOSS_PROVISION', 'BAD_DEBT_EXPENSE', 'STAFF_COSTS', 'STAFF_EXPENSE',
+    'SALARIES_WAGES', 'EMPLOYEE_BENEFITS', 'DEPRECIATION_EXPENSE', 'AMORTIZATION_EXPENSE',
+    'OCCUPANCY_COSTS', 'RENT_EXPENSE', 'UTILITIES_EXPENSE', 'IT_AND_COMMUNICATION_EXPENSES',
+    'MARKETING_AND_ADVERTISING', 'MARKETING_EXPENSE', 'PROFESSIONAL_AND_LEGAL_FEES',
+    'PROFESSIONAL_FEES', 'TRAVEL_AND_ENTERTAINMENT', 'TRAVEL_EXPENSE',
+    'INSURANCE_EXPENSE', 'REPAIRS_AND_MAINTENANCE', 'REPAIRS_MAINTENANCE',
+    'ADMINISTRATIVE_EXPENSES', 'ADMINISTRATIVE_EXPENSE', 'ADMIN_EXPENSE',
+    'OTHER_OPERATING_EXPENSES', 'OTHER_EXPENSE', 'FINANCE_COST', 'BORROWING_COST',
+    'FOREIGN_EXCHANGE_LOSS', 'LOSS_ON_SALE_OF_ASSETS', 'TAX_EXPENSE',
+    'NON_OPERATING_EXPENSES', 'OPERATING_EXPENSE', 'EXPENSE_ACCOUNT',
+  ]);
+
+  // Determine category
+  if (assetTypes.has(accountType)) {
+    // Further split: current vs non-current assets
+    const nonCurrentAssetKeywords = ['FIXED_', 'PROPERTY_', 'INTANGIBLE_', 'GOODWILL', 
+      'INVESTMENT_PROPERTY', 'LONG_TERM', 'LEASE_ASSET', 'RIGHT_OF_USE'];
+    if (nonCurrentAssetKeywords.some(k => accountType.includes(k))) {
+      return 'NON_CURRENT_ASSETS';
+    }
+    return 'CURRENT_ASSETS';
+  }
+
+  if (liabilityTypes.has(accountType)) {
+    return accountType.includes('LONG_TERM') ? 'NON_CURRENT_LIABILITIES' : 'CURRENT_LIABILITIES';
+  }
+
+  if (equityTypes.has(accountType)) return 'EQUITY';
+  if (incomeTypes.has(accountType)) return 'INCOME';
+  if (expenseTypes.has(accountType)) return 'EXPENSE';
+
+  // Fallbacks for control/suspense/off-balance
+  if (accountType.includes('SUSPENSE') || accountType.includes('CLEARING') || 
+      accountType.includes('CONTROL') || accountType.includes('INTER_BRANCH')) {
+    return accountType.includes('LIABILITY') ? 'CURRENT_LIABILITIES' : 'CURRENT_ASSETS';
+  }
+
+  return 'OTHER';
+};
+
 
       // FIX: Generate subfolderId if missing
       const generateSubfolderId = (glAccountNo) => {

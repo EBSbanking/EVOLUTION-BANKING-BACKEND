@@ -2,9 +2,9 @@
 import express from 'express';
 import {
   generateLoanAccountNumberByProdId,
-  generateAccountNumber,
   generateTransactionId
 } from '../utils/generateLoanAccountId.js';
+import   generateAccountNumber from '../utils/generateSerialNumber.js';
 import Transaction from '../models/Transaction.js';
 import CreditApplication from '../models/CreditApplication.js'; // Import using ES modules
 
