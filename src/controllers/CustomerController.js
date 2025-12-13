@@ -495,6 +495,8 @@ export const createCustomer = async (req, res) => {
   }
 };
 
+
+
 // controllers/CustomerController.js
 
 // Update your batchUploadCustomers function to accept buffer
@@ -1101,6 +1103,7 @@ export const getAllCustomer = async (req, res) => {
   }
 };
 
+// Update the getCustomerById function to support name-based search if CUST_ID doesn't match an ID format
 export const getCustomerById = async (req, res) => {
   try {
     let { CUST_ID } = req.params;
@@ -1112,34 +1115,110 @@ export const getCustomerById = async (req, res) => {
     }
 
     // Convert to string and remove any accidental whitespace
-    const custIdString = CUST_ID.toString().trim();
+    const searchTerm = CUST_ID.toString().trim().toLowerCase();
 
-    // Generate multiple formats for searching
-    const originalCustId = custIdString;
-    const cleanCustId = custIdString.replace(/^0+/, ""); // Remove leading zeros
-    const numericCustId = parseInt(custIdString, 10); // Convert to number for legacy ID matching
+    console.log(`🔍 Searching for customer with term: ${searchTerm}`);
+    console.log(`📋 Search term length: ${searchTerm.length}, isNumeric: ${!isNaN(searchTerm)}`);
 
-    console.log(`🔍 Searching for customer with ID: ${originalCustId}`);
-    console.log(
-      `📋 Search formats: original=${originalCustId}, clean=${cleanCustId}, numeric=${numericCustId}`
-    );
+    let customer;
 
-    // Search for customer in MULTIPLE formats including legacy IDs
-    const customer = await Customer.findOne({
+    // Check if searchTerm looks like an ID (e.g., numeric or ID-like format)
+    if (!isNaN(searchTerm) || searchTerm.match(/^\d{1,10}$/)) {
+      // Treat as ID search (existing logic)
+      const originalCustId = searchTerm;
+      const cleanCustId = searchTerm.replace(/^0+/, ""); // Remove leading zeros
+      const numericCustId = parseInt(searchTerm, 10); // Convert to number for legacy ID matching
+
+      console.log(`🔍 ID Search formats: original=${originalCustId}, clean=${cleanCustId}, numeric=${numericCustId}`);
+
+      // Search for customer in MULTIPLE formats including legacy IDs
+      customer = await Customer.findOne({
+        $or: [
+          { CUST_ID: originalCustId }, // Try with original format (with leading zeros)
+          { CUST_ID: cleanCustId }, // Try without leading zeros
+          { CUST_ID: numericCustId.toString() }, // Try as number string
+          { legacy_customer_id: numericCustId }, // Try legacy customer_id (numeric)
+          { legacy_customer_id: originalCustId }, // Try legacy customer_id (string)
+          { legacy_customer_id: cleanCustId }, // Try legacy customer_id (clean string)
+        ],
+      }).populate("nextOfKin");
+
+      if (customer) {
+        // Determine which field was matched
+        let matchedField = "unknown";
+        let matchedValue = "unknown";
+
+        if (
+          customer.CUST_ID === originalCustId ||
+          customer.CUST_ID === cleanCustId ||
+          customer.CUST_ID === numericCustId.toString()
+        ) {
+          matchedField = "CUST_ID";
+          matchedValue = customer.CUST_ID;
+        } else if (
+          customer.legacy_customer_id == numericCustId ||
+          customer.legacy_customer_id == originalCustId ||
+          customer.legacy_customer_id == cleanCustId
+        ) {
+          matchedField = "legacy_customer_id";
+          matchedValue = customer.legacy_customer_id;
+        }
+
+        console.log(
+          `✅ Customer found by ID: ${customer.FIRST_NAME} ${customer.LAST_NAME}`
+        );
+        console.log(`📝 Matched on: ${matchedField} = ${matchedValue}`);
+
+        // Self-audit success - log which format was found
+        auditLogger.info("Audit Event", {
+          entity_type: "customer_query",
+          entity_id: originalCustId,
+          user_id: userId,
+          action: "get_customer_by_id",
+          old_value: null,
+          new_value: {
+            event_id: customer.event_id,
+            found_cust_id: customer.CUST_ID,
+            legacy_customer_id: customer.legacy_customer_id,
+            matched_field: matchedField,
+            matched_value: matchedValue,
+            customer_name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
+          },
+          ip_address: ipAddress,
+          event_type: "QUERY_SUCCESS",
+          outcome: "success",
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: customer,
+          match_details: {
+            type: "ID",
+            matched_field: matchedField,
+            matched_value: matchedValue,
+            searched_id: originalCustId,
+          },
+        });
+      }
+    }
+
+    // If no ID match, treat as name search (partial match on first, last, or full name)
+    console.log(`🔍 Treating "${searchTerm}" as name search`);
+    const nameRegex = new RegExp(searchTerm, "i"); // Case-insensitive partial match
+
+    customer = await Customer.findOne({
       $or: [
-        { CUST_ID: originalCustId }, // Try with original format (with leading zeros)
-        { CUST_ID: cleanCustId }, // Try without leading zeros
-        { CUST_ID: numericCustId.toString() }, // Try as number string
-        { legacy_customer_id: numericCustId }, // Try legacy customer_id (numeric)
-        { legacy_customer_id: originalCustId }, // Try legacy customer_id (string)
-        { legacy_customer_id: cleanCustId }, // Try legacy customer_id (clean string)
+        { FIRST_NAME: nameRegex },
+        { LAST_NAME: nameRegex },
+        { CUST_NM: nameRegex },
+        { MIDDLE_NAME: nameRegex },
       ],
     }).populate("nextOfKin");
 
     if (!customer) {
-      // Enhanced debugging: Check what customer IDs exist in the database
+      // Enhanced debugging: Check what customer names exist in the database
       const sampleCustomers = await Customer.find({})
-        .select("CUST_ID legacy_customer_id FIRST_NAME LAST_NAME")
+        .select("CUST_ID CUST_NM FIRST_NAME LAST_NAME")
         .limit(5)
         .lean();
 
@@ -1148,20 +1227,14 @@ export const getCustomerById = async (req, res) => {
       // Self-audit not-found with enhanced details
       auditLogger.info("Audit Event", {
         entity_type: "customer_query",
-        entity_id: originalCustId,
+        entity_id: searchTerm,
         user_id: userId,
         action: "get_customer_by_id",
         old_value: null,
         new_value: {
           status: "not_found",
-          searched_formats: [
-            `CUST_ID: ${originalCustId}`,
-            `CUST_ID: ${cleanCustId}`,
-            `CUST_ID: ${numericCustId}`,
-            `legacy_customer_id: ${numericCustId}`,
-            `legacy_customer_id: ${originalCustId}`,
-            `legacy_customer_id: ${cleanCustId}`,
-          ],
+          search_type: "name",
+          searched_term: searchTerm,
           sample_customers: sampleCustomers,
         },
         ip_address: ipAddress,
@@ -1171,63 +1244,33 @@ export const getCustomerById = async (req, res) => {
 
       return res.status(404).json({
         success: false,
-        message: `Customer not found with ID: ${originalCustId}`,
-        searched_formats: [
-          `CUST_ID: ${originalCustId}`,
-          `CUST_ID: ${cleanCustId}`,
-          `CUST_ID: ${numericCustId}`,
-          `legacy_customer_id: ${numericCustId}`,
-          `legacy_customer_id: ${originalCustId}`,
-          `legacy_customer_id: ${cleanCustId}`,
-        ],
+        message: `No customer found matching ID or name: "${searchTerm}"`,
+        search_type: "ID and Name",
         sample_customers: sampleCustomers, // For debugging
         troubleshooting: [
-          "Check if customer exists in the database",
-          "Verify the ID format matches customer records",
-          "Try using the legacy customer_id if migrated from old system",
+          "Verify the ID format or try a partial name (e.g., 'John' or 'John Doe')",
+          "Use the dedicated search endpoint for advanced name queries: /customers/search?name=John",
+          "Check if the customer exists in the database",
         ],
       });
     }
 
-    // Determine which field was matched
-    let matchedField = "unknown";
-    let matchedValue = "unknown";
-
-    if (
-      customer.CUST_ID === originalCustId ||
-      customer.CUST_ID === cleanCustId ||
-      customer.CUST_ID === numericCustId.toString()
-    ) {
-      matchedField = "CUST_ID";
-      matchedValue = customer.CUST_ID;
-    } else if (
-      customer.legacy_customer_id == numericCustId ||
-      customer.legacy_customer_id == originalCustId ||
-      customer.legacy_customer_id == cleanCustId
-    ) {
-      matchedField = "legacy_customer_id";
-      matchedValue = customer.legacy_customer_id;
-    }
-
     console.log(
-      `✅ Customer found: ${customer.FIRST_NAME} ${customer.LAST_NAME}`
+      `✅ Customer found by name: ${customer.FIRST_NAME} ${customer.LAST_NAME} (${customer.CUST_ID})`
     );
-    console.log(`📝 Matched on: ${matchedField} = ${matchedValue}`);
 
-    // Self-audit success - log which format was found
+    // Self-audit success for name search
     auditLogger.info("Audit Event", {
       entity_type: "customer_query",
-      entity_id: originalCustId,
+      entity_id: searchTerm,
       user_id: userId,
       action: "get_customer_by_id",
       old_value: null,
       new_value: {
-        event_id: customer.event_id,
+        search_type: "name",
         found_cust_id: customer.CUST_ID,
-        legacy_customer_id: customer.legacy_customer_id,
-        matched_field: matchedField,
-        matched_value: matchedValue,
         customer_name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
+        matched_on: customer.CUST_NM.includes(searchTerm) ? "full name" : customer.FIRST_NAME.includes(searchTerm) ? "first name" : "last name",
       },
       ip_address: ipAddress,
       event_type: "QUERY_SUCCESS",
@@ -1238,9 +1281,10 @@ export const getCustomerById = async (req, res) => {
       success: true,
       data: customer,
       match_details: {
-        matched_field: matchedField,
-        matched_value: matchedValue,
-        searched_id: originalCustId,
+        type: "Name",
+        searched_term: searchTerm,
+        matched_on: customer.CUST_NM.includes(searchTerm) ? "full name" : customer.FIRST_NAME.includes(searchTerm) ? "first name" : "last name",
+        customer_id: customer.CUST_ID,
       },
     });
   } catch (error) {
