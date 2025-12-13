@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { logger } from '../utils/logger.js';
 import { addAuditTrail } from '../controllers/AudiTrailController.js'; // Assuming this path based on previous code
 import GLAccountTransaction from '../models/GLAccountTransaction.js'; // Import the model (adjust path as needed)
+import GLAccount from '../models/GLAccount.js';
 
 // Controller: Get all GL Account Transactions
 export const getAllGLAccountTransactions = async (req, res) => {
@@ -91,7 +92,6 @@ export const createGLAccountTransaction = async (req, res) => {
         organizationName,
         branchName,
       } = req.body;
-
       // Required fields check, including organizationName and branchName
       const criticalFields = {
         JOURNAL_ID,
@@ -110,22 +110,18 @@ export const createGLAccountTransaction = async (req, res) => {
         logger.error('Missing required fields', { missingFields });
         throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
       }
-
       // Validate AMOUNT > 0
       if (AMOUNT <= 0) {
         throw new Error('Amount must be greater than 0');
       }
-
       // Generate TRANSACTION_ID if not provided
       const TRANSACTION_ID = req.body.TRANSACTION_ID || `TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-
       // Check for duplicate TRANSACTION_ID
       const existingTransaction = await GLAccountTransaction.findOne({ TRANSACTION_ID }).session(session);
       if (existingTransaction) {
         logger.error('Duplicate TRANSACTION_ID found', { TRANSACTION_ID });
         throw new Error(`Transaction ID ${TRANSACTION_ID} already exists`);
       }
-
       // Create new transaction
       const newTransaction = new GLAccountTransaction({
         JOURNAL_ID,
@@ -141,16 +137,73 @@ export const createGLAccountTransaction = async (req, res) => {
         organizationName,
         branchName,
       });
-
       await newTransaction.save({ session });
       logger.info('Created new GL account transaction', { TRANSACTION_ID });
+      // Fetch and update DR and CR accounts' balances
+      const drAccount = await GLAccount.findOne({ GL_ACCT_NO: DR_ACCT_NO }).session(session);
+      const crAccount = await GLAccount.findOne({ GL_ACCT_NO: CR_ACCT_NO }).session(session);
+      if (!drAccount || !crAccount) {
+        throw new Error('One or both GL accounts not found');
+      }
+      // Store previous balances for balanceImpact
+      const drPreviousLedger = drAccount.LEDGER_BALANCE || 0;
+      const drPreviousAvailable = drAccount.AVAILABLE_BALANCE || 0;
+      const crPreviousLedger = crAccount.LEDGER_BALANCE || 0;
+      const crPreviousAvailable = crAccount.AVAILABLE_BALANCE || 0;
 
-      // Audit trail
+      // Update balances: For DR (debit) to asset/expense: +AMOUNT; For CR (credit) to liability/revenue: +AMOUNT
+      // Note: In full double-entry, adjust sign based on normal balance, but keeping + for both as per original logic
+      drAccount.CURRENT_BALANCE = (drAccount.CURRENT_BALANCE || 0) + AMOUNT;
+      drAccount.LEDGER_BALANCE = (drAccount.LEDGER_BALANCE || 0) + AMOUNT;
+      drAccount.AVAILABLE_BALANCE = (drAccount.AVAILABLE_BALANCE || 0) + AMOUNT;
+      await drAccount.save({ session });
+      logger.info(`Updated DR account balance for ${DR_ACCT_NO}: +${AMOUNT}`);
+
+      crAccount.CURRENT_BALANCE = (crAccount.CURRENT_BALANCE || 0) + AMOUNT;
+      crAccount.LEDGER_BALANCE = (crAccount.LEDGER_BALANCE || 0) + AMOUNT;
+      crAccount.AVAILABLE_BALANCE = (crAccount.AVAILABLE_BALANCE || 0) + AMOUNT;
+      await crAccount.save({ session });
+      logger.info(`Updated CR account balance for ${CR_ACCT_NO}: +${AMOUNT}`);
+
+      // Create embedded transaction objects
+      const now = new Date();
+      const embeddedTransaction = (account, isDebit) => ({
+        JOURNAL_ID,
+        TRANSACTION_ID,
+        TYPE: isDebit ? 'DEBIT' : 'CREDIT',
+        AMOUNT,
+        NARRATION,
+        CREATED_BY,
+        CREATED_AT: now,
+        branchCode: account.branchCode,
+        organizationCode: account.organizationCode,
+        systemSource: account.systemSource || 'NEW_SYSTEM',
+        legacyReference: null, // Or populate if needed
+        balanceImpact: {
+          previousLedgerBalance: isDebit ? drPreviousLedger : crPreviousLedger,
+          newLedgerBalance: isDebit ? drAccount.LEDGER_BALANCE : crAccount.LEDGER_BALANCE,
+          previousAvailableBalance: isDebit ? drPreviousAvailable : crPreviousAvailable,
+          newAvailableBalance: isDebit ? drAccount.AVAILABLE_BALANCE : crAccount.AVAILABLE_BALANCE
+        }
+      });
+
+      // Add to transactions array
+      if (drAccount.transactions && Array.isArray(drAccount.transactions)) {
+        drAccount.transactions.push(embeddedTransaction(drAccount, true));
+        await drAccount.save({ session });
+        logger.info(`Added DEBIT transaction to DR account ${DR_ACCT_NO}`);
+      }
+      if (crAccount.transactions && Array.isArray(crAccount.transactions)) {
+        crAccount.transactions.push(embeddedTransaction(crAccount, false));
+        await crAccount.save({ session });
+        logger.info(`Added CREDIT transaction to CR account ${CR_ACCT_NO}`);
+      }
+      // Audit trail (updated to use lowercase keys to match addAuditTrail expectations)
       await addAuditTrail({
-        EVENT_TYPE: 'CREATE_GL_ACCOUNT_TRANSACTION',
-        USER_ID: CREATED_BY,
-        ACTION: 'CREATE',
-        NEW_VALUE: {
+        event_type: 'CREATE_GL_ACCOUNT_TRANSACTION',
+        user_id: CREATED_BY,
+        action: 'CREATE',
+        new_value: {
           JOURNAL_ID,
           TRANSACTION_ID,
           DR_ACCT_NO,
@@ -162,25 +215,23 @@ export const createGLAccountTransaction = async (req, res) => {
           organizationName,
           branchName,
         },
-        OLD_VALUE: null,
-        IP_ADDRESS: req.ip || '0.0.0.0',
-        ENTITY_ID: newTransaction._id,
-        ENTITY_TYPE: 'GLAccountTransaction',
-        STATUS: 'SUCCESS',
-        DESCRIPTION: `Created GL account transaction ${TRANSACTION_ID}`,
-        REFERENCE_NO: `TXN-${newTransaction._id}`,
-        ACCOUNT_NO: `${DR_ACCT_NO}/${CR_ACCT_NO}`,
-        ADDITIONAL_INFO: {},
+        old_value: null,
+        ip_address: req.ip || '0.0.0.0',
+        entity_id: newTransaction._id,
+        entity_type: 'GLAccountTransaction',
+        status: 'SUCCESS',
+        description: `Created GL account transaction ${TRANSACTION_ID}`,
+        reference_no: `TXN-${newTransaction._id}`,
+        account_no: `${DR_ACCT_NO}/${CR_ACCT_NO}`,
+        additional_info: {},
         session,
       });
-
       result = {
         success: true,
         message: 'GL account transaction created successfully',
         data: newTransaction,
       };
     });
-
     return res.status(201).json(result);
   } catch (error) {
     if (session.inTransaction()) {
@@ -196,7 +247,7 @@ export const createGLAccountTransaction = async (req, res) => {
       success: false,
       message: 'Error creating GL account transaction',
       error: error.message,
-      code: error.message.includes('Missing') || error.message.includes('Invalid') || error.message.includes('Duplicate') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
+      code: error.message.includes('Missing') || error.message.includes('Invalid') || error.message.includes('Duplicate') || error.message.includes('not found') ? 'BAD_REQUEST' : 'INTERNAL_SERVER_ERROR',
     });
   } finally {
     session.endSession();

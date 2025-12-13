@@ -1,12 +1,13 @@
 import express from 'express';
 import { 
   recordPayment, 
-  recordPaymentSimple,
+  simpleRepayment,
   getRepaymentSchedule, 
   updateLoanServicingStatus,
   createRepaymentSchedule,
   deleteRepaymentSchedule,
-  processBulkRepayments
+  processBulkRepayments,
+   recordPaymentWithRetry 
 } from '../controllers/repaymentScheduleController.js';
 import LoanAccount from '../models/LoanAccount.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
@@ -18,8 +19,12 @@ const router = express.Router();
 router.post('/:ACCT_NO/pay', recordPayment);
 
 // POST /api/repayments/simple/:ACCT_NO/pay - Simple repayment (no schedule logic, no transaction)
-router.post('/simple/:ACCT_NO/pay', recordPaymentSimple);
+router.post('/simple/:ACCT_NO/pay', simpleRepayment);
 
+
+
+// Record a payment for a specific loan account
+router.post('/:ACCT_NO/pay', recordPaymentWithRetry);
 // POST /api/repayments/bulk - Process bulk repayments
 // Body: { payments: [], memberRepayments: [], commonData: {}, repaymentType: 'INDIVIDUAL' | 'GROUP' }
 router.post('/bulk', processBulkRepayments);

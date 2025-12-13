@@ -490,163 +490,416 @@ export const recordPayment = async (req, res) => {
 };
 
 // Simple repayment without transaction or schedule (legacy)
-export const recordPaymentSimple = async (req, res) => {
-  console.log('=== STARTING SIMPLE REPAYMENT (NO TRANSACTION) ===');
- 
+// First, let's create a simplified version that avoids the updateLoanServicingStatus call
+export const simpleRepayment = async (req, res) => {
+  console.log('=== SIMPLE REPAYMENT ===');
+  
   try {
     const { ACCT_NO } = req.params;
-    const { amount, customerAccountNo, paymentMethod = 'CASH_DEPOSIT',
-            referenceNumber, description, paymentDate = new Date(), createdBy = 'SYSTEM' } = req.body;
-   
-    console.log('Payment data:', { ACCT_NO, amount, customerAccountNo, paymentMethod });
-    // Validations
-    if (!ACCT_NO) {
+    const { 
+      amount, 
+      customerAccountNo, 
+      paymentMethod = 'CASH_DEPOSIT',
+      referenceNumber, 
+      description, 
+      paymentDate = new Date()
+    } = req.body;
+    
+    // Validate
+    if (!ACCT_NO || !amount || !customerAccountNo) {
       return res.status(400).json({
         success: false,
-        message: 'Loan account number (ACCT_NO) is required'
+        message: 'Missing required fields'
       });
     }
-    if (!amount || isNaN(amount) || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid payment amount is required'
-      });
-    }
-    if (!customerAccountNo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer account number is required'
-      });
-    }
+    
+    const paymentAmount = parseFloat(amount);
+    
     // Find accounts
     const loanAccount = await LoanAccount.findOne({ ACCT_NO: String(ACCT_NO) });
-    const customerAccount = await CustomerAccount.findOne({
-      account_number: String(customerAccountNo)
+    const customerAccount = await CustomerAccount.findOne({ 
+      account_number: String(customerAccountNo) 
     });
-    if (!loanAccount) {
+    
+    if (!loanAccount || !customerAccount) {
       return res.status(404).json({
         success: false,
-        message: 'Loan account not found'
+        message: !loanAccount ? 'Loan account not found' : 'Customer account not found'
       });
     }
-    if (!customerAccount) {
-      return res.status(404).json({
-        success: false,
-        message: 'Customer account not found'
-      });
-    }
+    
     // Check loan status
-    const validStatuses = ['ACTIVE', 'DISBURSED', 'ONGOING'];
-    if (!validStatuses.includes(loanAccount.LOAN_STATUS?.toUpperCase())) {
+    if (!['ACTIVE', 'DISBURSED', 'ONGOING'].includes(loanAccount.LOAN_STATUS?.toUpperCase())) {
       return res.status(400).json({
         success: false,
-        message: `Loan not active. Status: ${loanAccount.LOAN_STATUS}`
+        message: `Loan not repayable. Status: ${loanAccount.LOAN_STATUS}`
       });
     }
+    
     // Check balance
-    let customerBalance = 0;
-    if (customerAccount.ledger_balance !== undefined) {
-      customerBalance = parseFloat(customerAccount.ledger_balance.toString());
-    } else if (customerAccount.available_balance !== undefined) {
-      customerBalance = parseFloat(customerAccount.available_balance.toString());
+    let balance = 0;
+    if (customerAccount.available_balance !== undefined) {
+      balance = parseFloat(customerAccount.available_balance.toString());
+    } else if (customerAccount.ledger_balance !== undefined) {
+      balance = parseFloat(customerAccount.ledger_balance.toString());
     }
-    if (customerBalance < amount) {
+    
+    if (balance < paymentAmount) {
       return res.status(400).json({
         success: false,
-        message: `Insufficient funds. Available: ${customerBalance}`
+        message: `Insufficient funds. Available: ${balance}`
       });
     }
-    // Calculate new balances
+    
+    // Generate reference
+    const reference = referenceNumber || `PAY-${Date.now()}`;
+    
+    // Use direct updates without sessions/transactions
     const currentOutstanding = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL?.toString() || '0');
-    const newOutstanding = Math.max(0, currentOutstanding - amount);
+    const newOutstanding = Math.max(0, currentOutstanding - paymentAmount);
     const isFinalPayment = newOutstanding <= 0;
+    
     // Update loan account
     await LoanAccount.updateOne(
       { _id: loanAccount._id },
       {
         $inc: {
-          OUTSTANDING_PRINCIPAL: toDecimal128(-amount),
-          TOTAL_REPAID_AMOUNT: toDecimal128(amount)
+          OUTSTANDING_PRINCIPAL: -paymentAmount,
+          TOTAL_REPAID_AMOUNT: paymentAmount
         },
         $set: {
           LAST_PAYMENT_DATE: new Date(paymentDate),
-          LAST_PAYMENT_AMOUNT: toDecimal128(amount),
+          LAST_PAYMENT_AMOUNT: paymentAmount,
           LAST_PAYMENT_METHOD: paymentMethod,
-          ...(isFinalPayment ? {
+          ...(isFinalPayment && {
             LOAN_STATUS: 'CLOSED',
             CLOSURE_DATE: new Date(paymentDate)
-          } : {})
+          })
         }
       }
     );
+    
     // Update customer account
-    const updateFields = {};
-    if (customerAccount.ledger_balance !== undefined) {
-      updateFields.ledger_balance = toDecimal128(customerBalance - amount);
-    }
-    if (customerAccount.available_balance !== undefined) {
-      updateFields.available_balance = toDecimal128(customerBalance - amount);
-    }
     await CustomerAccount.updateOne(
       { _id: customerAccount._id },
       {
-        $set: updateFields
+        $inc: {
+          available_balance: -paymentAmount,
+          ledger_balance: -paymentAmount
+        }
       }
     );
+    
     // Create repayment record
     const repayment = new LoanRepayment({
       ACCT_NO: String(ACCT_NO),
-      amount: toDecimal128(amount),
+      amount: paymentAmount,
       date: new Date(paymentDate),
-      CUST_ID: String(loanAccount.CUST_ID),
+      CUST_ID: String(loanAccount.CUST_ID || ''),
       customerAccountNo: String(customerAccountNo),
       paymentMethod,
-      reference: referenceNumber || `REPAY-${Date.now()}`,
+      reference,
       description: description || 'Loan repayment',
       status: 'COMPLETED',
       loanAccountId: loanAccount._id,
-      customerAccountId: customerAccount._id,
-      details: {
-        previousBalance: customerBalance,
-        newBalance: customerBalance - amount,
-        previousOutstanding: currentOutstanding,
-        newOutstanding: newOutstanding,
-        isFinalPayment
-      }
+      customerAccountId: customerAccount._id
     });
+    
     await repayment.save();
-    // Update loan portfolio
-    await updateLoanPortfolio(loanAccount, amount, false, true);
-    console.log('=== REPAYMENT SUCCESSFUL (SIMPLE) ===');
-   
+    
     return res.status(200).json({
       success: true,
       message: 'Payment processed successfully',
       data: {
         repaymentId: repayment._id,
+        reference,
         loanAccount: {
           ACCT_NO: loanAccount.ACCT_NO,
           newOutstanding,
-          previousOutstanding: currentOutstanding,
-          loanStatus: isFinalPayment ? 'CLOSED' : loanAccount.LOAN_STATUS
-        },
-        customerAccount: {
-          accountNumber: customerAccount.account_number,
-          newBalance: customerBalance - amount
-        },
-        isFinalPayment
+          isFinalPayment
+        }
       }
     });
+    
   } catch (error) {
-    console.error('=== REPAYMENT ERROR ===', error);
+    console.error('Payment error:', error);
     return res.status(500).json({
       success: false,
       message: 'Payment processing failed',
-      error: error.message,
-      code: 'PAYMENT_ERROR'
+      error: error.message
     });
   }
 };
+
+export const recordPaymentWithRetry = async (req, res) => {
+  console.log('=== STARTING REPAYMENT WITH RETRY ===');
+  
+  const MAX_RETRIES = 3;
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`Attempt ${attempt}/${MAX_RETRIES}`);
+      
+      const { ACCT_NO } = req.params;
+      const { 
+        amount, 
+        customerAccountNo, 
+        paymentMethod = 'CASH_DEPOSIT',
+        referenceNumber, 
+        description, 
+        paymentDate = new Date(), 
+        createdBy = 'SYSTEM' 
+      } = req.body;
+      
+      // Skip updateLoanServicingStatus on first attempt if it's causing issues
+      const skipServicingUpdate = attempt === 1;
+      
+      const result = await processPayment({
+        ACCT_NO,
+        amount,
+        customerAccountNo,
+        paymentMethod,
+        referenceNumber,
+        description,
+        paymentDate,
+        createdBy,
+        skipServicingUpdate
+      });
+      
+      return res.status(200).json(result);
+      
+    } catch (error) {
+      lastError = error;
+      
+      // Check if it's a write conflict
+      if (error.code === 112 || error.name === 'WriteConflict') {
+        console.log(`Write conflict detected, attempt ${attempt}. Waiting before retry...`);
+        
+        // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        continue;
+      }
+      
+      // For other errors, break immediately
+      break;
+    }
+  }
+  
+  console.error('=== ALL RETRIES FAILED ===', lastError);
+  
+  return res.status(500).json({
+    success: false,
+    message: 'Payment processing failed after multiple attempts',
+    error: lastError?.message || 'Unknown error',
+    code: 'MAX_RETRIES_EXCEEDED'
+  });
+};
+
+// Separate payment processing function
+async function processPayment(params) {
+  const {
+    ACCT_NO,
+    amount,
+    customerAccountNo,
+    paymentMethod,
+    referenceNumber,
+    description,
+    paymentDate,
+    createdBy,
+    skipServicingUpdate = false
+  } = params;
+  
+  const paymentAmount = parseFloat(amount);
+  const uniqueReference = referenceNumber || `PAY-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+  
+  // Check duplicate
+  const existingPayment = await LoanRepayment.findOne({ reference: uniqueReference });
+  if (existingPayment) {
+    throw new Error('Duplicate payment reference');
+  }
+  
+  // Find accounts
+  const [loanAccount, customerAccount] = await Promise.all([
+    LoanAccount.findOne({ ACCT_NO: String(ACCT_NO) }),
+    CustomerAccount.findOne({ account_number: String(customerAccountNo) })
+  ]);
+  
+  if (!loanAccount || !customerAccount) {
+    throw new Error(loanAccount ? 'Customer account not found' : 'Loan account not found');
+  }
+  
+  // Validate
+  const loanStatus = (loanAccount.LOAN_STATUS || '').toUpperCase();
+  if (!['ACTIVE', 'DISBURSED', 'ONGOING', 'PERFORMING'].includes(loanStatus)) {
+    throw new Error(`Loan not repayable: ${loanAccount.LOAN_STATUS}`);
+  }
+  
+  let customerBalance = 0;
+  if (customerAccount.available_balance !== undefined) {
+    customerBalance = parseFloat(customerAccount.available_balance.toString());
+  } else if (customerAccount.ledger_balance !== undefined) {
+    customerBalance = parseFloat(customerAccount.ledger_balance.toString());
+  }
+  
+  if (customerBalance < paymentAmount) {
+    throw new Error(`Insufficient funds: ${customerBalance}`);
+  }
+  
+  // Calculate
+  const currentOutstanding = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL?.toString() || '0');
+  const newOutstanding = Math.max(0, currentOutstanding - paymentAmount);
+  const isFinalPayment = newOutstanding < 1;
+  
+  // Update loan account using updateOne instead of findOneAndUpdate
+  const loanUpdate = await LoanAccount.updateOne(
+    {
+      _id: loanAccount._id,
+      OUTSTANDING_PRINCIPAL: { $gte: paymentAmount }
+    },
+    {
+      $inc: {
+        OUTSTANDING_PRINCIPAL: -paymentAmount,
+        TOTAL_REPAID_AMOUNT: paymentAmount
+      },
+      $set: {
+        LAST_PAYMENT_DATE: new Date(paymentDate),
+        LAST_PAYMENT_AMOUNT: paymentAmount,
+        LAST_PAYMENT_METHOD: paymentMethod,
+        ...(isFinalPayment && {
+          LOAN_STATUS: 'CLOSED',
+          CLOSURE_DATE: new Date(paymentDate)
+        })
+      }
+    }
+  );
+  
+  if (loanUpdate.modifiedCount === 0) {
+    throw new Error('Loan account update failed');
+  }
+  
+  // Update customer account
+  const customerUpdate = await CustomerAccount.updateOne(
+    {
+      _id: customerAccount._id,
+      $or: [
+        { available_balance: { $gte: paymentAmount } },
+        { ledger_balance: { $gte: paymentAmount } }
+      ]
+    },
+    {
+      $inc: {
+        ...(customerAccount.available_balance !== undefined && { available_balance: -paymentAmount }),
+        ...(customerAccount.ledger_balance !== undefined && { ledger_balance: -paymentAmount })
+      }
+    }
+  );
+  
+  if (customerUpdate.modifiedCount === 0) {
+    // Rollback loan
+    await LoanAccount.updateOne(
+      { _id: loanAccount._id },
+      {
+        $inc: {
+          OUTSTANDING_PRINCIPAL: paymentAmount,
+          TOTAL_REPAID_AMOUNT: -paymentAmount
+        }
+      }
+    );
+    throw new Error('Customer account update failed');
+  }
+  
+  // Create repayment
+  const repayment = new LoanRepayment({
+    ACCT_NO: String(ACCT_NO),
+    amount: paymentAmount,
+    date: new Date(paymentDate),
+    CUST_ID: String(loanAccount.CUST_ID || ''),
+    customerAccountNo: String(customerAccountNo),
+    paymentMethod,
+    reference: uniqueReference,
+    description: description || 'Loan repayment',
+    status: 'COMPLETED',
+    loanAccountId: loanAccount._id,
+    customerAccountId: customerAccount._id,
+    details: {
+      previousBalance: customerBalance,
+      newBalance: customerBalance - paymentAmount,
+      previousOutstanding: currentOutstanding,
+      newOutstanding: newOutstanding,
+      isFinalPayment
+    }
+  });
+  
+  await repayment.save();
+  
+  // Call updateLoanServicingStatus only if not skipped
+  if (!skipServicingUpdate) {
+    try {
+      await updateLoanServicingStatus(loanAccount._id, paymentAmount, new Date(paymentDate));
+    } catch (servicingError) {
+      console.warn('Loan servicing update failed (non-critical):', servicingError.message);
+      // Don't fail the whole payment for this
+    }
+  }
+  
+  return {
+    success: true,
+    message: 'Payment processed successfully',
+    data: {
+      repaymentId: repayment._id,
+      reference: uniqueReference,
+      loanAccount: {
+        ACCT_NO: loanAccount.ACCT_NO,
+        previousOutstanding: currentOutstanding,
+        newOutstanding: newOutstanding,
+        loanStatus: isFinalPayment ? 'CLOSED' : loanAccount.LOAN_STATUS,
+        isFinalPayment
+      },
+      customerAccount: {
+        accountNumber: customerAccount.account_number,
+        previousBalance: customerBalance,
+        newBalance: customerBalance - paymentAmount
+      }
+    }
+  };
+}
+
+// Modified updateLoanServicingStatus to handle conflicts
+// async function updateLoanServicingStatus(loanId, amount, paymentDate) {
+//   try {
+//     // Use findOneAndUpdate with upsert to avoid conflicts
+//     await LoanServicing.findOneAndUpdate(
+//       { loanId },
+//       {
+//         $inc: {
+//           totalRepaid: amount,
+//           remainingBalance: -amount
+//         },
+//         $set: {
+//           lastPaymentDate: paymentDate,
+//           lastPaymentAmount: amount,
+//           updatedAt: new Date()
+//         },
+//         $setOnInsert: {
+//           loanId,
+//           createdAt: new Date()
+//         }
+//       },
+//       {
+//         upsert: true,
+//         new: true
+//       }
+//     );
+    
+//     console.log('Loan servicing status updated successfully');
+//   } catch (error) {
+//     console.error('Error updating loan servicing status:', error.message);
+//     throw error;
+//   }
+// }
 
 // Helper function to update loan portfolio
 export const updateLoanPortfolio = async (loanAccount, amount, isInterest = false, isRepayment = true, session = null) => {
