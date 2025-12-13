@@ -1,4 +1,3 @@
-// routes/userRoleRoutes.js
 import express from 'express';
 import {
   createUserRole,
@@ -12,7 +11,8 @@ import {
   getUserRolesByBusinessUnit,
   getUsersByRoleName,
   getAccessibleBUsForUser,
-  getUserCombinedPermissions
+  getUserCombinedPermissions,
+  getUsersByRoleId // ✅ Add this import
 } from '../controllers/UserRoleController.js';
 
 const router = express.Router();
@@ -43,6 +43,9 @@ router.get('/by-business-unit/:buId', getUserRolesByBusinessUnit);
 
 // ✅ Get users by role name
 router.get('/users/by-role/:roleName', getUsersByRoleName);
+
+// ✅ NEW: Get users by role ID (for role ID 28 specifically)
+router.get('/users/by-role-id/:roleId', getUsersByRoleId);
 
 // ✅ Delete user role
 router.delete('/:userRoleId', deleteUserRole);

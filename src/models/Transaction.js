@@ -1,7 +1,6 @@
-// models/Transaction.js - UPDATED AND FIXED VERSION
+// models/Transaction.js - UPDATED VERSION
 import mongoose from 'mongoose';
 import { getAllTransactionTypes } from '../constants/transactionTypes.js';
-import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
 
 const TransactionSchema = new mongoose.Schema(
   {
@@ -32,10 +31,16 @@ const TransactionSchema = new mongoose.Schema(
       trim: true,
     },
     AMOUNT: {
-      type: Number,
+      type: mongoose.Schema.Types.Decimal128, // Changed from Number to Decimal128
       required: [true, 'Amount is required'],
-      min: [0, 'Amount cannot be negative'],
-      set: (v) => parseFloat(v.toFixed(2)),
+      set: (v) => mongoose.Types.Decimal128.fromString(v.toString()),
+      get: (v) => parseFloat(v.toString())
+    },
+    transactionDirection: {
+      type: String,
+      enum: ['CREDIT', 'DEBIT'],
+      required: true,
+      default: 'CREDIT'
     },
     TRANSACTIONDATE: {
       type: Date,
@@ -59,11 +64,9 @@ const TransactionSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
-    // ADD THIS FIELD - FIX FOR temp_ IDs
     transactionId: {
       type: String,
-      unique: true,
-      sparse: true, // Allows null values for uniqueness
+      // Leave it plain
     },
     EVENT_ID: {
       type: Number,
@@ -163,163 +166,161 @@ const TransactionSchema = new mongoose.Schema(
   }
 );
 
-// Virtual for formatted amount
+// =========================
+// VIRTUAL FIELDS
+// =========================
+
 TransactionSchema.virtual('formattedAmount').get(function () {
+  const amount = parseFloat(this.AMOUNT.toString());
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: this.currency || 'NGN',
-  }).format(this.AMOUNT);
+  }).format(amount);
 });
 
-// Virtual for formatted date
 TransactionSchema.virtual('formattedDate').get(function () {
   return this.TRANSACTIONDATE.toLocaleString();
 });
 
-// Static method to find transactions by account
+TransactionSchema.virtual('actualAmount').get(function () {
+  const amount = parseFloat(this.AMOUNT.toString());
+  return this.transactionDirection === 'DEBIT' ? -amount : amount;
+});
+
+TransactionSchema.virtual('formattedActualAmount').get(function () {
+  const amount = parseFloat(this.AMOUNT.toString());
+  const actualAmount = this.transactionDirection === 'DEBIT' ? -amount : amount;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: this.currency || 'NGN',
+  }).format(actualAmount);
+});
+
+// =========================
+// PRE-VALIDATE HOOK - UPDATED
+// =========================
+
+TransactionSchema.pre('validate', async function (next) {
+  console.log('Pre-validate hook - Checking IDs:', { 
+    TRANSACTION_ID: this.TRANSACTION_ID, 
+    EVENT_ID: this.EVENT_ID, 
+    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+    REFERENCE: this.REFERENCE
+  });
+
+  // Only auto-generate if IDs are not provided
+  if (this.isNew) {
+    try {
+      // Check if IDs were already provided (e.g., from generateTransactionIds())
+      const hasProvidedIds = this.TRANSACTION_ID && this.EVENT_ID && this.TRAN_JOURNAL_ID && this.REFERENCE;
+      
+      if (!hasProvidedIds) {
+        console.log('Auto-generating transaction IDs...');
+        
+        // Get the next available TRANSACTION_ID
+        const lastTransaction = await this.constructor.findOne({})
+          .sort({ TRANSACTION_ID: -1 })
+          .select('TRANSACTION_ID')
+          .lean();
+        
+        let nextTransactionId = 1;
+        if (lastTransaction && lastTransaction.TRANSACTION_ID) {
+          nextTransactionId = Number(lastTransaction.TRANSACTION_ID) + 1;
+        }
+        
+        const timestamp = Date.now();
+        const randomSuffix = Math.floor(Math.random() * 1000);
+        
+        // Generate identifiers only if not provided
+        if (!this.TRANSACTION_ID) {
+          this.TRANSACTION_ID = nextTransactionId;
+        }
+        if (!this.EVENT_ID) {
+          this.EVENT_ID = nextTransactionId;
+        }
+        if (!this.TRAN_JOURNAL_ID) {
+          this.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
+        }
+        if (!this.REFERENCE) {
+          this.REFERENCE = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+        }
+        if (!this.transactionId) {
+          this.transactionId = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+        }
+        
+        console.log('Auto-generated IDs:', { 
+          TRANSACTION_ID: this.TRANSACTION_ID,
+          EVENT_ID: this.EVENT_ID,
+          TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+          REFERENCE: this.REFERENCE
+        });
+      } else {
+        console.log('Using provided IDs:', { 
+          TRANSACTION_ID: this.TRANSACTION_ID,
+          EVENT_ID: this.EVENT_ID,
+          TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
+          REFERENCE: this.REFERENCE
+        });
+      }
+    } catch (error) {
+      console.error('Error in pre-validate hook:', error);
+      // Continue with defaults
+      const timestamp = Date.now();
+      const fallbackId = Number(timestamp.toString().slice(-9));
+      
+      if (!this.TRANSACTION_ID) this.TRANSACTION_ID = fallbackId;
+      if (!this.EVENT_ID) this.EVENT_ID = fallbackId;
+      if (!this.TRAN_JOURNAL_ID) this.TRAN_JOURNAL_ID = `JRN${timestamp}`;
+      if (!this.REFERENCE) this.REFERENCE = `TXN${fallbackId}`;
+      if (!this.transactionId) this.transactionId = `TXN${fallbackId}`;
+    }
+  }
+  
+  next();
+});
+
+// =========================
+// STATIC METHODS
+// =========================
+
 TransactionSchema.statics.findByAccount = function (accountId) {
   return this.find({
     $or: [{ ACCT_ID: accountId }, { ACCT_NO: accountId }],
   }).sort({ TRANSACTIONDATE: -1 });
 };
 
-// Static method to find recent transactions by customer
 TransactionSchema.statics.findRecentByCustomer = function (customerId, limit = 10) {
   return this.find({ CUST_ID: customerId }).sort({ TRANSACTIONDATE: -1 }).limit(limit);
 };
 
-// SINGLE PRE-VALIDATE HOOK - FIXED FOR transactionId
-TransactionSchema.pre('validate', async function (next) {
-  console.log('Pre-validate hook - Current state:', { 
-    TRANSACTION_ID: this.TRANSACTION_ID, 
-    transactionId: this.transactionId, // Log this
-    EVENT_ID: this.EVENT_ID, 
-    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-    REFERENCE: this.REFERENCE
-  });
-
-  // Only generate identifiers for new documents
-  if (this.isNew) {
-    try {
-      // CRITICAL: Check for temp_ transactionId and clear it
-      if (this.transactionId && this.transactionId.startsWith('temp_')) {
-        console.warn('Found temp_ transactionId in pre-validate:', this.transactionId);
-        this.transactionId = undefined;
-      }
-      
-      const identifiers = await generateWorkflowIdentifiers();
-      console.log('Generated identifiers in pre-validate:', identifiers);
-
-      // CRITICAL FIX: ALWAYS assign all identifiers to ensure consistency
-      this.TRANSACTION_ID = Number(identifiers.TRANSACTION_ID);
-      this.EVENT_ID = Number(identifiers.EVENT_ID);
-      this.TRAN_JOURNAL_ID = identifiers.TRAN_JOURNAL_ID;
-      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-      
-      // CRITICAL: Generate proper transactionId from TRANSACTION_ID
-      this.transactionId = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-
-      console.log('Pre-validate hook - After assignment:', { 
-        TRANSACTION_ID: this.TRANSACTION_ID, 
-        transactionId: this.transactionId,
-        EVENT_ID: this.EVENT_ID, 
-        TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-        REFERENCE: this.REFERENCE
-      });
-
-    } catch (error) {
-      console.error('Error generating workflow identifiers in pre-validate:', error);
-      
-      // Fallback: generate identifiers manually
-      const timestamp = Date.now();
-      const randomSuffix = Math.floor(Math.random() * 1000);
-      
-      this.TRANSACTION_ID = Number(timestamp.toString().slice(-9));
-      this.EVENT_ID = Number(timestamp.toString().slice(-8));
-      this.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
-      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-      this.transactionId = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-      
-      console.log('Using fallback identifiers:', {
-        TRANSACTION_ID: this.TRANSACTION_ID,
-        transactionId: this.transactionId,
-        EVENT_ID: this.EVENT_ID,
-        TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-        REFERENCE: this.REFERENCE
-      });
-    }
-  }
-  next();
-});
-
-// PRE-SAVE HOOK AS BACKUP
-TransactionSchema.pre('save', function (next) {
-  console.log('Pre-save hook - Final check:', { 
-    TRANSACTION_ID: this.TRANSACTION_ID,
-    transactionId: this.transactionId,
-    EVENT_ID: this.EVENT_ID,
-    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-    REFERENCE: this.REFERENCE
-  });
-
-  // Final validation for new documents
-  if (this.isNew) {
-    // Ensure transactionId is properly set (not temp_)
-    if (this.transactionId && this.transactionId.startsWith('temp_')) {
-      console.warn('Found temp_ transactionId in pre-save, regenerating');
-      this.transactionId = undefined;
-    }
-    
-    // Ensure all required fields have values
-    if (!this.TRANSACTION_ID) {
-      console.warn('TRANSACTION_ID still missing in pre-save, generating emergency fallback');
-      this.TRANSACTION_ID = Number(Date.now().toString().slice(-9));
-    }
-    if (!this.EVENT_ID) {
-      this.EVENT_ID = Number(Date.now().toString().slice(-8));
-    }
-    if (!this.TRAN_JOURNAL_ID) {
-      this.TRAN_JOURNAL_ID = `JRN${Date.now()}`;
-    }
-    if (!this.REFERENCE) {
-      this.REFERENCE = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-    }
-    if (!this.transactionId) {
-      this.transactionId = `TXN${this.TRANSACTION_ID.toString().padStart(10, '0')}`;
-    }
-
-    // Final type conversion to ensure consistency
-    this.TRANSACTION_ID = Number(this.TRANSACTION_ID);
-    this.EVENT_ID = Number(this.EVENT_ID);
-    this.TRAN_JOURNAL_ID = String(this.TRAN_JOURNAL_ID);
-    this.REFERENCE = String(this.REFERENCE);
-    this.transactionId = String(this.transactionId);
-  }
-
-  next();
-});
-
-// Static method to drop transactionId_1 index
-TransactionSchema.statics.dropTransactionIdIndex = async function () {
-  try {
-    const indexes = await this.collection.getIndexes();
-    if (indexes['transactionId_1']) {
-      await this.collection.dropIndex('transactionId_1');
-      console.log('Dropped transactionId_1 index');
-    }
-  } catch (error) {
-    if (error.codeName === 'IndexNotFound') {
-      console.log('transactionId_1 index not found, no action needed');
-    } else {
-      console.error('Error dropping transactionId_1 index:', error.message);
-    }
-  }
+// Helper to generate transaction IDs
+TransactionSchema.statics.generateTransactionIds = function () {
+  const timestamp = Date.now();
+  const randomSuffix = Math.floor(Math.random() * 1000);
+  
+  // You can implement your own logic here
+  // For now, using simple timestamp-based IDs
+  const TRANSACTION_ID = Number(timestamp.toString().slice(-9));
+  
+  return {
+    TRANSACTION_ID: TRANSACTION_ID,
+    EVENT_ID: TRANSACTION_ID,
+    JOURNAL_ID: `JRN${timestamp}${randomSuffix}`,
+    TRAN_JOURNAL_ID: `TJ${timestamp}${randomSuffix}`,
+    transactionId: `TXN${TRANSACTION_ID}`
+  };
 };
 
-// Run index cleanup on schema registration
-TransactionSchema.post('init', async function () {
-  await this.model('Transaction').dropTransactionIdIndex();
-});
+// =========================
+// INDEXES
+// =========================
+
+// Compound indexes for better query performance
+TransactionSchema.index({ ACCT_NO: 1, TRANSACTIONDATE: -1 });
+TransactionSchema.index({ CUST_ID: 1, status: 1 });
+TransactionSchema.index({ TRANSACTIONDATE: -1, status: 1 });
 
 const Transaction = mongoose.model('Transaction', TransactionSchema);
+
+export { TransactionSchema, Transaction };
 export default Transaction;

@@ -1,72 +1,62 @@
-// models/LoanInterestRate.js - Updated version
+// models/LoanInterestRate.js - COMPLETE FIXED VERSION
 import mongoose from 'mongoose';
 
 const LoanInterestRateSchema = new mongoose.Schema({
-    // Product and Rate Identification
-    PROD_ID: { 
-        type: Number, 
-        required: true,
-        index: true 
+    // ========== ADD THIS FIELD ==========
+    LOAN_PROUD_INT_ID: {
+        type: Number,
+        unique: true,
+        sparse: true, // CRITICAL: Allows multiple null values
+        index: true,
+        description: "Legacy product interest ID",
+        default: null
     },
-    PRODUCT_NAME: {
-        type: String,
-        required: true,
-        trim: true
-    },
-    PRODUCT_SHORT_NAME: {
+    // ====================================
+    
+    // Product Identification
+    name: {
         type: String,
         required: true,
         trim: true,
-        uppercase: true
+        description: "Descriptive name for the interest rate"
     },
-    PRODUCT_TYPE: {
+    description: {
+        type: String,
+        trim: true
+    },
+    code: {
         type: String,
         required: true,
-        enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'BULLET', 'CUSTOM'],
-        default: 'MONTHLY'
+        unique: true,
+        trim: true,
+        uppercase: true,
+        description: "Unique code for the interest rate"
     },
-    INDEX_RATE_ID: { 
-        type: Number, 
-        required: true 
-    },
-    LOAN_PROUD_INT_ID: { 
-        type: String, 
-        unique: true, 
-        required: true 
-    },
-
-    // Interest Calculation Configuration
-    RATE_TY: { 
-        type: String, 
+    
+    // Rate Configuration
+    RATE_TYPE: {
+        type: String,
         required: true,
-        enum: ['FIXED', 'VARIABLE', 'TIERED'],
-        default: 'FIXED'
+        enum: ['FIXED', 'VARIABLE', 'TIERED', 'PROMOTIONAL', 'INTRODUCTORY'],
+        default: 'FIXED',
+        description: "Type of interest rate"
     },
-    INT_TY: {
+    INTEREST_TYPE: {
         type: String,
         required: true,
         enum: ['SIMPLE', 'COMPOUND'],
-        default: 'SIMPLE'
+        default: 'SIMPLE',
+        description: "Interest calculation type"
     },
-    ACCRUAL_BASIS_TY: { 
-        type: String, 
+    CALCULATION_METHOD: {
+        type: String,
         required: true,
-        enum: ['ACTUAL/360', 'ACTUAL/365', '30/360', 'BUSINESS/252'],
-        default: 'ACTUAL/360'
+        enum: ['FLAT', 'REDUCING_BALANCE', 'RULE_OF_78'],
+        default: 'FLAT',
+        description: "Method for calculating interest"
     },
-    ACCRUAL_FREQ_CD: { 
-        type: String, 
-        required: true,
-        enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUAL'],
-        default: 'DAILY'
-    },
-    ACCRUAL_FREQ_VALUE: { 
-        type: Number, 
-        required: true,
-        default: 1
-    },
-
-    // Rate Values - Based on your product table
+    
+    // Rate Values (Monthly rates for consistency)
     MIN_RATE_PER_MONTH: {
         type: Number,
         required: true,
@@ -88,394 +78,589 @@ const LoanInterestRateSchema = new mongoose.Schema({
         max: 100,
         description: "Default interest rate per month (%)"
     },
-    TOTAL_INTEREST_RATE: {
+    ANNUAL_PERCENTAGE_RATE: {
         type: Number,
-        required: true,
         min: 0,
-        max: 100,
-        description: "Total interest rate for the loan term (%)"
+        max: 1000,
+        description: "Annual Percentage Rate (%)"
     },
     
-    // For FIXED rates (simplified from your original)
-    FIXED_RATE: { 
+    // For variable rates - references RateIndex
+    INDEX_RATE_ID: {
         type: Number,
-        min: 0,
-        max: 100
-    },
-    ABSOLUTE_RATE: { 
-        type: Number,
-        min: 0,
-        max: 100
+        ref: 'RateIndex',
+        required: function() {
+            return this.RATE_TYPE === 'VARIABLE';
+        },
+        description: "Reference to market index rate for variable rates"
     },
     MARGIN_RATE: {
         type: Number,
-        default: 0
+        default: 0,
+        min: -100,
+        max: 100,
+        description: "Margin to add/subtract from index rate (%)"
     },
-
-    // Loan Term Constraints
-    MIN_DURATION_DAYS: {
-        type: Number,
-        default: 1,
-        description: "Minimum duration in days"
-    },
-    MIN_DURATION_WEEKS: {
+    SPREAD_RATE: {
         type: Number,
         default: 0,
-        description: "Minimum duration in weeks"
+        min: -100,
+        max: 100,
+        description: "Additional spread over index + margin (%)"
     },
-    MIN_DURATION_MONTHS: {
+    
+    // Term Configuration
+    MIN_TERM_VALUE: {
         type: Number,
-        default: 1,
-        description: "Minimum duration in months"
+        required: true,
+        min: 1,
+        description: "Minimum loan term value"
     },
-    MAX_DURATION_MONTHS: {
+    MAX_TERM_VALUE: {
         type: Number,
-        default: 60
+        required: true,
+        min: 1,
+        description: "Maximum loan term value"
     },
-
+    TERM_TYPE: {
+        type: String,
+        required: true,
+        enum: ['DAYS', 'WEEKS', 'MONTHS', 'QUARTERS', 'YEARS'],
+        default: 'MONTHS',
+        description: "Unit for term values"
+    },
+    
+    // Accrual Configuration
+    ACCRUAL_BASIS: {
+        type: String,
+        required: true,
+        enum: ['ACTUAL/360', 'ACTUAL/365', '30/360', 'BUSINESS/252'],
+        default: 'ACTUAL/360',
+        description: "Day count convention for interest accrual"
+    },
+    ACCRUAL_FREQUENCY: {
+        type: String,
+        required: true,
+        enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUAL'],
+        default: 'DAILY',
+        description: "Frequency of interest accrual"
+    },
+    
     // Loan Amount Constraints
     MIN_LOAN_AMOUNT: {
-        type: Number,
-        default: 0
+        type: mongoose.Types.Decimal128,
+        default: mongoose.Types.Decimal128.fromString('0.00'),
+        get: v => parseFloat(v.toString())
     },
     MAX_LOAN_AMOUNT: {
-        type: Number,
-        default: 1000000000
+        type: mongoose.Types.Decimal128,
+        default: mongoose.Types.Decimal128.fromString('1000000000.00'),
+        get: v => parseFloat(v.toString())
     },
-
-    // Capitalization and Amortization
-    CAPITALIZE_INT_FG: { 
-        type: Boolean, 
-        default: false 
+    
+    // Capitalization
+    CAPITALIZE_INTEREST: {
+        type: Boolean,
+        default: false,
+        description: "Whether to capitalize unpaid interest"
     },
-    CAPITALIZE_ACCT_ST: {
-  type: String,
-  enum: ['PENDING', 'CAPITALIZED', 'REJECTED'],
-  default: 'PENDING'
-},
-LAST_MODIFIED_BY: String,
-    AMORTIZED: { 
-        type: Boolean, 
-        default: true 
-    },
-    REPAYMENT_FREQUENCY: {
+    COMPOUNDING_FREQUENCY: {
         type: String,
         enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUAL'],
         default: 'MONTHLY'
     },
-
+    CAPITALIZATION_STATUS: {
+        type: String,
+        enum: ['PENDING', 'CAPITALIZED', 'REJECTED'],
+        default: 'PENDING'
+    },
+    
+    // Amortization
+    AMORTIZED: {
+        type: Boolean,
+        default: true,
+        description: "Whether loan is amortized"
+    },
+    REPAYMENT_FREQUENCY: {
+        type: String,
+        enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUAL', 'BULLET'],
+        default: 'MONTHLY'
+    },
+    
     // Rate Change Rules
-    RATE_CHANGE_ALLOWED: { 
-        type: Boolean, 
-        default: false 
+    RATE_CHANGE_ALLOWED: {
+        type: Boolean,
+        default: false,
+        description: "Whether rate changes are allowed after loan disbursement"
     },
     RATE_CHANGE_NOTICE_DAYS: {
         type: Number,
-        default: 30
+        default: 30,
+        min: 0,
+        description: "Notice period required for rate changes (days)"
     },
-
-    // Debit/Credit Indicator
-    DR_CR_IND: {
-        type: String,
-        required: true,
-        enum: ['DR', 'CR'],
-        default: 'DR'
-    },
-
-    // Time Period
-    TIME: {
+    MAX_RATE_CHANGES: {
         type: Number,
-        default: 12
+        default: 1,
+        min: 0,
+        description: "Maximum number of rate changes allowed"
     },
-
-    // System Metadata
-    EFFECTIVE_DT: { 
-        type: Date, 
+    
+    // Fees
+    ORIGINATION_FEE_RATE: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100,
+        description: "Origination fee as percentage of loan amount"
+    },
+    PROCESSING_FEE_FIXED: {
+        type: mongoose.Types.Decimal128,
+        default: mongoose.Types.Decimal128.fromString('0.00'),
+        get: v => parseFloat(v.toString())
+    },
+    LATE_PAYMENT_PENALTY_RATE: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100,
+        description: "Late payment penalty rate (%)"
+    },
+    EARLY_REPAYMENT_PENALTY_RATE: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100,
+        description: "Early repayment penalty rate (%)"
+    },
+    
+    // Tiered Rates (for TIERED rate type)
+    TIERED_RATES: [{
+        minAmount: {
+            type: mongoose.Types.Decimal128,
+            required: true,
+            get: v => parseFloat(v.toString())
+        },
+        maxAmount: {
+            type: mongoose.Types.Decimal128,
+            get: v => v ? parseFloat(v.toString()) : null
+        },
+        rate: {
+            type: Number,
+            required: true,
+            min: 0,
+            max: 100
+        }
+    }],
+    
+    // Effective Dates
+    EFFECTIVE_DATE: {
+        type: Date,
         required: true,
-        default: Date.now 
+        default: Date.now,
+        description: "Date when this rate becomes effective"
     },
-    EXPIRY_DT: {
-        type: Date
+    EXPIRY_DATE: {
+        type: Date,
+        description: "Date when this rate expires"
     },
-    VERSION: { 
-        type: Number, 
-        default: 1 
-    },
-    STATUS: { 
+    
+    // Status
+    STATUS: {
         type: String,
-        enum: ['ACTIVE', 'INACTIVE', 'PENDING'],
-        default: 'ACTIVE'
+        enum: ['ACTIVE', 'INACTIVE', 'DRAFT', 'PENDING', 'EXPIRED', 'DELETED'],
+        default: 'DRAFT'
     },
-
+    
     // Audit Fields
-    CREATED_BY: { 
-        type: String, 
-        required: true 
-    },
-    USER_ID: {
+    CREATED_BY: {
         type: String,
         required: true
     },
-    LAST_MODIFIED_BY: {
+    CREATED_AT: {
+        type: Date,
+        default: Date.now
+    },
+    UPDATED_BY: {
         type: String
+    },
+    UPDATED_AT: {
+        type: Date,
+        default: Date.now
+    },
+    LAST_UPDATED_BY: {
+        type: String
+    },
+    
+    // Metadata
+    VERSION: {
+        type: String,
+        default: '1.0'
+    },
+    TAGS: [{
+        type: String,
+        trim: true
+    }],
+    NOTES: {
+        type: String,
+        trim: true
+    },
+    IS_ACTIVE: {
+        type: Boolean,
+        default: false
     }
-}, { 
+}, {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true }
+    toJSON: { 
+        virtuals: true,
+        getters: true,
+        transform: function(doc, ret) {
+            // Convert Decimal128 to regular numbers for JSON output
+            if (ret.MIN_LOAN_AMOUNT) ret.MIN_LOAN_AMOUNT = parseFloat(ret.MIN_LOAN_AMOUNT.toString());
+            if (ret.MAX_LOAN_AMOUNT) ret.MAX_LOAN_AMOUNT = parseFloat(ret.MAX_LOAN_AMOUNT.toString());
+            if (ret.PROCESSING_FEE_FIXED) ret.PROCESSING_FEE_FIXED = parseFloat(ret.PROCESSING_FEE_FIXED.toString());
+            
+            // Remove internal fields
+            delete ret.__v;
+            return ret;
+        }
+    },
+    toObject: { 
+        virtuals: true,
+        getters: true 
+    }
 });
 
-// Virtual for formatted rate description
-LoanInterestRateSchema.virtual('rateDescription').get(function() {
-    return `${this.PRODUCT_NAME} (${this.PRODUCT_SHORT_NAME}) - ${this.DEFAULT_RATE_PER_MONTH}% per month`;
+// ==================== VIRTUALS ====================
+
+// Virtual for term conversion to months
+LoanInterestRateSchema.virtual('MIN_TERM_MONTHS').get(function() {
+    return this.convertToMonths(this.MIN_TERM_VALUE, this.TERM_TYPE);
 });
 
-// Virtual for display name
-LoanInterestRateSchema.virtual('displayName').get(function() {
-    return `${this.PRODUCT_NAME} - ${this.PRODUCT_TYPE} Loan`;
+// Virtual for max term in months
+LoanInterestRateSchema.virtual('MAX_TERM_MONTHS').get(function() {
+    return this.convertToMonths(this.MAX_TERM_VALUE, this.TERM_TYPE);
 });
 
-// Virtual for daily rate calculation
-LoanInterestRateSchema.virtual('dailyRate').get(function() {
-    // Convert monthly rate to daily rate (assuming 30 days per month)
-    return (this.DEFAULT_RATE_PER_MONTH / 30).toFixed(4);
+// Virtual for formatted term range
+LoanInterestRateSchema.virtual('termRange').get(function() {
+    return `${this.MIN_TERM_VALUE} - ${this.MAX_TERM_VALUE} ${this.TERM_TYPE}`;
 });
 
-// Virtual for weekly rate calculation
-LoanInterestRateSchema.virtual('weeklyRate').get(function() {
-    // Convert monthly rate to weekly rate (assuming 4 weeks per month)
-    return (this.DEFAULT_RATE_PER_MONTH / 4).toFixed(4);
-});
-
-// Virtual for annual rate calculation
+// Virtual for annual rate
 LoanInterestRateSchema.virtual('annualRate').get(function() {
-    // Convert monthly rate to annual rate
     return (this.DEFAULT_RATE_PER_MONTH * 12).toFixed(2);
 });
 
-// Index for better query performance
-LoanInterestRateSchema.index({ PROD_ID: 1, STATUS: 1 });
-LoanInterestRateSchema.index({ PRODUCT_SHORT_NAME: 1, STATUS: 1 });
-LoanInterestRateSchema.index({ EFFECTIVE_DT: 1, EXPIRY_DT: 1 });
-LoanInterestRateSchema.index({ PRODUCT_TYPE: 1 });
+// Virtual for effective rate (includes margin for variable rates)
+LoanInterestRateSchema.virtual('effectiveRate').get(function() {
+    if (this.RATE_TYPE === 'VARIABLE' && this.INDEX_RATE_ID) {
+        // This would need to fetch the current index rate
+        // For now, return default rate
+        return this.DEFAULT_RATE_PER_MONTH;
+    }
+    return this.DEFAULT_RATE_PER_MONTH;
+});
 
-// Static method to calculate interest for a loan
-LoanInterestRateSchema.statics.calculateInterest = function(productType, principal, rate, duration, durationUnit) {
-    let annualRate, periodRate, periods;
+// Virtual for rate description
+LoanInterestRateSchema.virtual('rateDescription').get(function() {
+    let desc = `${this.name}: ${this.DEFAULT_RATE_PER_MONTH}% per month`;
     
-    // Convert rate to decimal
-    const rateDecimal = rate / 100;
+    if (this.RATE_TYPE === 'VARIABLE') {
+        desc += ` (Variable - based on index + ${this.MARGIN_RATE}% margin)`;
+    }
     
-    switch(productType.toUpperCase()) {
-        case 'DAILY':
-            periodRate = rateDecimal / 30; // Daily rate from monthly rate
-            periods = duration;
-            break;
-        case 'WEEKLY':
-            periodRate = rateDecimal / 4; // Weekly rate from monthly rate
-            periods = duration;
-            break;
-        case 'MONTHLY':
-            periodRate = rateDecimal;
-            periods = duration;
-            break;
-        case 'BULLET':
-            // Bullet payment - interest for entire term
-            periodRate = rateDecimal;
-            periods = 1;
-            break;
+    return desc;
+});
+
+// ==================== METHODS ====================
+
+// Instance method to convert term to months
+LoanInterestRateSchema.methods.convertToMonths = function(value, fromType = null) {
+    const type = fromType || this.TERM_TYPE;
+    
+    switch(type.toUpperCase()) {
+        case 'DAYS':
+            return Math.ceil(value / 30.44); // Average days in month
+        case 'WEEKS':
+            return Math.ceil(value / 4.345); // Average weeks in month
+        case 'MONTHS':
+            return value;
+        case 'QUARTERS':
+            return value * 3;
+        case 'YEARS':
+            return value * 12;
         default:
-            periodRate = rateDecimal;
-            periods = duration;
+            return value;
+    }
+};
+
+// Instance method to convert months to specific term type
+LoanInterestRateSchema.methods.convertFromMonths = function(months, toType = null) {
+    const type = toType || this.TERM_TYPE;
+    
+    switch(type.toUpperCase()) {
+        case 'DAYS':
+            return Math.ceil(months * 30.44);
+        case 'WEEKS':
+            return Math.ceil(months * 4.345);
+        case 'MONTHS':
+            return months;
+        case 'QUARTERS':
+            return Math.ceil(months / 3);
+        case 'YEARS':
+            return Math.ceil(months / 12);
+        default:
+            return months;
+    }
+};
+
+// Instance method to validate loan application
+LoanInterestRateSchema.methods.validateLoanApplication = function(amount, termValue, termType = null) {
+    const errors = [];
+    
+    // Validate amount
+    const amountNum = parseFloat(amount);
+    const minAmount = parseFloat(this.MIN_LOAN_AMOUNT.toString() || '0');
+    const maxAmount = parseFloat(this.MAX_LOAN_AMOUNT.toString() || '999999999');
+    
+    if (amountNum < minAmount) {
+        errors.push(`Amount (${amountNum}) is below minimum (${minAmount})`);
+    }
+    if (amountNum > maxAmount) {
+        errors.push(`Amount (${amountNum}) exceeds maximum (${maxAmount})`);
     }
     
-    // Simple interest calculation
-    const interest = principal * periodRate * periods;
+    // Validate term
+    const actualTermType = termType || this.TERM_TYPE;
+    if (actualTermType.toUpperCase() !== this.TERM_TYPE.toUpperCase()) {
+        errors.push(`Term type (${actualTermType}) does not match product term type (${this.TERM_TYPE})`);
+    } else {
+        const termValueNum = parseInt(termValue);
+        if (termValueNum < this.MIN_TERM_VALUE) {
+            errors.push(`Term value (${termValueNum}) is below minimum (${this.MIN_TERM_VALUE})`);
+        }
+        if (termValueNum > this.MAX_TERM_VALUE) {
+            errors.push(`Term value (${termValueNum}) exceeds maximum (${this.MAX_TERM_VALUE})`);
+        }
+    }
+    
+    return {
+        isValid: errors.length === 0,
+        errors: errors
+    };
+};
+
+// Instance method to calculate effective rate for variable loans
+LoanInterestRateSchema.methods.getEffectiveRate = async function() {
+    if (this.RATE_TYPE === 'VARIABLE' && this.INDEX_RATE_ID) {
+        try {
+            // Populate the index rate
+            await this.populate('INDEX_RATE_ID');
+            
+            if (this.INDEX_RATE_ID && this.INDEX_RATE_ID.INDEX_RATE) {
+                const indexRate = parseFloat(this.INDEX_RATE_ID.INDEX_RATE);
+                const marginRate = this.MARGIN_RATE || 0;
+                const spreadRate = this.SPREAD_RATE || 0;
+                
+                // Effective rate = Index rate + Margin + Spread
+                return indexRate + marginRate + spreadRate;
+            }
+        } catch (error) {
+            console.error('Error getting effective rate:', error);
+        }
+    }
+    
+    // For fixed rates or if index not found, return default rate
+    return this.DEFAULT_RATE_PER_MONTH;
+};
+
+// Instance method to calculate interest
+LoanInterestRateSchema.methods.calculateInterest = function(principal, termValue, termType = null) {
+    const principalNum = parseFloat(principal);
+    const termValueNum = parseInt(termValue);
+    const actualTermType = termType || this.TERM_TYPE;
+    
+    // Convert term to months for calculation
+    const termInMonths = this.convertToMonths(termValueNum, actualTermType);
+    const monthlyRate = this.DEFAULT_RATE_PER_MONTH / 100;
+    
+    let interest;
+    
+    if (this.INTEREST_TYPE.toUpperCase() === 'SIMPLE') {
+        // Simple Interest
+        interest = principalNum * monthlyRate * termInMonths;
+    } else if (this.INTEREST_TYPE.toUpperCase() === 'COMPOUND') {
+        // Compound Interest
+        if (this.AMORTIZED) {
+            // Amortized loan
+            if (monthlyRate === 0) {
+                interest = 0;
+            } else {
+                const rateFactor = Math.pow(1 + monthlyRate, termInMonths);
+                const monthlyPayment = principalNum * monthlyRate * rateFactor / (rateFactor - 1);
+                const totalPayment = monthlyPayment * termInMonths;
+                interest = totalPayment - principalNum;
+            }
+        } else {
+            // Non-amortized (bullet payment)
+            interest = principalNum * (Math.pow(1 + monthlyRate, termInMonths) - 1);
+        }
+    } else {
+        // Default to simple interest
+        interest = principalNum * monthlyRate * termInMonths;
+    }
+    
     return parseFloat(interest.toFixed(2));
-};
-
-// Static method to calculate repayment schedule
-LoanInterestRateSchema.statics.calculateRepaymentSchedule = function(productType, principal, rate, duration, durationUnit) {
-    const schedule = [];
-    const interest = this.calculateInterest(productType, principal, rate, duration, durationUnit);
-    const totalAmount = principal + interest;
-    
-    switch(productType.toUpperCase()) {
-        case 'DAILY':
-            // Daily repayments
-            const dailyPayment = totalAmount / duration;
-            for (let i = 1; i <= duration; i++) {
-                schedule.push({
-                    installmentNumber: i,
-                    dueDate: i, // days from now
-                    principalPayment: principal / duration,
-                    interestPayment: interest / duration,
-                    totalPayment: dailyPayment
-                });
-            }
-            break;
-            
-        case 'WEEKLY':
-            // Weekly repayments
-            const weeklyPayment = totalAmount / duration;
-            for (let i = 1; i <= duration; i++) {
-                schedule.push({
-                    installmentNumber: i,
-                    dueDate: i * 7, // weeks in days
-                    principalPayment: principal / duration,
-                    interestPayment: interest / duration,
-                    totalPayment: weeklyPayment
-                });
-            }
-            break;
-            
-        case 'MONTHLY':
-            // Monthly repayments
-            const monthlyPayment = totalAmount / duration;
-            for (let i = 1; i <= duration; i++) {
-                schedule.push({
-                    installmentNumber: i,
-                    dueDate: i * 30, // months in days (approx)
-                    principalPayment: principal / duration,
-                    interestPayment: interest / duration,
-                    totalPayment: monthlyPayment
-                });
-            }
-            break;
-            
-        case 'BULLET':
-            // Single bullet payment
-            schedule.push({
-                installmentNumber: 1,
-                dueDate: duration, // at the end of term
-                principalPayment: principal,
-                interestPayment: interest,
-                totalPayment: totalAmount
-            });
-            break;
-    }
-    
-    return schedule;
-};
-
-// Static method to find active rate by product short name
-LoanInterestRateSchema.statics.findByProductShortName = function(shortName) {
-    return this.findOne({
-        PRODUCT_SHORT_NAME: shortName.toUpperCase(),
-        STATUS: 'ACTIVE',
-        EFFECTIVE_DT: { $lte: new Date() },
-        $or: [
-            { EXPIRY_DT: { $exists: false } },
-            { EXPIRY_DT: { $gte: new Date() } }
-        ]
-    }).sort({ EFFECTIVE_DT: -1 });
-};
-
-// Static method to get all active products
-LoanInterestRateSchema.statics.getAllActiveProducts = function() {
-    return this.find({
-        STATUS: 'ACTIVE',
-        EFFECTIVE_DT: { $lte: new Date() },
-        $or: [
-            { EXPIRY_DT: { $exists: false } },
-            { EXPIRY_DT: { $gte: new Date() } }
-        ]
-    }).sort({ PRODUCT_NAME: 1 });
 };
 
 // Instance method to check if rate is currently effective
 LoanInterestRateSchema.methods.isCurrentlyEffective = function() {
     const now = new Date();
     return this.STATUS === 'ACTIVE' && 
-           this.EFFECTIVE_DT <= now && 
-           (!this.EXPIRY_DT || this.EXPIRY_DT >= now);
+           this.EFFECTIVE_DATE <= now && 
+           (!this.EXPIRY_DATE || this.EXPIRY_DATE >= now);
 };
 
 // Instance method to get product summary
 LoanInterestRateSchema.methods.getProductSummary = function() {
     return {
-        productId: this.PROD_ID,
-        productName: this.PRODUCT_NAME,
-        shortName: this.PRODUCT_SHORT_NAME,
-        productType: this.PRODUCT_TYPE,
+        name: this.name,
+        code: this.code,
+        rateType: this.RATE_TYPE,
+        interestType: this.INTEREST_TYPE,
         defaultRate: `${this.DEFAULT_RATE_PER_MONTH}% per month`,
-        minRate: `${this.MIN_RATE_PER_MONTH}% per month`,
-        maxRate: `${this.MAX_RATE_PER_MONTH}% per month`,
-        totalInterestRate: `${this.TOTAL_INTEREST_RATE}%`,
-        minDuration: this.getMinDurationDisplay(),
+        annualRate: `${this.annualRate}% per year`,
+        termRange: this.termRange,
+        minAmount: parseFloat(this.MIN_LOAN_AMOUNT.toString()),
+        maxAmount: parseFloat(this.MAX_LOAN_AMOUNT.toString()),
         status: this.STATUS
     };
 };
 
-// Instance method to get minimum duration display
-LoanInterestRateSchema.methods.getMinDurationDisplay = function() {
-    switch(this.PRODUCT_TYPE) {
-        case 'DAILY':
-            return `${this.MIN_DURATION_DAYS} Days`;
-        case 'WEEKLY':
-            return `${this.MIN_DURATION_WEEKS} Weeks`;
-        case 'MONTHLY':
-        case 'BULLET':
-            return `${this.MIN_DURATION_MONTHS} Months`;
-        default:
-            return `${this.MIN_DURATION_MONTHS} Months`;
-    }
+// ==================== STATICS ====================
+
+// Static method to find active rates
+LoanInterestRateSchema.statics.findActiveRates = function() {
+    const now = new Date();
+    return this.find({
+        STATUS: 'ACTIVE',
+        EFFECTIVE_DATE: { $lte: now },
+        $or: [
+            { EXPIRY_DATE: { $exists: false } },
+            { EXPIRY_DATE: { $gte: now } }
+        ]
+    }).sort({ name: 1 });
 };
 
-// Middleware to validate rate consistency
+// Static method to find rates by term type
+LoanInterestRateSchema.statics.findByTermType = function(termType, status = 'ACTIVE') {
+    return this.find({
+        TERM_TYPE: termType.toUpperCase(),
+        STATUS: status
+    }).sort({ name: 1 });
+};
+
+// Static method to find rates by rate type
+LoanInterestRateSchema.statics.findByRateType = function(rateType, status = 'ACTIVE') {
+    return this.find({
+        RATE_TYPE: rateType.toUpperCase(),
+        STATUS: status
+    }).sort({ name: 1 });
+};
+
+// Static method to find rates using specific index
+LoanInterestRateSchema.statics.findByIndexRateId = function(indexRateId) {
+    return this.find({
+        INDEX_RATE_ID: indexRateId,
+        RATE_TYPE: 'VARIABLE',
+        STATUS: 'ACTIVE'
+    }).populate('INDEX_RATE_ID');
+};
+
+// ==================== MIDDLEWARE ====================
+
+// Pre-save validation
 LoanInterestRateSchema.pre('save', function(next) {
-    // Ensure default rate is within min-max range
+    // Validate default rate is within min-max range
     if (this.DEFAULT_RATE_PER_MONTH < this.MIN_RATE_PER_MONTH || 
         this.DEFAULT_RATE_PER_MONTH > this.MAX_RATE_PER_MONTH) {
         next(new Error(`Default rate (${this.DEFAULT_RATE_PER_MONTH}%) must be between min (${this.MIN_RATE_PER_MONTH}%) and max (${this.MAX_RATE_PER_MONTH}%) rates`));
         return;
     }
     
-    // Set ABSOLUTE_RATE based on product type
-    if (this.RATE_TY === 'FIXED') {
-        this.ABSOLUTE_RATE = this.DEFAULT_RATE_PER_MONTH;
-        this.FIXED_RATE = this.DEFAULT_RATE_PER_MONTH;
-    }
-    
-    // Set accrual frequency based on product type
-    switch(this.PRODUCT_TYPE) {
-        case 'DAILY':
-            this.ACCRUAL_FREQ_CD = 'DAILY';
-            this.ACCRUAL_FREQ_VALUE = 1;
-            break;
-        case 'WEEKLY':
-            this.ACCRUAL_FREQ_CD = 'WEEKLY';
-            this.ACCRUAL_FREQ_VALUE = 7;
-            break;
-        case 'MONTHLY':
-        case 'BULLET':
-            this.ACCRUAL_FREQ_CD = 'MONTHLY';
-            this.ACCRUAL_FREQ_VALUE = 30;
-            break;
-    }
-    
-    // Set repayment frequency based on product type
-    switch(this.PRODUCT_TYPE) {
-        case 'DAILY':
-            this.REPAYMENT_FREQUENCY = 'DAILY';
-            break;
-        case 'WEEKLY':
-            this.REPAYMENT_FREQUENCY = 'WEEKLY';
-            break;
-        case 'MONTHLY':
-        case 'BULLET':
-            this.REPAYMENT_FREQUENCY = 'MONTHLY';
-            break;
-    }
-    
-    // Validate that effective date is not in the future for active rates
-    if (this.STATUS === 'ACTIVE' && this.EFFECTIVE_DT > new Date()) {
-        next(new Error('Active rates cannot have future effective dates'));
+    // Validate min term is less than or equal to max term
+    if (this.MIN_TERM_VALUE > this.MAX_TERM_VALUE) {
+        next(new Error(`MIN_TERM_VALUE (${this.MIN_TERM_VALUE}) must be less than or equal to MAX_TERM_VALUE (${this.MAX_TERM_VALUE})`));
         return;
     }
     
+    // For variable rates, require INDEX_RATE_ID
+    if (this.RATE_TYPE === 'VARIABLE' && !this.INDEX_RATE_ID) {
+        next(new Error('INDEX_RATE_ID is required for variable rate loans'));
+        return;
+    }
+    
+    // For tiered rates, validate tieredRates array
+    if (this.RATE_TYPE === 'TIERED' && (!this.TIERED_RATES || this.TIERED_RATES.length === 0)) {
+        next(new Error('TIERED_RATES array is required for tiered rate loans'));
+        return;
+    }
+    
+    // Set IS_ACTIVE based on STATUS
+    this.IS_ACTIVE = this.STATUS === 'ACTIVE';
+    
+    // Set updated timestamp
+    this.UPDATED_AT = new Date();
+    
     next();
 });
+
+// Pre-save for variable rates: Set default rate based on index + margin
+LoanInterestRateSchema.pre('save', async function(next) {
+    if (this.RATE_TYPE === 'VARIABLE' && this.INDEX_RATE_ID && this.isModified('INDEX_RATE_ID')) {
+        try {
+            // Fetch the index rate
+            const RateIndex = mongoose.model('RateIndex');
+            const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: this.INDEX_RATE_ID });
+            
+            if (rateIndex) {
+                const indexRate = parseFloat(rateIndex.INDEX_RATE);
+                const marginRate = this.MARGIN_RATE || 0;
+                const spreadRate = this.SPREAD_RATE || 0;
+                
+                // Set default rate based on current index
+                const effectiveRate = indexRate + marginRate + spreadRate;
+                
+                // Validate effective rate is within min-max
+                if (effectiveRate < this.MIN_RATE_PER_MONTH || effectiveRate > this.MAX_RATE_PER_MONTH) {
+                    next(new Error(`Effective rate (${effectiveRate}%) based on index ${indexRate}% + margin ${marginRate}% + spread ${spreadRate}% is outside allowed range (${this.MIN_RATE_PER_MONTH}% - ${this.MAX_RATE_PER_MONTH}%)`));
+                    return;
+                }
+                
+                this.DEFAULT_RATE_PER_MONTH = effectiveRate;
+            }
+        } catch (error) {
+            next(error);
+            return;
+        }
+    }
+    next();
+});
+
+// ==================== INDEXES ====================
+
+// Indexes for better query performance
+LoanInterestRateSchema.index({ code: 1 }, { unique: true });
+LoanInterestRateSchema.index({ LOAN_PROUD_INT_ID: 1 }, { unique: true, sparse: true }); // Fixed index
+LoanInterestRateSchema.index({ STATUS: 1, EFFECTIVE_DATE: 1, EXPIRY_DATE: 1 });
+LoanInterestRateSchema.index({ RATE_TYPE: 1, STATUS: 1 });
+LoanInterestRateSchema.index({ TERM_TYPE: 1, STATUS: 1 });
+LoanInterestRateSchema.index({ INDEX_RATE_ID: 1, STATUS: 1 }); // For variable rates
+LoanInterestRateSchema.index({ CREATED_AT: -1 });
+LoanInterestRateSchema.index({ UPDATED_AT: -1 });
+LoanInterestRateSchema.index({ name: 1 }, { collation: { locale: 'en', strength: 2 } }); // Case-insensitive
 
 const LoanInterestRate = mongoose.model('LoanInterestRate', LoanInterestRateSchema);
 

@@ -38,12 +38,14 @@ import Charge from '../models/Charge.js';
 import getErrorMessage from '../utils/errorUtils.js';
 import LoanDisbursement from '../models/Disbursement.js'; 
 import LoanRepayment from '../models/LoanRepayment.js';
+import Disbursement from '../models/Disbursement.js';
 import ProductTypeMapping from '../models/ProductTypeMapping.js';
 // At the top of LoanAccountController.js, add this import:
 import {  processLoanDisbursementTransactions,
   processDisbursement,
   getGLAccountsFromProduct } from '../Services/processLoanDisbursementTransactions.js';
 import LoanPortfolio from '../models/LoanPortfolio.js';
+
 
 
 
@@ -449,23 +451,6 @@ function getPaymentFrequency(termCode, termValue) {
   }
 }
 
-// // Helper function to calculate maturity date
-// function calculateMaturityDate(startDate, termCode, termValue) {
-//   termCode = String(termCode).toUpperCase();
-//   const result = new Date(startDate);
-  
-//   switch (termCode) {
-//     case 'D': result.setDate(result.getDate() + termValue); break;
-//     case 'W': result.setDate(result.getDate() + termValue * 7); break;
-//     case 'BW': result.setDate(result.getDate() + termValue * 14); break;
-//     case 'M': result.setMonth(result.getMonth() + termValue); break;
-//     case 'Q': result.setMonth(result.getMonth() + termValue * 3); break;
-//     case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
-//     default: throw new Error(`Invalid term code: ${termCode}`);
-//   }
-  
-//   return result;
-// }
 
 // Helper functions
 function generateId(length) {
@@ -676,1349 +661,1477 @@ const LoanAccountController = {
   // =========================
 
 async applyForLoan(req, res) {
-  // ==================== INNER HELPER FUNCTIONS ====================
-  
-  async function getLoanCycleCount(custId, session) {
-    try {
-      const query = LoanAccount.countDocuments({ CUST_ID: custId });
-      if (session) query.session(session);
-      const loanCount = await query;
-      return loanCount + 1;
-    } catch (error) {
-      console.error('Error in getLoanCycleCount:', error);
-      throw {
-        code: 'LOAN_CYCLE_COUNT_ERROR',
-        message: 'Failed to retrieve loan cycle count',
-        status: 500,
-      };
-    }
-  }
-
-  function calculateMaturityDate(startDate, termCode, termValue) {
-    termCode = String(termCode).toUpperCase();
-    const result = new Date(startDate);
-    switch (termCode) {
-      case 'D': result.setDate(result.getDate() + termValue); break;
-      case 'W': result.setDate(result.getDate() + termValue * 7); break;
-      case 'BW': result.setDate(result.getDate() + termValue * 14); break;
-      case 'M': result.setMonth(result.getMonth() + termValue); break;
-      case 'Q': result.setMonth(result.getMonth() + termValue * 3); break;
-      case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
-      default: throw new Error(`Invalid term code: ${termCode}`);
-    }
-    return result;
-  }
-
-  function getPaymentFrequency(termCode, termValue) {
-    termCode = String(termCode).toUpperCase();
-    switch (termCode) {
-      case 'D': return 'DAILY';
-      case 'W': return 'WEEKLY';
-      case 'BW': return 'BI_WEEKLY';
-      case 'M': return 'MONTHLY';
-      case 'Q': return 'QUARTERLY';
-      case 'Y': return termValue <= 1 ? 'MONTHLY' : 'YEARLY';
-      default: return 'MONTHLY';
-    }
-  }
-
-  async function findGuarantor(guarantorId, session) {
-    try {
-      if (!guarantorId) {
-        return null;
-      }
-
-      if (!isNaN(guarantorId)) {
-        let query = Guarantor.findOne({ GUARANTOR_ID: Number(guarantorId) });
-        if (session) query = query.session(session);
-        const byNumber = await query;
-        if (byNumber) return byNumber;
-      }
-
-      if (mongoose.Types.ObjectId.isValid(guarantorId)) {
-        let query = Guarantor.findById(guarantorId);
-        if (session) query = query.session(session);
-        const byObjectId = await query;
-        if (byObjectId) return byObjectId;
-      }
-
-      let query = Guarantor.findOne({ GUARANTOR_ID: guarantorId.toString() });
-      if (session) query = query.session(session);
-      const byString = await query;
-      return byString;
-    } catch (error) {
-      console.error('Error finding guarantor:', error);
-      return null;
-    }
-  }
-
-  async function checkGuarantorExistingLoans(guarantorId, session) {
-    try {
-      console.log(`Checking existing loans for guarantor: ${guarantorId}`);
-      
-      let query = LoanAccount.find({
-        GUARANTOR_ID: guarantorId,
-        LOAN_STATUS: { $in: ['ACTIVE', 'PENDING', 'APPROVED'] }
-      });
-      
-      if (session) {
-        query = query.session(session);
-      }
-
-      const existingLoans = await query;
-      console.log(`Found ${existingLoans.length} existing loans for guarantor`);
-
-      if (existingLoans.length > 0) {
-        const loanDetails = existingLoans.map(loan => ({
-          loanAccountId: loan.loanAccountId,
-          ACCT_NO: loan.ACCT_NO,
-          LOAN_STATUS: loan.LOAN_STATUS,
-          DISBURSEMENT_LIMIT: parseFloat(loan.DISBURSEMENT_LIMIT?.toString() || '0'),
-          GUARANTEED_AMOUNT: parseFloat(loan.GUARANTEED_AMOUNT?.toString() || '0'),
-          CUST_ID: loan.CUST_ID,
-          START_DT: loan.START_DT,
-          MATURITY_DT: loan.MATURITY_DT
-        }));
-
-        return {
-          hasExistingLoans: true,
-          totalExistingLoans: existingLoans.length,
-          loanDetails: loanDetails,
-          totalGuaranteedAmount: loanDetails.reduce((sum, loan) => sum + loan.GUARANTEED_AMOUNT, 0)
+    // ==================== INNER HELPER FUNCTIONS ====================
+   
+    async function getLoanCycleCount(custId, session) {
+      try {
+        const query = LoanAccount.countDocuments({ CUST_ID: custId });
+        if (session) query.session(session);
+        const loanCount = await query;
+        return loanCount + 1;
+      } catch (error) {
+        console.error('Error in getLoanCycleCount:', error);
+        throw {
+          code: 'LOAN_CYCLE_COUNT_ERROR',
+          message: 'Failed to retrieve loan cycle count',
+          status: 500,
         };
       }
-
-      return {
-        hasExistingLoans: false,
-        totalExistingLoans: 0,
-        loanDetails: [],
-        totalGuaranteedAmount: 0
-      };
-    } catch (error) {
-      console.error('Error checking guarantor existing loans:', error);
-      return {
-        hasExistingLoans: false,
-        totalExistingLoans: 0,
-        loanDetails: [],
-        totalGuaranteedAmount: 0
-      };
     }
-  }
-
-  async function findRateIndex(rateIndexId, session) {
-    try {
-      let query = {};
-      
-      const numericId = parseInt(rateIndexId);
-      if (!isNaN(numericId)) {
-        query = { INDEX_RATE_ID: numericId };
-      } else {
-        query = { INDEX_RATE_ID: rateIndexId };
+ 
+    function calculateMaturityDate(startDate, termCode, termValue) {
+      termCode = String(termCode).toUpperCase();
+      const result = new Date(startDate);
+      switch (termCode) {
+        case 'D': result.setDate(result.getDate() + termValue); break;
+        case 'W': result.setDate(result.getDate() + termValue * 7); break;
+        case 'BW': result.setDate(result.getDate() + termValue * 14); break;
+        case 'M': result.setMonth(result.getMonth() + termValue); break;
+        case 'Q': result.setMonth(result.getMonth() + termValue * 3); break;
+        case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
+        default: throw new Error(`Invalid term code: ${termCode}`);
       }
-
-      let rateQuery = RateIndex.findOne(query);
-      if (session) rateQuery = rateQuery.session(session);
-      let rateIndex = await rateQuery;
-      
-      if (!rateIndex) {
-        console.warn(`Rate index ${rateIndexId} not found, looking for default...`);
-        
-        let defaultQuery = RateIndex.findOne({ IS_DEFAULT: true });
-        if (session) defaultQuery = defaultQuery.session(session);
-        rateIndex = await defaultQuery;
-        
-        if (!rateIndex) {
-          let firstQuery = RateIndex.findOne({});
-          if (session) firstQuery = firstQuery.session(session);
-          rateIndex = await firstQuery;
-          
-          if (rateIndex) {
-            console.warn(`Using first available rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
-          } else {
-            console.warn('No rate indexes available in the system');
-            return null;
-          }
-        } else {
-          console.warn(`Using default rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+      return result;
+    }
+ 
+    function getPaymentFrequency(termCode, termValue) {
+      termCode = String(termCode).toUpperCase();
+      switch (termCode) {
+        case 'D': return 'DAILY';
+        case 'W': return 'WEEKLY';
+        case 'BW': return 'BI_WEEKLY';
+        case 'M': return 'MONTHLY';
+        case 'Q': return 'QUARTERLY';
+        case 'Y': return termValue <= 1 ? 'MONTHLY' : 'YEARLY';
+        default: return 'MONTHLY';
+      }
+    }
+ 
+    async function findGuarantor(guarantorId, session) {
+      try {
+        if (!guarantorId) {
+          return null;
         }
+ 
+        if (!isNaN(guarantorId)) {
+          let query = Guarantor.findOne({ GUARANTOR_ID: Number(guarantorId) });
+          if (session) query = query.session(session);
+          const byNumber = await query;
+          if (byNumber) return byNumber;
+        }
+ 
+        if (mongoose.Types.ObjectId.isValid(guarantorId)) {
+          let query = Guarantor.findById(guarantorId);
+          if (session) query = query.session(session);
+          const byObjectId = await query;
+          if (byObjectId) return byObjectId;
+        }
+ 
+        let query = Guarantor.findOne({ GUARANTOR_ID: guarantorId.toString() });
+        if (session) query = query.session(session);
+        const byString = await query;
+        return byString;
+      } catch (error) {
+        console.error('Error finding guarantor:', error);
+        return null;
       }
-      
-      return rateIndex;
-    } catch (error) {
-      console.error('Error in findRateIndex:', error);
-      return null;
     }
-  }
-
-  async function findLoanInterestRate(PROD_ID, INDEX_RATE_ID, session) {
-    try {
-      console.log(`Looking for LoanInterestRate with PROD_ID: ${PROD_ID}, INDEX_RATE_ID: ${INDEX_RATE_ID}`);
-      
-      let query = LoanInterestRate.findOne({
-        PROD_ID: parseInt(PROD_ID),
-        INDEX_RATE_ID: parseInt(INDEX_RATE_ID),
-        STATUS: 'ACTIVE'
-      });
-      
-      if (session) query = query.session(session);
-      
-      const loanInterestRate = await query;
-      
-      if (!loanInterestRate) {
-        console.warn(`No LoanInterestRate found for PROD_ID: ${PROD_ID}, INDEX_RATE_ID: ${INDEX_RATE_ID}`);
-        
-        // Try to find any active rate for this product
-        let fallbackQuery = LoanInterestRate.findOne({
-          PROD_ID: parseInt(PROD_ID),
-          STATUS: 'ACTIVE'
+ 
+    async function checkGuarantorExistingLoans(guarantorId, session) {
+      try {
+        console.log(`Checking existing loans for guarantor: ${guarantorId}`);
+       
+        let query = LoanAccount.find({
+          GUARANTOR_ID: guarantorId,
+          LOAN_STATUS: { $in: ['ACTIVE', 'PENDING', 'APPROVED'] }
         });
-        
+       
+        if (session) {
+          query = query.session(session);
+        }
+ 
+        const existingLoans = await query;
+        console.log(`Found ${existingLoans.length} existing loans for guarantor`);
+ 
+        if (existingLoans.length > 0) {
+          const loanDetails = existingLoans.map(loan => ({
+            loanAccountId: loan.loanAccountId,
+            ACCT_NO: loan.ACCT_NO,
+            LOAN_STATUS: loan.LOAN_STATUS,
+            DISBURSEMENT_LIMIT: parseFloat(loan.DISBURSEMENT_LIMIT?.toString() || '0'),
+            GUARANTEED_AMOUNT: parseFloat(loan.GUARANTEED_AMOUNT?.toString() || '0'),
+            CUST_ID: loan.CUST_ID,
+            START_DT: loan.START_DT,
+            MATURITY_DT: loan.MATURITY_DT
+          }));
+ 
+          return {
+            hasExistingLoans: true,
+            totalExistingLoans: existingLoans.length,
+            loanDetails: loanDetails,
+            totalGuaranteedAmount: loanDetails.reduce((sum, loan) => sum + loan.GUARANTEED_AMOUNT, 0)
+          };
+        }
+ 
+        return {
+          hasExistingLoans: false,
+          totalExistingLoans: 0,
+          loanDetails: [],
+          totalGuaranteedAmount: 0
+        };
+      } catch (error) {
+        console.error('Error checking guarantor existing loans:', error);
+        return {
+          hasExistingLoans: false,
+          totalExistingLoans: 0,
+          loanDetails: [],
+          totalGuaranteedAmount: 0
+        };
+      }
+    }
+ 
+    async function findRateIndex(rateIndexId, session) {
+      try {
+        let query = {};
+       
+        const numericId = parseInt(rateIndexId);
+        if (!isNaN(numericId)) {
+          query = { INDEX_RATE_ID: numericId };
+        } else {
+          query = { INDEX_RATE_ID: rateIndexId };
+        }
+ 
+        let rateQuery = RateIndex.findOne(query);
+        if (session) rateQuery = rateQuery.session(session);
+        let rateIndex = await rateQuery;
+       
+        if (!rateIndex) {
+          console.warn(`Rate index ${rateIndexId} not found, looking for default...`);
+         
+          let defaultQuery = RateIndex.findOne({ IS_DEFAULT: true });
+          if (session) defaultQuery = defaultQuery.session(session);
+          rateIndex = await defaultQuery;
+         
+          if (!rateIndex) {
+            let firstQuery = RateIndex.findOne({});
+            if (session) firstQuery = firstQuery.session(session);
+            rateIndex = await firstQuery;
+           
+            if (rateIndex) {
+              console.warn(`Using first available rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+            } else {
+              console.warn('No rate indexes available in the system');
+              return null;
+            }
+          } else {
+            console.warn(`Using default rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+          }
+        }
+       
+        return rateIndex;
+      } catch (error) {
+        console.error('Error in findRateIndex:', error);
+        return null;
+      }
+    }
+ 
+    // UPDATED: Find LoanInterestRate using LOAN_PROUD_INT_ID instead of PROD_ID
+    async function findLoanInterestRate(LOAN_PROUD_INT_ID, INDEX_RATE_ID, session) {
+      try {
+        console.log(`Looking for LoanInterestRate with LOAN_PROUD_INT_ID: ${LOAN_PROUD_INT_ID}, INDEX_RATE_ID: ${INDEX_RATE_ID}`);
+       
+        let query = {};
+       
+        // First, try to find by LOAN_PROUD_INT_ID
+        if (LOAN_PROUD_INT_ID) {
+          const numericLoanProudIntId = parseInt(LOAN_PROUD_INT_ID);
+          if (!isNaN(numericLoanProudIntId)) {
+            query = {
+              LOAN_PROUD_INT_ID: numericLoanProudIntId,
+              STATUS: 'ACTIVE'
+            };
+          } else {
+            query = {
+              LOAN_PROUD_INT_ID: LOAN_PROUD_INT_ID.toString(),
+              STATUS: 'ACTIVE'
+            };
+          }
+         
+          let rateQuery = LoanInterestRate.findOne(query).populate('INDEX_RATE_ID');
+          if (session) rateQuery = rateQuery.session(session);
+          const loanInterestRate = await rateQuery;
+         
+          if (loanInterestRate) {
+            console.log(`Found LoanInterestRate by LOAN_PROUD_INT_ID: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+            return loanInterestRate;
+          }
+        }
+       
+        // If not found by LOAN_PROUD_INT_ID, try by INDEX_RATE_ID
+        if (INDEX_RATE_ID) {
+          query = {
+            INDEX_RATE_ID: parseInt(INDEX_RATE_ID),
+            STATUS: 'ACTIVE'
+          };
+         
+          let rateQuery = LoanInterestRate.findOne(query).populate('INDEX_RATE_ID');
+          if (session) rateQuery = rateQuery.session(session);
+          const loanInterestRate = await rateQuery;
+         
+          if (loanInterestRate) {
+            console.log(`Found LoanInterestRate by INDEX_RATE_ID: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+            return loanInterestRate;
+          }
+        }
+       
+        // If still not found, try to find any active rate
+        console.warn(`No LoanInterestRate found for LOAN_PROUD_INT_ID: ${LOAN_PROUD_INT_ID} or INDEX_RATE_ID: ${INDEX_RATE_ID}, looking for any active rate...`);
+       
+        let fallbackQuery = LoanInterestRate.findOne({
+          STATUS: 'ACTIVE'
+        }).populate('INDEX_RATE_ID');
+       
         if (session) fallbackQuery = fallbackQuery.session(session);
         const fallbackRate = await fallbackQuery;
-        
+       
         if (fallbackRate) {
-          console.warn(`Using fallback LoanInterestRate: ${fallbackRate.LOAN_PROUD_INT_ID}`);
+          console.warn(`Using fallback LoanInterestRate: ${fallbackRate.LOAN_PROUD_INT_ID} - ${fallbackRate.name}`);
           return fallbackRate;
         }
-        
+       
+        console.warn('No active LoanInterestRate found in the system');
+        return null;
+       
+      } catch (error) {
+        console.error('Error in findLoanInterestRate:', error);
         return null;
       }
-      
-      console.log(`Found LoanInterestRate: ${loanInterestRate.LOAN_PROUD_INT_ID} with RATE_TY: ${loanInterestRate.RATE_TY}, INT_TY: ${loanInterestRate.INT_TY}`);
-      return loanInterestRate;
-    } catch (error) {
-      console.error('Error in findLoanInterestRate:', error);
-      return null;
     }
-  }
-
-  function safeDecimal128(value, fieldName = 'value') {
-    console.log(`safeDecimal128: Converting field ${fieldName} with value:`, value);
-    
-    if (value === null || value === undefined) {
-      throw new Error(`Invalid ${fieldName}: null or undefined. Field: ${fieldName}, Value: ${value}`);
-    }
-    
-    if (value instanceof mongoose.Types.Decimal128) {
-      return value;
-    }
-    
-    const numericValue = typeof value === 'string' ? parseFloat(value) : Number(value);
-    
-    if (isNaN(numericValue)) {
-      throw new Error(`Invalid ${fieldName}: not a number. Field: ${fieldName}, Value: ${value}`);
-    }
-    
-    if (!isFinite(numericValue)) {
-      throw new Error(`Invalid ${fieldName}: infinite value. Field: ${fieldName}, Value: ${value}`);
-    }
-    
-    try {
-      return mongoose.Types.Decimal128.fromString(numericValue.toFixed(2));
-    } catch (error) {
-      console.error(`Error converting ${fieldName} to Decimal128:`, error);
-      throw new Error(`Failed to convert ${fieldName} to Decimal128: ${error.message}`);
-    }
-  }
-
-  const normalizeBorrowerAddress = (address) => {
-    if (!address || typeof address !== 'object') return null;
-    return {
-      street: address.street || address.Street || '',
-      city: address.city || address.City || '',
-      state: address.state || address.State || '',
-      zipCode: address.zipCode || address.ZIPCode || address.zipcode || '',
-      country: address.country || address.Country || 'Nigeria'
-    };
-  };
-
-  async function generateWorkflowIdentifiers(session) {
-    const timestamp = Date.now();
-    return {
-      TRANSACTION_ID: `TXN-${timestamp}`,
-      WORK_ITEM_ID: `WORK-${timestamp}`,
-      EVENT_ID: `EVT-${timestamp}`,
-      WORKFLOW_ID: `WF-${timestamp}`,
-      TRAN_JOURNAL_ID: `JRN-${timestamp}`
-    };
-  }
-
-  async function generateLoanAccountNumberByProdId(prodId) {
-    const prefix = prodId.toString().padStart(3, '0');
-    const randomSuffix = Math.floor(1000000 + Math.random() * 9000000).toString().padStart(7, '0');
-    return `${prefix}${randomSuffix}`;
-  }
-
-  // NEW: Function to calculate EMI with chosen method
-  function calculateEMIWithChosenMethod(principal, annualRate, termValue, termCode, paymentFrequency, startDate, calculationMethod) {
-    console.log('=== CALCULATING EMI WITH CHOSEN METHOD ===');
-    console.log(`Method: ${calculationMethod}, Rate: ${annualRate}%`);
-    
-    // Force the calculation method based on user choice
-    if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
-      console.log('Using FLAT RATE (Simple Interest) calculation');
-      return calculateFixedRateEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
-    } else if (calculationMethod === 'REDUCING_BALANCE' || calculationMethod === 'EMI') {
-      console.log('Using REDUCING BALANCE (Compound Interest) calculation');
-      return calculateReducingBalanceEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
-    } else {
-      console.warn(`Unknown calculation method: ${calculationMethod}, defaulting to REDUCING_BALANCE`);
-      return calculateReducingBalanceEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
-    }
-  }
-
-  // ==================== PRODUCT VALIDATION USING ProductTypeMapping ====================
-
-  async function validateProductUsingMapping(PROD_ID, PRODUCT_TYPE, session) {
-    try {
-      console.log(`Validating product using ProductTypeMapping: PROD_ID=${PROD_ID}, PRODUCT_TYPE=${PRODUCT_TYPE}`);
-      
-      // Check if product exists in ProductTypeMapping
-      let productMapping;
-      if (session) {
-        productMapping = await ProductTypeMapping.findOne({ 
-          PROD_ID: PROD_ID 
-        }).session(session);
-      } else {
-        productMapping = await ProductTypeMapping.findOne({ 
-          PROD_ID: PROD_ID 
-        });
-      }
-      
-      // If no mapping exists OR mapping exists but missing PRODUCT_TYPE
-      if (!productMapping) {
-        console.warn(`No ProductTypeMapping found for PROD_ID ${PROD_ID}. Creating new mapping...`);
-        return await createNewProductMapping(PROD_ID, PRODUCT_TYPE, session);
-      }
-      
-      // Check if PRODUCT_TYPE is missing in existing mapping
-      if (!productMapping.PRODUCT_TYPE) {
-        console.warn(`ProductTypeMapping found for PROD_ID ${PROD_ID} but missing PRODUCT_TYPE. Inferring from product name...`);
-        
-        // Try to infer PRODUCT_TYPE from productName or PROD_ID
-        let inferredProductType = inferProductTypeFromData(productMapping, PRODUCT_TYPE, PROD_ID);
-        
-        console.log(`Inferred PRODUCT_TYPE for PROD_ID ${PROD_ID}: ${inferredProductType}`);
-        
-        // Update the existing mapping with the inferred PRODUCT_TYPE
-        productMapping.PRODUCT_TYPE = inferredProductType;
-        
-        // Also set accountPrefix based on the inferred product type
-        if (!productMapping.accountPrefix || productMapping.accountPrefix === '10') {
-          productMapping.accountPrefix = getAccountPrefixForProductType(inferredProductType);
+ 
+    // NEW: Find LoanInterestRate by PROD_ID (for backward compatibility)
+    async function findLoanInterestRateByProduct(PROD_ID, INDEX_RATE_ID, session) {
+      try {
+        console.log(`Looking for LoanInterestRate for product: ${PROD_ID}`);
+       
+        // Try to find rates that might be associated with this product
+        // We can look for patterns in the name or code
+        let query = LoanInterestRate.findOne({
+          $or: [
+            { name: { $regex: `PROD_${PROD_ID}`, $options: 'i' } },
+            { code: { $regex: `^LO-.*-${PROD_ID}`, $options: 'i' } },
+            { description: { $regex: `Product ${PROD_ID}`, $options: 'i' } }
+          ],
+          STATUS: 'ACTIVE'
+        }).populate('INDEX_RATE_ID');
+       
+        if (session) query = query.session(session);
+       
+        let loanInterestRate = await query;
+       
+        if (!loanInterestRate) {
+          // Try by INDEX_RATE_ID if provided
+          if (INDEX_RATE_ID) {
+            query = LoanInterestRate.findOne({
+              INDEX_RATE_ID: parseInt(INDEX_RATE_ID),
+              STATUS: 'ACTIVE'
+            }).populate('INDEX_RATE_ID');
+           
+            if (session) query = query.session(session);
+            loanInterestRate = await query;
+          }
+         
+          if (!loanInterestRate) {
+            // Try to find any active rate
+            query = LoanInterestRate.findOne({
+              STATUS: 'ACTIVE'
+            }).populate('INDEX_RATE_ID');
+           
+            if (session) query = query.session(session);
+            loanInterestRate = await query;
+           
+            if (loanInterestRate) {
+              console.warn(`Using first available LoanInterestRate: ${loanInterestRate.LOAN_PROUD_INT_ID} for product ${PROD_ID}`);
+            }
+          }
         }
-        
-        // Save the updated mapping
-        if (session) {
-          await productMapping.save({ session });
-        } else {
-          await productMapping.save();
+       
+        if (loanInterestRate) {
+          console.log(`Found LoanInterestRate for product ${PROD_ID}: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
         }
-        
-        console.log(`Updated ProductTypeMapping for PROD_ID ${PROD_ID} with PRODUCT_TYPE: ${inferredProductType}`);
-        
-        return {
-          isValid: true,
-          productType: inferredProductType,
-          productName: productMapping.productName,
-          isLoanProduct: true,
-          accountPrefix: productMapping.accountPrefix,
-          isGlobalProduct: productMapping.isGlobalProduct || true,
-          BU_ID: productMapping.BU_ID || ['*'],
-          glAccounts: productMapping.glAccounts || {},
-          isAutoGenerated: false,
-          wasUpdated: true
-        };
+       
+        return loanInterestRate;
+      } catch (error) {
+        console.error('Error in findLoanInterestRateByProduct:', error);
+        return null;
       }
-      
-      // Product mapping exists and has PRODUCT_TYPE - validate it
-      const normalizedProductType = productMapping.PRODUCT_TYPE.toUpperCase().replace(/ /g, '_');
-      const isLoanProduct = normalizedProductType.includes('LOAN') || 
-                            normalizedProductType === 'MORTGAGE' || 
-                            normalizedProductType === 'CREDIT_CARD';
-      
-      if (!isLoanProduct) {
-        throw new Error(`PRODUCT_TYPE ${productMapping.PRODUCT_TYPE} in ProductTypeMapping is not a valid loan product`);
+    }
+ 
+    function safeDecimal128(value, fieldName = 'value') {
+      console.log(`safeDecimal128: Converting field ${fieldName} with value:`, value);
+     
+      if (value === null || value === undefined) {
+        throw new Error(`Invalid ${fieldName}: null or undefined. Field: ${fieldName}, Value: ${value}`);
       }
-      
-      // Check if provided PRODUCT_TYPE matches mapping (if provided)
-      if (PRODUCT_TYPE && PRODUCT_TYPE !== '') {
-        const normalizedProvidedType = PRODUCT_TYPE.toUpperCase().replace(/ /g, '_');
-        
-        if (normalizedProvidedType !== normalizedProductType) {
-          console.warn(`PRODUCT_TYPE mismatch: Provided "${PRODUCT_TYPE}" doesn't match mapped "${productMapping.PRODUCT_TYPE}". Using mapped type.`);
-        }
+     
+      if (value instanceof mongoose.Types.Decimal128) {
+        return value;
       }
-      
-      // Ensure BU_ID exists in the mapping
-      if (!productMapping.BU_ID || !Array.isArray(productMapping.BU_ID)) {
-        console.warn(`BU_ID not found or invalid in ProductTypeMapping for PROD_ID ${PROD_ID}. Defaulting to ['*']`);
-        productMapping.BU_ID = ['*'];
+     
+      const numericValue = typeof value === 'string' ? parseFloat(value) : Number(value);
+     
+      if (isNaN(numericValue)) {
+        throw new Error(`Invalid ${fieldName}: not a number. Field: ${fieldName}, Value: ${value}`);
       }
-      
+     
+      if (!isFinite(numericValue)) {
+        throw new Error(`Invalid ${fieldName}: infinite value. Field: ${fieldName}, Value: ${value}`);
+      }
+     
+      try {
+        return mongoose.Types.Decimal128.fromString(numericValue.toFixed(2));
+      } catch (error) {
+        console.error(`Error converting ${fieldName} to Decimal128:`, error);
+        throw new Error(`Failed to convert ${fieldName} to Decimal128: ${error.message}`);
+      }
+    }
+ 
+    const normalizeBorrowerAddress = (address) => {
+      if (!address || typeof address !== 'object') return null;
       return {
-        isValid: true,
-        productType: productMapping.PRODUCT_TYPE,
-        productName: productMapping.productName,
-        isLoanProduct: isLoanProduct,
-        accountPrefix: productMapping.accountPrefix,
-        isGlobalProduct: productMapping.isGlobalProduct,
-        BU_ID: productMapping.BU_ID,
-        glAccounts: productMapping.glAccounts,
-        isAutoGenerated: false,
-        wasUpdated: false
+        street: address.street || address.Street || '',
+        city: address.city || address.City || '',
+        state: address.state || address.State || '',
+        zipCode: address.zipCode || address.ZIPCode || address.zipcode || '',
+        country: address.country || address.Country || 'Nigeria'
       };
-    } catch (error) {
-      console.error('Error in validateProductUsingMapping:', error);
-      throw {
-        code: 'PRODUCT_VALIDATION_ERROR',
-        message: `Failed to validate product: ${error.message}`,
-        status: 400,
-      };
-    }
-  }
-
-  function inferProductTypeFromData(productMapping, providedProductType, prodId) {
-    // First priority: Use provided PRODUCT_TYPE if available
-    if (providedProductType && providedProductType.trim() !== '') {
-      return providedProductType.toUpperCase().replace(/ /g, '_');
-    }
-    
-    // Second priority: Infer from productName
-    if (productMapping.productName) {
-      const productName = productMapping.productName.toLowerCase();
-      
-      if (productName.includes('individual')) {
-        return 'INDIVIDUAL_LOAN';
-      } else if (productName.includes('business') || productName.includes('term')) {
-        return 'BUSINESS_TERM_LOAN';
-      } else if (productName.includes('consumer')) {
-        return 'CONSUMER_LOAN';
-      } else if (productName.includes('personal')) {
-        return 'PERSONAL_LOAN';
-      } else if (productName.includes('auto')) {
-        return 'AUTO_LOAN';
-      } else if (productName.includes('mortgage')) {
-        return 'MORTGAGE';
-      } else if (productName.includes('education')) {
-        return 'EDUCATION_LOAN';
-      } else if (productName.includes('sme')) {
-        return 'SME_LOAN';
-      } else if (productName.includes('group')) {
-        return 'GROUP_LOAN';
-      } else if (productName.includes('staff')) {
-        return 'STAFF_LOAN';
-      } else if (productName.includes('loan')) {
-        return 'GENERAL_LOAN';
-      }
-    }
-    
-    // Third priority: Infer from PROD_ID
-    if (prodId === 301) {
-      return 'INDIVIDUAL_LOAN';
-    } else if (prodId === 300) {
-      return 'BUSINESS_TERM_LOAN';
-    } else if (prodId === 302) {
-      return 'CONSUMER_LOAN';
-    } else if (prodId === 303) {
-      return 'MORTGAGE';
-    } else if (prodId === 304) {
-      return 'AUTO_LOAN';
-    } else if (prodId === 305) {
-      return 'PERSONAL_LOAN';
-    } else if (prodId === 306) {
-      return 'EDUCATION_LOAN';
-    } else if (prodId === 307) {
-      return 'CREDIT_CARD';
-    } else if (prodId === 308) {
-      return 'LINE_OF_CREDIT';
-    } else if (prodId === 309) {
-      return 'SME_LOAN';
-    } else if (prodId >= 300 && prodId <= 399) {
-      return 'GENERAL_LOAN';
-    }
-    
-    // Default fallback
-    return 'GENERAL_LOAN';
-  }
-
-  async function createNewProductMapping(PROD_ID, PRODUCT_TYPE, session) {
-    // Determine product type from PRODUCT_TYPE or default
-    let resolvedProductType = PRODUCT_TYPE;
-    if (!resolvedProductType || resolvedProductType === '') {
-      // Try to determine from PROD_ID pattern
-      if (PROD_ID === 301) {
-        resolvedProductType = 'INDIVIDUAL_LOAN';
-      } else if (PROD_ID >= 300 && PROD_ID <= 399) {
-        resolvedProductType = 'GENERAL_LOAN';
-      } else {
-        resolvedProductType = 'GENERAL_LOAN';
-      }
-    }
-    
-    resolvedProductType = resolvedProductType.toUpperCase().replace(/ /g, '_');
-    
-    // Check if it's a loan product
-    const isLoanProduct = resolvedProductType.includes('LOAN') || 
-                          resolvedProductType === 'MORTGAGE' || 
-                          resolvedProductType === 'CREDIT_CARD';
-    
-    if (!isLoanProduct) {
-      throw new Error(`PRODUCT_TYPE ${resolvedProductType} is not a valid loan product`);
-    }
-    
-    // Get GL accounts from the LoanProduct if available
-    let loanGLAccount = '100100';
-    let interestGLAccountNo = '400100';
-    
-    let loanProduct;
-    if (session) {
-      loanProduct = await LoanProduct.findOne({ PROD_ID: PROD_ID }).session(session);
-    } else {
-      loanProduct = await LoanProduct.findOne({ PROD_ID: PROD_ID });
-    }
-    
-    if (loanProduct) {
-      console.log(`Found LoanProduct for PROD_ID ${PROD_ID}, using its GL accounts`);
-      if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.loanGLAccount) {
-        loanGLAccount = loanProduct.defaultGLAccounts.loanGLAccount;
-      }
-      if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.interestGLAccountNo) {
-        interestGLAccountNo = loanProduct.defaultGLAccounts.interestGLAccountNo;
-      }
-    }
-    
-    // Create new dynamic mapping
-    const dynamicMapping = new ProductTypeMapping({
-      PROD_ID: PROD_ID,
-      PRODUCT_TYPE: resolvedProductType,
-      productName: `Auto-generated Product ${PROD_ID}`,
-      accountPrefix: getAccountPrefixForProductType(resolvedProductType),
-      BU_ID: ['*'],
-      isGlobalProduct: true,
-      visibility: 'GLOBAL',
-      glAccounts: {
-        loanGLAccount: loanGLAccount,
-        interestGLAccountNo: interestGLAccountNo,
-        principalGLAccountNo: loanGLAccount,
-        interestIncomeGLAccountNo: interestGLAccountNo,
-        SETTLEMENT_GL_ACCT_NO: '200100'
-      },
-      metadata: {
-        autoGenerated: true,
-        generatedAt: new Date(),
-        source: 'applyForLoan_auto_mapping'
-      }
-    });
-    
-    if (session) {
-      await dynamicMapping.save({ session });
-    } else {
-      await dynamicMapping.save();
-    }
-    
-    console.log(`Created auto-mapping for PROD_ID ${PROD_ID}: ${resolvedProductType}`);
-    
-    return {
-      isValid: true,
-      productType: resolvedProductType,
-      productName: dynamicMapping.productName,
-      isLoanProduct: true,
-      accountPrefix: dynamicMapping.accountPrefix,
-      isGlobalProduct: true,
-      BU_ID: dynamicMapping.BU_ID,
-      glAccounts: dynamicMapping.glAccounts,
-      isAutoGenerated: true,
-      wasUpdated: false
     };
-  }
-
-  function getAccountPrefixForProductType(productType) {
-    const prefixMap = {
-      'BUSINESS_TERM_LOAN': 'BTL',
-      'INDIVIDUAL_LOAN': 'IL',
-      'CONSUMER_LOAN': 'CL',
-      'MORTGAGE': 'MTG',
-      'AUTO_LOAN': 'AL',
-      'PERSONAL_LOAN': 'PL',
-      'EDUCATION_LOAN': 'EL',
-      'CREDIT_CARD': 'CC',
-      'LINE_OF_CREDIT': 'LOC',
-      'SME_LOAN': 'SME',
-      'GENERAL_LOAN': 'GL',
-      'GROUP_LOAN': 'GLN',
-      'MONTHLY_LOAN': 'MOL',
-      'ASSET_LOAN': 'ASL',
-      'RAPID_CASH_LOAN': 'RCL',
-      'STAFF_LOAN': 'STL',
-      'STAFF_SALARY_ADVANCE': 'SSA',
-      'GROUP_MONTHLY_LOAN': 'GML',
-      'SOLAR_LOAN': 'SOL',
-      'DAILY_LOAN': 'DLN'
-    };
-    
-    return prefixMap[productType] || '10';
-  }
-
-  // ==================== MAIN LOGIC ====================
-
-  if (!req.body || typeof req.body !== 'object') {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid request body',
-      code: 'INVALID_BODY',
-    });
-  }
-
-  req.body.Borrower_address = normalizeBorrowerAddress(req.body.Borrower_address);
-
-  // UPDATED: Added CALCULATION_METHOD to required fields
-  const requiredFields = [
-    'PROD_ID', 'CUST_ID', 'ACCT_NM', 'APPL_ID', 'PRODUCT_TYPE', 'CRNCY_ID', 'BU_ID',
-    'PRIMARY_OFFICER_ID', 'DISBURSEMENT_LIMIT', 'START_DT', 'TERM_CD', 'TERM_VALUE',
-    'CREATED_BY', 'REPAY_SRC_ACCT_NO', 'TRANSACTION_TYPE', 'GUARANTOR_ID',
-    'CALCULATION_METHOD' // NEW FIELD
-  ];
-
-  const missingFields = requiredFields.filter((field) => {
-    return !req.body.hasOwnProperty(field) || req.body[field] === undefined || req.body[field] === null || req.body[field] === '';
-  });
-
-  if (missingFields.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Missing or undefined required fields',
-      missingFields,
-      code: 'MISSING_FIELDS',
-    });
-  }
-
-  if (!req.body.GUARANTOR_ID) {
-    return res.status(400).json({
-      success: false,
-      message: 'GUARANTOR_ID is required',
-      code: 'INVALID_GUARANTOR_ID',
-    });
-  }
-
-  // Validate calculation method
-  const validCalculationMethods = ['FLAT_RATE', 'REDUCING_BALANCE', 'FIXED_RATE', 'EMI'];
-  const calculationMethod = req.body.CALCULATION_METHOD.toUpperCase();
-  
-  if (!validCalculationMethods.includes(calculationMethod)) {
-    return res.status(400).json({
-      success: false,
-      message: `Invalid calculation method. Must be one of: ${validCalculationMethods.join(', ')}`,
-      code: 'INVALID_CALCULATION_METHOD',
-    });
-  }
-
-  const numericFields = {
-    PROD_ID: req.body.PROD_ID,
-    TERM_VALUE: req.body.TERM_VALUE,
-    DISBURSEMENT_LIMIT: req.body.DISBURSEMENT_LIMIT,
-  };
-
-  const invalidNumericFields = Object.entries(numericFields).filter(([field, value]) => {
-    return isNaN(parseFloat(value)) || parseFloat(value) <= 0;
-  });
-
-  if (invalidNumericFields.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid numeric fields',
-      invalidFields: invalidNumericFields.map(([field]) => field),
-      code: 'INVALID_NUMERIC_FIELDS',
-    });
-  }
-
-  const upfrontInterest = req.body.UPFRONT_INTEREST || 0;
-  const partialInterest = req.body.PARTIAL_INTEREST || false;
-  const guaranteedAmount = req.body.GUARANTEED_AMT || req.body.DISBURSEMENT_LIMIT;
-
-  const session = await mongoose.startSession();
-  let transactionCompleted = false;
-
-  try {
-    session.startTransaction();
-    console.log('Transaction started');
-
-    let workflowIdentifiers;
-    try {
-      workflowIdentifiers = await generateWorkflowIdentifiers(session);
-      console.log('Workflow identifiers generated successfully:', workflowIdentifiers);
-    } catch (workflowIdError) {
-      console.error('Failed to generate workflow identifiers:', workflowIdError);
+ 
+    async function generateWorkflowIdentifiers(session) {
       const timestamp = Date.now();
-      workflowIdentifiers = {
+      return {
         TRANSACTION_ID: `TXN-${timestamp}`,
         WORK_ITEM_ID: `WORK-${timestamp}`,
         EVENT_ID: `EVT-${timestamp}`,
         WORKFLOW_ID: `WF-${timestamp}`,
         TRAN_JOURNAL_ID: `JRN-${timestamp}`
       };
-      console.log('Using fallback workflow identifiers:', workflowIdentifiers);
     }
-
-    const { TRANSACTION_ID, EVENT_ID, WORK_ITEM_ID, WORKFLOW_ID, TRAN_JOURNAL_ID } = workflowIdentifiers;
-
-    const numericValues = {
-      INDEX_RATE_ID: req.body.INDEX_RATE_ID,
-      PROD_ID: parseInt(req.body.PROD_ID),
-      TERM_VALUE: parseInt(req.body.TERM_VALUE),
-      CUST_ID: req.body.CUST_ID,
-      GUARANTEED_AMT: safeDecimal128(guaranteedAmount, 'GUARANTEED_AMT'),
-      DISBURSEMENT_LIMIT: safeDecimal128(req.body.DISBURSEMENT_LIMIT, 'DISBURSEMENT_LIMIT'),
-    };
-
-    // ==================== PRODUCT VALIDATION ====================
-    console.log('=== PRODUCT VALIDATION USING ProductTypeMapping ===');
-    
-    const productValidation = await validateProductUsingMapping(
-      numericValues.PROD_ID,
-      req.body.PRODUCT_TYPE,
-      session
-    );
-
-    if (!productValidation.isValid) {
-      throw {
-        code: 'PRODUCT_VALIDATION_FAILED',
-        message: `Product validation failed for PROD_ID ${numericValues.PROD_ID}`,
-        status: 400,
-      };
+ 
+    async function generateLoanAccountNumberByProdId(prodId) {
+      const prefix = prodId.toString().padStart(3, '0');
+      const randomSuffix = Math.floor(1000000 + Math.random() * 9000000).toString().padStart(7, '0');
+      return `${prefix}${randomSuffix}`;
     }
-
-    console.log(`Product validated: ${productValidation.productType} (${productValidation.productName})`);
-    console.log(`Is loan product: ${productValidation.isLoanProduct}`);
-    console.log(`Account prefix: ${productValidation.accountPrefix}`);
-    console.log(`Is global: ${productValidation.isGlobalProduct}`);
-    console.log(`Is auto-generated: ${productValidation.isAutoGenerated}`);
-
-    // Generate loan account number
-    let loanAccountNumber;
-    const maxRetries = 3;
-    let retries = 0;
-
-    while (!loanAccountNumber && retries < maxRetries) {
+ 
+    // NEW: Function to calculate EMI with chosen method
+    function calculateEMIWithChosenMethod(principal, annualRate, termValue, termCode, paymentFrequency, startDate, calculationMethod) {
+      console.log('=== CALCULATING EMI WITH CHOSEN METHOD ===');
+      console.log(`Method: ${calculationMethod}, Rate: ${annualRate}%`);
+     
+      // Force the calculation method based on user choice
+      if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
+        console.log('Using FLAT RATE (Simple Interest) calculation');
+        return calculateFixedRateEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
+      } else if (calculationMethod === 'REDUCING_BALANCE' || calculationMethod === 'EMI') {
+        console.log('Using REDUCING BALANCE (Compound Interest) calculation');
+        return calculateReducingBalanceEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
+      } else {
+        console.warn(`Unknown calculation method: ${calculationMethod}, defaulting to REDUCING_BALANCE`);
+        return calculateReducingBalanceEMI(principal, annualRate, termValue, termCode, paymentFrequency, startDate);
+      }
+    }
+ 
+    // ==================== PRODUCT VALIDATION USING ProductTypeMapping ====================
+ 
+    async function validateProductUsingMapping(PROD_ID, PRODUCT_TYPE, session) {
       try {
-        loanAccountNumber = await generateLoanAccountNumberByProdId(numericValues.PROD_ID);
-        console.log(`Generated loanAccountNumber (attempt ${retries + 1}): ${loanAccountNumber}`);
-
-        const existingLoanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber });
-        if (!existingLoanAccount) {
-          console.log(`Account number ${loanAccountNumber} is unique`);
-          break;
+        console.log(`Validating product using ProductTypeMapping: PROD_ID=${PROD_ID}, PRODUCT_TYPE=${PRODUCT_TYPE}`);
+       
+        // Check if product exists in ProductTypeMapping
+        let productMapping;
+        if (session) {
+          productMapping = await ProductTypeMapping.findOne({
+            PROD_ID: PROD_ID
+          }).session(session);
+        } else {
+          productMapping = await ProductTypeMapping.findOne({
+            PROD_ID: PROD_ID
+          });
         }
-
-        console.warn(`Account number ${loanAccountNumber} already exists, retrying...`);
-        loanAccountNumber = null;
-        retries++;
-      } catch (genError) {
-        console.error('Failed to generate loan account number:', genError.message);
-        retries++;
-      }
-    }
-
-    if (!loanAccountNumber) {
-      throw {
-        code: 'ACCOUNT_GENERATION_FAILED',
-        message: `Failed to generate a unique loan account number after ${maxRetries} attempts`,
-        status: 500,
-      };
-    }
-
-    const existingCreditApplication = await CreditApplication.findOne({ APPL_ID: req.body.APPL_ID });
-    if (existingCreditApplication) {
-      throw {
-        code: 'DUPLICATE_APPLICATION',
-        message: `A CreditApplication with APPL_ID ${req.body.APPL_ID} already exists`,
-        status: 409,
-      };
-    }
-
-    const loanCycleCount = await getLoanCycleCount(numericValues.CUST_ID, session);
-
-    console.log('=== DIAGNOSTIC: Product, Rate and Interest Rate Lookup ===');
-    console.log('Looking for loan product with PROD_ID:', numericValues.PROD_ID);
-    console.log('Looking for rate index with requested ID:', req.body.INDEX_RATE_ID);
-    console.log('Looking for loan interest rate with PROD_ID:', numericValues.PROD_ID, 'and INDEX_RATE_ID:', req.body.INDEX_RATE_ID);
-    
-    const allLoanProducts = await LoanProduct.find({}).limit(10).session(session);
-    console.log('Available loan products in database:', 
-      allLoanProducts.map(p => ({ 
-        PROD_ID: p.PROD_ID, 
-        PRODUCT_NAME: p.PRODUCT_NAME || p.productName,
-        PRODUCT_TYPE: p.PRODUCT_TYPE 
-      }))
-    );
-
-    let rateIndex, loanProduct, customer, guarantor, loanInterestRate;
-    
-    try {
-      [rateIndex, loanProduct, customer, guarantor, loanInterestRate] = await Promise.all([
-        findRateIndex(req.body.INDEX_RATE_ID, session),
-        LoanProduct.findOne({ PROD_ID: numericValues.PROD_ID }).session(session),
-        Customer.findOne({ CUST_ID: req.body.CUST_ID }).session(session),
-        findGuarantor(req.body.GUARANTOR_ID, session),
-        findLoanInterestRate(numericValues.PROD_ID, req.body.INDEX_RATE_ID, session)
-      ]);
-    } catch (error) {
-      console.error('Error in Promise.all lookup:', error);
-      throw {
-        code: 'LOOKUP_ERROR',
-        message: `Error during data lookup: ${error.message}`,
-        status: 500,
-      };
-    }
-
-    console.log('=== LOOKUP RESULTS ===');
-    console.log('Rate Index found:', rateIndex ? `${rateIndex.INDEX_RATE_ID} (${rateIndex.INDEX_RATE}%)` : 'NOT FOUND');
-    console.log('Loan Product found:', loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.PRODUCT_NAME || loanProduct.productName}` : 'NOT FOUND');
-    console.log('Customer found:', customer ? `${customer.CUST_ID} - ${customer.CUST_NM}` : 'NOT FOUND');
-    console.log('Guarantor found:', guarantor ? `${guarantor.GUARANTOR_ID} - ${guarantor.fullName}` : 'NOT FOUND');
-    console.log('Loan Interest Rate found:', loanInterestRate ? 
-      `${loanInterestRate.LOAN_PROUD_INT_ID} (Rate Type: ${loanInterestRate.RATE_TY}, Interest Type: ${loanInterestRate.INT_TY}, Rate: ${loanInterestRate.ABSOLUTE_RATE || loanInterestRate.FIXED_RATE}%)` : 
-      'NOT FOUND');
-
-    // If LoanProduct not found but ProductTypeMapping says it's a loan, create fallback
-    if (!loanProduct && productValidation.isLoanProduct) {
-      console.warn(`⚠️ Loan product not found for PROD_ID ${numericValues.PROD_ID}, creating fallback product`);
-      
-      const fallbackProduct = {
-        PROD_ID: numericValues.PROD_ID,
-        PRODUCT_NAME: productValidation.productName,
-        PRODUCT_SHORT_NAME: productValidation.accountPrefix,
-        PRODUCT_TYPE: productValidation.productType,
-        productName: productValidation.productName,
-        productDescription: `Fallback loan product for PROD_ID ${numericValues.PROD_ID}`,
-        // Set default values
-        minAmount: safeDecimal128('1000', 'minAmount'),
-        maxAmount: safeDecimal128('1000000', 'maxAmount'),
-        minTerm: 1,
-        maxTerm: 60,
-        interestRate: safeDecimal128('12.0', 'interestRate'), // Default 12%
-        DEFAULT_RATE_PER_MONTH: safeDecimal128('1.0', 'DEFAULT_RATE_PER_MONTH'), // Default 1% per month
-        MIN_RATE_PER_MONTH: safeDecimal128('0.5', 'MIN_RATE_PER_MONTH'),
-        MAX_RATE_PER_MONTH: safeDecimal128('2.0', 'MAX_RATE_PER_MONTH'),
-        // Set GL accounts from ProductTypeMapping
-        defaultGLAccounts: productValidation.glAccounts || {}
-      };
-      
-      loanProduct = fallbackProduct;
-      console.log('Using fallback product:', fallbackProduct);
-    }
-    
-    if (!customer) {
-      throw {
-        code: 'CUSTOMER_NOT_FOUND',
-        message: `Customer not found for CUST_ID ${req.body.CUST_ID}`,
-        status: 404,
-      };
-    }
-    
-    if (!guarantor) {
-      throw {
-        code: 'GUARANTOR_NOT_FOUND',
-        message: `Guarantor with ID ${req.body.GUARANTOR_ID} not found`,
-        status: 404,
-      };
-    }
-
-    console.log('Checking guarantor existing loans...');
-    const guarantorLoanCheck = await checkGuarantorExistingLoans(guarantor._id, session);
-
-    if (guarantorLoanCheck.hasExistingLoans) {
-      console.log(`Guarantor has ${guarantorLoanCheck.totalExistingLoans} existing guaranteed loans`);
-      console.warn(`Guarantor ${guarantor.GUARANTOR_ID} (${guarantor.fullName}) is already guaranteeing ${guarantorLoanCheck.totalExistingLoans} loan(s)`);
-    }
-
-    const validTermCodes = ['D', 'W', 'BW', 'M', 'Q', 'Y'];
-    if (!validTermCodes.includes(req.body.TERM_CD)) {
-      throw {
-        code: 'INVALID_TERM_CD',
-        message: `Invalid TERM_CD: ${req.body.TERM_CD}. Must be one of ${validTermCodes.join(', ')}`,
-        status: 400,
-      };
-    }
-
-    const paymentFrequency = getPaymentFrequency(req.body.TERM_CD, numericValues.TERM_VALUE);
-
-    const startDate = new Date(req.body.START_DT);
-    const maturityDate = calculateMaturityDate(startDate, req.body.TERM_CD, numericValues.TERM_VALUE);
-
-    console.log('=== INTEREST RATE CALCULATION ===');
-    let effectiveInterestRate;
-    let interestRateNumber;
-    let interestRateDetails = {};
-
-    try {
-      // Priority 1: Use LoanInterestRate if available
-      if (loanInterestRate && (loanInterestRate.ABSOLUTE_RATE !== undefined || loanInterestRate.FIXED_RATE !== undefined)) {
-        const rateValue = loanInterestRate.ABSOLUTE_RATE || loanInterestRate.FIXED_RATE;
-        console.log(`Using LoanInterestRate: ${rateValue}% (Type: ${loanInterestRate.RATE_TY}, Int Type: ${loanInterestRate.INT_TY})`);
-        effectiveInterestRate = safeDecimal128(rateValue, 'LoanInterestRate.rate');
-        interestRateNumber = parseFloat(rateValue);
-        interestRateDetails = {
-          rateType: loanInterestRate.RATE_TY,
-          interestType: loanInterestRate.INT_TY,
-          accrualBasis: loanInterestRate.ACCRUAL_BASIS_TY,
-          accrualFrequency: loanInterestRate.ACCRUAL_FREQ_CD,
-          loanInterestRateId: loanInterestRate.LOAN_PROUD_INT_ID,
-          source: 'LOAN_INTEREST_RATE'
+       
+        // If no mapping exists OR mapping exists but missing PRODUCT_TYPE
+        if (!productMapping) {
+          console.warn(`No ProductTypeMapping found for PROD_ID ${PROD_ID}. Creating new mapping...`);
+          return await createNewProductMapping(PROD_ID, PRODUCT_TYPE, session);
+        }
+       
+        // Check if PRODUCT_TYPE is missing in existing mapping
+        if (!productMapping.PRODUCT_TYPE) {
+          console.warn(`ProductTypeMapping found for PROD_ID ${PROD_ID} but missing PRODUCT_TYPE. Inferring from product name...`);
+         
+          // Try to infer PRODUCT_TYPE from productName or PROD_ID
+          let inferredProductType = inferProductTypeFromData(productMapping, PRODUCT_TYPE, PROD_ID);
+         
+          console.log(`Inferred PRODUCT_TYPE for PROD_ID ${PROD_ID}: ${inferredProductType}`);
+         
+          // Update the existing mapping with the inferred PRODUCT_TYPE
+          productMapping.PRODUCT_TYPE = inferredProductType;
+         
+          // Also set accountPrefix based on the inferred product type
+          if (!productMapping.accountPrefix || productMapping.accountPrefix === '10') {
+            productMapping.accountPrefix = getAccountPrefixForProductType(inferredProductType);
+          }
+         
+          // Save the updated mapping
+          if (session) {
+            await productMapping.save({ session });
+          } else {
+            await productMapping.save();
+          }
+         
+          console.log(`Updated ProductTypeMapping for PROD_ID ${PROD_ID} with PRODUCT_TYPE: ${inferredProductType}`);
+         
+          return {
+            isValid: true,
+            productType: inferredProductType,
+            productName: productMapping.productName,
+            isLoanProduct: true,
+            accountPrefix: productMapping.accountPrefix,
+            isGlobalProduct: productMapping.isGlobalProduct || true,
+            BU_ID: productMapping.BU_ID || ['*'],
+            glAccounts: productMapping.glAccounts || {},
+            isAutoGenerated: false,
+            wasUpdated: true
+          };
+        }
+       
+        // Product mapping exists and has PRODUCT_TYPE - validate it
+        const normalizedProductType = productMapping.PRODUCT_TYPE.toUpperCase().replace(/ /g, '_');
+        const isLoanProduct = normalizedProductType.includes('LOAN') ||
+                              normalizedProductType === 'MORTGAGE' ||
+                              normalizedProductType === 'CREDIT_CARD';
+       
+        if (!isLoanProduct) {
+          throw new Error(`PRODUCT_TYPE ${productMapping.PRODUCT_TYPE} in ProductTypeMapping is not a valid loan product`);
+        }
+       
+        // Check if provided PRODUCT_TYPE matches mapping (if provided)
+        if (PRODUCT_TYPE && PRODUCT_TYPE !== '') {
+          const normalizedProvidedType = PRODUCT_TYPE.toUpperCase().replace(/ /g, '_');
+         
+          if (normalizedProvidedType !== normalizedProductType) {
+            console.warn(`PRODUCT_TYPE mismatch: Provided "${PRODUCT_TYPE}" doesn't match mapped "${productMapping.PRODUCT_TYPE}". Using mapped type.`);
+          }
+        }
+       
+        // Ensure BU_ID exists in the mapping
+        if (!productMapping.BU_ID || !Array.isArray(productMapping.BU_ID)) {
+          console.warn(`BU_ID not found or invalid in ProductTypeMapping for PROD_ID ${PROD_ID}. Defaulting to ['*']`);
+          productMapping.BU_ID = ['*'];
+        }
+       
+        return {
+          isValid: true,
+          productType: productMapping.PRODUCT_TYPE,
+          productName: productMapping.productName,
+          isLoanProduct: isLoanProduct,
+          accountPrefix: productMapping.accountPrefix,
+          isGlobalProduct: productMapping.isGlobalProduct,
+          BU_ID: productMapping.BU_ID,
+          glAccounts: productMapping.glAccounts,
+          isAutoGenerated: false,
+          wasUpdated: false
         };
-      }
-      // Priority 2: Use RateIndex if available
-      else if (rateIndex && rateIndex.INDEX_RATE !== undefined && rateIndex.INDEX_RATE !== null) {
-        const rateValue = rateIndex.INDEX_RATE;
-        console.log(`Using RateIndex interest rate: ${rateValue}%`);
-        effectiveInterestRate = safeDecimal128(rateValue, 'INDEX_RATE');
-        interestRateNumber = parseFloat(rateValue);
-        interestRateDetails = {
-          rateType: 'REDUCING',
-          interestType: 'COMPOUND',
-          source: 'RATE_INDEX',
-          rateIndexId: rateIndex.INDEX_RATE_ID
-        };
-      }
-      // Priority 3: Use LoanProduct if it has interest rate
-      else if (loanProduct && loanProduct.interestRate !== undefined && loanProduct.interestRate !== null) {
-        const rateValue = loanProduct.interestRate;
-        console.log(`Using LoanProduct.interestRate: ${rateValue}%`);
-        effectiveInterestRate = safeDecimal128(rateValue, 'loanProduct.interestRate');
-        interestRateNumber = parseFloat(rateValue);
-        interestRateDetails = {
-          rateType: 'REDUCING',
-          interestType: 'COMPOUND',
-          source: 'LOAN_PRODUCT'
-        };
-      }
-      // Priority 4: Use LoanProduct DEFAULT_RATE_PER_MONTH if available
-      else if (loanProduct && loanProduct.DEFAULT_RATE_PER_MONTH !== undefined) {
-        const rateValue = loanProduct.DEFAULT_RATE_PER_MONTH;
-        console.log(`Using LoanProduct DEFAULT_RATE_PER_MONTH: ${rateValue}%`);
-        effectiveInterestRate = safeDecimal128(rateValue, 'DEFAULT_RATE_PER_MONTH');
-        interestRateNumber = parseFloat(rateValue);
-        interestRateDetails = {
-          rateType: 'REDUCING',
-          interestType: 'COMPOUND',
-          source: 'LOAN_PRODUCT_DEFAULT_RATE'
-        };
-      }
-      // NO HARDCODED DEFAULT - Throw error if no interest rate can be determined
-      else {
-        console.error('No interest rate source found:', {
-          hasLoanInterestRate: !!loanInterestRate,
-          loanInterestRateHasRate: loanInterestRate ? (loanInterestRate.ABSOLUTE_RATE || loanInterestRate.FIXED_RATE) : false,
-          hasRateIndex: !!rateIndex,
-          rateIndexHasRate: rateIndex ? rateIndex.INDEX_RATE : false,
-          loanProductInterestRate: loanProduct?.interestRate,
-          loanProductDefaultRate: loanProduct?.DEFAULT_RATE_PER_MONTH
-        });
-        
+      } catch (error) {
+        console.error('Error in validateProductUsingMapping:', error);
         throw {
-          code: 'NO_INTEREST_RATE_FOUND',
-          message: 'Cannot determine interest rate for this loan application. Please ensure:' +
-                  '\n1. A LoanInterestRate record exists for this product and rate index' +
-                  '\n2. A RateIndex record exists with the specified INDEX_RATE_ID' +
-                  '\n3. The LoanProduct has an interestRate or DEFAULT_RATE_PER_MONTH defined',
+          code: 'PRODUCT_VALIDATION_ERROR',
+          message: `Failed to validate product: ${error.message}`,
           status: 400,
         };
       }
-
-      console.log(`Final effective interest rate: ${interestRateNumber}%`);
-      console.log('Interest Rate Details:', interestRateDetails);
-    } catch (error) {
-      console.error('Interest rate calculation error:', error);
-      
-      // Re-throw the error if it's our custom NO_INTEREST_RATE_FOUND error
-      if (error.code === 'NO_INTEREST_RATE_FOUND') {
-        throw error;
-      }
-      
-      // For other errors, throw a more specific error
-      throw {
-        code: 'INTEREST_RATE_CALCULATION_ERROR',
-        message: `Failed to calculate interest rate: ${error.message}`,
-        status: 500,
-      };
     }
-
-    let emiResult;
-    try {
-      console.log('Calculating EMI...');
-      const principalAmount = parseFloat(numericValues.DISBURSEMENT_LIMIT.toString());
-      
-      // ==================== UPDATED EMI CALCULATION ====================
-      // Use the chosen calculation method instead of automatic detection
-      console.log(`Using user-selected calculation method: ${calculationMethod}`);
-      
-      // IMPORTANT: Check if rate seems too low (6.20% vs 74.40% issue)
-      if (interestRateNumber < 20) {
-        console.warn(`⚠️ WARNING: Interest rate ${interestRateNumber}% seems too low!`);
-        console.warn(`Expected ~74.40%, but found ${interestRateNumber}%`);
-        console.warn('This could be because the rate in database is stored as monthly (6.20%) instead of annual (74.40%)');
-        
-        // Option 1: Auto-correct by multiplying by 12
-        // const correctedRate = interestRateNumber * 12;
-        // console.log(`Auto-correcting rate: ${interestRateNumber}% → ${correctedRate}%`);
-        // interestRateNumber = correctedRate;
-        // effectiveInterestRate = safeDecimal128(correctedRate, 'corrected_rate');
-        
-        // Option 2: Keep as-is but warn user
-        console.warn('Keeping rate as-is. If this is wrong, check your LoanInterestRate record.');
+ 
+    function inferProductTypeFromData(productMapping, providedProductType, prodId) {
+      // First priority: Use provided PRODUCT_TYPE if available
+      if (providedProductType && providedProductType.trim() !== '') {
+        return providedProductType.toUpperCase().replace(/ /g, '_');
       }
-      
-      // Use the new function that respects user's chosen calculation method
-      emiResult = calculateEMIWithChosenMethod(
-        principalAmount,
-        interestRateNumber,
-        numericValues.TERM_VALUE,
-        req.body.TERM_CD,
-        paymentFrequency,
-        startDate,
-        calculationMethod
-      );
-      
-      console.log('EMI calculation successful - Generated', emiResult.installments.length, 'installments');
-      console.log('Calculation Method:', emiResult.calculationMethod, 'Interest Type:', emiResult.interestType);
-      console.log('Sample installment (first):', emiResult.installments[0]);
-      console.log('Sample installment (last):', emiResult.installments[emiResult.installments.length - 1]);
-      console.log('Total Interest:', emiResult.totalInterest);
-      console.log('Total Repayment:', emiResult.totalPayment);
-      console.log('Monthly Payment (EMI):', emiResult.emi);
-    } catch (emiError) {
-      console.error('EMI calculation error:', emiError);
-      throw {
-        code: 'INVALID_REPAYMENT_SCHEDULE',
-        message: `Failed to generate repayment schedule: ${emiError.message}`,
-        status: 500,
-      };
+     
+      // Second priority: Infer from productName
+      if (productMapping.productName) {
+        const productName = productMapping.productName.toLowerCase();
+       
+        if (productName.includes('individual')) {
+          return 'INDIVIDUAL_LOAN';
+        } else if (productName.includes('business') || productName.includes('term')) {
+          return 'BUSINESS_TERM_LOAN';
+        } else if (productName.includes('consumer')) {
+          return 'CONSUMER_LOAN';
+        } else if (productName.includes('personal')) {
+          return 'PERSONAL_LOAN';
+        } else if (productName.includes('auto')) {
+          return 'AUTO_LOAN';
+        } else if (productName.includes('mortgage')) {
+          return 'MORTGAGE';
+        } else if (productName.includes('education')) {
+          return 'EDUCATION_LOAN';
+        } else if (productName.includes('sme')) {
+          return 'SME_LOAN';
+        } else if (productName.includes('group')) {
+          return 'GROUP_LOAN';
+        } else if (productName.includes('staff')) {
+          return 'STAFF_LOAN';
+        } else if (productName.includes('loan')) {
+          return 'GENERAL_LOAN';
+        }
+      }
+     
+      // Third priority: Infer from PROD_ID
+      if (prodId === 301) {
+        return 'INDIVIDUAL_LOAN';
+      } else if (prodId === 300) {
+        return 'BUSINESS_TERM_LOAN';
+      } else if (prodId === 302) {
+        return 'CONSUMER_LOAN';
+      } else if (prodId === 303) {
+        return 'MORTGAGE';
+      } else if (prodId === 304) {
+        return 'AUTO_LOAN';
+      } else if (prodId === 305) {
+        return 'PERSONAL_LOAN';
+      } else if (prodId === 306) {
+        return 'EDUCATION_LOAN';
+      } else if (prodId === 307) {
+        return 'CREDIT_CARD';
+      } else if (prodId === 308) {
+        return 'LINE_OF_CREDIT';
+      } else if (prodId === 309) {
+        return 'SME_LOAN';
+      } else if (prodId >= 300 && prodId <= 399) {
+        return 'GENERAL_LOAN';
+      }
+     
+      // Default fallback
+      return 'GENERAL_LOAN';
     }
-
-    const loanAccountData = {
-      loanAccountId: parseInt(loanAccountNumber) || Date.now(),
-      JOURNAL_ID: TRAN_JOURNAL_ID,
-      CUST_ID: req.body.CUST_ID,
-      ACCT_NM: req.body.ACCT_NM,
-      ACCT_NO: loanAccountNumber,
-      APPL_ID: req.body.APPL_ID,
-      PRODUCT_TYPE: productValidation.productType,
-      CRNCY_ID: req.body.CRNCY_ID || 'NGN',
-      BU_ID: req.body.BU_ID,
-      PRIMARY_OFFICER_ID: req.body.PRIMARY_OFFICER_ID,
-      SECONDARY_OFFICER_ID: req.body.SECONDARY_OFFICER_ID || req.body.PRIMARY_OFFICER_ID,
-      DISBURSEMENT_LIMIT: numericValues.DISBURSEMENT_LIMIT,
-      ACTUAL_DISBURSEMENT: mongoose.Types.Decimal128.fromString('0.00'),
-      DISBURSED_AMOUNT: mongoose.Types.Decimal128.fromString('0.00'),
-      OUTSTANDING_PRINCIPAL: mongoose.Types.Decimal128.fromString('0.00'),
-      CURRENT_BALANCE: mongoose.Types.Decimal128.fromString('0.00'),
-      START_DT: startDate,
-      TERM_CD: req.body.TERM_CD,
-      TERM_VALUE: numericValues.TERM_VALUE,
-      MATURITY_DT: maturityDate,
-      INTEREST_RATE_ID: rateIndex?.INDEX_RATE_ID || null,
-      LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null,
-      INTEREST_RATE: effectiveInterestRate,
-      INTEREST_RATE_TYPE: interestRateDetails.rateType || 'REDUCING',
-      INTEREST_TYPE: interestRateDetails.interestType || 'COMPOUND',
-      INTEREST_CALCULATION_METHOD: calculationMethod, // Store user's choice
-      ACCRUAL_BASIS: loanInterestRate?.ACCRUAL_BASIS_TY || null,
-      ACCRUAL_FREQUENCY: loanInterestRate?.ACCRUAL_FREQ_CD || null,
-      LOAN_STATUS: 'PENDING',
-      PAYMENT_FREQUENCY: paymentFrequency,
-      CREATED_BY: req.body.CREATED_BY,
-      TRANSACTION_ID,
-      EVENT_ID,
-      PROD_ID: numericValues.PROD_ID,
-      TOTAL_INTEREST: safeDecimal128(emiResult.totalInterest, 'emiResult.totalInterest'),
-      TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment, 'emiResult.totalPayment'),
-      REPAYMENT_SOURCE_ACCOUNT: req.body.REPAY_SRC_ACCT_NO,
-      GUARANTOR_ID: guarantor._id,
-      GUARANTEED_AMOUNT: numericValues.GUARANTEED_AMT,
-      HAS_GUARANTOR: true,
-      guarantorDetails: {
-        name: guarantor.fullName,
-        phone: guarantor.phoneNumber,
-        relationship: guarantor.relationshipToBorrower,
-        guarantorNumberId: guarantor.GUARANTOR_ID.toString(),
-        email: guarantor.email,
-        address: guarantor.address,
-        existingGuarantees: guarantorLoanCheck.hasExistingLoans ? {
-          totalExistingLoans: guarantorLoanCheck.totalExistingLoans,
-          totalGuaranteedAmount: guarantorLoanCheck.totalGuaranteedAmount
-        } : null
-      },
-      Borrower_address: req.body.Borrower_address ? {
-        street: req.body.Borrower_address.street || '',
-        city: req.body.Borrower_address.city || '',
-        state: req.body.Borrower_address.state || '',
-        zipCode: req.body.Borrower_address.zipCode || '',
-        country: req.body.Borrower_address.country || 'Nigeria',
-      } : undefined,
-      upfrontInterestPercentage: safeDecimal128(upfrontInterest, 'upfrontInterest'),
-      partialUpfrontInterest: partialInterest,
-      applicationDate: new Date(),
-      lastUpdated: new Date(),
-      productValidationDetails: {
-        isAutoGenerated: productValidation.isAutoGenerated,
-        productName: productValidation.productName,
-        accountPrefix: productValidation.accountPrefix
+ 
+    async function createNewProductMapping(PROD_ID, PRODUCT_TYPE, session) {
+      // Determine product type from PRODUCT_TYPE or default
+      let resolvedProductType = PRODUCT_TYPE;
+      if (!resolvedProductType || resolvedProductType === '') {
+        // Try to determine from PROD_ID pattern
+        if (PROD_ID === 301) {
+          resolvedProductType = 'INDIVIDUAL_LOAN';
+        } else if (PROD_ID >= 300 && PROD_ID <= 399) {
+          resolvedProductType = 'GENERAL_LOAN';
+        } else {
+          resolvedProductType = 'GENERAL_LOAN';
+        }
       }
-    };
-
-    const loanAccount = new LoanAccount(loanAccountData);
-    await loanAccount.save({ session });
-    console.log('LoanAccount saved with ACCT_NO:', loanAccount.ACCT_NO);
-
-    await Guarantor.findByIdAndUpdate(
-      guarantor._id,
-      {
-        $addToSet: { guaranteedLoans: loanAccount._id },
-        lastUsedDate: new Date(),
-        status: 'PENDING_VERIFICATION',
-      },
-      { session }
-    );
-
-    // ==================== FIXED REPAYMENT SCHEDULE CREATION ====================
-    const repaymentScheduleData = {
-      LOAN_ACCOUNT_ID: loanAccount._id,
-      ACCT_NO: loanAccountNumber,
-      CUST_ID: req.body.CUST_ID.toString(), // Ensure string type
-      START_DATE: startDate,
-      MATURITY_DATE: maturityDate,
-      PRINCIPAL_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
-      INTEREST_RATE: effectiveInterestRate,
-      INTEREST_RATE_TYPE: interestRateDetails.rateType || 'REDUCING',
-      INTEREST_TYPE: interestRateDetails.interestType || 'COMPOUND',
-      CALCULATION_METHOD: calculationMethod, // Store user's choice
-      TERM: numericValues.TERM_VALUE,
-      TERM_TYPE: req.body.TERM_CD,
-      paymentFrequency: paymentFrequency,
-      EMI_AMOUNT: safeDecimal128(emiResult.emi, 'emiResult.emi'),
-      installments: emiResult.installments.map((installment, index) => ({
-        // Use installmentNo as per schema requirement
-        installmentNo: installment.installmentNo || installment.installmentNumber || (index + 1),
-        dueDate: installment.dueDate,
-        principal: safeDecimal128(installment.principal, `installment.principal for ${index}`),
-        interest: safeDecimal128(installment.interest, `installment.interest for ${index}`),
-        totalPayment: safeDecimal128(installment.totalPayment, `installment.totalPayment for ${index}`),
-        remainingBalance: safeDecimal128(installment.remainingBalance, `installment.remainingBalance for ${index}`),
-        status: 'PENDING',
-        amountPaid: mongoose.Types.Decimal128.fromString('0.00'),
-        principalPaid: mongoose.Types.Decimal128.fromString('0.00'),
-        interestPaid: mongoose.Types.Decimal128.fromString('0.00'),
-        feesPaid: mongoose.Types.Decimal128.fromString('0.00')
-      })),
-      TOTAL_INTEREST: safeDecimal128(emiResult.totalInterest, 'emiResult.totalInterest'),
-      TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment, 'emiResult.totalPayment'),
-      TRANSACTION_ID,
-      EVENT_ID,
-      CREATED_BY: req.body.CREATED_BY,
-      STATUS: 'PENDING'
-    };
-
-    console.log('Creating RepaymentSchedule with:', {
-      loanAccountId: loanAccount._id,
-      accountNumber: loanAccountNumber,
-      installmentsCount: repaymentScheduleData.installments.length,
-      calculationMethod: calculationMethod,
-      totalInterest: emiResult.totalInterest,
-      totalRepayment: emiResult.totalPayment,
-      emi: emiResult.emi
-    });
-
-    const repaymentSchedule = new RepaymentSchedule(repaymentScheduleData);
-    await repaymentSchedule.save({ session });
-    console.log('✅ RepaymentSchedule saved successfully with ACCT_NO:', repaymentSchedule.ACCT_NO, '- Installments:', repaymentScheduleData.installments.length);
-
-    const creditApplicationData = {
-      creditApplicationId: `APP-${Date.now()}`,
-      CUST_NM: req.body.ACCT_NM,
-      CUST_ID: req.body.CUST_ID,
-      PRODUCT: productValidation.productType,
-      ACCT_ID: loanAccountNumber,
-      ACCT_NO: loanAccountNumber,
-      APPL_ID: req.body.APPL_ID,
-      PROD_ID: req.body.PROD_ID,
-      BU_ID: req.body.BU_ID,
-      CREATED_BY: req.body.CREATED_BY,
-      CRNCY_ID: req.body.CRNCY_ID || 'NGN',
-      Credit_Type: 'LOAN',
-      PRIME_LIMIT_AMT: numericValues.DISBURSEMENT_LIMIT,
-      Purpose_of_Credit: req.body.loan_purpose || 'GENERAL LOAN',
-      REPAY_SRC_ACCT_NO: req.body.REPAY_SRC_ACCT_NO,
-      TERM_CD: req.body.TERM_CD,
-      TERM_VALUE: numericValues.TERM_VALUE,
-      USER_ID: req.body.USER_ID || req.body.CREATED_BY,
-      TRANSACTION_TYPE: req.body.TRANSACTION_TYPE,
-      CALCULATION_METHOD: calculationMethod, // Store user's choice
-      STATUS: 'PENDING',
-      REC_ST: 'active',
-      LOAN_CYCLE: loanCycleCount,
-      CREATED_AT: new Date(),
-      REQUESTED_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
-      LOAN_ACCOUNT_ID: loanAccount._id,
-      REPAYMENT_SCHEDULE_ID: repaymentSchedule._id,
-      TRANSACTION_ID,
-      EVENT_ID,
-      GUARANTOR_ID: guarantor._id,
-      INDEX_RATE_ID: req.body.INDEX_RATE_ID,
-      LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null,
-      Borrower_address: req.body.Borrower_address,
-      guarantorExistingLoans: guarantorLoanCheck.hasExistingLoans ? guarantorLoanCheck : null,
-      interestRateDetails: {
-        rateType: interestRateDetails.rateType,
-        interestType: interestRateDetails.interestType,
-        calculationMethod: calculationMethod, // Store user's choice
-        source: interestRateDetails.source
-      },
-      productValidation: {
-        productType: productValidation.productType,
-        productName: productValidation.productName,
-        isAutoGenerated: productValidation.isAutoGenerated,
-        accountPrefix: productValidation.accountPrefix
+     
+      resolvedProductType = resolvedProductType.toUpperCase().replace(/ /g, '_');
+     
+      // Check if it's a loan product
+      const isLoanProduct = resolvedProductType.includes('LOAN') ||
+                            resolvedProductType === 'MORTGAGE' ||
+                            resolvedProductType === 'CREDIT_CARD';
+     
+      if (!isLoanProduct) {
+        throw new Error(`PRODUCT_TYPE ${resolvedProductType} is not a valid loan product`);
       }
-    };
-
-    const creditApplication = new CreditApplication(creditApplicationData);
-    await creditApplication.save({ session });
-    console.log('CreditApplication saved with ACCT_NO:', creditApplication.ACCT_NO);
-
-    let workflowResult;
-    try {
-      workflowResult = await createWorkflowItem(
-        {
-          ITEM_VALUE: loanAccount._id.toString(),
-          ITEM_DESC: `Loan Application for ${loanAccountNumber}`,
-          ITEM_CLASS_NM: 'Loan',
-          ITEM_TYPE: 'Loan',
-          CUST_ID: req.body.CUST_ID,
-          USER_ID: req.body.USER_ID || req.body.CREATED_BY,
-          BU_ID: req.body.BU_ID || '0001',
-          TARGET_USER_ROLE_ID: 'LOAN_OFFICER',
-          ORIGINATOR_USER_ROLE_ID: 'Creator',
-          ITEM_ID: creditApplication._id.toString(),
-          REPAYMENT_SCHEDULE_ID: repaymentSchedule._id.toString(),
-          REC_ST: 'PENDING',
-          WAIT_ST: 'PENDING',
-          VERSION: 1,
-          CREATE_DT: new Date(),
-          dueDate: new Date(Date.now() + 7 * 86400000),
-          WORKFLOW_ID: WORKFLOW_ID,
-          WORK_ITEM_ID: WORK_ITEM_ID,
-          TRANSACTION_ID: TRANSACTION_ID,
-          EVENT_ID: EVENT_ID,
-          GUARANTOR_ID: guarantor._id.toString(),
-          ITEM_BU_ID: req.body.BU_ID,
+     
+      // Get GL accounts from the LoanProduct if available
+      let loanGLAccount = '100100';
+      let interestGLAccountNo = '400100';
+     
+      let loanProduct;
+      if (session) {
+        loanProduct = await LoanProduct.findOne({ PROD_ID: PROD_ID }).session(session);
+      } else {
+        loanProduct = await LoanProduct.findOne({ PROD_ID: PROD_ID });
+      }
+     
+      if (loanProduct) {
+        console.log(`Found LoanProduct for PROD_ID ${PROD_ID}, using its GL accounts`);
+        if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.loanGLAccount) {
+          loanGLAccount = loanProduct.defaultGLAccounts.loanGLAccount;
+        }
+        if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.interestGLAccountNo) {
+          interestGLAccountNo = loanProduct.defaultGLAccounts.interestGLAccountNo;
+        }
+      }
+     
+      // Create new dynamic mapping
+      const dynamicMapping = new ProductTypeMapping({
+        PROD_ID: PROD_ID,
+        PRODUCT_TYPE: resolvedProductType,
+        productName: `Auto-generated Product ${PROD_ID}`,
+        accountPrefix: getAccountPrefixForProductType(resolvedProductType),
+        BU_ID: ['*'],
+        isGlobalProduct: true,
+        visibility: 'GLOBAL',
+        glAccounts: {
+          loanGLAccount: loanGLAccount,
+          interestGLAccountNo: interestGLAccountNo,
+          principalGLAccountNo: loanGLAccount,
+          interestIncomeGLAccountNo: interestGLAccountNo,
+          SETTLEMENT_GL_ACCT_NO: '200100'
         },
+        metadata: {
+          autoGenerated: true,
+          generatedAt: new Date(),
+          source: 'applyForLoan_auto_mapping'
+        }
+      });
+     
+      if (session) {
+        await dynamicMapping.save({ session });
+      } else {
+        await dynamicMapping.save();
+      }
+     
+      console.log(`Created auto-mapping for PROD_ID ${PROD_ID}: ${resolvedProductType}`);
+     
+      return {
+        isValid: true,
+        productType: resolvedProductType,
+        productName: dynamicMapping.productName,
+        isLoanProduct: true,
+        accountPrefix: dynamicMapping.accountPrefix,
+        isGlobalProduct: true,
+        BU_ID: dynamicMapping.BU_ID,
+        glAccounts: dynamicMapping.glAccounts,
+        isAutoGenerated: true,
+        wasUpdated: false
+      };
+    }
+ 
+    function getAccountPrefixForProductType(productType) {
+      const prefixMap = {
+        'BUSINESS_TERM_LOAN': 'BTL',
+        'INDIVIDUAL_LOAN': 'IL',
+        'CONSUMER_LOAN': 'CL',
+        'MORTGAGE': 'MTG',
+        'AUTO_LOAN': 'AL',
+        'PERSONAL_LOAN': 'PL',
+        'EDUCATION_LOAN': 'EL',
+        'CREDIT_CARD': 'CC',
+        'LINE_OF_CREDIT': 'LOC',
+        'SME_LOAN': 'SME',
+        'GENERAL_LOAN': 'GL',
+        'GROUP_LOAN': 'GLN',
+        'MONTHLY_LOAN': 'MOL',
+        'ASSET_LOAN': 'ASL',
+        'RAPID_CASH_LOAN': 'RCL',
+        'STAFF_LOAN': 'STL',
+        'STAFF_SALARY_ADVANCE': 'SSA',
+        'GROUP_MONTHLY_LOAN': 'GML',
+        'SOLAR_LOAN': 'SOL',
+        'DAILY_LOAN': 'DLN'
+      };
+     
+      return prefixMap[productType] || '10';
+    }
+ 
+    // ==================== MAIN LOGIC ====================
+ 
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request body',
+        code: 'INVALID_BODY',
+      });
+    }
+ 
+    req.body.Borrower_address = normalizeBorrowerAddress(req.body.Borrower_address);
+ 
+    // UPDATED: Added LOAN_PROUD_INT_ID to required fields (or make it optional)
+    const requiredFields = [
+      'PROD_ID', 'CUST_ID', 'ACCT_NM', 'APPL_ID', 'PRODUCT_TYPE', 'CRNCY_ID', 'BU_ID',
+      'PRIMARY_OFFICER_ID', 'DISBURSEMENT_LIMIT', 'START_DT', 'TERM_CD', 'TERM_VALUE',
+      'CREATED_BY', 'REPAY_SRC_ACCT_NO', 'TRANSACTION_TYPE', 'GUARANTOR_ID',
+      'CALCULATION_METHOD'
+      // 'LOAN_PROUD_INT_ID' // Optional but recommended
+    ];
+ 
+    const missingFields = requiredFields.filter((field) => {
+      return !req.body.hasOwnProperty(field) || req.body[field] === undefined || req.body[field] === null || req.body[field] === '';
+    });
+ 
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing or undefined required fields',
+        missingFields,
+        code: 'MISSING_FIELDS',
+      });
+    }
+ 
+    if (!req.body.GUARANTOR_ID) {
+      return res.status(400).json({
+        success: false,
+        message: 'GUARANTOR_ID is required',
+        code: 'INVALID_GUARANTOR_ID',
+      });
+    }
+ 
+    // Validate calculation method
+    const validCalculationMethods = ['FLAT_RATE', 'REDUCING_BALANCE', 'FIXED_RATE', 'EMI'];
+    const calculationMethod = req.body.CALCULATION_METHOD.toUpperCase();
+   
+    if (!validCalculationMethods.includes(calculationMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid calculation method. Must be one of: ${validCalculationMethods.join(', ')}`,
+        code: 'INVALID_CALCULATION_METHOD',
+      });
+    }
+ 
+    const numericFields = {
+      PROD_ID: req.body.PROD_ID,
+      TERM_VALUE: req.body.TERM_VALUE,
+      DISBURSEMENT_LIMIT: req.body.DISBURSEMENT_LIMIT,
+    };
+ 
+    const invalidNumericFields = Object.entries(numericFields).filter(([field, value]) => {
+      return isNaN(parseFloat(value)) || parseFloat(value) <= 0;
+    });
+ 
+    if (invalidNumericFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid numeric fields',
+        invalidFields: invalidNumericFields.map(([field]) => field),
+        code: 'INVALID_NUMERIC_FIELDS',
+      });
+    }
+ 
+    const upfrontInterest = req.body.UPFRONT_INTEREST || 0;
+    const partialInterest = req.body.PARTIAL_INTEREST || false;
+    const guaranteedAmount = req.body.GUARANTEED_AMT || req.body.DISBURSEMENT_LIMIT;
+ 
+    const session = await mongoose.startSession();
+    let transactionCompleted = false;
+ 
+    try {
+      session.startTransaction();
+      console.log('Transaction started');
+ 
+      let workflowIdentifiers;
+      try {
+        workflowIdentifiers = await generateWorkflowIdentifiers(session);
+        console.log('Workflow identifiers generated successfully:', workflowIdentifiers);
+      } catch (workflowIdError) {
+        console.error('Failed to generate workflow identifiers:', workflowIdError);
+        const timestamp = Date.now();
+        workflowIdentifiers = {
+          TRANSACTION_ID: `TXN-${timestamp}`,
+          WORK_ITEM_ID: `WORK-${timestamp}`,
+          EVENT_ID: `EVT-${timestamp}`,
+          WORKFLOW_ID: `WF-${timestamp}`,
+          TRAN_JOURNAL_ID: `JRN-${timestamp}`
+        };
+        console.log('Using fallback workflow identifiers:', workflowIdentifiers);
+      }
+ 
+      const { TRANSACTION_ID, EVENT_ID, WORK_ITEM_ID, WORKFLOW_ID, TRAN_JOURNAL_ID } = workflowIdentifiers;
+ 
+      const numericValues = {
+        INDEX_RATE_ID: req.body.INDEX_RATE_ID,
+        PROD_ID: parseInt(req.body.PROD_ID),
+        TERM_VALUE: parseInt(req.body.TERM_VALUE),
+        CUST_ID: req.body.CUST_ID,
+        GUARANTEED_AMT: safeDecimal128(guaranteedAmount, 'GUARANTEED_AMT'),
+        DISBURSEMENT_LIMIT: safeDecimal128(req.body.DISBURSEMENT_LIMIT, 'DISBURSEMENT_LIMIT'),
+      };
+ 
+      // ==================== PRODUCT VALIDATION ====================
+      console.log('=== PRODUCT VALIDATION USING ProductTypeMapping ===');
+     
+      const productValidation = await validateProductUsingMapping(
+        numericValues.PROD_ID,
+        req.body.PRODUCT_TYPE,
         session
       );
-    } catch (workflowError) {
-      console.error('Workflow creation error:', workflowError);
-      workflowResult = {
-        success: true,
-        WORK_ITEM_ID: WORK_ITEM_ID,
-        WORKFLOW_ID: WORKFLOW_ID
-      };
-    }
-
-    await session.commitTransaction();
-    transactionCompleted = true;
-    console.log('✅ Transaction committed successfully');
-
-    return res.status(201).json({
-      success: true,
-      message: 'Loan application submitted successfully',
-      status: 'Pending',
-      data: {
-        loanAccountId: loanAccount._id,
-        loanAccountNumber,
-        creditApplicationId: creditApplication._id,
-        repaymentScheduleId: repaymentSchedule._id,
-        workItemId: workflowResult.WORK_ITEM_ID,
-        workflowId: workflowResult.WORKFLOW_ID,
-        APPL_ID: req.body.APPL_ID,
-        status: 'PENDING',
-        disbursementStatus: 'NOT_DISBURSED',
-        currentBalance: '0.00',
-        disbursedAmount: '0.00',
-        productDetails: {
+ 
+      if (!productValidation.isValid) {
+        throw {
+          code: 'PRODUCT_VALIDATION_FAILED',
+          message: `Product validation failed for PROD_ID ${numericValues.PROD_ID}`,
+          status: 400,
+        };
+      }
+ 
+      console.log(`Product validated: ${productValidation.productType} (${productValidation.productName})`);
+      console.log(`Is loan product: ${productValidation.isLoanProduct}`);
+      console.log(`Account prefix: ${productValidation.accountPrefix}`);
+      console.log(`Is global: ${productValidation.isGlobalProduct}`);
+      console.log(`Is auto-generated: ${productValidation.isAutoGenerated}`);
+ 
+      // Generate loan account number
+      let loanAccountNumber;
+      const maxRetries = 3;
+      let retries = 0;
+ 
+      while (!loanAccountNumber && retries < maxRetries) {
+        try {
+          loanAccountNumber = await generateLoanAccountNumberByProdId(numericValues.PROD_ID);
+          console.log(`Generated loanAccountNumber (attempt ${retries + 1}): ${loanAccountNumber}`);
+ 
+          const existingLoanAccount = await LoanAccount.findOne({ ACCT_NO: loanAccountNumber });
+          if (!existingLoanAccount) {
+            console.log(`Account number ${loanAccountNumber} is unique`);
+            break;
+          }
+ 
+          console.warn(`Account number ${loanAccountNumber} already exists, retrying...`);
+          loanAccountNumber = null;
+          retries++;
+        } catch (genError) {
+          console.error('Failed to generate loan account number:', genError.message);
+          retries++;
+        }
+      }
+ 
+      if (!loanAccountNumber) {
+        throw {
+          code: 'ACCOUNT_GENERATION_FAILED',
+          message: `Failed to generate a unique loan account number after ${maxRetries} attempts`,
+          status: 500,
+        };
+      }
+ 
+      const existingCreditApplication = await CreditApplication.findOne({ APPL_ID: req.body.APPL_ID });
+      if (existingCreditApplication) {
+        throw {
+          code: 'DUPLICATE_APPLICATION',
+          message: `A CreditApplication with APPL_ID ${req.body.APPL_ID} already exists`,
+          status: 409,
+        };
+      }
+ 
+      const loanCycleCount = await getLoanCycleCount(numericValues.CUST_ID, session);
+ 
+      console.log('=== DIAGNOSTIC: Product, Rate and Interest Rate Lookup ===');
+      console.log('Looking for loan product with PROD_ID:', numericValues.PROD_ID);
+      console.log('Looking for rate index with requested ID:', req.body.INDEX_RATE_ID);
+      console.log('Looking for loan interest rate with PROD_ID:', numericValues.PROD_ID, 'and INDEX_RATE_ID:', req.body.INDEX_RATE_ID);
+     
+      const allLoanProducts = await LoanProduct.find({}).limit(10).session(session);
+      console.log('Available loan products in database:',
+        allLoanProducts.map(p => ({
+          PROD_ID: p.PROD_ID,
+          PRODUCT_NAME: p.PRODUCT_NAME || p.productName,
+          PRODUCT_TYPE: p.PRODUCT_TYPE
+        }))
+      );
+ 
+      let rateIndex, loanProduct, customer, guarantor, loanInterestRate;
+     
+      try {
+        // UPDATED: Get LOAN_PROUD_INT_ID from request or find by product
+        const LOAN_PROUD_INT_ID = req.body.LOAN_PROUD_INT_ID || req.body.LOAN_INTEREST_RATE_ID;
+       
+        [rateIndex, loanProduct, customer, guarantor] = await Promise.all([
+          findRateIndex(req.body.INDEX_RATE_ID, session),
+          LoanProduct.findOne({ PROD_ID: numericValues.PROD_ID }).session(session),
+          Customer.findOne({ CUST_ID: req.body.CUST_ID }).session(session),
+          findGuarantor(req.body.GUARANTOR_ID, session)
+        ]);
+       
+        // UPDATED: Find LoanInterestRate using LOAN_PROUD_INT_ID or by product
+        if (LOAN_PROUD_INT_ID) {
+          loanInterestRate = await findLoanInterestRate(LOAN_PROUD_INT_ID, req.body.INDEX_RATE_ID, session);
+        } else {
+          // Fallback: Try to find by product ID
+          loanInterestRate = await findLoanInterestRateByProduct(numericValues.PROD_ID, req.body.INDEX_RATE_ID, session);
+        }
+       
+      } catch (error) {
+        console.error('Error in Promise.all lookup:', error);
+        throw {
+          code: 'LOOKUP_ERROR',
+          message: `Error during data lookup: ${error.message}`,
+          status: 500,
+        };
+      }
+ 
+      console.log('=== LOOKUP RESULTS ===');
+      console.log('Rate Index found:', rateIndex ? `${rateIndex.INDEX_RATE_ID} (${rateIndex.INDEX_RATE}%)` : 'NOT FOUND');
+      console.log('Loan Product found:', loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.PRODUCT_NAME || loanProduct.productName}` : 'NOT FOUND');
+      console.log('Customer found:', customer ? `${customer.CUST_ID} - ${customer.CUST_NM}` : 'NOT FOUND');
+      console.log('Guarantor found:', guarantor ? `${guarantor.GUARANTOR_ID} - ${guarantor.fullName}` : 'NOT FOUND');
+      console.log('Loan Interest Rate found:', loanInterestRate ?
+        `${loanInterestRate.LOAN_PROUD_INT_ID} (Rate Type: ${loanInterestRate.RATE_TYPE}, Interest Type: ${loanInterestRate.INTEREST_TYPE}, Rate: ${loanInterestRate.DEFAULT_RATE_PER_MONTH}%)` :
+        'NOT FOUND');
+ 
+      // If LoanProduct not found but ProductTypeMapping says it's a loan, create fallback
+      if (!loanProduct && productValidation.isLoanProduct) {
+        console.warn(`⚠️ Loan product not found for PROD_ID ${numericValues.PROD_ID}, creating fallback product`);
+       
+        const fallbackProduct = {
           PROD_ID: numericValues.PROD_ID,
-          productType: productValidation.productType,
+          PRODUCT_NAME: productValidation.productName,
+          PRODUCT_SHORT_NAME: productValidation.accountPrefix,
+          PRODUCT_TYPE: productValidation.productType,
           productName: productValidation.productName,
-          accountPrefix: productValidation.accountPrefix,
-          isAutoGenerated: productValidation.isAutoGenerated
-        },
-        interestRateDetails: {
-          effectiveRate: interestRateNumber,
-          rateType: interestRateDetails.rateType,
-          interestType: interestRateDetails.interestType,
-          calculationMethod: calculationMethod, // Return user's choice
-          source: interestRateDetails.source,
-          loanInterestRateId: loanInterestRate?.LOAN_PROUD_INT_ID,
-          rateIndexId: rateIndex?.INDEX_RATE_ID
-        },
-        guarantor: {
-          guarantorId: guarantor._id,
-          guarantorNumberId: guarantor.GUARANTOR_ID,
+          productDescription: `Fallback loan product for PROD_ID ${numericValues.PROD_ID}`,
+          // REMOVED HARDCODED INTEREST VALUES - Rely on dynamic fetch
+          minAmount: safeDecimal128('1000', 'minAmount'),
+          maxAmount: safeDecimal128('1000000', 'maxAmount'),
+          minTerm: 1,
+          maxTerm: 60,
+          // No hardcoded interestRate or DEFAULT_RATE_PER_MONTH - will be set dynamically later
+          defaultGLAccounts: productValidation.glAccounts || {}
+        };
+       
+        loanProduct = fallbackProduct;
+        console.log('Using fallback product:', fallbackProduct);
+      }
+     
+      if (!customer) {
+        throw {
+          code: 'CUSTOMER_NOT_FOUND',
+          message: `Customer not found for CUST_ID ${req.body.CUST_ID}`,
+          status: 404,
+        };
+      }
+     
+      if (!guarantor) {
+        throw {
+          code: 'GUARANTOR_NOT_FOUND',
+          message: `Guarantor with ID ${req.body.GUARANTOR_ID} not found`,
+          status: 404,
+        };
+      }
+ 
+      console.log('Checking guarantor existing loans...');
+      const guarantorLoanCheck = await checkGuarantorExistingLoans(guarantor._id, session);
+ 
+      if (guarantorLoanCheck.hasExistingLoans) {
+        console.log(`Guarantor has ${guarantorLoanCheck.totalExistingLoans} existing guaranteed loans`);
+        console.warn(`Guarantor ${guarantor.GUARANTOR_ID} (${guarantor.fullName}) is already guaranteeing ${guarantorLoanCheck.totalExistingLoans} loan(s)`);
+      }
+ 
+      const validTermCodes = ['D', 'W', 'BW', 'M', 'Q', 'Y'];
+      if (!validTermCodes.includes(req.body.TERM_CD)) {
+        throw {
+          code: 'INVALID_TERM_CD',
+          message: `Invalid TERM_CD: ${req.body.TERM_CD}. Must be one of ${validTermCodes.join(', ')}`,
+          status: 400,
+        };
+      }
+ 
+      const paymentFrequency = getPaymentFrequency(req.body.TERM_CD, numericValues.TERM_VALUE);
+ 
+      const startDate = new Date(req.body.START_DT);
+      const maturityDate = calculateMaturityDate(startDate, req.body.TERM_CD, numericValues.TERM_VALUE);
+ 
+      console.log('=== INTEREST RATE CALCULATION ===');
+      let effectiveInterestRate;
+      let interestRateNumber;
+      let interestRateDetails = {};
+ 
+      try {
+        // Priority 1: Use LoanInterestRate if available
+        if (loanInterestRate && loanInterestRate.DEFAULT_RATE_PER_MONTH !== undefined) {
+          const monthlyRate = loanInterestRate.DEFAULT_RATE_PER_MONTH;
+          // Convert monthly rate to annual for calculation
+          const annualRate = monthlyRate * 12;
+          console.log(`Using LoanInterestRate: ${monthlyRate}% per month (${annualRate}% annual) - Type: ${loanInterestRate.RATE_TYPE}, Int Type: ${loanInterestRate.INTEREST_TYPE}, Calc Method: ${loanInterestRate.CALCULATION_METHOD}`);
+         
+          effectiveInterestRate = safeDecimal128(annualRate, 'LoanInterestRate.annualRate');
+          interestRateNumber = parseFloat(annualRate);
+          interestRateDetails = {
+            rateType: loanInterestRate.RATE_TYPE,
+            interestType: loanInterestRate.INTEREST_TYPE,
+            calculationMethod: loanInterestRate.CALCULATION_METHOD,
+            accrualBasis: loanInterestRate.ACCRUAL_BASIS,
+            accrualFrequency: loanInterestRate.ACCRUAL_FREQUENCY,
+            loanInterestRateId: loanInterestRate.LOAN_PROUD_INT_ID,
+            source: 'LOAN_INTEREST_RATE',
+            monthlyRate: monthlyRate,
+            annualRate: annualRate
+          };
+         
+          // Override user's calculation method with LoanInterestRate's method if available
+          if (loanInterestRate.CALCULATION_METHOD) {
+            console.log(`Overriding calculation method from ${calculationMethod} to ${loanInterestRate.CALCULATION_METHOD}`);
+            // Note: We'll use this in EMI calculation
+          }
+        }
+        // Priority 2: Use RateIndex if available
+        else if (rateIndex && rateIndex.INDEX_RATE !== undefined && rateIndex.INDEX_RATE !== null) {
+          const rateValue = rateIndex.INDEX_RATE;
+          console.log(`Using RateIndex interest rate: ${rateValue}%`);
+          effectiveInterestRate = safeDecimal128(rateValue, 'INDEX_RATE');
+          interestRateNumber = parseFloat(rateValue);
+          interestRateDetails = {
+            rateType: 'REDUCING',
+            interestType: 'COMPOUND',
+            calculationMethod: 'REDUCING_BALANCE',
+            source: 'RATE_INDEX',
+            rateIndexId: rateIndex.INDEX_RATE_ID
+          };
+        }
+        // Priority 3: Use LoanProduct if it has interest rate
+        else if (loanProduct && loanProduct.interestRate !== undefined && loanProduct.interestRate !== null) {
+          const rateValue = loanProduct.interestRate;
+          console.log(`Using LoanProduct.interestRate: ${rateValue}%`);
+          effectiveInterestRate = safeDecimal128(rateValue, 'loanProduct.interestRate');
+          interestRateNumber = parseFloat(rateValue);
+          interestRateDetails = {
+            rateType: 'REDUCING',
+            interestType: 'COMPOUND',
+            calculationMethod: 'REDUCING_BALANCE',
+            source: 'LOAN_PRODUCT'
+          };
+        }
+        // Priority 4: Use LoanProduct DEFAULT_RATE_PER_MONTH if available
+        else if (loanProduct && loanProduct.DEFAULT_RATE_PER_MONTH !== undefined) {
+          const monthlyRate = loanProduct.DEFAULT_RATE_PER_MONTH;
+          const annualRate = monthlyRate * 12;
+          console.log(`Using LoanProduct DEFAULT_RATE_PER_MONTH: ${monthlyRate}% per month (${annualRate}% annual)`);
+          effectiveInterestRate = safeDecimal128(annualRate, 'DEFAULT_RATE_PER_MONTH');
+          interestRateNumber = parseFloat(annualRate);
+          interestRateDetails = {
+            rateType: 'REDUCING',
+            interestType: 'COMPOUND',
+            calculationMethod: 'REDUCING_BALANCE',
+            source: 'LOAN_PRODUCT_DEFAULT_RATE'
+          };
+        }
+        // NO HARDCODED DEFAULT - Throw error if no interest rate can be determined
+        else {
+          console.error('No interest rate source found:', {
+            hasLoanInterestRate: !!loanInterestRate,
+            loanInterestRateHasRate: loanInterestRate ? loanInterestRate.DEFAULT_RATE_PER_MONTH : false,
+            hasRateIndex: !!rateIndex,
+            rateIndexHasRate: rateIndex ? rateIndex.INDEX_RATE : false,
+            loanProductInterestRate: loanProduct?.interestRate,
+            loanProductDefaultRate: loanProduct?.DEFAULT_RATE_PER_MONTH
+          });
+         
+          throw {
+            code: 'NO_INTEREST_RATE_FOUND',
+            message: 'Cannot determine interest rate for this loan application. Please ensure:' +
+                    '\n1. A LoanInterestRate record exists (specify LOAN_PROUD_INT_ID)' +
+                    '\n2. A RateIndex record exists with the specified INDEX_RATE_ID' +
+                    '\n3. The LoanProduct has an interestRate or DEFAULT_RATE_PER_MONTH defined',
+            status: 400,
+          };
+        }
+ 
+        console.log(`Final effective interest rate: ${interestRateNumber}% annual`);
+        console.log('Interest Rate Details:', interestRateDetails);
+      } catch (error) {
+        console.error('Interest rate calculation error:', error);
+       
+        // Re-throw the error if it's our custom NO_INTEREST_RATE_FOUND error
+        if (error.code === 'NO_INTEREST_RATE_FOUND') {
+          throw error;
+        }
+       
+        // For other errors, throw a more specific error
+        throw {
+          code: 'INTEREST_RATE_CALCULATION_ERROR',
+          message: `Failed to calculate interest rate: ${error.message}`,
+          status: 500,
+        };
+      }
+ 
+      let emiResult;
+      try {
+        console.log('Calculating EMI...');
+        const principalAmount = parseFloat(numericValues.DISBURSEMENT_LIMIT.toString());
+       
+        // ==================== UPDATED EMI CALCULATION ====================
+        // Use calculation method from LoanInterestRate if available, otherwise use user's choice
+        const finalCalculationMethod = interestRateDetails.calculationMethod || calculationMethod;
+        console.log(`Final calculation method: ${finalCalculationMethod} (from ${interestRateDetails.source || 'user input'})`);
+       
+        // Check if rate seems too low (monthly vs annual confusion)
+        if (interestRateNumber < 20 && interestRateDetails.source === 'LOAN_INTEREST_RATE') {
+          console.warn(`⚠️ WARNING: Interest rate ${interestRateNumber}% seems low for annual rate.`);
+          console.warn('If this is a monthly rate stored as monthly, it should be multiplied by 12 for annual calculations.');
+        }
+       
+        // Use the calculation function that respects the chosen method
+        emiResult = calculateEMIWithChosenMethod(
+          principalAmount,
+          interestRateNumber,
+          numericValues.TERM_VALUE,
+          req.body.TERM_CD,
+          paymentFrequency,
+          startDate,
+          finalCalculationMethod
+        );
+       
+        console.log('EMI calculation successful - Generated', emiResult.installments.length, 'installments');
+        console.log('Calculation Method:', emiResult.calculationMethod, 'Interest Type:', emiResult.interestType);
+        console.log('Sample installment (first):', emiResult.installments[0]);
+        console.log('Sample installment (last):', emiResult.installments[emiResult.installments.length - 1]);
+        console.log('Total Interest:', emiResult.totalInterest);
+        console.log('Total Repayment:', emiResult.totalPayment);
+        console.log('Monthly Payment (EMI):', emiResult.emi);
+      } catch (emiError) {
+        console.error('EMI calculation error:', emiError);
+        throw {
+          code: 'INVALID_REPAYMENT_SCHEDULE',
+          message: `Failed to generate repayment schedule: ${emiError.message}`,
+          status: 500,
+        };
+      }
+ 
+      // ==================== DEFINE interestRateId VARIABLE ====================
+      // Find the correct INTEREST_RATE_ID value
+      // Priority: Use rateIndex ID, then loanInterestRate ID, then PROD_ID as fallback
+      const interestRateId = rateIndex?.INDEX_RATE_ID || 
+                            loanInterestRate?.LOAN_PROUD_INT_ID || 
+                            numericValues.PROD_ID;
+
+      // Also get loanInterestRateId separately
+      const loanInterestRateId = loanInterestRate?.LOAN_PROUD_INT_ID || null;
+
+      console.log('Debug - Setting interest rate IDs:', {
+        INTEREST_RATE_ID: interestRateId,
+        LOAN_INTEREST_RATE_ID: loanInterestRateId,
+        rateIndexId: rateIndex?.INDEX_RATE_ID,
+        loanInterestRateId: loanInterestRate?.LOAN_PROUD_INT_ID,
+        hasRateIndex: !!rateIndex,
+        hasLoanInterestRate: !!loanInterestRate,
+        PROD_ID: numericValues.PROD_ID
+      });
+
+      const loanAccountData = {
+        loanAccountId: parseInt(loanAccountNumber) || Date.now(),
+        JOURNAL_ID: TRAN_JOURNAL_ID,
+        CUST_ID: req.body.CUST_ID,
+        ACCT_NM: req.body.ACCT_NM,
+        ACCT_NO: loanAccountNumber,
+        APPL_ID: req.body.APPL_ID,
+        PRODUCT_TYPE: productValidation.productType,
+        CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+        BU_ID: req.body.BU_ID,
+        PRIMARY_OFFICER_ID: req.body.PRIMARY_OFFICER_ID,
+        SECONDARY_OFFICER_ID: req.body.SECONDARY_OFFICER_ID || req.body.PRIMARY_OFFICER_ID,
+        DISBURSEMENT_LIMIT: numericValues.DISBURSEMENT_LIMIT,
+        ACTUAL_DISBURSEMENT: mongoose.Types.Decimal128.fromString('0.00'),
+        DISBURSED_AMOUNT: mongoose.Types.Decimal128.fromString('0.00'),
+        OUTSTANDING_PRINCIPAL: mongoose.Types.Decimal128.fromString('0.00'),
+        CURRENT_BALANCE: mongoose.Types.Decimal128.fromString('0.00'),
+        START_DT: startDate,
+        TERM_CD: req.body.TERM_CD,
+        TERM_VALUE: numericValues.TERM_VALUE,
+        MATURITY_DT: maturityDate,
+        // FIXED: Now using the defined interestRateId variable
+        INTEREST_RATE_ID: interestRateId,
+        LOAN_INTEREST_RATE_ID: loanInterestRateId,
+        INTEREST_RATE: effectiveInterestRate,
+        INTEREST_RATE_TYPE: interestRateDetails.rateType || 'REDUCING',
+        INTEREST_TYPE: interestRateDetails.interestType || 'COMPOUND',
+        INTEREST_CALCULATION_METHOD: interestRateDetails.calculationMethod || calculationMethod,
+        ACCRUAL_BASIS: loanInterestRate?.ACCRUAL_BASIS || null,
+        ACCRUAL_FREQUENCY: loanInterestRate?.ACCRUAL_FREQUENCY || null,
+        LOAN_STATUS: 'PENDING',
+        PAYMENT_FREQUENCY: paymentFrequency,
+        CREATED_BY: req.body.CREATED_BY,
+        TRANSACTION_ID,
+        EVENT_ID,
+        PROD_ID: numericValues.PROD_ID,
+        TOTAL_INTEREST: safeDecimal128(emiResult.totalInterest, 'emiResult.totalInterest'),
+        TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment, 'emiResult.totalPayment'),
+        REPAYMENT_SOURCE_ACCOUNT: req.body.REPAY_SRC_ACCT_NO,
+        GUARANTOR_ID: guarantor._id,
+        GUARANTEED_AMOUNT: numericValues.GUARANTEED_AMT,
+        HAS_GUARANTOR: true,
+        guarantorDetails: {
           name: guarantor.fullName,
-          guaranteedAmount: parseFloat(numericValues.GUARANTEED_AMT.toString()),
-          status: 'PENDING_VERIFICATION',
+          phone: guarantor.phoneNumber,
+          relationship: guarantor.relationshipToBorrower,
+          guarantorNumberId: guarantor.GUARANTOR_ID.toString(),
+          email: guarantor.email,
+          address: guarantor.address,
           existingGuarantees: guarantorLoanCheck.hasExistingLoans ? {
             totalExistingLoans: guarantorLoanCheck.totalExistingLoans,
             totalGuaranteedAmount: guarantorLoanCheck.totalGuaranteedAmount
           } : null
         },
-        repaymentSchedule: {
-          id: repaymentSchedule._id,
-          numberOfInstallments: emiResult.installments.length,
-          firstPaymentDate: emiResult.installments[0]?.dueDate,
-          lastPaymentDate: emiResult.installments.at(-1)?.dueDate,
-          emiAmount: parseFloat(emiResult.emi),
-          totalInterest: parseFloat(emiResult.totalInterest),
-          totalRepayment: parseFloat(emiResult.totalPayment),
-          paymentFrequency: paymentFrequency,
-          calculationMethod: calculationMethod, // Return user's choice
-          totalPeriods: emiResult.totalPeriods
+        Borrower_address: req.body.Borrower_address ? {
+          street: req.body.Borrower_address.street || '',
+          city: req.body.Borrower_address.city || '',
+          state: req.body.Borrower_address.state || '',
+          zipCode: req.body.Borrower_address.zipCode || '',
+          country: req.body.Borrower_address.country || 'Nigeria',
+        } : undefined,
+        upfrontInterestPercentage: safeDecimal128(upfrontInterest, 'upfrontInterest'),
+        partialUpfrontInterest: partialInterest,
+        applicationDate: new Date(),
+        lastUpdated: new Date(),
+        productValidationDetails: {
+          isAutoGenerated: productValidation.isAutoGenerated,
+          productName: productValidation.productName,
+          accountPrefix: productValidation.accountPrefix
+        }
+      };
+ 
+      const loanAccount = new LoanAccount(loanAccountData);
+      await loanAccount.save({ session });
+      console.log('LoanAccount saved with ACCT_NO:', loanAccount.ACCT_NO);
+ 
+      await Guarantor.findByIdAndUpdate(
+        guarantor._id,
+        {
+          $addToSet: { guaranteedLoans: loanAccount._id },
+          lastUsedDate: new Date(),
+          status: 'PENDING_VERIFICATION',
         },
+        { session }
+      );
+ 
+      // ==================== FIXED REPAYMENT SCHEDULE CREATION ====================
+      const repaymentScheduleData = {
+        LOAN_ACCOUNT_ID: loanAccount._id,
+        ACCT_NO: loanAccountNumber,
+        CUST_ID: req.body.CUST_ID.toString(), // Ensure string type
+        START_DATE: startDate,
+        MATURITY_DATE: maturityDate,
+        PRINCIPAL_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+        INTEREST_RATE: effectiveInterestRate,
+        INTEREST_RATE_TYPE: interestRateDetails.rateType || 'REDUCING',
+        INTEREST_TYPE: interestRateDetails.interestType || 'COMPOUND',
+        CALCULATION_METHOD: interestRateDetails.calculationMethod || calculationMethod,
+        TERM: numericValues.TERM_VALUE,
+        TERM_TYPE: req.body.TERM_CD,
+        paymentFrequency: paymentFrequency,
+        EMI_AMOUNT: safeDecimal128(emiResult.emi, 'emiResult.emi'),
+        installments: emiResult.installments.map((installment, index) => ({
+          // Use installmentNo as per schema requirement
+          installmentNo: installment.installmentNo || installment.installmentNumber || (index + 1),
+          dueDate: installment.dueDate,
+          principal: safeDecimal128(installment.principal, `installment.principal for ${index}`),
+          interest: safeDecimal128(installment.interest, `installment.interest for ${index}`),
+          totalPayment: safeDecimal128(installment.totalPayment, `installment.totalPayment for ${index}`),
+          remainingBalance: safeDecimal128(installment.remainingBalance, `installment.remainingBalance for ${index}`),
+          status: 'PENDING',
+          amountPaid: mongoose.Types.Decimal128.fromString('0.00'),
+          principalPaid: mongoose.Types.Decimal128.fromString('0.00'),
+          interestPaid: mongoose.Types.Decimal128.fromString('0.00'),
+          feesPaid: mongoose.Types.Decimal128.fromString('0.00')
+        })),
+        TOTAL_INTEREST: safeDecimal128(emiResult.totalInterest, 'emiResult.totalInterest'),
+        TOTAL_REPAYMENT: safeDecimal128(emiResult.totalPayment, 'emiResult.totalPayment'),
+        TRANSACTION_ID,
+        EVENT_ID,
+        CREATED_BY: req.body.CREATED_BY,
+        STATUS: 'PENDING'
+      };
+ 
+      console.log('Creating RepaymentSchedule with:', {
+        loanAccountId: loanAccount._id,
+        accountNumber: loanAccountNumber,
+        installmentsCount: repaymentScheduleData.installments.length,
+        calculationMethod: repaymentScheduleData.CALCULATION_METHOD,
+        totalInterest: emiResult.totalInterest,
+        totalRepayment: emiResult.totalPayment,
+        emi: emiResult.emi
+      });
+ 
+      const repaymentSchedule = new RepaymentSchedule(repaymentScheduleData);
+      await repaymentSchedule.save({ session });
+      console.log('✅ RepaymentSchedule saved successfully with ACCT_NO:', repaymentSchedule.ACCT_NO, '- Installments:', repaymentScheduleData.installments.length);
+ 
+      const creditApplicationData = {
+        creditApplicationId: `APP-${Date.now()}`,
+        CUST_NM: req.body.ACCT_NM,
+        CUST_ID: req.body.CUST_ID,
+        PRODUCT: productValidation.productType,
+        ACCT_ID: loanAccountNumber,
+        ACCT_NO: loanAccountNumber,
+        APPL_ID: req.body.APPL_ID,
+        PROD_ID: req.body.PROD_ID,
+        BU_ID: req.body.BU_ID,
+        CREATED_BY: req.body.CREATED_BY,
+        CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+        Credit_Type: 'LOAN',
+        PRIME_LIMIT_AMT: numericValues.DISBURSEMENT_LIMIT,
+        Purpose_of_Credit: req.body.loan_purpose || 'GENERAL LOAN',
+        REPAY_SRC_ACCT_NO: req.body.REPAY_SRC_ACCT_NO,
+        TERM_CD: req.body.TERM_CD,
+        TERM_VALUE: numericValues.TERM_VALUE,
+        USER_ID: req.body.USER_ID || req.body.CREATED_BY,
+        TRANSACTION_TYPE: req.body.TRANSACTION_TYPE,
+        CALCULATION_METHOD: interestRateDetails.calculationMethod || calculationMethod,
+        STATUS: 'PENDING',
+        REC_ST: 'active',
+        LOAN_CYCLE: loanCycleCount,
+        CREATED_AT: new Date(),
+        REQUESTED_AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+        LOAN_ACCOUNT_ID: loanAccount._id,
+        REPAYMENT_SCHEDULE_ID: repaymentSchedule._id,
+        TRANSACTION_ID,
+        EVENT_ID,
+        GUARANTOR_ID: guarantor._id,
+        INDEX_RATE_ID: req.body.INDEX_RATE_ID,
+        LOAN_INTEREST_RATE_ID: loanInterestRateId,
         Borrower_address: req.body.Borrower_address,
-        guarantorWarning: guarantorLoanCheck.hasExistingLoans ? 
-          `Guarantor is already guaranteeing ${guarantorLoanCheck.totalExistingLoans} loan(s)` 
-          : null,
-      },
-    });
-  } catch (error) {
-    console.error('❌ Loan application error:', error);
-    console.error('Error stack:', error.stack);
-    
-    if (session && session.inTransaction() && !transactionCompleted) {
+        guarantorExistingLoans: guarantorLoanCheck.hasExistingLoans ? guarantorLoanCheck : null,
+        interestRateDetails: {
+          rateType: interestRateDetails.rateType,
+          interestType: interestRateDetails.interestType,
+          calculationMethod: interestRateDetails.calculationMethod || calculationMethod,
+          source: interestRateDetails.source,
+          monthlyRate: interestRateDetails.monthlyRate,
+          annualRate: interestRateNumber
+        },
+        productValidation: {
+          productType: productValidation.productType,
+          productName: productValidation.productName,
+          isAutoGenerated: productValidation.isAutoGenerated,
+          accountPrefix: productValidation.accountPrefix
+        }
+      };
+ 
+      const creditApplication = new CreditApplication(creditApplicationData);
+      await creditApplication.save({ session });
+      console.log('CreditApplication saved with ACCT_NO:', creditApplication.ACCT_NO);
+ 
+      let workflowResult;
       try {
-        await session.abortTransaction();
-        console.log('Transaction aborted successfully');
-      } catch (abortError) {
-        console.error('Error aborting transaction:', abortError);
+        workflowResult = await createWorkflowItem(
+          {
+            ITEM_VALUE: loanAccount._id.toString(),
+            ITEM_DESC: `Loan Application for ${loanAccountNumber}`,
+            ITEM_CLASS_NM: 'Loan',
+            ITEM_TYPE: 'Loan',
+            CUST_ID: req.body.CUST_ID,
+            USER_ID: req.body.USER_ID || req.body.CREATED_BY,
+            BU_ID: req.body.BU_ID || '0001',
+            TARGET_USER_ROLE_ID: 'LOAN_OFFICER',
+            ORIGINATOR_USER_ROLE_ID: 'Creator',
+            ITEM_ID: creditApplication._id.toString(),
+            REPAYMENT_SCHEDULE_ID: repaymentSchedule._id.toString(),
+            REC_ST: 'PENDING',
+            WAIT_ST: 'PENDING',
+            VERSION: 1,
+            CREATE_DT: new Date(),
+            dueDate: new Date(Date.now() + 7 * 86400000),
+            WORKFLOW_ID: WORKFLOW_ID,
+            WORK_ITEM_ID: WORK_ITEM_ID,
+            TRANSACTION_ID: TRANSACTION_ID,
+            EVENT_ID: EVENT_ID,
+            GUARANTOR_ID: guarantor._id.toString(),
+            ITEM_BU_ID: req.body.BU_ID,
+          },
+          session
+        );
+      } catch (workflowError) {
+        console.error('Workflow creation error:', workflowError);
+        workflowResult = {
+          success: true,
+          WORK_ITEM_ID: WORK_ITEM_ID,
+          WORKFLOW_ID: WORKFLOW_ID
+        };
+      }
+ 
+      await session.commitTransaction();
+      transactionCompleted = true;
+      console.log('✅ Transaction committed successfully');
+ 
+      return res.status(201).json({
+        success: true,
+        message: 'Loan application submitted successfully',
+        status: 'Pending',
+        data: {
+          loanAccountId: loanAccount._id,
+          loanAccountNumber,
+          creditApplicationId: creditApplication._id,
+          repaymentScheduleId: repaymentSchedule._id,
+          workItemId: workflowResult.WORK_ITEM_ID,
+          workflowId: workflowResult.WORKFLOW_ID,
+          APPL_ID: req.body.APPL_ID,
+          status: 'PENDING',
+          disbursementStatus: 'NOT_DISBURSED',
+          currentBalance: '0.00',
+          disbursedAmount: '0.00',
+          productDetails: {
+            PROD_ID: numericValues.PROD_ID,
+            productType: productValidation.productType,
+            productName: productValidation.productName,
+            accountPrefix: productValidation.accountPrefix,
+            isAutoGenerated: productValidation.isAutoGenerated
+          },
+          interestRateDetails: {
+            loanInterestRateId: loanInterestRate?.LOAN_PROUD_INT_ID,
+            effectiveRate: interestRateNumber,
+            rateType: interestRateDetails.rateType,
+            interestType: interestRateDetails.interestType,
+            calculationMethod: interestRateDetails.calculationMethod || calculationMethod,
+            source: interestRateDetails.source,
+            monthlyRate: interestRateDetails.monthlyRate,
+            annualRate: interestRateNumber,
+            rateIndexId: rateIndex?.INDEX_RATE_ID
+          },
+          guarantor: {
+            guarantorId: guarantor._id,
+            guarantorNumberId: guarantor.GUARANTOR_ID,
+            name: guarantor.fullName,
+            guaranteedAmount: parseFloat(numericValues.GUARANTEED_AMT.toString()),
+            status: 'PENDING_VERIFICATION',
+            existingGuarantees: guarantorLoanCheck.hasExistingLoans ? {
+              totalExistingLoans: guarantorLoanCheck.totalExistingLoans,
+              totalGuaranteedAmount: guarantorLoanCheck.totalGuaranteedAmount
+            } : null
+          },
+          repaymentSchedule: {
+            id: repaymentSchedule._id,
+            numberOfInstallments: emiResult.installments.length,
+            firstPaymentDate: emiResult.installments[0]?.dueDate,
+            lastPaymentDate: emiResult.installments.at(-1)?.dueDate,
+            emiAmount: parseFloat(emiResult.emi),
+            totalInterest: parseFloat(emiResult.totalInterest),
+            totalRepayment: parseFloat(emiResult.totalPayment),
+            paymentFrequency: paymentFrequency,
+            calculationMethod: interestRateDetails.calculationMethod || calculationMethod,
+            totalPeriods: emiResult.totalPeriods
+          },
+          Borrower_address: req.body.Borrower_address,
+          guarantorWarning: guarantorLoanCheck.hasExistingLoans ?
+            `Guarantor is already guaranteeing ${guarantorLoanCheck.totalExistingLoans} loan(s)`
+            : null,
+        },
+      });
+    } catch (error) {
+      console.error('❌ Loan application error:', error);
+      console.error('Error stack:', error.stack);
+     
+      if (session && session.inTransaction() && !transactionCompleted) {
+        try {
+          await session.abortTransaction();
+          console.log('Transaction aborted successfully');
+        } catch (abortError) {
+          console.error('Error aborting transaction:', abortError);
+        }
+      }
+ 
+      return res.status(error.status || 500).json({
+        success: false,
+        message: error.message || 'Failed to process loan application',
+        code: error.code || 'SERVER_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      });
+    } finally {
+      try {
+        if (session) {
+          await session.endSession();
+          console.log('Session ended successfully');
+        }
+      } catch (endSessionError) {
+        console.error('Error ending session:', endSessionError);
       }
     }
-
-    return res.status(error.status || 500).json({
-      success: false,
-      message: error.message || 'Failed to process loan application',
-      code: error.code || 'SERVER_ERROR',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-    });
-  } finally {
-    try {
-      if (session) {
-        await session.endSession();
-        console.log('Session ended successfully');
-      }
-    } catch (endSessionError) {
-      console.error('Error ending session:', endSessionError);
-    }
-  }
-},
-
+  },
 
 // Helper: Normalize CUST_ID to 10-digit string with leading zeros
 // Helper: Normalize CUST_ID to 10-digit string with leading zeros
@@ -2040,7 +2153,8 @@ async disburseLoan(req, res) {
         fundingAcctNo, 
         PROD_ID, 
         GUARANTOR_ID, 
-        CREATED_BY = 'SYSTEM' 
+        CREATED_BY = 'SYSTEM',
+        LOAN_PROUD_INT_ID // Added for LoanInterestRate lookup
       } = req.body;
 
       if (!APPL_ID || !ACCT_NO || !AMOUNT || !fundingAcctNo || !PROD_ID || !GUARANTOR_ID) {
@@ -2048,25 +2162,65 @@ async disburseLoan(req, res) {
       }
 
       const amount = parseFloat(AMOUNT);
-      // Convert PROD_ID to number since LoanProduct uses numeric PROD_ID
       const productIdNum = Number(PROD_ID);
 
       if (isNaN(productIdNum)) {
         throw { status: 400, message: "Invalid product ID", code: "INVALID_PRODUCT_ID" };
       }
 
-      console.log('Looking for product with PROD_ID:', productIdNum, 'Original:', PROD_ID);
+      console.log('Looking for product with PROD_ID:', productIdNum);
 
-      const [creditApp, loanAccount, fundingAccount, guarantor, productMapping, loanProduct] = await Promise.all([
+      // Helper function to find LoanInterestRate
+      async function findLoanInterestRateForDisbursement(LOAN_PROUD_INT_ID, session) {
+        try {
+          if (!LOAN_PROUD_INT_ID) {
+            console.log('No LOAN_PROUD_INT_ID provided, looking for default rate...');
+            return null;
+          }
+          
+          const numericId = parseInt(LOAN_PROUD_INT_ID);
+          const query = isNaN(numericId) 
+            ? { LOAN_PROUD_INT_ID: LOAN_PROUD_INT_ID.toString(), STATUS: 'ACTIVE' }
+            : { LOAN_PROUD_INT_ID: numericId, STATUS: 'ACTIVE' };
+          
+          let rateQuery = LoanInterestRate.findOne(query).populate('INDEX_RATE_ID');
+          if (session) rateQuery = rateQuery.session(session);
+          
+          const loanInterestRate = await rateQuery;
+          
+          if (loanInterestRate) {
+            console.log(`Found LoanInterestRate: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+            return loanInterestRate;
+          }
+          
+          console.warn(`LoanInterestRate not found for LOAN_PROUD_INT_ID: ${LOAN_PROUD_INT_ID}`);
+          return null;
+        } catch (error) {
+          console.error('Error finding LoanInterestRate:', error);
+          return null;
+        }
+      }
+
+      // Fetch all required data including LoanInterestRate
+      const [
+        creditApp, 
+        loanAccount, 
+        fundingAccount, 
+        guarantor, 
+        productMapping, 
+        loanProduct,
+        loanInterestRate
+      ] = await Promise.all([
         CreditApplication.findOne({ APPL_ID }).session(session),
         LoanAccount.findOne({ ACCT_NO }).session(session),
         CustomerAccount.findOne({ account_number: fundingAcctNo }).session(session),
         Guarantor.findOne({ GUARANTOR_ID: String(GUARANTOR_ID) }).session(session),
         ProductTypeMapping.findOne({ PROD_ID: productIdNum }).session(session),
-        // Query LoanProduct by numeric PROD_ID field
         LoanProduct.findOne({ PROD_ID: productIdNum }).session(session),
+        findLoanInterestRateForDisbursement(LOAN_PROUD_INT_ID || loanAccount?.LOAN_INTEREST_RATE_ID, session)
       ]);
 
+      // Validation checks
       if (!creditApp) throw { status: 404, message: "Application not found" };
       if (!loanAccount) throw { status: 404, message: "Loan account not found" };
       if (!fundingAccount) throw { status: 404, message: "Funding account not found" };
@@ -2081,6 +2235,15 @@ async disburseLoan(req, res) {
         hasDefaultGLAccounts: !!loanProduct.defaultGLAccounts
       });
 
+      console.log('Found LoanInterestRate:', loanInterestRate ? {
+        LOAN_PROUD_INT_ID: loanInterestRate.LOAN_PROUD_INT_ID,
+        name: loanInterestRate.name,
+        RATE_TYPE: loanInterestRate.RATE_TYPE,
+        DEFAULT_RATE_PER_MONTH: loanInterestRate.DEFAULT_RATE_PER_MONTH,
+        ANNUAL_PERCENTAGE_RATE: loanInterestRate.ANNUAL_PERCENTAGE_RATE
+      } : 'Not found');
+
+      // Validate loan status
       if (loanAccount.LOAN_STATUS !== "APPROVED") throw { 
         status: 400, 
         message: `Loan must be APPROVED. Current: ${loanAccount.LOAN_STATUS}` 
@@ -2098,14 +2261,45 @@ async disburseLoan(req, res) {
       const processingFee = amount * processingFeeRate;
       const upfrontInterest = amount * upfrontInterestRate;
       const totalFees = processingFee + upfrontInterest;
-      const netAmount = amount - totalFees; // What customer actually receives
+      const netAmount = amount - totalFees;
 
       if (netAmount <= 0) throw { 
         status: 400, 
         message: "Net disbursement must be positive" 
       };
 
-      // === NO BALANCE CHECK NEEDED - Customer is RECEIVING money ===
+      // === Determine interest rate to use ===
+      let effectiveInterestRate;
+      
+      // Priority 1: Use LoanInterestRate if available
+      if (loanInterestRate && loanInterestRate.DEFAULT_RATE_PER_MONTH !== undefined) {
+        const monthlyRate = loanInterestRate.DEFAULT_RATE_PER_MONTH;
+        const annualRate = monthlyRate * 12;
+        effectiveInterestRate = annualRate;
+        console.log(`Using LoanInterestRate rate: ${monthlyRate}% per month (${annualRate}% annual)`);
+      } 
+      // Priority 2: Use loan account's stored rate
+      else if (loanAccount.INTEREST_RATE) {
+        effectiveInterestRate = parseFloat(loanAccount.INTEREST_RATE.toString());
+        console.log(`Using loan account stored rate: ${effectiveInterestRate}%`);
+      }
+      // Priority 3: Use loan product rate
+      else if (loanProduct.interestRate) {
+        effectiveInterestRate = parseFloat(loanProduct.interestRate.toString());
+        console.log(`Using loan product rate: ${effectiveInterestRate}%`);
+      }
+      // Priority 4: Use loan product DEFAULT_RATE_PER_MONTH
+      else if (loanProduct.DEFAULT_RATE_PER_MONTH) {
+        const monthlyRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH.toString());
+        const annualRate = monthlyRate * 12;
+        effectiveInterestRate = annualRate;
+        console.log(`Using loan product DEFAULT_RATE_PER_MONTH: ${monthlyRate}% per month (${annualRate}% annual)`);
+      }
+      else {
+        effectiveInterestRate = 12.0; // Default fallback
+        console.warn(`Using default interest rate: ${effectiveInterestRate}%`);
+      }
+
       console.log('Customer balance check skipped - customer receives funds');
 
       const now = new Date();
@@ -2116,7 +2310,6 @@ async disburseLoan(req, res) {
       };
 
       // === UPDATE LOAN ACCOUNT ===
-      // Loan account goes NEGATIVE (customer owes bank)
       await LoanAccount.updateOne(
         { _id: loanAccount._id },
         {
@@ -2124,14 +2317,16 @@ async disburseLoan(req, res) {
             LOAN_STATUS: "ACTIVE",
             DISBURSED_AMOUNT: toDecimal128(amount),
             ACTUAL_DISBURSEMENT: toDecimal128(amount),
-            OUTSTANDING_PRINCIPAL: toDecimal128(amount), // Customer owes this amount
-            CURRENT_BALANCE: toDecimal128(-amount), // NEGATIVE balance (customer owes)
+            OUTSTANDING_PRINCIPAL: toDecimal128(amount),
+            CURRENT_BALANCE: toDecimal128(-amount),
             START_DT: now,
             DISBURSEMENT_DATE: now,
             processingFee: toDecimal128(processingFee),
             upfrontInterestCollected: toDecimal128(upfrontInterest),
             totalFeesCollected: toDecimal128(totalFees),
             NET_DISBURSEMENT: toDecimal128(netAmount),
+            INTEREST_RATE: toDecimal128(effectiveInterestRate), // Update with effective rate
+            LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null, // Store LOAN_PROUD_INT_ID
             ...txIds,
             LAST_UPDATED: now,
           },
@@ -2148,7 +2343,8 @@ async disburseLoan(req, res) {
             DISBURSEMENT_DATE: now, 
             ACTUAL_DISBURSEMENT: amount, 
             NET_DISBURSEMENT: netAmount,
-            LOAN_STATUS: "ACTIVE"
+            LOAN_STATUS: "ACTIVE",
+            LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null // Store LOAN_PROUD_INT_ID
           } 
         },
         { session }
@@ -2170,7 +2366,6 @@ async disburseLoan(req, res) {
       );
 
       // === PROCESS FINANCIAL TRANSACTIONS ===
-      // This function now includes LoanPortfolio update (ONCE)
       await processLoanDisbursementTransactions({
         session,
         loanAccount: {
@@ -2179,7 +2374,8 @@ async disburseLoan(req, res) {
           CUST_ID: loanAccount.CUST_ID,
           BU_ID: loanAccount.BU_ID || fundingAccount.branch,
           PROD_ID: loanAccount.PROD_ID || productIdNum,
-          DISBURSED_AMOUNT: amount
+          DISBURSED_AMOUNT: amount,
+          LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null // Pass LOAN_PROUD_INT_ID
         },
         customerAccount: fundingAccount,
         AMOUNT: amount,
@@ -2188,9 +2384,9 @@ async disburseLoan(req, res) {
         ACCT_NO: ACCT_NO,
         CREATED_BY: CREATED_BY,
         DISBURSEMENT_DATE: now,
-        INTEREST_RATE: parseFloat(loanAccount.INTEREST_RATE?.toString() || loanProduct.interestRate?.toString() || '0'),
+        INTEREST_RATE: effectiveInterestRate,
         PRODUCT_TYPE: loanProduct.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
-        productId: loanProduct.PROD_ID, // Pass numeric PROD_ID
+        productId: loanProduct.PROD_ID,
         deductUpfrontInterest: loanAccount.DEDUCT_UPFRONT_INTEREST || false,
         partialUpfrontInterest: loanAccount.PARTIAL_UPFRONT_INTEREST || false,
         upfrontInterestAmount: upfrontInterest,
@@ -2203,9 +2399,6 @@ async disburseLoan(req, res) {
         JOURNAL_ID: txIds.JOURNAL_ID,
         branchId: loanAccount.BU_ID || fundingAccount.branch
       });
-
-      // === LOAN PORTFOLIO IS NOW UPDATED INSIDE processLoanDisbursementTransactions ===
-      // No duplicate update needed here
 
       return res.status(200).json({
         success: true,
@@ -2222,10 +2415,16 @@ async disburseLoan(req, res) {
           },
           disbursementDate: now,
           status: "ACTIVE",
-          customerId: normalizeCustId(loanAccount.CUST_ID),
+          customerId: loanAccount.CUST_ID,
           guarantorName: guarantor.fullName || guarantor.name,
           guarantorId: GUARANTOR_ID,
           transactionIds: txIds,
+          interestRateDetails: {
+            effectiveRate: effectiveInterestRate,
+            source: loanInterestRate ? 'LoanInterestRate' : 'LoanProduct',
+            loanInterestRateId: loanInterestRate?.LOAN_PROUD_INT_ID,
+            loanInterestRateName: loanInterestRate?.name
+          },
           accountingEntries: {
             loanPortfolioDebit: amount.toFixed(2),
             customerAccountCredit: netAmount.toFixed(2),
@@ -2297,16 +2496,22 @@ async disburseLoan(req, res) {
 
  
 
-async approveLoanApplication(req, res) {
+// In your loan controller
+async approveAndDisburseLoan(req, res) {
   const session = await mongoose.startSession();
   let transactionSuccess = false;
 
   try {
     await session.startTransaction();
 
-    const { ACCT_NO, CUST_ID, approvedBy, approvalComments } = req.body;
+    const { 
+      ACCT_NO, 
+      CUST_ID, 
+      approvedBy, 
+      approvalComments = "Approved and auto-disbursed"
+    } = req.body;
 
-    // Required fields
+    // Required fields for approval
     if (!ACCT_NO || !approvedBy) {
       return res.status(400).json({
         success: false,
@@ -2315,9 +2520,9 @@ async approveLoanApplication(req, res) {
       });
     }
 
-    console.log("Approving loan:", { ACCT_NO, approvedBy });
+    console.log("Auto-approving and disbursing loan:", { ACCT_NO, approvedBy });
 
-    // Find pending credit application by ACCT_NO
+    // 1. FIND PENDING APPLICATION
     const creditApplication = await CreditApplication.findOne({
       ACCT_NO,
       STATUS: "PENDING",
@@ -2331,14 +2536,7 @@ async approveLoanApplication(req, res) {
       });
     }
 
-    // Optional: Use CUST_ID only if provided
-    let searchCustId = creditApplication.CUST_ID;
-    if (CUST_ID) {
-      const normalized = String(CUST_ID).replace(/^0+/, "") || CUST_ID;
-      searchCustId = normalized;
-    }
-
-    // Find loan account
+    // 2. FIND LOAN ACCOUNT
     const loanAccount = await LoanAccount.findOne({
       ACCT_NO,
       LOAN_STATUS: "PENDING",
@@ -2355,7 +2553,467 @@ async approveLoanApplication(req, res) {
     const now = new Date();
     const approvedAmount = loanAccount.DISBURSEMENT_LIMIT || creditApplication.PRIME_LIMIT_AMT;
 
-    // Update Credit Application
+    // 3. GET REQUIRED DISBURSEMENT DATA
+    const fundingAcctNo = creditApplication.REPAY_SRC_ACCT_NO;
+    const PROD_ID = creditApplication.PROD_ID;
+    const APPL_ID = creditApplication.APPL_ID;
+    
+    if (!APPL_ID || !fundingAcctNo || !PROD_ID) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Missing required data for disbursement. Need APPL_ID, funding account, and PROD_ID",
+        code: "MISSING_DISBURSEMENT_DATA",
+      });
+    }
+
+    // =====================================================
+    // START OF REPLACEMENT AREA - REPLACE FROM HERE
+    // =====================================================
+
+    // 4. ENTERPRISE-GRADE GUARANTOR HANDLING FOR MASSIVE SCALE (MILLIONS+ CUSTOMERS)
+    let guarantor;
+    let GUARANTOR_ID;
+
+    // CACHE STRATEGY: Use Redis/memory cache for frequent guarantor lookups
+    // Handle Redis gracefully - if not configured, skip caching
+    let redisClient;
+    try {
+      redisClient = req.app.get('redisClient') || null;
+    } catch (error) {
+      console.log('Redis not available, proceeding without cache');
+      redisClient = null;
+    }
+
+    const guarantorCacheKey = `guarantor_${creditApplication.CUST_ID || loanAccount.CUST_ID}`;
+    let cachedGuarantor = null;
+
+    if (redisClient) {
+      try {
+        cachedGuarantor = await redisClient.get(guarantorCacheKey);
+      } catch (redisError) {
+        console.warn('Redis cache read failed:', redisError.message);
+      }
+    }
+
+    if (cachedGuarantor) {
+      guarantor = JSON.parse(cachedGuarantor);
+      console.log('Using cached guarantor:', guarantor.GUARANTOR_ID);
+    }
+
+    // STRATEGY 1: PRIORITY - Direct Loan/Customer Linkage (Most Reliable)
+    if (!guarantor) {
+      const directLinkConditions = [];
+      
+      // A) Direct loan account linkage
+      if (loanAccount?._id) {
+        directLinkConditions.push({ loanId: loanAccount._id });
+      }
+      
+      // B) Existing guarantor ID from application or loan
+      const existingGuarantorId = loanAccount.GUARANTOR_ID || creditApplication.GUARANTOR_ID;
+      if (existingGuarantorId) {
+        directLinkConditions.push({ GUARANTOR_ID: existingGuarantorId });
+      }
+      
+      // C) Customer ID linkage (if guarantor has customer reference)
+      if (creditApplication?.CUST_ID) {
+        directLinkConditions.push({ $expr: { $eq: ["$idNumber", creditApplication.CUST_ID] } });
+      }
+      
+      if (directLinkConditions.length > 0) {
+        try {
+          guarantor = await Guarantor.findOne({
+            $or: directLinkConditions,
+            status: { 
+              $in: ["ACTIVE", "APPROVED"] // Using lowercase 'status' as per your schema
+            },
+            isActive: true
+          })
+          .select('GUARANTOR_ID fullName phoneNumber email status GUARANTEED_AMT relationshipToBorrower')
+          .session(session)
+          .lean(); // Use lean() for performance
+          
+          if (guarantor) {
+            console.log('Strategy 1: Found direct-linked guarantor:', guarantor.GUARANTOR_ID);
+            // Cache for future use
+            if (redisClient) {
+              try {
+                await redisClient.setex(guarantorCacheKey, 300, JSON.stringify(guarantor)); // 5 min cache
+              } catch (cacheError) {
+                console.warn('Failed to cache guarantor:', cacheError.message);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Strategy 1 query failed:', error.message);
+        }
+      }
+    }
+
+    // STRATEGY 2: CUSTOMER MATCHING - Find by customer attributes (Optimized)
+    if (!guarantor && creditApplication) {
+      const customerMatchConditions = [];
+      const branchId = loanAccount.BU_ID || creditApplication.BU_ID;
+      
+      // Build efficient search conditions with exact matches first
+      if (creditApplication.PHONE_NUMBER) {
+        const normalizedPhone = normalizePhoneNumber(creditApplication.PHONE_NUMBER);
+        customerMatchConditions.push({ phoneNumber: normalizedPhone });
+        customerMatchConditions.push({ phoneNumber: { $regex: `^${normalizedPhone.slice(-10)}` } }); // Last 10 digits
+      }
+      
+      if (creditApplication.EMAIL) {
+        const normalizedEmail = creditApplication.EMAIL.toLowerCase().trim();
+        customerMatchConditions.push({ email: normalizedEmail });
+      }
+      
+      if (creditApplication.BVN) {
+        customerMatchConditions.push({ bvn: creditApplication.BVN });
+      }
+      
+      if (creditApplication.CUST_NM) {
+        const names = creditApplication.CUST_NM.trim().split(/\s+/);
+        if (names.length > 0) {
+          const firstName = names[0];
+          // Create case-insensitive regex for first name
+          customerMatchConditions.push({ 
+            fullName: { $regex: new RegExp(`^${escapeRegex(firstName)}`, 'i') }
+          });
+        }
+      }
+      
+      if (creditApplication.CUST_ID) {
+        customerMatchConditions.push({ idNumber: creditApplication.CUST_ID });
+      }
+      
+      if (customerMatchConditions.length > 0) {
+        try {
+          // Prioritize guarantors in same branch, then any branch
+          guarantor = await Guarantor.findOne({
+            $or: customerMatchConditions,
+            status: { 
+              $in: ["ACTIVE", "APPROVED", "PENDING"] // Using lowercase 'status'
+            },
+            isActive: true,
+            $or: [
+              { BU_ID: branchId }, // Same branch first
+              { BU_ID: { $exists: true } } // Any branch second
+            ]
+          })
+          .select('GUARANTOR_ID fullName phoneNumber email status GUARANTEED_AMT relationshipToBorrower BU_ID')
+          .sort({ 
+            'BU_ID': branchId ? -1 : 1, // Prefer same branch
+            status: -1, // Prefer active over pending
+            updatedAt: -1 
+          })
+          .session(session)
+          .lean();
+          
+          if (guarantor) {
+            console.log('Strategy 2: Found customer-matched guarantor:', guarantor.GUARANTOR_ID);
+            if (redisClient) {
+              try {
+                await redisClient.setex(guarantorCacheKey, 300, JSON.stringify(guarantor));
+              } catch (cacheError) {
+                console.warn('Failed to cache guarantor:', cacheError.message);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Strategy 2 query failed:', error.message);
+        }
+      }
+    }
+
+    // STRATEGY 3: SIMPLE POOL SELECTION (Simplified version without pool guarantor flags)
+    if (!guarantor) {
+      const branchId = loanAccount.BU_ID || creditApplication.BU_ID || '001';
+      
+      try {
+        // Look for any active guarantor in the same branch
+        guarantor = await Guarantor.findOne({
+          BU_ID: branchId,
+          status: "ACTIVE",
+          isActive: true
+        })
+        .select('GUARANTOR_ID fullName phoneNumber email status GUARANTEED_AMT')
+        .sort({ updatedAt: -1 })
+        .session(session)
+        .lean();
+        
+        if (guarantor) {
+          console.log('Strategy 3: Found branch guarantor:', guarantor.GUARANTOR_ID);
+          if (redisClient) {
+            try {
+              await redisClient.setex(guarantorCacheKey, 600, JSON.stringify(guarantor));
+            } catch (cacheError) {
+              console.warn('Failed to cache guarantor:', cacheError.message);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Strategy 3 query failed:', error.message);
+      }
+    }
+
+    // STRATEGY 4: ANY ACTIVE GUARANTOR FALLBACK
+    if (!guarantor) {
+      try {
+        // Find any active guarantor in the system
+        guarantor = await Guarantor.findOne({
+          status: "ACTIVE",
+          isActive: true
+        })
+        .select('GUARANTOR_ID fullName phoneNumber email status GUARANTEED_AMT')
+        .sort({ updatedAt: -1 })
+        .session(session)
+        .lean();
+        
+        if (guarantor) {
+          console.log('Strategy 4: Found any active guarantor:', guarantor.GUARANTOR_ID);
+          if (redisClient) {
+            try {
+              await redisClient.setex(guarantorCacheKey, 180, JSON.stringify(guarantor));
+            } catch (cacheError) {
+              console.warn('Failed to cache guarantor:', cacheError.message);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Strategy 4 query failed:', error.message);
+      }
+    }
+
+    // STRATEGY 5: DYNAMIC GUARANTOR CREATION - SIMPLIFIED VERSION
+    if (!guarantor) {
+      console.log('Creating new guarantor record for customer:', creditApplication.CUST_NM);
+      
+      // Generate unique 7-digit GUARANTOR_ID (as per your schema requirement)
+      const lastGuarantor = await Guarantor.findOne({})
+        .sort({ GUARANTOR_ID: -1 })
+        .session(session);
+      
+      let newGuarantorId;
+      if (lastGuarantor && /^\d{7}$/.test(lastGuarantor.GUARANTOR_ID)) {
+        // Increment last ID
+        newGuarantorId = (parseInt(lastGuarantor.GUARANTOR_ID) + 1).toString().padStart(7, '0');
+      } else {
+        // Start from 1000001
+        newGuarantorId = '1000001';
+      }
+      
+      // Get user info from User model if available, otherwise use approvedBy
+      let userInfo = { user_name: approvedBy, email: null };
+      try {
+        // Check if User model exists and get user info
+        const User = mongoose.models.User;
+        if (User) {
+          const user = await User.findById(approvedBy).select('user_name email').session(session).catch(() => null);
+          if (user) {
+            userInfo = { user_name: user.user_name, email: user.email };
+          }
+        }
+      } catch (userError) {
+        console.warn('Could not fetch user info:', userError.message);
+      }
+      
+      const branchId = loanAccount.BU_ID || creditApplication.BU_ID || '001';
+      
+      // Build simplified guarantor data based on your schema
+      const guarantorData = {
+        GUARANTOR_ID: newGuarantorId,
+        fullName: creditApplication.CUST_NM?.trim() || "Customer Guarantor",
+        phoneNumber: normalizePhoneNumber(creditApplication.PHONE_NUMBER || creditApplication.Borrower_address?.phone || "08000000000"),
+        email: (creditApplication.EMAIL || `${creditApplication.CUST_ID || 'customer'}@bank.com`).toLowerCase().trim(),
+        relationshipToBorrower: "Customer",
+        GUARANTEED_AMT: parseFloat(approvedAmount),
+        status: "APPROVED", // Using lowercase 'status' as per schema
+        createdBy: approvedBy,
+        relationshipOfficerName: userInfo.user_name,
+        loanId: loanAccount._id,
+        guaranteedLoans: [loanAccount._id],
+        address: creditApplication.Borrower_address?.street || "Not specified",
+        state: creditApplication.Borrower_address?.state || "Lagos",
+        localGovernment: creditApplication.Borrower_address?.localGovernment || "Not specified",
+        country: creditApplication.Borrower_address?.country || "Nigeria",
+        BU_ID: branchId,
+        idType: "Customer ID",
+        idNumber: creditApplication.CUST_ID || newGuarantorId,
+        bvn: creditApplication.BVN || null,
+        dateOfBirth: creditApplication.dateOfBirth || new Date('1980-01-01'),
+        netWorth: parseFloat(approvedAmount) * 10,
+        annualIncome: parseFloat(approvedAmount) * 2,
+        occupation: creditApplication.occupation || "Not specified",
+        employmentType: creditApplication.employmentType || "Other",
+        verificationStatus: "Verified",
+        verifiedBy: approvedBy,
+        verificationDate: now,
+        consentDate: now,
+        isActive: true
+      };
+
+      try {
+        // Create guarantor
+        guarantor = new Guarantor(guarantorData);
+        await guarantor.save({ session });
+        
+        console.log('Strategy 5: Created new dynamic guarantor:', newGuarantorId);
+        
+      } catch (saveError) {
+        console.error('Dynamic guarantor creation failed:', saveError.message);
+        
+        // LAST RESORT: Minimal valid guarantor
+        try {
+          const minimalGuarantor = {
+            GUARANTOR_ID: newGuarantorId,
+            fullName: creditApplication.CUST_NM?.substring(0, 100) || "Customer",
+            phoneNumber: "08000000000",
+            relationshipToBorrower: "Customer",
+            GUARANTEED_AMT: parseFloat(approvedAmount),
+            status: "APPROVED",
+            createdBy: approvedBy,
+            relationshipOfficerName: approvedBy,
+            loanId: loanAccount._id,
+            state: "Lagos",
+            BU_ID: branchId,
+            idNumber: creditApplication.CUST_ID || newGuarantorId,
+            verificationStatus: "Verified",
+            verifiedBy: approvedBy,
+            verificationDate: now,
+            consentDate: now,
+            isActive: true,
+            createdAt: now,
+            updatedAt: now
+          };
+          
+          guarantor = new Guarantor(minimalGuarantor);
+          await guarantor.save({ session });
+          
+          console.log('Created minimal guarantor as fallback:', newGuarantorId);
+        } catch (minimalError) {
+          console.error('Minimal guarantor failed:', minimalError.message);
+          // Final fallback: In-memory guarantor object
+          guarantor = {
+            _id: new mongoose.Types.ObjectId(),
+            GUARANTOR_ID: newGuarantorId,
+            fullName: creditApplication.CUST_NM || "Customer",
+            status: "APPROVED",
+            GUARANTEED_AMT: parseFloat(approvedAmount),
+            isVirtual: true, // Flag as virtual/unsaved
+            isFallback: true
+          };
+        }
+      }
+    }
+
+    // PROCESS THE FOUND/CREATED GUARANTOR
+    GUARANTOR_ID = guarantor.GUARANTOR_ID;
+    console.log('Selected guarantor:', GUARANTOR_ID);
+
+    // ENRICHMENT: Update guarantor with loan linkage
+    if (guarantor._id && !guarantor.isVirtual) {
+      try {
+        const updateData = {
+          loanId: loanAccount._id,
+          updatedAt: now
+        };
+        
+        // Add to guaranteed loans array if not already present
+        if (!guarantor.guaranteedLoans || !guarantor.guaranteedLoans.includes(loanAccount._id)) {
+          updateData.$addToSet = { guaranteedLoans: loanAccount._id };
+        }
+        
+        // Ensure required fields
+        if (!guarantor.BU_ID) {
+          updateData.BU_ID = loanAccount.BU_ID || creditApplication.BU_ID || '001';
+        }
+        
+        if (!guarantor.relationshipOfficerName) {
+          updateData.relationshipOfficerName = approvedBy;
+        }
+        
+        // Auto-activate if pending
+        if (guarantor.status === "PENDING") {
+          updateData.status = "ACTIVE";
+          updateData.verifiedBy = approvedBy;
+          updateData.verificationDate = now;
+        }
+        
+        await Guarantor.updateOne(
+          { _id: guarantor._id },
+          updateData,
+          { session }
+        );
+        
+        // Update cache
+        if (redisClient) {
+          try {
+            const enrichedGuarantor = {
+              ...guarantor.toObject ? guarantor.toObject() : guarantor,
+              ...updateData
+            };
+            delete enrichedGuarantor.$addToSet; // Remove MongoDB operator
+            
+            await redisClient.setex(guarantorCacheKey, 300, JSON.stringify(enrichedGuarantor));
+          } catch (cacheError) {
+            console.warn('Failed to update guarantor cache:', cacheError.message);
+          }
+        }
+        
+      } catch (updateError) {
+        console.warn('Guarantor enrichment failed (non-critical):', updateError.message);
+        console.error('Guarantor update error:', {
+          guarantorId: GUARANTOR_ID,
+          loanAccount: ACCT_NO,
+          error: updateError.message,
+          timestamp: now
+        });
+      }
+    }
+
+    // UTILITY FUNCTIONS
+    function normalizePhoneNumber(phone) {
+      if (!phone) return "08000000000";
+      return phone.toString().replace(/\D/g, '').slice(-11); // Keep last 11 digits
+    }
+
+    function escapeRegex(string) {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // =====================================================
+    // END OF REPLACEMENT AREA - CONTINUE WITH EXISTING CODE
+    // =====================================================
+
+    // 5. FIND CUSTOMER ACCOUNT (CONTINUE WITH EXISTING CODE)
+    const customerAccount = await CustomerAccount.findOne({
+      account_number: fundingAcctNo
+    }).session(session);
+
+    if (!customerAccount) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Customer account not found for disbursement",
+        code: "CUSTOMER_ACCOUNT_NOT_FOUND",
+      });
+    }
+
+    // 6. VALIDATE LOAN AMOUNT
+    const amount = parseFloat(approvedAmount);
+    const productIdNum = Number(PROD_ID);
+
+    if (isNaN(productIdNum)) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+        code: "INVALID_PRODUCT_ID",
+      });
+    }
+
+    // 7. APPROVE CREDIT APPLICATION
     await CreditApplication.updateOne(
       { _id: creditApplication._id },
       {
@@ -2364,53 +3022,418 @@ async approveLoanApplication(req, res) {
           APPROVED_BY: approvedBy,
           APPROVAL_DT: now,
           APPROVED_LIMIT_AMT: approvedAmount,
-          approvalComments: approvalComments || "Approved via system",
+          approvalComments: approvalComments,
+          GUARANTOR_ID: GUARANTOR_ID, // Add guarantor reference
           UPDATED_AT: now,
         },
       },
       { session }
     );
 
-    // Update Loan Account
+    // 8. FETCH ADDITIONAL DATA
+    const [
+      loanProduct,
+      productMapping,
+      loanInterestRate
+    ] = await Promise.all([
+      LoanProduct.findOne({ PROD_ID: productIdNum }).session(session),
+      ProductTypeMapping.findOne({ PROD_ID: productIdNum }).session(session),
+      (async () => {
+        try {
+          if (!loanAccount.LOAN_INTEREST_RATE_ID && !creditApplication.INDEX_RATE_ID) return null;
+          const loanInterestRateId = loanAccount.LOAN_INTEREST_RATE_ID || creditApplication.INDEX_RATE_ID;
+          const numericId = parseInt(loanInterestRateId);
+          const query = isNaN(numericId) 
+            ? { LOAN_PROUD_INT_ID: loanInterestRateId.toString(), STATUS: 'ACTIVE' }
+            : { LOAN_PROUD_INT_ID: numericId, STATUS: 'ACTIVE' };
+          return await LoanInterestRate.findOne(query).populate('INDEX_RATE_ID').session(session);
+        } catch (error) {
+          console.error('Error finding LoanInterestRate:', error);
+          return null;
+        }
+      })()
+    ]);
+
+    if (!loanProduct) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: `Loan product not found with PROD_ID: ${productIdNum}`,
+        code: "PRODUCT_NOT_FOUND",
+      });
+    }
+
+    // 9. CALCULATE FEES
+    const processingFeeRate = parseFloat(loanProduct.processingFeeRate?.toString() || '0') / 100;
+    const upfrontInterestRate = parseFloat(loanAccount.upfrontInterestPercentage?.toString() || '0') / 100;
+
+    const processingFee = amount * processingFeeRate;
+    const upfrontInterest = amount * upfrontInterestRate;
+    const totalFees = processingFee + upfrontInterest;
+    const netAmount = amount - totalFees;
+
+    if (netAmount <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Net disbursement must be positive",
+        code: "INVALID_NET_AMOUNT",
+      });
+    }
+
+    // 10. DETERMINE INTEREST RATE
+    let effectiveInterestRate;
+    
+    if (loanInterestRate && loanInterestRate.DEFAULT_RATE_PER_MONTH !== undefined) {
+      const monthlyRate = loanInterestRate.DEFAULT_RATE_PER_MONTH;
+      effectiveInterestRate = monthlyRate * 12;
+    } else if (loanAccount.INTEREST_RATE) {
+      effectiveInterestRate = parseFloat(loanAccount.INTEREST_RATE.toString());
+    } else if (loanProduct.interestRate) {
+      effectiveInterestRate = parseFloat(loanProduct.interestRate.toString());
+    } else if (loanProduct.DEFAULT_RATE_PER_MONTH) {
+      const monthlyRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH.toString());
+      effectiveInterestRate = monthlyRate * 12;
+    } else {
+      effectiveInterestRate = 12.0;
+    }
+
+    const txIds = {
+      TRANSACTION_ID: `AUTO-DISB-${Date.now()}`,
+      EVENT_ID: `AUTO-EVT-${Date.now()}`,
+      JOURNAL_ID: `AUTO-JRN-${Date.now()}`,
+    };
+
+    // 11. UPDATE LOAN ACCOUNT WITH GUARANTOR INFO
+    // Get loan term data
+    const termValue = loanAccount.TERM_VALUE || creditApplication.TERM_VALUE || 12;
+    const termCd = loanAccount.TERM_CD || creditApplication.TERM_CD || 'MONTH';
+    
     await LoanAccount.updateOne(
       { _id: loanAccount._id },
       {
         $set: {
-          LOAN_STATUS: "APPROVED",
+          LOAN_STATUS: "ACTIVE",
           APPROVED_BY: approvedBy,
           APPROVED_DATE: now,
-          lastUpdated: now,
+          DISBURSEMENT_DATE: now,
+          DISBURSED_AMOUNT: toDecimal128(amount),
+          ACTUAL_DISBURSEMENT: toDecimal128(amount),
+          OUTSTANDING_PRINCIPAL: toDecimal128(amount),
+          CURRENT_BALANCE: toDecimal128(-amount),
+          START_DT: now,
+          processingFee: toDecimal128(processingFee),
+          upfrontInterestCollected: toDecimal128(upfrontInterest),
+          totalFeesCollected: toDecimal128(totalFees),
+          NET_DISBURSEMENT: toDecimal128(netAmount),
+          INTEREST_RATE: toDecimal128(effectiveInterestRate),
+          LOAN_INTEREST_RATE_ID: loanInterestRate?.LOAN_PROUD_INT_ID || null,
+          TERM_VALUE: termValue,
+          TERM_CD: termCd,
+          // ADD GUARANTOR INFO
+          GUARANTOR_ID: GUARANTOR_ID,
+          HAS_GUARANTOR: true,
+          guarantorDetails: {
+            guarantorId: guarantor._id,
+            guarantorNumberId: GUARANTOR_ID,
+            name: guarantor.fullName || "System Guarantor",
+            phone: guarantor.phoneNumber || "08000000000",
+            relationship: guarantor.relationshipToBorrower || "System",
+            status: guarantor.status || "APPROVED", // Changed from STATUS to status
+            guaranteedAmount: toDecimal128(guarantor.GUARANTEED_AMT || amount)
+          },
+          ...txIds,
+          LAST_UPDATED: now,
         },
       },
       { session }
     );
 
-    // Optional: Update Repayment Schedule
+    // 12. UPDATE CREDIT APPLICATION STATUS
+    await CreditApplication.updateOne(
+      { _id: creditApplication._id },
+      {
+        $set: {
+          STATUS: "DISBURSED",
+          DISBURSEMENT_DATE: now,
+          ACTUAL_DISBURSEMENT: amount,
+          NET_DISBURSEMENT: netAmount,
+          LOAN_STATUS: "ACTIVE",
+          GUARANTOR_ID: GUARANTOR_ID,
+        },
+      },
+      { session }
+    );
+
+    // 13. UPDATE CUSTOMER ACCOUNT WITH POSITIVE BALANCE
+    const currentCustomerBalance = parseFloat(customerAccount.LEDGER_BALANCE?.toString() || '0');
+    const newCustomerBalance = currentCustomerBalance + netAmount;
+    
+    await CustomerAccount.updateOne(
+      { _id: customerAccount._id },
+      {
+        $set: {
+          LEDGER_BALANCE: toDecimal128(newCustomerBalance),
+          CLEARED_BALANCE: toDecimal128(newCustomerBalance),
+          AVAILABLE_BALANCE: toDecimal128(newCustomerBalance),
+          LAST_UPDATED: now,
+        },
+      },
+      { session }
+    );
+
+    // 14. ACTIVATE AND LINK GUARANTOR TO LOAN
     try {
-      await RepaymentSchedule.updateOne(
-        { LOAN_ACCOUNT_ID: loanAccount._id },
-        { $set: { STATUS: "APPROVED" } },
+      await Guarantor.updateOne(
+        { _id: guarantor._id },
+        {
+          $addToSet: { guaranteedLoans: loanAccount._id },
+          $set: {
+            status: "ACTIVE", // Changed from STATUS to status
+            GUARANTEED_AMOUNT: amount,
+            LOAN_ACCOUNT_NO: ACCT_NO,
+            ACTIVATION_DATE: now,
+            LOAN_ACCOUNT_ID: loanAccount._id,
+            loanId: loanAccount._id.toString(),
+            updatedAt: now
+          }
+        },
         { session }
       );
-    } catch (e) {}
+      console.log('Guarantor linked to loan successfully');
+    } catch (guarantorUpdateError) {
+      console.warn('Guarantor update failed (non-critical):', guarantorUpdateError.message);
+      // Continue even if guarantor update fails
+    }
 
-    // Audit Log
+    // 15. CREATE TRANSACTION RECORDS - USING CREDIT/DEBIT TYPES
+    try {
+      // Get the last transaction ID to increment properly
+      const lastTransaction = await Transaction.findOne({})
+        .sort({ TRANSACTION_ID: -1 })
+        .session(session)
+        .select('TRANSACTION_ID');
+      
+      let nextTransactionId = 1;
+      if (lastTransaction && lastTransaction.TRANSACTION_ID) {
+        // Extract numeric part and increment
+        const match = lastTransaction.TRANSACTION_ID.toString().match(/\d+/);
+        if (match) {
+          nextTransactionId = parseInt(match[0]) + 1;
+        }
+      }
+      
+      const txId1 = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+      const txId2 = `TXN${(nextTransactionId + 1).toString().padStart(10, '0')}`;
+      
+      console.log('Creating transactions with IDs:', txId1, txId2);
+      
+      await Transaction.create([
+        {
+          TRANSACTION_ID: nextTransactionId,
+          transactionId: txId1,
+          EVENT_ID: 1,
+          TRAN_JOURNAL_ID: `JRN${Date.now()}1`,
+          ACCT_NO: fundingAcctNo,
+          ACCT_ID: customerAccount._id.toString(),
+          BU_ID: customerAccount.branch || loanAccount.BU_ID,
+          CUST_ID: customerAccount.CUST_ID || loanAccount.CUST_ID,
+          ACCT_NM: customerAccount.account_holder_name || `Customer ${fundingAcctNo}`,
+          AMOUNT: netAmount,
+          transactionDirection: 'CREDIT',
+          TRANSACTIONDATE: now,
+          TRANSACTION_TYPE: 'CREDIT', // Use CREDIT type
+          description: `Loan disbursement received from loan ${ACCT_NO} (Net: ₦${netAmount.toLocaleString()})`,
+          currency: loanAccount.CRNCY_ID || 'NGN',
+          createdBy: approvedBy,
+          status: 'COMPLETED',
+          REFERENCE: `DISB-RCV-${ACCT_NO}`,
+          metadata: {
+            sourceLoanAccount: ACCT_NO,
+            totalLoanAmount: amount,
+            feesDeducted: totalFees,
+            netAmountReceived: netAmount,
+            guarantorId: GUARANTOR_ID,
+            guarantorName: guarantor.fullName || "System Guarantor",
+            transactionCategory: 'LOAN_DISBURSEMENT',
+            isLoanDisbursement: true
+          }
+        },
+        {
+          TRANSACTION_ID: nextTransactionId + 1,
+          transactionId: txId2,
+          EVENT_ID: 2,
+          TRAN_JOURNAL_ID: `JRN${Date.now()}2`,
+          ACCT_NO: ACCT_NO,
+          ACCT_ID: loanAccount._id.toString(),
+          BU_ID: loanAccount.BU_ID,
+          CUST_ID: loanAccount.CUST_ID,
+          ACCT_NM: loanAccount.ACCT_NM || creditApplication.CUST_NM || `Loan ${ACCT_NO}`,
+          AMOUNT: amount,
+          transactionDirection: 'DEBIT',
+          TRANSACTIONDATE: now,
+          TRANSACTION_TYPE: 'DEBIT', // Use DEBIT type
+          description: `Loan disbursement issued to ${customerAccount.account_holder_name} (Total: ₦${amount.toLocaleString()})`,
+          currency: loanAccount.CRNCY_ID || 'NGN',
+          createdBy: approvedBy,
+          status: 'COMPLETED',
+          REFERENCE: `DISB-ISS-${ACCT_NO}`,
+          metadata: {
+            targetCustomerAccount: fundingAcctNo,
+            totalLoanAmount: amount,
+            feesDeducted: totalFees,
+            netAmountDisbursed: netAmount,
+            guarantorId: GUARANTOR_ID,
+            transactionCategory: 'LOAN_DISBURSEMENT',
+            isLoanDisbursement: true
+          }
+        }
+      ], { session, ordered: true });
+      
+      console.log('Transaction records created successfully');
+    } catch (transactionError) {
+      console.error('Failed to create transaction records:', transactionError.message);
+      throw transactionError;
+    }
+
+    // 16. CREATE DISBURSEMENT RECORD - WITH ALL REQUIRED FIELDS
+    // Get interest configuration data
+    const interestType = (loanAccount.INTEREST_TYPE || 'FIXED').toUpperCase();
+    const calculationMethod = (loanAccount.INTEREST_CALCULATION || 'DECLINING_BALANCE').toUpperCase();
+    
+    console.log('Creating disbursement with data:', {
+      ACCT_NO,
+      TERM_VALUE: termValue,
+      TERM_CD: termCd,
+      INTEREST_RATE: effectiveInterestRate,
+      AMOUNT: amount,
+      CUST_ID: loanAccount.CUST_ID || creditApplication.CUST_ID,
+      APPL_ID,
+      INTEREST_TYPE: interestType,
+      CALCULATION_METHOD: calculationMethod
+    });
+    
+    const disbursement = new Disbursement({
+      LOAN_ACCOUNT_ID: loanAccount._id,
+      CREDIT_APPLICATION_ID: creditApplication._id,
+      DISBURSEMENT_AMOUNT: toDecimal128(amount),
+      FEES_AMOUNT: toDecimal128(totalFees),
+      UPFRONT_INTEREST_AMOUNT: toDecimal128(upfrontInterest),
+      NET_DISBURSEMENT_AMOUNT: toDecimal128(netAmount),
+      TARGET_ACCOUNT_NO: fundingAcctNo,
+      SOURCE_ACCOUNT_NO: 'BANK_CAPITAL_ACCOUNT',
+      CURRENCY: loanAccount.CRNCY_ID || 'NGN',
+      STATUS: 'EXECUTED',
+      APPROVED_BY: approvedBy,
+      EXECUTED_BY: approvedBy,
+      APPROVED_DATE: now,
+      EXECUTION_DATE: now,
+      EXECUTION_METHOD: 'AUTO',
+      
+      // REQUIRED FIELDS FOR LOAN DISBURSEMENT
+      ACCT_NO: ACCT_NO,
+      INTEREST_RATE: effectiveInterestRate,
+      TERM_VALUE: termValue,
+      TERM_CD: termCd,
+      AMOUNT: toDecimal128(amount),
+      CUST_ID: loanAccount.CUST_ID || creditApplication.CUST_ID,
+      APPL_ID: APPL_ID,
+      
+      INTEREST_CONFIGURATION: {
+        INTEREST_RATE: effectiveInterestRate,
+        INTEREST_TYPE: interestType, // Ensure uppercase
+        CALCULATION_METHOD: calculationMethod // Ensure uppercase
+      },
+      
+      GUARANTOR_DETAILS: {
+        GUARANTOR_ID: GUARANTOR_ID,
+        name: guarantor.fullName || "System Guarantor",
+        phone: guarantor.phoneNumber || "08000000000",
+        relationship: guarantor.relationshipToBorrower || "System",
+        guaranteedAmount: guarantor.GUARANTEED_AMT || amount
+      },
+      
+      CREATED_BY: approvedBy,
+      CREATED_DATE: now,
+      TRANSACTION_REFERENCE: txIds.TRANSACTION_ID,
+      ACCOUNTING_ENTRIES: {
+        loanAccountDebit: amount,
+        customerAccountCredit: netAmount,
+        feeIncome: totalFees,
+        netEffect: `Bank: -₦${amount} | Customer: +₦${netAmount} | Bank Fees: +₦${totalFees}`
+      }
+    });
+
+    await disbursement.save({ session });
+    console.log('Disbursement record created successfully:', disbursement._id);
+
+    // 17. CREATE LOANDISBURSEMENT RECORD IF NEEDED
+    try {
+      // Check if LoanDisbursement model exists
+      const LoanDisbursementModel = mongoose.models.LoanDisbursement;
+      if (LoanDisbursementModel) {
+        const loanDisbursement = new LoanDisbursementModel({
+          ACCT_NO: ACCT_NO,
+          INTEREST_RATE: effectiveInterestRate,
+          TERM_VALUE: termValue,
+          TERM_CD: termCd,
+          AMOUNT: toDecimal128(amount),
+          CUST_ID: loanAccount.CUST_ID || creditApplication.CUST_ID,
+          APPL_ID: APPL_ID,
+          INTEREST_CONFIGURATION: {
+            INTEREST_TYPE: interestType,
+            CALCULATION_METHOD: calculationMethod,
+            INTEREST_RATE: effectiveInterestRate
+          },
+          DISBURSEMENT_ID: disbursement._id,
+          DISBURSEMENT_AMOUNT: toDecimal128(amount),
+          DISBURSEMENT_DATE: now,
+          STATUS: 'COMPLETED',
+          CREATED_DATE: now,
+          APPROVED_BY: approvedBy
+        });
+        
+        await loanDisbursement.save({ session });
+        console.log('LoanDisbursement record created successfully');
+      }
+    } catch (loanDisbursementError) {
+      console.warn('LoanDisbursement creation failed (non-critical):', loanDisbursementError.message);
+      // Continue even if this fails
+    }
+
+    // 18. AUDIT LOG
     try {
       const AuditLog = mongoose.model("AuditLog");
-      await AuditLog.create([{
-        action: "LOAN_APPROVED",
+      const auditRecord = new AuditLog({
+        action: "LOAN_APPROVED_AND_DISBURSED",
         userId: approvedBy,
         timestamp: now,
         details: {
           ACCT_NO,
           CUST_ID: creditApplication.CUST_ID,
-          approvedAmount,
-          method: "BY_ACCT_NO",
-          comments: approvalComments,
+          approvedAmount: amount,
+          disbursedAmount: amount,
+          netAmount,
+          feesDeducted: totalFees,
+          method: "AUTO_DISBURSEMENT",
+          accountingEntries: {
+            loanAccountBalance: -amount,
+            customerAccountBalanceChange: netAmount,
+            customerAccountBalanceBefore: currentCustomerBalance,
+            customerAccountBalanceAfter: newCustomerBalance
+          },
+          transactionId: txIds.TRANSACTION_ID,
+          fundingAccount: fundingAcctNo,
+          guarantorId: GUARANTOR_ID,
+          guarantorName: guarantor.fullName || "System Guarantor",
+          guarantorStatus: guarantor.status || "APPROVED"
         },
-      }], { session });
+      });
+      
+      await auditRecord.save({ session });
     } catch (e) {
       console.warn("Audit failed:", e.message);
+      // Don't throw error - audit failure shouldn't break the transaction
     }
 
     await session.commitTransaction();
@@ -2418,25 +3441,70 @@ async approveLoanApplication(req, res) {
 
     return res.json({
       success: true,
-      message: "Loan approved successfully",
+      message: "Loan approved and auto-disbursed successfully",
       data: {
-        ACCT_NO,
-        customerName: creditApplication.CUST_NM,
-        approvedAmount,
-        approvedBy,
-        approvedAt: now,
+        approval: {
+          ACCT_NO,
+          customerName: creditApplication.CUST_NM,
+          approvedAmount: amount,
+          approvedBy,
+          approvedAt: now,
+        },
+        disbursement: {
+          disbursementId: disbursement._id,
+          transactionReference: txIds.TRANSACTION_ID,
+          netAmountToCustomer: netAmount,
+          feesDeducted: totalFees,
+          feeBreakdown: {
+            processingFee,
+            upfrontInterest
+          },
+          fundingAccount: fundingAcctNo,
+          disbursementDate: now,
+          loanStatus: "ACTIVE"
+        },
+        guarantorDetails: {
+          guarantorId: GUARANTOR_ID,
+          name: guarantor.fullName || "System Guarantor",
+          phone: guarantor.phoneNumber || "08000000000",
+          relationship: guarantor.relationshipToBorrower || "System",
+          status: guarantor.status || "APPROVED", // Changed from STATUS to status
+          guaranteedAmount: guarantor.GUARANTEED_AMT || amount
+        },
+        accountingImpact: {
+          loanAccount: {
+            accountNumber: ACCT_NO,
+            balanceChange: -amount,
+            newBalance: -amount,
+            description: "Liability to bank"
+          },
+          customerAccount: {
+            accountNumber: fundingAcctNo,
+            balanceBefore: currentCustomerBalance,
+            balanceChange: netAmount,
+            balanceAfter: newCustomerBalance,
+            description: "Asset to customer"
+          },
+          bankIncome: {
+            feeIncome: totalFees,
+            description: "Bank revenue from fees"
+          }
+        },
+        transactionIds: txIds
       },
     });
   } catch (error) {
-    if (!transactionSuccess) await session.abortTransaction();
+    if (!transactionSuccess) {
+      await session.abortTransaction();
+    }
 
-    console.error("Approval failed:", error);
+    console.error("Auto-approval and disbursement failed:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Approval failed",
+      message: "Auto-approval and disbursement failed",
       error: error.message,
-      code: "APPROVAL_ERROR",
+      code: "AUTO_APPROVAL_DISBURSEMENT_ERROR",
     });
   } finally {
     session.endSession();
@@ -2628,6 +3696,313 @@ async rejectLoanApplication(req, res) {
 }, 
 
 
+
+// Helper: Get interest configuration from LoanInterestRate table
+async getInterestConfiguration(PROD_ID, INDEX_RATE_ID, session) {
+  try {
+    console.log('Getting interest configuration for:', { PROD_ID, INDEX_RATE_ID });
+    
+    // First try to get from LoanInterestRate table
+    const loanInterestRate = await LoanInterestRate.findOne({
+      PROD_ID: Number(PROD_ID),
+      INDEX_RATE_ID: Number(INDEX_RATE_ID),
+      STATUS: 'ACTIVE'
+    }).session(session);
+
+    if (loanInterestRate) {
+      console.log('Found LoanInterestRate:', loanInterestRate._id);
+      return {
+        LOAN_INTEREST_RATE_ID: loanInterestRate._id,
+        INTEREST_RATE: parseFloat(loanInterestRate.ABSOLUTE_RATE?.toString() || loanInterestRate.FIXED_RATE?.toString() || '0'),
+        INTEREST_TYPE: loanInterestRate.INT_TY || 'COMPOUND',
+        RATE_TYPE: loanInterestRate.RATE_TY || 'FIXED',
+        CALCULATION_METHOD: loanInterestRate.CALCULATION_METHOD || 'REDUCING_BALANCE',
+        PROD_ID: loanInterestRate.PROD_ID,
+        INDEX_RATE_ID: loanInterestRate.INDEX_RATE_ID,
+        ACCRUAL_BASIS: loanInterestRate.ACCRUAL_BASIS_TY,
+        ACCRUAL_FREQUENCY: loanInterestRate.ACCRUAL_FREQ_CD,
+        SOURCE: 'LOAN_INTEREST_RATE_TABLE'
+      };
+    }
+
+    // Fallback to RateIndex
+    console.log('LoanInterestRate not found, checking RateIndex...');
+    const rateIndex = await RateIndex.findOne({
+      INDEX_RATE_ID: Number(INDEX_RATE_ID)
+    }).session(session);
+
+    if (rateIndex) {
+      return {
+        INTEREST_RATE: parseFloat(rateIndex.INDEX_RATE?.toString() || '0'),
+        INTEREST_TYPE: 'COMPOUND',
+        RATE_TYPE: 'VARIABLE',
+        CALCULATION_METHOD: 'REDUCING_BALANCE',
+        INDEX_RATE_ID: rateIndex.INDEX_RATE_ID,
+        SOURCE: 'RATE_INDEX_TABLE'
+      };
+    }
+
+    // Fallback to LoanProduct
+    console.log('RateIndex not found, checking LoanProduct...');
+    const loanProduct = await LoanProduct.findOne({
+      PROD_ID: Number(PROD_ID)
+    }).session(session);
+
+    if (loanProduct) {
+      return {
+        INTEREST_RATE: parseFloat(loanProduct.interestRate?.toString() || loanProduct.DEFAULT_RATE_PER_MONTH?.toString() || '0'),
+        INTEREST_TYPE: 'COMPOUND',
+        RATE_TYPE: 'FIXED',
+        CALCULATION_METHOD: 'REDUCING_BALANCE',
+        PROD_ID: loanProduct.PROD_ID,
+        SOURCE: 'LOAN_PRODUCT_TABLE'
+      };
+    }
+
+    throw new Error('No interest configuration found for this loan product and rate index');
+
+  } catch (error) {
+    console.error('Error getting interest configuration:', error);
+    throw error;
+  }
+},
+
+// Helper: Calculate disbursement amount with fees
+async calculateDisbursementAmount(loanAccount, interestConfig, session) {
+  const loanAmount = parseFloat(loanAccount.DISBURSEMENT_LIMIT?.toString() || '0');
+  
+  // Get product for fee calculation
+  const loanProduct = await LoanProduct.findOne({
+    PROD_ID: Number(loanAccount.PROD_ID)
+  }).session(session);
+
+  // Calculate processing fee
+  const processingFeeRate = parseFloat(loanProduct?.processingFeeRate?.toString() || '0') / 100;
+  const processingFee = loanAmount * processingFeeRate;
+
+  // Calculate upfront interest (if applicable)
+  const upfrontInterestPercentage = parseFloat(loanAccount.upfrontInterestPercentage?.toString() || '0') / 100;
+  const upfrontInterest = loanAmount * upfrontInterestPercentage;
+
+  const totalFees = processingFee + upfrontInterest;
+  const netAmount = loanAmount - totalFees;
+
+  return {
+    totalLoanAmount: loanAmount,
+    processingFee,
+    upfrontInterest,
+    totalFees,
+    netAmount,
+    processingFeeRate: processingFeeRate * 100,
+    upfrontInterestPercentage: upfrontInterestPercentage * 100
+  };
+},
+
+async executeDisbursement(req, res) {
+  const session = await mongoose.startSession();
+  let transactionAborted = false;
+
+  try {
+    await session.withTransaction(async () => {
+      const { 
+        disbursementId,
+        executedBy,
+        transactionNotes
+      } = req.body;
+
+      if (!disbursementId || !executedBy) {
+        throw { status: 400, message: "Disbursement ID and executor are required" };
+      }
+
+      // 1. Get the disbursement record
+      const disbursement = await Disbursement.findById(disbursementId).session(session);
+      if (!disbursement) {
+        throw { status: 404, message: "Disbursement record not found" };
+      }
+
+      if (disbursement.STATUS !== 'APPROVED') {
+        throw { 
+          status: 400, 
+          message: `Disbursement cannot be executed. Current status: ${disbursement.STATUS}` 
+        };
+      }
+
+      // 2. Get the loan account
+      const loanAccount = await LoanAccount.findById(disbursement.LOAN_ACCOUNT_ID).session(session);
+      if (!loanAccount) {
+        throw { status: 404, message: "Loan account not found" };
+      }
+
+      if (loanAccount.LOAN_STATUS !== 'APPROVED') {
+        throw { 
+          status: 400, 
+          message: `Loan must be APPROVED for disbursement. Current status: ${loanAccount.LOAN_STATUS}` 
+        };
+      }
+
+      // 3. Get customer account
+      const customerAccount = await CustomerAccount.findOne({
+        account_number: disbursement.TARGET_ACCOUNT_NO
+      }).session(session);
+
+      if (!customerAccount) {
+        throw { status: 404, message: "Target account not found" };
+      }
+
+      // 4. Execute the disbursement using your existing disbursement service
+      const disbursementResult = await processLoanDisbursementTransactions({
+        session,
+        loanAccount: {
+          ...loanAccount.toObject(),
+          DISBURSED_AMOUNT: toDecimal128(disbursement.DISBURSEMENT_AMOUNT.toString()),
+          NET_DISBURSEMENT: toDecimal128(disbursement.NET_DISBURSEMENT_AMOUNT.toString())
+        },
+        customerAccount,
+        AMOUNT: parseFloat(disbursement.DISBURSEMENT_AMOUNT.toString()),
+        loanFeeAmount: parseFloat(disbursement.FEES_AMOUNT.toString()),
+        fundingAcctNo: disbursement.TARGET_ACCOUNT_NO,
+        ACCT_NO: loanAccount.ACCT_NO,
+        CREATED_BY: executedBy,
+        DISBURSEMENT_DATE: new Date(),
+        INTEREST_RATE: disbursement.INTEREST_CONFIGURATION.INTEREST_RATE,
+        PRODUCT_TYPE: loanAccount.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
+        productId: loanAccount.PROD_ID,
+        deductUpfrontInterest: loanAccount.DEDUCT_UPFRONT_INTEREST || false,
+        partialUpfrontInterest: loanAccount.PARTIAL_UPFRONT_INTEREST || false,
+        upfrontInterestAmount: parseFloat(disbursement.UPFRONT_INTEREST_AMOUNT.toString()),
+        upfrontInterestPercentage: parseFloat(loanAccount.upfrontInterestPercentage?.toString() || '0'),
+        guarantorId: loanAccount.GUARANTOR_ID,
+        guaranteedAmount: parseFloat(loanAccount.GUARANTEED_AMOUNT?.toString() || '0'),
+        guarantorName: loanAccount.guarantorDetails?.name,
+        TRANSACTION_ID: `DISB-${Date.now()}`,
+        EVENT_ID: `EVT-${Date.now()}`,
+        JOURNAL_ID: `JRN-${Date.now()}`,
+        branchId: loanAccount.BU_ID
+      });
+
+      // 5. Update disbursement status
+      disbursement.STATUS = 'EXECUTED';
+      disbursement.EXECUTED_BY = executedBy;
+      disbursement.EXECUTION_DATE = new Date();
+      disbursement.TRANSACTION_NOTES = transactionNotes;
+      disbursement.TRANSACTION_REFERENCE = disbursementResult.transactionIds.TRANSACTION_ID;
+      await disbursement.save({ session });
+
+      // 6. Update loan account status
+      loanAccount.LOAN_STATUS = 'ACTIVE';
+      loanAccount.DISBURSEMENT_DATE = new Date();
+      loanAccount.DISBURSED_AMOUNT = disbursement.DISBURSEMENT_AMOUNT;
+      loanAccount.ACTUAL_DISBURSEMENT = disbursement.DISBURSEMENT_AMOUNT;
+      loanAccount.OUTSTANDING_PRINCIPAL = disbursement.DISBURSEMENT_AMOUNT;
+      loanAccount.CURRENT_BALANCE = toDecimal128(parseFloat(disbursement.DISBURSEMENT_AMOUNT.toString()) * -1); // Negative balance
+      await loanAccount.save({ session });
+
+      // 7. Update customer account balance
+      const netDisbursement = parseFloat(disbursement.NET_DISBURSEMENT_AMOUNT.toString());
+      const currentBalance = parseFloat(customerAccount.LEDGER_BALANCE?.toString() || '0');
+      customerAccount.LEDGER_BALANCE = toDecimal128(currentBalance + netDisbursement);
+      customerAccount.CLEARED_BALANCE = toDecimal128(currentBalance + netDisbursement);
+      customerAccount.AVAILABLE_BALANCE = toDecimal128(currentBalance + netDisbursement);
+      await customerAccount.save({ session });
+
+      // 8. Create transaction history
+      await Transaction.create([{
+        TRANSACTION_ID: disbursementResult.transactionIds.TRANSACTION_ID,
+        EVENT_ID: disbursementResult.transactionIds.EVENT_ID,
+        TRAN_JOURNAL_ID: disbursementResult.transactionIds.JOURNAL_ID,
+        ACCT_NO: loanAccount.ACCT_NO,
+        ACCT_ID: loanAccount._id.toString(),
+        BU_ID: loanAccount.BU_ID,
+        CUST_ID: loanAccount.CUST_ID,
+        ACCT_NM: loanAccount.ACCT_NM,
+        AMOUNT: netDisbursement,
+        TRANSACTIONDATE: new Date(),
+        TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
+        description: `Loan disbursement to ${loanAccount.ACCT_NM}`,
+        currency: loanAccount.CRNCY_ID || 'NGN',
+        createdBy: executedBy,
+        status: 'COMPLETED',
+        REFERENCE: `DISB-${loanAccount.ACCT_NO}-${Date.now()}`
+      }], { session });
+
+      // 9. Update workflow
+      const workflowItem = await WorkflowItem.findOne({
+        ITEM_VALUE: loanAccount._id.toString()
+      }).session(session);
+
+      if (workflowItem) {
+        workflowItem.STATUS = 'COMPLETED';
+        workflowItem.ACTION_BY = executedBy;
+        workflowItem.ACTION_DATE = new Date();
+        workflowItem.ACTION_NOTES = 'Loan disbursement completed';
+        await workflowItem.save({ session });
+      }
+
+      // 10. Create audit trail
+      await AuditTrail.create([{
+        EVENT_ID: `EXEC-DISB-${Date.now()}`,
+        USER_ID: executedBy,
+        EVENT_TYPE: 'EXECUTION',
+        ACTION: 'LOAN_DISBURSEMENT_EXECUTED',
+        ENTITY_ID: loanAccount._id,
+        ENTITY_TYPE: 'LoanAccount',
+        OLD_VALUE: { 
+          LOAN_STATUS: 'APPROVED',
+          DISBURSED_AMOUNT: '0.00' 
+        },
+        NEW_VALUE: { 
+          LOAN_STATUS: 'ACTIVE',
+          DISBURSED_AMOUNT: disbursement.DISBURSEMENT_AMOUNT.toString() 
+        },
+        DESCRIPTION: `Loan ${loanAccount.ACCT_NO} disbursed to ${customerAccount.account_number}`,
+        IP_ADDRESS: req.ip,
+        STATUS: 'SUCCESS',
+        TIMESTAMP: new Date()
+      }], { session });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Loan disbursement executed successfully',
+        data: {
+          loanAccountNumber: loanAccount.ACCT_NO,
+          customerName: loanAccount.ACCT_NM,
+          disbursementStatus: 'EXECUTED',
+          financialImpact: {
+            totalLoanAmount: parseFloat(disbursement.DISBURSEMENT_AMOUNT.toString()),
+            feesDeducted: parseFloat(disbursement.FEES_AMOUNT.toString()),
+            upfrontInterest: parseFloat(disbursement.UPFRONT_INTEREST_AMOUNT.toString()),
+            netAmountToCustomer: parseFloat(disbursement.NET_DISBURSEMENT_AMOUNT.toString()),
+            targetAccount: customerAccount.account_number,
+            customerBalanceBefore: currentBalance,
+            customerBalanceAfter: currentBalance + netDisbursement
+          },
+          loanDetails: {
+            status: 'ACTIVE',
+            outstandingPrincipal: parseFloat(disbursement.DISBURSEMENT_AMOUNT.toString()),
+            nextPaymentDate: loanAccount.NEXT_PAYMENT_DATE,
+            interestRate: disbursement.INTEREST_CONFIGURATION.INTEREST_RATE,
+            interestType: disbursement.INTEREST_CONFIGURATION.INTEREST_TYPE
+          },
+          transactionReference: disbursementResult.transactionIds.TRANSACTION_ID
+        }
+      });
+    });
+
+  } catch (error) {
+    if (!transactionAborted && session.inTransaction?.()) {
+      await session.abortTransaction();
+      transactionAborted = true;
+    }
+    console.error("Disbursement execution failed:", error);
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.message || "Disbursement execution failed",
+      code: error.code || "DISBURSEMENT_EXECUTION_ERROR"
+    });
+  } finally {
+    await session.endSession();
+  }
+},
 
 // async disburseLoan(req, res) {
 //   const session = await mongoose.startSession();

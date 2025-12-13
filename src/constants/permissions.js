@@ -31,6 +31,39 @@ export const PERMISSIONS = {
     TERM_DEPOSIT: 'CREATE_TERM_DEPOSIT'
   },
 
+  // ✅ ADDED: Manual Loan Repayment Permissions (for your controller)
+  LOAN_REPAYMENT: {
+    MANUAL: 'MANUAL_LOAN_REPAYMENT',
+    PROCESS: 'PROCESS_LOAN_REPAYMENT',
+    VIEW_SCHEDULE: 'VIEW_LOAN_REPAYMENT_SCHEDULE',
+    OVERRIDE: 'OVERRIDE_LOAN_REPAYMENT',
+    PARTIAL: 'PROCESS_PARTIAL_REPAYMENT',
+    ADVANCE: 'PROCESS_ADVANCE_REPAYMENT',
+    RESCHEDULE: 'RESCHEDULE_REPAYMENT',
+    REVERSE: 'REVERSE_LOAN_REPAYMENT',
+    VIEW_HISTORY: 'VIEW_REPAYMENT_HISTORY',
+    PRINT_RECEIPT: 'PRINT_REPAYMENT_RECEIPT',
+    EXPORT: 'EXPORT_REPAYMENT_DATA'
+  },
+
+  // ✅ ADDED: Group Loan Permissions (for your bulk repayment controller)
+  GROUP_LOAN: {
+    CREATE: 'CREATE_GROUP_LOAN',
+    VIEW: 'VIEW_GROUP_LOAN',
+    UPDATE: 'UPDATE_GROUP_LOAN',
+    DISBURSE: 'DISBURSE_GROUP_LOAN',
+    APPROVE: 'APPROVE_GROUP_LOAN',
+    REJECT: 'REJECT_GROUP_LOAN',
+    MANAGE_MEMBERS: 'MANAGE_GROUP_LOAN_MEMBERS',
+    PROCESS_REPAYMENT: 'PROCESS_GROUP_LOAN_REPAYMENT',
+    VIEW_SCHEDULE: 'VIEW_GROUP_LOAN_SCHEDULE',
+    BULK_REPAYMENT: 'PROCESS_BULK_GROUP_LOAN_REPAYMENT',
+    COLLECT_SAVINGS: 'COLLECT_GROUP_SAVINGS',
+    VIEW_REPORTS: 'VIEW_GROUP_LOAN_REPORTS',
+    EXPORT_DATA: 'EXPORT_GROUP_LOAN_DATA',
+    AUDIT: 'VIEW_GROUP_LOAN_AUDIT'
+  },
+
   // Loan Operations
   LOAN_OPERATIONS: {
     DISBURSE: 'DISBURSE_LOAN',
@@ -43,7 +76,10 @@ export const PERMISSIONS = {
     CREATE_CONTRACT: 'CREATE_LOAN_CONTRACT',
     VIEW: 'VIEW_LOAN',
     PROCESS: 'PROCESS_LOAN',
-    CREDIT_APPLICATION: 'CREATE_LOAN_CREDIT_APPLICATION'
+    CREDIT_APPLICATION: 'CREATE_LOAN_CREDIT_APPLICATION',
+    // ✅ ADDED for your controller
+    MANUAL_REPAYMENT: 'PROCESS_MANUAL_LOAN_REPAYMENT',
+    BULK_REPAYMENT: 'PROCESS_BULK_LOAN_REPAYMENTS'
   },
 
   // Loan Fees
@@ -82,7 +118,11 @@ export const PERMISSIONS = {
     ALL_REPORTS: 'VIEW_ALL_REPORTS',
     TELLER_SUMMARY: 'VIEW_TELLER_SUMMARY_REPORT',
     GUARANTOR: 'VIEW_GUARANTOR_REPORT',
-    PERFORMANCE_METRICS: 'VIEW_PERFORMANCE_METRICS'
+    PERFORMANCE_METRICS: 'VIEW_PERFORMANCE_METRICS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'VIEW_LOAN_REPAYMENT_REPORT',
+    GROUP_LOAN: 'VIEW_GROUP_LOAN_REPORT',
+    BULK_REPAYMENT: 'VIEW_BULK_REPAYMENT_REPORT'
   },
 
   // System Administration with User Management
@@ -100,7 +140,9 @@ export const PERMISSIONS = {
     RESTORE: 'SYSTEM_RESTORE',
     SYSTEM_DATE: 'VIEW_SYSTEM_DATE',
     OS_TRIGGER: 'TRIGGER_OS_OPERATIONS',
-    LICENSE_DETAILS: 'VIEW_LICENSE_DETAILS'
+    LICENSE_DETAILS: 'VIEW_LICENSE_DETAILS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_CONFIG: 'CONFIGURE_LOAN_REPAYMENT'
   },
 
   // Permission Management
@@ -130,7 +172,10 @@ export const PERMISSIONS = {
     MANAGER_DASHBOARD: 'VIEW_MANAGER_DASHBOARD',
     GUARANTOR_DASHBOARD: 'VIEW_GUARANTOR_DASHBOARD',
     BU_PERFORMANCE: 'VIEW_BU_PERFORMANCE',
-    DASHBOARDSTATS: 'DASHBOARD_REAL_TIME_STATS'
+    DASHBOARDSTATS: 'DASHBOARD_REAL_TIME_STATS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_STATS: 'VIEW_LOAN_REPAYMENT_STATS',
+    GROUP_LOAN_STATS: 'VIEW_GROUP_LOAN_STATS'
   },
 
   // Credit Application
@@ -164,7 +209,11 @@ export const PERMISSIONS = {
     STANDING_ORDER: 'APPROVE_STANDING_ORDER',
     USER_ACTIVATION: 'APPROVE_USER_ACTIVATION',
     VAULT_ACCESS: 'APPROVE_VAULT_ACCESS',
-    VAULT_OPERATION: 'APPROVE_VAULT_OPERATION'
+    VAULT_OPERATION: 'APPROVE_VAULT_OPERATION',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'APPROVE_LOAN_REPAYMENT',
+    GROUP_LOAN: 'APPROVE_GROUP_LOAN',
+    BULK_REPAYMENT: 'APPROVE_BULK_REPAYMENT'
   },
 
   // Treasury
@@ -178,7 +227,9 @@ export const PERMISSIONS = {
   OPERATIONS: {
     VIEW: 'OPERATIONS_VIEW',
     MANAGE: 'OPERATIONS_MANAGE',
-    APPROVE: 'OPERATIONS_APPROVE'
+    APPROVE: 'OPERATIONS_APPROVE',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'OPERATIONS_LOAN_REPAYMENT'
   },
 
   // Transactions
@@ -199,13 +250,20 @@ export const PERMISSIONS = {
     DEBIT_GL: 'PROCESS_DEBIT_GL',
     REPRINT_RECEIPT: 'REPRINT_TRANSACTION_RECEIPT',
     VIEW_RECENT: 'VIEW_RECENT_TRANSACTIONS',
-    VIEW_STATS: 'VIEW_TRANSACTION_STATS'
+    VIEW_STATS: 'VIEW_TRANSACTION_STATS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'PROCESS_LOAN_REPAYMENT_TRANSACTION'
   },
 
   // Workflow Management
   WORKFLOW: {
     CONFIGURE: 'CONFIGURE_WORKFLOW',
-    MANAGE_SUBPROCESS: 'MANAGE_WORKFLOW_SUBPROCESS'
+    MANAGE_SUBPROCESS: 'MANAGE_WORKFLOW_SUBPROCESS',
+    // ✅ ADDED missing VIEW permission
+    VIEW: 'WORKFLOW.VIEW',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'MANAGE_LOAN_REPAYMENT_WORKFLOW',
+    GROUP_LOAN: 'MANAGE_GROUP_LOAN_WORKFLOW'
   },
 
   // AML (Anti-Money Laundering)
@@ -215,7 +273,9 @@ export const PERMISSIONS = {
     CONFIGURE: 'CONFIGURE_AML',
     MONITOR: 'MONITOR_AML',
     REPORT: 'GENERATE_AML_REPORT',
-    SUSPEND: 'SUSPEND_AML_TRANSACTION'
+    SUSPEND: 'SUSPEND_AML_TRANSACTION',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT: 'MONITOR_LOAN_REPAYMENT_AML'
   },
 
   // Business Unit
@@ -270,7 +330,9 @@ export const PERMISSIONS = {
   RATE: {
     LOAN_INTEREST: 'SETUP_LOAN_INTEREST',
     DEPOSIT_INTEREST: 'SETUP_DEPOSIT_INTEREST',
-    INDEX: 'SETUP_INDEX_RATE'
+    INDEX: 'SETUP_INDEX_RATE',
+    // ✅ ADDED for your controller
+    PENALTY: 'SETUP_LOAN_PENALTY_RATE'
   },
 
   // Product Management
@@ -302,19 +364,25 @@ export const PERMISSIONS = {
   ANALYTICS: {
     VIEW_BUSINESS_ANALYTICS: 'VIEW_BUSINESS_ANALYTICS',
     EXPORT_ANALYTICS: 'EXPORT_ANALYTICS_DATA',
-    VIEW_TELLER_ANALYTICS: 'VIEW_TELLER_ANALYTICS'
+    VIEW_TELLER_ANALYTICS: 'VIEW_TELLER_ANALYTICS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_ANALYTICS: 'VIEW_LOAN_REPAYMENT_ANALYTICS'
   },
 
   // Risk Management
   RISK: {
     VIEW_RISK_REPORT: 'VIEW_RISK_REPORT',
-    MANAGE_RISK_SETTINGS: 'MANAGE_RISK_SETTINGS'
+    MANAGE_RISK_SETTINGS: 'MANAGE_RISK_SETTINGS',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_RISK: 'ASSESS_LOAN_REPAYMENT_RISK'
   },
 
   // Reconciliation
   RECONCILIATION: {
     PROCESS_RECONCILIATION: 'PROCESS_RECONCILIATION',
-    VIEW_RECONCILIATION_REPORT: 'VIEW_RECONCILIATION_REPORT'
+    VIEW_RECONCILIATION_REPORT: 'VIEW_RECONCILIATION_REPORT',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_RECONCILE: 'RECONCILE_LOAN_REPAYMENTS'
   },
 
   // Thrift Management
@@ -337,7 +405,9 @@ export const PERMISSIONS = {
     VIEW_METRICS: 'VIEW_PERFORMANCE_METRICS',
     VIEW_TELLER_PERFORMANCE: 'VIEW_TELLER_PERFORMANCE',
     VIEW_BRANCH_PERFORMANCE: 'VIEW_BRANCH_PERFORMANCE',
-    EXPORT_PERFORMANCE_DATA: 'EXPORT_PERFORMANCE_DATA'
+    EXPORT_PERFORMANCE_DATA: 'EXPORT_PERFORMANCE_DATA',
+    // ✅ ADDED for your controller
+    LOAN_REPAYMENT_PERFORMANCE: 'VIEW_LOAN_REPAYMENT_PERFORMANCE'
   },
 
   // Dashboard Statistics Permissions
@@ -361,6 +431,116 @@ export const PERMISSIONS = {
     ASSIGN_ROLES: 'ASSIGN_USER_ROLES',
     VIEW_PROFILE: 'VIEW_USER_PROFILE',
     EXPORT: 'EXPORT_USER_DATA'
+  },
+
+  // Group Management
+  GROUP: {
+    CREATE: 'GROUP.CREATE',
+    SAVINGS_MANAGEMENT: 'GROUP.SAVINGS_MANAGEMENT',
+    VIEW: 'VIEW_GROUP',
+    UPDATE: 'UPDATE_GROUP',
+    DELETE: 'DELETE_GROUP',
+    MEMBER_MANAGEMENT: 'MANAGE_GROUP_MEMBERS',
+    APPROVE: 'APPROVE_GROUP',
+    REPORTS: 'VIEW_GROUP_REPORTS',
+    DASHBOARD: 'VIEW_GROUP_DASHBOARD',
+    BULK_ACTIONS: 'PERFORM_GROUP_BULK_ACTIONS'
+  },
+
+  // ✅ ADDED: Audit Trail Permissions (for your controller)
+  AUDIT: {
+    VIEW_LOGS: 'VIEW_AUDIT_LOGS',
+    VIEW_TRANSACTION_AUDIT: 'VIEW_TRANSACTION_AUDIT',
+    VIEW_USER_AUDIT: 'VIEW_USER_AUDIT',
+    VIEW_SYSTEM_AUDIT: 'VIEW_SYSTEM_AUDIT',
+    EXPORT_AUDIT: 'EXPORT_AUDIT_LOGS',
+    VIEW_LOAN_REPAYMENT_AUDIT: 'VIEW_LOAN_REPAYMENT_AUDIT',
+    VIEW_GROUP_LOAN_AUDIT: 'VIEW_GROUP_LOAN_AUDIT',
+    VIEW_BULK_REPAYMENT_AUDIT: 'VIEW_BULK_REPAYMENT_AUDIT'
+  },
+
+  // ✅ ADDED: Notification Permissions (for your controller)
+  NOTIFICATION: {
+    VIEW: 'VIEW_NOTIFICATIONS',
+    MANAGE: 'MANAGE_NOTIFICATIONS',
+    SEND: 'SEND_NOTIFICATIONS',
+    CONFIGURE: 'CONFIGURE_NOTIFICATION_SETTINGS',
+    LOAN_REPAYMENT_NOTIFY: 'SEND_LOAN_REPAYMENT_NOTIFICATIONS'
+  },
+
+  // ✅ ADDED: Bulk Operations Permissions (for your controller)
+  BULK_OPERATIONS: {
+    PROCESS: 'PROCESS_BULK_OPERATIONS',
+    UPLOAD: 'UPLOAD_BULK_DATA',
+    DOWNLOAD: 'DOWNLOAD_BULK_TEMPLATES',
+    VALIDATE: 'VALIDATE_BULK_DATA',
+    EXECUTE: 'EXECUTE_BULK_OPERATIONS',
+    BULK_LOAN_REPAYMENT: 'PROCESS_BULK_LOAN_REPAYMENTS',
+    BULK_GROUP_REPAYMENT: 'PROCESS_BULK_GROUP_REPAYMENTS',
+    BULK_CSV_IMPORT: 'IMPORT_BULK_CSV_DATA',
+    BULK_CSV_EXPORT: 'EXPORT_BULK_CSV_DATA'
+  },
+
+  // ✅ ADDED: Print & Export Permissions (for your controller)
+  PRINT_EXPORT: {
+    PRINT_RECEIPT: 'PRINT_RECEIPT',
+    PRINT_REPORT: 'PRINT_REPORT',
+    EXPORT_CSV: 'EXPORT_CSV',
+    EXPORT_PDF: 'EXPORT_PDF',
+    EXPORT_EXCEL: 'EXPORT_EXCEL',
+    PRINT_LOAN_REPAYMENT_RECEIPT: 'PRINT_LOAN_REPAYMENT_RECEIPT',
+    PRINT_BULK_REPAYMENT_RECEIPT: 'PRINT_BULK_REPAYMENT_RECEIPT',
+    EXPORT_BULK_REPAYMENT: 'EXPORT_BULK_REPAYMENT_DATA'
+  },
+
+  // ✅ ADDED: Queue Management Permissions (for your controller)
+  QUEUE: {
+    VIEW_QUEUE: 'VIEW_QUEUE',
+    MANAGE_QUEUE: 'MANAGE_QUEUE',
+    PROCESS_QUEUE: 'PROCESS_QUEUE_ITEMS',
+    REORDER_QUEUE: 'REORDER_QUEUE',
+    CLEAR_QUEUE: 'CLEAR_QUEUE',
+    LOAN_REPAYMENT_QUEUE: 'MANAGE_LOAN_REPAYMENT_QUEUE',
+    BULK_REPAYMENT_QUEUE: 'MANAGE_BULK_REPAYMENT_QUEUE'
+  },
+
+  // ✅ ADDED: Help & Support Permissions
+  HELP: {
+    VIEW_HELP: 'VIEW_HELP_DOCUMENTATION',
+    CREATE_TICKET: 'CREATE_SUPPORT_TICKET',
+    VIEW_TICKETS: 'VIEW_SUPPORT_TICKETS',
+    MANAGE_TICKETS: 'MANAGE_SUPPORT_TICKETS'
+  },
+
+  // ✅ ADDED: Mobile App Permissions (for your controller)
+  MOBILE: {
+    VIEW_MOBILE: 'VIEW_MOBILE_APP',
+    MANAGE_MOBILE: 'MANAGE_MOBILE_APP',
+    APPROVE_MOBILE: 'APPROVE_MOBILE_TRANSACTIONS',
+    MOBILE_LOAN_REPAYMENT: 'PROCESS_MOBILE_LOAN_REPAYMENT'
+  },
+
+  // ✅ ADDED: Collection Management Permissions (for your Collection model)
+  COLLECTION: {
+    CREATE: 'CREATE_COLLECTION',
+    VIEW: 'VIEW_COLLECTION',
+    UPDATE: 'UPDATE_COLLECTION',
+    DELETE: 'DELETE_COLLECTION',
+    PROCESS: 'PROCESS_COLLECTION',
+    VERIFY: 'VERIFY_COLLECTION',
+    APPROVE: 'APPROVE_COLLECTION',
+    REJECT: 'REJECT_COLLECTION',
+    REPORTS: 'VIEW_COLLECTION_REPORTS',
+    EXPORT: 'EXPORT_COLLECTION_DATA'
+  },
+
+  // ✅ ADDED: Loan Portfolio Permissions (for your LoanPortfolio model)
+  LOAN_PORTFOLIO: {
+    VIEW: 'VIEW_LOAN_PORTFOLIO',
+    MANAGE: 'MANAGE_LOAN_PORTFOLIO',
+    UPDATE: 'UPDATE_LOAN_PORTFOLIO',
+    REPORTS: 'VIEW_LOAN_PORTFOLIO_REPORTS',
+    ANALYTICS: 'VIEW_LOAN_PORTFOLIO_ANALYTICS'
   },
 
   // ✅ **COMPLETE VAULT MANAGEMENT PERMISSIONS - UPDATED**
@@ -413,9 +593,9 @@ export const PERMISSIONS = {
     VAULT_WITHDRAWAL: 'VAULT_WITHDRAWAL',
     VAULT_TRANSFER: 'VAULT_TRANSFER',
     VAULT_RECONCILIATION: 'VAULT_RECONCILIATION',
-  VIEW_VAULT_TRANSACTIONS: 'VIEW_VAULT_TRANSACTIONS',
-  CANCEL_VAULT_TRANSACTION: 'CANCEL_VAULT_TRANSACTION',
-  EXPORT_VAULT_TRANSACTIONS: 'EXPORT_VAULT_TRANSACTIONS',
+    VIEW_VAULT_TRANSACTIONS: 'VIEW_VAULT_TRANSACTIONS',
+    CANCEL_VAULT_TRANSACTION: 'CANCEL_VAULT_TRANSACTION',
+    EXPORT_VAULT_TRANSACTIONS: 'EXPORT_VAULT_TRANSACTIONS',
     
     // **Audit & Compliance**
     VAULT_AUDIT: 'CONDUCT_VAULT_AUDIT',
@@ -466,8 +646,158 @@ export const PERMISSIONS = {
     VAULT_TRAINING: 'ACCESS_VAULT_TRAINING',
     CERTIFY_PERSONNEL: 'CERTIFY_VAULT_PERSONNEL',
     VIEW_CERTIFICATIONS: 'VIEW_VAULT_CERTIFICATIONS',
-
   }
+};
+
+// ✅ ADDED: Helper function to get all permissions as flat array
+export const getAllPermissions = () => {
+  const permissions = [];
+  
+  const traverse = (obj, prefix = '') => {
+    for (const key in obj) {
+      if (typeof obj[key] === 'object') {
+        traverse(obj[key], `${prefix}${key}.`);
+      } else {
+        permissions.push(obj[key]);
+      }
+    }
+  };
+  
+  traverse(PERMISSIONS);
+  return permissions;
+};
+
+// ✅ ADDED: Helper function to check if permission exists
+export const hasPermission = (permission, userPermissions = []) => {
+  if (!permission) return false;
+  
+  // Get all permission values as flat array
+  const allPermissions = getAllPermissions();
+  
+  // Check if permission is valid
+  const isValidPermission = allPermissions.includes(permission);
+  if (!isValidPermission) {
+    console.warn(`Permission "${permission}" is not defined in PERMISSIONS object`);
+    return false;
+  }
+  
+  // Check if user has permission
+  return userPermissions.includes(permission);
+};
+
+// ✅ ADDED: Helper function to get permissions by module
+export const getPermissionsByModule = (moduleName) => {
+  if (!PERMISSIONS[moduleName]) {
+    console.warn(`Module "${moduleName}" not found in PERMISSIONS object`);
+    return [];
+  }
+  
+  const modulePermissions = [];
+  
+  const traverse = (obj, prefix = '') => {
+    for (const key in obj) {
+      if (typeof obj[key] === 'object') {
+        traverse(obj[key], `${prefix}${key}.`);
+      } else {
+        modulePermissions.push(obj[key]);
+      }
+    }
+  };
+  
+  traverse(PERMISSIONS[moduleName]);
+  return modulePermissions;
+};
+
+// ✅ ADDED: Get all loan-related permissions including manual repayment
+export const getLoanRepaymentPermissions = () => {
+  return [
+    PERMISSIONS.LOAN_REPAYMENT.MANUAL,
+    PERMISSIONS.LOAN_REPAYMENT.PROCESS,
+    PERMISSIONS.LOAN_REPAYMENT.VIEW_SCHEDULE,
+    PERMISSIONS.LOAN_OPERATIONS.MANUAL_REPAYMENT,
+    PERMISSIONS.TRANSACTION.LOAN_REPAYMENT
+  ];
+};
+
+// ✅ ADDED: Get all bulk repayment permissions
+export const getBulkRepaymentPermissions = () => {
+  return [
+    PERMISSIONS.BULK_OPERATIONS.BULK_LOAN_REPAYMENT,
+    PERMISSIONS.BULK_OPERATIONS.BULK_GROUP_REPAYMENT,
+    PERMISSIONS.LOAN_OPERATIONS.BULK_REPAYMENT,
+    PERMISSIONS.GROUP_LOAN.BULK_REPAYMENT
+  ];
+};
+
+// ✅ ADDED: Get all group loan permissions
+export const getGroupLoanPermissions = () => {
+  return [
+    PERMISSIONS.GROUP_LOAN.CREATE,
+    PERMISSIONS.GROUP_LOAN.VIEW,
+    PERMISSIONS.GROUP_LOAN.PROCESS_REPAYMENT,
+    PERMISSIONS.GROUP_LOAN.BULK_REPAYMENT,
+    PERMISSIONS.GROUP_LOAN.MANAGE_MEMBERS
+  ];
+};
+
+// ✅ ADDED: Get permissions by controller function
+export const getControllerPermissions = () => {
+  return {
+    // For recordPaymentSimple and recordPayment functions
+    SIMPLE_REPAYMENT: [
+      PERMISSIONS.LOAN_REPAYMENT.MANUAL,
+      PERMISSIONS.LOAN_REPAYMENT.PROCESS,
+      PERMISSIONS.LOAN_OPERATIONS.MANUAL_REPAYMENT
+    ],
+    
+    // For processBulkRepayments function - Individual
+    BULK_REPAYMENT_INDIVIDUAL: [
+      PERMISSIONS.BULK_OPERATIONS.BULK_LOAN_REPAYMENT,
+      PERMISSIONS.LOAN_OPERATIONS.BULK_REPAYMENT
+    ],
+    
+    // For processBulkRepayments function - Group
+    BULK_REPAYMENT_GROUP: [
+      PERMISSIONS.BULK_OPERATIONS.BULK_GROUP_REPAYMENT,
+      PERMISSIONS.GROUP_LOAN.BULK_REPAYMENT,
+      PERMISSIONS.GROUP_LOAN.PROCESS_REPAYMENT
+    ],
+    
+    // For updateLoanPortfolio function
+    LOAN_PORTFOLIO_UPDATE: [
+      PERMISSIONS.LOAN_PORTFOLIO.UPDATE,
+      PERMISSIONS.LOAN_PORTFOLIO.MANAGE
+    ],
+    
+    // For Collection operations
+    COLLECTION_OPERATIONS: [
+      PERMISSIONS.COLLECTION.CREATE,
+      PERMISSIONS.COLLECTION.PROCESS,
+      PERMISSIONS.COLLECTION.APPROVE
+    ]
+  };
+};
+
+// ✅ ADDED: Check if user has any of the required permissions
+export const hasAnyPermission = (requiredPermissions, userPermissions = []) => {
+  if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) {
+    return false;
+  }
+  
+  return requiredPermissions.some(permission => 
+    userPermissions.includes(permission)
+  );
+};
+
+// ✅ ADDED: Check if user has all required permissions
+export const hasAllPermissions = (requiredPermissions, userPermissions = []) => {
+  if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) {
+    return false;
+  }
+  
+  return requiredPermissions.every(permission => 
+    userPermissions.includes(permission)
+  );
 };
 
 export default PERMISSIONS;

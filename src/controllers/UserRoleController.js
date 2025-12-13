@@ -1107,6 +1107,72 @@ export const getAccessibleBUsForUser = asyncHandler(async (req, res) => {
   }
 });
 
+// ✅ SIMPLER VERSION: Get Users by Role ID
+export const getUsersByRoleId = asyncHandler(async (req, res) => {
+  const { roleId } = req.params;
+  const { buId } = req.query;
+
+  try {
+    const numericRoleId = Number(roleId);
+    
+    // Query to find users with role ID 28
+    const query = {
+      $or: [
+        { USER_ROLE_IDS: numericRoleId },
+        { USER_ROLE_ID: numericRoleId }
+      ],
+      REC_ST: { $in: ['A', 'Y'] } // Active users only
+    };
+
+    if (buId) {
+      query.BU_ID = buId;
+    }
+
+    const users = await UserRole.find(query)
+      .select('USER_ID BU_ID Business_Unit ROLE_NM USER_ROLE_ID USER_ROLE_IDS ROLE_NMS SYSUSER_ID')
+      .lean();
+
+    // Transform data
+    const result = users.map(user => ({
+      userId: user.USER_ID,
+      sysuserId: user.SYSUSER_ID,
+      businessUnit: {
+        id: user.BU_ID,
+        name: user.Business_Unit
+      },
+      roles: {
+        // For old schema
+        singleRole: user.USER_ROLE_ID ? {
+          id: user.USER_ROLE_ID,
+          name: user.ROLE_NM
+        } : null,
+        // For new schema
+        multipleRoles: user.USER_ROLE_IDS ? {
+          ids: user.USER_ROLE_IDS,
+          names: user.ROLE_NMS || user.USER_ROLE_IDS.map(id => ROLE_MAPPING[String(id)]?.ROLE_NM)
+        } : null
+      },
+      hasTargetRole: true // Since we filtered by it
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      roleId: numericRoleId,
+      roleName: ROLE_MAPPING[numericRoleId]?.ROLE_NM || 'Unknown',
+      users: result
+    });
+
+  } catch (error) {
+    console.error("Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching users",
+      error: error.message
+    });
+  }
+});
+
 // ✅ NEW: Get User's Combined Permissions
 export const getUserCombinedPermissions = asyncHandler(async (req, res) => {
   const { userId } = req.params;
@@ -1175,4 +1241,5 @@ export default {
   getUsersByRoleName,
   getAccessibleBUsForUser,
   getUserCombinedPermissions,
+  getUsersByRoleId
 };

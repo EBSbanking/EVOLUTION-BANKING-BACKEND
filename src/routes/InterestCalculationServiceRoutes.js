@@ -1,43 +1,31 @@
-// src/routes/loanInterestRoutes.js
+// src/routes/loanInterestRoutes.js - UPDATED COMPATIBLE VERSION
 import express from 'express';
-import LoanInterestController from '../controllers/LoanInterestRateController.js';
-
-// Assuming you have middleware for authentication/protection if needed
-// import { protect, authorize } from '../middleware/auth.js'; // Uncomment if auth is required
+import LoanInterestController from '../controllers/LoanInterestRateController.js'; // Fixed import
 
 const router = express.Router();
 
 // CREATE LOAN INTEREST RATE
 router.post('/create', LoanInterestController.createInterestRate);
 
-// GET ALL INTEREST RATES (with optional query params: page, limit, search, status, rateType)
+// GET ALL INTEREST RATES (with optional query params)
 router.get('/', LoanInterestController.getAllInterestRates);
 
-// GET INTEREST RATE BY PROD_ID
-router.get('/:prodId', LoanInterestController.getInterestRate);
+// GET INTEREST RATE BY ID - NOTE: Method name changed from getInterestRate to getInterestRateById
+router.get('/:id', LoanInterestController.getInterestRateById);
 
-// GET INTEREST RATE BY LOAN_PROUD_INT_ID
-router.get('/loan-product/:loanProudIntId', LoanInterestController.getInterestRateByLoanProductId);
+// UPDATE INTEREST RATE BY ID
+router.put('/:id', LoanInterestController.updateInterestRate);
 
-// UPDATE INTEREST RATE BY PROD_ID
-router.put('/:prodId', LoanInterestController.updateInterestRate);
+// DELETE INTEREST RATE BY ID
+router.delete('/:id', LoanInterestController.deleteInterestRate);
 
-// DELETE INTEREST RATE BY PROD_ID
-router.delete('/:prodId', LoanInterestController.deleteInterestRate);
+// ACTIVATE INTEREST RATE
+router.patch('/:id/activate', LoanInterestController.activateInterestRate);
 
-// UPDATE CAPITALIZATION STATUS BY LOAN_PROUD_INT_ID
-router.put('/capitalization/:loanProudIntId', LoanInterestController.updateCapitalizationStatus);
+// CALCULATE INTEREST - ADD THIS NEW ROUTE
+router.post('/calculate', LoanInterestController.calculateInterest);
 
-// GET CAPITALIZATION STATUS BY LOAN_PROUD_INT_ID
-router.get('/capitalization/:loanProudIntId', LoanInterestController.getCapitalizationStatus);
-
-// SEARCH INTEREST RATES (with query params: search, productId, status, rateType, startDate, endDate, page, limit)
-router.get('/search', LoanInterestController.searchInterestRates);
-
-// CALCULATE EMI
-router.post('/emi/calculate', LoanInterestController.calculateEMI);
-
-// CALCULATE DAILY INTEREST
-router.post('/daily-interest/calculate', LoanInterestController.calculateDailyInterest);
+// Alternative route if you want to support prodId as well
+// router.get('/prod/:prodId', LoanInterestController.getInterestRateByProdId);
 
 export default router;

@@ -1,8 +1,6 @@
-// utils/generateWorkflowIdentifiers.js - CORRECTED VERSION
+// utils/generateWorkflowIdentifiers.js - FIXED VERSION
 import mongoose from 'mongoose';
-import Counter from '../models/Counter.js'; // Use your existing Counter model
 
-// Remove the Sequence model and use Counter instead
 // Helper to generate a random number with 8 to 12 digits
 const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
   try {
@@ -21,33 +19,7 @@ const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
   }
 };
 
-// Generate sequential numbers using your Counter model
-const generateSequentialNumber = async (sequenceName, session = null) => {
-  try {
-    const options = { 
-      new: true, 
-      upsert: true,
-      setDefaultsOnInsert: { seq: 1000000000 } // Start from 1,000,000,000
-    };
-    
-    if (session) {
-      options.session = session;
-    }
-
-    const counter = await Counter.findByIdAndUpdate(
-      sequenceName,
-      { $inc: { seq: 1 } },
-      options
-    );
-
-    return counter.seq.toString();
-  } catch (error) {
-    console.error(`Error generating sequential number for ${sequenceName}:`, error);
-    // Fallback to timestamp-based number
-    return Date.now().toString().slice(-10);
-  }
-};
-
+// SIMPLIFIED VERSION - Use database to get next transaction ID
 export async function generateWorkflowIdentifiers(session = null) {
   console.log('generateWorkflowIdentifiers: Generating workflow identifiers');
   
@@ -55,16 +27,28 @@ export async function generateWorkflowIdentifiers(session = null) {
   const randomSuffix = Math.floor(100000 + Math.random() * 900000);
   
   try {
-    // Generate sequential numbers using Counter model
-    const transactionSeq = await generateSequentialNumber('WORKFLOW_TRANSACTION', session);
-    const workItemSeq = await generateSequentialNumber('WORKFLOW_WORK_ITEM', session);
-    const eventSeq = await generateSequentialNumber('WORKFLOW_EVENT', session);
+    // DIRECT DATABASE APPROACH - Find the highest TRANSACTION_ID and increment
+    const Transaction = mongoose.model('Transaction');
     
-    const TRANSACTION_ID = parseInt(transactionSeq.padStart(10, '0').slice(-10));
-    const WORK_ITEM_ID = parseInt(workItemSeq.padStart(10, '0').slice(-10));
-    const EVENT_ID = parseInt(eventSeq.padStart(10, '0').slice(-10));
+    // Get the highest existing TRANSACTION_ID
+    const lastTransaction = await Transaction.findOne({})
+      .sort({ TRANSACTION_ID: -1 })
+      .select('TRANSACTION_ID')
+      .lean();
+    
+    let nextTransactionId = 1;
+    if (lastTransaction && lastTransaction.TRANSACTION_ID) {
+      nextTransactionId = Number(lastTransaction.TRANSACTION_ID) + 1;
+      console.log(`Found last TRANSACTION_ID: ${lastTransaction.TRANSACTION_ID}, next: ${nextTransactionId}`);
+    } else {
+      console.log('No existing transactions found, starting from 1');
+    }
+    
+    const TRANSACTION_ID = nextTransactionId;
+    const WORK_ITEM_ID = nextTransactionId;
+    const EVENT_ID = nextTransactionId;
 
-    // Generate other IDs with proper error handling
+    // Generate other IDs
     const glInterestPaymentTxnId = generateRandomDigits();
     const glSettlementTxnId = generateRandomDigits();
     const customerInterestPaymentTxnId = generateRandomDigits();
@@ -93,7 +77,7 @@ export async function generateWorkflowIdentifiers(session = null) {
   } catch (error) {
     console.error('Error in generateWorkflowIdentifiers, using fallback:', error);
     
-    // Fallback: generate timestamp-based identifiers without database
+    // Fallback: generate timestamp-based identifiers
     return generateFallbackWorkflowIdentifiers();
   }
 }
@@ -104,6 +88,7 @@ function generateFallbackWorkflowIdentifiers() {
   const randomSuffix = Math.floor(100000 + Math.random() * 900000);
   const microtime = process.hrtime?.bigint?.()?.toString()?.slice(-6) || '000000';
   
+  // Use timestamp for unique IDs
   const TRANSACTION_ID = parseInt(`${timestamp}${randomSuffix}`.substring(0, 10));
   const WORK_ITEM_ID = parseInt(`${timestamp}${randomSuffix + 1}`.substring(0, 10));
   const EVENT_ID = parseInt(`${timestamp}${randomSuffix + 2}`.substring(0, 10));
@@ -134,7 +119,7 @@ function generateFallbackWorkflowIdentifiers() {
 export const generateTransactionReference = async (session = null) => {
   try {
     const identifiers = await generateWorkflowIdentifiers(session);
-    return `TXN${identifiers.TRANSACTION_ID}`;
+    return `TXN${identifiers.TRANSACTION_ID.toString().padStart(10, '0')}`;
   } catch (error) {
     // Fallback
     return `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
