@@ -637,7 +637,7 @@ export const approveCustomer = async (req, res) => {
     });
 
     // --- IMPROVED: Check current status ---
-    if (customer.REC_ST === "Active") {
+    if (customer.REC_ST === "Active" || customer.REC_ST === "ACTIVE") {
       console.log("ℹ️ Customer already Active - returning success");
 
       // Update workflow if still pending
@@ -678,15 +678,17 @@ export const approveCustomer = async (req, res) => {
       });
     }
 
-    // Allow approval from other valid initial states if needed
-    const allowedInitialStates = ["Pending", "In Review", "Draft"];
-    if (!allowedInitialStates.includes(customer.REC_ST)) {
+    // FIX: Case-insensitive check for allowed initial states
+    const allowedInitialStates = ["pending", "in review", "draft", "p", "pending review"];
+    const currentStatusLower = customer.REC_ST.toLowerCase();
+    
+    if (!allowedInitialStates.includes(currentStatusLower)) {
       console.log("❌ Customer not in approvable state:", customer.REC_ST);
       return res.status(400).json({
         success: false,
         message: `Customer cannot be approved from current status: ${customer.REC_ST}`,
         currentStatus: customer.REC_ST,
-        allowedStates: allowedInitialStates,
+        allowedStates: ["PENDING", "IN REVIEW", "DRAFT", "P", "PENDING REVIEW"],
       });
     }
 
@@ -734,7 +736,7 @@ export const approveCustomer = async (req, res) => {
         {
           ITEM_CLASS_NM: "Customer",
           ITEM_VALUE: paddedCustomerId,
-          REC_ST: { $in: ["Pending", "In Review"] }, // Multiple possible workflow states
+          REC_ST: { $in: ["Pending", "In Review", "PENDING", "IN REVIEW"] }, // Multiple possible workflow states
         },
         {
           REC_ST: "Completed",
@@ -862,28 +864,44 @@ export const rejectCustomer = async (req, res) => {
       nextOfKinCount: customer.nextOfKin ? customer.nextOfKin.length : 0,
     });
 
-    // --- Check if customer can be rejected ---
-    if (customer.REC_ST === "Rejected") {
+    // --- Check if customer can be rejected (case-insensitive) ---
+    const currentStatusUpper = customer.REC_ST.toUpperCase();
+    
+    if (currentStatusUpper === "REJECTED") {
       return res.status(400).json({
         success: false,
         message: "Customer is already Rejected",
       });
     }
 
-    if (customer.REC_ST === "Active") {
+    if (currentStatusUpper === "ACTIVE" || currentStatusUpper === "APPROVED") {
       return res.status(400).json({
         success: false,
-        message: "Cannot reject an Active customer",
+        message: "Cannot reject an Active/Approved customer",
+      });
+    }
+
+    // --- Check allowed states for rejection (case-insensitive) ---
+    const allowedRejectionStates = ["pending", "in review", "submitted", "under review", "draft", "p"];
+    const currentStatusLower = customer.REC_ST.toLowerCase();
+    
+    if (!allowedRejectionStates.includes(currentStatusLower)) {
+      return res.status(400).json({
+        success: false,
+        message: `Customer cannot be rejected from current status: ${customer.REC_ST}`,
+        currentStatus: customer.REC_ST,
+        allowedStates: ["PENDING", "IN REVIEW", "SUBMITTED", "UNDER REVIEW", "DRAFT", "P"],
       });
     }
 
     // --- REJECT THE CUSTOMER ---
     console.log("✅ Rejecting customer from", customer.REC_ST, "to Rejected");
 
+    // Use case-insensitive query for atomic update
     const updateResult = await Customer.findOneAndUpdate(
       {
         CUST_ID: paddedCustomerId,
-        REC_ST: { $in: ["Pending", "Submitted", "Under Review"] }, // Only reject from these states
+        REC_ST: { $regex: new RegExp(`^${customer.REC_ST}$`, 'i') }, // Case-insensitive match
       },
       {
         $set: {
@@ -923,7 +941,7 @@ export const rejectCustomer = async (req, res) => {
         {
           ITEM_CLASS_NM: "Customer",
           ITEM_VALUE: paddedCustomerId,
-          REC_ST: { $in: ["Pending", "Submitted"] },
+          REC_ST: { $regex: /pending|submitted|in review/i }, // Case-insensitive regex
         },
         {
           REC_ST: "Completed",

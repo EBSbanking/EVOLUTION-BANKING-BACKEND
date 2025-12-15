@@ -1,1029 +1,571 @@
 // src/services/InterestCalculationService.js
 import { Decimal } from 'decimal.js';
-import Holidays from 'date-holidays';
-import moment from 'moment';
 import mongoose from 'mongoose';
-import RateIndex from '../models/Rate-Index.js';
-import LoanInterestRate from '../models/LoanInterestRate.js';
+
+const { Decimal128 } = mongoose.Types;
 
 export default class InterestCalculationService {
   constructor() {
-    try {
-      this.holidays = new Holidays('NG'); // Nigeria holiday calendar
-    } catch (error) {
-      console.warn('Holiday calendar initialization failed, using fallback:', error.message);
-      this.holidays = null;
-    }
+    console.log('InterestCalculationService initialized');
   }
 
   /**
-   * ==================== CORE INTEREST CALCULATION METHODS ====================
+   * Convert value to Decimal128 for MongoDB storage
    */
-
-  /**
-   * Calculate interest using rate index configuration
-   */
-  async calculateInterest({ rateIndexId, principal, startDate, endDate, precision = 4 }) {
-    try {
-      // Input validation
-      if (!rateIndexId || typeof rateIndexId !== 'number' || rateIndexId <= 0) {
-        throw new Error('rateIndexId must be a valid positive number');
-      }
-      
-      if (!principal || principal <= 0) {
-        throw new Error('Principal must be greater than 0');
-      }
-      
-      if (!startDate || !endDate) {
-        throw new Error('Both startDate and endDate are required');
-      }
-
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        throw new Error('Invalid startDate or endDate format');
-      }
-      
-      if (end <= start) {
-        throw new Error('endDate must be after startDate');
-      }
-
-      // Fetch rate index
-      const rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: rateIndexId });
-      if (!rateIndex) {
-        throw new Error(`Rate Index ${rateIndexId} not found`);
-      }
-
-      const { 
-        INDEX_RATE, 
-        PRECISION = 4, 
-        DAY_COUNT_CONVENTION = 'ACTUAL/365' 
-      } = rateIndex;
-
-      if (!INDEX_RATE || isNaN(INDEX_RATE) || INDEX_RATE < 0) {
-        throw new Error('Invalid INDEX_RATE in rate index');
-      }
-
-      // Calculate days between dates (considering business days)
-      const daysBetween = this.calculateBusinessDaysBetween(start, end);
-      
-      // Calculate year basis based on convention
-      const yearBasis = this.calculateYearBasis(start, end, DAY_COUNT_CONVENTION);
-
-      // Calculate interest
-      const annualRate = new Decimal(INDEX_RATE).div(100);
-      const interest = new Decimal(principal)
-        .times(annualRate)
-        .times(daysBetween)
-        .div(yearBasis)
-        .toDecimalPlaces(PRECISION)
-        .toNumber();
-
-      return {
-        success: true,
-        data: {
-          principal,
-          annualRate: INDEX_RATE,
-          dayCountConvention: DAY_COUNT_CONVENTION,
-          daysBetween,
-          businessDays: daysBetween,
-          startDate: start,
-          endDate: end,
-          interest,
-          totalAmount: principal + interest,
-          calculationDate: new Date()
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateInterest:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+  toDecimal128(value) {
+    if (value === null || value === undefined) return Decimal128.fromString('0');
+    if (value instanceof mongoose.Types.Decimal128) return value;
+    return Decimal128.fromString(value.toString());
   }
 
   /**
-   * ==================== LOAN INTEREST CALCULATION WITH CAPITALIZATION ====================
+   * Convert term to months based on term code
    */
-
-  /**
-   * Calculate loan interest with capitalization support
-   */
-  async calculateLoanInterest({ 
-    loanAccountData, 
-    interestConfig, 
-    calculationDate, 
-    includePenalties = false,
-    precision = 4 
-  }) {
-    try {
-      // Validate inputs
-      if (!loanAccountData || !loanAccountData.PRINCIPAL_AMOUNT) {
-        throw new Error('Loan account data with PRINCIPAL_AMOUNT is required');
-      }
-      
-      if (!interestConfig) {
-        throw new Error('Interest rate configuration is required');
-      }
-
-      const effectiveDate = calculationDate ? new Date(calculationDate) : new Date();
-      const lastCalcDate = loanAccountData.lastInterestCalculationDate || 
-                          loanAccountData.disbursementDate || 
-                          loanAccountData.CREATED_DT;
-      
-      // Calculate days elapsed (business days)
-      const daysElapsed = this.calculateBusinessDaysBetween(new Date(lastCalcDate), effectiveDate);
-      
-      if (daysElapsed <= 0) {
-        throw new Error('No business days have elapsed since last calculation');
-      }
-
-      const principal = parseFloat(loanAccountData.PRINCIPAL_AMOUNT.toString());
-      const annualRate = parseFloat(interestConfig.ABSOLUTE_RATE.toString());
-
-      // Calculate interest based on accrual basis
-      let interestAmount = 0;
-      let calculationMethod = '';
-      
-      switch (interestConfig.ACCRUAL_BASIS_TY?.toUpperCase()) {
-        case 'DAILY':
-          interestAmount = this.calculateDailyInterest(principal, annualRate, daysElapsed, precision);
-          calculationMethod = 'DAILY_ACCRUAL';
-          break;
-          
-        case 'MONTHLY':
-          const monthsElapsed = daysElapsed / 30;
-          interestAmount = this.calculateMonthlyInterest(principal, annualRate, monthsElapsed, precision);
-          calculationMethod = 'MONTHLY_ACCRUAL';
-          break;
-          
-        case 'WEEKLY':
-          const weeksElapsed = daysElapsed / 7;
-          interestAmount = this.calculateWeeklyInterest(principal, annualRate, weeksElapsed, precision);
-          calculationMethod = 'WEEKLY_ACCRUAL';
-          break;
-          
-        default:
-          // Default to daily calculation
-          interestAmount = this.calculateDailyInterest(principal, annualRate, daysElapsed, precision);
-          calculationMethod = 'DAILY_ACCRUAL';
-      }
-
-      // Calculate penalties if enabled
-      let penaltyAmount = 0;
-      if (includePenalties && loanAccountData.overdueDays > 0) {
-        penaltyAmount = this.calculateDailyPenalty(
-          principal,
-          loanAccountData.penaltyRate || interestConfig.PENALTY_RATE || 5,
-          loanAccountData.overdueDays,
-          precision
-        ).penalty;
-      }
-
-      // Check for capitalization
-      let capitalizationApplied = false;
-      let capitalizedAmount = 0;
-      let newPrincipal = principal;
-      
-      if (interestConfig.CAPITALIZE_INTEREST === true) {
-        const shouldCapitalize = await this.shouldApplyCapitalization(interestConfig, daysElapsed);
-        
-        if (shouldCapitalize) {
-          capitalizedAmount = interestAmount;
-          capitalizationApplied = true;
-          newPrincipal = principal + capitalizedAmount;
-          
-          // Reset interest since it's been capitalized
-          interestAmount = 0;
-        }
-      }
-
-      return {
-        success: true,
-        data: {
-          calculationDate: effectiveDate,
-          daysElapsed,
-          interestRate: annualRate,
-          interestAmount,
-          penaltyAmount,
-          capitalizationApplied,
-          capitalizedAmount,
-          calculationMethod,
-          newPrincipal,
-          totalAccrued: interestAmount + penaltyAmount,
-          businessDayCount: daysElapsed
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateLoanInterest:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * ==================== EMI AND REPAYMENT CALCULATIONS ====================
-   */
-
-  /**
-   * EMI calculation using reducing balance method
-   */
-  calculateEMI({ principal, annualRate, termMonths, startDate, precision = 2 }) {
-    try {
-      this._validateEMIParams({ principal, annualRate, termMonths, startDate, precision });
-
-      const monthlyRate = new Decimal(annualRate).div(100).div(12);
-
-      // EMI formula: P * r * (1+r)^n / ((1+r)^n - 1)
-      const onePlusR = Decimal.add(1, monthlyRate);
-      const powTerm = Decimal.pow(onePlusR, termMonths);
-      
-      const numerator = new Decimal(principal)
-        .times(monthlyRate)
-        .times(powTerm);
-
-      const denominator = powTerm.minus(1);
-
-      const emi = numerator.div(denominator)
-        .toDecimalPlaces(precision)
-        .toNumber();
-
-      const installments = this._generateAmortizationSchedule(
-        principal,
-        annualRate,
-        termMonths,
-        emi,
-        startDate,
-        precision
-      );
-
-      const totalInterest = installments.reduce((sum, i) => sum + i.interest, 0);
-
-      return {
-        success: true,
-        data: {
-          monthlyPayment: emi,
-          totalInterest,
-          totalRepayment: new Decimal(emi).times(termMonths).toDecimalPlaces(precision).toNumber(),
-          installments,
-          method: 'reducing_balance',
-          calculationDate: new Date(),
-          effectiveAnnualRate: this.calculateEffectiveAnnualRate(annualRate, 12)
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateEMI:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Flat rate calculation method
-   */
-  calculateFlatRate({ principal, annualRate, termMonths, startDate, precision = 2 }) {
-    try {
-      this._validateEMIParams({ principal, annualRate, termMonths, startDate, precision });
-
-      const monthlyRate = new Decimal(annualRate).div(100).div(12);
-
-      // Flat rate calculation
-      const totalInterest = new Decimal(principal)
-        .times(monthlyRate)
-        .times(termMonths)
-        .toDecimalPlaces(precision)
-        .toNumber();
-
-      const totalRepayment = new Decimal(principal).plus(totalInterest).toDecimalPlaces(precision).toNumber();
-      const monthlyPayment = new Decimal(totalRepayment).div(termMonths).toDecimalPlaces(precision).toNumber();
-
-      const installments = this._generateFlatRateSchedule(
-        principal,
-        annualRate,
-        termMonths,
-        monthlyPayment,
-        startDate,
-        precision
-      );
-
-      return {
-        success: true,
-        data: {
-          monthlyPayment,
-          totalInterest,
-          totalRepayment,
-          installments,
-          method: 'flat_rate',
-          calculationDate: new Date(),
-          effectiveAnnualRate: this.calculateEffectiveAnnualRate(annualRate, 12)
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateFlatRate:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Calculate interest capitalization amount
-   */
-  calculateCapitalizationAmount(principal, accruedInterest, capitalizationRate = null, capitalizationType = 'FULL') {
-    try {
-      if (capitalizationRate) {
-        // If a specific capitalization rate is provided
-        return new Decimal(accruedInterest)
-          .times(capitalizationRate)
-          .div(100)
-          .toDecimalPlaces(4)
-          .toNumber();
-      }
-      
-      // Based on capitalization type
-      switch (capitalizationType?.toUpperCase()) {
-        case 'PARTIAL':
-          // Capitalize only a portion (e.g., 50%)
-          return new Decimal(accruedInterest)
-            .times(0.5)
-            .toDecimalPlaces(4)
-            .toNumber();
-            
-        case 'MINIMUM':
-          // Capitalize minimum of interest or threshold
-          const threshold = new Decimal(principal).times(0.01); // 1% threshold
-          return Decimal.min(accruedInterest, threshold)
-            .toDecimalPlaces(4)
-            .toNumber();
-            
-        case 'FULL':
-        default:
-          // Capitalize all accrued interest
-          return new Decimal(accruedInterest)
-            .toDecimalPlaces(4)
-            .toNumber();
-      }
-    } catch (error) {
-      console.error('Error in calculateCapitalizationAmount:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * ==================== SPECIALIZED INTEREST CALCULATIONS ====================
-   */
-
-  /**
-   * Calculate interest by product type with different frequencies
-   */
-  calculateInterestByProductType({ 
-    principal, 
-    annualRate, 
-    duration, 
-    productType, 
-    precision = 4 
-  }) {
-    try {
-      let effectiveRate, periods, interest;
-      
-      switch(productType?.toUpperCase()) {
-        case 'DAILY':
-          effectiveRate = new Decimal(annualRate).div(365);
-          periods = duration; // duration in days
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        case 'WEEKLY':
-          effectiveRate = new Decimal(annualRate).div(52);
-          periods = duration; // duration in weeks
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        case 'MONTHLY':
-          effectiveRate = new Decimal(annualRate).div(12);
-          periods = duration; // duration in months
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        case 'QUARTERLY':
-          effectiveRate = new Decimal(annualRate).div(4);
-          periods = duration; // duration in quarters
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        case 'BULLET':
-          effectiveRate = new Decimal(annualRate);
-          periods = 1;
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        case 'ANNUAL':
-          effectiveRate = new Decimal(annualRate);
-          periods = duration; // duration in years
-          interest = new Decimal(principal)
-            .times(effectiveRate.div(100))
-            .times(periods)
-            .toDecimalPlaces(precision)
-            .toNumber();
-          break;
-          
-        default:
-          throw new Error(`Unsupported product type: ${productType}`);
-      }
-      
-      return {
-        success: true,
-        data: {
-          principal,
-          annualRate,
-          productType,
-          duration,
-          effectiveRate: effectiveRate.toNumber(),
-          interest,
-          totalAmount: principal + interest,
-          calculationDate: new Date()
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateInterestByProductType:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Calculate daily interest with different day count conventions
-   */
-  calculateDailyInterest(principal, annualRate, days, precision = 4, convention = 'ACTUAL/365') {
-    try {
-      let dailyRate;
-      
-      switch(convention) {
-        case 'ACTUAL/365':
-          dailyRate = new Decimal(annualRate).div(365).div(100);
-          break;
-        case 'ACTUAL/360':
-          dailyRate = new Decimal(annualRate).div(360).div(100);
-          break;
-        case '30/360':
-          dailyRate = new Decimal(annualRate).div(360).div(100);
-          break;
-        default:
-          dailyRate = new Decimal(annualRate).div(365).div(100);
-      }
-      
-      const interest = new Decimal(principal)
-        .times(dailyRate)
-        .times(days)
-        .toDecimalPlaces(precision)
-        .toNumber();
-      
-      return {
-        success: true,
-        data: {
-          principal,
-          annualRate,
-          days,
-          convention,
-          dailyRate: dailyRate.times(100).toNumber(),
-          interest,
-          calculationDate: new Date()
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateDailyInterest:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Calculate monthly interest
-   */
-  calculateMonthlyInterest(principal, annualRate, months, precision = 4) {
-    try {
-      const monthlyRate = new Decimal(annualRate).div(12).div(100);
-      const interest = new Decimal(principal)
-        .times(monthlyRate)
-        .times(months)
-        .toDecimalPlaces(precision)
-        .toNumber();
-      
-      return interest;
-    } catch (error) {
-      console.error('Error in calculateMonthlyInterest:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * Calculate weekly interest
-   */
-  calculateWeeklyInterest(principal, annualRate, weeks, precision = 4) {
-    try {
-      const weeklyRate = new Decimal(annualRate).div(52).div(100);
-      const interest = new Decimal(principal)
-        .times(weeklyRate)
-        .times(weeks)
-        .toDecimalPlaces(precision)
-        .toNumber();
-      
-      return interest;
-    } catch (error) {
-      console.error('Error in calculateWeeklyInterest:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * Calculate daily penalty for overdue payments
-   */
-  calculateDailyPenalty(principal, annualPenaltyRate, overdueDays, precision = 2) {
-    try {
-      if (typeof principal !== 'number' || principal <= 0) {
-        throw new Error('Principal must be a positive number');
-      }
-      if (typeof annualPenaltyRate !== 'number' || annualPenaltyRate < 0) {
-        throw new Error('Annual penalty rate must be a non-negative number');
-      }
-      if (typeof overdueDays !== 'number' || overdueDays < 0) {
-        throw new Error('Overdue days must be a non-negative number');
-      }
-
-      const dailyRate = new Decimal(annualPenaltyRate).div(100).div(365);
-      const penalty = new Decimal(principal)
-        .times(dailyRate)
-        .times(overdueDays)
-        .toDecimalPlaces(precision)
-        .toNumber();
-
-      return {
-        success: true,
-        data: {
-          principal,
-          annualPenaltyRate,
-          overdueDays,
-          dailyPenaltyRate: dailyRate.times(100).toNumber(),
-          penalty,
-          totalAmount: principal + penalty,
-          calculationDate: new Date()
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateDailyPenalty:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * ==================== ADVANCED CALCULATIONS ====================
-   */
-
-  /**
-   * Compare different calculation methods
-   */
-  compareMethods(params) {
-    try {
-      const emiResult = this.calculateEMI(params);
-      const flatResult = this.calculateFlatRate(params);
-
-      if (!emiResult.success || !flatResult.success) {
-        throw new Error('Failed to calculate comparison');
-      }
-
-      return {
-        success: true,
-        data: {
-          emi: emiResult.data,
-          flatRate: flatResult.data,
-          comparison: {
-            monthlyPaymentDifference: flatResult.data.monthlyPayment - emiResult.data.monthlyPayment,
-            totalInterestDifference: flatResult.data.totalInterest - emiResult.data.totalInterest,
-            totalRepaymentDifference: flatResult.data.totalRepayment - emiResult.data.totalRepayment,
-            interestSavings: flatResult.data.totalInterest - emiResult.data.totalInterest,
-            recommendedMethod: emiResult.data.totalInterest < flatResult.data.totalInterest ? 'emi' : 'flat',
-            effectiveRateDifference: this.calculateEffectiveRateDifference(
-              emiResult.data.effectiveAnnualRate,
-              flatResult.data.effectiveAnnualRate
-            )
-          }
-        }
-      };
-    } catch (error) {
-      console.error('Error in compareMethods:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Calculate variable rate interest
-   */
-  calculateVariableInterest(principal, rateSegments, days, precision = 4) {
-    try {
-      let totalInterest = new Decimal(0);
-      let remainingDays = days;
-      
-      for (const segment of rateSegments) {
-        const daysInSegment = Math.min(remainingDays, segment.days);
-        const segmentInterest = this.calculateDailyInterest(
-          principal,
-          segment.rate,
-          daysInSegment,
-          precision + 2
-        );
-        
-        if (!segmentInterest.success) {
-          throw new Error(`Failed to calculate segment interest: ${segmentInterest.error}`);
-        }
-        
-        totalInterest = totalInterest.plus(segmentInterest.data.interest);
-        remainingDays -= daysInSegment;
-        
-        if (remainingDays <= 0) break;
-      }
-      
-      return {
-        success: true,
-        data: {
-          principal,
-          rateSegments,
-          totalDays: days,
-          totalInterest: totalInterest.toDecimalPlaces(precision).toNumber(),
-          totalAmount: principal + totalInterest.toNumber(),
-          calculationDate: new Date()
-        }
-      };
-    } catch (error) {
-      console.error('Error in calculateVariableInterest:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Calculate effective annual rate
-   */
-  calculateEffectiveAnnualRate(nominalRate, compoundingFrequency = 12) {
-    try {
-      const effectiveRate = Decimal.pow(
-        Decimal.add(1, new Decimal(nominalRate).div(100).div(compoundingFrequency)),
-        compoundingFrequency
-      ).minus(1);
-      
-      return effectiveRate.times(100).toDecimalPlaces(4).toNumber();
-    } catch (error) {
-      console.error('Error in calculateEffectiveAnnualRate:', error);
-      return nominalRate;
-    }
-  }
-
-  /**
-   * Calculate effective rate difference
-   */
-  calculateEffectiveRateDifference(rate1, rate2) {
-    try {
-      const diff = new Decimal(rate2).minus(rate1);
-      const percentDiff = diff.div(rate1).times(100);
-      
-      return {
-        absolute: diff.toDecimalPlaces(4).toNumber(),
-        percentage: percentDiff.toDecimalPlaces(2).toNumber()
-      };
-    } catch (error) {
-      console.error('Error in calculateEffectiveRateDifference:', error);
-      return { absolute: 0, percentage: 0 };
-    }
-  }
-
-  /**
-   * ==================== HELPER AND UTILITY METHODS ====================
-   */
-
-  /**
-   * Determine if capitalization should be applied
-   */
-  async shouldApplyCapitalization(interestConfig, daysElapsed) {
-    try {
-      if (!interestConfig.CAPITALIZE_INTEREST) {
-        return false;
-      }
-
-      // Check frequency-based capitalization
-      if (interestConfig.CAPITALIZATION_FREQUENCY) {
-        switch (interestConfig.CAPITALIZATION_FREQUENCY.toUpperCase()) {
-          case 'DAILY':
-            return daysElapsed >= 1;
-          case 'WEEKLY':
-            return daysElapsed >= 7;
-          case 'MONTHLY':
-            return daysElapsed >= 30;
-          case 'QUARTERLY':
-            return daysElapsed >= 90;
-          case 'ANNUAL':
-            return daysElapsed >= 365;
-          default:
-            return daysElapsed >= 30;
-        }
-      }
-
-      // Check threshold-based capitalization
-      if (interestConfig.CAPITALIZATION_THRESHOLD) {
-        // This would require the accrued interest amount
-        return true;
-      }
-
-      return false;
-    } catch (error) {
-      console.error('Error in shouldApplyCapitalization:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Calculate business days between dates (excluding weekends and holidays)
-   */
-  calculateBusinessDaysBetween(start, end) {
-    try {
-      let count = 0;
-      const current = new Date(start);
-      current.setHours(0, 0, 0, 0);
-      const endDate = new Date(end);
-      endDate.setHours(23, 59, 59, 999);
-      
-      while (current <= endDate) {
-        const dayOfWeek = current.getDay();
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-        const isHoliday = this.holidays ? this.holidays.isHoliday(current) : false;
-        
-        if (!isWeekend && !isHoliday) {
-          count++;
-        }
-        
-        current.setDate(current.getDate() + 1);
-      }
-      
-      return count;
-    } catch (error) {
-      console.error('Error in calculateBusinessDaysBetween:', error);
-      // Fallback to simple day count
-      return Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-    }
-  }
-
-  /**
-   * Calculate year basis for different day count conventions
-   */
-  calculateYearBasis(start, end, convention) {
-    switch (convention?.toUpperCase()) {
-      case 'ACTUAL/360':
-        return 360;
-      case 'ACTUAL/365':
-        const startYear = start.getFullYear();
-        const endYear = end.getFullYear();
-        
-        if (startYear === endYear) {
-          return this.isLeapYear(startYear) ? 366 : 365;
-        } else {
-          // For multi-year periods, use 365 (simplified)
-          return 365;
-        }
-      case '30/360':
-        return 360;
-      case 'ACTUAL/ACTUAL':
-        const daysInYear = this.isLeapYear(start.getFullYear()) ? 366 : 365;
-        return daysInYear;
-      default:
-        return 365;
-    }
-  }
-
-  /**
-   * Generate amortization schedule
-   */
-  _generateAmortizationSchedule(principal, annualRate, termMonths, emi, startDate, precision) {
-    const schedule = [];
-    let balance = new Decimal(principal);
-    const monthlyRate = new Decimal(annualRate).div(100).div(12);
-    const baseDate = startDate ? new Date(startDate) : new Date();
-
-    for (let i = 1; i <= termMonths; i++) {
-      const interest = balance.times(monthlyRate).toDecimalPlaces(precision).toNumber();
-      const principalPayment = new Decimal(emi).minus(interest).toDecimalPlaces(precision).toNumber();
-
-      balance = balance.minus(principalPayment);
-
-      const isFinalPayment = i === termMonths;
-      
-      // Handle final payment adjustment
-      let adjustedPrincipal = principalPayment;
-      let adjustedEMI = emi;
-      let adjustedBalance = balance.toNumber();
-
-      if (isFinalPayment) {
-        adjustedPrincipal = balance.plus(principalPayment).toNumber();
-        adjustedBalance = 0;
-        adjustedEMI = adjustedPrincipal + interest;
-      }
-
-      const dueDate = this._calculateDueDate(baseDate, i);
-
-      schedule.push({
-        installmentNo: i,
-        dueDate: dueDate.toISOString().split('T')[0],
-        principal: adjustedPrincipal,
-        interest,
-        totalPayment: adjustedEMI,
-        remainingBalance: adjustedBalance,
-        isFinalInstallment: isFinalPayment,
-        cumulativeInterest: schedule.reduce((sum, item) => sum + item.interest, 0) + interest,
-        cumulativePrincipal: schedule.reduce((sum, item) => sum + item.principal, 0) + adjustedPrincipal
-      });
-
-      if (isFinalPayment) break;
-    }
-
-    return schedule;
-  }
-
-  /**
-   * Generate flat rate schedule
-   */
-  _generateFlatRateSchedule(principal, annualRate, termMonths, monthlyPayment, startDate, precision) {
-    const schedule = [];
-    const monthlyRate = new Decimal(annualRate).div(100).div(12);
-    const baseDate = startDate ? new Date(startDate) : new Date();
-    let balance = new Decimal(principal);
-
-    for (let i = 1; i <= termMonths; i++) {
-      const interest = new Decimal(principal).times(monthlyRate).toDecimalPlaces(precision).toNumber();
-      const principalPayment = new Decimal(monthlyPayment).minus(interest).toDecimalPlaces(precision).toNumber();
-
-      balance = balance.minus(principalPayment);
-
-      const isFinalPayment = i === termMonths;
-      
-      let adjustedPrincipal = principalPayment;
-      let adjustedEMI = monthlyPayment;
-      let adjustedBalance = balance.toNumber();
-
-      if (isFinalPayment) {
-        adjustedPrincipal = balance.plus(principalPayment).toNumber();
-        adjustedBalance = 0;
-        adjustedEMI = adjustedPrincipal + interest;
-      }
-
-      const dueDate = this._calculateDueDate(baseDate, i);
-
-      schedule.push({
-        installmentNo: i,
-        dueDate: dueDate.toISOString().split('T')[0],
-        principal: adjustedPrincipal,
-        interest,
-        totalPayment: adjustedEMI,
-        remainingBalance: adjustedBalance,
-        isFinalInstallment: isFinalPayment,
-        cumulativeInterest: schedule.reduce((sum, item) => sum + item.interest, 0) + interest,
-        cumulativePrincipal: schedule.reduce((sum, item) => sum + item.principal, 0) + adjustedPrincipal
-      });
-
-      if (isFinalPayment) break;
-    }
-
-    return schedule;
-  }
-
-  /**
-   * Calculate due date considering business days
-   */
-  _calculateDueDate(baseDate, monthOffset) {
-    const dueDate = new Date(baseDate);
-    dueDate.setMonth(dueDate.getMonth() + monthOffset);
-
-    // Adjust for weekends and holidays
-    while (this._isNonBusinessDay(dueDate)) {
-      dueDate.setDate(dueDate.getDate() + 1);
-    }
-
-    return dueDate;
-  }
-
-  /**
-   * Check if date is non-business day
-   */
-  _isNonBusinessDay(date) {
-    const dayOfWeek = date.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const isHoliday = this.holidays ? this.holidays.isHoliday(date) : false;
+  convertTermToMonths(termValue, termCode) {
+    const termCodeUpper = String(termCode).toUpperCase();
     
-    return isWeekend || isHoliday;
-  }
-
-  /**
-   * Check if year is leap year
-   */
-  isLeapYear(year) {
-    return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-  }
-
-  /**
-   * Validate EMI calculation parameters
-   */
-  _validateEMIParams(params) {
-    const { principal, annualRate, termMonths, startDate, precision } = params;
-
-    if (typeof principal !== 'number' || principal <= 0) {
-      throw new Error('Principal must be a positive number');
-    }
-    if (typeof annualRate !== 'number' || annualRate < 0) {
-      throw new Error('Annual rate must be a non-negative number');
-    }
-    if (typeof termMonths !== 'number' || termMonths <= 0 || !Number.isInteger(termMonths)) {
-      throw new Error('Term must be a positive integer (months)');
-    }
-    if (startDate && !(startDate instanceof Date) && isNaN(new Date(startDate).getTime())) {
-      throw new Error('Start date must be a valid Date object or string');
-    }
-    if (precision && (typeof precision !== 'number' || precision < 0 || !Number.isInteger(precision))) {
-      throw new Error('Precision must be a non-negative integer');
+    switch (termCodeUpper) {
+      case 'D': return termValue / 30.44; // Days to months
+      case 'W': return termValue / 4.345; // Weeks to months
+      case 'BW': return termValue / 2; // Bi-weeks to months
+      case 'M': return termValue; // Already in months
+      case 'Q': return termValue * 3; // Quarters to months
+      case 'Y': return termValue * 12; // Years to months
+      default: return termValue; // Default to months
     }
   }
 
   /**
-   * Get interest calculation summary
+   * Get total payments based on frequency
    */
-  async getCalculationSummary(loanAccountId) {
+  getTotalPaymentsForFrequency(termValue, termCode, paymentFrequency) {
+    const termMonths = this.convertTermToMonths(termValue, termCode);
+    const frequency = String(paymentFrequency).toUpperCase();
+    
+    let totalPayments;
+    
+    switch (frequency) {
+      case 'DAILY': totalPayments = termMonths * 30.44; break;
+      case 'WEEKLY': totalPayments = termMonths * 4.345; break;
+      case 'BI_WEEKLY': totalPayments = termMonths * 2; break;
+      case 'MONTHLY': totalPayments = termMonths; break;
+      case 'QUARTERLY': totalPayments = termMonths / 3; break;
+      case 'SEMI_ANNUALLY': totalPayments = termMonths / 6; break;
+      case 'ANNUALLY': totalPayments = termMonths / 12; break;
+      default: totalPayments = termMonths; // Default to monthly
+    }
+    
+    return Math.ceil(totalPayments);
+  }
+
+  /**
+   * Calculate next payment date
+   */
+  calculateNextPaymentDate(installmentNumber, paymentFrequency, startDate) {
+    const date = new Date(startDate);
+    const frequency = String(paymentFrequency).toUpperCase();
+    
+    switch (frequency) {
+      case 'DAILY': 
+        date.setDate(date.getDate() + installmentNumber);
+        break;
+      case 'WEEKLY': 
+        date.setDate(date.getDate() + (installmentNumber * 7));
+        break;
+      case 'BI_WEEKLY': 
+        date.setDate(date.getDate() + (installmentNumber * 14));
+        break;
+      case 'MONTHLY': 
+        date.setMonth(date.getMonth() + installmentNumber);
+        break;
+      case 'QUARTERLY': 
+        date.setMonth(date.getMonth() + (installmentNumber * 3));
+        break;
+      case 'SEMI_ANNUALLY': 
+        date.setMonth(date.getMonth() + (installmentNumber * 6));
+        break;
+      case 'ANNUALLY': 
+        date.setFullYear(date.getFullYear() + installmentNumber);
+        break;
+      default: 
+        date.setMonth(date.getMonth() + installmentNumber);
+    }
+    
+    return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+  }
+
+  /**
+   * Calculate FIXED RATE / SIMPLE INTEREST EMI
+   * Used for flat rate loans where interest is calculated on original principal
+   */
+  calculateFixedRateEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate, isRateForTerm = false) {
+    console.log('=== FIXED RATE / SIMPLE INTEREST CALCULATION ===');
+    console.log(`Principal: ₦${principal}, Annual Rate: ${annualRatePercent}%, Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
+    console.log(`Is rate for term duration? ${isRateForTerm}`);
+
+    let totalInterest;
+    
+    if (isRateForTerm || annualRatePercent > 50) {
+      console.log(`Rate ${annualRatePercent}% is for the entire term, not annual`);
+      totalInterest = principal * (annualRatePercent / 100);
+    } else {
+      // For annual rates
+      const timeInYears = this.convertTermToMonths(termValue, termCode) / 12;
+      totalInterest = principal * (annualRatePercent / 100) * timeInYears;
+      console.log(`Rate ${annualRatePercent}% is annual, time in years: ${timeInYears.toFixed(4)}`);
+    }
+    
+    const totalRepayable = principal + totalInterest;
+    const totalPayments = this.getTotalPaymentsForFrequency(termValue, termCode, paymentFrequency);
+    const emi = totalRepayable / totalPayments;
+
+    console.log(`Total Interest: ₦${totalInterest.toFixed(2)}`);
+    console.log(`Total Repayable: ₦${totalRepayable.toFixed(2)}`);
+    console.log(`EMI (per payment): ₦${emi.toFixed(2)}`);
+    console.log(`Total Payments: ${totalPayments}`);
+
+    // Generate schedule
+    const installments = [];
+    let remaining = principal;
+
+    for (let i = 1; i <= totalPayments; i++) {
+      const interestPortion = totalInterest / totalPayments;
+      let principalPortion = emi - interestPortion;
+
+      if (i === totalPayments) {
+        principalPortion = remaining;
+      }
+
+      remaining -= principalPortion;
+      if (remaining < 0.01) remaining = 0;
+
+      const dueDate = this.calculateNextPaymentDate(i, paymentFrequency, startDate);
+
+      installments.push({
+        installmentNo: i,
+        dueDate,
+        principal: Number(principalPortion.toFixed(2)),
+        interest: Number(interestPortion.toFixed(2)),
+        totalPayment: Number((principalPortion + interestPortion).toFixed(2)),
+        remainingBalance: Number(remaining.toFixed(2)),
+        status: 'PENDING'
+      });
+    }
+
+    return {
+      emi: Number(emi.toFixed(2)),
+      totalInterest: Number(totalInterest.toFixed(2)),
+      totalRepayable: Number(totalRepayable.toFixed(2)),
+      totalPayment: Number(totalRepayable.toFixed(2)), // Added for compatibility
+      installments,
+      calculationMethod: 'FIXED_RATE_SIMPLE',
+      interestType: 'SIMPLE',
+      rateUsed: annualRatePercent,
+      isRateForTerm: isRateForTerm || annualRatePercent > 50
+    };
+  }
+
+  /**
+   * Calculate REDUCING BALANCE / COMPOUND EMI
+   * Used for reducing balance loans where interest is calculated on outstanding balance
+   */
+  calculateReducingBalanceEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate) {
+    console.log('=== REDUCING BALANCE / COMPOUND INTEREST CALCULATION ===');
+    console.log(`Principal: ₦${principal}, Annual Rate: ${annualRatePercent}%, Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
+
+    const totalPayments = this.getTotalPaymentsForFrequency(termValue, termCode, paymentFrequency);
+    
+    // Calculate periodic rate based on payment frequency
+    let periodicRate;
+    const frequency = String(paymentFrequency).toUpperCase();
+    
+    switch (frequency) {
+      case 'DAILY': periodicRate = annualRatePercent / 100 / 365; break;
+      case 'WEEKLY': periodicRate = annualRatePercent / 100 / 52; break;
+      case 'BI_WEEKLY': periodicRate = annualRatePercent / 100 / 26; break;
+      case 'MONTHLY': periodicRate = annualRatePercent / 100 / 12; break;
+      case 'QUARTERLY': periodicRate = annualRatePercent / 100 / 4; break;
+      case 'SEMI_ANNUALLY': periodicRate = annualRatePercent / 100 / 2; break;
+      case 'ANNUALLY': periodicRate = annualRatePercent / 100; break;
+      default: periodicRate = annualRatePercent / 100 / 12; // Default to monthly
+    }
+
+    let emi;
+    if (periodicRate === 0) {
+      emi = principal / totalPayments;
+    } else {
+      emi = principal * periodicRate * Math.pow(1 + periodicRate, totalPayments) /
+            (Math.pow(1 + periodicRate, totalPayments) - 1);
+    }
+
+    const totalRepayable = emi * totalPayments;
+    const totalInterest = totalRepayable - principal;
+
+    // Generate schedule
+    const installments = [];
+    let remaining = principal;
+
+    for (let i = 1; i <= totalPayments; i++) {
+      const interestPortion = remaining * periodicRate;
+      let principalPortion = emi - interestPortion;
+
+      if (i === totalPayments) {
+        principalPortion = remaining;
+      }
+
+      remaining -= principalPortion;
+      if (remaining < 0.01) remaining = 0;
+
+      const dueDate = this.calculateNextPaymentDate(i, paymentFrequency, startDate);
+
+      installments.push({
+        installmentNo: i,
+        dueDate,
+        principal: Number(principalPortion.toFixed(2)),
+        interest: Number(interestPortion.toFixed(2)),
+        totalPayment: Number((principalPortion + interestPortion).toFixed(2)),
+        remainingBalance: Number(remaining.toFixed(2)),
+        status: 'PENDING'
+      });
+    }
+
+    return {
+      emi: Number(emi.toFixed(2)),
+      totalInterest: Number(totalInterest.toFixed(2)),
+      totalRepayable: Number(totalRepayable.toFixed(2)),
+      totalPayment: Number(totalRepayable.toFixed(2)), // Added for compatibility
+      installments,
+      calculationMethod: 'REDUCING_BALANCE_COMPOUND',
+      interestType: 'COMPOUND',
+      rateUsed: annualRatePercent
+    };
+  }
+
+  /**
+   * Calculate interest based on product type
+   */
+  calculateInterestByProductType(productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate) {
+    console.log(`=== CALCULATING INTEREST BY PRODUCT TYPE: ${productType} ===`);
+    console.log(`Principal: ₦${principal}, Rate: ${ratePercent}%`);
+    console.log(`Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
+
+    // Map product types to calculation methods
+    const calculationMethodMap = {
+      'FIXED_RATE_LOAN': 'FIXED_RATE',
+      'FLAT_RATE_LOAN': 'FIXED_RATE',
+      'REDUCING_BALANCE_LOAN': 'REDUCING_BALANCE',
+      'EMI_LOAN': 'REDUCING_BALANCE',
+      'SIMPLE_INTEREST_LOAN': 'FIXED_RATE',
+      'COMPOUND_INTEREST_LOAN': 'REDUCING_BALANCE',
+      'MICROFINANCE_LOAN': 'FIXED_RATE',
+      'PERSONAL_LOAN': 'REDUCING_BALANCE',
+      'BUSINESS_LOAN': 'REDUCING_BALANCE',
+      'HOME_LOAN': 'REDUCING_BALANCE',
+      'CAR_LOAN': 'REDUCING_BALANCE',
+      'EDUCATION_LOAN': 'REDUCING_BALANCE',
+    };
+    
+    const calculationMethod = calculationMethodMap[productType] || 'REDUCING_BALANCE';
+    const isFixedTermRate = ['FIXED_RATE_LOAN', 'FLAT_RATE_LOAN', 'SIMPLE_INTEREST_LOAN', 'MICROFINANCE_LOAN'].includes(productType);
+    
+    console.log(`Using calculation method: ${calculationMethod}`);
+    console.log(`Is fixed term rate? ${isFixedTermRate}`);
+    
+    return this.calculateEMIWithChosenMethod(
+      principal,
+      ratePercent,
+      termValue,
+      termCode,
+      paymentFrequency,
+      startDate,
+      calculationMethod,
+      isFixedTermRate
+    );
+  }
+
+  /**
+   * ENHANCED EMI CALCULATION - Main entry point for loan application
+   * Aligns with applyForLoan function requirements
+   */
+  calculateInterestAndEMIEnhanced(principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate) {
+    console.log('=== ENHANCED EMI CALCULATION STARTED ===');
+    console.log(`Principal: ₦${principalAmount}`);
+    console.log(`Interest Rate Config:`, loanInterestRate);
+
+    // Extract rate - prefer ABSOLUTE_RATE, fallback to FIXED_RATE
+    let ratePercent = loanInterestRate.ABSOLUTE_RATE || loanInterestRate.FIXED_RATE || loanInterestRate.DEFAULT_RATE_PER_MONTH || 0;
+    
+    // Log the rate type to understand what we're dealing with
+    console.log(`Rate Type: ${loanInterestRate.RATE_TYPE}, Interest Type: ${loanInterestRate.INTEREST_TYPE}`);
+    console.log(`Extracted Rate: ${ratePercent}%`);
+
+    // Check if rate is monthly or annual
+    const isFixedOrSimple = (loanInterestRate.RATE_TYPE === 'FIXED' || loanInterestRate.INTEREST_TYPE === 'SIMPLE');
+    
+    if (isFixedOrSimple) {
+      console.log('Using FIXED RATE / SIMPLE INTEREST method');
+      
+      // For fixed rate loans, the rate is usually for the entire term
+      // Example: 74.4% for 6 months = total interest over the term
+      return this.calculateFixedRateEMI(
+        principalAmount, 
+        ratePercent, 
+        termValue, 
+        termCode, 
+        paymentFrequency, 
+        startDate, 
+        true
+      );
+    } else {
+      console.log('Using REDUCING BALANCE / COMPOUND method');
+      
+      // For reducing balance, check if rate is monthly
+      const isMonthlyRate = ratePercent < 20; // Rates < 20% are likely monthly
+      if (isMonthlyRate) {
+        console.warn(`⚠️ Rate ${ratePercent}% appears to be monthly - converting to annual: ${ratePercent * 12}%`);
+        ratePercent = ratePercent * 12;
+      }
+      
+      return this.calculateReducingBalanceEMI(
+        principalAmount, 
+        ratePercent, 
+        termValue, 
+        termCode, 
+        paymentFrequency, 
+        startDate
+      );
+    }
+  }
+
+  /**
+   * Calculate EMI with chosen method - For applyForLoan compatibility
+   */
+  calculateEMIWithChosenMethod(principal, ratePercent, termValue, termCode, paymentFrequency, startDate, calculationMethod, isFixedTermRate = false) {
+    console.log('=== CALCULATING EMI WITH CHOSEN METHOD ===');
+    console.log(`Method: ${calculationMethod}, Rate: ${ratePercent}%`);
+    console.log(`Is rate for term duration? ${isFixedTermRate}`);
+    
+    // Force the calculation method based on user choice
+    if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
+      console.log('Using FLAT RATE (Simple Interest) calculation');
+      
+      // For flat rate loans, we need to know if the rate is for term or annual
+      if (isFixedTermRate || ratePercent > 50) {
+        console.log(`Rate ${ratePercent}% is for the entire ${termValue} ${termCode} term`);
+      }
+      
+      return this.calculateFixedRateEMI(
+        principal, 
+        ratePercent, 
+        termValue, 
+        termCode, 
+        paymentFrequency, 
+        startDate, 
+        isFixedTermRate || ratePercent > 50
+      );
+    } else if (calculationMethod === 'REDUCING_BALANCE' || calculationMethod === 'EMI') {
+      console.log('Using REDUCING BALANCE (Compound Interest) calculation');
+      
+      // For reducing balance, assume rate is annual
+      // If rate seems too high for annual (> 50%), it might be for term
+      if (ratePercent > 50) {
+        console.warn(`⚠️ WARNING: Rate ${ratePercent}% seems high for annual rate in reducing balance method`);
+      }
+      
+      return this.calculateReducingBalanceEMI(
+        principal, 
+        ratePercent, 
+        termValue, 
+        termCode, 
+        paymentFrequency, 
+        startDate
+      );
+    } else {
+      console.warn(`Unknown calculation method: ${calculationMethod}, defaulting to REDUCING_BALANCE`);
+      return this.calculateReducingBalanceEMI(
+        principal, 
+        ratePercent, 
+        termValue, 
+        termCode, 
+        paymentFrequency, 
+        startDate
+      );
+    }
+  }
+
+  /**
+   * Calculate total interest for loan
+   */
+  calculateTotalInterest(principal, ratePercent, termValue, termCode, calculationMethod, isFixedTermRate = false) {
+    const termMonths = this.convertTermToMonths(termValue, termCode);
+    
+    if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
+      if (isFixedTermRate || ratePercent > 50) {
+        // Rate is for the entire term
+        return principal * (ratePercent / 100);
+      } else {
+        // Rate is annual
+        const timeInYears = termMonths / 12;
+        return principal * (ratePercent / 100) * timeInYears;
+      }
+    } else {
+      // For reducing balance, we need to calculate the full schedule
+      // For simplicity, use an approximation
+      const annualRate = ratePercent / 100;
+      const timeInYears = termMonths / 12;
+      return principal * annualRate * timeInYears * 0.6; // Approximation factor for reducing balance
+    }
+  }
+
+  /**
+   * Calculate effective annual percentage rate (APR)
+   */
+  calculateAPR(principal, totalInterest, termMonths, fees = 0) {
     try {
-      // This would fetch and summarize all interest calculations for a loan
-      // Implementation depends on your data structure
+      const totalCost = totalInterest + fees;
+      const financeCharge = new Decimal(totalCost).div(principal).times(100);
+      const termInYears = new Decimal(termMonths).div(12);
+      
+      const apr = financeCharge.div(termInYears).toNumber();
+      
       return {
         success: true,
         data: {
-          totalInterestAccrued: 0,
-          totalInterestCapitalized: 0,
-          totalPenalties: 0,
-          currentOutstandingInterest: 0,
-          lastCalculationDate: null
+          principal,
+          totalInterest,
+          fees,
+          totalCost,
+          termMonths,
+          apr: parseFloat(apr.toFixed(2)),
+          calculationDate: new Date()
         }
       };
     } catch (error) {
-      console.error('Error in getCalculationSummary:', error);
+      console.error('Error calculating APR:', error);
       return {
         success: false,
         error: error.message
       };
     }
+  }
+
+  /**
+   * Calculate daily accrued interest
+   */
+  calculateDailyAccruedInterest(principal, annualRate, days) {
+    const dailyRate = annualRate / 100 / 365;
+    return principal * dailyRate * days;
+  }
+
+  /**
+   * Calculate penalty interest for overdue loans
+   */
+  calculatePenaltyInterest(principal, penaltyRate, overdueDays) {
+    const dailyPenaltyRate = penaltyRate / 100 / 365;
+    return principal * dailyPenaltyRate * overdueDays;
+  }
+
+  /**
+   * Generate repayment schedule
+   */
+  generateRepaymentSchedule(emiResult, loanAccountData) {
+    return {
+      LOAN_ACCOUNT_ID: loanAccountData._id,
+      ACCT_NO: loanAccountData.ACCT_NO,
+      CUST_ID: loanAccountData.CUST_ID,
+      START_DATE: loanAccountData.START_DT,
+      MATURITY_DATE: loanAccountData.MATURITY_DT,
+      PRINCIPAL_AMOUNT: loanAccountData.DISBURSEMENT_LIMIT,
+      INTEREST_RATE: loanAccountData.INTEREST_RATE,
+      INTEREST_RATE_TYPE: loanAccountData.INTEREST_RATE_TYPE,
+      INTEREST_TYPE: loanAccountData.INTEREST_TYPE,
+      CALCULATION_METHOD: emiResult.calculationMethod,
+      TERM: loanAccountData.TERM_VALUE,
+      TERM_TYPE: loanAccountData.TERM_CD,
+      paymentFrequency: loanAccountData.PAYMENT_FREQUENCY,
+      EMI_AMOUNT: this.toDecimal128(emiResult.emi),
+      installments: emiResult.installments.map((installment, index) => ({
+        installmentNo: installment.installmentNo || installment.installmentNumber || (index + 1),
+        dueDate: installment.dueDate,
+        principal: this.toDecimal128(installment.principal),
+        interest: this.toDecimal128(installment.interest),
+        totalPayment: this.toDecimal128(installment.totalPayment),
+        remainingBalance: this.toDecimal128(installment.remainingBalance),
+        status: 'PENDING',
+        amountPaid: this.toDecimal128('0.00'),
+        principalPaid: this.toDecimal128('0.00'),
+        interestPaid: this.toDecimal128('0.00'),
+        feesPaid: this.toDecimal128('0.00')
+      })),
+      TOTAL_INTEREST: this.toDecimal128(emiResult.totalInterest),
+      TOTAL_REPAYMENT: this.toDecimal128(emiResult.totalRepayable),
+      STATUS: 'PENDING'
+    };
+  }
+
+  /**
+   * Validate interest rate configuration
+   */
+  validateInterestRateConfig(loanInterestRate) {
+    const errors = [];
+    
+    if (!loanInterestRate) {
+      errors.push('Interest rate configuration is required');
+    }
+    
+    if (loanInterestRate) {
+      if (!loanInterestRate.DEFAULT_RATE_PER_MONTH && 
+          !loanInterestRate.ABSOLUTE_RATE && 
+          !loanInterestRate.FIXED_RATE) {
+        errors.push('No valid rate found in interest rate configuration');
+      }
+      
+      if (loanInterestRate.DEFAULT_RATE_PER_MONTH && 
+          (isNaN(loanInterestRate.DEFAULT_RATE_PER_MONTH) || loanInterestRate.DEFAULT_RATE_PER_MONTH < 0)) {
+        errors.push('Invalid DEFAULT_RATE_PER_MONTH value');
+      }
+      
+      if (loanInterestRate.ABSOLUTE_RATE && 
+          (isNaN(loanInterestRate.ABSOLUTE_RATE) || loanInterestRate.ABSOLUTE_RATE < 0)) {
+        errors.push('Invalid ABSOLUTE_RATE value');
+      }
+      
+      if (loanInterestRate.FIXED_RATE && 
+          (isNaN(loanInterestRate.FIXED_RATE) || loanInterestRate.FIXED_RATE < 0)) {
+        errors.push('Invalid FIXED_RATE value');
+      }
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors: errors.length > 0 ? errors : null
+    };
   }
 }
 
-// Export utility functions for direct use
-export const calculateEMI = (params) => new InterestCalculationService().calculateEMI(params);
-export const calculateFlatRate = (params) => new InterestCalculationService().calculateFlatRate(params);
-export const calculateLoanInterest = (params) => new InterestCalculationService().calculateLoanInterest(params);
-export const calculateInterest = (params) => new InterestCalculationService().calculateInterest(params);
-export const calculateDailyInterest = (principal, annualRate, days, precision, convention) => 
-  new InterestCalculationService().calculateDailyInterest(principal, annualRate, days, precision, convention);
-export const calculateInterestByProductType = (params) => 
-  new InterestCalculationService().calculateInterestByProductType(params);
-export const calculateCapitalizationAmount = (principal, accruedInterest, capitalizationRate, capitalizationType) =>
-  new InterestCalculationService().calculateCapitalizationAmount(principal, accruedInterest, capitalizationRate, capitalizationType);
-export const calculateEffectiveAnnualRate = (nominalRate, compoundingFrequency) =>
-  new InterestCalculationService().calculateEffectiveAnnualRate(nominalRate, compoundingFrequency);
+// Export standalone functions for backward compatibility
+export const calculateInterestAndEMIEnhanced = (principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate) => {
+  const service = new InterestCalculationService();
+  return service.calculateInterestAndEMIEnhanced(principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate);
+};
+
+export const calculateEMIWithChosenMethod = (principal, ratePercent, termValue, termCode, paymentFrequency, startDate, calculationMethod, isFixedTermRate = false) => {
+  const service = new InterestCalculationService();
+  return service.calculateEMIWithChosenMethod(principal, ratePercent, termValue, termCode, paymentFrequency, startDate, calculationMethod, isFixedTermRate);
+};
+
+export const calculateFixedRateEMI = (principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate, isRateForTerm = false) => {
+  const service = new InterestCalculationService();
+  return service.calculateFixedRateEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate, isRateForTerm);
+};
+
+export const calculateReducingBalanceEMI = (principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate) => {
+  const service = new InterestCalculationService();
+  return service.calculateReducingBalanceEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate);
+};
+
+// ADDED: Export the new calculateInterestByProductType function
+export const calculateInterestByProductType = (productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate) => {
+  const service = new InterestCalculationService();
+  return service.calculateInterestByProductType(productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate);
+};

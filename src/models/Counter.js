@@ -1,3 +1,4 @@
+// models/Counter.js
 import mongoose from 'mongoose';
 
 const counterSchema = new mongoose.Schema({
@@ -5,116 +6,59 @@ const counterSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  // Primary sequence field for account generation
   seq: {
     type: Number,
-    default: 100000, // Start from 6-digit for account IDs
+    default: 0,
     min: 0
-  },
-  // Alternative field name for compatibility
-  sequence_value: {
-    type: Number,
-    default: 1000000000, // Start from 10-digit for account numbers
-    min: 0
-  },
-  // Additional fields for enhanced functionality
-  lastGeneratedAt: {
-    type: Date,
-    default: Date.now
   },
   description: {
     type: String,
     required: false
   },
-  metadata: {
-    type: mongoose.Schema.Types.Mixed,
-    default: {}
+  lastGeneratedAt: {
+    type: Date,
+    default: Date.now
   }
 }, {
   timestamps: true
 });
 
-// NO index({ _id: 1 }) - MongoDB auto-creates unique _id index
-
-// Pre-save hook to sync seq and sequence_value
-counterSchema.pre('save', function(next) {
-  // If seq is modified and sequence_value exists, keep them in sync for account types
-  if (this.isModified('seq') && this.sequence_value) {
-    // For account counters, maintain relationship between seq and sequence_value
-    if (this._id.includes('ACCT_') || this._id.includes('Account')) {
-      this.sequence_value = 1000000000 + this.seq;
+// ✅ Critical: Proper static method that your helpers expect
+counterSchema.statics.getNextSequence = async function(name) {
+  const counter = await this.findOneAndUpdate(
+    { _id: name },
+    { $inc: { seq: 1 } },
+    { 
+      new: true, 
+      upsert: true, 
+      setDefaultsOnInsert: true,
+      returnDocument: 'after'
     }
-  }
-  
-  // Update lastGeneratedAt when sequence changes
-  if (this.isModified('seq') || this.isModified('sequence_value')) {
-    this.lastGeneratedAt = new Date();
-  }
-  
-  next();
-});
-
-// Static method for generating account numbers (compatible with your original logic)
-counterSchema.statics.generateAccountNumber = async function (productType) {
-  const counterMap = {
-    'SAVINGS': 'savingsAccount',
-    'LOAN': 'loanAccount',
-    'TERM_DEPOSIT': 'termDepositAccount',
-    'CREDIT_CARD': 'creditCardAccount'
-  };
-
-  const counterId = counterMap[productType] || 'savingsAccount';
-
-  const counter = await this.findOneAndUpdate(
-    { _id: counterId },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
   );
 
-  return {
-    sequence: counter.seq,
-    sequence_value: counter.sequence_value
-  };
-};
+  if (!counter) {
+    throw new Error(`Failed to increment counter: ${name}`);
+  }
 
-// Static method for NUBAN account generation
-counterSchema.statics.generateNUBANSequence = async function (accountType) {
-  const counterMap = {
-    'SAVINGS': 'savingsAccount',
-    'LOAN': 'loanAccount', 
-    'TERM_DEPOSIT': 'termDepositAccount',
-    'CREDIT_CARD': 'creditCardAccount'
-  };
-
-  const counterId = counterMap[accountType] || 'savingsAccount';
-
-  const counter = await this.findOneAndUpdate(
-    { _id: counterId },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
+  counter.lastGeneratedAt = new Date();
+  await counter.save(); // Update timestamp
 
   return counter.seq;
 };
 
-// Method to get current sequence without incrementing
-counterSchema.statics.getCurrentSequence = async function (counterId) {
-  const counter = await this.findOne({ _id: counterId });
+// Optional: Convenience method if you still want it
+counterSchema.statics.getCurrentSequence = async function(name) {
+  const counter = await this.findOne({ _id: name });
   return counter ? counter.seq : null;
 };
 
-// Method to reset sequence
-counterSchema.statics.resetSequence = async function (counterId, newValue = 100000) {
-  const counter = await this.findOneAndUpdate(
-    { _id: counterId },
-    { 
-      seq: newValue,
-      sequence_value: 1000000000 + newValue,
-      lastGeneratedAt: new Date()
-    },
-    { new: true, upsert: true }
+// Optional: Reset method
+counterSchema.statics.resetSequence = async function(name, value = 0) {
+  return await this.findOneAndUpdate(
+    { _id: name },
+    { seq: value, lastGeneratedAt: new Date() },
+    { upsert: true, new: true }
   );
-  return counter;
 };
 
 const Counter = mongoose.models.Counter || mongoose.model('Counter', counterSchema);

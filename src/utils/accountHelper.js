@@ -1,177 +1,222 @@
-// utils/accountHelper.js
+// utils/accountHelper.js - UPDATED & FIXED VERSION
 import retry from "async-retry";
 import Counter from "../models/Counter.js";
-import { v4 as uuidv4 } from 'uuid'; // ✅ FIXED: Import uuidv4 from uuid library
 
-const USE_NUBAN = true;
-const ACCOUNT_ID_LENGTH = 6;
+// Simple 10-digit account number system
+// Format: Prefix (2 digits) + Sequence (8 digits)
+// Prefixes based on your requirements:
+// - Savings: 20xxxxxxx
+// - Loan: 30xxxxxxx
+// - Current: 31xxxxxxx (different from loan)
+// - Deposit: 40xxxxxxx
 
-// Numeric prefixes for NUBAN (first digit)
-const PREFIX_MAP = {
-  SAVINGS: "2",
-  CURRENT: "3", 
-  LOAN: "1",
-  TERM_DEPOSIT: "1",
-  CREDIT_CARD: "1",
+const SIMPLE_ACCOUNT_PREFIXES = {
+  LOAN: "30",         // Loan accounts start with 30 (as you specified)
+  SAVINGS: "20",      // Savings: 20 + 8 digits
+  CURRENT: "31",      // Current: 31 + 8 digits (distinct from loan)
+  DEPOSIT: "40",      // Deposit: 40 + 8 digits
+  TERM_DEPOSIT: "41",
+  FIXED_DEPOSIT: "42",
+  INVESTMENT: "50",
+  CORPORATE: "70"
 };
 
-// Counter name mapping
-const COUNTER_MAP = {
-  SAVINGS: 'savingsAccount',
-  LOAN: 'loanAccount', 
-  TERM_DEPOSIT: 'termDepositAccount',
-  CREDIT_CARD: 'creditCardAccount'
-};
-
-// 🔢 Calculate NUBAN Check Digit (Nigerian banking standard)
-const calculateNUBANCheckDigit = (baseNumber) => {
-  const weights = [3, 7, 3, 3, 7, 3, 3, 7, 3];
-  let sum = 0;
-  
-  for (let i = 0; i < baseNumber.length; i++) {
-    sum += parseInt(baseNumber[i]) * weights[i];
-  }
-  
-  const mod = sum % 10;
-  return mod === 0 ? "0" : String(10 - mod);
-};
-
+// ============================================
+// CORE ACCOUNT NUMBER GENERATOR
+// ============================================
 
 /**
- * Generate loan account number for group loans
+ * Generate a 10-digit account number using Counter.getNextSequence
+ * Relies on Counter model having getNextSequence static method
  */
-export const getLoanAccountNumberForGroupLoan = async () => {
-  try {
-    const identifiers = await generateAccountIdentifiersFromCounter('LOAN');
-    return identifiers.ACCT_NO;
-  } catch (error) {
-    console.error('Error generating loan account number:', error);
-    throw new Error('Failed to generate loan account number');
-  }
-};
-
-/**
- * Generate UUID (re-export for consistency)
- */
-export { uuidv4 };
-
-/**
- * Fallback function for emergency account number generation
- */
-export const generateEmergencyLoanAccountNumber = () => {
-  const timestamp = Date.now().toString().slice(-8);
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return `1${timestamp}${random}`.padStart(10, '0');
-};
-
-
-// 🔢 Generate Account Identifiers (ACCT_NO + ACCT_ID)
-export const generateAccountIdentifiersFromCounter = async (productType) => {
+export const generateAccountNumber = async (accountType = 'SAVINGS') => {
   return retry(
     async () => {
       try {
-        console.log(`🔄 Generating account identifiers for: ${productType}`);
-        
-        // Determine counter name based on product type
-        const counterName = COUNTER_MAP[productType.toUpperCase()] || 'savingsAccount';
-        console.log(`📊 Using counter: ${counterName}`);
-        
-        // Get numeric prefix for NUBAN
-        const numericPrefix = PREFIX_MAP[productType.toUpperCase()] || "2"; // default savings
-        console.log(`🔢 Using NUBAN prefix: ${numericPrefix}`);
-        
-        // Get sequence number using the Counter model method
-        const sequence = await Counter.generateNUBANSequence(productType.toUpperCase());
-        console.log(`🔢 Sequence number: ${sequence}`);
+        console.log(`🔢 Generating ${accountType} account number`);
 
-        let accountNumber;
-        
-        if (USE_NUBAN) {
-          // Generate NUBAN-compliant account number
-          const sequencePadded = String(sequence).padStart(8, "0");
-          const baseNumber = `${numericPrefix}${sequencePadded}`; // 9 digits (prefix + 8 seq)
-          const checkDigit = calculateNUBANCheckDigit(baseNumber);
-          accountNumber = `${baseNumber}${checkDigit}`; // final 10 digits
-        } else {
-          // Simple sequential numbering
-          accountNumber = String(sequence).padStart(10, '0');
-        }
+        const prefix = SIMPLE_ACCOUNT_PREFIXES[accountType.toUpperCase()] || "20";
+        const counterName = `${accountType.toLowerCase()}Account`; // e.g., 'savingsAccount'
 
-        // Validate account number format
-        if (!/^\d{10}$/.test(accountNumber)) {
-          throw new Error(`Generated ACCT_NO ${accountNumber} is not 10 digits`);
-        }
+        // This will increment and return the next sequence
+        const sequence = await Counter.getNextSequence(counterName);
 
-        // Generate account ID (6 digits)
-        const accountId = String(sequence).padStart(ACCOUNT_ID_LENGTH, "0");
+        const sequencePadded = sequence.toString().padStart(8, '0');
+        const accountNumber = `${prefix}${sequencePadded}`;
 
-        console.log(`✅ Generated identifiers - ACCT_NO: ${accountNumber}, ACCT_ID: ${accountId}`);
+        console.log(`✅ Generated ${accountType} account: ${accountNumber} (seq: ${sequence})`);
+        return accountNumber;
 
-        return {
-          ACCT_NO: accountNumber,
-          ACCT_ID: accountId,
-          sequence: sequence
-        };
-        
       } catch (error) {
-        console.error('❌ Error in generateAccountIdentifiersFromCounter:', error);
+        console.error(`❌ Error generating ${accountType} account:`, error.message);
         throw error; // Let retry handle it
       }
     },
-    { 
-      retries: 3,
+    {
+      retries: 5,
+      factor: 2,
+      minTimeout: 500,
+      maxTimeout: 3000,
       onRetry: (error, attempt) => {
-        console.log(`🔄 Retry attempt ${attempt} for account generation:`, error.message);
+        console.warn(`🔄 Retry ${attempt}/5 for ${accountType} account generation: ${error.message}`);
       }
     }
   );
 };
 
-// Fallback function for emergency use
-export const generateFallbackAccountIdentifiers = (productType) => {
-  console.log('🔄 Using fallback account generation');
-  
-  const numericPrefix = PREFIX_MAP[productType.toUpperCase()] || "2";
-  const randomSeq = Math.floor(Math.random() * 900000) + 100000; // 6-digit random
-  
-  let accountNumber;
-  if (USE_NUBAN) {
-    const sequencePadded = String(randomSeq).padStart(8, "0");
-    const baseNumber = `${numericPrefix}${sequencePadded}`;
-    const checkDigit = calculateNUBANCheckDigit(baseNumber);
-    accountNumber = `${baseNumber}${checkDigit}`;
-  } else {
-    accountNumber = String(randomSeq).padStart(10, '0');
-  }
-  
-  const accountId = String(randomSeq).padStart(6, "0");
-  
-  return {
-    ACCT_NO: accountNumber,
-    ACCT_ID: accountId
-  };
+// Convenience functions
+export const generateLoanAccountNumber = async () => generateAccountNumber('LOAN');
+export const generateSavingsAccountNumber = async () => generateAccountNumber('SAVINGS');
+export const generateCurrentAccountNumber = async () => generateAccountNumber('CURRENT');
+export const generateDepositAccountNumber = async () => generateAccountNumber('DEPOSIT');
+
+// ============================================
+// EMERGENCY FALLBACK (if counter fails)
+// ============================================
+
+export const generateEmergencyAccountNumber = (accountType = 'SAVINGS') => {
+  console.warn(`⚠️ Using emergency generator for ${accountType}`);
+
+  const prefix = SIMPLE_ACCOUNT_PREFIXES[accountType.toUpperCase()] || "20";
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+
+  let accountNumber = `${prefix}${timestamp}${random}`;
+  accountNumber = accountNumber.slice(0, 10); // Ensure 10 digits
+
+  console.warn(`⚠️ Emergency account generated: ${accountNumber}`);
+  return accountNumber;
 };
 
-// Initialize counters on startup
+// ============================================
+// UNIQUENESS CHECK (optional extra safety)
+// ============================================
+
+export const isAccountNumberUnique = async (accountNumber, Model) => {
+  try {
+    const existing = await Model.findOne({
+      $or: [
+        { ACCT_NO: accountNumber },
+        { account_number: accountNumber },
+        { accountNumber: accountNumber }
+      ]
+    }).lean();
+
+    return !existing;
+  } catch (error) {
+    console.error('Uniqueness check failed:', error);
+    return false;
+  }
+};
+
+// ============================================
+// GUARANTEED UNIQUE GENERATOR (recommended for production)
+// ============================================
+
+export const generateUniqueAccountNumber = async (Model, accountType = 'SAVINGS', maxAttempts = 10) => {
+  console.log(`🏦 Generating unique ${accountType} account (up to ${maxAttempts} attempts)`);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const accountNumber = await generateAccountNumber(accountType);
+
+      const unique = await isAccountNumberUnique(accountNumber, Model);
+      if (unique) {
+        console.log(`🎉 Unique ${accountType} account generated: ${accountNumber}`);
+        return accountNumber;
+      }
+
+      console.warn(`Attempt ${attempt}: ${accountNumber} already exists, retrying...`);
+    } catch (error) {
+      console.warn(`Attempt ${attempt} failed: ${error.message}`);
+    }
+
+    // Small delay to avoid thundering herd
+    if (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
+  // Final fallback
+  const emergency = generateEmergencyAccountNumber(accountType);
+  console.warn(`⚠️ All attempts failed, using emergency: ${emergency}`);
+  return emergency;
+};
+
+// Specific wrappers
+export const generateUniqueSavingsAccountNumber = async (Model) => 
+  generateUniqueAccountNumber(Model, 'SAVINGS');
+
+export const generateUniqueLoanAccountNumber = async (Model) => 
+  generateUniqueAccountNumber(Model, 'LOAN');
+
+export const generateUniqueCurrentAccountNumber = async (Model) => 
+  generateUniqueAccountNumber(Model, 'CURRENT');
+
+// ============================================
+// COUNTER INITIALIZATION (run once at startup)
+// ============================================
+
 export const initializeCounters = async () => {
   try {
     const counters = [
-      { _id: 'savingsAccount', description: 'Savings account sequence' },
-      { _id: 'loanAccount', description: 'Loan account sequence' },
-      { _id: 'termDepositAccount', description: 'Term deposit account sequence' },
-      { _id: 'creditCardAccount', description: 'Credit card account sequence' }
+      { _id: 'savingsAccount', seq: 80 },        // Continues from your existing 2000000080
+      { _id: 'loanAccount', seq: 10000000 },
+      { _id: 'currentAccount', seq: 10000000 },
+      { _id: 'depositAccount', seq: 10000000 }
     ];
 
-    for (const counterData of counters) {
+    for (const { _id, seq } of counters) {
       await Counter.findOneAndUpdate(
-        { _id: counterData._id },
-        { ...counterData },
+        { _id },
+        { $setOnInsert: { seq } },
         { upsert: true }
       );
     }
-    
-    console.log('✅ Counters initialized successfully');
+
+    console.log('✅ Account counters initialized/verified');
   } catch (error) {
-    console.error('❌ Error initializing counters:', error);
+    console.error('❌ Failed to initialize counters:', error);
+    throw error;
   }
+};
+
+// ============================================
+// UTILITIES
+// ============================================
+
+export const getAccountTypeFromNumber = (accountNumber) => {
+  if (!accountNumber || accountNumber.length < 2) return 'UNKNOWN';
+
+  const prefix = accountNumber.toString().slice(0, 2);
+  for (const [type, p] of Object.entries(SIMPLE_ACCOUNT_PREFIXES)) {
+    if (p === prefix) return type;
+  }
+  return 'UNKNOWN';
+};
+
+export const validateAccountNumber = (accountNumber) => {
+  const str = accountNumber.toString();
+  if (str.length !== 10) return false;
+  if (!/^\d{10}$/.test(str)) return false;
+
+  const prefix = str.slice(0, 2);
+  return Object.values(SIMPLE_ACCOUNT_PREFIXES).includes(prefix);
+};
+
+// Legacy compatibility (if still needed elsewhere)
+export const generateAccountIdentifiersFromCounter = async (productType = 'SAVINGS') => {
+  let accountType = 'SAVINGS';
+  const upper = productType.toUpperCase();
+
+  if (upper.includes('LOAN')) accountType = 'LOAN';
+  else if (upper.includes('CURRENT')) accountType = 'CURRENT';
+  else if (upper.includes('DEPOSIT')) accountType = 'DEPOSIT';
+
+  const ACCT_NO = await generateAccountNumber(accountType);
+  return {
+    ACCT_NO,
+    ACCT_ID: ACCT_NO.slice(-6),
+    sequence: parseInt(ACCT_NO.slice(-8), 10)
+  };
 };

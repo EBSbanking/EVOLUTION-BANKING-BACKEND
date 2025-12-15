@@ -303,6 +303,9 @@ import vaultTransactionRoutes from './routes/VaultTransactions.js';
 import loanCalculatorRoutes from './routes/loanCalculatorRoutes.js';
 import PortfolioRoutes from './routes/PorfolioRoutes.js';
 import RateIndexRoutes from './routes/RateIndexRoutes.js';
+import customerTransactionRoutes from './routes/customerTransactionRoutes.js';
+import DisbursementReportRoutes from './routes/DisbursementReportRoutes.js'
+
 
 // Mount API Routes
 app.use('/api/users', userRoutes);
@@ -442,6 +445,11 @@ app.use('/api/vault/transactions', vaultTransactionRoutes);
 app.use('/api/calculator', loanCalculatorRoutes);
 app.use('/api/portfolio', PortfolioRoutes);
 app.use('/api/index-rates', RateIndexRoutes);
+
+app.use("/api/customer-transactions", customerTransactionRoutes);
+app.use("/api/Loan-disbursement-report", DisbursementReportRoutes);
+
+
 
 
 // Static Files (Production)

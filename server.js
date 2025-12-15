@@ -1,82 +1,27 @@
-// server.js - Fixed version with proper system status handling, date formatting, EOD management, and permission sync
+// server.js - FULLY FIXED VERSION
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import connectDB from './config/db.js';
 import logger from './src/utils/logger.js';
-import initializeApplication from './src/utils/initializeApplication.js';
 import { initializeSystemDates } from './src/controllers/OsController.js';
 import os from 'os';
+import fs from 'fs';
 
-// Error suppression
-const originalError = console.error;
-console.error = function(...args) {
-  if (args[0] && typeof args[0] === 'string' && args[0].includes('auditLogger.info(...).catch is not a function')) {
-    console.log('⚠️ Audit logger compatibility issue - continuing startup...');
-    return;
-  }
-  originalError.apply(console, args);
-};
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 // Global variable to store system user ID
 let SYSTEM_USER_ID = null;
 
-// Role mapping for system user based on your ROLE_MAPPING
+// Role mapping for system user
 const ROLE_MAPPING = {
-  // System-specific role mapping
-  'SYSTEM_ADMIN': 24, // EOD Operator role for system user
-  'ADMIN': 1,        // Administrator
-  'STAFF': 29,       // Teller (default staff)
-  'USER': 28,        // Customer Service Officer (default user)
-  
-  // Your specific roles
   'EOD_OPERATOR': 24,
   'ADMINISTRATOR': 1,
-  'HEAD_BANKING_SERVICES': 2,
-  'LOAN_PROCESSING_OFFICER': 3,
-  'SENIOR_FINANCIAL_ACCOUNTANT': 4,
-  'INTERNAL_CONTROL_OFFICER': 5,
-  'INTERNAL_CONTROL_MANAGER': 6,
-  'HEAD_OF_CREDIT': 7,
-  'INTERNAL_AUDIT_MANAGER': 8,
-  'HEAD_HUMAN_RESOURCES': 9,
-  'HUMAN_RESOURCE_OFFICER': 10,
-  'IT_MANAGER': 11,
-  'FINANCIAL_ACCOUNTANT': 12,
-  'FINANCIAL_ACCOUNTANT_MANAGER': 13,
-  'CHIEF_FINANCIAL_OFFICER': 14,
-  'CHIEF_EXECUTIVE_OFFICER': 15,
-  'TREASURER': 16,
-  'LOAN_PROCESSING_SUPERVISOR': 17,
-  'SENIOR_FINANCIAL_ACCOUNTANT': 18,
-  'BRANCH_MANAGER': 19,
-  'BRANCH_OPERATION_SUPERVISOR': 20,
-  'CHIEF_OPERATION_OFFICER': 21,
-  'MARKETING_MANAGER': 22,
-  'PAYMENT_AND_RECONCILIATION_NGN': 23,
-  'RECOVERY_OFFICER': 25,
-  'RELATIONSHIP_DEVELOPMENT_OFFICER': 26,
-  'CUSTOMER_RELATIONSHIP_OFFICER': 27,
-  'CUSTOMER_SERVICE_OFFICER': 28,
   'TELLER': 29,
-  'HEAD_TELLER': 30,
-  'CUSTOMER_RELATIONSHIP_SUPERVISOR': 31,
-  'RECOVERY_TEAM_LEAD': 32,
-  'BUSINESS_ANALYST': 33,
-  'CREDIT_RISK_ANALYST': 34,
-  'HEAD_OF_DIGITAL_BANKING': 35,
-  'AGENCY_BANKING_OFFICER': 36,
-  'CHANNEL_MANAGER': 37,
-  'VAULT_MANAGER': 38
+  'CUSTOMER_SERVICE_OFFICER': 28
 };
 
 // Reverse mapping for display
@@ -112,41 +57,69 @@ function getNetworkIP() {
   return 'localhost';
 }
 
-// Helper function to format date for clean display
-const formatDateForDisplay = (date) => {
-  if (!date) return null;
-  
-  if (date instanceof Date) {
-    return date.toISOString().split('T')[0]; // YYYY-MM-DD
-  } else if (typeof date === 'string') {
-    if (date.includes('T')) {
-      return date.split('T')[0];
+// Initialize counters safely (standalone version)
+const initializeCounters = async () => {
+  try {
+    console.log('🔄 Initializing account counters...');
+    
+    // Ensure MongoDB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⚠️ MongoDB not connected, skipping counter initialization');
+      return;
     }
-    else if (date.includes('GMT')) {
+    
+    const db = mongoose.connection.db;
+    
+    // Check if counters collection exists
+    const collections = await db.listCollections().toArray();
+    const hasCountersCollection = collections.some(col => col.name === 'counters');
+    
+    if (!hasCountersCollection) {
+      console.log('📁 Creating counters collection...');
+      await db.createCollection('counters');
+    }
+    
+    // Default counters to initialize
+    const defaultCounters = [
+      { _id: 'accountNumber', sequence_value: 1000000000 },
+      { _id: 'customerId', sequence_value: 1000 },
+      { _id: 'transactionId', sequence_value: 1000000 },
+      { _id: 'loanAccount', sequence_value: 9000000000 },
+      { _id: 'savingsAccount', sequence_value: 8000000000 },
+      { _id: 'currentAccount', sequence_value: 7000000000 },
+      { _id: 'fixedDeposit', sequence_value: 6000000000 }
+    ];
+    
+    let initializedCount = 0;
+    
+    for (const counter of defaultCounters) {
       try {
-        const parsedDate = new Date(date);
-        if (!isNaN(parsedDate.getTime())) {
-          return parsedDate.toISOString().split('T')[0];
+        const existing = await db.collection('counters').findOne({ _id: counter._id });
+        
+        if (!existing) {
+          await db.collection('counters').insertOne({
+            _id: counter._id,
+            sequence_value: counter.sequence_value,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+          console.log(`   ✅ Created counter: ${counter._id} = ${counter.sequence_value}`);
+          initializedCount++;
+        } else {
+          console.log(`   📊 Counter exists: ${counter._id} = ${existing.sequence_value}`);
         }
-      } catch (e) {
-        // Keep original if parsing fails
+      } catch (counterError) {
+        console.log(`   ⚠️ Error with counter ${counter._id}:`, counterError.message);
       }
     }
-    return date;
+    
+    console.log(`✅ Counters initialized: ${initializedCount} new counters created`);
+    return initializedCount;
+    
+  } catch (error) {
+    console.log('⚠️ Counter initialization failed:', error.message);
+    // Don't throw, just log - this is non-critical
   }
-  return date;
-};
-
-// Get role number from role name
-const getRoleNumber = (roleName) => {
-  const roleNum = ROLE_MAPPING[roleName] || 28; // Default to Customer Service Officer (28)
-  console.log(`📊 Role mapping: "${roleName}" -> ${roleNum} (${ROLE_REVERSE_MAPPING[roleNum] || 'Unknown'})`);
-  return roleNum;
-};
-
-// Get role name from role number
-const getRoleName = (roleNumber) => {
-  return ROLE_REVERSE_MAPPING[roleNumber] || `Role ${roleNumber}`;
 };
 
 // DIRECT MongoDB cleanup - bypasses Mongoose completely
@@ -154,148 +127,138 @@ const cleanupInvalidDataDirect = async () => {
   try {
     console.log('🧹 DIRECT CLEANUP: Fixing invalid data using raw MongoDB operations...');
     
+    // Check connection first
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⚠️ MongoDB not connected, skipping cleanup');
+      return 0;
+    }
+    
     const db = mongoose.connection.db;
     let totalFixed = 0;
     
     // 1. Clean up User collection - Convert string roles to numbers
     console.log('   🔧 Fixing User collection...');
     
-    // Find users with string roles
-    const usersWithStringRoles = await db.collection('users').find({
-      $or: [
-        { "primary_role": { $type: "string" } },
-        { "roles": { $elemMatch: { $type: "string" } } }
-      ]
-    }).toArray();
-    
-    console.log(`   📊 Found ${usersWithStringRoles.length} users with string roles`);
-    
-    for (const user of usersWithStringRoles) {
-      const updateDoc = {};
-      let needsUpdate = false;
+    try {
+      // Find users with string roles
+      const usersWithStringRoles = await db.collection('users').find({
+        $or: [
+          { "primary_role": { $type: "string" } },
+          { "roles": { $elemMatch: { $type: "string" } } }
+        ]
+      }).toArray();
       
-      // Fix primary_role if it's a string
-      if (typeof user.primary_role === 'string') {
-        const oldValue = user.primary_role;
-        let newValue;
+      console.log(`   📊 Found ${usersWithStringRoles.length} users with string roles`);
+      
+      for (const user of usersWithStringRoles) {
+        const updateDoc = {};
+        let needsUpdate = false;
         
-        // Map common string values to numbers
-        switch (user.primary_role.toUpperCase()) {
-          case 'ADMIN':
-          case 'ADMINISTRATOR':
-            newValue = 1;
-            break;
-          case 'SYSTEM':
-          case 'SYSTEM_ADMIN':
-          case 'EOD_OPERATOR':
-            newValue = 24;
-            break;
-          case 'TELLER':
-            newValue = 29;
-            break;
-          case 'STAFF':
-            newValue = 28;
-            break;
-          default:
-            // Try to parse as number
-            newValue = parseInt(user.primary_role);
-            if (isNaN(newValue)) {
-              newValue = 28; // Default to Customer Service Officer
-            }
+        // Fix primary_role if it's a string
+        if (typeof user.primary_role === 'string') {
+          const oldValue = user.primary_role;
+          let newValue;
+          
+          // Map common string values to numbers
+          switch (user.primary_role.toUpperCase()) {
+            case 'ADMIN':
+            case 'ADMINISTRATOR':
+              newValue = 1;
+              break;
+            case 'SYSTEM':
+            case 'SYSTEM_ADMIN':
+            case 'EOD_OPERATOR':
+              newValue = 24;
+              break;
+            case 'TELLER':
+              newValue = 29;
+              break;
+            case 'STAFF':
+              newValue = 28;
+              break;
+            default:
+              // Try to parse as number
+              newValue = parseInt(user.primary_role);
+              if (isNaN(newValue)) {
+                newValue = 28; // Default to Customer Service Officer
+              }
+          }
+          
+          updateDoc.primary_role = newValue;
+          needsUpdate = true;
+          console.log(`     🔄 User ${user.username || user._id}: primary_role "${oldValue}" -> ${newValue}`);
         }
         
-        updateDoc.primary_role = newValue;
-        needsUpdate = true;
-        console.log(`     🔄 User ${user.username || user._id}: primary_role "${oldValue}" -> ${newValue}`);
-      }
-      
-      // Fix roles array if it contains strings
-      if (user.roles && Array.isArray(user.roles) && user.roles.some(role => typeof role === 'string')) {
-        const fixedRoles = user.roles.map(role => {
-          if (typeof role === 'string') {
-            // Map common string values to numbers
-            switch (role.toUpperCase()) {
-              case 'ADMIN':
-              case 'ADMINISTRATOR':
-                return 1;
-              case 'SYSTEM':
-              case 'SYSTEM_ADMIN':
-              case 'EOD_OPERATOR':
-                return 24;
-              case 'TELLER':
-                return 29;
-              case 'STAFF':
-                return 28;
-              default:
-                const num = parseInt(role);
-                return isNaN(num) ? 28 : num;
+        // Fix roles array if it contains strings
+        if (user.roles && Array.isArray(user.roles) && user.roles.some(role => typeof role === 'string')) {
+          const fixedRoles = user.roles.map(role => {
+            if (typeof role === 'string') {
+              // Map common string values to numbers
+              switch (role.toUpperCase()) {
+                case 'ADMIN':
+                case 'ADMINISTRATOR':
+                  return 1;
+                case 'SYSTEM':
+                case 'SYSTEM_ADMIN':
+                case 'EOD_OPERATOR':
+                  return 24;
+                case 'TELLER':
+                  return 29;
+                case 'STAFF':
+                  return 28;
+                default:
+                  const num = parseInt(role);
+                  return isNaN(num) ? 28 : num;
+              }
             }
-          }
-          return role;
-        });
+            return role;
+          });
+          
+          updateDoc.roles = fixedRoles;
+          needsUpdate = true;
+          console.log(`     🔄 User ${user.username || user._id}: roles ${JSON.stringify(user.roles)} -> ${JSON.stringify(fixedRoles)}`);
+        }
         
-        updateDoc.roles = fixedRoles;
-        needsUpdate = true;
-        console.log(`     🔄 User ${user.username || user._id}: roles ${JSON.stringify(user.roles)} -> ${JSON.stringify(fixedRoles)}`);
+        if (needsUpdate) {
+          await db.collection('users').updateOne(
+            { _id: user._id },
+            { $set: updateDoc }
+          );
+          totalFixed++;
+        }
       }
-      
-      if (needsUpdate) {
-        await db.collection('users').updateOne(
-          { _id: user._id },
-          { $set: updateDoc }
-        );
-        totalFixed++;
-      }
+    } catch (userError) {
+      console.log('   ⚠️ User cleanup error:', userError.message);
     }
     
-    // 2. Clean up SystemDate collection - Remove string user IDs
+    // 2. Clean up SystemDate collection
     console.log('   🔧 Fixing SystemDate collection...');
     
-    const systemDatesWithStringIds = await db.collection('systemdates').find({
-      $or: [
-        { "lastEODProcessedBy": { $type: "string" } },
-        { "eodHistory.processedBy": { $type: "string" } }
-      ]
-    }).toArray();
-    
-    console.log(`   📊 Found ${systemDatesWithStringIds.length} SystemDate documents with string user IDs`);
-    
-    for (const systemDate of systemDatesWithStringIds) {
-      const updateDoc = {};
-      let needsUpdate = false;
+    try {
+      const systemDates = await db.collection('systemdates').find({}).toArray();
+      console.log(`   📊 Found ${systemDates.length} SystemDate documents`);
       
-      // Fix lastEODProcessedBy if it's a string
-      if (typeof systemDate.lastEODProcessedBy === 'string') {
-        updateDoc.lastEODProcessedBy = null;
-        needsUpdate = true;
-        console.log(`     🔄 SystemDate ${systemDate._id}: lastEODProcessedBy "${systemDate.lastEODProcessedBy}" -> null`);
-      }
-      
-      // Fix eodHistory processedBy if they're strings
-      if (systemDate.eodHistory && Array.isArray(systemDate.eodHistory)) {
-        const fixedHistory = systemDate.eodHistory.map(history => {
-          if (typeof history.processedBy === 'string') {
-            console.log(`     🔄 SystemDate ${systemDate._id}: eodHistory.processedBy "${history.processedBy}" -> null`);
-            return { ...history, processedBy: null };
-          }
-          return history;
-        });
+      for (const systemDate of systemDates) {
+        const updateDoc = {};
+        let needsUpdate = false;
         
-        if (fixedHistory.some((history, index) => 
-          JSON.stringify(history) !== JSON.stringify(systemDate.eodHistory[index])
-        )) {
-          updateDoc.eodHistory = fixedHistory;
+        // Fix lastEODProcessedBy if it's a string
+        if (typeof systemDate.lastEODProcessedBy === 'string') {
+          updateDoc.lastEODProcessedBy = null;
           needsUpdate = true;
+          console.log(`     🔄 SystemDate ${systemDate._id}: lastEODProcessedBy "${systemDate.lastEODProcessedBy}" -> null`);
+        }
+        
+        if (needsUpdate) {
+          await db.collection('systemdates').updateOne(
+            { _id: systemDate._id },
+            { $set: updateDoc }
+          );
+          totalFixed++;
         }
       }
-      
-      if (needsUpdate) {
-        await db.collection('systemdates').updateOne(
-          { _id: systemDate._id },
-          { $set: updateDoc }
-        );
-        totalFixed++;
-      }
+    } catch (systemDateError) {
+      console.log('   ⚠️ SystemDate cleanup error:', systemDateError.message);
     }
     
     console.log(`✅ DIRECT CLEANUP: Fixed ${totalFixed} documents`);
@@ -307,14 +270,19 @@ const cleanupInvalidDataDirect = async () => {
   }
 };
 
-// Get System User ID Helper - WITH ERROR HANDLING
+// Get System User ID Helper
 const getSystemUserId = async () => {
   if (SYSTEM_USER_ID) {
     return SYSTEM_USER_ID;
   }
   
   try {
-    // Use direct MongoDB query to bypass Mongoose validation
+    // Use direct MongoDB query
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⚠️ MongoDB not connected for system user lookup');
+      return null;
+    }
+    
     const db = mongoose.connection.db;
     const systemUser = await db.collection('users').findOne({ 
       $or: [
@@ -325,84 +293,160 @@ const getSystemUserId = async () => {
     
     if (systemUser && systemUser._id) {
       SYSTEM_USER_ID = systemUser._id.toString();
-      console.log(`📋 Retrieved System User ID via direct query: ${SYSTEM_USER_ID}`);
+      console.log(`📋 Retrieved System User ID: ${SYSTEM_USER_ID}`);
       return SYSTEM_USER_ID;
     }
     
-    console.log('⚠️ System user not found, creating new ObjectId for fallback');
-    return new mongoose.Types.ObjectId().toString();
+    console.log('⚠️ System user not found');
+    return null;
   } catch (error) {
     console.log('⚠️ Error getting system user ID:', error.message);
-    return new mongoose.Types.ObjectId().toString();
+    return null;
   }
 };
 
-// Helper to get user ID from username or ID - WITH DIRECT MONGODB QUERY
-const getUserId = async (userIdentifier) => {
+// Create System User
+const createSystemUserIfNotExists = async () => {
   try {
-    // If it's already an ObjectId or looks like one, return it
-    if (mongoose.Types.ObjectId.isValid(userIdentifier)) {
-      return userIdentifier;
+    console.log('🔄 Checking/Creating system user...');
+    
+    // Check connection first
+    if (mongoose.connection.readyState !== 1) {
+      console.log('⚠️ MongoDB not connected, skipping system user creation');
+      return null;
     }
     
-    // If it's 'system' or 'admin', get the system user ID
-    if (userIdentifier === 'system' || userIdentifier === 'admin') {
-      return await getSystemUserId();
-    }
+    const db = mongoose.connection.db;
     
-    // Try direct MongoDB query to bypass Mongoose validation
-    try {
-      const db = mongoose.connection.db;
-      const user = await db.collection('users').findOne({ 
-        $or: [
-          { username: userIdentifier },
-          { email: userIdentifier },
-          { user_name: userIdentifier }
-        ]
-      });
+    // Check if system user exists
+    const existingSystemUser = await db.collection('users').findOne({ 
+      $or: [
+        { username: 'system' },
+        { user_name: 'system' }
+      ]
+    });
+    
+    if (existingSystemUser) {
+      console.log('✅ System user already exists');
+      SYSTEM_USER_ID = existingSystemUser._id.toString();
       
-      if (user && user._id) {
-        return user._id.toString();
+      // Fix role if needed
+      let needsUpdate = false;
+      const updateDoc = {};
+      
+      if (typeof existingSystemUser.primary_role === 'string') {
+        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
+        needsUpdate = true;
+      } else if (existingSystemUser.primary_role !== ROLE_MAPPING.EOD_OPERATOR) {
+        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
+        needsUpdate = true;
       }
-    } catch (userError) {
-      console.log(`⚠️ Direct user lookup error for "${userIdentifier}":`, userError.message);
+      
+      if (needsUpdate) {
+        await db.collection('users').updateOne(
+          { _id: existingSystemUser._id },
+          { $set: updateDoc }
+        );
+        console.log(`✅ Updated system user role`);
+      }
+      
+      return existingSystemUser;
     }
     
-    // If not found, fall back to system user
-    console.log(`⚠️ User "${userIdentifier}" not found, using system user`);
-    return await getSystemUserId();
-  } catch (error) {
-    console.log(`⚠️ Error getting user ID for "${userIdentifier}":`, error.message);
-    return await getSystemUserId(); // Fallback to system user
-  }
-};
-
-// System status with fallback
-let systemStatus = { 
-  currentBusinessDate: null,
-  initialized: false 
-};
-
-// Safe system status getter
-const getSystemStatus = () => {
-  if (!systemStatus || typeof systemStatus !== 'object') {
-    return {
-      currentBusinessDate: null,
-      initialized: false,
-      status: 'Not Initialized'
+    // Create new system user
+    console.log('🔄 Creating new system user...');
+    
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(
+      process.env.SYSTEM_USER_PASSWORD || 'System@123',
+      salt
+    );
+    
+    const systemUser = {
+      username: 'system',
+      user_name: 'system',
+      primary_role: ROLE_MAPPING.EOD_OPERATOR,
+      roles: [ROLE_MAPPING.EOD_OPERATOR, ROLE_MAPPING.ADMINISTRATOR],
+      email: 'system@bank.com',
+      password: hashedPassword,
+      first_name: 'System',
+      last_name: 'Administrator',
+      status: 'Active',
+      primary_business_role: 'EOD Operator',
+      branchCode: '000',
+      department: 'IT',
+      phoneNumber: '000-000-0000',
+      address: 'System Address',
+      firstLogin: false,
+      enable_multi_session: true,
+      is_supervisor: true,
+      is_main_BU: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
+    
+    const result = await db.collection('users').insertOne(systemUser);
+    SYSTEM_USER_ID = result.insertedId.toString();
+    console.log(`✅ System user created with ID: ${SYSTEM_USER_ID}`);
+    
+    return { ...systemUser, _id: result.insertedId };
+    
+  } catch (error) {
+    console.log('⚠️ System user creation failed:', error.message);
+    return null;
   }
-  
-  const displayDate = formatDateForDisplay(systemStatus.currentBusinessDate);
-  
-  return {
-    currentBusinessDate: displayDate,
-    previousBusinessDate: formatDateForDisplay(systemStatus.previousBusinessDate),
-    nextBusinessDate: formatDateForDisplay(systemStatus.nextBusinessDate),
-    eodStatus: systemStatus.eodStatus || 'IDLE',
-    initialized: systemStatus.initialized,
-    status: systemStatus.currentBusinessDate ? 'Initialized' : 'Not Initialized'
-  };
+};
+
+// Initialize application safely
+const safeInitializeApplication = async () => {
+  try {
+    console.log('🛡️ Starting SAFE application initialization...');
+
+    // Wait for MongoDB connection
+    const waitForMongoConnection = async (maxWaitTime = 20000) => {
+      const startTime = Date.now();
+      
+      return new Promise((resolve) => {
+        const checkConnection = () => {
+          const currentTime = Date.now();
+          const elapsedTime = currentTime - startTime;
+
+          if (mongoose.connection.readyState === 1) {
+            console.log('✅ MongoDB connection ready');
+            resolve(true);
+          } else if (elapsedTime >= maxWaitTime) {
+            console.log('⚠️ MongoDB connection timeout');
+            resolve(false);
+          } else {
+            setTimeout(checkConnection, 1000);
+          }
+        };
+        
+        checkConnection();
+      });
+    };
+
+    const isConnected = await waitForMongoConnection(20000);
+    
+    if (!isConnected) {
+      console.log('⚠️ MongoDB not connected, skipping application initialization');
+      return;
+    }
+
+    console.log('✅ Database ready, initializing application...');
+    
+    // Import and run initializeApplication
+    try {
+      const { default: initializeApplication } = await import('./src/utils/initializeApplication.js');
+      await initializeApplication();
+      logger.info('✅ Application initialization completed successfully');
+    } catch (initError) {
+      console.log('⚠️ Application initialization failed:', initError.message);
+    }
+    
+  } catch (error) {
+    console.error('❌ Application initialization failed:', error.message);
+  }
 };
 
 // ============================================
@@ -438,7 +482,7 @@ app.use(
 );
 
 // ============================================
-// API ENDPOINTS
+// BASIC API ENDPOINTS
 // ============================================
 
 app.get('/api', (req, res) => {
@@ -457,22 +501,28 @@ app.get('/api/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    database: getDbStateText(mongoose.connection.readyState),
     systemUserId: SYSTEM_USER_ID ? 'Available' : 'Not set'
   });
 });
 
 // ============================================
-// EOD MANAGEMENT ENDPOINTS (FIXED FOR ObjectId)
+// EOD MANAGEMENT ENDPOINTS
 // ============================================
 
-// EOD Processing Endpoint - FIXED VERSION
 app.post('/api/system/eod/start', async (req, res) => {
   try {
     const { processedBy = 'system' } = req.body;
     
-    const userId = await getUserId(processedBy);
-    console.log(`🔄 Starting EOD process with user ID: ${userId} (from identifier: ${processedBy})`);
+    const userId = await getSystemUserId();
+    if (!userId) {
+      return res.status(500).json({
+        success: false,
+        error: 'System user not available'
+      });
+    }
+    
+    console.log(`🔄 Starting EOD process with system user ID: ${userId}`);
     
     const { processEndOfDay } = await import('./src/controllers/OsController.js');
     const result = await processEndOfDay(userId);
@@ -492,10 +542,15 @@ app.post('/api/system/eod/start', async (req, res) => {
   }
 });
 
-// EOD Status Endpoint
 app.get('/api/system/eod/status', async (req, res) => {
   try {
-    // Use direct MongoDB query for SystemDate to avoid validation errors
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
+    
     const db = mongoose.connection.db;
     const systemDate = await db.collection('systemdates').findOne({}, { sort: { createdAt: -1 } });
     
@@ -513,8 +568,7 @@ app.get('/api/system/eod/status', async (req, res) => {
         previousBusinessDate: systemDate.previousBusinessDate,
         nextBusinessDate: systemDate.nextBusinessDate,
         eodStatus: systemDate.eodStatus,
-        lastUpdated: systemDate.lastUpdated,
-        eodHistory: systemDate.eodHistory ? systemDate.eodHistory.slice(-5) : []
+        lastUpdated: systemDate.lastUpdated
       }
     });
   } catch (error) {
@@ -525,41 +579,15 @@ app.get('/api/system/eod/status', async (req, res) => {
   }
 });
 
-// Manual date adjustment (admin only)
-app.post('/api/system/date/manual-set', async (req, res) => {
-  try {
-    const { date, updatedBy = 'system', reason = 'Manual adjustment' } = req.body;
-    
-    if (!date) {
-      return res.status(400).json({
-        success: false,
-        message: 'Date is required'
-      });
-    }
-    
-    const userId = await getUserId(updatedBy);
-    console.log(`🔄 Manual date adjustment by user ID: ${userId} (from identifier: ${updatedBy})`);
-    
-    const { setBusinessDateManually } = await import('./src/controllers/OsController.js');
-    const result = await setBusinessDateManually(date, userId, reason);
-    
-    res.json({
-      success: true,
-      message: 'Business date updated manually',
-      data: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// System Date Information Endpoint
 app.get('/api/system/date/info', async (req, res) => {
   try {
-    // Use direct MongoDB query
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
+    
     const db = mongoose.connection.db;
     const systemDate = await db.collection('systemdates').findOne({}, { sort: { createdAt: -1 } });
     
@@ -577,8 +605,7 @@ app.get('/api/system/date/info', async (req, res) => {
         previousBusinessDate: systemDate.previousBusinessDate,
         nextBusinessDate: systemDate.nextBusinessDate,
         eodStatus: systemDate.eodStatus,
-        lastUpdated: systemDate.lastUpdated,
-        updatedBy: systemDate.updatedBy
+        lastUpdated: systemDate.lastUpdated
       }
     });
   } catch (error) {
@@ -589,11 +616,23 @@ app.get('/api/system/date/info', async (req, res) => {
   }
 });
 
-// Get System User Info Endpoint
 app.get('/api/system/user/info', async (req, res) => {
   try {
     const systemUserId = await getSystemUserId();
-    // Use direct MongoDB query
+    if (!systemUserId) {
+      return res.status(404).json({
+        success: false,
+        message: 'System user not found'
+      });
+    }
+    
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
+    
     const db = mongoose.connection.db;
     const systemUser = await db.collection('users').findOne({ _id: new mongoose.Types.ObjectId(systemUserId) });
     
@@ -613,9 +652,7 @@ app.get('/api/system/user/info', async (req, res) => {
         firstName: systemUser.firstName || systemUser.first_name,
         lastName: systemUser.lastName || systemUser.last_name,
         primary_role: systemUser.primary_role,
-        primary_role_name: getRoleName(systemUser.primary_role),
-        roles: systemUser.roles || [],
-        roles_names: (systemUser.roles || []).map(role => getRoleName(role)),
+        primary_role_name: ROLE_REVERSE_MAPPING[systemUser.primary_role] || 'Unknown',
         status: systemUser.status
       }
     });
@@ -631,6 +668,14 @@ app.get('/api/system/user/info', async (req, res) => {
 app.post('/api/system/cleanup', async (req, res) => {
   try {
     console.log('🚨 Manual cleanup requested');
+    
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database not connected'
+      });
+    }
+    
     const fixedCount = await cleanupInvalidDataDirect();
     
     res.json({
@@ -647,288 +692,7 @@ app.post('/api/system/cleanup', async (req, res) => {
 });
 
 // ============================================
-// SYSTEM USER CREATION (WITH DIRECT MONGODB)
-// ============================================
-
-const createSystemUserIfNotExists = async () => {
-  try {
-    console.log('🔄 Checking/Creating system user...');
-    
-    // Use direct MongoDB query first
-    const db = mongoose.connection.db;
-    const existingSystemUser = await db.collection('users').findOne({ 
-      $or: [
-        { username: 'system' },
-        { user_name: 'system' }
-      ]
-    });
-    
-    if (existingSystemUser) {
-      console.log('✅ System user already exists in database');
-      SYSTEM_USER_ID = existingSystemUser._id.toString();
-      console.log(`📋 System User ID: ${SYSTEM_USER_ID}`);
-      
-      // Check if we need to fix the user's role
-      let needsUpdate = false;
-      const updateDoc = {};
-      
-      if (typeof existingSystemUser.primary_role === 'string') {
-        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
-        needsUpdate = true;
-        console.log(`   🔄 Fixing string primary_role: "${existingSystemUser.primary_role}" -> ${ROLE_MAPPING.EOD_OPERATOR}`);
-      } else if (existingSystemUser.primary_role !== ROLE_MAPPING.EOD_OPERATOR) {
-        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
-        needsUpdate = true;
-        console.log(`   🔄 Updating primary_role: ${existingSystemUser.primary_role} -> ${ROLE_MAPPING.EOD_OPERATOR}`);
-      }
-      
-      // Fix roles array
-      const currentRoles = existingSystemUser.roles || [];
-      const hasEodRole = currentRoles.includes(ROLE_MAPPING.EOD_OPERATOR);
-      const hasAdminRole = currentRoles.includes(ROLE_MAPPING.ADMINISTRATOR);
-      
-      if (!hasEodRole || !hasAdminRole) {
-        const newRoles = [...new Set([...currentRoles, ROLE_MAPPING.EOD_OPERATOR, ROLE_MAPPING.ADMINISTRATOR])];
-        updateDoc.roles = newRoles;
-        needsUpdate = true;
-        console.log(`   🔄 Updating roles: ${JSON.stringify(currentRoles)} -> ${JSON.stringify(newRoles)}`);
-      }
-      
-      if (needsUpdate) {
-        await db.collection('users').updateOne(
-          { _id: existingSystemUser._id },
-          { $set: updateDoc }
-        );
-        console.log(`✅ Updated system user in database`);
-      }
-      
-      return existingSystemUser;
-    }
-    
-    // Create new system user using Mongoose model (since it's a new user, no validation issues)
-    console.log('🔄 Creating new system user...');
-    const User = (await import('./src/models/User.js')).default;
-    
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(
-      process.env.SYSTEM_USER_PASSWORD || 'System@123',
-      salt
-    );
-    
-    const systemUser = new User({
-      username: 'system',
-      user_name: 'system',
-      primary_role: ROLE_MAPPING.EOD_OPERATOR,
-      roles: [ROLE_MAPPING.EOD_OPERATOR, ROLE_MAPPING.ADMINISTRATOR],
-      email: 'system@bank.com',
-      password: hashedPassword,
-      first_name: 'System',
-      last_name: 'Administrator',
-      status: 'Active',
-      primary_business_role: 'EOD Operator',
-      branchCode: '000',
-      department: 'IT',
-      phoneNumber: '000-000-0000',
-      address: 'System Address',
-      firstLogin: false,
-      enable_multi_session: true,
-      is_supervisor: true,
-      is_main_BU: true
-    });
-    
-    await systemUser.save();
-    SYSTEM_USER_ID = systemUser._id.toString();
-    console.log(`✅ System user created with ID: ${SYSTEM_USER_ID}, Role: ${systemUser.primary_role}`);
-    return systemUser;
-    
-  } catch (error) {
-    console.log('⚠️ System user creation failed:', error.message);
-    
-    // If Mongoose creation fails, try direct MongoDB insertion
-    try {
-      console.log('🔄 Trying direct MongoDB insertion for system user...');
-      const db = mongoose.connection.db;
-      
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(
-        process.env.SYSTEM_USER_PASSWORD || 'System@123',
-        salt
-      );
-      
-      const systemUser = {
-        username: 'system',
-        user_name: 'system',
-        primary_role: ROLE_MAPPING.EOD_OPERATOR,
-        roles: [ROLE_MAPPING.EOD_OPERATOR, ROLE_MAPPING.ADMINISTRATOR],
-        email: 'system@bank.com',
-        password: hashedPassword,
-        first_name: 'System',
-        last_name: 'Administrator',
-        status: 'Active',
-        primary_business_role: 'EOD Operator',
-        branchCode: '000',
-        department: 'IT',
-        phoneNumber: '000-000-0000',
-        address: 'System Address',
-        firstLogin: false,
-        enable_multi_session: true,
-        is_supervisor: true,
-        is_main_BU: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      
-      const result = await db.collection('users').insertOne(systemUser);
-      SYSTEM_USER_ID = result.insertedId.toString();
-      console.log(`✅ System user created via direct MongoDB with ID: ${SYSTEM_USER_ID}`);
-      
-      return { ...systemUser, _id: result.insertedId };
-    } catch (directError) {
-      console.log('⚠️ Direct MongoDB insertion also failed:', directError.message);
-      return null;
-    }
-  }
-};
-
-// ============================================
-// SERVER CONFIGURATION
-// ============================================
-
-const waitForMongoConnection = async (maxWaitTime = 30000) => {
-  const startTime = Date.now();
-  
-  return new Promise((resolve) => {
-    const checkConnection = () => {
-      const currentTime = Date.now();
-      const elapsedTime = currentTime - startTime;
-
-      if (mongoose.connection.readyState === 1) {
-        console.log('✅ MongoDB connection confirmed ready for queries');
-        resolve(true);
-      } else if (elapsedTime >= maxWaitTime) {
-        console.log('⚠️ MongoDB connection timeout, but continuing...');
-        resolve(false);
-      } else {
-        setTimeout(checkConnection, 1000);
-      }
-    };
-    
-    checkConnection();
-  });
-};
-
-const testDatabaseConnection = async () => {
-  try {
-    console.log('🧪 Testing database connection...');
-    const result = await mongoose.connection.db.admin().ping();
-    
-    if (result.ok === 1) {
-      console.log('✅ Database connection test PASSED');
-      return true;
-    } else {
-      console.log('❌ Database connection test FAILED');
-      return false;
-    }
-  } catch (error) {
-    console.log('❌ Database connection test FAILED - Error:', error.message);
-    return false;
-  }
-};
-
-const safeInitializeApplication = async () => {
-  try {
-    console.log('🛡️ Starting SAFE application initialization...');
-
-    const isConnected = await waitForMongoConnection(20000);
-    
-    if (!isConnected) {
-      console.log('⚠️ MongoDB not fully connected, skipping application initialization');
-      return;
-    }
-
-    const connectionTest = await testDatabaseConnection();
-    if (!connectionTest) {
-      console.log('⚠️ Database connection test failed, skipping application initialization');
-      return;
-    }
-
-    console.log('⏳ Ensuring database is fully ready...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    console.log('✅ Database confirmed ready, initializing application...');
-    await initializeApplication();
-    logger.info('✅ Application initialization completed successfully');
-  } catch (error) {
-    console.error('❌ Application initialization failed', {
-      error: error.message,
-      dbState: getDbStateText(mongoose.connection.readyState),
-    });
-  }
-};
-
-const configureLogging = () => {
-  let LOG_DIR = process.env.LOG_DIR || './logs';
-  let LOG_FILE = path.join(LOG_DIR, 'server.log');
-
-  try {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-    
-    const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a', encoding: 'utf8' });
-    console.log(`✅ Log file configured: ${LOG_FILE}`);
-    
-    return { logStream, logFile: LOG_FILE };
-  } catch (err) {
-    console.warn(`⚠️ Cannot use log directory ${LOG_DIR}: ${err.message}`);
-    return {
-      logStream: { write: () => {}, end: (cb) => cb && cb() },
-      logFile: null,
-    };
-  }
-};
-
-const { logStream, logFile } = configureLogging();
-
-const configureShutdown = (server) => {
-  const shutdown = async (signal) => {
-    console.log(`Shutdown signal received: ${signal}`);
-    
-    try {
-      await mongoose.connection.close();
-      console.log('✅ MongoDB connection closed');
-    } catch (dbError) {
-      console.error('❌ Error closing MongoDB connection:', dbError.message);
-    }
-
-    logStream.end(() => {
-      console.log('✅ Log stream closed');
-      console.log('🛑 Shutdown completed');
-      process.exit(0);
-    });
-  };
-
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-};
-
-const syncPermissionsToDatabase = async () => {
-  try {
-    console.log('🔄 Syncing permissions to database...');
-    
-    const { syncPermissions } = await import('./src/constants/roleMapping.js');
-    await syncPermissions();
-    
-    console.log('✅ Permissions synced to database successfully');
-    return true;
-  } catch (error) {
-    console.log('⚠️ Permissions sync failed:', error.message);
-    return false;
-  }
-};
-
-// ============================================
-// STARTUP SEQUENCE
+// SERVER STARTUP
 // ============================================
 
 const startServer = async () => {
@@ -940,146 +704,99 @@ const startServer = async () => {
     // STEP 1: Connect to MongoDB
     console.log('🔄 STEP 1: Connecting to MongoDB...');
     await connectDB();
+    logger.info('✅ MongoDB connected successfully');
 
-    // STEP 1.5: Wait for connection
-    console.log('🔄 STEP 1.5: Waiting for MongoDB connection...');
-    await waitForMongoConnection(25000);
-    await testDatabaseConnection();
+    // STEP 2: Wait for stable connection
+    console.log('🔄 STEP 2: Waiting for MongoDB connection...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // STEP 1.6: EMERGENCY CLEANUP - Fix invalid data FIRST (DIRECT MongoDB)
-    console.log('🔄 STEP 1.6: DIRECT CLEANUP of invalid data...');
+    // STEP 3: Emergency cleanup
+    console.log('🔄 STEP 3: Running direct data cleanup...');
     if (mongoose.connection.readyState === 1) {
-      const fixedCount = await cleanupInvalidDataDirect();
-      if (fixedCount > 0) {
-        console.log(`✅ Cleaned up ${fixedCount} invalid documents`);
-      }
+      const fixed = await cleanupInvalidDataDirect();
+      if (fixed > 0) console.log(`✅ Cleaned up ${fixed} documents`);
     } else {
-      console.log('⚠️ Skipping data cleanup - MongoDB not connected');
+      console.log('⚠️ MongoDB not connected, skipping cleanup');
     }
 
-    // STEP 1.7: Create System User
-    console.log('🔄 STEP 1.7: Ensuring system user exists...');
+    // STEP 4: Create system user
+    console.log('🔄 STEP 4: Ensuring system user exists...');
     if (mongoose.connection.readyState === 1) {
-      const systemUser = await createSystemUserIfNotExists();
-      if (!systemUser) {
-        console.log('⚠️ System user creation may have failed, continuing startup...');
-      }
+      await createSystemUserIfNotExists();
     } else {
-      console.log('⚠️ Skipping system user creation - MongoDB not connected');
+      console.log('⚠️ MongoDB not connected, skipping system user creation');
     }
 
-    // STEP 1.8: Initialize System Dates
-    console.log('🔄 STEP 1.8: Initializing system dates...');
+    // STEP 5: Initialize counters
+    console.log('🔄 STEP 5: Initializing account counters...');
     if (mongoose.connection.readyState === 1) {
-      try {
-        const dateResult = await initializeSystemDates();
-        
-        if (dateResult && dateResult.currentBusinessDate) {
-          systemStatus = dateResult;
-          const displayDate = formatDateForDisplay(systemStatus.currentBusinessDate);
-          console.log(`✅ System dates initialized: ${displayDate}`);
-        } else {
-          const fallbackDate = new Date().toISOString().split('T')[0];
-          systemStatus = {
-            currentBusinessDate: fallbackDate,
-            previousBusinessDate: fallbackDate,
-            nextBusinessDate: fallbackDate,
-            eodStatus: 'IDLE',
-            initialized: true
-          };
-          console.log(`✅ System dates set to fallback: ${fallbackDate}`);
-        }
-      } catch (dateError) {
-        console.log('⚠️ System dates initialization failed:', dateError.message);
-        const fallbackDate = new Date().toISOString().split('T')[0];
-        systemStatus = {
-          currentBusinessDate: fallbackDate,
-          previousBusinessDate: fallbackDate, 
-          nextBusinessDate: fallbackDate,
-          eodStatus: 'IDLE',
-          initialized: false
-        };
-      }
+      await initializeCounters();
     } else {
-      console.log('⚠️ Skipping system dates initialization - MongoDB not connected');
-      const fallbackDate = new Date().toISOString().split('T')[0];
-      systemStatus = {
-        currentBusinessDate: fallbackDate,
-        previousBusinessDate: fallbackDate, 
-        nextBusinessDate: fallbackDate,
-        eodStatus: 'IDLE',
-        initialized: false
-      };
+      console.log('⚠️ MongoDB not connected, skipping counter initialization');
     }
 
-    // STEP 1.9: Sync Permissions
-    console.log('🔄 STEP 1.9: Syncing permissions to database...');
-    if (mongoose.connection.readyState === 1) {
-      try {
-        await syncPermissionsToDatabase();
-      } catch (permissionError) {
-        console.log('⚠️ Permissions sync error:', permissionError.message);
-      }
-    } else {
-      console.log('⚠️ Skipping permissions sync - MongoDB not connected');
+    // STEP 6: Initialize system dates
+    console.log('🔄 STEP 6: Initializing system dates...');
+    try {
+      await initializeSystemDates();
+      logger.info('✅ System dates initialized');
+    } catch (e) {
+      logger.warn('System dates init failed:', e.message);
     }
 
-    // STEP 2: Start the server
-    console.log('🔄 STEP 2: Starting HTTP server...');
+    // STEP 7: Start server
+    console.log('🔄 STEP 7: Starting HTTP server...');
     const PORT = process.env.PORT || 5000;
-    const HOST = process.env.HOST || '0.0.0.0';
+    const HOST = '0.0.0.0';
 
     const server = app.listen(PORT, HOST, () => {
-      console.log('\n' + '='.repeat(60));
-      console.log('✅ BACKEND SERVER RUNNING SUCCESSFULLY');
-      console.log('='.repeat(60));
-      
-      const currentStatus = getSystemStatus();
       const networkIP = getNetworkIP();
-      
-      const businessDateDisplay = currentStatus.currentBusinessDate 
-        ? currentStatus.currentBusinessDate
-        : 'Not set';
-      
-      console.log(`📍 Local URL: http://localhost:${PORT}`);
-      console.log(`🌐 Network URL: http://${networkIP}:${PORT}`);
-      console.log(`🔧 API Base: http://${networkIP}:${PORT}/api`);
-      console.log(`📱 Frontend: ${process.env.CLIENT_URL || 'Not specified'}`);
-      console.log(`🗄️  Database: ${getDbStateText(mongoose.connection.readyState)}`);
-      console.log(`📅 Current Business Date: ${businessDateDisplay}`);
-      console.log(`📅 System Dates: ${currentStatus.status}`);
-      console.log(`🔄 EOD Status: ${currentStatus.eodStatus || 'IDLE'}`);
-      console.log(`👤 System User: ${SYSTEM_USER_ID ? 'Created ✓' : 'Not created'}`);
-      console.log(`🎯 System User Role: ${SYSTEM_USER_ID ? 'EOD Operator (24)' : 'Not set'}`);
-      console.log(`🧹 Data Cleanup: Completed on startup`);
-      console.log(`📋 Permissions: Synced on startup`);
-      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🛡️  CORS Origins: ${allowedOrigins.length} configured`);
+      console.log('\n' + '='.repeat(60));
+      console.log('✅ SERVER RUNNING SUCCESSFULLY');
+      console.log('='.repeat(60));
+      console.log(`Local: http://localhost:${PORT}`);
+      console.log(`Network: http://${networkIP}:${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Database: ${getDbStateText(mongoose.connection.readyState)}`);
       console.log('='.repeat(60) + '\n');
 
-      // STEP 3: Initialize application in background
-      if (mongoose.connection.readyState === 1) {
-        console.log('🔄 STEP 3: Starting background application initialization...');
-        safeInitializeApplication().then(() => {
-          console.log('🎉 Application initialization completed!');
-        });
-      } else {
-        console.log('⚠️ Skipping application initialization - MongoDB not connected');
-      }
+      // Background application init
+      setTimeout(() => {
+        safeInitializeApplication();
+      }, 3000);
     });
 
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.error(`❌ Port ${PORT} is already in use`);
-      } else {
-        console.error('Server error:', err.message);
-      }
-      process.exit(1);
-    });
+    // Configure graceful shutdown
+    const configureShutdown = (server) => {
+      const shutdown = async (signal) => {
+        console.log(`Shutdown signal received: ${signal}`);
+        
+        server.close(async () => {
+          console.log('✅ HTTP server closed');
+          
+          try {
+            if (mongoose.connection.readyState === 1) {
+              await mongoose.connection.close();
+              console.log('✅ MongoDB connection closed');
+            }
+          } catch (dbError) {
+            console.error('❌ Error closing MongoDB connection:', dbError.message);
+          }
+          
+          console.log('🛑 Shutdown completed');
+          process.exit(0);
+        });
+      };
+
+      process.on('SIGINT', () => shutdown('SIGINT'));
+      process.on('SIGTERM', () => shutdown('SIGTERM'));
+    };
 
     configureShutdown(server);
-  } catch (err) {
-    console.error('❌ SERVER STARTUP FAILED:', err.message);
+
+  } catch (error) {
+    logger.error('❌ Fatal startup error:', error);
+    console.error('❌ Server startup failed:', error.message);
     process.exit(1);
   }
 };

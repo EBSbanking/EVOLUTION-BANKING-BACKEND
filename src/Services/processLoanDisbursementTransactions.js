@@ -5,6 +5,7 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import GLAccount from '../models/GLAccount.js';
 import LoanPortfolio from '../models/LoanPortfolio.js';
 import LoanProduct from '../models/LoanProduct.js';
+import LoanInterestRate from '../models/LoanInterestRate.js'; // ADD THIS IMPORT
 import Guarantor from '../models/Guarantor.js';
 import mongoose from 'mongoose';
 import { generateTransactionId } from '../utils/generateLoanAccountId.js';
@@ -283,9 +284,6 @@ async function processGuarantorId(guarantorId, loanDoc, guaranteedAmount, guaran
 /**
  * Main loan disbursement transaction processing
  */
-/**
- * Main loan disbursement transaction processing
- */
 async function processLoanDisbursementTransactions({
   session,
   loanAccount,
@@ -296,7 +294,7 @@ async function processLoanDisbursementTransactions({
   ACCT_NO,
   CREATED_BY,
   DISBURSEMENT_DATE = new Date(),
-  INTEREST_RATE,
+  INTEREST_RATE, // This parameter will be IGNORED
   PRODUCT_TYPE,
   productId,
   deductUpfrontInterest = false,
@@ -330,6 +328,15 @@ async function processLoanDisbursementTransactions({
     JOURNAL_ID = ids.JOURNAL_ID;
   }
 
+  // Generate transaction references
+  const timestamp = Date.now();
+  const refs = {
+    main: `DISP-${timestamp}`,
+    fee: `FEE-${timestamp}`,
+    interest: `INT-${timestamp}`,
+    batch: `BATCH-${timestamp}`
+  };
+
   // Fetch GL accounts dynamically from product
   const { 
     loanGLAccount, 
@@ -348,7 +355,11 @@ async function processLoanDisbursementTransactions({
   const disbursementAmount = Number(AMOUNT);
   const feeAmount = Number(loanFeeAmount);
   upfrontInterestAmount = Number(upfrontInterestAmount);
-  const interestRate = Number(INTEREST_RATE);
+  
+  // IGNORE the INTEREST_RATE parameter - we'll use LoanInterestRate.ANNUAL_PERCENTAGE_RATE
+  console.log('\n=== IGNORING DISBURSEMENT INTEREST RATE PARAMETER ===');
+  console.log('Parameter INTEREST_RATE:', INTEREST_RATE, '(will be ignored)');
+  
   const transactionDate = new Date(DISBURSEMENT_DATE);
   
   // Calculate net amount customer receives
@@ -362,12 +373,7 @@ async function processLoanDisbursementTransactions({
     loanAmount: disbursementAmount,
     fees: feeAmount,
     upfrontInterest: upfrontInterestAmount,
-    netToCustomer: netDisbursement,
-    glAccounts: {
-      loan: loanGLAccount,
-      interest: interestGLAccountNo,
-      fee: feeGLAccountNo
-    }
+    netToCustomer: netDisbursement
   });
 
   // ============================================
@@ -375,21 +381,28 @@ async function processLoanDisbursementTransactions({
   // ============================================
   let loanDoc = await ensureLoanAccountIsDocument(loanAccount, loanAccount._id, session);
   
-  console.log('After ensureLoanAccountIsDocument:');
+  console.log('\n=== LOAN ACCOUNT DETAILS ===');
   console.log('Document _id:', loanDoc._id);
   console.log('LOAN_INTEREST_RATE_ID:', loanDoc.LOAN_INTEREST_RATE_ID);
+  console.log('Existing INTEREST_RATE:', loanDoc.INTEREST_RATE ? parseFloat(loanDoc.INTEREST_RATE.toString()) : 'N/A');
 
   if (!(loanDoc instanceof mongoose.Document)) {
     throw new Error('Failed to obtain a valid Mongoose document for loan account');
   }
 
   // ============================================
-  // 2. FETCH LOAN INTEREST RATE DETAILS
+  // 2. FETCH AND USE ANNUAL_PERCENTAGE_RATE FROM LOAN_INTEREST_RATE
   // ============================================
+  console.log('\n=== FETCHING ANNUAL_PERCENTAGE_RATE FROM LOAN_INTEREST_RATE ===');
+  
   let loanInterestRateDetails = null;
+  let finalInterestRate;
+  let interestRateSource;
+  let annualPercentageRate = null;
+
   if (loanDoc.LOAN_INTEREST_RATE_ID) {
     try {
-      // Try to fetch LoanInterestRate by LOAN_PROUD_INT_ID
+      // Fetch LoanInterestRate by LOAN_PROUD_INT_ID
       const loanInterestRate = await LoanInterestRate.findOne({
         LOAN_PROUD_INT_ID: parseInt(loanDoc.LOAN_INTEREST_RATE_ID),
         STATUS: 'ACTIVE'
@@ -404,12 +417,80 @@ async function processLoanDisbursementTransactions({
           INTEREST_TYPE: loanInterestRate.INTEREST_TYPE,
           CALCULATION_METHOD: loanInterestRate.CALCULATION_METHOD,
           DEFAULT_RATE_PER_MONTH: loanInterestRate.DEFAULT_RATE_PER_MONTH,
-          ANNUAL_PERCENTAGE_RATE: loanInterestRate.ANNUAL_PERCENTAGE_RATE
+          ANNUAL_PERCENTAGE_RATE: loanInterestRate.ANNUAL_PERCENTAGE_RATE,
+          ACCRUAL_BASIS: loanInterestRate.ACCRUAL_BASIS,
+          ACCRUAL_FREQUENCY: loanInterestRate.ACCRUAL_FREQUENCY
         };
-        console.log('Found LoanInterestRate details:', loanInterestRateDetails);
+        
+        console.log('Found LoanInterestRate details:', {
+          LOAN_PROUD_INT_ID: loanInterestRateDetails.LOAN_PROUD_INT_ID,
+          name: loanInterestRateDetails.name,
+          ANNUAL_PERCENTAGE_RATE: loanInterestRateDetails.ANNUAL_PERCENTAGE_RATE,
+          DEFAULT_RATE_PER_MONTH: loanInterestRateDetails.DEFAULT_RATE_PER_MONTH,
+          CALCULATION_METHOD: loanInterestRateDetails.CALCULATION_METHOD
+        });
+        
+        // USE ANNUAL_PERCENTAGE_RATE as the final interest rate
+        if (loanInterestRate.ANNUAL_PERCENTAGE_RATE !== undefined && 
+            loanInterestRate.ANNUAL_PERCENTAGE_RATE !== null) {
+          
+          annualPercentageRate = parseFloat(loanInterestRate.ANNUAL_PERCENTAGE_RATE);
+          
+          if (!isNaN(annualPercentageRate) && annualPercentageRate > 0) {
+            finalInterestRate = toDecimal128(annualPercentageRate);
+            interestRateSource = 'LOAN_INTEREST_RATE_ANNUAL';
+            
+            console.log(`✓ USING ANNUAL_PERCENTAGE_RATE from LoanInterestRate: ${annualPercentageRate}%`);
+            
+            // Log what we're ignoring
+            const existingLoanAccountRate = loanDoc.INTEREST_RATE ? 
+              parseFloat(loanDoc.INTEREST_RATE.toString()) : null;
+            
+            if (existingLoanAccountRate && Math.abs(existingLoanAccountRate - annualPercentageRate) > 0.1) {
+              console.warn(`⚠️ OVERRIDING loan account rate of ${existingLoanAccountRate}%`);
+            }
+            
+            if (INTEREST_RATE && parseFloat(INTEREST_RATE) && 
+                Math.abs(parseFloat(INTEREST_RATE) - annualPercentageRate) > 0.1) {
+              console.warn(`⚠️ IGNORING disbursement parameter rate of ${parseFloat(INTEREST_RATE)}%`);
+            }
+            
+          } else {
+            throw new Error(`Invalid ANNUAL_PERCENTAGE_RATE in LoanInterestRate: ${loanInterestRate.ANNUAL_PERCENTAGE_RATE}`);
+          }
+        } else {
+          throw new Error('ANNUAL_PERCENTAGE_RATE not found in LoanInterestRate configuration');
+        }
+      } else {
+        throw new Error(`LoanInterestRate with LOAN_PROUD_INT_ID ${loanDoc.LOAN_INTEREST_RATE_ID} not found or not active`);
       }
     } catch (error) {
-      console.warn('Error fetching LoanInterestRate:', error.message);
+      console.error('❌ Error fetching/using LoanInterestRate:', error.message);
+      throw new Error(`Failed to get interest rate from LoanInterestRate: ${error.message}`);
+    }
+  } else {
+    // If no LOAN_INTEREST_RATE_ID, look for default LoanInterestRate
+    console.log('No LOAN_INTEREST_RATE_ID found, looking for default LoanInterestRate...');
+    
+    try {
+      const defaultLoanInterestRate = await LoanInterestRate.findOne({
+        IS_DEFAULT: true,
+        STATUS: 'ACTIVE'
+      }).session(session);
+      
+      if (defaultLoanInterestRate && defaultLoanInterestRate.ANNUAL_PERCENTAGE_RATE) {
+        annualPercentageRate = parseFloat(defaultLoanInterestRate.ANNUAL_PERCENTAGE_RATE);
+        finalInterestRate = toDecimal128(annualPercentageRate);
+        interestRateSource = 'DEFAULT_LOAN_INTEREST_RATE_ANNUAL';
+        
+        console.log(`✓ Using default LoanInterestRate ANNUAL_PERCENTAGE_RATE: ${annualPercentageRate}%`);
+        console.log(`Default LoanInterestRate LOAN_PROUD_INT_ID: ${defaultLoanInterestRate.LOAN_PROUD_INT_ID}`);
+      } else {
+        throw new Error('No default LoanInterestRate found with ANNUAL_PERCENTAGE_RATE');
+      }
+    } catch (error) {
+      console.error('❌ Error fetching default LoanInterestRate:', error.message);
+      throw new Error(`No interest rate configuration found: ${error.message}`);
     }
   }
 
@@ -428,20 +509,26 @@ async function processLoanDisbursementTransactions({
   }
 
   // ============================================
-  // 4. UPDATE LOAN ACCOUNT DOCUMENT
+  // 4. UPDATE LOAN ACCOUNT DOCUMENT WITH CORRECT RATE
   // ============================================
+  console.log('\n=== UPDATING LOAN ACCOUNT WITH ANNUAL_PERCENTAGE_RATE ===');
+  console.log(`Setting interest rate to: ${annualPercentageRate}%`);
+  
   loanDoc.LOAN_STATUS = 'ACTIVE';
   loanDoc.ACTUAL_DISBURSEMENT = toDecimal128(netDisbursement);
   loanDoc.DISBURSEMENT_DATE = transactionDate;
   loanDoc.OUTSTANDING_PRINCIPAL = toDecimal128(disbursementAmount);
   loanDoc.outstanding_balance = toDecimal128(disbursementAmount);
   loanDoc.START_DT = transactionDate;
-  loanDoc.INTEREST_RATE = toDecimal128(interestRate);
+  loanDoc.INTEREST_RATE = finalInterestRate; // Set from ANNUAL_PERCENTAGE_RATE
   
-  // Store LoanInterestRate details if available
+  // Store LoanInterestRate details
   if (loanInterestRateDetails) {
     loanDoc.loanInterestRateDetails = loanInterestRateDetails;
   }
+  
+  // Store interest rate source info
+  loanDoc.interestRateSource = interestRateSource;
   
   // Calculate next payment date
   const nextPaymentDate = new Date(transactionDate);
@@ -491,11 +578,12 @@ async function processLoanDisbursementTransactions({
     upfrontInterestPercentage: toDecimal128(upfrontInterestPercentage)
   };
 
-  console.log('Attempting to save loan account document...');
+  console.log('Saving loan account with ANNUAL_PERCENTAGE_RATE...');
   
   try {
     await loanDoc.save({ session });
     console.log('✅ Loan account updated successfully');
+    console.log(`✅ Final interest rate: ${annualPercentageRate}% (from ANNUAL_PERCENTAGE_RATE)`);
   } catch (saveError) {
     console.error('❌ Error saving loan account:', saveError.message);
     console.error('Save error stack:', saveError.stack);
@@ -512,11 +600,12 @@ async function processLoanDisbursementTransactions({
         outstanding_balance: toDecimal128(disbursementAmount),
         START_DT: transactionDate,
         NEXT_PAYMENT_DATE: nextPaymentDate,
-        INTEREST_RATE: toDecimal128(interestRate),
+        INTEREST_RATE: finalInterestRate, // From ANNUAL_PERCENTAGE_RATE
         PRIMARY_OFFICER_ID: loanDoc.PRIMARY_OFFICER_ID || CREATED_BY,
         JOURNAL_ID,
         TRANSACTION_ID,
         EVENT_ID,
+        interestRateSource,
         ...(loanInterestRateDetails && { loanInterestRateDetails }),
         ...(upfrontInterestAmount > 0 && {
           upfrontInterestDeducted: true,
@@ -620,7 +709,19 @@ async function processLoanDisbursementTransactions({
       upfrontInterestDeducted: upfrontInterestAmount,
       glAccountUsed: loanGLAccount,
       transactionType: 'loan_disbursement',
-      loanInterestRateId: loanDoc.LOAN_INTEREST_RATE_ID
+      loanInterestRateId: loanDoc.LOAN_INTEREST_RATE_ID,
+      // ANNUAL_PERCENTAGE_RATE info
+      interestRate: {
+        appliedRate: annualPercentageRate,
+        rateSource: interestRateSource,
+        loanProudIntId: loanInterestRateDetails?.LOAN_PROUD_INT_ID || null,
+        annualPercentageRate: annualPercentageRate,
+        rateType: loanInterestRateDetails?.RATE_TYPE || loanDoc.INTEREST_RATE_TYPE || 'FIXED',
+        calculationMethod: loanInterestRateDetails?.CALCULATION_METHOD || loanDoc.INTEREST_CALCULATION_METHOD || 'FLAT_RATE',
+        interestType: loanInterestRateDetails?.INTEREST_TYPE || 'SIMPLE',
+        isTermBased: loanDoc.IS_TERM_BASED_RATE || true,
+        note: `Using ANNUAL_PERCENTAGE_RATE from LoanInterestRate configuration`
+      }
     }
   }));
 
@@ -656,7 +757,8 @@ async function processLoanDisbursementTransactions({
         interestType,
         percentage: partialUpfrontInterest ? upfrontInterestPercentage : null,
         glAccountUsed: interestGLAccountNo,
-        customerAccountNo: fundingAcctNo
+        customerAccountNo: fundingAcctNo,
+        calculatedFromAnnualRate: annualPercentageRate
       }
     }));
   }
@@ -776,7 +878,7 @@ async function processLoanDisbursementTransactions({
             STATUS: 'ACTIVE',
             CREATED_BY: CREATED_BY,
             UPDATED_BY: CREATED_BY,
-            YIELD_RATE: interestRate,
+            YIELD_RATE: annualPercentageRate, // Use ANNUAL_PERCENTAGE_RATE
             TOTAL_INTEREST_ACCRUED: 0,
             TOTAL_REPAYMENTS: 0,
             TOTAL_RECOVERED: 0,
@@ -785,7 +887,7 @@ async function processLoanDisbursementTransactions({
             PROVISION_AMOUNT: 0,
             NPL_RATIO: 0,
             COST_OF_FUNDS: 0,
-            NET_INTEREST_MARGIN: interestRate,
+            NET_INTEREST_MARGIN: annualPercentageRate, // Use ANNUAL_PERCENTAGE_RATE
             AVERAGE_LOAN_SIZE: disbursementAmount
           },
           $set: {
@@ -810,6 +912,7 @@ async function processLoanDisbursementTransactions({
   }
 
   console.log('=== LOAN DISBURSEMENT COMPLETED SUCCESSFULLY ===');
+  console.log(`=== FINAL INTEREST RATE: ${annualPercentageRate}% (Source: ${interestRateSource}) ===`);
   
   return {
     success: true,
@@ -819,14 +922,23 @@ async function processLoanDisbursementTransactions({
     netDisbursementToCustomer: netDisbursement,
     productDetails,
     loanInterestRateDetails,
+    interestRateDetails: {
+      appliedRate: annualPercentageRate,
+      source: interestRateSource,
+      loanProudIntId: loanInterestRateDetails?.LOAN_PROUD_INT_ID || null,
+      annualPercentageRate: annualPercentageRate,
+      rateType: loanInterestRateDetails?.RATE_TYPE || 'FIXED',
+      calculationMethod: loanInterestRateDetails?.CALCULATION_METHOD || 'FLAT_RATE',
+      interestType: loanInterestRateDetails?.INTEREST_TYPE || 'SIMPLE',
+      note: 'Rate from LoanInterestRate.ANNUAL_PERCENTAGE_RATE'
+    },
     transactions: transactionsToCreate,
     transactionReferences: refs,
     guarantorDetails: guarantorDetails || { guarantorId, guarantorName, guaranteedAmount },
     transactionIds: {
       TRANSACTION_ID,
       EVENT_ID,
-      JOURNAL_ID,
-      batchId
+      JOURNAL_ID
     },
     accountingSummary: {
       totalLoanAmount: disbursementAmount,
@@ -838,21 +950,19 @@ async function processLoanDisbursementTransactions({
         loanPortfolio: loanGLAccount,
         interestIncome: interestGLAccountNo,
         feeIncome: feeGLAccountNo
-      }
+      },
+      interestRateApplied: annualPercentageRate
     }
   };
 }
 
-/**
- * Public wrapper function
- */
 async function processDisbursement({
   session,
   loanContract,
   repaymentSchedule,
   loanProduct,
   totalFees,
-  interestRate,
+  interestRate, // This parameter is IGNORED - we use ANNUAL_PERCENTAGE_RATE instead
   PRODUCT_TYPE,
   deductUpfrontInterest = false,
   partialUpfrontInterest = false,
@@ -867,8 +977,42 @@ async function processDisbursement({
   transactionReferences = {},
   branchId
 }) {
-  // Implementation of processDisbursement wrapper
-  // This should call processLoanDisbursementTransactions with appropriate parameters
+  console.log('=== DISBURSEMENT WRAPPER - ANNUAL_PERCENTAGE_RATE WILL BE USED ===');
+  console.log('Note: interestRate parameter will be ignored');
+  console.log('LoanInterestRate.ANNUAL_PERCENTAGE_RATE will be used instead');
+  
+  // The loanContract should have LOAN_INTEREST_RATE_ID which points to LoanInterestRate
+  console.log('Loan Contract Details:', {
+    LOAN_INTEREST_RATE_ID: loanContract.LOAN_INTEREST_RATE_ID,
+    loanAccountNumber: loanContract.loanAccountNumber,
+    PROD_ID: loanProduct?.PROD_ID
+  });
+  
+  // Validate required parameters
+  if (!loanContract) {
+    throw new Error('loanContract is required');
+  }
+  
+  if (!loanProduct) {
+    throw new Error('loanProduct is required');
+  }
+  
+  if (!loanContract.loanAccountNumber) {
+    throw new Error('loanAccountNumber is required in loanContract');
+  }
+  
+  if (!loanContract.fundingAccountNumber) {
+    throw new Error('fundingAccountNumber is required in loanContract');
+  }
+  
+  if (!loanContract.loanAmount) {
+    throw new Error('loanAmount is required in loanContract');
+  }
+  
+  // IMPORTANT: We're NOT using the interestRate parameter at all
+  // The processLoanDisbursementTransactions function will fetch and use
+  // ANNUAL_PERCENTAGE_RATE from LoanInterestRate configuration
+  
   return await processLoanDisbursementTransactions({
     session,
     loanAccount: loanContract,
@@ -879,7 +1023,7 @@ async function processDisbursement({
     ACCT_NO: loanContract.loanAccountNumber,
     CREATED_BY: loanContract.createdBy || 'SYSTEM',
     DISBURSEMENT_DATE: new Date(),
-    INTEREST_RATE: interestRate,
+    INTEREST_RATE: null, // Explicitly pass null since we're ignoring this parameter
     PRODUCT_TYPE,
     productId: loanProduct.PROD_ID,
     deductUpfrontInterest,

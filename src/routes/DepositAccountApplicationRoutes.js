@@ -202,4 +202,57 @@ router.get("/health", (req, res) => {
   });
 });
 
+
+// In your routes file, add this:
+router.post('/reset-deposit-counter', async (req, res) => {
+  try {
+    const Counter = mongoose.models.Counter || mongoose.model('Counter');
+    
+    // Find highest existing account number
+    const highestAccount = await CustomerAccount.findOne({})
+      .sort({ account_number: -1 })
+      .select('account_number')
+      .lean();
+    
+    let nextSequence = 10; // Default start
+    
+    if (highestAccount?.account_number) {
+      const accountNum = highestAccount.account_number;
+      if (accountNum.startsWith('20000000') && accountNum.length === 10) {
+        const sequence = parseInt(accountNum.slice(-2));
+        nextSequence = sequence + 1;
+      }
+    }
+    
+    // Reset counter
+    const result = await Counter.findOneAndUpdate(
+      { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+      { 
+        seq: nextSequence,
+        updatedAt: new Date(),
+        resetAt: new Date(),
+        resetBy: 'system'
+      },
+      { new: true, upsert: true }
+    );
+    
+    const nextAccount = `20000000${String(result.seq).padStart(2, '0')}`;
+    
+    return res.json({
+      success: true,
+      message: 'Deposit counter reset successfully',
+      data: {
+        previousHighestAccount: highestAccount?.account_number,
+        nextSequence: result.seq,
+        nextAccount,
+        timestamp: new Date()
+      }
+    });
+    
+  } catch (error) {
+    console.error('Reset error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

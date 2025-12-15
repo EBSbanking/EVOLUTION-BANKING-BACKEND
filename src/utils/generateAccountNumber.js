@@ -264,8 +264,8 @@ export const generateCustomerNumber = async (branchCode = '01') => {
   }
 };
 
-// 🔢 Generate Account Identifiers for savings applications
-export const generateAccountIdentifiersFromCounter = async (prodId, custId, buId) => {
+// 🔢 Generate Account Identifiers for savings applications (SIMPLIFIED)
+export const generateAccountIdentifiersFromCounter = async (custId) => {
   try {
     // Generate savings account number for the customer
     const normalizedCustId = custId ? custId.toString().padStart(10, '0') : `SAV_${Date.now()}`;
@@ -275,7 +275,6 @@ export const generateAccountIdentifiersFromCounter = async (prodId, custId, buId
     return {
       ACCT_ID: accountData.ACCT_ID,
       ACCT_NO: accountData.ACCT_NO,
-      PROD_ID: prodId,
       CUST_ID: normalizedCustId,
       accountType: 'SAVINGS',
       productType: 'SAVINGS',
@@ -292,7 +291,6 @@ export const generateAccountIdentifiersFromCounter = async (prodId, custId, buId
     return {
       ACCT_ID: generateAcctId(Math.floor(Math.random() * 1000000)),
       ACCT_NO: accountNumber,
-      PROD_ID: prodId,
       CUST_ID: custId || null,
       accountType: 'SAVINGS',
       productType: 'SAVINGS',
