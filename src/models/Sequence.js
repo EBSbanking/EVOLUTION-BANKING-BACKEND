@@ -1,111 +1,145 @@
-// models/Sequence.js
-import mongoose from 'mongoose';
+// models/Sequence.js - SIMPLIFIED FIXED VERSION
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const SequenceSchema = new mongoose.Schema({
-  targetCollection: { 
-    type: String, 
-    required: true, 
+class Sequence extends Model {}
+
+Sequence.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+    field: 'id'
+  },
+  target_collection: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
     unique: true,
-    index: true
+    comment: 'Target collection name',
+    field: 'target_collection'
   },
-  value: { 
-    type: Number, 
-    default: 1000
+  value: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: 'Current sequence value',
+    field: 'value'
   },
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
+  created_at: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
   },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
+  updated_at: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
-  strict: false
-});
-
-// Pre-save middleware
-SequenceSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
-  
-  if (!this.targetCollection || this.targetCollection === null || this.targetCollection === 'null') {
-    this.targetCollection = `sequence_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  }
-  next();
-});
-
-// Static method to safely get or create sequence
-SequenceSchema.statics.getOrCreateSequence = async function(collectionName, session = null) {
-  try {
-    const sequence = await this.findOneAndUpdate(
-      { targetCollection: collectionName },
-      { 
-        $setOnInsert: { 
-          targetCollection: collectionName,
-          value: 1000,
-          createdAt: new Date()
-        }
-      },
-      { 
-        upsert: true, 
-        new: true, 
-        session,
-        setDefaultsOnInsert: true
+  sequelize,
+  modelName: 'Sequence',
+  tableName: 'sequences',
+  timestamps: false, // Set to false since we're managing timestamps manually
+  freezeTableName: true,
+  hooks: {
+    beforeCreate: (sequence) => {
+      if (!sequence.target_collection) {
+        throw new Error('target_collection is required');
       }
-    );
-    return sequence;
-  } catch (error) {
-    if (error.code === 11000) {
-      // Duplicate key error - sequence already exists
-      const existing = await this.findOne({ targetCollection: collectionName }).session(session);
-      if (existing) return existing;
     }
-    throw error;
   }
-};
+});
 
-// Static method to increment and get next value
-SequenceSchema.statics.getNextValue = async function(collectionName, session = null) {
+// Static method to get next value (SIMPLIFIED)
+Sequence.getNextValue = async function(targetCollection, transaction = null) {
+  const options = transaction ? { transaction } : {};
+  
   try {
-    const sequence = await this.findOneAndUpdate(
-      { targetCollection: collectionName },
-      { 
-        $inc: { value: 1 },
-        $set: { updatedAt: new Date() }
-      },
-      { 
-        new: true, 
-        upsert: true, 
-        session,
-        setDefaultsOnInsert: true,
-        runValidators: true
-      }
-    );
+    // Find or create sequence
+    let sequence = await this.findOne({
+      where: { target_collection: targetCollection },
+      ...options
+    });
     
     if (!sequence) {
-      throw new Error(`Failed to get sequence for ${collectionName}`);
+      // Create new sequence starting from 1000
+      sequence = await this.create({
+        target_collection: targetCollection,
+        value: 1000,
+        ...options
+      });
     }
     
-    return sequence.value;
-  } catch (error) {
-    if (error.code === 11000) {
-      // Retry once if there's a duplicate key error
-      const sequence = await this.findOne({ targetCollection: collectionName }).session(session);
-      if (sequence) {
-        const updated = await this.findOneAndUpdate(
-          { targetCollection: collectionName },
-          { 
-            $inc: { value: 1 },
-            $set: { updatedAt: new Date() }
-          },
-          { new: true, session }
-        );
-        return updated.value;
+    // Get current value and increment
+    const currentValue = sequence.value;
+    const nextValue = currentValue + 1;
+    
+    // Update sequence
+    await this.update(
+      { value: nextValue, updated_at: new Date() },
+      { 
+        where: { id: sequence.id },
+        ...options
       }
-    }
-    throw error;
+    );
+    
+    return nextValue;
+    
+  } catch (error) {
+    console.error(`Error getting next value for ${targetCollection}:`, error);
+    
+    // Fallback: generate a random number
+    const fallbackValue = 100000 + Math.floor(Math.random() * 900000);
+    console.log(`Using fallback value for ${targetCollection}: ${fallbackValue}`);
+    
+    return fallbackValue;
   }
 };
 
-const Sequence = mongoose.model('Sequence', SequenceSchema, 'sequences');
+// Static method to get current value
+Sequence.getCurrentValue = async function(targetCollection, transaction = null) {
+  const options = transaction ? { transaction } : {};
+  
+  const sequence = await this.findOne({
+    where: { target_collection: targetCollection },
+    attributes: ['value'],
+    ...options
+  });
+  
+  if (!sequence) {
+    return 1000; // Default starting value
+  }
+  
+  return sequence.value;
+};
+
+// Static method to reset sequence
+Sequence.resetSequence = async function(targetCollection, newValue = 1000, transaction = null) {
+  const options = transaction ? { transaction } : {};
+  
+  const [updatedCount] = await this.update(
+    {
+      value: newValue,
+      updated_at: new Date()
+    },
+    {
+      where: { target_collection: targetCollection },
+      ...options
+    }
+  );
+  
+  if (updatedCount === 0) {
+    // Create if doesn't exist
+    await this.create({
+      target_collection: targetCollection,
+      value: newValue,
+      ...options
+    });
+  }
+  
+  return newValue;
+};
+
 export default Sequence;

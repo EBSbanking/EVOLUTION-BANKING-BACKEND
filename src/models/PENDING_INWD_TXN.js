@@ -1,69 +1,82 @@
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-import mongoose from 'mongoose';
+class PendingGLTransaction extends Model {}
 
-const PendingGLTransactionSchema = new mongoose.Schema({
+PendingGLTransaction.init({
   INWD_FUNDS_XFER_ID: {
-    type: Number,
-    required: true,
+    type: DataTypes.INTEGER,
+    allowNull: false,
   },
   XFER_REF: {
-    type: String,
-    required: true,
-    maxlength: 100,
+    type: DataTypes.STRING(100),
+    allowNull: false,
   },
   GL_ACCT_NO: {
-    type: String,
-    required: true,
-    maxlength: 60,
+    type: DataTypes.STRING(60),
+    allowNull: false,
   },
   TRANSACTION_TYPE: {
-    type: String,
-    required: true,
-    enum: ['DEBIT', 'CREDIT'],
+    type: DataTypes.ENUM('DEBIT', 'CREDIT'),
+    allowNull: false,
   },
   AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    required: true,
+    type: DataTypes.DECIMAL(20, 8), // Adjust precision and scale as needed
+    allowNull: false,
   },
   CRNCY_ID: {
-    type: Number,
-    required: true,
+    type: DataTypes.INTEGER,
+    allowNull: false,
   },
   TRANSACTION_DATE: {
-    type: Date,
-    required: true,
+    type: DataTypes.DATE,
+    allowNull: false,
   },
   CREATED_BY: {
-    type: String,
-    required: true,
-    maxlength: 24,
+    type: DataTypes.STRING(24),
+    allowNull: false,
   },
   JOURNAL_ID: {
-    type: Number,
+    type: DataTypes.INTEGER,
   },
   STATUS: {
-    type: String,
-    required: true,
-    enum: ['PENDING', 'PROCESSED', 'FAILED'],
-    default: 'PENDING',
+    type: DataTypes.ENUM('PENDING', 'PROCESSED', 'FAILED'),
+    allowNull: false,
+    defaultValue: 'PENDING',
   },
   processedAt: {
-    type: Date,
+    type: DataTypes.DATE,
   },
   createdAt: {
-    type: Date,
-    default: Date.now,
-    required: true,
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
   },
   errorMessage: {
-    type: String,
-    maxlength: 4000,
+    type: DataTypes.STRING(4000),
   },
 }, {
-  timestamps: false,
-  toJSON: { getters: true },
+  sequelize,
+  modelName: 'PendingGLTransaction',
+  tableName: 'PendingGLTransactions', // Sequelize will pluralize the model name
+  timestamps: false, // Disable automatic createdAt and updatedAt
+  hooks: {
+    // Add hooks if you need custom JSON transformation like Mongoose getters
+    afterFind: (result) => {
+      if (!result) return;
+      
+      if (Array.isArray(result)) {
+        result.forEach(instance => {
+          if (instance.dataValues.AMOUNT && typeof instance.dataValues.AMOUNT === 'object') {
+            // Convert Decimal to string/number for JSON
+            instance.dataValues.AMOUNT = parseFloat(instance.dataValues.AMOUNT);
+          }
+        });
+      } else if (result.dataValues && result.dataValues.AMOUNT && typeof result.dataValues.AMOUNT === 'object') {
+        result.dataValues.AMOUNT = parseFloat(result.dataValues.AMOUNT);
+      }
+    }
+  }
 });
-
-const PendingGLTransaction = mongoose.model ('PendingGLTransaction', PendingGLTransactionSchema);
 
 export default PendingGLTransaction;

@@ -29,6 +29,13 @@ router.put('/credit-applications/:applId(*)', CreditApplicationController.update
 // Delete credit application by MongoDB ID
 router.delete('/:applId', CreditApplicationController.deleteCreditApplication);
 
+// Option A: Different path
+router.get('/by-applid/:applId', CreditApplicationController.getCreditApplicationByApplId);
+
+// Option B: Use query parameter instead
+router.get('/search', CreditApplicationController.getCreditApplicationByApplId);
+// Then call: GET /api/credit-applications/search?applId=CRAPP/0098
+
 router.get('/customer/:custId', CreditApplicationController.getCreditApplicationByCustId);
 
 

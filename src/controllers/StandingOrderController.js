@@ -1,12 +1,13 @@
 // controllers/standingOrderController.js
-import mongoose from 'mongoose';
+import { Sequelize, Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 import StandingOrder from '../models/StandingOrder.js';
 import StandingOrderExecution from '../models/StandingOrderExecution.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import logger from '../utils/logger.js';
 
 // -----------------------------------------------------------------------------
-// Utility: Safe calculation of nextExecutionDate
+// Utility: Safe calculation of nextExecutionDate (unchanged - pure JavaScript)
 // -----------------------------------------------------------------------------
 function calculateNextExecutionDate(options) {
   const {
@@ -99,54 +100,67 @@ function calculateNextExecutionDate(options) {
 }
 
 // -----------------------------------------------------------------------------
-// Helper: Validate and fetch Standing Order by ID
+// Helper: Validate and fetch Standing Order by ID with ownership check
 // -----------------------------------------------------------------------------
 async function findByIdAndCheckOwner(id, customerAcctNo) {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new Error('Invalid standing order ID');
+  const standingOrder = await StandingOrder.findByPk(id);
+  
+  if (!standingOrder) {
+    throw new Error('Standing order not found');
   }
-  const order = await StandingOrder.findById(id);
-  if (!order) throw new Error('Standing order not found');
-  if (order.customerAcctNo !== customerAcctNo) {
+  
+  if (standingOrder.customerAcctNo !== customerAcctNo) {
     throw new Error('Standing order does not belong to this customer account');
   }
-  return order;
+  
+  return standingOrder;
 }
 
 // -----------------------------------------------------------------------------
-// Helper: Debit Customer Account
+// Helper: Debit Customer Account using Sequelize transaction
 // -----------------------------------------------------------------------------
 async function debitCustomerAccount(acctNo, amount, currency = 'NGN') {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const transaction = await sequelize.transaction();
 
   try {
-    const account = await CustomerAccount.findOne({ ACCT_NO: acctNo }).session(session);
-    if (!account) throw new Error(`Customer account ${acctNo} not found`);
-    if (!account.DR_ALLOWED) throw new Error(`Debits not allowed on account ${acctNo}`);
-    if (parseFloat(account.AVAILABLE_BALANCE) < amount) {
-      throw new Error(`Insufficient balance in account ${acctNo}. Available: ${account.AVAILABLE_BALANCE}, Required: ${amount}`);
+    // Find account with row lock for concurrency control
+    const account = await CustomerAccount.findOne({
+      where: { ACCT_NO: acctNo },
+      lock: transaction.LOCK.UPDATE,
+      transaction
+    });
+
+    if (!account) {
+      throw new Error(`Customer account ${acctNo} not found`);
+    }
+    if (!account.DR_ALLOWED) {
+      throw new Error(`Debits not allowed on account ${acctNo}`);
+    }
+
+    // Convert to numbers for comparison
+    const availableBalance = parseFloat(account.AVAILABLE_BALANCE);
+    if (availableBalance < amount) {
+      throw new Error(`Insufficient balance in account ${acctNo}. Available: ${availableBalance}, Required: ${amount}`);
     }
 
     // Debit balances
     const newLedger = (parseFloat(account.LEDGER_BAL) - amount).toFixed(2);
     const newCleared = (parseFloat(account.CLEARED_BAL) - amount).toFixed(2);
-    const newAvailable = (parseFloat(account.AVAILABLE_BALANCE) - amount).toFixed(2);
+    const newAvailable = (availableBalance - amount).toFixed(2);
 
-    account.LEDGER_BAL = mongoose.Types.Decimal128.fromString(newLedger);
-    account.CLEARED_BAL = mongoose.Types.Decimal128.fromString(newCleared);
-    account.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(newAvailable);
-    account.lastActivityDate = new Date();
+    await account.update({
+      LEDGER_BAL: newLedger,
+      CLEARED_BAL: newCleared,
+      AVAILABLE_BALANCE: newAvailable,
+      lastActivityDate: new Date()
+    }, { transaction });
 
-    await account.save({ session });
-    await session.commitTransaction();
-
+    await transaction.commit();
     return account;
+
   } catch (error) {
-    await session.abortTransaction();
+    await transaction.rollback();
     throw error;
-  } finally {
-    session.endSession();
   }
 }
 
@@ -154,6 +168,8 @@ async function debitCustomerAccount(acctNo, amount, currency = 'NGN') {
 // CREATE: Create a new Standing Order
 // -----------------------------------------------------------------------------
 export const createStandingOrder = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { customerAcctNo } = req.params;
     const { 
@@ -165,19 +181,34 @@ export const createStandingOrder = async (req, res) => {
     const finalCustomerAcctNo = req.body.customerAcctNo || customerAcctNo;
 
     // Validate customer account
-    const customerAccount = await CustomerAccount.findOne({ ACCT_NO: finalCustomerAcctNo });
+    const customerAccount = await CustomerAccount.findOne({ 
+      where: { ACCT_NO: finalCustomerAcctNo },
+      transaction
+    });
+
     if (!customerAccount) {
+      await transaction.rollback();
       return res.status(404).json({ error: `Customer account ${finalCustomerAcctNo} not found` });
     }
+
     if (!customerAccount.DR_ALLOWED) {
+      await transaction.rollback();
       return res.status(400).json({ error: `Debits not allowed on account ${finalCustomerAcctNo}` });
+    }
+
+    // Validate startDate
+    const startDateObj = new Date(startDate);
+    if (isNaN(startDateObj.getTime())) {
+      await transaction.rollback();
+      return res.status(400).json({ error: 'Invalid startDate' });
     }
 
     // Compute next execution date safely
     let nextExecutionDate = null;
     try {
       const computedDate = calculateNextExecutionDate({ 
-        frequency, interval, dayOfWeek, dayOfMonth, weekOfMonth, startDate,
+        frequency, interval, dayOfWeek, dayOfMonth, weekOfMonth, 
+        startDate: startDateObj,
         currentDate: new Date()
       });
       if (computedDate && !isNaN(new Date(computedDate).getTime())) {
@@ -187,8 +218,8 @@ export const createStandingOrder = async (req, res) => {
       logger.warn(`Could not compute nextExecutionDate: ${calcErr.message}`);
     }
 
-    // Create standing order with pending status (requires approval to activate)
-    const standingOrder = new StandingOrder({
+    // Create standing order with pending status
+    const standingOrder = await StandingOrder.create({
       customerAcctNo: finalCustomerAcctNo,
       beneficiaryAcctNo,
       amount,
@@ -198,29 +229,31 @@ export const createStandingOrder = async (req, res) => {
       dayOfWeek,
       dayOfMonth,
       weekOfMonth,
-      startDate: new Date(startDate),
+      startDate: startDateObj,
       endDate: endDate ? new Date(endDate) : null,
       maxExecutions,
       nextExecutionDate,
-      isActive: false, // Initially inactive until approved
-      status: 'PENDING_APPROVAL' // NEW: Explicit status for approval workflow
-    });
+      isActive: false,
+      status: 'PENDING_APPROVAL',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }, { transaction });
 
-    await standingOrder.save();
+    await transaction.commit();
 
-    // TODO: Trigger approval workflow (e.g., notify managers via email/queue, create approval record)
     logger.info('Standing order created and sent for approval', {
-      standingOrderId: standingOrder._id,
+      standingOrderId: standingOrder.id,
       customerAcctNo: finalCustomerAcctNo
     });
 
     res.status(201).json({
       success: true,
       data: standingOrder,
-      message: 'Standing order created successfully and sent for approval. It will be activated upon manager approval.'
+      message: 'Standing order created successfully and sent for approval.'
     });
 
   } catch (error) {
+    await transaction.rollback();
     logger.error('Error creating standing order', { 
       error: error.message, 
       params: req.params, 
@@ -230,17 +263,14 @@ export const createStandingOrder = async (req, res) => {
   }
 };
 
-
-
-
-
+// -----------------------------------------------------------------------------
+// APPROVE: Bulk Approve ALL Pending Standing Orders for a Customer
+// -----------------------------------------------------------------------------
 export const approveStandingOrder = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   let transactionCompleted = false;
 
   try {
-    await session.startTransaction();
-
     const { customerAcctNo } = req.params;
     const { approvedBy = req.user?.id || 'SYSTEM', comments = 'Approved by manager' } = req.body;
 
@@ -255,12 +285,16 @@ export const approveStandingOrder = async (req, res) => {
     }
 
     // Find ALL pending standing orders for this customer
-    const pendingOrders = await StandingOrder.find({ 
-      customerAcctNo,
-      status: 'PENDING_APPROVAL'
-    }).session(session);
+    const pendingOrders = await StandingOrder.findAll({ 
+      where: { 
+        customerAcctNo,
+        status: 'PENDING_APPROVAL'
+      },
+      transaction
+    });
 
     if (pendingOrders.length === 0) {
+      await transaction.rollback();
       return res.status(200).json({
         success: true,
         data: [],
@@ -271,32 +305,34 @@ export const approveStandingOrder = async (req, res) => {
 
     // Bulk update all pending orders
     const updatedOrders = [];
+    const updatePromises = [];
+
     for (const standingOrder of pendingOrders) {
-      standingOrder.status = 'APPROVED';
-      standingOrder.isActive = true;
-      standingOrder.approvedBy = approvedBy;
-      standingOrder.approvedAt = new Date();
-      standingOrder.comments = comments;
+      const nextExecutionDate = calculateNextExecutionDate({ 
+        frequency: standingOrder.frequency, 
+        interval: standingOrder.interval, 
+        dayOfMonth: standingOrder.dayOfMonth, 
+        startDate: standingOrder.startDate,
+        currentDate: new Date()
+      });
 
-      // Recompute nextExecutionDate
-      try {
-        const computedNextDate = calculateNextExecutionDate({ 
-          frequency: standingOrder.frequency, 
-          interval: standingOrder.interval, 
-          dayOfMonth: standingOrder.dayOfMonth, 
-          startDate: standingOrder.startDate,
-          currentDate: new Date()
-        });
-        standingOrder.nextExecutionDate = new Date(computedNextDate);
-      } catch (calcErr) {
-        logger.warn(`Could not recompute nextExecutionDate for order ${standingOrder._id}: ${calcErr.message}`);
-      }
+      const updatePromise = standingOrder.update({
+        status: 'APPROVED',
+        isActive: true,
+        approvedBy,
+        approvedAt: new Date(),
+        comments,
+        nextExecutionDate: new Date(nextExecutionDate),
+        updatedAt: new Date()
+      }, { transaction });
 
-      await standingOrder.save({ session });
-      updatedOrders.push(standingOrder);
+      updatePromises.push(updatePromise);
     }
 
-    await session.commitTransaction();
+    const results = await Promise.all(updatePromises);
+    updatedOrders.push(...results);
+
+    await transaction.commit();
     transactionCompleted = true;
 
     logger.info('Bulk standing orders approved', {
@@ -308,13 +344,13 @@ export const approveStandingOrder = async (req, res) => {
     res.status(200).json({
       success: true,
       data: updatedOrders,
-      message: `Approved ${updatedOrders.length} standing order(s) for ${customerAcctNo}. They are now active.`,
+      message: `Approved ${updatedOrders.length} standing order(s) for ${customerAcctNo}.`,
       count: updatedOrders.length
     });
 
   } catch (error) {
-    if (session.inTransaction() && !transactionCompleted) {
-      await session.abortTransaction();
+    if (!transactionCompleted) {
+      await transaction.rollback();
     }
     logger.error('Bulk approval error', { error: error.message, params: req.params });
     res.status(error.status || 500).json({ 
@@ -322,84 +358,68 @@ export const approveStandingOrder = async (req, res) => {
       error: error.message || 'Bulk approval failed',
       code: error.code || 'APPROVAL_ERROR'
     });
-  } finally {
-    await session.endSession();
   }
 };
 
 // -----------------------------------------------------------------------------
-// REJECT: Bulk Reject ALL Pending Standing Orders for a Customer (by customerAcctNo only)
+// REJECT: Bulk Reject ALL Pending Standing Orders for a Customer
 // -----------------------------------------------------------------------------
 export const rejectStandingOrder = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   let transactionCompleted = false;
 
   try {
-    await session.startTransaction();
-
-    // --- Extract customerAcctNo from BOTH URL params and request body ---
+    // Extract customerAcctNo from both URL params and request body
     const CUSTOMER_ACCT_NO = String(
-      req.params.customerAcctNo ||  // From URL: /reject/2000001025
-      req.body.customerAcctNo ||    // From body: { "customerAcctNo": "2000001025" }
+      req.params.customerAcctNo || 
+      req.body.customerAcctNo || 
       ''
     ).trim();
 
     const REJECTED_BY = String(req.body.rejectedBy || '').trim();
+    const comments = req.body.comments || 'Rejected by manager';
 
-    console.log('🔍 FULL REQUEST ANALYSIS for Standing Order Rejection:', {
-      'req.params': req.params,
-      'req.body': req.body,
-      'req.originalUrl': req.originalUrl,
-      finalCustomerAcctNo: CUSTOMER_ACCT_NO,
-      rejectedBy: REJECTED_BY
-    });
-
-    // --- Validation ---
+    // Validation
     if (!CUSTOMER_ACCT_NO) {
       return res.status(400).json({
         success: false,
         message: 'customerAcctNo is required',
-        help: 'Provide it in URL (/reject/2000001025) OR request body ({ "customerAcctNo": "2000001025" })',
-        received: {
-          params: req.params,
-          body: req.body
-        }
+        help: 'Provide it in URL or request body'
       });
     }
 
     if (!REJECTED_BY) {
       return res.status(400).json({
         success: false,
-        message: 'rejectedBy is required in request body',
-        example: { "rejectedBy": "PCO06" }
+        message: 'rejectedBy is required in request body'
       });
     }
 
-    console.log('🔍 Processing bulk rejection for customerAcctNo:', CUSTOMER_ACCT_NO);
+    // Find the customer account
+    const customerAccount = await CustomerAccount.findOne({ 
+      where: { ACCT_NO: CUSTOMER_ACCT_NO },
+      transaction
+    });
 
-    // --- Find the customer account ---
-    const customerAccount = await CustomerAccount.findOne({ ACCT_NO: CUSTOMER_ACCT_NO });
     if (!customerAccount) {
-      console.log('❌ Customer account not found:', CUSTOMER_ACCT_NO);
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: `Customer account not found: ${CUSTOMER_ACCT_NO}`
       });
     }
 
-    console.log('🔍 FOUND CUSTOMER ACCOUNT:', {
-      ACCT_NO: customerAccount.ACCT_NO,
-      _id: customerAccount._id
+    // Find ALL pending standing orders for this customer
+    const pendingOrders = await StandingOrder.findAll({ 
+      where: { 
+        customerAcctNo: CUSTOMER_ACCT_NO,
+        status: 'PENDING_APPROVAL'
+      },
+      transaction
     });
 
-    // --- Find ALL pending standing orders for this customer ---
-    const pendingOrders = await StandingOrder.find({ 
-      customerAcctNo: CUSTOMER_ACCT_NO,
-      status: 'PENDING_APPROVAL'
-    }).session(session);
-
     if (pendingOrders.length === 0) {
-      console.log('❌ No pending standing orders for:', CUSTOMER_ACCT_NO);
+      await transaction.rollback();
       return res.status(200).json({
         success: true,
         data: [],
@@ -408,56 +428,53 @@ export const rejectStandingOrder = async (req, res) => {
       });
     }
 
-    console.log('🔍 FOUND PENDING ORDERS:', {
-      count: pendingOrders.length,
-      ids: pendingOrders.map(o => o._id)
-    });
-
-    // --- Bulk REJECT the standing orders ---
+    // Bulk REJECT the standing orders
     const updatedOrders = [];
+    const updatePromises = [];
+
     for (const standingOrder of pendingOrders) {
-      console.log('🔍 Rejecting standing order:', standingOrder._id);
+      const updatePromise = standingOrder.update({
+        status: 'REJECTED',
+        isActive: false,
+        rejectedBy: REJECTED_BY,
+        rejectedAt: new Date(),
+        comments,
+        updatedAt: new Date()
+      }, { transaction });
 
-      // Update to rejected and inactive
-      standingOrder.status = 'REJECTED';
-      standingOrder.isActive = false;
-      standingOrder.rejectedBy = REJECTED_BY;
-      standingOrder.rejectedAt = new Date();
-      standingOrder.comments = comments;
-
-      const updated = await standingOrder.save({ session });
-      updatedOrders.push(updated);
-      console.log('✅ Standing order rejected:', updated._id);
+      updatePromises.push(updatePromise);
     }
 
-    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    const results = await Promise.all(updatePromises);
+    updatedOrders.push(...results);
 
-    // --- Audit trail via logger ---
+    await transaction.commit();
+    transactionCompleted = true;
+
+    // Audit trail via logger
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    
     logger.info('Audit Event', {
       entity_type: 'STANDING_ORDER_REJECT',
-      entity_id: updatedOrders.map(o => o._id),
+      entity_id: updatedOrders.map(o => o.id),
       user_id: REJECTED_BY,
-      action: `Bulk rejected ${updatedOrders.length} standing orders for customer ${CUSTOMER_ACCT_NO}`,
+      action: `Bulk rejected ${updatedOrders.length} standing orders`,
       old_value: 'PENDING_APPROVAL',
       new_value: 'REJECTED',
       ip_address: ipAddress,
-      event_type: 'STANDING_ORDER_REJECT',
       outcome: 'success'
     });
 
-    // --- Success response ---
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: `Bulk rejected ${updatedOrders.length} standing order(s) for customer account ${CUSTOMER_ACCT_NO}.`,
       data: {
         customerAcctNo: CUSTOMER_ACCT_NO,
-        previousStatus: 'PENDING_APPROVAL',
-        newStatus: 'REJECTED',
         rejectedBy: REJECTED_BY,
         rejectedAt: new Date(),
         count: updatedOrders.length,
         orders: updatedOrders.map(o => ({
-          _id: o._id,
+          id: o.id,
           status: o.status,
           isActive: o.isActive,
           rejectedBy: o.rejectedBy,
@@ -467,24 +484,23 @@ export const rejectStandingOrder = async (req, res) => {
     });
 
   } catch (error) {
-    if (session.inTransaction() && !transactionCompleted) {
-      await session.abortTransaction();
+    if (!transactionCompleted) {
+      await transaction.rollback();
     }
-    console.error('❌ BULK REJECTION ERROR:', error);
+    
+    logger.error('BULK REJECTION ERROR:', error);
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    
     logger.error('Audit Event', {
       entity_type: 'STANDING_ORDER_REJECT',
-      entity_id: req.params.customerAcctNo || null,
       user_id: req.body.rejectedBy || 'SYSTEM',
       action: 'bulk_reject_standing_order',
-      old_value: null,
-      new_value: null,
       ip_address: ipAddress,
-      event_type: 'STANDING_ORDER_REJECT_ERROR',
       outcome: 'failure',
       error: error.message
     });
-    return res.status(500).json({
+    
+    res.status(500).json({
       success: false,
       message: 'Internal server error during bulk rejection',
       error: error.message
@@ -492,28 +508,34 @@ export const rejectStandingOrder = async (req, res) => {
   }
 };
 
-// READ: Get standing orders for a customer (unchanged, uses param)
+// -----------------------------------------------------------------------------
+// READ: Get standing orders for a customer
+// -----------------------------------------------------------------------------
 export const getStandingOrders = async (req, res) => {
   try {
     const { customerAcctNo } = req.params;
     const { page = 1, limit = 10, isActive } = req.query;
 
-    const query = { customerAcctNo };
+    const where = { customerAcctNo };
     if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
+      where.isActive = isActive === 'true';
     }
 
-    const standingOrders = await StandingOrder.find(query)
-      .populate({ 
-        path: 'customerAcctNo', 
-        select: 'ACCT_NO ACCT_NM LEDGER_BAL REC_ST', 
-        match: { ACCT_NO: customerAcctNo }  // Extra safety
-      })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ createdAt: -1 });
+    const offset = (page - 1) * limit;
 
-    const total = await StandingOrder.countDocuments(query);
+    const { count, rows: standingOrders } = await StandingOrder.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['createdAt', 'DESC']],
+      include: [{
+        model: CustomerAccount,
+        as: 'customerAccount',
+        where: { ACCT_NO: customerAcctNo },
+        attributes: ['ACCT_NO', 'ACCT_NM', 'LEDGER_BAL', 'REC_ST'],
+        required: true
+      }]
+    });
 
     res.json({
       success: true,
@@ -521,8 +543,8 @@ export const getStandingOrders = async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit)
+        total: count,
+        pages: Math.ceil(count / limit)
       }
     });
   } catch (error) {
@@ -531,19 +553,28 @@ export const getStandingOrders = async (req, res) => {
   }
 };
 
-// UPDATE: Update a standing order (now scoped to customerAcctNo)
+// -----------------------------------------------------------------------------
+// UPDATE: Update a standing order
+// -----------------------------------------------------------------------------
 export const updateStandingOrder = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { customerAcctNo, id } = req.params;
     const updates = req.body;
 
-    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);  // Validates ownership
+    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);
 
     // Re-validate customer account if updating acctNo
     if (updates.customerAcctNo && updates.customerAcctNo !== standingOrder.customerAcctNo) {
-      const newAccount = await CustomerAccount.findOne({ ACCT_NO: updates.customerAcctNo });
+      const newAccount = await CustomerAccount.findOne({ 
+        where: { ACCT_NO: updates.customerAcctNo },
+        transaction
+      });
+      
       if (!newAccount || !newAccount.DR_ALLOWED) {
-        return res.status(400).json({ error: `Invalid customer account for debits` });
+        await transaction.rollback();
+        return res.status(400).json({ error: 'Invalid customer account for debits' });
       }
     }
 
@@ -556,78 +587,104 @@ export const updateStandingOrder = async (req, res) => {
         dayOfMonth: updates.dayOfMonth !== undefined ? updates.dayOfMonth : standingOrder.dayOfMonth,
         weekOfMonth: updates.weekOfMonth !== undefined ? updates.weekOfMonth : standingOrder.weekOfMonth,
         startDate: standingOrder.startDate,
-        currentDate: new Date()  // Add this for consistency
+        currentDate: new Date()
       });
       updates.nextExecutionDate = nextDate;
     }
 
-    Object.assign(standingOrder, updates);
-    await standingOrder.save();
+    updates.updatedAt = new Date();
 
-    logger.info(`Standing order updated`, { standingOrderId: id, customerAcctNo });
+    await standingOrder.update(updates, { transaction });
+    await transaction.commit();
+
+    logger.info('Standing order updated', { standingOrderId: id, customerAcctNo });
 
     res.json({
       success: true,
       data: standingOrder,
       message: 'Standing order updated successfully'
     });
+
   } catch (error) {
+    await transaction.rollback();
     logger.error('Error updating standing order', { error: error.message, params: req.params });
     res.status(400).json({ error: error.message });
   }
 };
 
-// DELETE: Delete a standing order (now scoped to customerAcctNo)
+// -----------------------------------------------------------------------------
+// DELETE: Delete a standing order
+// -----------------------------------------------------------------------------
 export const deleteStandingOrder = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { customerAcctNo, id } = req.params;
 
-    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);  // Validates ownership
+    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);
 
-    await standingOrder.deleteOne();
+    // Delete related executions first
+    await StandingOrderExecution.destroy({
+      where: { standingOrderId: id },
+      transaction
+    });
 
-    // Optional: Delete related executions
-    await StandingOrderExecution.deleteMany({ standingOrderId: standingOrder._id });
+    // Delete the standing order
+    await standingOrder.destroy({ transaction });
+    await transaction.commit();
 
-    logger.info(`Standing order deleted`, { standingOrderId: id, customerAcctNo });
+    logger.info('Standing order deleted', { standingOrderId: id, customerAcctNo });
 
     res.json({
       success: true,
       message: 'Standing order deleted successfully'
     });
+
   } catch (error) {
+    await transaction.rollback();
     logger.error('Error deleting standing order', { error: error.message, params: req.params });
     res.status(500).json({ error: error.message });
   }
 };
 
-// PROCESS: Manually trigger execution (now scoped to customerAcctNo)
+// -----------------------------------------------------------------------------
+// PROCESS: Manually trigger execution
+// -----------------------------------------------------------------------------
 export const processStandingOrderExecution = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const { customerAcctNo, id } = req.params;
-    const now = new Date();  // Current date: October 27, 2025
+    const now = new Date();
 
-    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);  // Validates ownership
+    const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);
+    
     if (!standingOrder.isActive) {
+      await transaction.rollback();
       return res.status(400).json({ error: 'Standing order is not active' });
     }
 
     if (standingOrder.nextExecutionDate > now) {
+      await transaction.rollback();
       return res.status(400).json({ error: 'Next execution date not reached yet' });
     }
 
-    // Check bounds (unchanged)
+    // Check bounds
     if (standingOrder.endDate && standingOrder.endDate < now) {
-      standingOrder.isActive = false;
-      await standingOrder.save();
+      await standingOrder.update({ isActive: false }, { transaction });
+      await transaction.commit();
       return res.status(400).json({ error: 'Standing order has expired' });
     }
 
     if (standingOrder.maxExecutions) {
-      const executionCount = await StandingOrderExecution.countDocuments({ standingOrderId: id });
+      const executionCount = await StandingOrderExecution.count({
+        where: { standingOrderId: id },
+        transaction
+      });
+      
       if (executionCount >= standingOrder.maxExecutions) {
-        standingOrder.isActive = false;
-        await standingOrder.save();
+        await standingOrder.update({ isActive: false }, { transaction });
+        await transaction.commit();
         return res.status(400).json({ error: 'Maximum executions reached' });
       }
     }
@@ -636,18 +693,14 @@ export const processStandingOrderExecution = async (req, res) => {
     try {
       await debitCustomerAccount(standingOrder.customerAcctNo, standingOrder.amount, standingOrder.currency);
 
-      // Credit beneficiary (implement if needed)
-      // await creditBeneficiaryAccount(standingOrder.beneficiaryAcctNo, standingOrder.amount);
-
       // Create success execution
-      const execution = new StandingOrderExecution({
-        standingOrderId: standingOrder._id,
+      const execution = await StandingOrderExecution.create({
+        standingOrderId: standingOrder.id,
         executionDate: now,
         amount: standingOrder.amount,
         currency: standingOrder.currency,
         status: 'success'
-      });
-      await execution.save();
+      }, { transaction });
 
       // Update next execution date
       const nextDate = calculateNextExecutionDate({
@@ -657,31 +710,46 @@ export const processStandingOrderExecution = async (req, res) => {
         dayOfMonth: standingOrder.dayOfMonth,
         weekOfMonth: standingOrder.weekOfMonth,
         startDate: standingOrder.startDate,
-        currentDate: now  // For calculation offset after execution
+        currentDate: now
       });
-      standingOrder.nextExecutionDate = nextDate;
-      await standingOrder.save();
 
-      logger.info(`Standing order executed successfully`, { standingOrderId: id, customerAcctNo, executionId: execution._id });
+      await standingOrder.update({
+        nextExecutionDate: new Date(nextDate),
+        updatedAt: new Date()
+      }, { transaction });
+
+      await transaction.commit();
+
+      logger.info('Standing order executed successfully', { 
+        standingOrderId: id, 
+        customerAcctNo, 
+        executionId: execution.id 
+      });
 
       res.json({
         success: true,
         data: { execution, updatedStandingOrder: standingOrder },
         message: 'Standing order executed successfully'
       });
+
     } catch (debitError) {
       // Create failed execution
-      const execution = new StandingOrderExecution({
-        standingOrderId: standingOrder._id,
+      const execution = await StandingOrderExecution.create({
+        standingOrderId: standingOrder.id,
         executionDate: now,
         amount: standingOrder.amount,
         currency: standingOrder.currency,
         status: 'failed',
         failureReason: debitError.message
-      });
-      await execution.save();
+      }, { transaction });
 
-      logger.error(`Standing order execution failed`, { standingOrderId: id, customerAcctNo, error: debitError.message });
+      await transaction.commit();
+
+      logger.error('Standing order execution failed', { 
+        standingOrderId: id, 
+        customerAcctNo, 
+        error: debitError.message 
+      });
 
       res.status(400).json({
         success: false,
@@ -689,31 +757,37 @@ export const processStandingOrderExecution = async (req, res) => {
         data: { execution }
       });
     }
+
   } catch (error) {
+    await transaction.rollback();
     logger.error('Error processing standing order execution', { error: error.message, params: req.params });
     res.status(500).json({ error: error.message });
   }
 };
 
-// GET EXECUTIONS: Get executions for a standing order (now scoped to customerAcctNo)
+// -----------------------------------------------------------------------------
+// GET EXECUTIONS: Get executions for a standing order
+// -----------------------------------------------------------------------------
 export const getStandingOrderExecutions = async (req, res) => {
   try {
     const { customerAcctNo, id } = req.params;
     const { page = 1, limit = 10, status } = req.query;
 
-    await findByIdAndCheckOwner(id, customerAcctNo);  // Validates ownership (no populate needed)
+    await findByIdAndCheckOwner(id, customerAcctNo);
 
-    const query = { standingOrderId: id };
+    const where = { standingOrderId: id };
     if (status) {
-      query.status = status;
+      where.status = status;
     }
 
-    const executions = await StandingOrderExecution.find(query)
-      .sort({ executionDate: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const offset = (page - 1) * limit;
 
-    const total = await StandingOrderExecution.countDocuments(query);
+    const { count, rows: executions } = await StandingOrderExecution.findAndCountAll({
+      where,
+      order: [['executionDate', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
 
     res.json({
       success: true,
@@ -721,12 +795,128 @@ export const getStandingOrderExecutions = async (req, res) => {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit)
+        total: count,
+        pages: Math.ceil(count / limit)
       }
     });
   } catch (error) {
     logger.error('Error fetching standing order executions', { error: error.message, params: req.params });
     res.status(500).json({ error: error.message });
+  }
+};
+
+// -----------------------------------------------------------------------------
+// ADDITIONAL HELPER: Process due standing orders (cron job)
+// -----------------------------------------------------------------------------
+export const processDueStandingOrders = async () => {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    const now = new Date();
+    
+    // Find all active standing orders due for execution
+    const dueOrders = await StandingOrder.findAll({
+      where: {
+        isActive: true,
+        status: 'APPROVED',
+        nextExecutionDate: {
+          [Op.lte]: now
+        }
+      },
+      transaction
+    });
+
+    const results = {
+      successful: 0,
+      failed: 0,
+      processed: [],
+      errors: []
+    };
+
+    for (const order of dueOrders) {
+      try {
+        // Check if order has expired
+        if (order.endDate && order.endDate < now) {
+          await order.update({ isActive: false }, { transaction });
+          continue;
+        }
+
+        // Check max executions
+        if (order.maxExecutions) {
+          const executionCount = await StandingOrderExecution.count({
+            where: { standingOrderId: order.id },
+            transaction
+          });
+          
+          if (executionCount >= order.maxExecutions) {
+            await order.update({ isActive: false }, { transaction });
+            continue;
+          }
+        }
+
+        // Debit customer account
+        await debitCustomerAccount(order.customerAcctNo, order.amount, order.currency);
+
+        // Create execution record
+        await StandingOrderExecution.create({
+          standingOrderId: order.id,
+          executionDate: now,
+          amount: order.amount,
+          currency: order.currency,
+          status: 'success'
+        }, { transaction });
+
+        // Calculate next execution date
+        const nextDate = calculateNextExecutionDate({
+          frequency: order.frequency,
+          interval: order.interval,
+          dayOfWeek: order.dayOfWeek,
+          dayOfMonth: order.dayOfMonth,
+          weekOfMonth: order.weekOfMonth,
+          startDate: order.startDate,
+          currentDate: now
+        });
+
+        await order.update({
+          nextExecutionDate: new Date(nextDate),
+          updatedAt: new Date()
+        }, { transaction });
+
+        results.successful++;
+        results.processed.push(order.id);
+
+      } catch (error) {
+        // Create failed execution record
+        await StandingOrderExecution.create({
+          standingOrderId: order.id,
+          executionDate: now,
+          amount: order.amount,
+          currency: order.currency,
+          status: 'failed',
+          failureReason: error.message
+        }, { transaction });
+
+        results.failed++;
+        results.errors.push({
+          orderId: order.id,
+          error: error.message
+        });
+        
+        logger.error('Failed to process standing order', {
+          orderId: order.id,
+          error: error.message
+        });
+      }
+    }
+
+    await transaction.commit();
+    
+    logger.info('Processed due standing orders', results);
+    return results;
+
+  } catch (error) {
+    await transaction.rollback();
+    logger.error('Error processing due standing orders', { error: error.message });
+    throw error;
   }
 };

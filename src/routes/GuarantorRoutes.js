@@ -18,7 +18,7 @@ import {
 import Guarantor from '../models/Guarantor.js'
 
 import { authenticate } from '../middlewares/authMiddleware.js';
-import mongoose from "mongoose";
+
 
 const router = express.Router();
 

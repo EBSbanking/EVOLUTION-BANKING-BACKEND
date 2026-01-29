@@ -1,10 +1,10 @@
-// utils/generateLoanAccountId.js - COMPLETE AND FUNCTIONAL
+// utils/generateLoanAccountId.js - Sequelize Version
+import { Op } from 'sequelize';
 import Counter from '../models/Counter.js';
 import Transaction from '../models/Transaction.js';
 import LoanProduct from '../models/LoanProduct.js';
 import ProductTypeMapping from '../models/ProductTypeMapping.js'; // Import the ProductTypeMapping model
-import generateSerialNumber from './generateSerialNumber.js';
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
 
 // ✅ Account prefix logic based on product type ONLY - UPDATED
 export function getPrefixForProductType(productType) {
@@ -55,10 +55,10 @@ export const getProductTypeFromDatabase = async (PROD_ID) => {
   try {
     console.log(`🔍 Looking up product type mapping for PROD_ID: ${PROD_ID}`);
     
-    // First, try the ProductTypeMapping collection (primary source)
+    // First, try the ProductTypeMapping model (primary source)
     const productMapping = await ProductTypeMapping.findOne({ 
-      PROD_ID: PROD_ID 
-    }).lean();
+      where: { PROD_ID: PROD_ID }
+    });
     
     if (productMapping) {
       const productType = productMapping.PRODUCT_TYPE;
@@ -68,14 +68,16 @@ export const getProductTypeFromDatabase = async (PROD_ID) => {
       }
     }
     
-    // Fallback to LoanProduct collection
+    // Fallback to LoanProduct model
     console.log(`⚠️ No mapping found in ProductTypeMapping, checking LoanProduct...`);
     const product = await LoanProduct.findOne({ 
-      $or: [
-        { PROD_ID: PROD_ID },
-        { productCode: PROD_ID.toString() }
-      ]
-    }).lean();
+      where: {
+        [Op.or]: [
+          { PROD_ID: PROD_ID },
+          { productCode: PROD_ID.toString() }
+        ]
+      }
+    });
     
     if (product) {
       // Extract product type from various possible fields
@@ -169,18 +171,17 @@ export const getProductTypeFallback = async (PROD_ID) => {
 };
 
 // ✅ OPTIMIZED: Generate loan account number by PROD_ID
-export const generateLoanAccountNumberByProdId = async (PROD_ID, session = null) => {
-  let localSession = session;
-  let shouldEndSession = false;
+export const generateLoanAccountNumberByProdId = async (PROD_ID, transaction = null) => {
+  let localTransaction = transaction;
+  let shouldCommit = false;
   
   try {
     console.log(`🚀 Generating loan account for PROD_ID: ${PROD_ID}`);
     
-    // Start transaction if no session provided
-    if (!localSession) {
-      localSession = await mongoose.startSession();
-      localSession.startTransaction();
-      shouldEndSession = true;
+    // Start transaction if no transaction provided
+    if (!localTransaction) {
+      localTransaction = await sequelize.transaction();
+      shouldCommit = true;
     }
     
     // Get product type
@@ -191,24 +192,38 @@ export const generateLoanAccountNumberByProdId = async (PROD_ID, session = null)
     
     // Get or create counter
     const counterName = `LOAN_ACCT_${prefix}`;
-    const counter = await Counter.findOneAndUpdate(
-      { _id: counterName },
-      { 
-        $inc: { seq: 1 },
-        $setOnInsert: {
-          name: `Counter for ${productType}`,
-          description: `${productType} account numbers`,
-          createdAt: new Date(),
-          seq: 0
+    
+    // Find existing counter
+    let counter = await Counter.findOne({
+      where: { _id: counterName },
+      transaction: localTransaction
+    });
+    
+    if (counter) {
+      // Increment existing counter
+      await Counter.update(
+        { seq: sequelize.literal('seq + 1') },
+        {
+          where: { _id: counterName },
+          transaction: localTransaction
         }
-      },
-      { 
-        new: true, 
-        upsert: true,
-        setDefaultsOnInsert: true,
-        session: localSession
-      }
-    );
+      );
+      
+      // Fetch updated counter
+      counter = await Counter.findOne({
+        where: { _id: counterName },
+        transaction: localTransaction
+      });
+    } else {
+      // Create new counter
+      counter = await Counter.create({
+        _id: counterName,
+        seq: 1,
+        name: `Counter for ${productType}`,
+        description: `${productType} account numbers`,
+        createdAt: new Date()
+      }, { transaction: localTransaction });
+    }
 
     if (!counter) {
       throw new Error(`Counter ${counterName} update failed`);
@@ -223,8 +238,8 @@ export const generateLoanAccountNumberByProdId = async (PROD_ID, session = null)
     }
 
     // Commit if we started the transaction
-    if (shouldEndSession) {
-      await localSession.commitTransaction();
+    if (shouldCommit) {
+      await localTransaction.commit();
     }
 
     console.log(`✅ Generated: ${accountNumber} (${productType})`);
@@ -241,8 +256,8 @@ export const generateLoanAccountNumberByProdId = async (PROD_ID, session = null)
 
   } catch (error) {
     // Rollback on error
-    if (shouldEndSession && localSession) {
-      await localSession.abortTransaction();
+    if (shouldCommit && localTransaction) {
+      await localTransaction.rollback();
     }
     
     console.error('❌ Generation failed:', error.message);
@@ -261,47 +276,53 @@ export const generateLoanAccountNumberByProdId = async (PROD_ID, session = null)
       error: error.message,
       timestamp: new Date()
     };
-    
-  } finally {
-    // Clean up session
-    if (shouldEndSession && localSession) {
-      await localSession.endSession();
-    }
   }
 };
 
 // ✅ ENHANCED: Generate deposit account number
-export const generateDepositAccountNumber = async (PROD_ID, session = null) => {
-  let localSession = session;
-  let shouldEndSession = false;
+export const generateDepositAccountNumber = async (PROD_ID, transaction = null) => {
+  let localTransaction = transaction;
+  let shouldCommit = false;
   
   try {
     console.log(`💰 Generating deposit account for PROD_ID: ${PROD_ID}`);
     
-    if (!localSession) {
-      localSession = await mongoose.startSession();
-      localSession.startTransaction();
-      shouldEndSession = true;
+    if (!localTransaction) {
+      localTransaction = await sequelize.transaction();
+      shouldCommit = true;
     }
     
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
-      { 
-        $inc: { seq: 1 },
-        $setOnInsert: {
-          name: 'Deposit Account Counter',
-          description: 'Deposit account numbers',
-          createdAt: new Date(),
-          seq: 10 // Start from 10 → 2000000011
+    // Find existing counter
+    let counter = await Counter.findOne({
+      where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+      transaction: localTransaction
+    });
+    
+    if (counter) {
+      // Increment existing counter
+      await Counter.update(
+        { seq: sequelize.literal('seq + 1') },
+        {
+          where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+          transaction: localTransaction
         }
-      },
-      { 
-        new: true, 
-        upsert: true,
-        setDefaultsOnInsert: true,
-        session: localSession
-      }
-    );
+      );
+      
+      // Fetch updated counter
+      counter = await Counter.findOne({
+        where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+        transaction: localTransaction
+      });
+    } else {
+      // Create new counter starting from 10
+      counter = await Counter.create({
+        _id: 'DEPOSIT_ACCOUNT_NUMBER',
+        seq: 10, // Start from 10 → 2000000011
+        name: 'Deposit Account Counter',
+        description: 'Deposit account numbers',
+        createdAt: new Date()
+      }, { transaction: localTransaction });
+    }
 
     if (!counter) {
       throw new Error('Deposit counter update failed');
@@ -314,8 +335,8 @@ export const generateDepositAccountNumber = async (PROD_ID, session = null) => {
       throw new Error(`Invalid deposit account: ${accountNumber}`);
     }
 
-    if (shouldEndSession) {
-      await localSession.commitTransaction();
+    if (shouldCommit) {
+      await localTransaction.commit();
     }
 
     console.log(`✅ Generated deposit: ${accountNumber}`);
@@ -331,8 +352,8 @@ export const generateDepositAccountNumber = async (PROD_ID, session = null) => {
     };
 
   } catch (error) {
-    if (shouldEndSession && localSession) {
-      await localSession.abortTransaction();
+    if (shouldCommit && localTransaction) {
+      await localTransaction.rollback();
     }
     
     console.error('❌ Deposit generation failed:', error);
@@ -351,32 +372,27 @@ export const generateDepositAccountNumber = async (PROD_ID, session = null) => {
       error: error.message,
       timestamp: new Date()
     };
-    
-  } finally {
-    if (shouldEndSession && localSession) {
-      await localSession.endSession();
-    }
   }
 };
 
 // ✅ SMART: Universal account number generator
-export const generateAccountNumberByProdId = async (PROD_ID, session = null) => {
+export const generateAccountNumberByProdId = async (PROD_ID, transaction = null) => {
   try {
     // Check ProductTypeMapping first to determine product type
     const productMapping = await ProductTypeMapping.findOne({ 
-      PROD_ID: PROD_ID 
-    }).lean();
+      where: { PROD_ID: PROD_ID }
+    });
     
     if (productMapping) {
       const productType = productMapping.PRODUCT_TYPE;
       // Check if it's a deposit product
       if (productType === 'SAVINGS' || productType === 'TERM_DEPOSIT') {
-        return await generateDepositAccountNumber(PROD_ID, session);
+        return await generateDepositAccountNumber(PROD_ID, transaction);
       }
     }
     
     // Default to loan for everything else
-    return await generateLoanAccountNumberByProdId(PROD_ID, session);
+    return await generateLoanAccountNumberByProdId(PROD_ID, transaction);
     
   } catch (error) {
     console.error('Universal generation failed:', error);
@@ -407,7 +423,10 @@ export const initializeCounters = async () => {
     console.log('='.repeat(50));
     
     // Check deposit counter
-    let depositCounter = await Counter.findOne({ _id: 'DEPOSIT_ACCOUNT_NUMBER' });
+    let depositCounter = await Counter.findOne({ 
+      where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' }
+    });
+    
     if (!depositCounter) {
       depositCounter = await Counter.create({
         _id: 'DEPOSIT_ACCOUNT_NUMBER',
@@ -457,7 +476,9 @@ export const initializeCounters = async () => {
     
     for (const prefix of loanPrefixes) {
       const counterName = `LOAN_ACCT_${prefix}`;
-      let counter = await Counter.findOne({ _id: counterName });
+      let counter = await Counter.findOne({ 
+        where: { _id: counterName }
+      });
       
       if (!counter) {
         counter = await Counter.create({
@@ -534,7 +555,9 @@ export const debugAccountNumberGeneration = async (detailed = false) => {
     console.log('\n🔍 ACCOUNT NUMBER GENERATION DEBUG');
     console.log('='.repeat(50));
     
-    const counters = await Counter.find({}).sort({ _id: 1 });
+    const counters = await Counter.findAll({
+      order: [['_id', 'ASC']]
+    });
     
     if (!counters.length) {
       console.log('No counters found in database.');
@@ -1031,110 +1054,172 @@ export const getPrefixInfo = (productType) => {
 };
 
 // ✅ TRANSACTION: Generate unique transaction ID
-export const generateTransactionId = async (session = null) => {
+// ✅ TRANSACTION: Generate unique numeric transaction IDs (with backward compatibility)
+export const generateTransactionId = async (transaction = null, returnObject = true) => {
   try {
-    const timestamp = Date.now().toString();
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000); // 0-999
     
-    // Create base ID: timestamp + random
-    let transactionId = (timestamp + random).slice(-13);
+    // Create numeric ID (combine timestamp and random number)
+    let numericId = parseInt(`${timestamp}${random.toString().padStart(3, '0')}`);
     
     // Ensure uniqueness
     let attempts = 0;
     const maxAttempts = 5;
     
     while (attempts < maxAttempts) {
-      const existing = await Transaction.findOne({ TRANSACTION_ID: transactionId });
+      const existing = await Transaction.findOne({ 
+        where: { TRANSACTION_ID: numericId },
+        transaction
+      });
       
       if (!existing) {
         break; // Unique found
       }
       
       // Regenerate with different random part
-      transactionId = (Date.now().toString() + 
-                      Math.floor(Math.random() * 10000).toString().padStart(4, '0'))
-                      .slice(-13);
+      const newTimestamp = Date.now();
+      const newRandom = Math.floor(Math.random() * 1000);
+      numericId = parseInt(`${newTimestamp}${newRandom.toString().padStart(3, '0')}`);
       attempts++;
     }
     
     if (attempts >= maxAttempts) {
-      // Last resort: UUID style
-      transactionId = `T${Date.now()}${Math.floor(Math.random() * 1000000)}`.slice(-13);
+      // Last resort: simple numeric
+      numericId = parseInt(Date.now().toString() + Math.floor(Math.random() * 1000000).toString());
     }
     
-    console.log(`🔑 Generated transaction ID: ${transactionId}`);
+    console.log(`🔑 Generated NUMERIC transaction ID: ${numericId}`);
     
-    return transactionId;
+    // Return format based on parameter
+    if (returnObject) {
+      return {
+        TRANSACTION_ID: numericId,
+        EVENT_ID: numericId + 1,
+        JOURNAL_ID: numericId + 2,
+        TRAN_JOURNAL_ID: numericId + 2
+      };
+    } else {
+      // Backward compatibility: return just the transaction ID as a number
+      return numericId;
+    }
     
   } catch (error) {
     console.error('Transaction ID generation failed:', error);
     
-    // Simple fallback
-    return `T${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-13);
+    // Simple numeric fallback
+    const fallbackId = parseInt(Date.now().toString() + Math.floor(Math.random() * 1000).toString());
+    
+    if (returnObject) {
+      return {
+        TRANSACTION_ID: fallbackId,
+        EVENT_ID: fallbackId + 1,
+        JOURNAL_ID: fallbackId + 2,
+        TRAN_JOURNAL_ID: fallbackId + 2
+      };
+    } else {
+      return fallbackId;
+    }
   }
 };
 
 // ✅ ADMIN: Reset counters
 export const resetDepositAccountCounter = async (startFrom = 10) => {
+  const t = await sequelize.transaction();
+  
   try {
-    const result = await Counter.findOneAndUpdate(
-      { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
-      { 
+    const [counter, created] = await Counter.findOrCreate({
+      where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+      defaults: {
         seq: startFrom,
-        updatedAt: new Date(),
-        resetAt: new Date(),
-        resetBy: 'system'
+        name: 'Deposit Account Counter',
+        description: 'Deposit account numbers',
+        createdAt: new Date()
       },
-      { new: true, upsert: true }
-    );
+      transaction: t
+    });
     
-    const nextAccount = `20000000${String(result.seq).padStart(2, '0')}`;
+    if (!created) {
+      await Counter.update(
+        {
+          seq: startFrom,
+          updatedAt: new Date()
+        },
+        {
+          where: { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
+          transaction: t
+        }
+      );
+    }
     
-    console.log(`🔄 Deposit counter reset to: ${result.seq}`);
+    await t.commit();
+    
+    const nextAccount = `20000000${String(startFrom).padStart(2, '0')}`;
+    
+    console.log(`🔄 Deposit counter reset to: ${startFrom}`);
     console.log(`   Next account: ${nextAccount}`);
     
     return {
       success: true,
-      sequence: result.seq,
+      sequence: startFrom,
       nextAccount,
       timestamp: new Date()
     };
     
   } catch (error) {
+    await t.rollback();
     console.error('Reset failed:', error);
     return { success: false, error: error.message };
   }
 };
 
 export const resetLoanAccountCounter = async (prefix, startFrom = 0) => {
+  const t = await sequelize.transaction();
+  
   try {
     const counterName = `LOAN_ACCT_${prefix}`;
     
-    const result = await Counter.findOneAndUpdate(
-      { _id: counterName },
-      { 
+    const [counter, created] = await Counter.findOrCreate({
+      where: { _id: counterName },
+      defaults: {
         seq: startFrom,
-        updatedAt: new Date(),
-        resetAt: new Date(),
-        resetBy: 'system'
+        name: `Loan Counter: ${prefix}`,
+        description: `Loan account numbers with prefix ${prefix}`,
+        createdAt: new Date()
       },
-      { new: true, upsert: true }
-    );
+      transaction: t
+    });
     
-    const nextAccount = `${prefix}${String(result.seq).padStart(7, '0')}`;
+    if (!created) {
+      await Counter.update(
+        {
+          seq: startFrom,
+          updatedAt: new Date()
+        },
+        {
+          where: { _id: counterName },
+          transaction: t
+        }
+      );
+    }
     
-    console.log(`🔄 Loan counter ${prefix} reset to: ${result.seq}`);
+    await t.commit();
+    
+    const nextAccount = `${prefix}${String(startFrom).padStart(7, '0')}`;
+    
+    console.log(`🔄 Loan counter ${prefix} reset to: ${startFrom}`);
     console.log(`   Next account: ${nextAccount}`);
     
     return {
       success: true,
       prefix,
-      sequence: result.seq,
+      sequence: startFrom,
       nextAccount,
       timestamp: new Date()
     };
     
   } catch (error) {
+    await t.rollback();
     console.error(`Reset failed for prefix ${prefix}:`, error);
     return { success: false, prefix, error: error.message };
   }
@@ -1142,6 +1227,8 @@ export const resetLoanAccountCounter = async (prefix, startFrom = 0) => {
 
 // ✅ BATCH: Reset all loan counters - UPDATED
 export const resetAllLoanCounters = async (startFrom = 0) => {
+  const t = await sequelize.transaction();
+  
   try {
     console.log('🔄 Resetting all loan counters...');
     
@@ -1154,24 +1241,51 @@ export const resetAllLoanCounters = async (startFrom = 0) => {
     const results = [];
     
     for (const prefix of loanPrefixes) {
-      const result = await resetLoanAccountCounter(prefix, startFrom);
-      results.push(result);
+      const counterName = `LOAN_ACCT_${prefix}`;
+      
+      const [counter, created] = await Counter.findOrCreate({
+        where: { _id: counterName },
+        defaults: {
+          seq: startFrom,
+          name: `Loan Counter: ${prefix}`,
+          description: `Loan account numbers with prefix ${prefix}`,
+          createdAt: new Date()
+        },
+        transaction: t
+      });
+      
+      if (!created) {
+        await Counter.update(
+          {
+            seq: startFrom,
+            updatedAt: new Date()
+          },
+          {
+            where: { _id: counterName },
+            transaction: t
+          }
+        );
+      }
+      
+      results.push({
+        success: true,
+        prefix,
+        sequence: startFrom
+      });
     }
     
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
+    await t.commit();
     
-    console.log(`\n📊 Reset complete: ${successful} successful, ${failed} failed`);
+    console.log(`\n📊 Reset complete: ${results.length} counters reset`);
     
     return {
-      success: failed === 0,
+      success: true,
       total: results.length,
-      successful,
-      failed,
       results
     };
     
   } catch (error) {
+    await t.rollback();
     console.error('Batch reset failed:', error);
     return { success: false, error: error.message };
   }

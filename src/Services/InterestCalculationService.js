@@ -1,21 +1,26 @@
-// src/services/InterestCalculationService.js
+// src/services/InterestCalculationService.js - MYSQL VERSION
 import { Decimal } from 'decimal.js';
-import mongoose from 'mongoose';
-
-const { Decimal128 } = mongoose.Types;
+import sequelize from '../../config/db.js';
 
 export default class InterestCalculationService {
   constructor() {
-    console.log('InterestCalculationService initialized');
+    console.log('InterestCalculationService initialized (MySQL)');
   }
 
   /**
-   * Convert value to Decimal128 for MongoDB storage
+   * Convert value to MySQL-safe decimal
    */
-  toDecimal128(value) {
-    if (value === null || value === undefined) return Decimal128.fromString('0');
-    if (value instanceof mongoose.Types.Decimal128) return value;
-    return Decimal128.fromString(value.toString());
+  toMySQLDecimal(value) {
+    if (value === null || value === undefined) return 0.00;
+    if (value instanceof Decimal) return parseFloat(value.toFixed(2));
+    
+    try {
+      const decimalValue = new Decimal(value);
+      return parseFloat(decimalValue.toFixed(2));
+    } catch (error) {
+      console.warn('Failed to convert to MySQL decimal:', value, error.message);
+      return 0.00;
+    }
   }
 
   /**
@@ -99,7 +104,7 @@ export default class InterestCalculationService {
    * Used for flat rate loans where interest is calculated on original principal
    */
   calculateFixedRateEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate, isRateForTerm = false) {
-    console.log('=== FIXED RATE / SIMPLE INTEREST CALCULATION ===');
+    console.log('=== FIXED RATE / SIMPLE INTEREST CALCULATION (MySQL) ===');
     console.log(`Principal: ₦${principal}, Annual Rate: ${annualRatePercent}%, Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
     console.log(`Is rate for term duration? ${isRateForTerm}`);
 
@@ -144,19 +149,19 @@ export default class InterestCalculationService {
       installments.push({
         installmentNo: i,
         dueDate,
-        principal: Number(principalPortion.toFixed(2)),
-        interest: Number(interestPortion.toFixed(2)),
-        totalPayment: Number((principalPortion + interestPortion).toFixed(2)),
-        remainingBalance: Number(remaining.toFixed(2)),
+        principal: this.toMySQLDecimal(principalPortion),
+        interest: this.toMySQLDecimal(interestPortion),
+        totalPayment: this.toMySQLDecimal(principalPortion + interestPortion),
+        remainingBalance: this.toMySQLDecimal(remaining),
         status: 'PENDING'
       });
     }
 
     return {
-      emi: Number(emi.toFixed(2)),
-      totalInterest: Number(totalInterest.toFixed(2)),
-      totalRepayable: Number(totalRepayable.toFixed(2)),
-      totalPayment: Number(totalRepayable.toFixed(2)), // Added for compatibility
+      emi: this.toMySQLDecimal(emi),
+      totalInterest: this.toMySQLDecimal(totalInterest),
+      totalRepayable: this.toMySQLDecimal(totalRepayable),
+      totalPayment: this.toMySQLDecimal(totalRepayable), // Added for compatibility
       installments,
       calculationMethod: 'FIXED_RATE_SIMPLE',
       interestType: 'SIMPLE',
@@ -170,7 +175,7 @@ export default class InterestCalculationService {
    * Used for reducing balance loans where interest is calculated on outstanding balance
    */
   calculateReducingBalanceEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate) {
-    console.log('=== REDUCING BALANCE / COMPOUND INTEREST CALCULATION ===');
+    console.log('=== REDUCING BALANCE / COMPOUND INTEREST CALCULATION (MySQL) ===');
     console.log(`Principal: ₦${principal}, Annual Rate: ${annualRatePercent}%, Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
 
     const totalPayments = this.getTotalPaymentsForFrequency(termValue, termCode, paymentFrequency);
@@ -221,19 +226,19 @@ export default class InterestCalculationService {
       installments.push({
         installmentNo: i,
         dueDate,
-        principal: Number(principalPortion.toFixed(2)),
-        interest: Number(interestPortion.toFixed(2)),
-        totalPayment: Number((principalPortion + interestPortion).toFixed(2)),
-        remainingBalance: Number(remaining.toFixed(2)),
+        principal: this.toMySQLDecimal(principalPortion),
+        interest: this.toMySQLDecimal(interestPortion),
+        totalPayment: this.toMySQLDecimal(principalPortion + interestPortion),
+        remainingBalance: this.toMySQLDecimal(remaining),
         status: 'PENDING'
       });
     }
 
     return {
-      emi: Number(emi.toFixed(2)),
-      totalInterest: Number(totalInterest.toFixed(2)),
-      totalRepayable: Number(totalRepayable.toFixed(2)),
-      totalPayment: Number(totalRepayable.toFixed(2)), // Added for compatibility
+      emi: this.toMySQLDecimal(emi),
+      totalInterest: this.toMySQLDecimal(totalInterest),
+      totalRepayable: this.toMySQLDecimal(totalRepayable),
+      totalPayment: this.toMySQLDecimal(totalRepayable), // Added for compatibility
       installments,
       calculationMethod: 'REDUCING_BALANCE_COMPOUND',
       interestType: 'COMPOUND',
@@ -245,7 +250,7 @@ export default class InterestCalculationService {
    * Calculate interest based on product type
    */
   calculateInterestByProductType(productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate) {
-    console.log(`=== CALCULATING INTEREST BY PRODUCT TYPE: ${productType} ===`);
+    console.log(`=== CALCULATING INTEREST BY PRODUCT TYPE (MySQL): ${productType} ===`);
     console.log(`Principal: ₦${principal}, Rate: ${ratePercent}%`);
     console.log(`Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
 
@@ -288,7 +293,7 @@ export default class InterestCalculationService {
    * Aligns with applyForLoan function requirements
    */
   calculateInterestAndEMIEnhanced(principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate) {
-    console.log('=== ENHANCED EMI CALCULATION STARTED ===');
+    console.log('=== ENHANCED EMI CALCULATION STARTED (MySQL) ===');
     console.log(`Principal: ₦${principalAmount}`);
     console.log(`Interest Rate Config:`, loanInterestRate);
 
@@ -341,7 +346,7 @@ export default class InterestCalculationService {
    * Calculate EMI with chosen method - For applyForLoan compatibility
    */
   calculateEMIWithChosenMethod(principal, ratePercent, termValue, termCode, paymentFrequency, startDate, calculationMethod, isFixedTermRate = false) {
-    console.log('=== CALCULATING EMI WITH CHOSEN METHOD ===');
+    console.log('=== CALCULATING EMI WITH CHOSEN METHOD (MySQL) ===');
     console.log(`Method: ${calculationMethod}, Rate: ${ratePercent}%`);
     console.log(`Is rate for term duration? ${isFixedTermRate}`);
     
@@ -466,41 +471,191 @@ export default class InterestCalculationService {
   }
 
   /**
-   * Generate repayment schedule
+   * Generate repayment schedule for MySQL storage
    */
-  generateRepaymentSchedule(emiResult, loanAccountData) {
-    return {
-      LOAN_ACCOUNT_ID: loanAccountData._id,
-      ACCT_NO: loanAccountData.ACCT_NO,
-      CUST_ID: loanAccountData.CUST_ID,
-      START_DATE: loanAccountData.START_DT,
-      MATURITY_DATE: loanAccountData.MATURITY_DT,
-      PRINCIPAL_AMOUNT: loanAccountData.DISBURSEMENT_LIMIT,
-      INTEREST_RATE: loanAccountData.INTEREST_RATE,
-      INTEREST_RATE_TYPE: loanAccountData.INTEREST_RATE_TYPE,
-      INTEREST_TYPE: loanAccountData.INTEREST_TYPE,
-      CALCULATION_METHOD: emiResult.calculationMethod,
-      TERM: loanAccountData.TERM_VALUE,
-      TERM_TYPE: loanAccountData.TERM_CD,
-      paymentFrequency: loanAccountData.PAYMENT_FREQUENCY,
-      EMI_AMOUNT: this.toDecimal128(emiResult.emi),
-      installments: emiResult.installments.map((installment, index) => ({
-        installmentNo: installment.installmentNo || installment.installmentNumber || (index + 1),
-        dueDate: installment.dueDate,
-        principal: this.toDecimal128(installment.principal),
-        interest: this.toDecimal128(installment.interest),
-        totalPayment: this.toDecimal128(installment.totalPayment),
-        remainingBalance: this.toDecimal128(installment.remainingBalance),
-        status: 'PENDING',
-        amountPaid: this.toDecimal128('0.00'),
-        principalPaid: this.toDecimal128('0.00'),
-        interestPaid: this.toDecimal128('0.00'),
-        feesPaid: this.toDecimal128('0.00')
-      })),
-      TOTAL_INTEREST: this.toDecimal128(emiResult.totalInterest),
-      TOTAL_REPAYMENT: this.toDecimal128(emiResult.totalRepayable),
-      STATUS: 'PENDING'
-    };
+  async generateRepaymentScheduleForMySQL(emiResult, loanAccountData) {
+    try {
+      // Create loan_installments table if it doesn't exist
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS loan_installments (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          loan_account_id INT NOT NULL,
+          account_number VARCHAR(50),
+          customer_id VARCHAR(50),
+          installment_number INT NOT NULL,
+          due_date DATE NOT NULL,
+          principal_amount DECIMAL(15,2) NOT NULL,
+          interest_amount DECIMAL(15,2) NOT NULL,
+          total_amount DECIMAL(15,2) NOT NULL,
+          remaining_balance DECIMAL(15,2) NOT NULL,
+          status ENUM('PENDING', 'PAID', 'OVERDUE', 'PARTIAL') DEFAULT 'PENDING',
+          amount_paid DECIMAL(15,2) DEFAULT 0.00,
+          principal_paid DECIMAL(15,2) DEFAULT 0.00,
+          interest_paid DECIMAL(15,2) DEFAULT 0.00,
+          fees_paid DECIMAL(15,2) DEFAULT 0.00,
+          payment_date DATE,
+          payment_reference VARCHAR(255),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_loan_account (loan_account_id),
+          INDEX idx_due_date (due_date),
+          INDEX idx_status (status),
+          UNIQUE KEY unique_installment (loan_account_id, installment_number)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      // Generate installments for MySQL insertion
+      const installments = emiResult.installments.map((installment) => ({
+        loan_account_id: loanAccountData.id || loanAccountData._id,
+        account_number: loanAccountData.account_number || loanAccountData.ACCT_NO,
+        customer_id: loanAccountData.customer_id || loanAccountData.CUST_ID,
+        installment_number: installment.installmentNo,
+        due_date: installment.dueDate,
+        principal_amount: installment.principal,
+        interest_amount: installment.interest,
+        total_amount: installment.totalPayment,
+        remaining_balance: installment.remainingBalance,
+        status: 'PENDING'
+      }));
+
+      // Insert installments into MySQL
+      const insertedIds = [];
+      for (const installment of installments) {
+        const [result] = await sequelize.query(
+          `INSERT INTO loan_installments SET ?`,
+          { replacements: [installment] }
+        );
+        insertedIds.push(result.insertId);
+      }
+
+      console.log(`✅ Generated ${installments.length} installments for loan account: ${loanAccountData.account_number || loanAccountData.ACCT_NO}`);
+
+      return {
+        success: true,
+        loan_account_id: loanAccountData.id || loanAccountData._id,
+        account_number: loanAccountData.account_number || loanAccountData.ACCT_NO,
+        customer_id: loanAccountData.customer_id || loanAccountData.CUST_ID,
+        start_date: loanAccountData.start_date || loanAccountData.START_DT,
+        maturity_date: loanAccountData.maturity_date || loanAccountData.MATURITY_DT,
+        principal_amount: loanAccountData.principal_amount || loanAccountData.DISBURSEMENT_LIMIT,
+        interest_rate: loanAccountData.interest_rate || loanAccountData.INTEREST_RATE,
+        interest_type: loanAccountData.interest_type || loanAccountData.INTEREST_TYPE,
+        calculation_method: emiResult.calculationMethod,
+        term_value: loanAccountData.term_value || loanAccountData.TERM_VALUE,
+        term_code: loanAccountData.term_code || loanAccountData.TERM_CD,
+        payment_frequency: loanAccountData.payment_frequency || loanAccountData.PAYMENT_FREQUENCY,
+        emi_amount: emiResult.emi,
+        total_interest: emiResult.totalInterest,
+        total_repayable: emiResult.totalRepayable,
+        total_installments: installments.length,
+        installment_ids: insertedIds,
+        generated_at: new Date()
+      };
+    } catch (error) {
+      console.error('Error generating repayment schedule for MySQL:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Create loan accounts table if it doesn't exist
+   */
+  async createLoanAccountsTableIfNotExists() {
+    try {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS loan_accounts (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          account_number VARCHAR(50) UNIQUE NOT NULL,
+          customer_id VARCHAR(50) NOT NULL,
+          product_type VARCHAR(100),
+          principal_amount DECIMAL(15,2) NOT NULL,
+          interest_rate DECIMAL(10,4) NOT NULL,
+          interest_type ENUM('SIMPLE', 'COMPOUND') DEFAULT 'SIMPLE',
+          calculation_method VARCHAR(50),
+          term_value INT NOT NULL,
+          term_code VARCHAR(10) DEFAULT 'M',
+          payment_frequency VARCHAR(20) DEFAULT 'MONTHLY',
+          start_date DATE NOT NULL,
+          maturity_date DATE,
+          emi_amount DECIMAL(15,2),
+          total_interest DECIMAL(15,2),
+          total_repayable DECIMAL(15,2),
+          outstanding_balance DECIMAL(15,2),
+          status ENUM('ACTIVE', 'CLOSED', 'DEFAULTED', 'WRITTEN_OFF') DEFAULT 'ACTIVE',
+          created_by INT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_account_number (account_number),
+          INDEX idx_customer_id (customer_id),
+          INDEX idx_status (status),
+          INDEX idx_maturity_date (maturity_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      
+      console.log('✅ Loan accounts table ready');
+      return true;
+    } catch (error) {
+      console.error('Error creating loan accounts table:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Save loan calculation to database
+   */
+  async saveLoanCalculation(loanData, emiResult) {
+    try {
+      await this.createLoanAccountsTableIfNotExists();
+      
+      const loanAccount = {
+        account_number: loanData.account_number || `LOAN_${Date.now()}`,
+        customer_id: loanData.customer_id || loanData.CUST_ID,
+        product_type: loanData.product_type,
+        principal_amount: loanData.principal_amount || loanData.DISBURSEMENT_LIMIT,
+        interest_rate: loanData.interest_rate || loanData.INTEREST_RATE,
+        interest_type: loanData.interest_type || (emiResult.interestType === 'SIMPLE' ? 'SIMPLE' : 'COMPOUND'),
+        calculation_method: emiResult.calculationMethod,
+        term_value: loanData.term_value || loanData.TERM_VALUE,
+        term_code: loanData.term_code || loanData.TERM_CD,
+        payment_frequency: loanData.payment_frequency || loanData.PAYMENT_FREQUENCY,
+        start_date: loanData.start_date || loanData.START_DT,
+        maturity_date: this.calculateNextPaymentDate(
+          loanData.term_value || loanData.TERM_VALUE,
+          loanData.term_code || loanData.TERM_CD,
+          loanData.start_date || loanData.START_DT
+        ),
+        emi_amount: emiResult.emi,
+        total_interest: emiResult.totalInterest,
+        total_repayable: emiResult.totalRepayable,
+        outstanding_balance: emiResult.totalRepayable,
+        status: 'ACTIVE',
+        created_by: loanData.created_by
+      };
+
+      const [result] = await sequelize.query(
+        `INSERT INTO loan_accounts SET ?`,
+        { replacements: [loanAccount] }
+      );
+
+      console.log(`✅ Loan account saved with ID: ${result.insertId}`);
+
+      // Generate and save repayment schedule
+      const scheduleResult = await this.generateRepaymentScheduleForMySQL(emiResult, {
+        id: result.insertId,
+        ...loanAccount
+      });
+
+      return {
+        success: true,
+        loan_account_id: result.insertId,
+        loan_account: loanAccount,
+        emi_calculation: emiResult,
+        repayment_schedule: scheduleResult
+      };
+    } catch (error) {
+      console.error('Error saving loan calculation:', error.message);
+      throw error;
+    }
   }
 
   /**
@@ -541,6 +696,44 @@ export default class InterestCalculationService {
       errors: errors.length > 0 ? errors : null
     };
   }
+
+  /**
+   * Get loan calculations by customer
+   */
+  async getLoanCalculationsByCustomer(customerId) {
+    try {
+      const [loans] = await sequelize.query(
+        `SELECT * FROM loan_accounts 
+         WHERE customer_id = ? 
+         ORDER BY created_at DESC`,
+        { replacements: [customerId] }
+      );
+
+      return loans;
+    } catch (error) {
+      console.error('Error fetching loan calculations:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get loan installments by loan account
+   */
+  async getLoanInstallments(loanAccountId) {
+    try {
+      const [installments] = await sequelize.query(
+        `SELECT * FROM loan_installments 
+         WHERE loan_account_id = ? 
+         ORDER BY installment_number ASC`,
+        { replacements: [loanAccountId] }
+      );
+
+      return installments;
+    } catch (error) {
+      console.error('Error fetching loan installments:', error.message);
+      throw error;
+    }
+  }
 }
 
 // Export standalone functions for backward compatibility
@@ -564,8 +757,23 @@ export const calculateReducingBalanceEMI = (principal, annualRatePercent, termVa
   return service.calculateReducingBalanceEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate);
 };
 
-// ADDED: Export the new calculateInterestByProductType function
 export const calculateInterestByProductType = (productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate) => {
   const service = new InterestCalculationService();
   return service.calculateInterestByProductType(productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate);
+};
+
+// MySQL-specific exports
+export const saveLoanCalculation = async (loanData, emiResult) => {
+  const service = new InterestCalculationService();
+  return await service.saveLoanCalculation(loanData, emiResult);
+};
+
+export const getLoanCalculationsByCustomer = async (customerId) => {
+  const service = new InterestCalculationService();
+  return await service.getLoanCalculationsByCustomer(customerId);
+};
+
+export const getLoanInstallments = async (loanAccountId) => {
+  const service = new InterestCalculationService();
+  return await service.getLoanInstallments(loanAccountId);
 };

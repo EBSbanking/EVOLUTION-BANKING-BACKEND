@@ -1,805 +1,1185 @@
-// server.js - FULLY FIXED VERSION
+// server.js - UPDATED VERSION WITH IMPROVED MODEL LOADING
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
-import mongoose from 'mongoose';
-import cors from 'cors';
-import bcrypt from 'bcryptjs';
-import connectDB from './config/db.js';
-import logger from './src/utils/logger.js';
-import { initializeSystemDates } from './src/controllers/OsController.js';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+// Import sequelize from db.js - use the getSequelize function since that's what's exported
+import { getSequelize, checkDatabaseHealth } from './config/db.js';
 import os from 'os';
-import fs from 'fs';
+import fs from 'fs/promises';
+import configurationService from './src/Services/ConfigurationService.js';
+import SavingsProduct from './src/models/SavingsProduct.js';
+import { LoanInterestRate } from './src/models/LoanInterestRate.js';
+import LoanAccount from './src/models/LoanAccount.js';
 
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+// Fix __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-// Global variable to store system user ID
-let SYSTEM_USER_ID = null;
+// Load environment variables
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-// Role mapping for system user
-const ROLE_MAPPING = {
-  'EOD_OPERATOR': 24,
-  'ADMINISTRATOR': 1,
-  'TELLER': 29,
-  'CUSTOMER_SERVICE_OFFICER': 28
-};
+const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || '0.0.0.0';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const AUTO_SYNC_DB = process.env.AUTO_SYNC_DB === 'true';
 
-// Reverse mapping for display
-const ROLE_REVERSE_MAPPING = Object.fromEntries(
-  Object.entries(ROLE_MAPPING).map(([name, id]) => [id, name])
-);
+await configurationService.initialize();
 
 // ============================================
-// HELPER FUNCTIONS
+// GET SEQUELIZE INSTANCE
 // ============================================
 
-// Helper function to get DB state text
-function getDbStateText(state) {
-  const states = {
-    0: '❌ Disconnected',
-    1: '✅ Connected',
-    2: '🔄 Connecting',
-    3: '⏳ Disconnecting',
-  };
-  return states[state] || `❓ Unknown (${state})`;
-}
+// Use getSequelize() to get the instance
+const sequelize = getSequelize();
 
-// Network IP Helper Function
-function getNetworkIP() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return 'localhost';
-}
+// ============================================
+// EMERGENCY TABLE CREATION FOR MISSING TABLES
+// ============================================
 
-// Initialize counters safely (standalone version)
-const initializeCounters = async () => {
-  try {
-    console.log('🔄 Initializing account counters...');
-    
-    // Ensure MongoDB is connected
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ MongoDB not connected, skipping counter initialization');
-      return;
-    }
-    
-    const db = mongoose.connection.db;
-    
-    // Check if counters collection exists
-    const collections = await db.listCollections().toArray();
-    const hasCountersCollection = collections.some(col => col.name === 'counters');
-    
-    if (!hasCountersCollection) {
-      console.log('📁 Creating counters collection...');
-      await db.createCollection('counters');
-    }
-    
-    // Default counters to initialize
-    const defaultCounters = [
-      { _id: 'accountNumber', sequence_value: 1000000000 },
-      { _id: 'customerId', sequence_value: 1000 },
-      { _id: 'transactionId', sequence_value: 1000000 },
-      { _id: 'loanAccount', sequence_value: 9000000000 },
-      { _id: 'savingsAccount', sequence_value: 8000000000 },
-      { _id: 'currentAccount', sequence_value: 7000000000 },
-      { _id: 'fixedDeposit', sequence_value: 6000000000 }
-    ];
-    
-    let initializedCount = 0;
-    
-    for (const counter of defaultCounters) {
-      try {
-        const existing = await db.collection('counters').findOne({ _id: counter._id });
+const createMissingTables = async () => {
+  console.log('\n🔍 Checking for missing critical tables...');
+  
+  const criticalTables = [
+    'customers',
+    'customer_accounts',
+    'account_applications',
+    'counters'
+  ];
+  
+  const createdTables = [];
+  const failedTables = [];
+  
+  for (const tableName of criticalTables) {
+    try {
+      const [tables] = await sequelize.query(`SHOW TABLES LIKE '${tableName}'`);
+      
+      if (tables.length === 0) {
+        console.log(`   ⚠️  Table ${tableName} doesn't exist, creating...`);
         
-        if (!existing) {
-          await db.collection('counters').insertOne({
-            _id: counter._id,
-            sequence_value: counter.sequence_value,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          console.log(`   ✅ Created counter: ${counter._id} = ${counter.sequence_value}`);
-          initializedCount++;
-        } else {
-          console.log(`   📊 Counter exists: ${counter._id} = ${existing.sequence_value}`);
+        let createQuery = '';
+        
+        switch (tableName) {
+          case 'customer_accounts':
+            createQuery = `
+              CREATE TABLE customer_accounts (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                customer_id BIGINT NOT NULL,
+                account_number VARCHAR(20) UNIQUE NOT NULL,
+                status VARCHAR(20) DEFAULT 'PENDING' NOT NULL,
+                account_type VARCHAR(20) DEFAULT 'SAVINGS',
+                available_balance DECIMAL(20,2) DEFAULT 0.00,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_customer_id (customer_id),
+                INDEX idx_account_number (account_number),
+                INDEX idx_status (status)
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            `;
+            break;
+            
+          case 'customers':
+            createQuery = `
+              CREATE TABLE customers (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                CUST_ID VARCHAR(50) UNIQUE NOT NULL,
+                CUST_NO VARCHAR(50),
+                CUST_NM VARCHAR(255),
+                FIRST_NAME VARCHAR(100),
+                LAST_NAME VARCHAR(100),
+                EMAIL_ADDRESS VARCHAR(255),
+                PHONE_NO VARCHAR(20),
+                REC_ST VARCHAR(20) DEFAULT 'PENDING',
+                status VARCHAR(20) DEFAULT 'Pending',
+                APPROVED_BY VARCHAR(100),
+                APPROVED_DT DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_cust_id (CUST_ID),
+                INDEX idx_cust_no (CUST_NO)
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            `;
+            break;
+            
+          case 'account_applications':
+            // This should already exist from fixAccountApplicationSchema()
+            continue;
+            
+          case 'counters':
+            createQuery = `
+              CREATE TABLE counters (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(50) UNIQUE NOT NULL,
+                seq INT DEFAULT 0 NOT NULL,
+                description VARCHAR(255),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_name (name)
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            `;
+            break;
         }
-      } catch (counterError) {
-        console.log(`   ⚠️ Error with counter ${counter._id}:`, counterError.message);
+        
+        if (createQuery) {
+          await sequelize.query(createQuery);
+          console.log(`   ✅ Created table: ${tableName}`);
+          createdTables.push(tableName);
+        }
+      } else {
+        console.log(`   ✅ Table exists: ${tableName}`);
       }
+    } catch (error) {
+      console.log(`   ❌ Failed to create ${tableName}: ${error.message}`);
+      failedTables.push(tableName);
     }
-    
-    console.log(`✅ Counters initialized: ${initializedCount} new counters created`);
-    return initializedCount;
-    
-  } catch (error) {
-    console.log('⚠️ Counter initialization failed:', error.message);
-    // Don't throw, just log - this is non-critical
   }
+  
+  console.log(`\n📊 Emergency table creation summary:`);
+  console.log(`   Created: ${createdTables.length} tables`);
+  console.log(`   Failed: ${failedTables.length} tables`);
+  
+  if (createdTables.length > 0) {
+    console.log(`   Created tables: ${createdTables.join(', ')}`);
+  }
+  
+  if (failedTables.length > 0) {
+    console.log(`   Failed tables: ${failedTables.join(', ')}`);
+  }
+  
+  return createdTables.length > 0;
 };
 
-// DIRECT MongoDB cleanup - bypasses Mongoose completely
-const cleanupInvalidDataDirect = async () => {
-  try {
-    console.log('🧹 DIRECT CLEANUP: Fixing invalid data using raw MongoDB operations...');
+// ============================================
+// LOAD SPECIFIC MODELS TO AVOID COLUMN ERRORS
+// ============================================
+
+const loadModelsSafely = async () => {
+  console.log('\n📦 Loading models from models directory...');
+  
+  const modelPriority = [
+    // Critical models first (must work)
+    'Counter', 'User', 'Customer', 'CustomerAccount',
+
+     'Drawer', 'AuditTrail',
     
-    // Check connection first
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ MongoDB not connected, skipping cleanup');
-      return 0;
+    // AccountApplication should be loaded early to fix schema issues
+    'AccountApplication',
+    
+    // Other important models
+    'Transaction', 'LoanDisbursement', 'Disbursement', 'LoanRepayment',
+    'LoanProduct', 'LoanAccount', 'CreditApplication', 'Guarantor',
+    'LoanInterestRate', 'ProductTypeMapping', 'LoanFee',
+    'InterestAccrual', 'LoanPortfolio', 'GLAccount', 'Charge',
+    'LoanContractForm', 'WF_WORK_ITEM', 'Thrift', 'AuditTrail',
+    'BusinessUnit', 'UserRole'
+  ];
+  
+  const skipModels = [
+    'Account',
+    'RepaymentSchedule',
+    'RateIndex',
+    'Permission',
+    'DepositTransaction',
+    'LoanFee',
+    'InterestAccrual'
+  ];
+  
+  const loadedModels = [];
+  const failedModels = [];
+  
+  for (const modelName of modelPriority) {
+    if (skipModels.includes(modelName)) {
+      console.log(`   ⏭️  Skipping ${modelName} (known issues)`);
+      continue;
     }
-    
-    const db = mongoose.connection.db;
-    let totalFixed = 0;
-    
-    // 1. Clean up User collection - Convert string roles to numbers
-    console.log('   🔧 Fixing User collection...');
     
     try {
-      // Find users with string roles
-      const usersWithStringRoles = await db.collection('users').find({
-        $or: [
-          { "primary_role": { $type: "string" } },
-          { "roles": { $elemMatch: { $type: "string" } } }
-        ]
-      }).toArray();
+      const modelPath = path.resolve(__dirname, `./src/models/${modelName}.js`);
       
-      console.log(`   📊 Found ${usersWithStringRoles.length} users with string roles`);
+      try {
+        await fs.access(modelPath);
+      } catch {
+        console.log(`   ⚠️  ${modelName} - File not found`);
+        continue;
+      }
       
-      for (const user of usersWithStringRoles) {
-        const updateDoc = {};
-        let needsUpdate = false;
-        
-        // Fix primary_role if it's a string
-        if (typeof user.primary_role === 'string') {
-          const oldValue = user.primary_role;
-          let newValue;
-          
-          // Map common string values to numbers
-          switch (user.primary_role.toUpperCase()) {
-            case 'ADMIN':
-            case 'ADMINISTRATOR':
-              newValue = 1;
-              break;
-            case 'SYSTEM':
-            case 'SYSTEM_ADMIN':
-            case 'EOD_OPERATOR':
-              newValue = 24;
-              break;
-            case 'TELLER':
-              newValue = 29;
-              break;
-            case 'STAFF':
-              newValue = 28;
-              break;
-            default:
-              // Try to parse as number
-              newValue = parseInt(user.primary_role);
-              if (isNaN(newValue)) {
-                newValue = 28; // Default to Customer Service Officer
-              }
+      console.log(`   📂 Loading ${modelName} from ${modelPath}...`);
+      const modelModule = await import(`./src/models/${modelName}.js`);
+      const model = modelModule.default;
+      
+      if (model) {
+        // Check if model is properly initialized
+        if (typeof model.init === 'function') {
+          // Initialize the model if not already done
+          if (!sequelize.isDefined(modelName)) {
+            try {
+              model.init(model.rawAttributes || {}, model.options || {});
+              console.log(`   ✅ ${modelName} - Model initialized`);
+            } catch (initError) {
+              console.log(`   ❌ ${modelName} - Failed to initialize: ${initError.message}`);
+              failedModels.push({ model: modelName, error: `Init failed: ${initError.message}` });
+              continue;
+            }
           }
           
-          updateDoc.primary_role = newValue;
-          needsUpdate = true;
-          console.log(`     🔄 User ${user.username || user._id}: primary_role "${oldValue}" -> ${newValue}`);
+          loadedModels.push(modelName);
+          console.log(`   ✅ ${modelName} loaded and registered`);
+        } else {
+          console.log(`   ⚠️  ${modelName} - Model doesn't have init method`);
+          failedModels.push({ model: modelName, error: 'Model missing init method' });
         }
-        
-        // Fix roles array if it contains strings
-        if (user.roles && Array.isArray(user.roles) && user.roles.some(role => typeof role === 'string')) {
-          const fixedRoles = user.roles.map(role => {
-            if (typeof role === 'string') {
-              // Map common string values to numbers
-              switch (role.toUpperCase()) {
-                case 'ADMIN':
-                case 'ADMINISTRATOR':
-                  return 1;
-                case 'SYSTEM':
-                case 'SYSTEM_ADMIN':
-                case 'EOD_OPERATOR':
-                  return 24;
-                case 'TELLER':
-                  return 29;
-                case 'STAFF':
-                  return 28;
-                default:
-                  const num = parseInt(role);
-                  return isNaN(num) ? 28 : num;
-              }
-            }
-            return role;
-          });
-          
-          updateDoc.roles = fixedRoles;
-          needsUpdate = true;
-          console.log(`     🔄 User ${user.username || user._id}: roles ${JSON.stringify(user.roles)} -> ${JSON.stringify(fixedRoles)}`);
-        }
-        
-        if (needsUpdate) {
-          await db.collection('users').updateOne(
-            { _id: user._id },
-            { $set: updateDoc }
-          );
-          totalFixed++;
-        }
+      } else {
+        console.log(`   ⚠️  ${modelName} - Imported but model is undefined`);
+        failedModels.push({ model: modelName, error: 'Model is undefined after import' });
       }
-    } catch (userError) {
-      console.log('   ⚠️ User cleanup error:', userError.message);
+    } catch (error) {
+      failedModels.push({ model: modelName, error: error.message });
+      console.log(`   ❌ ${modelName} - ${error.message}`);
+      console.log(`   Stack: ${error.stack?.split('\n')[1]}`);
     }
+  }
+  
+  console.log(`\n📊 Model loading summary:`);
+  console.log(`   Loaded: ${loadedModels.length} models`);
+  console.log(`   Failed: ${failedModels.length} models`);
+  console.log(`   Skipped: ${skipModels.length} models`);
+  
+  if (failedModels.length > 0) {
+    console.log('\n❌ Failed models:');
+    failedModels.forEach(f => console.log(`   - ${f.model}: ${f.error}`));
+  }
+  
+  return loadedModels.length > 0;
+};
+
+// ============================================
+// FIX FOR AccountApplication MODEL SCHEMA ISSUE
+// ============================================
+
+const fixAccountApplicationSchema = async () => {
+  console.log('\n🔧 Checking AccountApplication schema...');
+  
+  try {
+    // First, check what columns exist in the database
+    const tableInfo = await sequelize.query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'account_applications'
+      AND TABLE_SCHEMA = DATABASE()
+      ORDER BY ORDINAL_POSITION
+    `, { type: sequelize.QueryTypes.SELECT });
     
-    // 2. Clean up SystemDate collection
-    console.log('   🔧 Fixing SystemDate collection...');
+    console.log(`📋 Found ${tableInfo.length} columns in account_applications table`);
     
-    try {
-      const systemDates = await db.collection('systemdates').find({}).toArray();
-      console.log(`   📊 Found ${systemDates.length} SystemDate documents`);
+    // List of columns that should exist according to the model
+    const requiredColumns = [
+      'approved_by', 'approved_at', 'rejected_by', 'rejected_at',
+      'branch_name', 'user_id'
+    ];
+    
+    const existingColumns = tableInfo.map(col => col.COLUMN_NAME);
+    const missingColumns = requiredColumns.filter(col => !existingColumns.includes(col));
+    
+    if (missingColumns.length > 0) {
+      console.log(`⚠️  Missing columns: ${missingColumns.join(', ')}`);
       
-      for (const systemDate of systemDates) {
-        const updateDoc = {};
-        let needsUpdate = false;
-        
-        // Fix lastEODProcessedBy if it's a string
-        if (typeof systemDate.lastEODProcessedBy === 'string') {
-          updateDoc.lastEODProcessedBy = null;
-          needsUpdate = true;
-          console.log(`     🔄 SystemDate ${systemDate._id}: lastEODProcessedBy "${systemDate.lastEODProcessedBy}" -> null`);
-        }
-        
-        if (needsUpdate) {
-          await db.collection('systemdates').updateOne(
-            { _id: systemDate._id },
-            { $set: updateDoc }
-          );
-          totalFixed++;
+      // Add missing columns
+      for (const column of missingColumns) {
+        try {
+          let columnDefinition = '';
+          
+          switch (column) {
+            case 'approved_by':
+            case 'rejected_by':
+            case 'user_id':
+              columnDefinition = 'VARCHAR(100) NULL';
+              break;
+            case 'branch_name':
+              columnDefinition = 'VARCHAR(255) NULL';
+              break;
+            case 'approved_at':
+            case 'rejected_at':
+              columnDefinition = 'DATETIME NULL';
+              break;
+            default:
+              columnDefinition = 'VARCHAR(255) NULL';
+          }
+          
+          await sequelize.query(`
+            ALTER TABLE account_applications 
+            ADD COLUMN ${column} ${columnDefinition}
+          `);
+          
+          console.log(`   ✅ Added column: ${column}`);
+        } catch (alterError) {
+          console.log(`   ⚠️  Failed to add column ${column}: ${alterError.message}`);
         }
       }
-    } catch (systemDateError) {
-      console.log('   ⚠️ SystemDate cleanup error:', systemDateError.message);
+    } else {
+      console.log('✅ All required columns exist');
     }
     
-    console.log(`✅ DIRECT CLEANUP: Fixed ${totalFixed} documents`);
-    return totalFixed;
-    
+    return true;
   } catch (error) {
-    console.log('⚠️ DIRECT CLEANUP error:', error.message);
-    return 0;
+    console.error('❌ Error checking AccountApplication schema:', error.message);
+    return false;
   }
 };
 
-// Get System User ID Helper
-const getSystemUserId = async () => {
-  if (SYSTEM_USER_ID) {
-    return SYSTEM_USER_ID;
+// ============================================
+// SAFE DATABASE SYNC WITH COLUMN FIXES
+// ============================================
+
+const syncDatabaseSafely = async () => {
+  console.log('\n🔄 Synchronizing database...');
+  
+  try {
+    // Fix AccountApplication schema first
+    await fixAccountApplicationSchema();
+    
+    // Get all loaded models
+    const modelNames = Object.keys(sequelize.models);
+    console.log(`📋 Found ${modelNames.length} models to sync`);
+    
+    if (modelNames.length === 0) {
+      console.log('⚠️  No models found to sync');
+      return true;
+    }
+    
+    // List of models that are known to have issues
+    const skipModels = [
+      'LoanDisbursement', // Missing ACCT_NO column
+      'Counter', // Missing created_at, updated_at columns
+      'DepositTransaction', 
+      'AML'
+    ];
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    // Sync models one by one
+    for (const modelName of modelNames) {
+      if (skipModels.includes(modelName)) {
+        console.log(`   ⏭️  Skipping ${modelName} (known issues)`);
+        continue;
+      }
+      
+      try {
+        console.log(`   🔄 Syncing ${modelName}...`);
+        
+        // Use safer sync options - don't alter in production
+        const syncOptions = {
+          alter: NODE_ENV === 'development' && AUTO_SYNC_DB,
+          force: false
+        };
+        
+        // This will create the table if it doesn't exist
+        await sequelize.models[modelName].sync(syncOptions);
+        console.log(`   ✅ ${modelName} synced`);
+        successCount++;
+      } catch (modelError) {
+        console.log(`   ❌ ${modelName} sync failed: ${modelError.message}`);
+        errorCount++;
+      }
+    }
+    
+    console.log(`\n📊 Sync summary:`);
+    console.log(`   ✅ Success: ${successCount} models`);
+    console.log(`   ❌ Errors: ${errorCount} models`);
+    console.log(`   ⏭️  Skipped: ${skipModels.length} models`);
+    
+    return successCount > 0;
+    
+  } catch (error) {
+    console.error('❌ Database sync failed:', error.message);
+    return false;
+  }
+};
+
+// ============================================
+// ATTACH DATABASE TO REQUESTS (CRITICAL!)
+// ============================================
+
+console.log('\n🔗 Attaching database to requests...');
+
+// This middleware MUST come before any routes
+app.use((req, res, next) => {
+  console.log(`📡 Request received for: ${req.method} ${req.path}`);
+  
+  // Attach sequelize instance to all requests
+  req.sequelize = sequelize;
+  req.db = {
+    sequelize: sequelize,
+    models: sequelize.models || {},
+    query: async (sql, params = []) => {
+      const [results] = await sequelize.query(sql, { replacements: params });
+      return results;
+    },
+    execute: async (sql, params = []) => {
+      const [results] = await sequelize.query(sql, { replacements: params });
+      return results;
+    }
+  };
+  
+  console.log(`✅ Database attached to request. Models available: ${Object.keys(sequelize.models || {}).length}`);
+  next();
+});
+
+// ============================================
+// MOUNT DRAWER ROUTES
+// ============================================
+
+console.log('\n🔗 Loading Drawer Routes...');
+
+try {
+  const drawerRoutesModule = await import('./src/routes/DrawerRoutes.js');
+  const drawerRoutes = drawerRoutesModule.default;
+  
+  // Test middleware before routes
+  drawerRoutes.use((req, res, next) => {
+    console.log(`🎯 Drawer route hit: ${req.method} ${req.path}`);
+    console.log(`📊 Has sequelize: ${!!req.sequelize}`);
+    console.log(`📊 Has db: ${!!req.db}`);
+    next();
+  });
+  
+  app.use('/api/drawer', drawerRoutes);
+  console.log('✅ Drawer Routes mounted at /api/drawer');
+  
+} catch (error) {
+  console.error('❌ Failed to load Drawer Routes:', error.message);
+  console.error('Error stack:', error.stack);
+}
+
+// ============================================
+// DATABASE ATTACHMENT MIDDLEWARE (CRITICAL FIX)
+// ============================================
+
+console.log('\n🔗 ADDING DATABASE MIDDLEWARE...');
+
+// This middleware MUST come BEFORE any routes
+const attachDatabaseMiddleware = (req, res, next) => {
+  console.log(`🔗 Database middleware executing for: ${req.method} ${req.originalUrl}`);
+  
+  // Attach sequelize to request
+  req.sequelize = sequelize;
+  req.db = {
+    sequelize: sequelize,
+    models: sequelize.models || {},
+    query: async (sql, params) => {
+      const [results] = await sequelize.query(sql, { replacements: params });
+      return results;
+    }
+  };
+  
+  console.log(`✅ Database attached. Models available: ${Object.keys(sequelize.models || {}).length}`);
+  next();
+};
+
+// Apply to ALL requests
+app.use(attachDatabaseMiddleware);
+
+// Or apply only to API routes
+// app.use('/api', attachDatabaseMiddleware);
+
+// Test endpoint
+app.get('/api/debug-middleware', (req, res) => {
+  console.log('Debug middleware endpoint called');
+  res.json({
+    success: true,
+    hasSequelize: !!req.sequelize,
+    hasDb: !!req.db,
+    middlewareExecuted: true,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ============================================
+// DATABASE SCHEMA REPAIR FUNCTION
+// ============================================
+
+const repairDatabaseSchema = async () => {
+  console.log('\n🔧 Checking and repairing database schema...');
+  
+  const repairs = [];
+  
+  try {
+    // 1. Fix counters table
+    try {
+      await sequelize.query(`
+        ALTER TABLE counters 
+        ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS description VARCHAR(255) NULL
+      `);
+      repairs.push('✅ Counters table fixed');
+    } catch (error) {
+      repairs.push(`⚠️  Counters: ${error.message}`);
+    }
+    
+    // 2. Check account_applications table
+    try {
+      const [appColumns] = await sequelize.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'account_applications'
+        AND TABLE_SCHEMA = DATABASE()
+      `);
+      
+      const appColumnNames = appColumns.map(col => col.COLUMN_NAME);
+      const requiredAppColumns = ['approved_by', 'approved_at', 'rejected_by', 'rejected_at'];
+      const missingAppColumns = requiredAppColumns.filter(col => !appColumnNames.includes(col));
+      
+      if (missingAppColumns.length > 0) {
+        for (const column of missingAppColumns) {
+          try {
+            if (column.includes('_by')) {
+              await sequelize.query(`ALTER TABLE account_applications ADD COLUMN ${column} VARCHAR(100) NULL`);
+            } else if (column.includes('_at')) {
+              await sequelize.query(`ALTER TABLE account_applications ADD COLUMN ${column} DATETIME NULL`);
+            }
+          } catch (colError) {
+            // Ignore if column already exists
+          }
+        }
+        repairs.push('✅ Account applications table updated');
+      }
+    } catch (error) {
+      repairs.push(`⚠️  Account applications: ${error.message}`);
+    }
+    
+    // 3. Fix loan_disbursements table (remove problematic index)
+    try {
+      // Check if the problematic index exists
+      const [indexes] = await sequelize.query(`SHOW INDEX FROM loan_disbursements`);
+      const idxAcctNoIndex = indexes.find(idx => idx.Key_name === 'idx_acct_no_unique');
+      
+      if (idxAcctNoIndex) {
+        // First check if ACCT_NO column exists
+        const [columns] = await sequelize.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'loan_disbursements'
+          AND COLUMN_NAME = 'ACCT_NO'
+        `);
+        
+        if (columns.length === 0) {
+          // Column doesn't exist, drop the index
+          await sequelize.query(`ALTER TABLE loan_disbursements DROP INDEX idx_acct_no_unique`);
+          repairs.push('✅ Removed problematic index from loan_disbursements');
+        }
+      }
+    } catch (error) {
+      repairs.push(`⚠️  Loan disbursements: ${error.message}`);
+    }
+    
+    console.log('\n📊 Schema repair summary:');
+    repairs.forEach(repair => console.log(`   ${repair}`));
+    
+    return repairs.some(repair => repair.startsWith('✅'));
+    
+  } catch (error) {
+    console.error('❌ Schema repair failed:', error.message);
+    return false;
+  }
+};
+
+// ============================================
+// COUNTER INITIALIZATION
+// ============================================
+
+// Initialize table on startup
+await SavingsProduct.initializeTable();
+
+// Fixed: Use ensureTableExists instead of initializeTable
+try {
+  console.log('🚀 Auto-initializing LoanAccount table...');
+  
+  // Check which method exists on LoanAccount
+  if (typeof LoanAccount.initializeTable === 'function') {
+    console.log('📝 Using initializeTable method...');
+    await LoanAccount.initializeTable();
+  } else if (typeof LoanAccount.ensureTableExists === 'function') {
+    console.log('📝 Using ensureTableExists method...');
+    await LoanAccount.ensureTableExists();
+  } else if (typeof LoanAccount.sync === 'function') {
+    console.log('📝 Using sync method...');
+    await LoanAccount.sync({ force: false });
+  } else {
+    console.log('⚠️  No initialization method found on LoanAccount, trying to sync anyway');
+    try {
+      await LoanAccount.sync({ force: false });
+    } catch (syncError) {
+      console.error('❌ Sync failed:', syncError.message);
+    }
+  }
+  console.log('✅ LoanAccount table ready');
+} catch (error) {
+  console.error('❌ Error initializing LoanAccount table:', error.message);
+  // Don't crash the server, just log the error
+}
+
+const initializeCounters = async () => {
+  console.log('\n📊 Initializing counters...');
+
+  // Simple sync call for LoanInterestRate
+  try {
+    if (LoanInterestRate && typeof LoanInterestRate.syncTable === 'function') {
+      await LoanInterestRate.syncTable({ alter: true });
+      console.log('✅ LoanInterestRate table ready');
+    } else {
+      console.log('⚠️  LoanInterestRate.syncTable not available');
+    }
+  } catch (err) {
+    console.error('❌ LoanInterestRate table sync failed:', err.message);
   }
   
   try {
-    // Use direct MongoDB query
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ MongoDB not connected for system user lookup');
-      return null;
+    // First check if counters table exists and has basic structure
+    const [tables] = await sequelize.query("SHOW TABLES LIKE 'counters'");
+    
+    if (tables.length === 0) {
+      console.log('⚠️  Counters table does not exist, skipping initialization');
+      return false;
     }
     
-    const db = mongoose.connection.db;
-    const systemUser = await db.collection('users').findOne({ 
-      $or: [
-        { username: 'system' },
-        { user_name: 'system' }
-      ]
-    });
+    // Check what columns exist in counters table
+    const [columns] = await sequelize.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'counters'
+      AND TABLE_SCHEMA = DATABASE()
+    `);
     
-    if (systemUser && systemUser._id) {
-      SYSTEM_USER_ID = systemUser._id.toString();
-      console.log(`📋 Retrieved System User ID: ${SYSTEM_USER_ID}`);
-      return SYSTEM_USER_ID;
-    }
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+    console.log(`📋 Counters table columns: ${columnNames.join(', ')}`);
     
-    console.log('⚠️ System user not found');
-    return null;
-  } catch (error) {
-    console.log('⚠️ Error getting system user ID:', error.message);
-    return null;
-  }
-};
-
-// Create System User
-const createSystemUserIfNotExists = async () => {
-  try {
-    console.log('🔄 Checking/Creating system user...');
-    
-    // Check connection first
-    if (mongoose.connection.readyState !== 1) {
-      console.log('⚠️ MongoDB not connected, skipping system user creation');
-      return null;
-    }
-    
-    const db = mongoose.connection.db;
-    
-    // Check if system user exists
-    const existingSystemUser = await db.collection('users').findOne({ 
-      $or: [
-        { username: 'system' },
-        { user_name: 'system' }
-      ]
-    });
-    
-    if (existingSystemUser) {
-      console.log('✅ System user already exists');
-      SYSTEM_USER_ID = existingSystemUser._id.toString();
-      
-      // Fix role if needed
-      let needsUpdate = false;
-      const updateDoc = {};
-      
-      if (typeof existingSystemUser.primary_role === 'string') {
-        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
-        needsUpdate = true;
-      } else if (existingSystemUser.primary_role !== ROLE_MAPPING.EOD_OPERATOR) {
-        updateDoc.primary_role = ROLE_MAPPING.EOD_OPERATOR;
-        needsUpdate = true;
-      }
-      
-      if (needsUpdate) {
-        await db.collection('users').updateOne(
-          { _id: existingSystemUser._id },
-          { $set: updateDoc }
-        );
-        console.log(`✅ Updated system user role`);
-      }
-      
-      return existingSystemUser;
-    }
-    
-    // Create new system user
-    console.log('🔄 Creating new system user...');
-    
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(
-      process.env.SYSTEM_USER_PASSWORD || 'System@123',
-      salt
+    // Try to insert counters with only existing columns
+    const countersExist = await sequelize.query(
+      'SELECT COUNT(*) as count FROM counters',
+      { type: sequelize.QueryTypes.SELECT }
     );
     
-    const systemUser = {
-      username: 'system',
-      user_name: 'system',
-      primary_role: ROLE_MAPPING.EOD_OPERATOR,
-      roles: [ROLE_MAPPING.EOD_OPERATOR, ROLE_MAPPING.ADMINISTRATOR],
-      email: 'system@bank.com',
-      password: hashedPassword,
-      first_name: 'System',
-      last_name: 'Administrator',
-      status: 'Active',
-      primary_business_role: 'EOD Operator',
-      branchCode: '000',
-      department: 'IT',
-      phoneNumber: '000-000-0000',
-      address: 'System Address',
-      firstLogin: false,
-      enable_multi_session: true,
-      is_supervisor: true,
-      is_main_BU: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    
-    const result = await db.collection('users').insertOne(systemUser);
-    SYSTEM_USER_ID = result.insertedId.toString();
-    console.log(`✅ System user created with ID: ${SYSTEM_USER_ID}`);
-    
-    return { ...systemUser, _id: result.insertedId };
-    
-  } catch (error) {
-    console.log('⚠️ System user creation failed:', error.message);
-    return null;
-  }
-};
-
-// Initialize application safely
-const safeInitializeApplication = async () => {
-  try {
-    console.log('🛡️ Starting SAFE application initialization...');
-
-    // Wait for MongoDB connection
-    const waitForMongoConnection = async (maxWaitTime = 20000) => {
-      const startTime = Date.now();
+    if (parseInt(countersExist[0].count) === 0) {
+      console.log('Creating default counters...');
       
-      return new Promise((resolve) => {
-        const checkConnection = () => {
-          const currentTime = Date.now();
-          const elapsedTime = currentTime - startTime;
-
-          if (mongoose.connection.readyState === 1) {
-            console.log('✅ MongoDB connection ready');
-            resolve(true);
-          } else if (elapsedTime >= maxWaitTime) {
-            console.log('⚠️ MongoDB connection timeout');
-            resolve(false);
-          } else {
-            setTimeout(checkConnection, 1000);
-          }
-        };
+      try {
+        // Use minimal insert based on available columns
+        if (columnNames.includes('name') && columnNames.includes('seq')) {
+          await sequelize.query(`
+            INSERT INTO counters (name, seq) VALUES
+            ('customer', 1000),
+            ('account', 10000),
+            ('transaction', 100000),
+            ('application', 1)
+          `);
+          console.log('✅ Default counters created');
+          return true;
+        } else {
+          console.log('⚠️  Counters table missing required columns (name, seq)');
+          return false;
+        }
+      } catch (sqlError) {
+        console.log('Counter creation failed:', sqlError.message);
         
-        checkConnection();
-      });
-    };
-
-    const isConnected = await waitForMongoConnection(20000);
-    
-    if (!isConnected) {
-      console.log('⚠️ MongoDB not connected, skipping application initialization');
-      return;
-    }
-
-    console.log('✅ Database ready, initializing application...');
-    
-    // Import and run initializeApplication
-    try {
-      const { default: initializeApplication } = await import('./src/utils/initializeApplication.js');
-      await initializeApplication();
-      logger.info('✅ Application initialization completed successfully');
-    } catch (initError) {
-      console.log('⚠️ Application initialization failed:', initError.message);
+        // Try alternative approach - check if we need to add columns
+        if (sqlError.message.includes('created_at')) {
+          console.log('🔧 Attempting to fix counters table schema...');
+          try {
+            // Add missing timestamp columns
+            await sequelize.query(`
+              ALTER TABLE counters 
+              ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            `);
+            
+            // Now try inserting again
+            await sequelize.query(`
+              INSERT INTO counters (name, seq) VALUES
+              ('customer', 1000),
+              ('account', 10000),
+              ('transaction', 100000),
+              ('application', 1)
+            `);
+            console.log('✅ Counters table fixed and initialized');
+            return true;
+          } catch (fixError) {
+            console.log('Could not fix counters table:', fixError.message);
+            return false;
+          }
+        }
+        return false;
+      }
+    } else {
+      console.log(`📊 Found existing counters in table`);
+      return true;
     }
     
   } catch (error) {
-    console.error('❌ Application initialization failed:', error.message);
+    console.error('❌ Counter initialization failed:', error.message);
+    // Don't fail the whole server if counters fail
+    console.log('⚠️  Continuing without counters...');
+    return false;
   }
 };
 
 // ============================================
-// CORS CONFIGURATION
+// ULTIMATE PERMISSIONS CACHE FIX
 // ============================================
 
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  process.env.CLIENT_URL_LOCAL,
-  process.env.CLIENT_URL_NETWORK,
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-].filter(Boolean);
+const fixPermissionsCacheGlobally = () => {
+  console.log('🔧 Installing global MySQL query patch...');
+  
+  try {
+    // Get the mysql2 module
+    const mysql = require('mysql2');
+    
+    // 1. Patch createPool method
+    const originalCreatePool = mysql.createPool;
+    
+    mysql.createPool = function(config) {
+      const pool = originalCreatePool.call(this, config);
+      
+      // Patch the query method
+      const originalQuery = pool.query;
+      
+      pool.query = function(sql, values, callback) {
+        // Fix ALL roles queries
+        if (typeof sql === 'string') {
+          // Fix: SELECT role_id, role_name FROM roles WHERE active = 1
+          if (sql.includes('SELECT role_id, role_name') && sql.includes('FROM roles') && sql.includes('WHERE active = 1')) {
+            console.log('🔴 INTERCEPTED AND PATCHING ROLES QUERY:', sql.substring(0, 100) + '...');
+            
+            // Use the roles_vw view
+            sql = `
+              SELECT 
+                role_id, 
+                role_name, 
+                permissions, 
+                description,
+                active
+              FROM roles_vw
+              WHERE active = 1
+            `;
+          }
+          // Also fix any other variations
+          else if (sql.includes('SELECT role_id, role_name FROM roles')) {
+            console.log('🔴 INTERCEPTED ROLES QUERY (variation):', sql.substring(0, 100) + '...');
+            sql = `
+              SELECT 
+                role_id, 
+                role_name, 
+                permissions, 
+                description,
+                active
+              FROM roles_vw
+              WHERE active = 1
+            `;
+          }
+          // Fix: SELECT role_id, role_name, permissions, description FROM roles WHERE active = 1
+          else if (sql.includes('role_id, role_name, permissions, description') && sql.includes('FROM roles')) {
+            console.log('🔴 INTERCEPTED FULL ROLES QUERY');
+            sql = `
+              SELECT 
+                role_id, 
+                role_name, 
+                permissions, 
+                description,
+                active
+              FROM roles_vw
+              WHERE active = 1
+            `;
+          }
+        }
+        
+        return originalQuery.call(this, sql, values, callback);
+      };
+      
+      return pool;
+    };
+    
+    // 2. Also patch createConnection for direct connections
+    const originalCreateConnection = mysql.createConnection;
+    
+    mysql.createConnection = function(config) {
+      const connection = originalCreateConnection.call(this, config);
+      
+      const originalQuery = connection.query;
+      connection.query = function(sql, values, callback) {
+        if (typeof sql === 'string' && sql.includes('SELECT role_id, role_name FROM roles')) {
+          console.log('🔴 INTERCEPTED CONNECTION ROLES QUERY');
+          sql = `
+            SELECT 
+              role_id, 
+              role_name, 
+              permissions, 
+              description,
+              active
+            FROM roles_vw
+            WHERE active = 1
+          `;
+        }
+        return originalQuery.call(this, sql, values, callback);
+      };
+      
+      return connection;
+    };
+    
+    // 3. Patch Sequelize queries too
+    if (sequelize && sequelize.query) {
+      const originalSequelizeQuery = sequelize.query;
+      
+      sequelize.query = function(sql, options) {
+        if (typeof sql === 'string') {
+          if (sql.includes('SELECT role_id, role_name FROM roles')) {
+            console.log('🔴 INTERCEPTED SEQUELIZE ROLES QUERY');
+            sql = `
+              SELECT 
+                role_id, 
+                role_name, 
+                permissions, 
+                description,
+                active
+              FROM roles_vw
+              WHERE active = 1
+            `;
+          }
+        }
+        return originalSequelizeQuery.call(this, sql, options);
+      };
+    }
+    
+    console.log('✅ Global MySQL query patch installed');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Failed to install global patch:', error.message);
+    return false;
+  }
+};
 
-console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
+// Call it immediately
+fixPermissionsCacheGlobally();
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
+// ============================================
+// DEBUG: TRACE THE PROBLEMATIC QUERY SOURCE
+// ============================================
+
+const traceQuerySource = () => {
+  console.log('🔍 Installing query source tracer...');
+  
+  // Override Error.captureStackTrace to add our own trace
+  const originalCaptureStackTrace = Error.captureStackTrace;
+  
+  Error.captureStackTrace = function(error, constructorOpt) {
+    originalCaptureStackTrace(error, constructorOpt);
+    
+    // Create a custom error for SQL queries
+    if (error.message && error.message.includes('Unknown column')) {
+      console.log('🔴 CAPTURED SQL ERROR STACK:');
+      console.log(error.stack);
+      
+      // Also log the current call stack
+      console.log('🔴 CURRENT CALL STACK:');
+      const stack = new Error().stack;
+      console.log(stack);
+    }
+  };
+  
+  // Also monkey-patch console.error to catch SQL errors
+  const originalConsoleError = console.error;
+  
+  console.error = function(...args) {
+    if (args[0] && typeof args[0] === 'string' && args[0].includes('Unknown column')) {
+      console.log('🔴 CAUGHT SQL ERROR IN CONSOLE:');
+      console.log(args[0]);
+      
+      // Log stack trace
+      const stack = new Error().stack;
+      console.log('🔴 ERROR STACK TRACE:');
+      console.log(stack);
+    }
+    return originalConsoleError.apply(console, args);
+  };
+  
+  console.log('✅ Query source tracer installed');
+};
+
+// ============================================
+// CUSTOMER APPROVAL SYSTEM INITIALIZATION
+// ============================================
+
+const initCustomerApprovalSystem = async () => {
+  console.log('\n🎯 Initializing Customer Approval System...');
+  
+  try {
+    // Import the initialization function
+    const { initializeCustomerApprovalSystem } = await import('./src/controllers/CustomerController.js');
+    
+    const success = await initializeCustomerApprovalSystem();
+    
+    if (success) {
+      console.log('✅ Customer approval system ready');
+    } else {
+      console.warn('⚠️ Customer approval system initialization had issues');
+    }
+    
+    return success;
+  } catch (error) {
+    console.error('❌ Failed to initialize customer approval system:', error.message);
+    
+    if (error.message.includes("Cannot find module") || 
+        error.message.includes("initializeCustomerApprovalSystem is not a function")) {
+      console.log('ℹ️  Customer approval functions not available, using fallback');
+      
+      // Create basic customer table structure if needed
+      try {
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS customers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            CUST_ID VARCHAR(50) UNIQUE NOT NULL,
+            CUST_NO VARCHAR(50),
+            CUST_NM VARCHAR(255),
+            FIRST_NAME VARCHAR(100),
+            LAST_NAME VARCHAR(100),
+            EMAIL_ADDRESS VARCHAR(255),
+            PHONE_NO VARCHAR(20),
+            REC_ST VARCHAR(20) DEFAULT 'PENDING',
+            status VARCHAR(20) DEFAULT 'Pending',
+            APPROVED_BY VARCHAR(100),
+            APPROVED_DT DATETIME,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          )
+        `);
+        console.log('✅ Basic customers table ensured');
+        return true;
+      } catch (createError) {
+        console.error('Failed to create customers table:', createError.message);
+        return false;
       }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  })
-);
+    }
+    
+    console.error('Error stack:', error.stack);
+    return false;
+  }
+};
 
 // ============================================
-// BASIC API ENDPOINTS
-// ============================================
-
-app.get('/api', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Evolution Banking API Server is running',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    database: getDbStateText(mongoose.connection.readyState),
-    systemUserId: SYSTEM_USER_ID ? 'Available' : 'Not set'
-  });
-});
-
-// ============================================
-// EOD MANAGEMENT ENDPOINTS
-// ============================================
-
-app.post('/api/system/eod/start', async (req, res) => {
-  try {
-    const { processedBy = 'system' } = req.body;
-    
-    const userId = await getSystemUserId();
-    if (!userId) {
-      return res.status(500).json({
-        success: false,
-        error: 'System user not available'
-      });
-    }
-    
-    console.log(`🔄 Starting EOD process with system user ID: ${userId}`);
-    
-    const { processEndOfDay } = await import('./src/controllers/OsController.js');
-    const result = await processEndOfDay(userId);
-    
-    res.json({
-      success: true,
-      message: 'EOD processing completed successfully',
-      data: result.data
-    });
-  } catch (error) {
-    console.error('❌ EOD processing error:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-app.get('/api/system/eod/status', async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database not connected'
-      });
-    }
-    
-    const db = mongoose.connection.db;
-    const systemDate = await db.collection('systemdates').findOne({}, { sort: { createdAt: -1 } });
-    
-    if (!systemDate) {
-      return res.status(404).json({
-        success: false,
-        message: 'System date not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: {
-        currentBusinessDate: systemDate.currentBusinessDate,
-        previousBusinessDate: systemDate.previousBusinessDate,
-        nextBusinessDate: systemDate.nextBusinessDate,
-        eodStatus: systemDate.eodStatus,
-        lastUpdated: systemDate.lastUpdated
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-app.get('/api/system/date/info', async (req, res) => {
-  try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database not connected'
-      });
-    }
-    
-    const db = mongoose.connection.db;
-    const systemDate = await db.collection('systemdates').findOne({}, { sort: { createdAt: -1 } });
-    
-    if (!systemDate) {
-      return res.status(404).json({
-        success: false,
-        message: 'System date not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: {
-        currentBusinessDate: systemDate.currentBusinessDate,
-        previousBusinessDate: systemDate.previousBusinessDate,
-        nextBusinessDate: systemDate.nextBusinessDate,
-        eodStatus: systemDate.eodStatus,
-        lastUpdated: systemDate.lastUpdated
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-app.get('/api/system/user/info', async (req, res) => {
-  try {
-    const systemUserId = await getSystemUserId();
-    if (!systemUserId) {
-      return res.status(404).json({
-        success: false,
-        message: 'System user not found'
-      });
-    }
-    
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database not connected'
-      });
-    }
-    
-    const db = mongoose.connection.db;
-    const systemUser = await db.collection('users').findOne({ _id: new mongoose.Types.ObjectId(systemUserId) });
-    
-    if (!systemUser) {
-      return res.status(404).json({
-        success: false,
-        message: 'System user not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: {
-        id: systemUser._id,
-        username: systemUser.username,
-        email: systemUser.email,
-        firstName: systemUser.firstName || systemUser.first_name,
-        lastName: systemUser.lastName || systemUser.last_name,
-        primary_role: systemUser.primary_role,
-        primary_role_name: ROLE_REVERSE_MAPPING[systemUser.primary_role] || 'Unknown',
-        status: systemUser.status
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Emergency cleanup endpoint
-app.post('/api/system/cleanup', async (req, res) => {
-  try {
-    console.log('🚨 Manual cleanup requested');
-    
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database not connected'
-      });
-    }
-    
-    const fixedCount = await cleanupInvalidDataDirect();
-    
-    res.json({
-      success: true,
-      message: 'Cleanup completed',
-      fixedCount: fixedCount
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// ============================================
-// SERVER STARTUP
+// MAIN SERVER STARTUP
 // ============================================
 
 const startServer = async () => {
+  console.log('\n' + '='.repeat(60));
+  console.log('🚀 STARTING EVOLUTION BANKING BACKEND SERVER');
+  console.log('='.repeat(60));
+  console.log(`Environment: ${NODE_ENV}`);
+  console.log(`Port: ${PORT}`);
+  console.log(`Host: ${HOST}`);
+  console.log(`Auto Sync: ${AUTO_SYNC_DB}`);
+  console.log(`Database: ${process.env.DB_NAME || 'core_banking'}`);
+  
   try {
-    console.log('\n' + '='.repeat(60));
-    console.log('🚀 STARTING EVOLUTION BANKING BACKEND SERVER');
-    console.log('='.repeat(60));
-
-    // STEP 1: Connect to MongoDB
-    console.log('🔄 STEP 1: Connecting to MongoDB...');
-    await connectDB();
-    logger.info('✅ MongoDB connected successfully');
-
-    // STEP 2: Wait for stable connection
-    console.log('🔄 STEP 2: Waiting for MongoDB connection...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // STEP 3: Emergency cleanup
-    console.log('🔄 STEP 3: Running direct data cleanup...');
-    if (mongoose.connection.readyState === 1) {
-      const fixed = await cleanupInvalidDataDirect();
-      if (fixed > 0) console.log(`✅ Cleaned up ${fixed} documents`);
-    } else {
-      console.log('⚠️ MongoDB not connected, skipping cleanup');
+    // STEP 1: Connect to database
+    console.log('\n🔌 Connecting to database...');
+    await sequelize.authenticate();
+    console.log('✅ Database connected');
+    
+    // Check database health
+    const dbHealth = await checkDatabaseHealth();
+    console.log('📊 Database health:', dbHealth.status);
+    
+    // STEP 1.5: Emergency table creation if needed
+    console.log('\n🆘 Emergency table check...');
+    const tablesCreated = await createMissingTables();
+    if (tablesCreated) {
+      console.log('✅ Emergency tables created/verified');
     }
-
-    // STEP 4: Create system user
-    console.log('🔄 STEP 4: Ensuring system user exists...');
-    if (mongoose.connection.readyState === 1) {
-      await createSystemUserIfNotExists();
-    } else {
-      console.log('⚠️ MongoDB not connected, skipping system user creation');
+    
+    // STEP 2: Repair schema before loading models
+    console.log('\n🔧 Checking database schema...');
+    await repairDatabaseSchema();
+    
+    // STEP 3: Load models
+    console.log('\n📦 Loading models...');
+    const modelsLoaded = await loadModelsSafely();
+    
+    if (!modelsLoaded && NODE_ENV === 'production') {
+      console.error('❌ Cannot start in production without models');
+      process.exit(1);
     }
-
-    // STEP 5: Initialize counters
-    console.log('🔄 STEP 5: Initializing account counters...');
-    if (mongoose.connection.readyState === 1) {
-      await initializeCounters();
-    } else {
-      console.log('⚠️ MongoDB not connected, skipping counter initialization');
+    
+    // STEP 4: Sync database (more permissive now)
+    const dbSynced = await syncDatabaseSafely();
+    
+    if (!dbSynced && NODE_ENV === 'production') {
+      console.error('❌ Cannot start in production without database sync');
+      process.exit(1);
     }
-
-    // STEP 6: Initialize system dates
-    console.log('🔄 STEP 6: Initializing system dates...');
-    try {
-      await initializeSystemDates();
-      logger.info('✅ System dates initialized');
-    } catch (e) {
-      logger.warn('System dates init failed:', e.message);
-    }
-
-    // STEP 7: Start server
-    console.log('🔄 STEP 7: Starting HTTP server...');
-    const PORT = process.env.PORT || 5000;
-    const HOST = '0.0.0.0';
-
-    const server = app.listen(PORT, HOST, () => {
-      const networkIP = getNetworkIP();
-      console.log('\n' + '='.repeat(60));
-      console.log('✅ SERVER RUNNING SUCCESSFULLY');
-      console.log('='.repeat(60));
-      console.log(`Local: http://localhost:${PORT}`);
-      console.log(`Network: http://${networkIP}:${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`Database: ${getDbStateText(mongoose.connection.readyState)}`);
-      console.log('='.repeat(60) + '\n');
-
-      // Background application init
-      setTimeout(() => {
-        safeInitializeApplication();
-      }, 3000);
-    });
-
-    // Configure graceful shutdown
-    const configureShutdown = (server) => {
-      const shutdown = async (signal) => {
-        console.log(`Shutdown signal received: ${signal}`);
-        
-        server.close(async () => {
-          console.log('✅ HTTP server closed');
-          
-          try {
-            if (mongoose.connection.readyState === 1) {
-              await mongoose.connection.close();
-              console.log('✅ MongoDB connection closed');
-            }
-          } catch (dbError) {
-            console.error('❌ Error closing MongoDB connection:', dbError.message);
-          }
-          
-          console.log('🛑 Shutdown completed');
-          process.exit(0);
-        });
+    
+    // STEP 5: Initialize counters (with better error handling)
+    console.log('\n📊 Initializing system data...');
+    const countersInitialized = await initializeCounters();
+    
+    // STEP 6: Initialize Customer Approval System
+    console.log('\n🎯 Initializing business systems...');
+    const approvalSystemReady = await initCustomerApprovalSystem();
+    
+    // STEP 7: Attach database to app requests
+    app.use((req, res, next) => {
+      req.db = {
+        sequelize,
+        getSequelize: () => sequelize,
+        models: sequelize.models || {},
+        countersInitialized,
+        approvalSystemReady
       };
-
-      process.on('SIGINT', () => shutdown('SIGINT'));
-      process.on('SIGTERM', () => shutdown('SIGTERM'));
+      next();
+    });
+    
+    // Add a test endpoint to verify database connection
+    app.get('/api/test-db', async (req, res) => {
+      try {
+        const [results] = await sequelize.query('SELECT 1 as test, NOW() as timestamp');
+        res.json({ 
+          success: true, 
+          database: 'Connected', 
+          result: results[0],
+          dbHealth: await checkDatabaseHealth()
+        });
+      } catch (error) {
+        res.status(500).json({ 
+          success: false, 
+          error: error.message,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    });
+    
+    // STEP 8: Start HTTP server
+    console.log('\n🌐 Starting HTTP server...');
+    
+    const networkIP = (() => {
+      try {
+        const interfaces = os.networkInterfaces();
+        for (const name of Object.keys(interfaces)) {
+          for (const iface of interfaces[name]) {
+            if (iface.family === 'IPv4' && !iface.internal) {
+              return iface.address;
+            }
+          }
+        }
+      } catch (error) {
+        // Ignore
+      }
+      return 'localhost';
+    })();
+    
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`
+╔════════════════════════════════════════════════════════════════════════╗
+║                    Evolution Banking System API                       ║
+╠════════════════════════════════════════════════════════════════════════╣
+║  Status:      ${'✅ RUNNING'.padEnd(48)}                                ║
+║  Time:        ${new Date().toLocaleString().padEnd(48)}                ║
+║  Environment: ${NODE_ENV.padEnd(48)}                                  ║
+║  Database:    ${'✅ Connected'.padEnd(48)}                             ║
+║  DB Health:   ${dbHealth.status.padEnd(48)}                           ║
+║  Models:      ${(modelsLoaded ? '✅ Loaded' : '⚠️  Partial').padEnd(48)}  ║
+║  Sync:        ${(dbSynced ? '✅ Complete' : '⚠️  Partial').padEnd(48)}    ║
+║  Counters:    ${(countersInitialized ? '✅ Initialized' : '⚠️  Partial').padEnd(48)} ║
+║  Approval Sys:${(approvalSystemReady ? '✅ Ready' : '⚠️  Issues').padEnd(48)}  ║
+║  Auto Sync:   ${(AUTO_SYNC_DB ? '✅ Enabled' : '❌ Disabled').padEnd(48)}  ║
+║                                                                        ║
+║  Server URLs:                                                         ║
+║  ─────────────────────────────────────────────────────────────────────║
+║  Local:       http://localhost:${PORT}                                   ║
+║  Network:     http://${networkIP}:${PORT}                                 ║
+║                                                                        ║
+║  Health:      http://localhost:${PORT}/health                           ║
+║  Test DB:     http://localhost:${PORT}/api/test-db                      ║
+╚════════════════════════════════════════════════════════════════════════╝
+      `);
+    });
+    
+    // STEP 9: Setup graceful shutdown
+    const shutdown = (signal) => {
+      console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
+      
+      server.close(() => {
+        console.log('✅ HTTP server closed');
+        
+        sequelize.close()
+          .then(() => {
+            console.log('✅ Database connections closed');
+            process.exit(0);
+          })
+          .catch(error => {
+            console.error('⚠️  Error closing database:', error.message);
+            process.exit(0);
+          });
+      });
+      
+      setTimeout(() => {
+        console.error('⏰ Shutdown timeout, forcing exit');
+        process.exit(1);
+      }, 10000);
     };
-
-    configureShutdown(server);
-
+    
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    
+    process.on('uncaughtException', (error) => {
+      console.error('🚨 Uncaught Exception:', error.message);
+      if (error.stack) console.error(error.stack);
+      shutdown('UNCAUGHT_EXCEPTION');
+    });
+    
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('🚨 Unhandled Rejection at:', promise);
+      console.error('Reason:', reason);
+    });
+    
   } catch (error) {
-    logger.error('❌ Fatal startup error:', error);
-    console.error('❌ Server startup failed:', error.message);
-    process.exit(1);
+    console.error('\n❌ Server startup failed:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    if (NODE_ENV === 'production') {
+      console.error('🚨 Production startup failed - exiting');
+      process.exit(1);
+    } else {
+      console.log('⚠️  Development mode - trying to start server anyway');
+      
+      try {
+        const server = app.listen(PORT, HOST, () => {
+          console.log(`
+╔══════════════════════════════════════════════════════════╗
+║          Evolution Banking System API                    ║
+╠══════════════════════════════════════════════════════════╣
+║  ⚠️  STARTED WITH ERRORS                                ║
+║     http://localhost:${PORT}                               ║
+║                                                          ║
+║  🔗 Health: http://localhost:${PORT}/health               ║
+║  🔗 Test DB: http://localhost:${PORT}/api/test-db         ║
+╚══════════════════════════════════════════════════════════╝
+          `);
+        });
+      } catch (startError) {
+        console.error('❌ Could not start server at all:', startError.message);
+        process.exit(1);
+      }
+    }
   }
 };
 
+// ============================================
+// EXPORT AND START SERVER
+// ============================================
+
 // Start the server
-startServer();
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}
+
+export default app;

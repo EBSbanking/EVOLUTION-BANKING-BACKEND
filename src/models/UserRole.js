@@ -1,232 +1,605 @@
-import mongoose from 'mongoose';
-import Permissions from '../models/Permissions.js';
-import RoleMapping from '../models/RoleMapping.js';
+// models/UserRole.js - COMPLETE UPDATED VERSION
+import { DataTypes, Op } from 'sequelize';
+import sequelize  from '../../config/db.js';
 import { ROLE_MAPPING } from '../constants/roleMapping.js';
 
-const userRoleSchema = new mongoose.Schema({
-  ROLE_NM: { type: String, required: true }, // Role name
-  SYSUSER_ID: { type: String, required: true }, // System user ID
-  Business_Unit: { type: String, required: true }, // Business unit name
-  BU_ID: { type: String, required: true },
+const UserRole = sequelize.define('UserRole', {
+  // ✅ ADDED: role_id field to match database schema
+  role_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    autoIncrement: true,
+    primaryKey: true,
+    field: 'role_id'
+  },
   
-  // ✅ Support multiple roles
+  ROLE_NM: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    field: 'ROLE_NM'
+  },
+  SYSUSER_ID: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    field: 'SYSUSER_ID'
+  },
+  Business_Unit: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    field: 'Business_Unit'
+  },
+  BU_ID: {
+    type: DataTypes.STRING(10),
+    allowNull: false,
+    defaultValue: '000',
+    field: 'BU_ID'
+  },
+
+  // Array of role IDs (from ROLE_MAPPING)
   USER_ROLE_IDS: {
-    type: [Number], // Array of role IDs
-    required: true,
-    ref: 'RoleMapping',
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: [],
+    field: 'USER_ROLE_IDS'
   },
-  
-  // ✅ Support multiple role names
+
+  // Array of role names
   ROLE_NMS: {
-    type: [String], // Array of role names
-    required: true,
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: [],
+    field: 'ROLE_NMS'
   },
-  
+
   EFF_FROM_DT: {
-    type: Date,
-    required: true,
-    set: (value) => new Date(value),
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'EFF_FROM_DT'
   },
-  EFF_TO_DT: { type: Date, default: null },
-  DEF_ROLE_FG: { type: String, enum: ['Y', 'N'], default: 'N', required: true },
-  SUPERVISOR_FG: { type: String, enum: ['Y', 'N'], default: 'N', required: true },
-  MULTI_CRNCY_FG: { type: String, enum: ['Y', 'N'], default: 'N', required: true },
-  
-  WF_ITEM_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  EFF_TO_DT: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'EFF_TO_DT'
   },
-  
-  REC_ST: { type: String, enum: ['Y', 'N', 'A'], default: 'A', required: true },
-  VERSION_NO: { type: Number, default: 1 },
-  ROW_TS: { type: Date, default: Date.now },
-  
-  // ✅ FIXED: Changed from ObjectId to String to match your user identifiers
-  USER_ID: { type: String, required: true },
-  
-  CREATE_DT: { type: Date, default: Date.now },
-  CREATED_BY: { type: String, required: true },
-  
-  // ✅ Support multiple permissions references
-  permissions: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Permissions',
-  }],
-  
-  // ✅ All access levels now support combined permissions from multiple roles
-  VAULT_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  DEF_ROLE_FG: {
+    type: DataTypes.ENUM('Y', 'N'),
+    allowNull: false,
+    defaultValue: 'N',
+    field: 'DEF_ROLE_FG'
   },
-  DRAWER_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  SUPERVISOR_FG: {
+    type: DataTypes.ENUM('Y', 'N'),
+    allowNull: false,
+    defaultValue: 'N',
+    field: 'SUPERVISOR_FG'
   },
-  TXN_ENQUIRY_ACCESS_LVL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  MULTI_CRNCY_FG: {
+    type: DataTypes.ENUM('Y', 'N'),
+    allowNull: false,
+    defaultValue: 'N',
+    field: 'MULTI_CRNCY_FG'
   },
-  CREDIT_APPL_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  WF_ITEM_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'WF_ITEM_ACCESS_LEVEL'
   },
-  CUSTOMER_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  REC_ST: {
+    type: DataTypes.ENUM('Y', 'N', 'A'),
+    allowNull: false,
+    defaultValue: 'A',
+    field: 'REC_ST'
   },
-  ACCOUNT_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  VERSION_NO: {
+    type: DataTypes.INTEGER,
+    defaultValue: 1,
+    field: 'VERSION_NO'
   },
-  REPORT_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  ROW_TS: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'ROW_TS'
   },
-  CUST_POSTING_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  // ✅ ADDED: Actual user_id database field (missing in your original)
+  user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true, // Changed to true since we're fixing the schema
+    field: 'user_id',
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
-  GL_POSTING_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  // Virtual field that maps to user_id
+  USER_ID: {
+    type: DataTypes.VIRTUAL,
+    get() {
+      return this.user_id;
+    },
+    set(value) {
+      this.setDataValue('user_id', value);
+    }
   },
-  FIXED_ASSET_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  CREATE_DT: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'CREATE_DT'
   },
-  LOAN_FEE_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  CREATED_BY: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    defaultValue: 'SYSTEM',
+    field: 'CREATED_BY'
   },
-  LOAN_OPERATIONS_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+
+  // Access level arrays (stored as JSON)
+  VAULT_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'VAULT_ACCESS_LEVEL'
   },
-  PERMISSION_MANAGEMENT_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  DRAWER_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'DRAWER_ACCESS_LEVEL'
   },
-  SYSTEM_ADMIN_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  TXN_ENQUIRY_ACCESS_LVL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'TXN_ENQUIRY_ACCESS_LVL'
   },
-  DASHBOARD_ACCESS_LEVEL: { 
-    type: [String],
-    enum: ['BU', 'OWN BUSINESS UNIT', 'ALL BUSINESS UNIT', 'ASSIGNED'],
-    default: ['BU'], 
-    required: true 
+  CREDIT_APPL_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'CREDIT_APPL_ACCESS_LEVEL'
   },
+  CUSTOMER_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'CUSTOMER_ACCESS_LEVEL'
+  },
+  ACCOUNT_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'ACCOUNT_ACCESS_LEVEL'
+  },
+  REPORT_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'REPORT_ACCESS_LEVEL'
+  },
+  CUST_POSTING_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'CUST_POSTING_ACCESS_LEVEL'
+  },
+  GL_POSTING_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'GL_POSTING_ACCESS_LEVEL'
+  },
+  FIXED_ASSET_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'FIXED_ASSET_ACCESS_LEVEL'
+  },
+  LOAN_FEE_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'LOAN_FEE_ACCESS_LEVEL'
+  },
+  LOAN_OPERATIONS_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'LOAN_OPERATIONS_ACCESS_LEVEL'
+  },
+  PERMISSION_MANAGEMENT_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'PERMISSION_MANAGEMENT_ACCESS_LEVEL'
+  },
+  SYSTEM_ADMIN_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'SYSTEM_ADMIN_ACCESS_LEVEL'
+  },
+  DASHBOARD_ACCESS_LEVEL: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: ['BU'],
+    field: 'DASHBOARD_ACCESS_LEVEL'
+  },
+}, {
+  tableName: 'user_roles',
+  timestamps: false, // You manage CREATE_DT and ROW_TS manually
+  underscored: true, // Use snake_case in DB, camelCase in models
+  indexes: [
+    { 
+      unique: true, 
+      fields: ['BU_ID', 'user_id'], 
+      name: 'user_roles_bu_user_unique' 
+    },
+    { 
+      fields: ['user_id'], 
+      name: 'user_roles_user_id_idx' 
+    },
+    { 
+      fields: ['BU_ID'], 
+      name: 'user_roles_bu_id_idx' 
+    },
+    { 
+      fields: ['ROLE_NM'], 
+      name: 'user_roles_role_nm_idx' 
+    },
+    { 
+      fields: ['SYSUSER_ID'], 
+      name: 'user_roles_sysuser_id_idx' 
+    },
+    {
+      fields: ['role_id'],
+      name: 'user_roles_role_id_idx'
+    }
+  ],
+  // ✅ ADDED: Hook to automatically check and fix schema on sync
+  hooks: {
+    beforeSync: async (options) => {
+      try {
+        console.log('🔄 Checking user_roles table schema before sync...');
+        
+        // Check if user_id column exists and is nullable
+        const [results] = await sequelize.query(`
+          SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'user_roles' 
+          AND TABLE_SCHEMA = DATABASE()
+          AND COLUMN_NAME = 'user_id'
+        `);
+        
+        if (results.length === 0) {
+          console.log('⚠️ user_id column not found, it will be created by sync');
+        } else {
+          const columnInfo = results[0];
+          console.log('📊 Current user_id column:', columnInfo);
+          
+          // Auto-fix if column is NOT NULL without default
+          if (columnInfo.IS_NULLABLE === 'NO' && !columnInfo.COLUMN_DEFAULT) {
+            console.log('🔧 Auto-fixing: Making user_id nullable');
+            try {
+              await sequelize.query(`
+                ALTER TABLE user_roles MODIFY user_id INT NULL
+              `);
+              console.log('✅ Auto-fix applied: user_id is now nullable');
+            } catch (fixError) {
+              console.warn('⚠️ Could not auto-fix user_id column:', fixError.message);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Schema check failed:', error.message);
+      }
+    }
+  }
 });
 
-// ✅ FIXED: Updated unique index to use String USER_ID
-userRoleSchema.index({ BU_ID: 1, USER_ID: 1 }, { unique: true });
+// ========================
+// Instance Methods
+// ========================
 
-// ✅ Virtual for multiple roles
-userRoleSchema.virtual('UserRoleNames').get(function () {
-  const roleNames = this.ROLE_NMS || this.USER_ROLE_IDS.map(roleId => 
-    ROLE_MAPPING[String(roleId)]?.ROLE_NM || 'Unknown Role'
-  );
-  return roleNames.map(roleName => `${roleName}, ${this.Business_Unit}`).join(' | ');
-});
+// Virtual: Combined role names with business unit
+UserRole.prototype.getUserRoleNames = function() {
+  const roleNames = this.ROLE_NMS?.length > 0
+    ? this.ROLE_NMS
+    : (this.USER_ROLE_IDS || []).map(id => ROLE_MAPPING[id]?.ROLE_NM || 'Unknown Role');
 
-// ✅ Method to get combined permissions from all roles
-userRoleSchema.methods.getCombinedPermissions = async function() {
+  return roleNames.map(name => `${name}, ${this.Business_Unit}`).join(' | ');
+};
+
+// Get combined permissions from all assigned roles
+UserRole.prototype.getCombinedPermissions = async function() {
   try {
-    const permissionsDocs = await Permissions.find({ 
-      BU_ROLE_ID: { $in: this.USER_ROLE_IDS } 
-    }).lean();
-    
-    const combinedPermissions = {};
-    
-    permissionsDocs.forEach(doc => {
+    // Import Permissions model dynamically to avoid circular dependency
+    const { default: Permissions } = await import('./Permissions.js');
+
+    const permissionDocs = await Permissions.findAll({
+      where: {
+        BU_ROLE_ID: { [Op.in]: this.USER_ROLE_IDS || [] }
+      },
+      raw: true,
+    });
+
+    const combined = {};
+
+    permissionDocs.forEach(doc => {
       if (doc.permissions) {
         Object.keys(doc.permissions).forEach(category => {
-          if (!combinedPermissions[category]) {
-            combinedPermissions[category] = [];
-          }
-          // Merge permissions, avoiding duplicates
-          combinedPermissions[category] = [
-            ...new Set([...combinedPermissions[category], ...doc.permissions[category]])
-          ];
+          if (!combined[category]) combined[category] = [];
+          combined[category] = [...new Set([...combined[category], ...doc.permissions[category]])];
         });
       }
     });
-    
-    return combinedPermissions;
+
+    return combined;
   } catch (error) {
-    console.error('Error getting combined permissions:', error);
+    console.error('Error fetching combined permissions:', error.message);
     return {};
   }
 };
 
-// ✅ Method to check if user has any of the given roles
-userRoleSchema.methods.hasAnyRole = function(roleNames) {
-  const userRoleNames = this.ROLE_NMS || this.USER_ROLE_IDS.map(roleId => 
-    ROLE_MAPPING[String(roleId)]?.ROLE_NM
-  ).filter(Boolean);
-  
-  return roleNames.some(roleName => userRoleNames.includes(roleName));
+// Check if user has any of the given roles
+UserRole.prototype.hasAnyRole = function(roleNames) {
+  const userRoles = this.ROLE_NMS?.length > 0
+    ? this.ROLE_NMS
+    : (this.USER_ROLE_IDS || []).map(id => ROLE_MAPPING[id]?.ROLE_NM).filter(Boolean);
+
+  return roleNames.some(name => userRoles.includes(name));
 };
 
-// ✅ Method to check if user has all of the given roles
-userRoleSchema.methods.hasAllRoles = function(roleNames) {
-  const userRoleNames = this.ROLE_NMS || this.USER_ROLE_IDS.map(roleId => 
-    ROLE_MAPPING[String(roleId)]?.ROLE_NM
-  ).filter(Boolean);
-  
-  return roleNames.every(roleName => userRoleNames.includes(roleName));
+// Check if user has all given roles
+UserRole.prototype.hasAllRoles = function(roleNames) {
+  const userRoles = this.ROLE_NMS?.length > 0
+    ? this.ROLE_NMS
+    : (this.USER_ROLE_IDS || []).map(id => ROLE_MAPPING[id]?.ROLE_NM).filter(Boolean);
+
+  return roleNames.every(name => userRoles.includes(name));
 };
 
-// ✅ Static method to find users by role
-userRoleSchema.statics.findByRole = function(roleName) {
-  return this.find({
-    $or: [
-      { ROLE_NMS: roleName },
-      { USER_ROLE_IDS: { $in: Object.keys(ROLE_MAPPING).filter(key => ROLE_MAPPING[key].ROLE_NM === roleName).map(Number) } }
-    ]
+// Check if user ID matches (support both SYSUSER_ID and user_id)
+UserRole.prototype.isUser = function(userId) {
+  return this.SYSUSER_ID === userId || this.user_id === userId;
+};
+
+// ========================
+// Class Methods
+// ========================
+
+UserRole.findByRole = function(roleName) {
+  const matchingRoleIds = Object.keys(ROLE_MAPPING)
+    .filter(key => ROLE_MAPPING[key]?.ROLE_NM === roleName)
+    .map(Number);
+
+  return this.findAll({
+    where: {
+      [Op.or]: [
+        { ROLE_NMS: { [Op.contains]: [roleName] } },
+        { USER_ROLE_IDS: { [Op.overlap]: matchingRoleIds } }
+      ]
+    }
   });
 };
 
-// ✅ Static method to find user roles by user ID (string)
-userRoleSchema.statics.findByUserId = function(userId) {
-  return this.find({ USER_ID: userId });
+UserRole.findByUserId = function(userId) {
+  return this.findAll({ 
+    where: { 
+      [Op.or]: [
+        { user_id: userId },
+        { SYSUSER_ID: userId }
+      ]
+    } 
+  });
 };
 
-// ✅ Static method to find user roles by business unit and user ID
-userRoleSchema.statics.findByBusinessUnitAndUserId = function(buId, userId) {
-  return this.findOne({ BU_ID: buId, USER_ID: userId });
+UserRole.findByBusinessUnitAndUserId = function(buId, userId) {
+  return this.findOne({ 
+    where: { 
+      BU_ID: buId,
+      [Op.or]: [
+        { user_id: userId },
+        { SYSUSER_ID: userId }
+      ]
+    } 
+  });
 };
 
-const UserRole = mongoose.model('UserRole', userRoleSchema);
+// Find by SYSUSER_ID (the original field)
+UserRole.findBySysuserId = function(sysuserId) {
+  return this.findAll({ where: { SYSUSER_ID: sysuserId } });
+};
+
+// Bulk create user roles
+UserRole.bulkCreateUserRoles = async function(userRolesArray) {
+  return this.bulkCreate(userRolesArray, {
+    validate: true,
+    ignoreDuplicates: true
+  });
+};
+
+// Update user role
+UserRole.updateUserRole = async function(userId, buId, updates) {
+  const userRole = await this.findOne({
+    where: {
+      BU_ID: buId,
+      [Op.or]: [
+        { user_id: userId },
+        { SYSUSER_ID: userId }
+      ]
+    }
+  });
+
+  if (!userRole) {
+    throw new Error(`User role not found for user ${userId} in business unit ${buId}`);
+  }
+
+  return userRole.update(updates);
+};
+
+// Delete user role
+UserRole.deleteUserRole = async function(userId, buId) {
+  const result = await this.destroy({
+    where: {
+      BU_ID: buId,
+      [Op.or]: [
+        { user_id: userId },
+        { SYSUSER_ID: userId }
+      ]
+    }
+  });
+
+  return result > 0;
+};
+
+// Get all roles for a business unit
+UserRole.findByBusinessUnit = function(buId) {
+  return this.findAll({ 
+    where: { BU_ID: buId },
+    order: [['ROLE_NM', 'ASC']]
+  });
+};
+
+// Get user's active roles (where EFF_TO_DT is null or in future)
+UserRole.findActiveRolesByUser = function(userId) {
+  const now = new Date();
+  
+  return this.findAll({
+    where: {
+      [Op.or]: [
+        { user_id: userId },
+        { SYSUSER_ID: userId }
+      ],
+      [Op.or]: [
+        { EFF_TO_DT: null },
+        { EFF_TO_DT: { [Op.gt]: now } }
+      ],
+      REC_ST: 'A' // Active records
+    }
+  });
+};
+
+// Generate next role_id
+UserRole.generateRoleId = async function() {
+  const lastEntry = await this.findOne({
+    order: [['role_id', 'DESC']],
+    attributes: ['role_id']
+  });
+
+  let nextId = 1;
+  if (lastEntry && lastEntry.role_id) {
+    const parsed = parseInt(lastEntry.role_id, 10);
+    if (!isNaN(parsed)) {
+      nextId = parsed + 1;
+    }
+  }
+  
+  return nextId;
+};
+
+// Sync helper method - call this after database is ready
+UserRole.syncModel = async function(options = {}) {
+  try {
+    // First ensure the table exists
+    await this.sync({ force: false, alter: false });
+    
+    // Then manually add indexes if they don't exist
+    const tableExists = await sequelize.queryInterface.showAllTables();
+    
+    if (tableExists.includes('user_roles')) {
+      console.log('✅ user_roles table exists, checking indexes...');
+      
+      // You can add indexes manually here if needed
+      // await sequelize.queryInterface.addIndex('user_roles', ['BU_ID', 'user_id'], {
+      //   unique: true,
+      //   name: 'user_roles_bu_user_unique'
+      // });
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error syncing UserRole model:', error.message);
+    return false;
+  }
+};
+
+// ✅ ADDED: Method to manually check and fix schema
+UserRole.checkAndFixSchema = async function() {
+  try {
+    console.log('🔧 Manually checking and fixing user_roles schema...');
+    
+    // Check if user_id column exists
+    const [results] = await sequelize.query(`
+      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'user_roles' 
+      AND TABLE_SCHEMA = DATABASE()
+      AND COLUMN_NAME = 'user_id'
+    `);
+    
+    if (results.length === 0) {
+      console.log('❌ user_id column does not exist in user_roles table');
+      console.log('💡 Running sync to create missing column...');
+      await this.sync({ alter: true });
+      return { success: true, action: 'created_column' };
+    }
+    
+    const columnInfo = results[0];
+    console.log('📊 Current user_id column:', columnInfo);
+    
+    // Fix if column is NOT NULL without default
+    if (columnInfo.IS_NULLABLE === 'NO' && !columnInfo.COLUMN_DEFAULT) {
+      console.log('🔧 Fixing: Making user_id nullable');
+      try {
+        await sequelize.query(`
+          ALTER TABLE user_roles MODIFY user_id INT NULL
+        `);
+        console.log('✅ Fixed: user_id is now nullable');
+        return { success: true, action: 'made_nullable' };
+      } catch (fixError) {
+        console.error('❌ Failed to fix user_id column:', fixError.message);
+        return { success: false, error: fixError.message };
+      }
+    }
+    
+    console.log('✅ Schema is already correct');
+    return { success: true, action: 'already_correct' };
+  } catch (error) {
+    console.error('❌ Error checking schema:', error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// ✅ ADDED: Enhanced create method that handles schema issues
+UserRole.createWithSchemaCheck = async function(data, options = {}) {
+  try {
+    return await this.create(data, options);
+  } catch (error) {
+    // If error is about user_id schema, try to fix it
+    if (error.message.includes("Field 'user_id' doesn't have a default value") ||
+        error.message.includes("Incorrect integer value")) {
+      
+      console.log('🔄 Create failed due to schema issue, attempting auto-fix...');
+      const fixResult = await this.checkAndFixSchema();
+      
+      if (fixResult.success) {
+        console.log('✅ Schema fixed, retrying create...');
+        return await this.create(data, options);
+      } else {
+        throw new Error(`Create failed and schema fix failed: ${fixResult.error}`);
+      }
+    }
+    throw error;
+  }
+};
 
 export default UserRole;

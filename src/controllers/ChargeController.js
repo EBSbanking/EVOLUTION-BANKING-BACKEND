@@ -1,6 +1,6 @@
 // controllers/ChargeController.js
+import { Op } from 'sequelize';
 import Charge from '../models/Charge.js';
-import mongoose from 'mongoose';
 
 const ChargeController = {
   // 🔹 Transform request body (simplified → Oracle schema)
@@ -99,10 +99,12 @@ const ChargeController = {
 
       // Check duplicates
       const existingCharge = await Charge.findOne({
-        $or: [
-          { CHRG_ID: transformedBody.CHRG_ID },
-          { CHRG_CD: transformedBody.CHRG_CD }
-        ]
+        where: {
+          [Op.or]: [
+            { CHRG_ID: transformedBody.CHRG_ID },
+            { CHRG_CD: transformedBody.CHRG_CD }
+          ]
+        }
       });
 
       if (existingCharge) {
@@ -113,8 +115,7 @@ const ChargeController = {
       }
 
       // ✅ Save charge
-      const charge = new Charge(transformedBody);
-      await charge.save();
+      const charge = await Charge.create(transformedBody);
 
       // ✅ Always return simplified format to API response
       res.status(201).json({
@@ -125,6 +126,23 @@ const ChargeController = {
 
     } catch (error) {
       console.error('Create Charge Error:', error);
+
+      // Handle Sequelize validation errors
+      if (error.name === 'SequelizeValidationError') {
+        const errors = error.errors.map(err => err.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors
+        });
+      }
+
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Duplicate charge ID or code'
+        });
+      }
 
       res.status(500).json({
         success: false,
@@ -141,7 +159,7 @@ const ChargeController = {
         page = 1,
         limit = 10,
         sortBy = 'CHRG_CD',
-        sortOrder = 'asc',
+        sortOrder = 'ASC',
         search,
         recSt,
         chrgTy,
@@ -150,29 +168,30 @@ const ChargeController = {
       } = req.query;
 
       // Build filter object
-      const filter = {};
+      const where = {};
       
-      if (recSt) filter.REC_ST = recSt;
-      if (chrgTy) filter.CHRG_TY = chrgTy;
-      if (tierTy) filter.TIER_TY = tierTy;
+      if (recSt) where.REC_ST = recSt;
+      if (chrgTy) where.CHRG_TY = chrgTy;
+      if (tierTy) where.TIER_TY = tierTy;
       
       if (search) {
-        filter.$or = [
-          { CHRG_CD: { $regex: search, $options: 'i' } },
-          { CHRG_NM: { $regex: search, $options: 'i' } },
-          { CHRG_DESC: { $regex: search, $options: 'i' } }
+        where[Op.or] = [
+          { CHRG_CD: { [Op.like]: `%${search}%` } },
+          { CHRG_NM: { [Op.like]: `%${search}%` } },
+          { CHRG_DESC: { [Op.like]: `%${search}%` } }
         ];
       }
 
-      const sortOptions = {};
-      sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+      const order = [[sortBy, sortOrder.toUpperCase()]];
+      
+      const offset = (page - 1) * limit;
 
-      const charges = await Charge.find(filter)
-        .sort(sortOptions)
-        .limit(limit * 1)
-        .skip((page - 1) * limit);
-
-      const total = await Charge.countDocuments(filter);
+      const { count, rows: charges } = await Charge.findAndCountAll({
+        where,
+        order,
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
 
       // Transform response based on format parameter
       let data = charges;
@@ -185,8 +204,8 @@ const ChargeController = {
         data: data,
         pagination: {
           currentPage: parseInt(page),
-          totalPages: Math.ceil(total / limit),
-          totalItems: total,
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
           itemsPerPage: parseInt(limit)
         }
       });
@@ -205,7 +224,9 @@ const ChargeController = {
   getChargeById: async (req, res) => {
     try {
       const { format = 'oracle' } = req.query;
-      const charge = await Charge.findOne({ CHRG_ID: parseInt(req.params.id) });
+      const charge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(req.params.id) }
+      });
       
       if (!charge) {
         return res.status(404).json({
@@ -244,7 +265,10 @@ const ChargeController = {
       const transformedBody = ChargeController.transformChargeRequest(req.body);
 
       // Check if charge exists
-      const existingCharge = await Charge.findOne({ CHRG_ID: parseInt(id) });
+      const existingCharge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(id) }
+      });
+      
       if (!existingCharge) {
         return res.status(404).json({
           success: false,
@@ -267,11 +291,19 @@ const ChargeController = {
         });
       }
 
-      const updatedCharge = await Charge.findOneAndUpdate(
-        { CHRG_ID: parseInt(id) },
+      // Update the charge
+      await Charge.update(
         { ...transformedBody, ROW_TS: new Date() },
-        { new: true, runValidators: true }
+        { 
+          where: { CHRG_ID: parseInt(id) },
+          returning: true
+        }
       );
+
+      // Fetch the updated charge
+      const updatedCharge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(id) }
+      });
 
       let data = updatedCharge;
       if (format === 'simplified') {
@@ -287,8 +319,8 @@ const ChargeController = {
     } catch (error) {
       console.error('Update Charge Error:', error);
 
-      if (error.name === 'ValidationError') {
-        const errors = Object.values(error.errors).map(err => err.message);
+      if (error.name === 'SequelizeValidationError') {
+        const errors = error.errors.map(err => err.message);
         return res.status(400).json({
           success: false,
           message: 'Validation failed',
@@ -307,7 +339,9 @@ const ChargeController = {
   // Get charge by code
   getChargeByCode: async (req, res) => {
     try {
-      const charge = await Charge.findOne({ CHRG_CD: req.params.code });
+      const charge = await Charge.findOne({ 
+        where: { CHRG_CD: req.params.code }
+      });
       
       if (!charge) {
         return res.status(404).json({
@@ -334,7 +368,9 @@ const ChargeController = {
   // Delete charge by ID
   deleteCharge: async (req, res) => {
     try {
-      const charge = await Charge.findOneAndDelete({ CHRG_ID: parseInt(req.params.id) });
+      const charge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(req.params.id) }
+      });
       
       if (!charge) {
         return res.status(404).json({
@@ -342,6 +378,8 @@ const ChargeController = {
           message: 'Charge not found'
         });
       }
+
+      await charge.destroy();
 
       res.status(200).json({
         success: true,
@@ -362,11 +400,9 @@ const ChargeController = {
   // Soft delete (deactivate) charge
   deactivateCharge: async (req, res) => {
     try {
-      const charge = await Charge.findOneAndUpdate(
-        { CHRG_ID: parseInt(req.params.id) },
-        { REC_ST: 'I', ROW_TS: new Date() },
-        { new: true }
-      );
+      const charge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(req.params.id) }
+      });
 
       if (!charge) {
         return res.status(404).json({
@@ -374,6 +410,11 @@ const ChargeController = {
           message: 'Charge not found'
         });
       }
+
+      await charge.update({ 
+        REC_ST: 'I', 
+        ROW_TS: new Date() 
+      });
 
       res.status(200).json({
         success: true,
@@ -394,11 +435,9 @@ const ChargeController = {
   // Activate charge
   activateCharge: async (req, res) => {
     try {
-      const charge = await Charge.findOneAndUpdate(
-        { CHRG_ID: parseInt(req.params.id) },
-        { REC_ST: 'A', ROW_TS: new Date() },
-        { new: true }
-      );
+      const charge = await Charge.findOne({ 
+        where: { CHRG_ID: parseInt(req.params.id) }
+      });
 
       if (!charge) {
         return res.status(404).json({
@@ -406,6 +445,11 @@ const ChargeController = {
           message: 'Charge not found'
         });
       }
+
+      await charge.update({ 
+        REC_ST: 'A', 
+        ROW_TS: new Date() 
+      });
 
       res.status(200).json({
         success: true,
@@ -427,9 +471,11 @@ const ChargeController = {
   getChargesByType: async (req, res) => {
     try {
       const { type } = req.params;
-      const charges = await Charge.find({ 
-        CHRG_TY: type.toUpperCase(),
-        REC_ST: 'A'
+      const charges = await Charge.findAll({ 
+        where: { 
+          CHRG_TY: type.toUpperCase(),
+          REC_ST: 'A'
+        }
       });
 
       res.status(200).json({
@@ -451,7 +497,11 @@ const ChargeController = {
   // Get active charges only
   getActiveCharges: async (req, res) => {
     try {
-      const charges = await Charge.findActive();
+      const charges = await Charge.findAll({
+        where: {
+          REC_ST: 'A'
+        }
+      });
       
       res.status(200).json({
         success: true,
@@ -487,9 +537,13 @@ const ChargeController = {
 
       for (const [index, chargeData] of charges.entries()) {
         try {
-          const charge = new Charge(chargeData);
+          // Transform the charge data
+          const transformedCharge = ChargeController.transformChargeRequest(chargeData);
+          
+          // Validate using model
+          const charge = Charge.build(transformedCharge);
           await charge.validate();
-          validatedCharges.push(chargeData);
+          validatedCharges.push(transformedCharge);
         } catch (error) {
           errors.push({
             index,
@@ -508,7 +562,11 @@ const ChargeController = {
         });
       }
 
-      const result = await Charge.insertMany(validatedCharges);
+      // Create all charges in bulk
+      const result = await Charge.bulkCreate(validatedCharges, {
+        validate: true,
+        returning: true
+      });
 
       res.status(201).json({
         success: true,
@@ -518,6 +576,23 @@ const ChargeController = {
 
     } catch (error) {
       console.error('Bulk Create Charges Error:', error);
+      
+      if (error.name === 'SequelizeValidationError') {
+        const errors = error.errors.map(err => err.message);
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error during bulk create',
+          errors
+        });
+      }
+
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Duplicate charge IDs or codes in bulk data'
+        });
+      }
+
       res.status(500).json({
         success: false,
         message: 'Error creating charges in bulk',

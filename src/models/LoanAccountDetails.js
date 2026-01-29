@@ -1,256 +1,401 @@
-import mongoose from 'mongoose';
+import { DataTypes } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const LoanAccountDetailsSchema = new mongoose.Schema({
+const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
   // ===== CORE ACCOUNT IDENTIFICATION =====
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   ACCT_NO: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(20),
+    allowNull: false,
     unique: true,
-    index: true,
     validate: {
-      validator: function(v) {
-        return /^[A-Z0-9]{10,20}$/.test(v);
-      },
-      message: props => `${props.value} is not a valid account number!`
+      is: /^[A-Z0-9]{10,20}$/
     }
   },
   CUST_ID: {
-    type: String,
-    required: true,
-    ref: 'Customer',
-    index: true
+    type: DataTypes.STRING,
+    allowNull: false
   },
   CUST_NM: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING,
+    allowNull: false,
+    validate: {
+      notEmpty: true
+    }
   },
   PROD_ID: {
-    type: String,
-    required: true,
-    ref: 'Product'
+    type: DataTypes.STRING,
+    allowNull: false
   },
   APPL_ID: {
-    type: String,
-    required: true,
-    index: true,
+    type: DataTypes.STRING,
+    allowNull: false,
     unique: true
   },
   CRNCY_ID: {
-    type: String,
-    required: true,
-    default: 'NGN'
+    type: DataTypes.STRING(3),
+    allowNull: false,
+    defaultValue: 'NGN'
   },
   BU_ID: {
-    type: String,
-    required: true
+    type: DataTypes.STRING,
+    allowNull: false
   },
   PRIMARY_OFFICER_ID: {
-    type: String,
-    required: true
+    type: DataTypes.STRING,
+    allowNull: false
   },
-  SECONDARY_OFFICER_ID: String,
+  SECONDARY_OFFICER_ID: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   creditReference: {
-    type: String,
-    maxlength: 50
+    type: DataTypes.STRING(50),
+    allowNull: true
   },
   loanCycle: {
-    type: Number,
-    min: 1,
-    max: 10,
-    default: 1
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    validate: {
+      min: 1,
+      max: 10
+    }
   },
 
   // ===== LOAN TERMS & DISBURSEMENT =====
   START_DT: {
-    type: Date,
-    required: true,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   MATURITY_DT: {
-    type: Date,
-    required: true,
+    type: DataTypes.DATE,
+    allowNull: false,
     validate: {
-      validator: function(v) {
-        return v > this.START_DT;
-      },
-      message: 'Maturity date must be after start date'
+      isAfterStartDate(value) {
+        if (value <= this.START_DT) {
+          throw new Error('Maturity date must be after start date');
+        }
+      }
     }
   },
   TERM_CD: {
-    type: String,
-    required: true,
-    enum: ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'],
-    default: 'MONTHLY'
+    type: DataTypes.ENUM('DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'),
+    allowNull: false,
+    defaultValue: 'MONTHLY'
   },
   TERM_VALUE: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 360,
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    validate: {
+      min: 1,
+      max: 360
+    },
     comment: 'Loan term in months for monthly, weeks for weekly, etc.'
   },
-  DISBURSEMENT_DATE: Date,
-  DISBURSEMENT_LIMIT: Number,
-  TRANSACTION_TYPE: {
-    type: String,
-    enum: ['CASH', 'TRANSFER', 'CHECK', 'WIRE', null],
-    default: null
+  DISBURSEMENT_DATE: {
+    type: DataTypes.DATE,
+    allowNull: true
   },
-  fundingAcctNo: String,
-  REPAY_SRC_ACCT_NO: String,
+  DISBURSEMENT_LIMIT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true
+  },
+  TRANSACTION_TYPE: {
+    type: DataTypes.ENUM('CASH', 'TRANSFER', 'CHECK', 'WIRE'),
+    allowNull: true,
+    defaultValue: null
+  },
+  fundingAcctNo: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  REPAY_SRC_ACCT_NO: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
 
   // ===== INTEREST RATES =====
   INTEREST_RATE: {
-    type: Number,
-    required: true,
-    min: 0,
-    max: 100,
-    get: v => parseFloat(v.toFixed(4))
+    type: DataTypes.DECIMAL(7, 4),
+    allowNull: false,
+    validate: {
+      min: 0,
+      max: 100
+    }
   },
-  INDEX_RATE_ID: String,
+  INDEX_RATE_ID: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   accruedInterest: {
-    type: Number,
-    default: 0.00,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   lastAccrualAmount: {
-    type: Number,
-    default: 0.00,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   averageDailyAccrualInterestRate: {
-    type: Number,
-    min: 0,
-    max: 100,
-    get: v => v ? parseFloat(v.toFixed(6)) : null
+    type: DataTypes.DECIMAL(10, 6),
+    allowNull: true
   },
 
   // ===== FINANCIAL BALANCES =====
   LOAN_AMOUNT: {
-    type: Number,
-    required: true,
-    min: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    validate: {
+      min: 0
+    }
   },
   OUTSTANDING_BALANCE: {
-    type: Number,
-    default: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0
   },
   AVAILABLE_BALANCE: {
-    type: Number,
-    default: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0
   },
   LEDGER_BALANCE: {
-    type: Number,
-    default: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0
   },
   CLEARED_BALANCE: {
-    type: Number,
-    default: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0
   },
   payOffBalance: {
-    type: Number,
-    default: 0.00,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   provision: {
-    type: Number,
-    default: 0.00,
-    min: 0,
-    get: v => parseFloat(v.toFixed(2))
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00,
+    validate: {
+      min: 0
+    }
   },
   equalPeriodicPaymentAmount: {
-    type: Number,
-    get: v => v ? parseFloat(v.toFixed(2)) : null
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true
   },
 
   // ===== STATUS & TRACKING =====
   STATUS: {
-    type: String,
-    enum: ['PENDING', 'APPROVED', 'REJECTED', 'ACTIVE', 'CLOSED', 'DELINQUENT', 'DEFAULTED', 'WRITTEN_OFF'],
-    default: 'PENDING'
+    type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED', 'ACTIVE', 'CLOSED', 'DELINQUENT', 'DEFAULTED', 'WRITTEN_OFF'),
+    allowNull: false,
+    defaultValue: 'PENDING'
   },
   LOAN_STATUS: {
-    type: String,
-    enum: ['APPLICATION', 'APPROVED', 'DISBURSED', 'REPAYING', 'CLOSED', 'DEFAULTED'],
-    default: 'APPLICATION'
+    type: DataTypes.ENUM('APPLICATION', 'APPROVED', 'DISBURSED', 'REPAYING', 'CLOSED', 'DEFAULTED'),
+    allowNull: false,
+    defaultValue: 'APPLICATION'
   },
   APPROVAL_STATUS: {
-    type: String,
-    enum: ['PENDING', 'APPROVED', 'REJECTED'],
-    default: 'PENDING'
+    type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'),
+    allowNull: false,
+    defaultValue: 'PENDING'
   },
-  lastSettlementDate: Date,
-  nextSettlementDate: Date,
+  lastSettlementDate: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  nextSettlementDate: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
 
   // ===== AUDIT FIELDS =====
   CREATED_BY: {
-    type: String,
-    required: true
+    type: DataTypes.STRING,
+    allowNull: false
   },
   CREATED_AT: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
-  lastModifiedBy: String,
-  lastModifiedAt: Date
-}, {
-  timestamps: true,
-  versionKey: false,
-  toJSON: { getters: true, virtuals: true },
-  toObject: { getters: true, virtuals: true }
-});
-
-// Virtual Fields
-LoanAccountDetailsSchema.virtual('remainingTerm').get(function() {
-  const months = (this.MATURITY_DT - new Date()) / (1000 * 60 * 60 * 24 * 30);
-  return Math.max(0, Math.ceil(months));
-});
-
-LoanAccountDetailsSchema.virtual('daysPastDue').get(function() {
-  if (!this.nextSettlementDate || !['DELINQUENT', 'DEFAULTED'].includes(this.STATUS)) return 0;
-  return Math.floor((new Date() - this.nextSettlementDate) / (1000 * 60 * 60 * 24));
-});
-
-// Pre-save Hooks
-LoanAccountDetailsSchema.pre('save', function(next) {
-  // Auto-calculate payoff balance
-  this.payOffBalance = parseFloat((this.LEDGER_BALANCE + this.accruedInterest).toFixed(2));
-  
-  // Update last modified timestamp
-  this.lastModifiedAt = new Date();
-  
-  // Ensure consistent statuses
-  if (this.LOAN_STATUS === 'DISBURSED' && this.STATUS === 'APPROVED') {
-    this.STATUS = 'ACTIVE';
+  lastModifiedBy: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  lastModifiedAt: {
+    type: DataTypes.DATE,
+    allowNull: true
   }
-  
-  next();
+}, {
+  tableName: 'loan_account_details',
+  timestamps: true,
+  createdAt: 'CREATED_AT',
+  updatedAt: 'lastModifiedAt',
+  hooks: {
+    beforeCreate: (loanAccount, options) => {
+      // Auto-calculate payoff balance
+      if (loanAccount.LEDGER_BALANCE && loanAccount.accruedInterest) {
+        loanAccount.payOffBalance = parseFloat((loanAccount.LEDGER_BALANCE + loanAccount.accruedInterest).toFixed(2));
+      }
+      
+      // Set lastModifiedBy if not set
+      if (!loanAccount.lastModifiedBy && loanAccount.CREATED_BY) {
+        loanAccount.lastModifiedBy = loanAccount.CREATED_BY;
+      }
+      
+      // Ensure consistent statuses
+      if (loanAccount.LOAN_STATUS === 'DISBURSED' && loanAccount.STATUS === 'APPROVED') {
+        loanAccount.STATUS = 'ACTIVE';
+      }
+    },
+    
+    beforeUpdate: (loanAccount, options) => {
+      // Auto-calculate payoff balance on update
+      if (loanAccount.LEDGER_BALANCE && loanAccount.accruedInterest) {
+        loanAccount.payOffBalance = parseFloat((loanAccount.LEDGER_BALANCE + loanAccount.accruedInterest).toFixed(2));
+      }
+      
+      // Update lastModifiedAt is handled automatically by Sequelize timestamps
+      
+      // Ensure consistent statuses
+      if (loanAccount.LOAN_STATUS === 'DISBURSED' && loanAccount.STATUS === 'APPROVED') {
+        loanAccount.STATUS = 'ACTIVE';
+      }
+    }
+  },
+  getterMethods: {
+    remainingTerm() {
+      if (!this.MATURITY_DT) return 0;
+      const months = (new Date(this.MATURITY_DT) - new Date()) / (1000 * 60 * 60 * 24 * 30);
+      return Math.max(0, Math.ceil(months));
+    },
+    
+    daysPastDue() {
+      if (!this.nextSettlementDate || !['DELINQUENT', 'DEFAULTED'].includes(this.STATUS)) return 0;
+      return Math.floor((new Date() - new Date(this.nextSettlementDate)) / (1000 * 60 * 60 * 24));
+    }
+  },
+  indexes: [
+    {
+      unique: true,
+      fields: ['ACCT_NO']
+    },
+    {
+      unique: true,
+      fields: ['APPL_ID']
+    },
+    {
+      fields: ['CUST_ID', 'STATUS']
+    },
+    {
+      fields: ['PROD_ID', 'STATUS']
+    },
+    {
+      fields: ['MATURITY_DT']
+    },
+    {
+      fields: ['nextSettlementDate']
+    },
+    {
+      fields: ['STATUS']
+    },
+    {
+      fields: ['LOAN_STATUS']
+    }
+  ]
 });
 
-// Indexes
-// LoanAccountDetailsSchema.index({ CUST_ID: 1, STATUS: 1 });
-// LoanAccountDetailsSchema.index({ PROD_ID: 1, STATUS: 1 });
-// LoanAccountDetailsSchema.index({ MATURITY_DT: 1 });
-// LoanAccountDetailsSchema.index({ nextSettlementDate: 1 });
-// LoanAccountDetailsSchema.index({ APPL_ID: 1 }, { unique: true });
-
-// Static Methods
-LoanAccountDetailsSchema.statics.findByStatus = function(status) {
-  return this.find({ STATUS: status });
+// Define associations
+LoanAccountDetails.associate = (models) => {
+  // Assuming you have Customer, Product models
+  LoanAccountDetails.belongsTo(models.Customer, {
+    foreignKey: 'CUST_ID',
+    targetKey: 'CUST_ID', // Adjust if your Customer model uses a different primary key
+    as: 'customer'
+  });
+  
+  LoanAccountDetails.belongsTo(models.Product, {
+    foreignKey: 'PROD_ID',
+    targetKey: 'PROD_ID', // Adjust if your Product model uses a different primary key
+    as: 'product'
+  });
+  
+  LoanAccountDetails.belongsTo(models.User, {
+    foreignKey: 'PRIMARY_OFFICER_ID',
+    targetKey: 'user_id', // Adjust based on your User model
+    as: 'primaryOfficer'
+  });
+  
+  LoanAccountDetails.belongsTo(models.User, {
+    foreignKey: 'SECONDARY_OFFICER_ID',
+    targetKey: 'user_id', // Adjust based on your User model
+    as: 'secondaryOfficer'
+  });
+  
+  LoanAccountDetails.belongsTo(models.User, {
+    foreignKey: 'CREATED_BY',
+    targetKey: 'user_id', // Adjust based on your User model
+    as: 'createdByUser'
+  });
 };
 
-// Instance Methods
-LoanAccountDetailsSchema.methods.calculateNextPayment = function() {
+// Add class methods
+LoanAccountDetails.findByStatus = function(status) {
+  return this.findAll({ where: { STATUS: status } });
+};
+
+// Add instance methods
+LoanAccountDetails.prototype.calculateNextPayment = function() {
   // Implementation for calculating next payment based on repayment frequency
   // This would use TERM_CD and lastSettlementDate to determine next payment date and amount
+  
+  // Example implementation:
+  if (!this.lastSettlementDate || !this.TERM_CD) {
+    return null;
+  }
+  
+  const lastDate = new Date(this.lastSettlementDate);
+  let nextDate;
+  
+  switch (this.TERM_CD) {
+    case 'DAILY':
+      nextDate = new Date(lastDate.setDate(lastDate.getDate() + 1));
+      break;
+    case 'WEEKLY':
+      nextDate = new Date(lastDate.setDate(lastDate.getDate() + 7));
+      break;
+    case 'BIWEEKLY':
+      nextDate = new Date(lastDate.setDate(lastDate.getDate() + 14));
+      break;
+    case 'MONTHLY':
+      nextDate = new Date(lastDate.setMonth(lastDate.getMonth() + 1));
+      break;
+    case 'QUARTERLY':
+      nextDate = new Date(lastDate.setMonth(lastDate.getMonth() + 3));
+      break;
+    case 'YEARLY':
+      nextDate = new Date(lastDate.setFullYear(lastDate.getFullYear() + 1));
+      break;
+    default:
+      return null;
+  }
+  
+  return {
+    nextPaymentDate: nextDate,
+    // You might want to calculate the payment amount here
+    estimatedAmount: this.equalPeriodicPaymentAmount || null
+  };
 };
-
-const LoanAccountDetails = mongoose.model('LoanAccountDetails', LoanAccountDetailsSchema);
 
 export default LoanAccountDetails;

@@ -5,46 +5,59 @@ import { asyncHandler } from "../middlewares/asyncHandler.js";
 
 const router = express.Router();
 
+// ==================== DIAGNOSTIC ROUTES ====================
+router.get('/diagnose', asyncHandler(GLAccountController.diagnoseDatabase));
+
 // ==================== GL ACCOUNT CREATION ROUTES ====================
 router.post('/create', asyncHandler(GLAccountController.createGLAccount));
-router.post('/dynamic/create', asyncHandler(GLAccountController.createDynamicGLAccount));
-router.post('/dynamic/bulk-create', asyncHandler(GLAccountController.createAllDynamicGLAccountsForBranch));
-router.post('/clone-branch', asyncHandler(GLAccountController.cloneGLAccountsForBranch));
-
-// ==================== COA-ALIGNED ACCOUNT ROUTES ====================
 router.post('/coa-aligned/create', asyncHandler(GLAccountController.createCOAAlignedGLAccount));
-router.post('/coa/migrate', asyncHandler(GLAccountController.migrateToCOAStructure));
-router.get('/coa/structure/:organizationCode', asyncHandler(GLAccountController.getCOAStructure));
 
-// ==================== BRANCH MANAGEMENT ROUTES ====================
-router.get('/branch/summary/:organizationCode/:branchCode', asyncHandler(GLAccountController.getBranchGLAccountSummary));
-router.get('/organization/:organizationCode', asyncHandler(GLAccountController.getOrganizationGLAccounts));
-router.get('/inter-branch/:organizationCode', asyncHandler(GLAccountController.getInterBranchAccounts));
-
-// ==================== TRANSACTION PROCESSING ROUTES ====================
+// ==================== LEDGER TRANSACTION ROUTES ====================
 router.post('/ledger-entry', asyncHandler(GLAccountController.createLedgerEntry));
-router.post('/transactions/queue', asyncHandler(GLAccountController.queueGLTransaction));
-router.post('/transactions/approve/:journalId', asyncHandler(GLAccountController.approveGLTransaction));
-router.post('/eod/process', asyncHandler(GLAccountController.processEODGLTransactions));
 
-// ==================== ACCOUNT MANAGEMENT ROUTES ====================
-router.get('/list', asyncHandler(GLAccountController.getAllGLAccounts));
-router.get('/search', asyncHandler(GLAccountController.searchGLAccounts));
-router.get('/:GL_ACCT_NO', asyncHandler(GLAccountController.getGLAccountById));
-router.put('/:GL_ACCT_NO', asyncHandler(GLAccountController.updateGLAccount));
-router.patch('/:GL_ACCT_NO/status', asyncHandler(GLAccountController.updateGLAccountStatus));
-router.delete('/:GL_ACCT_NO', asyncHandler(GLAccountController.deleteGLAccount));
+// ==================== UTILITY ROUTES ====================
+router.post('/validate-account-class', (req, res) => {
+  try {
+    const { accountClass, accountType } = req.body;
+    const result = GLAccountController.validateAccountClassType(accountClass, accountType);
+    res.json({ success: true, message: 'Account class validated', accountClass: result });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
 
+router.post('/get-account-type-code', (req, res) => {
+  try {
+    const { accountType } = req.body;
+    const code = GLAccountController.getAccountTypeCode(accountType);
+    res.json({ success: true, accountType, code });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
 
-// GL Account Activation Routes
-router.post('/initialize-activate', (GLAccountController.initializeAndActivateGLAccounts));
-router.get('/activation-status', (GLAccountController.getGLActivationStatus));
-router.post('/activate-specific', (GLAccountController.activateSpecificGLAccounts));
-router.post('/force-reactivate', (GLAccountController.forceReactivateGLAccounts));
-router.get('/by-number/:GL_ACCT_NO', asyncHandler(GLAccountController.getGLAccountByNumber));
+router.post('/get-coa-balance-type', (req, res) => {
+  try {
+    const { accountClass, accountType } = req.body;
+    const balanceType = GLAccountController.getCOABalanceType(accountClass, accountType);
+    res.json({ success: true, accountClass, accountType, balanceType });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
 
-router.put('/coa/update/:GL_ACCT_NO', asyncHandler(GLAccountController.updateCOA));
-router.put('/coa/bulk-update', asyncHandler(GLAccountController.bulkUpdateCOA));
-router.get('/coa/settings/:organizationCode', asyncHandler(GLAccountController.getCOASettings));
+// ==================== HEALTH CHECK ROUTES ====================
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'GL Account Controller is working',
+    endpoints: [
+      { method: 'POST', path: '/api/gl-accounts/create', description: 'Create GL Account' },
+      { method: 'POST', path: '/api/gl-accounts/coa-aligned/create', description: 'Create COA-aligned GL Account' },
+      { method: 'POST', path: '/api/gl-accounts/ledger-entry', description: 'Create Ledger Entry' },
+      { method: 'GET', path: '/api/gl-accounts/diagnose', description: 'Diagnose Database' }
+    ]
+  });
+});
 
 export default router;

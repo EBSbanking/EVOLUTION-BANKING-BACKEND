@@ -1,478 +1,470 @@
-import mongoose from 'mongoose';
+// models/LoanDisbursement.js
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const repaymentScheduleSchema = new mongoose.Schema({
-  installmentNo: {
-    type: Number,
-    required: true
-  },
-  dueDate: {
-    type: Date,
-    required: true
-  },
-  principal: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  interest: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  totalPayment: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  remainingBalance: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  status: {
-    type: String,
-    enum: ['PENDING', 'PAID', 'OVERDUE', 'PARTIALLY_PAID'],
-    default: 'PENDING'
-  },
-  amountPaid: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  principalPaid: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  interestPaid: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  paymentDate: {
-    type: Date
-  },
-  isEarlyPayment: {
-    type: Boolean,
-    default: false
-  },
-  isOverduePayment: {
-    type: Boolean,
-    default: false
-  },
-  lateFeeCharged: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+class LoanDisbursement extends Model {
+  // Static methods
+  static async findByAccountNumber(accountNumber) {
+    return this.findOne({ where: { ACCT_NO: accountNumber } });
   }
-});
 
-const feeDetailsSchema = new mongoose.Schema({
-  processingFee: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  totalFees: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  charges: [{
-    chargeId: { type: Number },
-    chargeCode: { type: String },
-    amount: {
-      type: mongoose.Types.Decimal128,
-      default: mongoose.Types.Decimal128.fromString('0.00')
-    },
-    name: { type: String },
-    glAccountCode: { type: String }
-  }],
-  upfrontInterest: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  upfrontInterestPercentage: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
-  },
-  processingFeeGLCode: {
-    type: String,
-    trim: true
+  static async findByApplicationId(applicationId) {
+    return this.findAll({ where: { APPL_ID: applicationId } });
   }
-});
 
-const Borrower_addressSchema = new mongoose.Schema({
-  street: {
-    type: String,
-    trim: true
-  },
-  state: {
-    type: String,
-    trim: true
-  },
-  city: {
-    type: String,
-    trim: true
-  },
-  zipCode: {
-    type: String,
-    trim: true
-  },
-  country: {
-    type: String,
-    default: 'Nigeria',
-    trim: true
+  static async findByStatus(status) {
+    return this.findAll({ where: { STATUS: status } });
   }
-});
 
-const guarantorDetailsSchema = new mongoose.Schema({
-  name: { type: String },
-  phone: { type: String },
-  relationship: { type: String },
-  guarantorNumberId: { type: String },
-  email: { type: String },
-  address: { type: String },
-  existingGuarantees: {
-    type: {
-      totalExistingLoans: { type: Number },
-      totalGuaranteedAmount: { type: mongoose.Types.Decimal128 }
-    },
-    default: null
+  static async findByLoanAccountId(loanAccountId) {
+    return this.findOne({ where: { LOAN_ACCOUNT_ID: loanAccountId } });
   }
-});
 
-// Interest rate details schema
-const interestRateDetailsSchema = new mongoose.Schema({
-  rateType: { type: String },
-  interestType: { type: String },
-  calculationMethod: { type: String },
-  loanInterestRateId: { type: mongoose.Schema.Types.Mixed },
-  source: { type: String },
-  annualRate: { type: Number },
-  monthlyRate: { type: Number },
-  isTermBasedRate: { type: Boolean },
-  note: { type: String },
-  overrideDetails: {
-    forcedRate: { type: Number },
-    reason: { type: String }
+  // Instance method to update status
+  async updateStatus(newStatus) {
+    this.STATUS = newStatus;
+    return this.save();
   }
-});
 
-const LoanDisbursementSchema = new mongoose.Schema({
-  // Core Identification Fields
+  // Instance method to get formatted amount
+  get formattedAmount() {
+    const amount = parseFloat(this.AMOUNT || 0);
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: this.CRNCY_ID || 'NGN'
+    }).format(amount);
+  }
+}
+
+LoanDisbursement.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+    field: 'id'
+  },
+  
+  // Core Identification Fields with field mappings
   ACCT_NO: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(255),
+    allowNull: false,
     unique: true,
-    trim: true,
-    index: true
+    field: 'a_c_c_t__n_o'  // Map to actual column name
   },
+  
   APPL_ID: {
-    type: String,
-    required: true,
-    trim: true,
-    index: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'a_p_p_l__i_d'
   },
+  
   CUST_ID: {
-    type: mongoose.Schema.Types.Mixed, // Can be String or Number
-    required: true,
-    index: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'c_u_s_t__i_d'
   },
   
   // Loan Details
   INTEREST_RATE: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(7, 4),
+    allowNull: false,
+    field: 'i_n_t_e_r_e_s_t__r_a_t_e'
   },
+  
   TERM_VALUE: {
-    type: Number,
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 't_e_r_m__v_a_l_u_e'
   },
+  
   TERM_CD: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 't_e_r_m__c_d'
   },
+  
   AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    field: 'a_m_o_u_n_t'
   },
+  
   CALCULATION_METHOD: {
-    type: String,
-    required: true,
-    enum: ['FLAT_RATE', 'DECLINING_BALANCE'],
-    default: 'FLAT_RATE'
+    type: DataTypes.ENUM('FLAT_RATE', 'DECLINING_BALANCE'),
+    allowNull: false,
+    defaultValue: 'FLAT_RATE',
+    field: 'c_a_l_c_u_l_a_t_i_o_n__m_e_t_h_o_d'
   },
+  
   PAYMENT_FREQUENCY: {
-    type: String,
-    required: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'p_a_y_m_e_n_t__f_r_e_q_u_e_n_c_y'
   },
   
   // Financial Summary
   EMI_AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    field: 'e_m_i__a_m_o_u_n_t'
   },
+  
   TOTAL_INTEREST: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    field: 't_o_t_a_l__i_n_t_e_r_e_s_t'
   },
+  
   TOTAL_REPAYMENT: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    field: 't_o_t_a_l__r_e_p_a_y_m_e_n_t'
   },
   
   // References to other documents
   LOAN_ACCOUNT_ID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'LoanAccount',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'l_o_a_n__a_c_c_o_u_n_t__i_d'
   },
+  
   CREDIT_APPLICATION_ID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'CreditApplication'
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 'c_r_e_d_i_t__a_p_p_l_i_c_a_t_i_o_n__i_d'
   },
+  
   REPAYMENT_SCHEDULE_ID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'RepaymentSchedule',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'r_e_p_a_y_m_e_n_t__s_c_h_e_d_u_l_e__i_d'
   },
+  
   GUARANTOR_ID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Guarantor',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'g_u_a_r_a_n_t_o_r__i_d'
   },
   
   // Transaction and Workflow IDs
   TRANSACTION_ID: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 't_r_a_n_s_a_c_t_i_o_n__i_d'
   },
+  
   EVENT_ID: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'e_v_e_n_t__i_d'
   },
+  
   JOURNAL_ID: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'j_o_u_r_n_a_l__i_d'
   },
   
   // Product Information
   PROD_ID: {
-    type: mongoose.Schema.Types.Mixed, // Can be String or Number
-    required: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'p_r_o_d__i_d'
   },
+  
   PRODUCT_TYPE: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'p_r_o_d_u_c_t__t_y_p_e'
   },
   
   // Account Information
   ACCT_NM: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'a_c_c_t__n_m'
   },
+  
   CRNCY_ID: {
-    type: String,
-    required: true,
-    default: 'NGN'
+    type: DataTypes.STRING(3),
+    allowNull: false,
+    defaultValue: 'NGN',
+    field: 'c_r_n_c_y__i_d'
   },
+  
   BU_ID: {
-    type: mongoose.Schema.Types.Mixed, // Can be String or Number
-    required: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'b_u__i_d'
   },
   
   // Officer Information
   PRIMARY_OFFICER_ID: {
-    type: mongoose.Schema.Types.Mixed, // Can be String or Number
-    required: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'p_r_i_m_a_r_y__o_f_f_i_c_e_r__i_d'
   },
+  
   REPAY_SRC_ACCT_NO: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'r_e_p_a_y__s_r_c__a_c_c_t__n_o'
   },
   
   // Dates
   START_DT: {
-    type: Date,
-    required: true
+    type: DataTypes.DATE,
+    allowNull: false,
+    field: 's_t_a_r_t__d_t'
   },
+  
   MATURITY_DT: {
-    type: Date,
-    required: true
+    type: DataTypes.DATE,
+    allowNull: false,
+    field: 'm_a_t_u_r_i_t_y__d_t'
   },
   
-  // Address Information
-  Borrower_address: {
-    type: Borrower_addressSchema,
-    default: null
+  // JSON Fields
+  borrower_address: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {},
+    field: 'borrower_address'
   },
   
-  // Guarantor Details
-  guarantorDetails: {
-    type: guarantorDetailsSchema,
-    default: null
+  guarantor_details: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {},
+    field: 'guarantor_details'
   },
   
-  // Interest Rate Details
-  interestRateDetails: {
-    type: interestRateDetailsSchema,
-    default: null
+  interest_rate_details: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {},
+    field: 'interest_rate_details'
   },
   
   // Status and Metadata
   STATUS: {
-    type: String,
-    required: true,
-    enum: ['PENDING', 'APPROVED', 'ACTIVE', 'REJECTED', 'DISBURSED', 'COMPLETED'],
-    default: 'PENDING'
+    type: DataTypes.ENUM('PENDING', 'APPROVED', 'ACTIVE', 'REJECTED', 'DISBURSED', 'COMPLETED'),
+    allowNull: false,
+    defaultValue: 'PENDING',
+    field: 's_t_a_t_u_s'
   },
+  
   CREATED_BY: {
-    type: String,
-    required: true,
-    trim: true
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'c_r_e_a_t_e_d__b_y'
   },
   
   // Disbursement Details
   DISBURSEMENT_TYPE: {
-    type: String,
-    required: true,
-    enum: ['CUSTOMER_ACCOUNT', 'CASH', 'BANK_TRANSFER'],
-    default: 'CUSTOMER_ACCOUNT'
+    type: DataTypes.ENUM('CUSTOMER_ACCOUNT', 'CASH', 'BANK_TRANSFER'),
+    allowNull: false,
+    defaultValue: 'CUSTOMER_ACCOUNT',
+    field: 'd_i_s_b_u_r_s_e_m_e_n_t__t_y_p_e'
   },
+  
   FEES_AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00,
+    field: 'f_e_e_s__a_m_o_u_n_t'
   },
+  
   UPFRONT_INTEREST_AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00,
+    field: 'u_p_f_r_o_n_t__i_n_t_e_r_e_s_t__a_m_o_u_n_t'
   },
+  
   NET_DISBURSEMENT_AMOUNT: {
-    type: mongoose.Types.Decimal128,
-    required: true
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    field: 'n_e_t__d_i_s_b_u_r_s_e_m_e_n_t__a_m_o_u_n_t'
   },
   
   // Additional Metadata
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  metadata: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {},
+    field: 'metadata'
   },
   
-  // Version tracking
-  __v: {
-    type: Number,
-    select: false
+  // Sequelize timestamps
+  createdAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
+  },
+  
+  updatedAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
+  sequelize,
+  modelName: 'LoanDisbursement',
+  tableName: 'loan_disbursements',  // Explicit lowercase table name
   timestamps: true,
-  toJSON: {
-    transform: function(doc, ret) {
-      // Convert Decimal128 fields to numbers
-      const decimalFields = [
-        'INTEREST_RATE', 'AMOUNT', 'EMI_AMOUNT', 'TOTAL_INTEREST', 
-        'TOTAL_REPAYMENT', 'FEES_AMOUNT', 'UPFRONT_INTEREST_AMOUNT', 
-        'NET_DISBURSEMENT_AMOUNT'
-      ];
-      
-      decimalFields.forEach(field => {
-        if (ret[field] && typeof ret[field] === 'object') {
-          ret[field] = parseFloat(ret[field].toString());
-        }
-      });
-      
-      // Convert interestRateDetails Decimal128
-      if (ret.interestRateDetails && ret.interestRateDetails.overrideDetails) {
-        if (ret.interestRateDetails.overrideDetails.forcedRate && typeof ret.interestRateDetails.overrideDetails.forcedRate === 'object') {
-          ret.interestRateDetails.overrideDetails.forcedRate = parseFloat(ret.interestRateDetails.overrideDetails.forcedRate.toString());
-        }
+  underscored: false,
+  freezeTableName: true,  // This prevents Sequelize from pluralizing
+  name: {
+    singular: 'LoanDisbursement',
+    plural: 'LoanDisbursements'
+  },
+  hooks: {
+    beforeCreate: (disbursement) => {
+      // Calculate NET_DISBURSEMENT_AMOUNT if not provided
+      if (!disbursement.NET_DISBURSEMENT_AMOUNT) {
+        const amount = parseFloat(disbursement.AMOUNT || 0);
+        const fees = parseFloat(disbursement.FEES_AMOUNT || 0);
+        const upfrontInterest = parseFloat(disbursement.UPFRONT_INTEREST_AMOUNT || 0);
+        const netAmount = amount - fees - upfrontInterest;
+        disbursement.NET_DISBURSEMENT_AMOUNT = Math.max(0, netAmount);
       }
       
-      // Convert guarantorDetails Decimal128
-      if (ret.guarantorDetails && ret.guarantorDetails.existingGuarantees && ret.guarantorDetails.existingGuarantees.totalGuaranteedAmount) {
-        if (typeof ret.guarantorDetails.existingGuarantees.totalGuaranteedAmount === 'object') {
-          ret.guarantorDetails.existingGuarantees.totalGuaranteedAmount = parseFloat(ret.guarantorDetails.existingGuarantees.totalGuaranteedAmount.toString());
-        }
+      // Ensure JSON fields have proper defaults
+      if (!disbursement.borrower_address || typeof disbursement.borrower_address !== 'object') {
+        disbursement.borrower_address = {};
       }
       
-      // Remove mongoose internal fields
-      delete ret.__v;
-      delete ret._id;
+      if (!disbursement.guarantor_details || typeof disbursement.guarantor_details !== 'object') {
+        disbursement.guarantor_details = {};
+      }
       
-      return ret;
+      if (!disbursement.interest_rate_details || typeof disbursement.interest_rate_details !== 'object') {
+        disbursement.interest_rate_details = {};
+      }
+      
+      if (!disbursement.metadata || typeof disbursement.metadata !== 'object') {
+        disbursement.metadata = {};
+      }
+    },
+    
+    beforeUpdate: (disbursement) => {
+      // Calculate NET_DISBURSEMENT_AMOUNT if relevant fields changed
+      if (disbursement.changed('AMOUNT') || disbursement.changed('FEES_AMOUNT') || disbursement.changed('UPFRONT_INTEREST_AMOUNT')) {
+        const amount = parseFloat(disbursement.AMOUNT || 0);
+        const fees = parseFloat(disbursement.FEES_AMOUNT || 0);
+        const upfrontInterest = parseFloat(disbursement.UPFRONT_INTEREST_AMOUNT || 0);
+        const netAmount = amount - fees - upfrontInterest;
+        disbursement.NET_DISBURSEMENT_AMOUNT = Math.max(0, netAmount);
+      }
     }
-  }
+  },
+  indexes: [
+    // FIXED: Use actual column names in indexes
+    {
+      unique: true,
+      fields: ['ACCT_NO'],  // Model property name
+      name: 'idx_acct_no_unique'
+    },
+    {
+      fields: ['APPL_ID'],
+      name: 'idx_appl_id'
+    },
+    {
+      fields: ['CUST_ID'],
+      name: 'idx_cust_id'
+    },
+    {
+      fields: ['LOAN_ACCOUNT_ID'],
+      name: 'idx_loan_acct_id'
+    },
+    {
+      fields: ['GUARANTOR_ID'],
+      name: 'idx_guarantor_id'
+    },
+    {
+      fields: ['TRANSACTION_ID'],
+      name: 'idx_transaction_id'
+    },
+    {
+      fields: ['EVENT_ID'],
+      name: 'idx_event_id'
+    },
+    {
+      fields: ['PROD_ID'],
+      name: 'idx_prod_id'
+    },
+    {
+      fields: ['STATUS'],
+      name: 'idx_status'
+    },
+    {
+      fields: ['CREATED_BY'],
+      name: 'idx_created_by'
+    },
+    {
+      fields: ['createdAt'],
+      name: 'idx_created_at'
+    },
+    {
+      fields: ['TERM_CD'],
+      name: 'idx_term_cd'
+    },
+    {
+      fields: ['PRODUCT_TYPE'],
+      name: 'idx_product_type'
+    },
+    {
+      fields: ['CRNCY_ID'],
+      name: 'idx_crncy_id'
+    },
+    {
+      fields: ['BU_ID'],
+      name: 'idx_bu_id'
+    },
+    {
+      fields: ['PRIMARY_OFFICER_ID'],
+      name: 'idx_primary_officer'
+    }
+  ]
 });
 
-// Indexes for better query performance
-LoanDisbursementSchema.index({ ACCT_NO: 1 });
-LoanDisbursementSchema.index({ APPL_ID: 1 });
-LoanDisbursementSchema.index({ CUST_ID: 1 });
-LoanDisbursementSchema.index({ LOAN_ACCOUNT_ID: 1 });
-LoanDisbursementSchema.index({ GUARANTOR_ID: 1 });
-LoanDisbursementSchema.index({ TRANSACTION_ID: 1 });
-LoanDisbursementSchema.index({ EVENT_ID: 1 });
-LoanDisbursementSchema.index({ PROD_ID: 1 });
-LoanDisbursementSchema.index({ STATUS: 1 });
-LoanDisbursementSchema.index({ CREATED_BY: 1 });
-LoanDisbursementSchema.index({ createdAt: 1 });
-
-// Virtual for formatted amounts
-LoanDisbursementSchema.virtual('formattedAmount').get(function() {
-  return `₦${parseFloat(this.AMOUNT?.toString() || '0').toLocaleString()}`;
-});
-
-LoanDisbursementSchema.virtual('formattedInterestRate').get(function() {
-  return `${parseFloat(this.INTEREST_RATE?.toString() || '0').toFixed(2)}%`;
-});
-
-LoanDisbursementSchema.virtual('formattedEMI').get(function() {
-  return `₦${parseFloat(this.EMI_AMOUNT?.toString() || '0').toLocaleString()}`;
-});
-
-// Static methods
-LoanDisbursementSchema.statics.findByAccountNumber = function(accountNumber) {
-  return this.findOne({ ACCT_NO: accountNumber });
-};
-
-LoanDisbursementSchema.statics.findByApplicationId = function(applicationId) {
-  return this.find({ APPL_ID: applicationId });
-};
-
-LoanDisbursementSchema.statics.findByCustomerId = function(customerId) {
-  return this.find({ CUST_ID: customerId });
-};
-
-LoanDisbursementSchema.statics.findByStatus = function(status) {
-  return this.find({ STATUS: status });
-};
-
-// Instance methods
-LoanDisbursementSchema.methods.updateStatus = function(newStatus) {
-  this.STATUS = newStatus;
-  this.updatedAt = new Date();
-  return this.save();
-};
-
-// Pre-save middleware
-LoanDisbursementSchema.pre('save', function(next) {
-  // Ensure NET_DISBURSEMENT_AMOUNT is calculated
-  if (!this.NET_DISBURSEMENT_AMOUNT) {
-    const amount = parseFloat(this.AMOUNT?.toString() || '0');
-    const fees = parseFloat(this.FEES_AMOUNT?.toString() || '0');
-    const upfrontInterest = parseFloat(this.UPFRONT_INTEREST_AMOUNT?.toString() || '0');
-    const netAmount = amount - fees - upfrontInterest;
-    this.NET_DISBURSEMENT_AMOUNT = mongoose.Types.Decimal128.fromString(Math.max(0, netAmount).toFixed(2));
+// Define associations
+LoanDisbursement.associate = (models) => {
+  if (models.LoanAccount) {
+    LoanDisbursement.belongsTo(models.LoanAccount, {
+      foreignKey: 'LOAN_ACCOUNT_ID',
+      as: 'loanAccount',
+      constraints: false
+    });
   }
   
-  // Update timestamps
-  this.updatedAt = new Date();
+  if (models.RepaymentSchedule) {
+    LoanDisbursement.belongsTo(models.RepaymentSchedule, {
+      foreignKey: 'REPAYMENT_SCHEDULE_ID',
+      as: 'repaymentSchedule',
+      constraints: false
+    });
+  }
   
-  next();
-});
-
-const LoanDisbursement = mongoose.models.LoanDisbursement || 
-                         mongoose.model('LoanDisbursement', LoanDisbursementSchema);
+  if (models.Guarantor) {
+    LoanDisbursement.belongsTo(models.Guarantor, {
+      foreignKey: 'GUARANTOR_ID',
+      as: 'guarantor',
+      constraints: false
+    });
+  }
+  
+  if (models.Customer) {
+    LoanDisbursement.belongsTo(models.Customer, {
+      foreignKey: 'CUST_ID',
+      targetKey: 'CUST_ID',
+      as: 'customer',
+      constraints: false
+    });
+  }
+};
 
 export default LoanDisbursement;

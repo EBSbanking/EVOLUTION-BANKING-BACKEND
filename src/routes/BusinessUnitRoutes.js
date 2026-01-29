@@ -1,32 +1,28 @@
+// routes/businessUnitRoutes.js
 import express from 'express';
 import {
-  createBusinessUnit,
   getAllBusinessUnits,
   getBusinessUnitById,
+  getBusinessUnitByBuId,
+  createBusinessUnit,       // Standalone business unit creation
   updateBusinessUnit,
-  deleteBusinessUnit
+  deleteBusinessUnit,
+  getBusinessUnitsByStatus,
+  searchBusinessUnits,
+  getUnassignedBusinessUnits
 } from '../controllers/BusinessUnitController.js';
-
-import { getAccessibleBUsForUser } from '../controllers/UserRoleController.js'; // ⬅️ Add this import
 
 const router = express.Router();
 
-// Route to create a new business unit
-router.post('/create', createBusinessUnit);
-
-// Route to get all business units
-router.get('/all', getAllBusinessUnits);
-
-// Route to get a specific business unit by ID
-router.get('/business-unit/:BU_ID', getBusinessUnitById);
-
-// Route to update a business unit by ID
-router.put('/business-unit/update/:BU_ID', updateBusinessUnit);
-
-// Route to delete a business unit by ID
-router.delete('/business-unit/delete/:BU_ID', deleteBusinessUnit);
-
-// ✅ NEW: Route to get accessible business units for a given user
-router.get('/accessible/:userId', getAccessibleBUsForUser);
+// Business Unit routes
+router.get('/', getAllBusinessUnits);
+router.get('/unassigned', getUnassignedBusinessUnits);
+router.get('/search/:query', searchBusinessUnits);
+router.get('/status/:status', getBusinessUnitsByStatus);
+router.get('/bu-id/:buId', getBusinessUnitByBuId);
+router.get('/:id', getBusinessUnitById);
+router.post('/', createBusinessUnit);  // Standalone business unit
+router.put('/:id', updateBusinessUnit);
+router.delete('/:id', deleteBusinessUnit);
 
 export default router;

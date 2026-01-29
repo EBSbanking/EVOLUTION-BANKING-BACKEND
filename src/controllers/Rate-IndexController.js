@@ -1,8 +1,12 @@
-// src/controllers/RateIndexController.js - UPDATED VERSION
+// src/controllers/RateIndexController.js - UPDATED VERSION WITH SEQUELIZE
 import asyncHandler from 'express-async-handler';
-import mongoose from 'mongoose';
-import RateIndex from '../models/Rate-Index.js';
-import AuditTrail from '../models/AuditTrail.js';
+import { Sequelize, Op } from 'sequelize';
+import db from '../models/index.js'; // Your Sequelize models
+import { 
+  auditLogger, 
+  logAuditTrail, 
+  logAuditTrailWithBranch 
+} from '../utils/AuditLogger.js';
 import InterestCalculationService from '../Services/InterestCalculationService.js';
 
 const interestService = new InterestCalculationService();
@@ -25,14 +29,17 @@ const RateIndexController = {
   getAllRateIndices: asyncHandler(async (req, res) => {
     try {
       const { RATE_TYPE, CRNCY_ID, STATUS } = req.query;
-      const filter = {};
       
-      if (RATE_TYPE) filter.RATE_TYPE = RATE_TYPE;
-      if (CRNCY_ID) filter.CRNCY_ID = CRNCY_ID;
-      if (STATUS) filter.STATUS = STATUS;
+      const where = {};
+      
+      if (RATE_TYPE) where.RATE_TYPE = RATE_TYPE;
+      if (CRNCY_ID) where.CRNCY_ID = CRNCY_ID;
+      if (STATUS) where.STATUS = STATUS;
 
-      const rateIndices = await RateIndex.find(filter)
-        .sort({ INDEX_RATE_ID: 1 }); // Sort by ID
+      const rateIndices = await db.RateIndex.findAll({
+        where,
+        order: [['INDEX_RATE_ID', 'ASC']]
+      });
       
       res.status(200).json({
         success: true,
@@ -48,10 +55,9 @@ const RateIndexController = {
     }
   }),
 
-  // CREATE A NEW RATE INDEX - UPDATED FOR YOUR FRONTEND
+  // CREATE A NEW RATE INDEX
   createRateIndex: asyncHandler(async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const transaction = await db.sequelize.transaction();
 
     try {
       // Required fields based on your frontend
@@ -78,18 +84,24 @@ const RateIndexController = {
       }
 
       // Check for duplicate INDEX_RATE_ID
-      const existingRateIndex = await RateIndex.findOne({
-        INDEX_RATE_ID: req.body.INDEX_RATE_ID
-      }).session(session);
+      const existingRateIndexById = await db.RateIndex.findOne({
+        where: {
+          INDEX_RATE_ID: parseInt(req.body.INDEX_RATE_ID)
+        },
+        transaction
+      });
       
-      if (existingRateIndex) {
+      if (existingRateIndexById) {
         throw new Error(`Rate Index with ID ${req.body.INDEX_RATE_ID} already exists`);
       }
 
       // Check for duplicate INDEX_CD
-      const existingRateCode = await RateIndex.findOne({
-        INDEX_CD: req.body.INDEX_CD
-      }).session(session);
+      const existingRateCode = await db.RateIndex.findOne({
+        where: {
+          INDEX_CD: req.body.INDEX_CD.toUpperCase()
+        },
+        transaction
+      });
       
       if (existingRateCode) {
         throw new Error(`Rate Index with code ${req.body.INDEX_CD} already exists`);
@@ -97,10 +109,12 @@ const RateIndexController = {
 
       // If setting as default, unset other defaults
       if (req.body.IS_DEFAULT === true) {
-        await RateIndex.updateMany(
-          { IS_DEFAULT: true },
+        await db.RateIndex.update(
           { IS_DEFAULT: false },
-          { session }
+          {
+            where: { IS_DEFAULT: true },
+            transaction
+          }
         );
       }
 
@@ -124,18 +138,16 @@ const RateIndexController = {
         UPDATED_AT: new Date()
       };
 
-      const newRateIndex = new RateIndex(rateIndexData);
-      await newRateIndex.save({ session });
+      const newRateIndex = await db.RateIndex.create(rateIndexData, { transaction });
 
-      // AUDIT TRAIL
-      const auditTrailData = {
-        event_id: generateEventId(),
-        user_id: req.user?.id || 'SYSTEM',
-        user_name: req.user?.name || 'SYSTEM',
-        event_type: 'CREATE',
-        action: 'CREATE_RATE_INDEX',
-        old_value: null,
-        new_value: {
+      // AUDIT TRAIL using the imported audit logger
+      await logAuditTrail(
+        'RateIndex',
+        newRateIndex.id.toString(),
+        req.user?.id?.toString() || 'SYSTEM',
+        'CREATE',
+        null, // old_value
+        {
           INDEX_RATE_ID: newRateIndex.INDEX_RATE_ID,
           INDEX_CD: newRateIndex.INDEX_CD,
           INDEX_RATE: newRateIndex.INDEX_RATE,
@@ -145,23 +157,19 @@ const RateIndexController = {
           EFFECTIVE_DT: newRateIndex.EFFECTIVE_DT,
           IS_DEFAULT: newRateIndex.IS_DEFAULT,
           STATUS: newRateIndex.STATUS
-        },
-        ip_address: getClientIp(req),
-        user_agent: req.headers['user-agent'],
-        entity_id: newRateIndex._id.toString(),
-        entity_type: 'RateIndex',
-        status: 'SUCCESS',
-        description: `Created rate index: ${newRateIndex.INDEX_NM} (${newRateIndex.INDEX_CD})`,
-        timestamp: new Date(),
-        metadata: {
+        }, // new_value
+        getClientIp(req),
+        'RATE_INDEX_CREATED',
+        {
+          branch: 1, // Default branch
+          user_name: req.user?.name || 'SYSTEM',
+          user_agent: req.headers['user-agent'],
           route: req.originalUrl,
           method: req.method
-        }
-      };
+        } // additional_info
+      );
 
-      await new AuditTrail(auditTrailData).save({ session });
-
-      await session.commitTransaction();
+      await transaction.commit();
 
       res.status(201).json({
         success: true,
@@ -176,11 +184,20 @@ const RateIndexController = {
       });
 
     } catch (error) {
-      await session.abortTransaction();
+      await transaction.rollback();
       console.error('Error creating Rate Index:', error);
       
-      if (error.name === 'ValidationError') {
-        const errors = Object.values(error.errors).map(err => ({
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path || 'unique field';
+        return res.status(400).json({
+          success: false,
+          message: `Duplicate value for ${field}`,
+          field
+        });
+      }
+      
+      if (error.name === 'SequelizeValidationError') {
+        const errors = error.errors.map(err => ({
           field: err.path,
           message: err.message
         }));
@@ -192,22 +209,11 @@ const RateIndexController = {
         });
       }
       
-      if (error.code === 11000) {
-        const field = Object.keys(error.keyPattern)[0];
-        return res.status(400).json({
-          success: false,
-          message: `Duplicate value for ${field}`,
-          field
-        });
-      }
-      
       res.status(400).json({
         success: false,
         message: error.message || 'Failed to create Rate Index',
         error: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
-    } finally {
-      session.endSession();
     }
   }),
 
@@ -217,18 +223,25 @@ const RateIndexController = {
       const { id } = req.params;
       
       let rateIndex;
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        rateIndex = await RateIndex.findById(id);
-      } else {
-        // Try to find by INDEX_RATE_ID
-        const numericId = parseInt(id);
-        if (!isNaN(numericId)) {
-          rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: numericId });
-        }
-        if (!rateIndex) {
-          // Try by INDEX_CD
-          rateIndex = await RateIndex.findOne({ INDEX_CD: id.toUpperCase() });
-        }
+      
+      // Try to find by INDEX_RATE_ID first (if numeric)
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        rateIndex = await db.RateIndex.findOne({
+          where: { INDEX_RATE_ID: numericId }
+        });
+      }
+      
+      // If not found by INDEX_RATE_ID, try by INDEX_CD
+      if (!rateIndex) {
+        rateIndex = await db.RateIndex.findOne({
+          where: { INDEX_CD: id.toUpperCase() }
+        });
+      }
+      
+      // If still not found, try by primary key (id)
+      if (!rateIndex) {
+        rateIndex = await db.RateIndex.findByPk(id);
       }
       
       if (!rateIndex) {
@@ -251,10 +264,9 @@ const RateIndexController = {
     }
   }),
 
-  // UPDATE EXISTING RATE INDEX - UPDATED
+  // UPDATE EXISTING RATE INDEX
   updateRateIndex: asyncHandler(async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const transaction = await db.sequelize.transaction();
 
     try {
       const { id } = req.params;
@@ -262,13 +274,19 @@ const RateIndexController = {
       
       // Find rate index
       let rateIndex;
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        rateIndex = await RateIndex.findById(id).session(session);
-      } else {
-        const numericId = parseInt(id);
-        if (!isNaN(numericId)) {
-          rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: numericId }).session(session);
-        }
+      
+      // Try by INDEX_RATE_ID first
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        rateIndex = await db.RateIndex.findOne({
+          where: { INDEX_RATE_ID: numericId },
+          transaction
+        });
+      }
+      
+      // If not found, try by primary key
+      if (!rateIndex) {
+        rateIndex = await db.RateIndex.findByPk(id, { transaction });
       }
       
       if (!rateIndex) {
@@ -278,12 +296,25 @@ const RateIndexController = {
         });
       }
       
+      // Store old values for audit
+      const oldValues = {
+        INDEX_NM: rateIndex.INDEX_NM,
+        INDEX_RATE: rateIndex.INDEX_RATE,
+        RATE_TYPE: rateIndex.RATE_TYPE,
+        STATUS: rateIndex.STATUS,
+        IS_DEFAULT: rateIndex.IS_DEFAULT,
+        DAY_COUNT_CONVENTION: rateIndex.DAY_COUNT_CONVENTION,
+        DESCRIPTION: rateIndex.DESCRIPTION
+      };
+      
       // Handle IS_DEFAULT update
       if (updateData.IS_DEFAULT === true && !rateIndex.IS_DEFAULT) {
-        await RateIndex.updateMany(
-          { IS_DEFAULT: true },
+        await db.RateIndex.update(
           { IS_DEFAULT: false },
-          { session }
+          {
+            where: { IS_DEFAULT: true },
+            transaction
+          }
         );
       }
       
@@ -311,34 +342,30 @@ const RateIndexController = {
       updates.UPDATED_BY = req.user?.id || 'SYSTEM';
       
       // Update the rate index
-      Object.assign(rateIndex, updates);
-      await rateIndex.save({ session });
+      await rateIndex.update(updates, { transaction });
 
       // AUDIT TRAIL
-      const auditTrailData = {
-        event_id: generateEventId(),
-        user_id: req.user?.id || 'SYSTEM',
-        user_name: req.user?.name || 'SYSTEM',
-        event_type: 'UPDATE',
-        action: 'UPDATE_RATE_INDEX',
-        old_value: null, // In production, store old values
-        new_value: updates,
-        ip_address: getClientIp(req),
-        user_agent: req.headers['user-agent'],
-        entity_id: rateIndex._id.toString(),
-        entity_type: 'RateIndex',
-        status: 'SUCCESS',
-        description: `Updated rate index: ${rateIndex.INDEX_NM} (${rateIndex.INDEX_CD})`,
-        timestamp: new Date(),
-        metadata: {
+      await logAuditTrail(
+        'RateIndex',
+        rateIndex.id.toString(),
+        req.user?.id?.toString() || 'SYSTEM',
+        'UPDATE',
+        oldValues,
+        updates,
+        getClientIp(req),
+        'RATE_INDEX_UPDATED',
+        {
+          branch: 1,
+          user_name: req.user?.name || 'SYSTEM',
+          user_agent: req.headers['user-agent'],
           route: req.originalUrl,
-          method: req.method
+          method: req.method,
+          rateIndexId: rateIndex.INDEX_RATE_ID,
+          rateCode: rateIndex.INDEX_CD
         }
-      };
+      );
 
-      await new AuditTrail(auditTrailData).save({ session });
-
-      await session.commitTransaction();
+      await transaction.commit();
 
       res.status(200).json({
         success: true,
@@ -347,33 +374,37 @@ const RateIndexController = {
       });
 
     } catch (error) {
-      await session.abortTransaction();
+      await transaction.rollback();
       console.error('Error updating Rate Index:', error);
       res.status(400).json({
         success: false,
         message: error.message || 'Failed to update Rate Index'
       });
-    } finally {
-      session.endSession();
     }
   }),
 
-  // DELETE RATE INDEX BY ID - UPDATED
+  // DELETE RATE INDEX BY ID
   deleteRateIndex: asyncHandler(async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const transaction = await db.sequelize.transaction();
 
     try {
       const { id } = req.params;
       
+      // Find rate index
       let rateIndex;
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        rateIndex = await RateIndex.findById(id).session(session);
-      } else {
-        const numericId = parseInt(id);
-        if (!isNaN(numericId)) {
-          rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: numericId }).session(session);
-        }
+      
+      // Try by INDEX_RATE_ID first
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        rateIndex = await db.RateIndex.findOne({
+          where: { INDEX_RATE_ID: numericId },
+          transaction
+        });
+      }
+      
+      // If not found, try by primary key
+      if (!rateIndex) {
+        rateIndex = await db.RateIndex.findByPk(id, { transaction });
       }
       
       if (!rateIndex) {
@@ -391,38 +422,38 @@ const RateIndexController = {
         });
       }
       
-      await rateIndex.deleteOne({ session });
+      const oldValue = {
+        INDEX_RATE_ID: rateIndex.INDEX_RATE_ID,
+        INDEX_CD: rateIndex.INDEX_CD,
+        INDEX_NM: rateIndex.INDEX_NM,
+        INDEX_RATE: rateIndex.INDEX_RATE,
+        RATE_TYPE: rateIndex.RATE_TYPE,
+        CRNCY_ID: rateIndex.CRNCY_ID,
+        STATUS: rateIndex.STATUS
+      };
+      
+      await rateIndex.destroy({ transaction });
 
       // AUDIT TRAIL
-      const auditTrailData = {
-        event_id: generateEventId(),
-        user_id: req.user?.id || 'SYSTEM',
-        user_name: req.user?.name || 'SYSTEM',
-        event_type: 'DELETE',
-        action: 'DELETE_RATE_INDEX',
-        old_value: {
-          INDEX_RATE_ID: rateIndex.INDEX_RATE_ID,
-          INDEX_CD: rateIndex.INDEX_CD,
-          INDEX_NM: rateIndex.INDEX_NM,
-          INDEX_RATE: rateIndex.INDEX_RATE
-        },
-        new_value: null,
-        ip_address: getClientIp(req),
-        user_agent: req.headers['user-agent'],
-        entity_id: rateIndex._id.toString(),
-        entity_type: 'RateIndex',
-        status: 'SUCCESS',
-        description: `Deleted rate index: ${rateIndex.INDEX_NM} (${rateIndex.INDEX_CD})`,
-        timestamp: new Date(),
-        metadata: {
+      await logAuditTrail(
+        'RateIndex',
+        rateIndex.id.toString(),
+        req.user?.id?.toString() || 'SYSTEM',
+        'DELETE',
+        oldValue,
+        null,
+        getClientIp(req),
+        'RATE_INDEX_DELETED',
+        {
+          branch: 1,
+          user_name: req.user?.name || 'SYSTEM',
+          user_agent: req.headers['user-agent'],
           route: req.originalUrl,
           method: req.method
         }
-      };
+      );
 
-      await new AuditTrail(auditTrailData).save({ session });
-
-      await session.commitTransaction();
+      await transaction.commit();
 
       res.status(200).json({
         success: true,
@@ -430,18 +461,16 @@ const RateIndexController = {
       });
 
     } catch (error) {
-      await session.abortTransaction();
+      await transaction.rollback();
       console.error('Error deleting Rate Index:', error);
       res.status(400).json({
         success: false,
         message: error.message || 'Failed to delete Rate Index'
       });
-    } finally {
-      session.endSession();
     }
   }),
 
-  // CALCULATE INTEREST USING RATE INDEX - UPDATED
+  // CALCULATE INTEREST USING RATE INDEX
   calculateInterest: asyncHandler(async (req, res) => {
     try {
       const { id } = req.params;
@@ -474,13 +503,18 @@ const RateIndexController = {
       
       // Find rate index
       let rateIndex;
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        rateIndex = await RateIndex.findById(id);
-      } else {
-        const numericId = parseInt(id);
-        if (!isNaN(numericId)) {
-          rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: numericId });
-        }
+      
+      // Try by INDEX_RATE_ID first
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        rateIndex = await db.RateIndex.findOne({
+          where: { INDEX_RATE_ID: numericId }
+        });
+      }
+      
+      // If not found, try by primary key
+      if (!rateIndex) {
+        rateIndex = await db.RateIndex.findByPk(id);
       }
       
       if (!rateIndex) {
@@ -551,15 +585,19 @@ const RateIndexController = {
   // GET DEFAULT RATE INDEX
   getDefaultRateIndex: asyncHandler(async (req, res) => {
     try {
-      const defaultRate = await RateIndex.findOne({ 
-        IS_DEFAULT: true, 
-        STATUS: 'ACTIVE' 
+      const defaultRate = await db.RateIndex.findOne({ 
+        where: { 
+          IS_DEFAULT: true, 
+          STATUS: 'ACTIVE' 
+        }
       });
       
       if (!defaultRate) {
         // Fallback to first active rate
-        const fallbackRate = await RateIndex.findOne({ STATUS: 'ACTIVE' })
-          .sort({ INDEX_RATE_ID: 1 });
+        const fallbackRate = await db.RateIndex.findOne({ 
+          where: { STATUS: 'ACTIVE' },
+          order: [['INDEX_RATE_ID', 'ASC']]
+        });
         
         if (!fallbackRate) {
           return res.status(404).json({
@@ -589,208 +627,225 @@ const RateIndexController = {
     }
   }),
 
-  // Add these methods to your existing Rate-IndexController.js file
-
-// GET ACTIVE RATE INDICES BY CURRENCY
-getActiveRateIndicesByCurrency: asyncHandler(async (req, res) => {
-  try {
-    const { currency } = req.params;
-    
-    if (!currency) {
-      return res.status(400).json({
-        success: false,
-        message: 'Currency parameter is required'
-      });
-    }
-    
-    const rateIndices = await RateIndex.find({
-      CRNCY_ID: currency.toUpperCase(),
-      STATUS: 'ACTIVE'
-    }).sort({ IS_DEFAULT: -1, INDEX_RATE_ID: 1 }); // Default rates first
-    
-    res.status(200).json({
-      success: true,
-      count: rateIndices.length,
-      data: rateIndices
-    });
-  } catch (error) {
-    console.error('Error fetching active rate indices by currency:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch active rate indices'
-    });
-  }
-}),
-
-// BULK UPDATE RATE INDICES
-bulkUpdateRateIndices: asyncHandler(async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { updates } = req.body;
-    
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Updates array is required and must not be empty'
-      });
-    }
-    
-    const results = [];
-    const errors = [];
-    
-    for (const update of updates) {
-      try {
-        const { id, ...updateData } = update;
-        
-        // Find rate index
-        let rateIndex;
-        if (mongoose.Types.ObjectId.isValid(id)) {
-          rateIndex = await RateIndex.findById(id).session(session);
-        } else {
-          const numericId = parseInt(id);
-          if (!isNaN(numericId)) {
-            rateIndex = await RateIndex.findOne({ INDEX_RATE_ID: numericId }).session(session);
-          }
-        }
-        
-        if (!rateIndex) {
-          errors.push({
-            id,
-            error: 'Rate Index not found'
-          });
-          continue;
-        }
-        
-        // Handle IS_DEFAULT update
-        if (updateData.IS_DEFAULT === true && !rateIndex.IS_DEFAULT) {
-          await RateIndex.updateMany(
-            { IS_DEFAULT: true },
-            { IS_DEFAULT: false },
-            { session }
-          );
-        }
-        
-        // Update specific fields
-        const allowedUpdates = [
-          'INDEX_NM', 'INDEX_RATE', 'RATE_TYPE', 'STATUS', 
-          'IS_DEFAULT', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
-        ];
-        
-        const updatesToApply = {};
-        allowedUpdates.forEach(field => {
-          if (updateData[field] !== undefined) {
-            updatesToApply[field] = updateData[field];
-          }
-        });
-        
-        if (updatesToApply.INDEX_RATE !== undefined) {
-          updatesToApply.INDEX_RATE = parseFloat(updatesToApply.INDEX_RATE);
-          if (isNaN(updatesToApply.INDEX_RATE) || updatesToApply.INDEX_RATE <= 0) {
-            throw new Error('INDEX_RATE must be a positive number');
-          }
-        }
-        
-        updatesToApply.UPDATED_AT = new Date();
-        updatesToApply.UPDATED_BY = req.user?.id || 'SYSTEM';
-        
-        // Apply updates
-        Object.assign(rateIndex, updatesToApply);
-        await rateIndex.save({ session });
-        
-        results.push({
-          id,
-          success: true,
-          data: rateIndex
-        });
-        
-        // AUDIT TRAIL for each update
-        const auditTrailData = {
-          event_id: generateEventId(),
-          user_id: req.user?.id || 'SYSTEM',
-          user_name: req.user?.name || 'SYSTEM',
-          event_type: 'UPDATE',
-          action: 'BULK_UPDATE_RATE_INDEX',
-          old_value: null,
-          new_value: updatesToApply,
-          ip_address: getClientIp(req),
-          user_agent: req.headers['user-agent'],
-          entity_id: rateIndex._id.toString(),
-          entity_type: 'RateIndex',
-          status: 'SUCCESS',
-          description: `Bulk update for rate index: ${rateIndex.INDEX_NM}`,
-          timestamp: new Date(),
-          metadata: {
-            route: req.originalUrl,
-            method: req.method,
-            batchOperation: true
-          }
-        };
-        
-        await new AuditTrail(auditTrailData).save({ session });
-        
-      } catch (itemError) {
-        errors.push({
-          id: update.id,
-          error: itemError.message
+  // GET ACTIVE RATE INDICES BY CURRENCY
+  getActiveRateIndicesByCurrency: asyncHandler(async (req, res) => {
+    try {
+      const { currency } = req.params;
+      
+      if (!currency) {
+        return res.status(400).json({
+          success: false,
+          message: 'Currency parameter is required'
         });
       }
+      
+      const rateIndices = await db.RateIndex.findAll({
+        where: {
+          CRNCY_ID: currency.toUpperCase(),
+          STATUS: 'ACTIVE'
+        },
+        order: [
+          ['IS_DEFAULT', 'DESC'],
+          ['INDEX_RATE_ID', 'ASC']
+        ]
+      });
+      
+      res.status(200).json({
+        success: true,
+        count: rateIndices.length,
+        data: rateIndices
+      });
+    } catch (error) {
+      console.error('Error fetching active rate indices by currency:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch active rate indices'
+      });
     }
-    
-    await session.commitTransaction();
-    
-    res.status(200).json({
-      success: true,
-      message: 'Bulk update completed',
-      results: {
-        successful: results.length,
-        failed: errors.length,
-        total: updates.length
-      },
-      data: results,
-      errors: errors.length > 0 ? errors : undefined
-    });
-    
-  } catch (error) {
-    await session.abortTransaction();
-    console.error('Error in bulk update:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Bulk update failed',
-      error: error.message
-    });
-  } finally {
-    session.endSession();
-  }
-}),
+  }),
 
-// Also add this method if you want to get rate indices by type
-getRateIndicesByType: asyncHandler(async (req, res) => {
-  try {
-    const { type } = req.params;
-    
-    const rateIndices = await RateIndex.find({
-      RATE_TYPE: type.toUpperCase(),
-      STATUS: 'ACTIVE'
-    }).sort({ IS_DEFAULT: -1, INDEX_RATE_ID: 1 });
-    
-    res.status(200).json({
-      success: true,
-      count: rateIndices.length,
-      data: rateIndices
-    });
-  } catch (error) {
-    console.error('Error fetching rate indices by type:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch rate indices by type'
-    });
-  }
-})
+  // BULK UPDATE RATE INDICES
+  bulkUpdateRateIndices: asyncHandler(async (req, res) => {
+    const transaction = await db.sequelize.transaction();
 
+    try {
+      const { updates } = req.body;
+      
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Updates array is required and must not be empty'
+        });
+      }
+      
+      const results = [];
+      const errors = [];
+      
+      for (const update of updates) {
+        try {
+          const { id, ...updateData } = update;
+          
+          // Find rate index
+          let rateIndex;
+          const numericId = parseInt(id);
+          if (!isNaN(numericId)) {
+            rateIndex = await db.RateIndex.findOne({
+              where: { INDEX_RATE_ID: numericId },
+              transaction
+            });
+          }
+          
+          // If not found by INDEX_RATE_ID, try by primary key
+          if (!rateIndex) {
+            rateIndex = await db.RateIndex.findByPk(id, { transaction });
+          }
+          
+          if (!rateIndex) {
+            errors.push({
+              id,
+              error: 'Rate Index not found'
+            });
+            continue;
+          }
+          
+          // Store old values for audit
+          const oldValues = {
+            INDEX_NM: rateIndex.INDEX_NM,
+            INDEX_RATE: rateIndex.INDEX_RATE,
+            RATE_TYPE: rateIndex.RATE_TYPE,
+            STATUS: rateIndex.STATUS,
+            IS_DEFAULT: rateIndex.IS_DEFAULT,
+            DAY_COUNT_CONVENTION: rateIndex.DAY_COUNT_CONVENTION,
+            DESCRIPTION: rateIndex.DESCRIPTION
+          };
+          
+          // Handle IS_DEFAULT update
+          if (updateData.IS_DEFAULT === true && !rateIndex.IS_DEFAULT) {
+            await db.RateIndex.update(
+              { IS_DEFAULT: false },
+              {
+                where: { IS_DEFAULT: true },
+                transaction
+              }
+            );
+          }
+          
+          // Update specific fields
+          const allowedUpdates = [
+            'INDEX_NM', 'INDEX_RATE', 'RATE_TYPE', 'STATUS', 
+            'IS_DEFAULT', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
+          ];
+          
+          const updatesToApply = {};
+          allowedUpdates.forEach(field => {
+            if (updateData[field] !== undefined) {
+              updatesToApply[field] = updateData[field];
+            }
+          });
+          
+          if (updatesToApply.INDEX_RATE !== undefined) {
+            updatesToApply.INDEX_RATE = parseFloat(updatesToApply.INDEX_RATE);
+            if (isNaN(updatesToApply.INDEX_RATE) || updatesToApply.INDEX_RATE <= 0) {
+              throw new Error('INDEX_RATE must be a positive number');
+            }
+          }
+          
+          updatesToApply.UPDATED_AT = new Date();
+          updatesToApply.UPDATED_BY = req.user?.id || 'SYSTEM';
+          
+          // Apply updates
+          await rateIndex.update(updatesToApply, { transaction });
+          
+          results.push({
+            id,
+            success: true,
+            data: rateIndex
+          });
+          
+          // AUDIT TRAIL for each update
+          await logAuditTrail(
+            'RateIndex',
+            rateIndex.id.toString(),
+            req.user?.id?.toString() || 'SYSTEM',
+            'UPDATE',
+            oldValues,
+            updatesToApply,
+            getClientIp(req),
+            'RATE_INDEX_BULK_UPDATED',
+            {
+              branch: 1,
+              user_name: req.user?.name || 'SYSTEM',
+              user_agent: req.headers['user-agent'],
+              route: req.originalUrl,
+              method: req.method,
+              batchOperation: true,
+              rateIndexId: rateIndex.INDEX_RATE_ID,
+              rateCode: rateIndex.INDEX_CD
+            }
+          );
+          
+        } catch (itemError) {
+          errors.push({
+            id: update.id,
+            error: itemError.message
+          });
+        }
+      }
+      
+      await transaction.commit();
+      
+      res.status(200).json({
+        success: true,
+        message: 'Bulk update completed',
+        results: {
+          successful: results.length,
+          failed: errors.length,
+          total: updates.length
+        },
+        data: results,
+        errors: errors.length > 0 ? errors : undefined
+      });
+      
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Error in bulk update:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Bulk update failed',
+        error: error.message
+      });
+    }
+  }),
 
-  // Other methods remain the same...
+  // GET RATE INDICES BY TYPE
+  getRateIndicesByType: asyncHandler(async (req, res) => {
+    try {
+      const { type } = req.params;
+      
+      const rateIndices = await db.RateIndex.findAll({
+        where: {
+          RATE_TYPE: type.toUpperCase(),
+          STATUS: 'ACTIVE'
+        },
+        order: [
+          ['IS_DEFAULT', 'DESC'],
+          ['INDEX_RATE_ID', 'ASC']
+        ]
+      });
+      
+      res.status(200).json({
+        success: true,
+        count: rateIndices.length,
+        data: rateIndices
+      });
+    } catch (error) {
+      console.error('Error fetching rate indices by type:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch rate indices by type'
+      });
+    }
+  })
 };
 
 export default RateIndexController;

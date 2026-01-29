@@ -1,5 +1,5 @@
-// utils/generateWorkflowIdentifiers.js - FIXED VERSION
-import mongoose from 'mongoose';
+// utils/generateWorkflowIdentifiers.js - Sequelize Version
+import Transaction from '../models/Transaction.js'; // Import Sequelize Transaction model
 
 // Helper to generate a random number with 8 to 12 digits
 const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
@@ -20,7 +20,7 @@ const generateRandomDigits = (minDigits = 8, maxDigits = 12) => {
 };
 
 // SIMPLIFIED VERSION - Use database to get next transaction ID
-export async function generateWorkflowIdentifiers(session = null) {
+export async function generateWorkflowIdentifiers(transaction = null) {
   console.log('generateWorkflowIdentifiers: Generating workflow identifiers');
   
   const timestamp = Date.now();
@@ -28,17 +28,17 @@ export async function generateWorkflowIdentifiers(session = null) {
   
   try {
     // DIRECT DATABASE APPROACH - Find the highest TRANSACTION_ID and increment
-    const Transaction = mongoose.model('Transaction');
-    
-    // Get the highest existing TRANSACTION_ID
-    const lastTransaction = await Transaction.findOne({})
-      .sort({ TRANSACTION_ID: -1 })
-      .select('TRANSACTION_ID')
-      .lean();
+    // Get the highest existing TRANSACTION_ID using Sequelize
+    const lastTransaction = await Transaction.findOne({
+      order: [['TRANSACTION_ID', 'DESC']],
+      attributes: ['TRANSACTION_ID'],
+      transaction
+    });
     
     let nextTransactionId = 1;
     if (lastTransaction && lastTransaction.TRANSACTION_ID) {
-      nextTransactionId = Number(lastTransaction.TRANSACTION_ID) + 1;
+      const lastId = parseInt(lastTransaction.TRANSACTION_ID);
+      nextTransactionId = isNaN(lastId) ? 1 : lastId + 1;
       console.log(`Found last TRANSACTION_ID: ${lastTransaction.TRANSACTION_ID}, next: ${nextTransactionId}`);
     } else {
       console.log('No existing transactions found, starting from 1');
@@ -116,14 +116,171 @@ function generateFallbackWorkflowIdentifiers() {
 }
 
 // Simple version for transaction references only
-export const generateTransactionReference = async (session = null) => {
+export const generateTransactionReference = async (transaction = null) => {
   try {
-    const identifiers = await generateWorkflowIdentifiers(session);
+    const identifiers = await generateWorkflowIdentifiers(transaction);
     return `TXN${identifiers.TRANSACTION_ID.toString().padStart(10, '0')}`;
   } catch (error) {
     // Fallback
     return `TXN${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
   }
+};
+
+// Alternative: Generate using a counter table approach
+export const generateWorkflowIdentifiersWithCounter = async (transaction = null) => {
+  try {
+    // Import Counter model
+    const Counter = (await import('../models/Counter.js')).default;
+    
+    // Use a counter for workflow IDs
+    const [counter, created] = await Counter.findOrCreate({
+      where: { _id: 'WORKFLOW_ID_COUNTER' },
+      defaults: { seq: 1 },
+      transaction
+    });
+    
+    if (!created) {
+      await Counter.increment('seq', {
+        where: { _id: 'WORKFLOW_ID_COUNTER' },
+        by: 1,
+        transaction
+      });
+      
+      const updatedCounter = await Counter.findOne({
+        where: { _id: 'WORKFLOW_ID_COUNTER' },
+        transaction
+      });
+      
+      counter.seq = updatedCounter.seq;
+    }
+    
+    const baseId = counter.seq;
+    const timestamp = Date.now();
+    
+    return {
+      TRANSACTION_ID: baseId,
+      WORK_ITEM_ID: baseId,
+      EVENT_ID: baseId,
+      TRAN_JOURNAL_ID: `JRN${timestamp}${baseId}`.substring(0, 18),
+      WORKFLOW_ID: `WF${timestamp}${baseId}`.substring(0, 20),
+      BUS_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
+      SUB_PROC_ID: 1000 + Math.floor(Math.random() * 9000),
+      QUEUE_ID: 1000 + Math.floor(Math.random() * 9000),
+      JOURNAL_ID: `${timestamp}${baseId}`.padEnd(16, '0').substring(0, 16),
+      glInterestPaymentTxnId: generateRandomDigits(),
+      glSettlementTxnId: generateRandomDigits(),
+      customerInterestPaymentTxnId: generateRandomDigits(),
+      customerSettlementTxnId: generateRandomDigits(),
+      timestamp: new Date().toISOString(),
+      isCounterBased: true
+    };
+    
+  } catch (error) {
+    console.error('Counter-based generation failed:', error);
+    return generateWorkflowIdentifiers(transaction);
+  }
+};
+
+// Batch generation for multiple identifiers
+export const generateBatchWorkflowIdentifiers = async (count = 10, transaction = null) => {
+  const identifiers = [];
+  
+  for (let i = 0; i < count; i++) {
+    try {
+      const id = await generateWorkflowIdentifiers(transaction);
+      identifiers.push(id);
+    } catch (error) {
+      console.error(`Failed to generate identifier ${i + 1}:`, error);
+      // Use fallback for this item
+      identifiers.push(generateFallbackWorkflowIdentifiers());
+    }
+  }
+  
+  return identifiers;
+};
+
+// Validate identifier format
+export const validateWorkflowIdentifier = (identifier) => {
+  const validations = {
+    TRANSACTION_ID: id => !isNaN(id) && id > 0,
+    WORK_ITEM_ID: id => !isNaN(id) && id > 0,
+    EVENT_ID: id => !isNaN(id) && id > 0,
+    TRAN_JOURNAL_ID: id => typeof id === 'string' && id.length <= 18,
+    WORKFLOW_ID: id => typeof id === 'string' && id.length <= 20,
+    JOURNAL_ID: id => typeof id === 'string' && id.length === 16
+  };
+  
+  const errors = [];
+  
+  for (const [key, validator] of Object.entries(validations)) {
+    if (identifier[key] !== undefined && !validator(identifier[key])) {
+      errors.push(`${key} is invalid: ${identifier[key]}`);
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+};
+
+// Test function for identifier generation
+export const testWorkflowIdentifierGeneration = async (iterations = 5) => {
+  console.log('🧪 Testing Workflow Identifier Generation');
+  console.log('='.repeat(50));
+  
+  const results = [];
+  
+  for (let i = 0; i < iterations; i++) {
+    try {
+      console.log(`Test ${i + 1}/${iterations}:`);
+      
+      // Test main function
+      const identifiers = await generateWorkflowIdentifiers();
+      console.log(`  Main function: TRANSACTION_ID = ${identifiers.TRANSACTION_ID}`);
+      
+      // Validate
+      const validation = validateWorkflowIdentifier(identifiers);
+      
+      results.push({
+        testNumber: i + 1,
+        success: true,
+        identifiers,
+        validation
+      });
+      
+      if (!validation.isValid) {
+        console.log(`  ⚠️ Validation errors:`, validation.errors);
+      }
+      
+      // Test transaction reference
+      const reference = await generateTransactionReference();
+      console.log(`  Transaction Reference: ${reference}`);
+      
+    } catch (error) {
+      console.log(`  ❌ Error: ${error.message}`);
+      results.push({
+        testNumber: i + 1,
+        success: false,
+        error: error.message
+      });
+    }
+    
+    // Small delay between tests
+    if (i < iterations - 1) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
+  const successCount = results.filter(r => r.success).length;
+  console.log(`\n📊 Test Results: ${successCount}/${iterations} successful`);
+  
+  return {
+    total: iterations,
+    successful: successCount,
+    successRate: (successCount / iterations) * 100,
+    results
+  };
 };
 
 // Export individual functions

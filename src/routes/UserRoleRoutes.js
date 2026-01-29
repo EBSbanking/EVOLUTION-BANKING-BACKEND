@@ -1,3 +1,4 @@
+// src/routes/UserRoleRoutes.js
 import express from 'express';
 import {
   createUserRole,
@@ -12,48 +13,72 @@ import {
   getUsersByRoleName,
   getAccessibleBUsForUser,
   getUserCombinedPermissions,
-  getUsersByRoleId // ✅ Add this import
+  getUsersByRoleId
 } from '../controllers/UserRoleController.js';
 
 const router = express.Router();
 
-// ✅ Create general user role
+// ========== DEBUG & TEST ROUTES FIRST ==========
+// Test if router is working
+router.get('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'UserRoleRoutes router is working!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// List all routes in this router
+router.get('/list-routes', (req, res) => {
+  const routes = router.stack
+    .filter(layer => layer.route)
+    .map(layer => ({
+      method: Object.keys(layer.route.methods)[0].toUpperCase(),
+      path: layer.route.path
+    }));
+  
+  res.json({
+    success: true,
+    message: 'Routes in UserRoleRouter',
+    basePath: '/api/user-roles',
+    routes: routes,
+    total: routes.length
+  });
+});
+
+// ========== MAIN ROUTES ==========
+
+// CREATE & UPDATE
 router.post('/create', createUserRole);
-
-// ✅ Add roles to existing user
 router.post('/add-roles/:userId', addRolesToUser);
-
-// ✅ Remove roles from user
 router.post('/remove-roles/:userId', removeRolesFromUser);
-
-// ✅ Update User Role (generic or CSO)
 router.put('/update/:userId', updateUserRole);
 
-// ✅ Get user role by USER_ID
+// READ
 router.get('/:userId', getUserRoleByUserId);
-
-// ✅ Check user roles (e.g., validate/verify roles for user)
 router.get('/check/:userId', checkUserRoles);
-
-// ✅ Get all user roles
 router.get('/', getAllUserRoles);
-
-// ✅ Get user roles by business unit
 router.get('/by-business-unit/:buId', getUserRolesByBusinessUnit);
 
-// ✅ Get users by role name
+// READ - Users by role criteria
 router.get('/users/by-role/:roleName', getUsersByRoleName);
-
-// ✅ NEW: Get users by role ID (for role ID 28 specifically)
 router.get('/users/by-role-id/:roleId', getUsersByRoleId);
+router.get('/users/role-id/:roleId', getUsersByRoleId);
 
-// ✅ Delete user role
+// DELETE
 router.delete('/:userRoleId', deleteUserRole);
 
-// ✅ Get accessible business units for a user
+// PERMISSIONS & ACCESS
 router.get('/accessible-business-units/:userId', getAccessibleBUsForUser);
-
-// ✅ Get combined permissions for user (from all roles)
 router.get('/permissions/combined/:userId', getUserCombinedPermissions);
+
+// Health check
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'UserRoleRoutes is healthy',
+    timestamp: new Date().toISOString()
+  });
+});
 
 export default router;

@@ -1,5 +1,6 @@
 // controllers/tellerStatsController.js
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
+import { Op } from 'sequelize';
 import AuditTrail from '../models/AuditTrail.js';
 import Drawer from '../models/Drawer.js';
 import CustomerAccount from '../models/CustomerAccount.js';
@@ -9,7 +10,15 @@ import PERMISSIONS from '../constants/permissions.js';
 import { hasPermission } from '../utils/permissionHelpers.js';
 import BusinessUnit from '../models/BusinessUnit.js';
 
-// Get today's statistics for teller dashboard
+// Helper function for date range
+const getTodayDateRange = () => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return { start: today, end: tomorrow };
+};
+
 // Get today's statistics for teller dashboard
 export const getTellerTodayStats = asyncHandler(async (req, res) => {
   try {
@@ -60,10 +69,7 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
     }
 
     // Get today's date range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const { start: today, end: tomorrow } = getTodayDateRange();
 
     // ✅ IMPROVED FIX: Query BusinessUnit model to get numeric BU_ID
     let numericBuId = 101; // Default to 101 based on your API response
@@ -71,8 +77,9 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
     try {
       // Try to find the business unit by name to get the numeric ID
       const businessUnit = await BusinessUnit.findOne({ 
-        BUSINESS_UNIT: buId 
-      }).select('BU_ID').lean();
+        where: { BUSINESS_UNIT: buId },
+        attributes: ['BU_ID']
+      });
 
       if (businessUnit && businessUnit.BU_ID) {
         numericBuId = parseInt(businessUnit.BU_ID);
@@ -105,35 +112,40 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
     try {
       // Strategy 1: Search by numeric BU_ID (primary)
       drawer = await Drawer.findOne({ 
-        USER_ID: userId,
-        BU_ID: numericBuId,
-        REC_ST: 'A',
-        WF_STATUS: 'OPEN'
-      }).lean();
+        where: {
+          USER_ID: userId,
+          BU_ID: numericBuId,
+          REC_ST: 'A',
+          WF_STATUS: 'OPEN'
+        }
+      });
 
       // Strategy 2: If not found, search by business unit name (fallback)
       if (!drawer) {
         console.log(`🔄 Drawer not found with BU_ID: ${numericBuId}, trying business unit name...`);
         drawer = await Drawer.findOne({ 
-          USER_ID: userId,
-          // Some systems might store business unit name in a different field
-          $or: [
-            { BUSINESS_UNIT: buId },
-            { DRAWER_NM: { $regex: buId, $options: 'i' } }
-          ],
-          REC_ST: 'A',
-          WF_STATUS: 'OPEN'
-        }).lean();
+          where: {
+            USER_ID: userId,
+            [Op.or]: [
+              { BUSINESS_UNIT: buId },
+              { DRAWER_NM: { [Op.like]: `%${buId}%` } }
+            ],
+            REC_ST: 'A',
+            WF_STATUS: 'OPEN'
+          }
+        });
       }
 
       // Strategy 3: If still not found, search for any open drawer for this user
       if (!drawer) {
         console.log(`🔄 No drawer found for specific BU, searching any open drawer for user...`);
         drawer = await Drawer.findOne({ 
-          USER_ID: userId,
-          REC_ST: 'A',
-          WF_STATUS: 'OPEN'
-        }).lean();
+          where: {
+            USER_ID: userId,
+            REC_ST: 'A',
+            WF_STATUS: 'OPEN'
+          }
+        });
       }
 
       if (drawer) {
@@ -146,16 +158,7 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
         });
       } else {
         console.log(`❌ No open drawer found for user: ${userId}`);
-        // Try to get drawer balance from your existing drawer balance endpoint
-        try {
-          const drawerResponse = await apiClient.get(`/drawer/001/balance`);
-          if (drawerResponse.data.success && drawerResponse.data.drawer) {
-            cashInDrawer = drawerResponse.data.drawer.currentBalance || 0;
-            console.log(`💰 Using drawer balance from API: ${cashInDrawer}`);
-          }
-        } catch (drawerError) {
-          console.log('❌ Could not fetch drawer balance from API:', drawerError.message);
-        }
+        // Note: API client calls would need to be updated separately
       }
     } catch (drawerError) {
       console.error('❌ Error searching for drawer:', drawerError);
@@ -163,29 +166,24 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
     }
 
     // Get transaction statistics from AuditTrail WITH BU FILTER
-    const transactionStats = await AuditTrail.aggregate([
-      {
-        $match: {
-          timestamp: { $gte: today, $lt: tomorrow },
-          entity_type: 'CustomerAccount',
-          'additional_info.bu_id': buId,  // ✅ Keep string for AuditTrail
-          $or: [
-            { event_type: 'TRANSACTION_DR' },
-            { event_type: 'TRANSACTION_CR' }
-          ],
-          status: 'SUCCESS'
-        }
+    const transactionStats = await AuditTrail.findAll({
+      where: {
+        timestamp: { [Op.gte]: today, [Op.lt]: tomorrow },
+        entity_type: 'CustomerAccount',
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+          buId
+        ),
+        [Op.or]: [
+          { event_type: 'TRANSACTION_DR' },
+          { event_type: 'TRANSACTION_CR' }
+        ],
+        status: 'SUCCESS'
       },
-      {
-        $group: {
-          _id: '$event_type',
-          count: { $sum: 1 },
-          totalAmount: { $sum: { $toDouble: '$additional_info.amount' } }
-        }
-      }
-    ]);
+      raw: true
+    });
 
-    console.log(`📊 Transaction stats found:`, transactionStats);
+    console.log(`📊 Transaction stats found:`, transactionStats.length);
 
     // Calculate totals
     let deposits = 0;
@@ -194,31 +192,47 @@ export const getTellerTodayStats = asyncHandler(async (req, res) => {
     let transfers = 0;
 
     transactionStats.forEach(stat => {
-      if (stat._id === 'TRANSACTION_CR') {
-        deposits += stat.totalAmount || 0;
-      } else if (stat._id === 'TRANSACTION_DR') {
-        withdrawals += stat.totalAmount || 0;
+      const amount = parseFloat(stat.additional_info?.amount || 0);
+      if (stat.event_type === 'TRANSACTION_CR') {
+        deposits += amount;
+      } else if (stat.event_type === 'TRANSACTION_DR') {
+        withdrawals += amount;
       }
-      transactions += stat.count || 0;
+      transactions++;
     });
 
-    // Count transfers WITH BU FILTER (using string bu_id for AuditTrail)
-    const transferStats = await AuditTrail.countDocuments({
-      timestamp: { $gte: today, $lt: tomorrow },
-      entity_type: 'CustomerAccount',
-      'additional_info.bu_id': buId,  // ✅ Keep string for AuditTrail
-      'additional_info.transaction_mode': 'TRANSFER',
-      status: 'SUCCESS'
+    // Count transfers WITH BU FILTER
+    const transferStats = await AuditTrail.count({
+      where: {
+        timestamp: { [Op.gte]: today, [Op.lt]: tomorrow },
+        entity_type: 'CustomerAccount',
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+          buId
+        ),
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.transaction_mode'),
+          'TRANSFER'
+        ),
+        status: 'SUCCESS'
+      }
     });
 
     transfers = transferStats;
 
-    // Count unique customers served today WITH BU FILTER (using string bu_id for AuditTrail)
-    const uniqueCustomers = await AuditTrail.distinct('account_no', {
-      timestamp: { $gte: today, $lt: tomorrow },
-      entity_type: 'CustomerAccount',
-      'additional_info.bu_id': buId,  // ✅ Keep string for AuditTrail
-      status: 'SUCCESS'
+    // Count unique customers served today WITH BU FILTER
+    const uniqueCustomers = await AuditTrail.findAll({
+      where: {
+        timestamp: { [Op.gte]: today, [Op.lt]: tomorrow },
+        entity_type: 'CustomerAccount',
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+          buId
+        ),
+        status: 'SUCCESS'
+      },
+      attributes: [[sequelize.fn('DISTINCT', sequelize.col('account_no')), 'account_no']],
+      raw: true
     });
 
     const customers = uniqueCustomers.length;
@@ -321,24 +335,30 @@ export const getTellerRecentTransactions = asyncHandler(async (req, res) => {
     }
 
     // Get last 10 transactions WITH BU FILTER
-    const recentTransactions = await AuditTrail.find({
-      entity_type: 'CustomerAccount',
-      'additional_info.bu_id': buId,
-      $or: [
-        { event_type: 'TRANSACTION_DR' },
-        { event_type: 'TRANSACTION_CR' }
-      ],
-      status: 'SUCCESS'
-    })
-    .sort({ timestamp: -1 })
-    .limit(10)
-    .lean();
+    const recentTransactions = await AuditTrail.findAll({
+      where: {
+        entity_type: 'CustomerAccount',
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+          buId
+        ),
+        [Op.or]: [
+          { event_type: 'TRANSACTION_DR' },
+          { event_type: 'TRANSACTION_CR' }
+        ],
+        status: 'SUCCESS'
+      },
+      order: [['timestamp', 'DESC']],
+      limit: 10,
+      raw: true
+    });
 
     // Format transactions for frontend
     const formattedTransactions = recentTransactions.map((transaction, index) => {
       const isDeposit = transaction.event_type === 'TRANSACTION_CR';
-      const amount = parseFloat(transaction.additional_info?.amount || 0);
-      const customerName = transaction.additional_info?.account_name || 'Unknown Customer';
+      const additionalInfo = transaction.additional_info || {};
+      const amount = parseFloat(additionalInfo.amount || 0);
+      const customerName = additionalInfo.account_name || 'Unknown Customer';
       
       const transactionTime = new Date(transaction.timestamp);
       const timeString = transactionTime.toLocaleTimeString('en-US', {
@@ -348,7 +368,7 @@ export const getTellerRecentTransactions = asyncHandler(async (req, res) => {
       });
 
       return {
-        id: transaction._id || index + 1,
+        id: transaction.id || index + 1,
         type: isDeposit ? 'Deposit' : 'Withdrawal',
         amount: amount,
         customer: customerName,
@@ -356,7 +376,7 @@ export const getTellerRecentTransactions = asyncHandler(async (req, res) => {
         status: 'completed',
         reference: transaction.reference_no,
         account: transaction.account_no,
-        buId: transaction.additional_info?.bu_id
+        buId: additionalInfo.bu_id
       };
     });
 
@@ -418,21 +438,27 @@ export const getDrawerStats = asyncHandler(async (req, res) => {
       const drawerIdNum = parseInt(drawerId);
       if (!isNaN(drawerIdNum)) {
         drawer = await Drawer.findOne({ 
-          DRAWER_ID: drawerIdNum,
-          BU_ID: buId
+          where: {
+            DRAWER_ID: drawerIdNum,
+            BU_ID: buId
+          }
         });
       } else {
         drawer = await Drawer.findOne({ 
-          DRAWER_NO: drawerId,
-          BU_ID: buId
+          where: {
+            DRAWER_NO: drawerId,
+            BU_ID: buId
+          }
         });
       }
     } else {
       drawer = await Drawer.findOne({ 
-        USER_ID: userId,
-        BU_ID: buId,
-        REC_ST: 'A',
-        WF_STATUS: 'OPEN'
+        where: {
+          USER_ID: userId,
+          BU_ID: buId,
+          REC_ST: 'A',
+          WF_STATUS: 'OPEN'
+        }
       });
     }
 
@@ -444,17 +470,21 @@ export const getDrawerStats = asyncHandler(async (req, res) => {
     }
 
     // Get today's drawer transactions WITH BU FILTER
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const { start: today, end: tomorrow } = getTodayDateRange();
 
-    const drawerTransactions = await AuditTrail.find({
-      entity_type: 'Drawer',
-      entity_id: drawer._id,
-      'additional_info.bu_id': buId,
-      timestamp: { $gte: today, $lt: tomorrow }
-    }).sort({ timestamp: -1 }).lean();
+    const drawerTransactions = await AuditTrail.findAll({
+      where: {
+        entity_type: 'Drawer',
+        entity_id: drawer.id,
+        additional_info: sequelize.where(
+          sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+          buId
+        ),
+        timestamp: { [Op.gte]: today, [Op.lt]: tomorrow }
+      },
+      order: [['timestamp', 'DESC']],
+      raw: true
+    });
 
     // Calculate drawer statistics
     let totalDeposits = 0;
@@ -462,8 +492,9 @@ export const getDrawerStats = asyncHandler(async (req, res) => {
     let transactionCount = 0;
 
     drawerTransactions.forEach(transaction => {
-      const amount = parseFloat(transaction.additional_info?.amount || 0);
-      const effect = transaction.additional_info?.effect;
+      const additionalInfo = transaction.additional_info || {};
+      const amount = parseFloat(additionalInfo.amount || 0);
+      const effect = additionalInfo.effect;
       
       if (effect === 'CREDIT') {
         totalDeposits += amount;
@@ -476,20 +507,21 @@ export const getDrawerStats = asyncHandler(async (req, res) => {
       }
     });
 
+    const drawerData = drawer.get({ plain: true });
     const drawerStats = {
-      drawerId: drawer.DRAWER_ID,
-      drawerNo: drawer.DRAWER_NO,
-      drawerName: drawer.DRAWER_NM,
-      currentBalance: parseFloat(drawer.CURRENT_BALANCE?.toString() || 0),
-      openingBalance: parseFloat(drawer.OPENING_BALANCE?.toString() || 0),
-      minBalance: parseFloat(drawer.MIN_BAL?.toString() || 0),
-      maxBalance: parseFloat(drawer.MAX_BAL?.toString() || 0),
+      drawerId: drawerData.DRAWER_ID,
+      drawerNo: drawerData.DRAWER_NO,
+      drawerName: drawerData.DRAWER_NM,
+      currentBalance: parseFloat(drawerData.CURRENT_BALANCE?.toString() || 0),
+      openingBalance: parseFloat(drawerData.OPENING_BALANCE?.toString() || 0),
+      minBalance: parseFloat(drawerData.MIN_BAL?.toString() || 0),
+      maxBalance: parseFloat(drawerData.MAX_BAL?.toString() || 0),
       todayDeposits: totalDeposits,
       todayWithdrawals: totalWithdrawals,
       todayTransactions: transactionCount,
-      status: drawer.WF_STATUS,
-      lastUpdated: drawer.LAST_UPDATE_DT,
-      buId: drawer.BU_ID
+      status: drawerData.WF_STATUS,
+      lastUpdated: drawerData.LAST_UPDATE_DT,
+      buId: drawerData.BU_ID
     };
 
     console.log('📊 Drawer stats calculated for BU:', { buId, drawerStats });
@@ -548,34 +580,29 @@ export const getBUPerformanceSummary = asyncHandler(async (req, res) => {
     startDate.setDate(startDate.getDate() - 7);
     startDate.setHours(0, 0, 0, 0);
 
-    // Get performance data WITH BU FILTER
-    const performanceData = await AuditTrail.aggregate([
-      {
-        $match: {
-          timestamp: { $gte: startDate, $lte: endDate },
-          'additional_info.bu_id': buId,
-          entity_type: 'CustomerAccount',
-          status: 'SUCCESS',
-          $or: [
-            { event_type: 'TRANSACTION_DR' },
-            { event_type: 'TRANSACTION_CR' }
-          ]
-        }
+    // Get performance data WITH BU FILTER using raw SQL for complex aggregation
+    const performanceData = await sequelize.query(`
+      SELECT 
+        DATE(timestamp) as date,
+        event_type as type,
+        COUNT(*) as count,
+        SUM(CAST(JSON_EXTRACT(additional_info, '$.amount') AS DECIMAL(10,2))) as totalAmount
+      FROM audit_trails
+      WHERE timestamp BETWEEN :startDate AND :endDate
+        AND entity_type = 'CustomerAccount'
+        AND JSON_EXTRACT(additional_info, '$.bu_id') = :buId
+        AND status = 'SUCCESS'
+        AND (event_type = 'TRANSACTION_DR' OR event_type = 'TRANSACTION_CR')
+      GROUP BY DATE(timestamp), event_type
+      ORDER BY date ASC
+    `, {
+      replacements: { 
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        buId: buId
       },
-      {
-        $group: {
-          _id: {
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp' } },
-            type: '$event_type'
-          },
-          count: { $sum: 1 },
-          totalAmount: { $sum: { $toDouble: '$additional_info.amount' } }
-        }
-      },
-      {
-        $sort: { '_id.date': 1 }
-      }
-    ]);
+      type: sequelize.QueryTypes.SELECT
+    });
 
     console.log('📈 BU performance summary for:', { buId, dataPoints: performanceData.length });
 
@@ -632,77 +659,36 @@ export const getTellerPerformanceMetrics = asyncHandler(async (req, res) => {
     const endDate = new Date();
     endDate.setHours(23, 59, 59, 999);
 
-    // Get teller performance data WITH BU FILTER
-    const tellerPerformance = await AuditTrail.aggregate([
-      {
-        $match: {
-          timestamp: { $gte: startDate, $lte: endDate },
-          'additional_info.bu_id': buId,
-          entity_type: 'CustomerAccount',
-          status: 'SUCCESS',
-          $or: [
-            { event_type: 'TRANSACTION_DR' },
-            { event_type: 'TRANSACTION_CR' }
-          ]
-        }
+    // Get teller performance data WITH BU FILTER using raw SQL for complex aggregation
+    const tellerPerformance = await sequelize.query(`
+      SELECT 
+        user_id as tellerId,
+        COUNT(*) as transactionCount,
+        SUM(CAST(JSON_EXTRACT(additional_info, '$.amount') AS DECIMAL(10,2))) as totalAmount,
+        SUM(CASE WHEN event_type = 'TRANSACTION_CR' THEN 1 ELSE 0 END) as depositCount,
+        SUM(CASE WHEN event_type = 'TRANSACTION_DR' THEN 1 ELSE 0 END) as withdrawalCount,
+        u.FULL_NAME as tellerName,
+        CASE 
+          WHEN COUNT(*) = 0 THEN 0
+          ELSE SUM(CAST(JSON_EXTRACT(additional_info, '$.amount') AS DECIMAL(10,2))) / COUNT(*)
+        END as averageTransaction
+      FROM audit_trails a
+      LEFT JOIN users u ON a.user_id = u.USER_ID
+      WHERE a.timestamp BETWEEN :startDate AND :endDate
+        AND a.entity_type = 'CustomerAccount'
+        AND JSON_EXTRACT(a.additional_info, '$.bu_id') = :buId
+        AND a.status = 'SUCCESS'
+        AND (a.event_type = 'TRANSACTION_DR' OR a.event_type = 'TRANSACTION_CR')
+      GROUP BY a.user_id
+      ORDER BY transactionCount DESC
+    `, {
+      replacements: { 
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        buId: buId
       },
-      {
-        $group: {
-          _id: '$user_id',
-          transactionCount: { $sum: 1 },
-          totalAmount: { $sum: { $toDouble: '$additional_info.amount' } },
-          depositCount: {
-            $sum: {
-              $cond: [{ $eq: ['$event_type', 'TRANSACTION_CR'] }, 1, 0]
-            }
-          },
-          withdrawalCount: {
-            $sum: {
-              $cond: [{ $eq: ['$event_type', 'TRANSACTION_DR'] }, 1, 0]
-            }
-          }
-        }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: '_id',
-          foreignField: 'USER_ID',
-          as: 'userInfo'
-        }
-      },
-      {
-        $unwind: {
-          path: '$userInfo',
-          preserveNullAndEmptyArrays: true
-        }
-      },
-      {
-        $project: {
-          tellerId: '$_id',
-          tellerName: {
-            $ifNull: [
-              '$userInfo.FULL_NAME',
-              'Unknown Teller'
-            ]
-          },
-          transactionCount: 1,
-          totalAmount: 1,
-          depositCount: 1,
-          withdrawalCount: 1,
-          averageTransaction: {
-            $cond: [
-              { $eq: ['$transactionCount', 0] },
-              0,
-              { $divide: ['$totalAmount', '$transactionCount'] }
-            ]
-          }
-        }
-      },
-      {
-        $sort: { transactionCount: -1 }
-      }
-    ]);
+      type: sequelize.QueryTypes.SELECT
+    });
 
     console.log('📊 Teller performance metrics for BU:', { buId, tellerCount: tellerPerformance.length });
 
@@ -727,3 +713,166 @@ export const getTellerPerformanceMetrics = asyncHandler(async (req, res) => {
     });
   }
 });
+
+// Additional helper functions
+
+// Get teller dashboard overview
+export const getTellerDashboardOverview = asyncHandler(async (req, res) => {
+  try {
+    const buId = req.user?.businessUnit;
+    const userId = req.user?.userId;
+
+    if (!buId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: No business unit context'
+      });
+    }
+
+    // Get all statistics in parallel
+    const [todayStats, recentTransactions, drawerStats] = await Promise.all([
+      // Get today's stats (simplified version)
+      (async () => {
+        const { start: today, end: tomorrow } = getTodayDateRange();
+        
+        const transactions = await AuditTrail.count({
+          where: {
+            timestamp: { [Op.gte]: today, [Op.lt]: tomorrow },
+            entity_type: 'CustomerAccount',
+            additional_info: sequelize.where(
+              sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+              buId
+            ),
+            [Op.or]: [
+              { event_type: 'TRANSACTION_DR' },
+              { event_type: 'TRANSACTION_CR' }
+            ],
+            status: 'SUCCESS'
+          }
+        });
+
+        const customers = await AuditTrail.count({
+          where: {
+            timestamp: { [Op.gte]: today, [Op.lt]: tomorrow },
+            entity_type: 'CustomerAccount',
+            additional_info: sequelize.where(
+              sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+              buId
+            ),
+            status: 'SUCCESS'
+          },
+          distinct: true,
+          col: 'account_no'
+        });
+
+        return {
+          transactions,
+          customers,
+          dailyTarget: 25,
+          targetAchievement: Math.min(100, Math.floor((transactions / 25) * 100))
+        };
+      })(),
+
+      // Get recent transactions
+      getTellerRecentTransactionsData(buId),
+
+      // Get drawer stats
+      (async () => {
+        const drawer = await Drawer.findOne({
+          where: {
+            USER_ID: userId,
+            BU_ID: buId,
+            REC_ST: 'A',
+            WF_STATUS: 'OPEN'
+          }
+        });
+
+        if (drawer) {
+          const drawerData = drawer.get({ plain: true });
+          return {
+            drawerId: drawerData.DRAWER_ID,
+            drawerNo: drawerData.DRAWER_NO,
+            currentBalance: parseFloat(drawerData.CURRENT_BALANCE?.toString() || 0),
+            status: drawerData.WF_STATUS
+          };
+        }
+        return null;
+      })()
+    ]);
+
+    const overview = {
+      todayStats,
+      recentTransactions,
+      drawerStats,
+      buId,
+      lastUpdated: new Date().toISOString()
+    };
+
+    res.status(200).json({
+      success: true,
+      data: overview,
+      message: 'Teller dashboard overview retrieved successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching teller dashboard overview:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching teller dashboard overview',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Helper function for recent transactions data
+async function getTellerRecentTransactionsData(buId, limit = 5) {
+  const transactions = await AuditTrail.findAll({
+    where: {
+      entity_type: 'CustomerAccount',
+      additional_info: sequelize.where(
+        sequelize.fn('JSON_EXTRACT', sequelize.col('additional_info'), '$.bu_id'),
+        buId
+      ),
+      [Op.or]: [
+        { event_type: 'TRANSACTION_DR' },
+        { event_type: 'TRANSACTION_CR' }
+      ],
+      status: 'SUCCESS'
+    },
+    order: [['timestamp', 'DESC']],
+    limit: limit,
+    raw: true
+  });
+
+  return transactions.map((transaction, index) => {
+    const isDeposit = transaction.event_type === 'TRANSACTION_CR';
+    const additionalInfo = transaction.additional_info || {};
+    const amount = parseFloat(additionalInfo.amount || 0);
+    const customerName = additionalInfo.account_name || 'Unknown Customer';
+    
+    const transactionTime = new Date(transaction.timestamp);
+    const timeString = transactionTime.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    return {
+      id: transaction.id || index + 1,
+      type: isDeposit ? 'Deposit' : 'Withdrawal',
+      amount: amount,
+      customer: customerName,
+      time: timeString,
+      status: 'completed'
+    };
+  });
+}
+
+export default {
+  getTellerTodayStats,
+  getTellerRecentTransactions,
+  getDrawerStats,
+  getBUPerformanceSummary,
+  getTellerPerformanceMetrics,
+  getTellerDashboardOverview
+};

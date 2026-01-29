@@ -1,69 +1,96 @@
-// models/GuarantorAudit.js
-import mongoose from 'mongoose';
-import mongoosePaginate from 'mongoose-paginate-v2';
+// models/GuarantorAudit.js - FIXED VERSION
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const RelationshipOfficerSchema = new mongoose.Schema({
+class GuarantorAudit extends Model {}
+
+GuarantorAudit.init({
   id: {
-    type: String,
-    required: false,
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
   },
-  name: {
-    type: String,
-    required: false,
-  }
-}, { _id: false });
-
-const GuarantorAuditSchema = new mongoose.Schema({
   guarantorId: {
-    type: Number,
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    comment: 'Reference to the guarantor being audited'
   },
   action: {
-    type: String,
-    enum: [
-      "CREATE",
-      "UPDATE",
-      "DEACTIVATE",
-      "REACTIVATE",
-      "DELETE",
-      "APPROVED",
-      "REJECTED",
-      "REMOVAL_REQUESTED", // ✅ ADD THIS
-      "REMOVAL_APPROVED",  // ✅ ADD THIS  
-      "REMOVAL_REJECTED",  // ✅ ADD THIS
-      "REMOVAL_CANCELLED"  // ✅ ADD THIS
-    ],
-    required: true
+    type: DataTypes.ENUM(
+      'CREATE',
+      'UPDATE',
+      'DEACTIVATE',
+      'REACTIVATE',
+      'DELETE',
+      'APPROVED',
+      'REJECTED',
+      'REMOVAL_REQUESTED',
+      'REMOVAL_APPROVED',
+      'REMOVAL_REJECTED',
+      'REMOVAL_CANCELLED'
+    ),
+    allowNull: false
   },
   changedFields: {
-    type: [String],
-    default: []
+    type: DataTypes.JSON,
+    defaultValue: [],
+    comment: 'Array of field names that were changed'
   },
   previousValues: {
-    type: mongoose.Schema.Types.Mixed
+    type: DataTypes.JSON,
+    comment: 'JSON object containing previous values of changed fields'
   },
   performedBy: {
-    type: String,
-    required: true
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    comment: 'Username or ID of the person who performed the action'
   },
   notes: {
-    type: String
+    type: DataTypes.TEXT,
+    comment: 'Additional notes about the audit entry'
   },
   ipAddress: {
-    type: String
+    type: DataTypes.STRING(45),
+    comment: 'IP address of the user who performed the action'
   },
-  relationshipOfficer: {
-    type: RelationshipOfficerSchema,
-    default: {}
+  // Store relationship officer data as JSON (not as a separate model)
+  relationshipOfficerData: {
+    type: DataTypes.JSON,
+    defaultValue: {},
+    comment: 'Relationship officer information at the time of audit'
   }
 }, {
-  timestamps: true
+  sequelize,
+  modelName: 'GuarantorAudit',
+  tableName: 'guarantor_audits',
+  timestamps: true,
+  indexes: [
+    {
+      name: 'idx_guarantor_id',
+      fields: ['guarantorId']
+    },
+    {
+      name: 'idx_action',
+      fields: ['action']
+    },
+    {
+      name: 'idx_performed_by',
+      fields: ['performedBy']
+    },
+    {
+      name: 'idx_created_at',
+      fields: ['createdAt']
+    },
+    {
+      name: 'idx_guarantor_action',
+      fields: ['guarantorId', 'action']
+    },
+    {
+      name: 'idx_action_date',
+      fields: ['action', 'createdAt']
+    }
+  ],
+  comment: 'Audit trail for all guarantor-related activities'
 });
-
-GuarantorAuditSchema.plugin(mongoosePaginate);
-
-const GuarantorAudit =
-  mongoose.models.GuarantorAudit ||
-  mongoose.model('GuarantorAudit', GuarantorAuditSchema);
 
 export default GuarantorAudit;

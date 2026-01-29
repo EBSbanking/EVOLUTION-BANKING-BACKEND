@@ -1,451 +1,394 @@
-// src/utils/generateCustomerNumber.js - UPDATED with better connection handling
-import Counter from '../models/Counter.js';
-import Customer from '../models/Customer.js';
-import mongoose from 'mongoose';
+// utils/generateCustomerNumber.js - COMPLETE FIXED VERSION
+import { initializeModels, getCustomer, getSequelize } from '../models/index.js';
 
 // Constants
 const CUST_ID_LENGTH = 10;
-const CUST_NO_LENGTH = 7;
+const CUST_NO_LENGTH = 9; // Updated to match your example "000000003"
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
-const MULTIPLIER = 10;
+const RETRY_DELAY_MS = 100;
 
-// Global state
-let isInitializing = false;
-let initializationPromise = null;
+// Global variables for models
+let Customer = null;
+let sequelize = null;
+let modelsInitialized = false;
 
-/**
- * Wait for MongoDB connection to be ready
- */
-async function waitForConnection() {
-  const maxWaitTime = 30000; // 30 seconds max
-  const checkInterval = 100; // Check every 100ms
-  
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    
-    const checkConnection = () => {
-      const elapsed = Date.now() - startTime;
-      
-      if (mongoose.connection.readyState === 1) {
-        // Connected
-        resolve();
-      } else if (elapsed > maxWaitTime) {
-        // Timeout
-        reject(new Error('MongoDB connection timeout after 30 seconds'));
-      } else if (mongoose.connection.readyState === 2) {
-        // Connecting, wait and check again
-        setTimeout(checkConnection, checkInterval);
-      } else if (mongoose.connection.readyState === 3) {
-        // Disconnecting, wait and check again
-        setTimeout(checkConnection, checkInterval);
-      } else {
-        // Disconnected or 0 (initializing)
-        reject(new Error('MongoDB is not connected'));
-      }
-    };
-    
-    checkConnection();
-  });
-}
-
-/**
- * Safely initialize counter with retry logic
- */
-async function initializeCounter() {
-  // Prevent multiple initializations
-  if (isInitializing && initializationPromise) {
-    return initializationPromise;
+// Initialize models for this utility
+const initModelsForUtility = async () => {
+  if (modelsInitialized) {
+    return { Customer, sequelize };
   }
   
-  isInitializing = true;
-  initializationPromise = (async () => {
-    let retryCount = 0;
+  try {
+    console.log('🔄 Initializing models for generateCustomerNumber...');
     
-    while (retryCount < MAX_RETRIES) {
-      try {
-        console.log(`Initializing counter (attempt ${retryCount + 1}/${MAX_RETRIES})...`);
-        
-        // Wait for connection
-        await waitForConnection();
-        
-        // Check if counter exists
-        const existingCounter = await Counter.findOne({ _id: 'customerId' });
-        if (existingCounter) {
-          console.log('Counter already exists, value:', existingCounter.seq);
-          isInitializing = false;
-          return existingCounter.seq;
-        }
-        
-        // Find the highest existing CUST_ID
-        const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 }).lean();
-        let lastId = 0;
-        
-        if (lastCustomer && lastCustomer.CUST_ID) {
-          lastId = parseInt(lastCustomer.CUST_ID, 10) || 0;
-        }
-        
-        // Set initial value
-        const initialValue = Math.max(1, lastId);
-        
-        // Create counter
-        await Counter.create({
-          _id: 'customerId',
-          seq: initialValue,
-          lastUpdated: new Date()
-        });
-        
-        console.log(`Counter initialized with value: ${initialValue}`);
-        isInitializing = false;
-        return initialValue;
-        
-      } catch (error) {
-        retryCount++;
-        console.error(`Counter initialization attempt ${retryCount} failed:`, error.message);
-        
-        if (retryCount >= MAX_RETRIES) {
-          isInitializing = false;
-          console.warn('All counter initialization attempts failed, using fallback mode');
-          return 0;
-        }
-        
-        // Exponential backoff
-        const delay = RETRY_DELAY_MS * Math.pow(2, retryCount - 1);
-        console.log(`Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
+    // Initialize models from models/index.js
+    const models = await initializeModels();
+    
+    // Get models using getter functions
+    Customer = getCustomer();
+    sequelize = getSequelize();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Customer model or Sequelize not loaded');
     }
-  })();
-  
-  return initializationPromise;
-}
+    
+    // Check if Customer has Sequelize model methods
+    if (typeof Customer.findOne !== 'function') {
+      console.error('❌ Customer is not a valid Sequelize model in generateCustomerNumber');
+      throw new Error('Customer model is not properly initialized');
+    }
+    
+    console.log('✅ Models initialized for generateCustomerNumber');
+    modelsInitialized = true;
+    
+    return { Customer, sequelize };
+  } catch (error) {
+    console.error('❌ Failed to initialize models for generateCustomerNumber:', error);
+    throw error;
+  }
+};
 
-/**
- * Safe database operation with retry
- */
-async function safeDbOperation(operation, operationName = 'database operation') {
-  let retryCount = 0;
-  
-  while (retryCount < MAX_RETRIES) {
+// Safe database operation with retry logic
+const safeDbOperation = async (operation, maxRetries = 3, delay = 100) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await waitForConnection();
+      // Initialize models before each attempt
+      await initModelsForUtility();
+      
+      if (!Customer) {
+        throw new Error('Customer model not initialized');
+      }
+      
       return await operation();
     } catch (error) {
-      retryCount++;
-      console.error(`${operationName} attempt ${retryCount} failed:`, error.message);
+      console.warn(`⚠️ Database operation attempt ${attempt} failed:`, error.message);
       
-      if (retryCount >= MAX_RETRIES) {
+      if (attempt === maxRetries) {
         throw error;
       }
       
       // Exponential backoff
-      const delay = RETRY_DELAY_MS * Math.pow(2, retryCount - 1);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      const backoffDelay = delay * Math.pow(2, attempt - 1);
+      console.log(`🔄 Retrying in ${backoffDelay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, backoffDelay));
+      
+      // Reset models for next attempt
+      modelsInitialized = false;
     }
   }
-}
+};
 
-/**
- * Verify and repair counter if out of sync
- */
-async function verifyAndRepairCounter() {
-  return safeDbOperation(async () => {
-    // Get highest CUST_ID from customers
-    const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 }).lean();
-    let highestCustomerId = 0;
-    
-    if (lastCustomer && lastCustomer.CUST_ID) {
-      highestCustomerId = parseInt(lastCustomer.CUST_ID, 10) || 0;
-    }
-    
-    // Get current counter value
-    const counter = await Counter.findOne({ _id: 'customerId' });
-    let currentCounter = 0;
-    
-    if (counter) {
-      currentCounter = Number(counter.seq) || 0;
-    }
-    
-    // If counter is behind, update it to highest + 1
-    if (currentCounter <= highestCustomerId) {
-      console.log(`Counter out of sync. Customer max: ${highestCustomerId}, Counter: ${currentCounter}. Repairing...`);
-      
-      const newCounterValue = highestCustomerId + 1;
-      
-      await Counter.findOneAndUpdate(
-        { _id: 'customerId' },
-        { 
-          $set: { 
-            seq: newCounterValue, 
-            lastUpdated: new Date() 
-          } 
-        },
-        { 
-          upsert: true,
-          new: true 
-        }
-      );
-      
-      console.log(`Counter repaired and set to: ${newCounterValue}`);
-      return newCounterValue;
-    }
-    
-    return currentCounter;
-  }, 'verifyAndRepairCounter');
-}
-
-/**
- * Generates synchronized customer numbers
- */
-export async function generateCustomerNumber() {
+// Verify and repair counter table
+const verifyAndRepairCounter = async () => {
   try {
-    // Ensure connection is ready
-    await waitForConnection();
+    console.log('🔍 Verifying counter table...');
     
-    // Verify and repair counter first
-    const repairedValue = await verifyAndRepairCounter();
+    // Check if counter table exists
+    const [tables] = await sequelize.query(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'customer_counter'
+    `);
     
-    const session = await mongoose.startSession();
-    
-    try {
-      await session.startTransaction();
+    if (tables.length === 0) {
+      console.log('🔄 Creating counter table...');
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS customer_counter (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          counter_type VARCHAR(50) NOT NULL UNIQUE,
+          last_used_id VARCHAR(50) NOT NULL,
+          last_used_number VARCHAR(50) NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
       
-      // Get the current counter value
-      const currentCounter = await Counter.findOne({ _id: 'customerId' }).session(session);
-      if (!currentCounter) {
-        throw new Error('Counter not found');
-      }
+      // Insert default counter
+      await sequelize.query(`
+        INSERT INTO customer_counter (counter_type, last_used_id, last_used_number) 
+        VALUES ('customer', '0000000000', '000000000')
+      `);
       
-      let baseNumber = Number(currentCounter.seq);
-      let foundAvailableId = false;
-      let attempts = 0;
-      const maxAttempts = 100;
-      
-      while (!foundAvailableId && attempts < maxAttempts) {
-        if (attempts > 0) {
-          baseNumber++;
-        }
-        
-        const proposedCustId = String(baseNumber).padStart(CUST_ID_LENGTH, '0');
-        
-        // Check if this CUST_ID already exists
-        const existingCustomer = await Customer.findOne({ 
-          CUST_ID: proposedCustId 
-        }).session(session);
-        
-        if (!existingCustomer) {
-          foundAvailableId = true;
-          break;
-        }
-        
-        attempts++;
-      }
-      
-      if (!foundAvailableId) {
-        throw new Error('Could not find available customer ID');
-      }
-      
-      // Verify the CUST_NO doesn't exceed 7 digits
-      const custNo = baseNumber * MULTIPLIER;
-      if (custNo.toString().length > CUST_NO_LENGTH) {
-        throw new Error('Customer number overflow');
-      }
-      
-      const result = {
-        CUST_ID: String(baseNumber).padStart(CUST_ID_LENGTH, '0'),
-        CUST_NO: String(custNo).padStart(CUST_NO_LENGTH, '0'),
-        rawValue: baseNumber
-      };
-      
-      // Update the counter with the used value
-      await Counter.findOneAndUpdate(
-        { _id: 'customerId' },
-        { 
-          $set: { 
-            seq: baseNumber, 
-            lastUpdated: new Date() 
-          } 
-        },
-        { session }
-      );
-      
-      await session.commitTransaction();
-      return result;
-      
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      await session.endSession();
+      console.log('✅ Counter table created and initialized');
+    } else {
+      console.log('✅ Counter table exists');
     }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to verify/repair counter table:', error.message);
+    return false;
+  }
+};
+
+// Get last used numbers from database
+const getLastUsedNumbers = async () => {
+  return await safeDbOperation(async () => {
+    // Verify counter table exists
+    await verifyAndRepairCounter();
+    
+    const [results] = await sequelize.query(`
+      SELECT last_used_id, last_used_number 
+      FROM customer_counter 
+      WHERE counter_type = 'customer' 
+      LIMIT 1
+    `);
+    
+    if (results.length > 0) {
+      return {
+        lastCUST_ID: results[0].last_used_id,
+        lastCUST_NO: results[0].last_used_number
+      };
+    }
+    
+    // Default values
+    return {
+      lastCUST_ID: '0000000000',
+      lastCUST_NO: '000000000'
+    };
+  });
+};
+
+// Update last used numbers in database
+const updateLastUsedNumbers = async (custId, custNo) => {
+  return await safeDbOperation(async () => {
+    await sequelize.query(`
+      UPDATE customer_counter 
+      SET last_used_id = ?, last_used_number = ?, updated_at = NOW()
+      WHERE counter_type = 'customer'
+    `, {
+      replacements: [custId, custNo]
+    });
+    
+    console.log(`📊 Counter updated: CUST_ID=${custId}, CUST_NO=${custNo}`);
+  });
+};
+
+// Check if customer ID already exists
+const customerIdExists = async (custId) => {
+  return await safeDbOperation(async () => {
+    const existingCustomer = await Customer.findOne({
+      where: { CUST_ID: custId },
+      attributes: ['id']
+    });
+    
+    return !!existingCustomer;
+  });
+};
+
+// Find the next available customer ID
+const findNextAvailableId = async (lastId) => {
+  let baseNumber = parseInt(lastId, 10) + 1;
+  let attempts = 0;
+  const maxAttempts = 1000; // Safety limit
+  
+  while (attempts < maxAttempts) {
+    const proposedId = String(baseNumber).padStart(CUST_ID_LENGTH, '0');
+    
+    // Check if this ID already exists
+    const exists = await customerIdExists(proposedId);
+    
+    if (!exists) {
+      return {
+        id: proposedId,
+        baseNumber: baseNumber
+      };
+    }
+    
+    // ID exists, try next one
+    baseNumber++;
+    attempts++;
+  }
+  
+  throw new Error(`Could not find available customer ID after ${maxAttempts} attempts`);
+};
+
+// Generate customer number with retry logic
+const generateCustomerNumber = async () => {
+  try {
+    // Initialize models
+    await initModelsForUtility();
+    
+    // Get last used numbers
+    const { lastCUST_ID, lastCUST_NO } = await getLastUsedNumbers();
+    console.log(`📊 Last used: CUST_ID=${lastCUST_ID}, CUST_NO=${lastCUST_NO}`);
+    
+    // Find next available ID
+    const { id: newCUST_ID, baseNumber } = await findNextAvailableId(lastCUST_ID);
+    
+    // Generate customer number (baseNumber * 1, but we can use a different logic)
+    const custNoNumber = baseNumber; // Simple 1:1 mapping
+    const newCUST_NO = String(custNoNumber).padStart(CUST_NO_LENGTH, '0');
+    
+    // Update counter
+    await updateLastUsedNumbers(newCUST_ID, newCUST_NO);
+    
+    console.log(`✅ Generated: CUST_ID=${newCUST_ID}, CUST_NO=${newCUST_NO}`);
+    
+    return {
+      CUST_ID: newCUST_ID,
+      CUST_NO: newCUST_NO,
+      lastCUST_ID,
+      lastCUST_NO
+    };
     
   } catch (error) {
-    console.error('Failed to generate customer number from counter:', error);
-    // Fallback to timestamp method
+    console.error('❌ Failed to generate customer number:', error);
+    
+    // Fallback: Use timestamp-based generation
     return generateFallbackCustomerNumber();
   }
-}
+};
 
-/**
- * Fallback method using timestamp
- */
-function generateFallbackCustomerNumber() {
-  const timestamp = Date.now();
-  const randomSuffix = Math.floor(Math.random() * 1000);
+// Fallback generation using timestamp
+const generateFallbackCustomerNumber = () => {
+  console.log('⚠️ Using fallback customer number generation');
   
-  // Use last 8 digits of timestamp plus random suffix
-  const timestampPart = timestamp.toString().slice(-8);
-  const randomPart = randomSuffix.toString().padStart(3, '0');
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000);
+  
+  // Use last 6 digits of timestamp + random 3 digits
+  const timestampPart = timestamp.toString().slice(-6);
+  const randomPart = random.toString().padStart(3, '0');
   const baseNumber = parseInt(timestampPart + randomPart, 10);
   
-  // Ensure it's within limits
-  const custId = baseNumber % 10000000000;
-  const custNo = (custId * MULTIPLIER) % 10000000;
+  // Ensure it's within 10 digits
+  const custIdNumber = baseNumber % 10000000000;
+  const custNoNumber = custIdNumber; // Same for fallback
+  
+  const CUST_ID = String(custIdNumber).padStart(CUST_ID_LENGTH, '0');
+  const CUST_NO = String(custNoNumber).padStart(CUST_NO_LENGTH, '0');
+  
+  console.log(`⚠️ Fallback generated: CUST_ID=${CUST_ID}, CUST_NO=${CUST_NO}`);
   
   return {
-    CUST_ID: String(custId).padStart(CUST_ID_LENGTH, '0'),
-    CUST_NO: String(custNo).padStart(CUST_NO_LENGTH, '0'),
+    CUST_ID,
+    CUST_NO,
     isFallback: true,
     timestamp: new Date().toISOString()
   };
-}
+};
 
-/**
- * Legacy generator
- */
+// =============================================
+// EXPORTS SECTION - CORRECTED (NO DUPLICATES)
+// =============================================
+
+// Export the main function as a named export
+// This allows: import { generateCustomerNumber } from './utils/generateCustomerNumber.js'
+export { generateCustomerNumber };
+
+// Legacy function for compatibility
 export const generateCustomerNumberLegacy = async () => {
+  return await generateCustomerNumber();
+};
+
+// Get current counter status
+export const getCurrentCounterStatus = async () => {
   try {
-    await waitForConnection();
-    await verifyAndRepairCounter();
+    await initModelsForUtility();
     
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'customerId' },
-      { $inc: { seq: 1 }, $set: { lastUpdated: new Date() } },
-      { new: true }
-    );
+    const { lastCUST_ID, lastCUST_NO } = await getLastUsedNumbers();
     
-    if (!counter) {
-      throw new Error('Counter not found');
-    }
+    // Count total customers
+    const customerCount = await safeDbOperation(async () => {
+      return await Customer.count();
+    });
     
-    const baseNumber = Number(counter.seq);
-    const custNo = baseNumber * MULTIPLIER;
-    
-    if (custNo.toString().length > CUST_NO_LENGTH) {
-      throw new Error('Customer number overflow');
-    }
+    // Get highest customer ID from database
+    const highestCustomer = await safeDbOperation(async () => {
+      return await Customer.findOne({
+        order: [['CUST_ID', 'DESC']],
+        attributes: ['CUST_ID', 'CUST_NO', 'CUST_NM']
+      });
+    });
     
     return {
-      CUST_ID: String(baseNumber).padStart(CUST_ID_LENGTH, '0'),
-      CUST_NO: String(custNo).padStart(CUST_NO_LENGTH, '0')
-    };
-  } catch (error) {
-    console.error('Legacy generation error:', error);
-    return generateFallbackCustomerNumber();
-  }
-};
-
-/**
- * Get current counter value
- */
-export const getCurrentCounterValue = async () => {
-  try {
-    await waitForConnection();
-    await verifyAndRepairCounter();
-    const counter = await Counter.findOne({ _id: 'customerId' });
-    return counter ? Number(counter.seq) : 0;
-  } catch (error) {
-    console.error('Error getting counter value:', error);
-    return 0;
-  }
-};
-
-/**
- * Reset counter to a specific value
- */
-export const resetCounter = async (value = 0) => {
-  if (value < 0) throw new Error('Counter value cannot be negative');
-  
-  await waitForConnection();
-  
-  // Check if any customer exists with ID >= value
-  const existingCustomer = await Customer.findOne({
-    CUST_ID: { $gte: String(value).padStart(CUST_ID_LENGTH, '0') }
-  }).sort({ CUST_ID: -1 });
-  
-  if (existingCustomer) {
-    throw new Error(`Cannot reset to ${value}. Customer with ID ${existingCustomer.CUST_ID} already exists.`);
-  }
-  
-  await Counter.findOneAndUpdate(
-    { _id: 'customerId' },
-    { $set: { seq: value, lastUpdated: new Date() } },
-    { upsert: true }
-  );
-  
-  console.log(`Counter reset to: ${value}`);
-  return value;
-};
-
-/**
- * Get counter status for debugging
- */
-export const getCounterStatus = async () => {
-  try {
-    await waitForConnection();
-    
-    const counter = await Counter.findOne({ _id: 'customerId' });
-    const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 }).lean();
-    
-    const counterValue = counter ? Number(counter.seq) : 0;
-    const highestCustomerId = lastCustomer ? parseInt(lastCustomer.CUST_ID, 10) || 0 : 0;
-    
-    return {
-      counterValue,
-      highestCustomerId,
-      isInSync: counterValue > highestCustomerId,
-      difference: counterValue - highestCustomerId,
-      counterExists: !!counter,
-      lastCustomer: lastCustomer ? lastCustomer.CUST_ID : 'none',
-      connectionStatus: mongoose.connection.readyState,
-      connectionState: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState] || 'unknown'
+      counter: {
+        lastCUST_ID,
+        lastCUST_NO
+      },
+      database: {
+        customerCount,
+        highestCustomer: highestCustomer ? {
+          CUST_ID: highestCustomer.CUST_ID,
+          CUST_NO: highestCustomer.CUST_NO,
+          name: highestCustomer.CUST_NM
+        } : null
+      },
+      isInSync: highestCustomer ? lastCUST_ID === highestCustomer.CUST_ID : true,
+      modelsInitialized: modelsInitialized,
+      CustomerModel: Customer ? '✅ Loaded' : '❌ Not loaded',
+      sequelize: sequelize ? '✅ Loaded' : '❌ Not loaded'
     };
   } catch (error) {
     console.error('Error getting counter status:', error);
-    return { 
+    return {
       error: error.message,
-      connectionStatus: mongoose.connection.readyState 
+      modelsInitialized,
+      CustomerModel: Customer ? '✅ Loaded' : '❌ Not loaded',
+      sequelize: sequelize ? '✅ Loaded' : '❌ Not loaded'
     };
   }
 };
 
-// Initialize counter after connection is ready, but don't block
-let initializationTimeout = null;
-
-// Delayed initialization to allow main connection
-if (typeof window === 'undefined') {
-  // Server-side only
-  initializationTimeout = setTimeout(async () => {
-    try {
-      console.log('Starting delayed counter initialization...');
-      await initializeCounter();
-      console.log('Counter initialization completed');
-    } catch (error) {
-      console.warn('Counter initialization failed:', error.message);
+// Reset counter to a specific value
+export const resetCounter = async (newCustId = '0000000000') => {
+  try {
+    await initModelsForUtility();
+    
+    // Validate input
+    if (!/^\d{10}$/.test(newCustId)) {
+      throw new Error('CUST_ID must be exactly 10 digits');
     }
-  }, 5000); // 5 second delay
-}
+    
+    const custIdNumber = parseInt(newCustId, 10);
+    const custNoNumber = custIdNumber; // Same for reset
+    
+    const newCUST_NO = String(custNoNumber).padStart(CUST_NO_LENGTH, '0');
+    
+    // Update counter
+    await safeDbOperation(async () => {
+      await sequelize.query(`
+        UPDATE customer_counter 
+        SET last_used_id = ?, last_used_number = ?, updated_at = NOW()
+        WHERE counter_type = 'customer'
+      `, {
+        replacements: [newCustId, newCUST_NO]
+      });
+    });
+    
+    console.log(`🔄 Counter reset to: CUST_ID=${newCustId}, CUST_NO=${newCUST_NO}`);
+    
+    return {
+      success: true,
+      message: 'Counter reset successfully',
+      newCUST_ID: newCustId,
+      newCUST_NO: newCUST_NO
+    };
+    
+  } catch (error) {
+    console.error('Error resetting counter:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+};
 
-// Clean up on exit
-if (typeof process !== 'undefined') {
-  process.on('exit', () => {
-    if (initializationTimeout) {
-      clearTimeout(initializationTimeout);
-    }
-  });
-}
+// Simple synchronous fallback for testing
+export const generateSimpleCustomerNumber = () => {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 10000);
+  const base = parseInt(timestamp.toString().slice(-6) + random.toString().padStart(4, '0'), 10) % 10000000000;
+  
+  return {
+    CUST_ID: String(base).padStart(CUST_ID_LENGTH, '0'),
+    CUST_NO: String(base).padStart(CUST_NO_LENGTH, '0'),
+    isSimple: true
+  };
+};
 
-// Export debug function
-export { verifyAndRepairCounter as debugVerifyCounter };
-
+// Export main function as default export
+// This allows: import generateCustomerNumber from './utils/generateCustomerNumber.js'
 export default generateCustomerNumber;

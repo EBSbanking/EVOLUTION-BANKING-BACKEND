@@ -1,8 +1,9 @@
+// routes/CustomerRoutes.js - FIXED VERSION
 import express from 'express';
 import Customer from '../models/Customer.js';
-import logger from '../utils/logger.js'; // ✅ Added logger import
+import logger from '../utils/logger.js';
 import {
-  getAllCustomer,
+  getAllCustomers,
   getCustomerById,
   deactivateCustomer,
   approveCustomer,
@@ -12,15 +13,20 @@ import {
   batchUploadCustomers,
   searchCustomers,
   advancedSearchCustomers,
-  createCustomer // ✅ Added createCustomer import
+  createCustomer,
+   getCustomerSummary,
+   getCustomerSchema
+  // REMOVED: getCustomerSummary - not needed or create it
 } from '../controllers/CustomerController.js';
 import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
+import { ensureModelsInitialized } from '../middlewares/modelMiddleware.js';
 
 const router = express.Router();
+// Apply the middleware to all customer routes
+router.use(ensureModelsInitialized);
 
-// Helper function for error handling - FIXED VERSION
+// Helper function for error handling
 const handleError = (res, error, defaultMessage = 'An error occurred') => {
-  // Use logger instead of console.error to avoid the problematic override
   logger.error('Customer Route Error:', { 
     message: error.message,
     customMessage: defaultMessage,
@@ -35,11 +41,11 @@ const handleError = (res, error, defaultMessage = 'An error occurred') => {
   });
 };
 
-// CREATE CUSTOMER - Use the imported controller function ✅ FIXED
+// CREATE CUSTOMER
 router.post('/customers', createCustomer);
 
 // GET ALL CUSTOMERS
-router.get('/customers', getAllCustomer);
+router.get('/customers', getAllCustomers);
 
 // GET PENDING CUSTOMERS
 router.get('/customers/pending', getPendingCustomers);
@@ -59,17 +65,17 @@ router.put('/reject/:customerId', rejectCustomer);
 // DEACTIVATE CUSTOMER
 router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
 
-
-//////////////////////////////////////////////////
-
-
+// SEARCH CUSTOMERS
 router.get('/search', searchCustomers);
+
+// In your customer routes
+router.get('/schema', getCustomerSchema);
+
+// ADVANCED SEARCH CUSTOMERS
 router.get('/advanced-search', advancedSearchCustomers);
 
-
-
-
-
+// Add this route for dashboard summary
+router.get('/dashboard-summary', getCustomerSummary);
 
 // GENERATE CUSTOMER NUMBER
 router.get('/generate-customer-number', async (req, res) => {
@@ -105,7 +111,6 @@ router.get('/generate-customer-number', async (req, res) => {
 // BATCH UPLOAD TEMPLATE
 router.get('/batch-template', (req, res) => {
   try {
-    // Dynamic template structure based on your customer schema
     const templateFields = [
       { name: 'CUST_ID', required: true, type: 'string', description: 'Unique Customer ID (Auto-generated if empty)' },
       { name: 'CUST_NO', required: true, type: 'string', description: 'Customer Number (Auto-generated if empty)' },
@@ -226,7 +231,6 @@ router.post('/debug-file-structure', (req, res) => {
       tempFilePath: file.tempFilePath
     });
     
-    // Try different ways to access the file data
     const dataAccessMethods = {
       'file.data': file.data,
       'file.data (as buffer)': Buffer.isBuffer(file.data) ? file.data : 'Not a buffer',
@@ -291,7 +295,6 @@ router.post('/test-upload', (req, res) => {
       useTempFiles: file.tempFilePath ? 'YES' : 'NO'
     });
 
-    // Validate file type
     const allowedMimes = [
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -312,12 +315,10 @@ router.post('/test-upload', (req, res) => {
 
     let dataLength = 0;
     if (file.tempFilePath) {
-      // File is stored as temp file
       const fs = require('fs');
       const stats = fs.statSync(file.tempFilePath);
       dataLength = stats.size;
     } else if (Buffer.isBuffer(file.data)) {
-      // File is stored in memory
       dataLength = file.data.length;
     }
 
@@ -388,7 +389,6 @@ router.post('/batch-upload', async (req, res) => {
       useTempFiles: file.tempFilePath ? 'YES' : 'NO'
     });
 
-    // Validate file type
     const allowedMimes = [
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -409,16 +409,13 @@ router.post('/batch-upload', async (req, res) => {
 
     let fileBuffer;
 
-    // Handle file data based on storage method
     if (file.tempFilePath) {
-      // File is stored as temporary file - read from disk
       logger.info('📂 Reading from temp file:', { tempFilePath: file.tempFilePath });
       const fs = await import('fs');
       try {
         fileBuffer = fs.readFileSync(file.tempFilePath);
         logger.info('✅ Successfully read temp file:', { bufferLength: fileBuffer.length });
         
-        // Clean up temp file
         fs.unlinkSync(file.tempFilePath);
         logger.info('✅ Temp file cleaned up');
       } catch (error) {
@@ -438,11 +435,9 @@ router.post('/batch-upload', async (req, res) => {
         });
       }
     } else if (Buffer.isBuffer(file.data) && file.data.length > 0) {
-      // File is stored in memory as buffer
       fileBuffer = file.data;
       logger.info('✅ Using memory buffer:', { length: fileBuffer.length });
     } else {
-      // No accessible file data
       logger.error('❌ No accessible file data found');
       return res.status(400).json({
         success: false,
@@ -457,12 +452,10 @@ router.post('/batch-upload', async (req, res) => {
 
     logger.info('🔄 Processing file with buffer length:', { length: fileBuffer.length });
 
-    // Process the file buffer using your existing service
     const result = await batchUploadCustomers(fileBuffer);
     
     logger.info('✅ Batch upload result:', { result });
 
-    // Ensure response has all required fields
     const response = {
       success: result.success || false,
       message: result.message || 'Processing completed',

@@ -1,212 +1,692 @@
-import mongoose from 'mongoose';
-import { ROLE_MAPPING } from '../constants/roleMapping.js';
+// src/models/BusinessRole.js - FIXED VERSION
+import { DataTypes, Model, Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const BusinessRoleSchema = new mongoose.Schema({
-  ROLE_NM: {
-    type: String,
-    required: [true, 'Role name is required'],
-    trim: true,
-    uppercase: true,
-    enum: {
-      values: Object.values(ROLE_MAPPING).map(r => r.ROLE_NM.toUpperCase()),
-      message: 'Invalid role name. Valid values: {VALUE}'
+// Import ROLE_MAPPING but defer its usage
+let ROLE_MAPPING = {};
+let ROLE_MAPPING_LOADED = false;
+
+// Function to lazy load role mapping
+const getRoleMapping = () => {
+  if (!ROLE_MAPPING_LOADED) {
+    try {
+      // Import dynamically to avoid circular dependency
+      const mapping = require('../constants/roleMapping.js');
+      ROLE_MAPPING = mapping.ROLE_MAPPING || {};
+      ROLE_MAPPING_LOADED = true;
+    } catch (error) {
+      console.warn('⚠️ Could not load ROLE_MAPPING, using empty mapping:', error.message);
+      ROLE_MAPPING = {};
+      ROLE_MAPPING_LOADED = true;
+    }
+  }
+  return ROLE_MAPPING;
+};
+
+// Helper functions that lazily access ROLE_MAPPING
+const getAllRoleIds = () => {
+  const mapping = getRoleMapping();
+  return Object.keys(mapping).map(id => parseInt(id));
+};
+
+const getAllRoleNames = () => {
+  const mapping = getRoleMapping();
+  return Object.values(mapping).map(role => role.ROLE_NM);
+};
+
+const getRoleById = (id) => {
+  const mapping = getRoleMapping();
+  return mapping[id];
+};
+
+const isValidRoleId = (id) => {
+  const mapping = getRoleMapping();
+  return mapping.hasOwnProperty(id);
+};
+
+const isValidRoleName = (name) => {
+  if (!name) return false;
+  const mapping = getRoleMapping();
+  const upperName = name.toUpperCase();
+  return Object.values(mapping).some(role => role.ROLE_NM === upperName);
+};
+
+class BusinessRole extends Model {}
+
+BusinessRole.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+      allowNull: false,
     },
-    validate: {
-      validator: function(v) {
-        if (!this.ROLE_ID) return true;
-        const expectedName = ROLE_MAPPING[this.ROLE_ID]?.ROLE_NM.toUpperCase();
-        return expectedName === v.toUpperCase();
+    ROLE_NM: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'Role name is required',
+        },
+        customValidation(value) {
+          const roleNames = getAllRoleNames();
+          if (roleNames.length > 0 && !roleNames.includes(value.toUpperCase())) {
+            throw new Error(`Invalid role name. Valid names are: ${roleNames.join(', ')}`);
+          }
+        },
       },
-      message: function(props) {
-        const expectedName = ROLE_MAPPING[this.ROLE_ID]?.ROLE_NM.toUpperCase();
-        return expectedName 
-          ? `Role name '${props.value}' doesn't match role ID ${this.ROLE_ID}. Expected: ${expectedName}`
-          : `Invalid ROLE_ID: ${this.ROLE_ID}`;
-      }
-    }
-  },
-  REC_ST: {
-    type: String,
-    required: [true, 'Record status is required'],
-    enum: {
-      values: ['Active', 'Deactivated'],
-      message: 'Status must be either Active or Deactivated'
     },
-    default: 'Active'
-  },
-  VERSION_NO: {
-    type: Number,
-    default: 1,
-    min: [1, 'Version number cannot be less than 1']
-  },
-  USER_ID: {
-    type: String,
-    required: [true, 'User ID is required'],
-    index: true,
-    trim: true,
-    uppercase: true
-  },
-  CREATE_DT: {
-    type: Date,
-    default: Date.now,
-    immutable: true
-  },
-  SYS_CREATE_TS: {
-    type: Date,
-    default: Date.now,
-    immutable: true
-  },
-  CREATED_BY: {
-    type: String,
-    required: [true, 'Creator user is required'],
-    trim: true
-  },
-  CREATED_BY_ROLE: {
-    type: String,
-    default: 'Unknown',
-    trim: true
-  },
-  ROW_TS: {
-    type: Date,
-    default: Date.now
-  },
-  ROLE_ID: {
-    type: Number,
-    required: [true, 'Role ID is required'],
-    enum: {
-      values: Object.keys(ROLE_MAPPING).map(Number),
-      message: props => {
-        const expectedName = ROLE_MAPPING[props.value]?.ROLE_NM;
-        const currentName = props?.instance?.ROLE_NM;
-        return expectedName
-          ? `Role ID ${props.value} doesn't match role name ${currentName}. Expected: ${expectedName}`
-          : `Invalid ROLE_ID: ${props.value}`;
-      }
-    },
-    validate: {
-      validator: function(v) {
-        if (!this.ROLE_NM) return true;
-        const expectedName = ROLE_MAPPING[v]?.ROLE_NM.toUpperCase();
-        return expectedName === this.ROLE_NM.toUpperCase();
+    REC_ST: {
+      type: DataTypes.ENUM('Active', 'Deactivated'),
+      allowNull: false,
+      defaultValue: 'Active',
+      validate: {
+        notEmpty: {
+          msg: 'Record status is required',
+        },
+        isIn: {
+          args: [['Active', 'Deactivated']],
+          msg: 'Status must be either Active or Deactivated',
+        },
       },
-      message: function(props) {
-        const expectedName = ROLE_MAPPING[props.value]?.ROLE_NM;
-        return expectedName
-          ? `Role ID ${props.value} doesn't match role name ${this.ROLE_NM}. Expected: ${expectedName}`
-          : `Invalid ROLE_ID: ${props.value}`;
-      }
     },
-    index: true
-  },
-  BUSINESS_UNIT: {
-    type: String,
-    required: [true, 'Business unit is required'],
-    index: true,
-    trim: true
-  },
-  BU_ID: {
-    type: Number,
-    required: [true, 'Business unit ID is required'],
-    min: [1, 'Business unit ID must be positive']
-  },
-  SUPERVISOR_FG: {
-    type: String,
-    required: [true, 'Supervisor flag is required'],
-    enum: {
-      values: ['Y', 'N'],
-      message: 'Supervisor flag must be either Y or N'
+    VERSION_NO: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+      validate: {
+        min: {
+          args: [1],
+          msg: 'Version number cannot be less than 1',
+        },
+      },
     },
-    default: 'N',
-    uppercase: true,
-    set: function(v) {
-      return v.toString().toUpperCase();
-    }
-  },
-  ALLOW_TXN_POSTING_FG: {
-    type: String,
-    required: [true, 'Transaction posting flag is required'],
-    enum: {
-      values: ['Y', 'N'],
-      message: 'Transaction posting flag must be either Y or N'
+    USER_ID: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'User ID is required',
+        },
+      },
     },
-    default: 'N',
-    uppercase: true,
-    set: function(v) {
-      if (typeof v === 'boolean') return v ? 'Y' : 'N';
-      if (typeof v === 'number') return v > 0 ? 'Y' : 'N';
-      return v.toString().toUpperCase() === 'Y' ? 'Y' : 'N';
-    }
+    CREATE_DT: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    SYS_CREATE_TS: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    CREATED_BY: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'Creator user is required',
+        },
+      },
+    },
+    CREATED_BY_ROLE: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'Unknown',
+    },
+    ROW_TS: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    ROLE_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'Role ID is required',
+        },
+        customValidation(value) {
+          const roleIds = getAllRoleIds();
+          if (roleIds.length > 0 && !roleIds.includes(value)) {
+            throw new Error(`Invalid role ID. Valid IDs are: ${roleIds.join(', ')}`);
+          }
+        },
+      },
+    },
+    BUSINESS_UNIT: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'Business unit is required',
+        },
+      },
+    },
+    BU_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      validate: {
+        notEmpty: {
+          msg: 'Business unit ID is required',
+        },
+        min: {
+          args: [1],
+          msg: 'Business unit ID must be positive',
+        },
+      },
+    },
+    SUPERVISOR_FG: {
+      type: DataTypes.ENUM('Y', 'N'),
+      allowNull: false,
+      defaultValue: 'N',
+      set(value) {
+        let flag = 'N';
+        if (typeof value === 'boolean') {
+          flag = value ? 'Y' : 'N';
+        } else if (typeof value === 'number') {
+          flag = value > 0 ? 'Y' : 'N';
+        } else if (typeof value === 'string') {
+          flag = value.toString().toUpperCase() === 'Y' ? 'Y' : 'N';
+        }
+        this.setDataValue('SUPERVISOR_FG', flag);
+      },
+      get() {
+        return this.getDataValue('SUPERVISOR_FG');
+      },
+    },
+    ALLOW_TXN_POSTING_FG: {
+      type: DataTypes.ENUM('Y', 'N'),
+      allowNull: false,
+      defaultValue: 'N',
+      set(value) {
+        let flag = 'N';
+        if (typeof value === 'boolean') {
+          flag = value ? 'Y' : 'N';
+        } else if (typeof value === 'number') {
+          flag = value > 0 ? 'Y' : 'N';
+        } else if (typeof value === 'string') {
+          flag = value.toString().toUpperCase() === 'Y' ? 'Y' : 'N';
+        }
+        this.setDataValue('ALLOW_TXN_POSTING_FG', flag);
+      },
+      get() {
+        return this.getDataValue('ALLOW_TXN_POSTING_FG');
+      },
+    },
+    LAST_UPDATED_BY: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    LAST_UPDATED_DT: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    ADMIN_OVERRIDE: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    WF_ITEM_ACCESS_LEVEL: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      defaultValue: '',
+      validate: {
+        len: {
+          args: [0, 50],
+          msg: 'Access level cannot exceed 50 characters',
+        },
+      },
+    },
+    
+    // Virtual fields
+    role_details: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return getRoleById(this.ROLE_ID);
+      },
+    },
+    is_active: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.REC_ST === 'Active';
+      },
+    },
+    is_supervisor: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.SUPERVISOR_FG === 'Y';
+      },
+    },
+    can_post_transactions: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.ALLOW_TXN_POSTING_FG === 'Y';
+      },
+    },
   },
-  LAST_UPDATED_BY: {
-    type: String,
-    trim: true
-  },
-  LAST_UPDATED_DT: {
-    type: Date
-  },
-  ADMIN_OVERRIDE: {
-    type: Boolean,
-    default: false
-  },
-  WF_ITEM_ACCESS_LEVEL: {
-  type: String,
-  trim: true,
-  default: '' // e.g., could be 'VIEW_ONLY', 'APPROVER', etc.
-},
-
-}, {
-  timestamps: true,
-  toJSON: { 
-    virtuals: true,
-    transform: function(doc, ret) {
-      delete ret.__v;
-      delete ret._id;
-      return ret;
-    }
-  },
-  toObject: { 
-    virtuals: true,
-    transform: function(doc, ret) {
-      delete ret.__v;
-      return ret;
-    }
+  {
+    sequelize,
+    modelName: 'BusinessRole',
+    tableName: 'business_roles',
+    timestamps: true,
+    underscored: false,
+    hooks: {
+      beforeValidate: (businessRole) => {
+        // Uppercase ROLE_NM
+        if (businessRole.ROLE_NM) {
+          businessRole.ROLE_NM = businessRole.ROLE_NM.toUpperCase().trim();
+        }
+        
+        // Uppercase USER_ID
+        if (businessRole.USER_ID) {
+          businessRole.USER_ID = businessRole.USER_ID.toUpperCase().trim();
+        }
+        
+        // Trim string fields
+        ['CREATED_BY', 'CREATED_BY_ROLE', 'BUSINESS_UNIT', 'LAST_UPDATED_BY'].forEach(field => {
+          if (businessRole[field]) {
+            businessRole[field] = businessRole[field].toString().trim();
+          }
+        });
+        
+        // Set default transaction posting based on role
+        if (businessRole.isNewRecord && !businessRole.ALLOW_TXN_POSTING_FG) {
+          const roleConfig = getRoleById(businessRole.ROLE_ID);
+          if (roleConfig?.defaultTransactionPosting) {
+            businessRole.ALLOW_TXN_POSTING_FG = 'Y';
+          }
+        }
+        
+        // Validate ROLE_ID and ROLE_NM consistency
+        if (businessRole.ROLE_ID && businessRole.ROLE_NM) {
+          const roleConfig = getRoleById(businessRole.ROLE_ID);
+          if (roleConfig && businessRole.ROLE_NM.toUpperCase() !== roleConfig.ROLE_NM.toUpperCase()) {
+            throw new Error(
+              `Role mismatch: ROLE_ID ${businessRole.ROLE_ID} expects ROLE_NM "${roleConfig.ROLE_NM}", got "${businessRole.ROLE_NM}"`
+            );
+          }
+        }
+      },
+      beforeCreate: (businessRole) => {
+        // Set immutable fields
+        businessRole.CREATE_DT = new Date();
+        businessRole.SYS_CREATE_TS = new Date();
+        businessRole.ROW_TS = new Date();
+        
+        // Default CREATED_BY_ROLE if not set
+        if (!businessRole.CREATED_BY_ROLE || businessRole.CREATED_BY_ROLE === 'Unknown') {
+          businessRole.CREATED_BY_ROLE = businessRole.ROLE_NM || 'Unknown';
+        }
+      },
+      beforeUpdate: (businessRole) => {
+        // Update timestamps
+        businessRole.ROW_TS = new Date();
+        businessRole.LAST_UPDATED_DT = new Date();
+      },
+      beforeSave: (businessRole) => {
+        // Force version increment on update
+        if (!businessRole.isNewRecord && businessRole.changed()) {
+          businessRole.VERSION_NO += 1;
+        }
+      },
+    },
+    indexes: [
+      {
+        unique: false,
+        fields: ['ROLE_ID', 'BUSINESS_UNIT'],
+        name: 'idx_role_business_unit',
+      },
+      {
+        unique: false,
+        fields: ['USER_ID'],
+        name: 'idx_user_id',
+      },
+      {
+        unique: false,
+        fields: ['BU_ID'],
+        name: 'idx_bu_id',
+      },
+      {
+        unique: false,
+        fields: ['ALLOW_TXN_POSTING_FG'],
+        name: 'idx_txn_posting',
+      },
+      {
+        unique: false,
+        fields: ['ROLE_ID'],
+        name: 'idx_role_id',
+      },
+      {
+        unique: false,
+        fields: ['REC_ST'],
+        name: 'idx_rec_status',
+      },
+      {
+        unique: false,
+        fields: ['CREATED_BY'],
+        name: 'idx_created_by',
+      },
+      {
+        unique: false,
+        fields: ['BUSINESS_UNIT', 'REC_ST'],
+        name: 'idx_business_unit_status',
+      },
+      {
+        unique: false,
+        fields: ['USER_ID', 'ROLE_ID', 'BUSINESS_UNIT'],
+        name: 'idx_user_role_business',
+      },
+    ],
   }
-});
+);
 
-// // Indexes
-// BusinessRoleSchema.index({ ROLE_ID: 1, BUSINESS_UNIT: 1 });
-// BusinessRoleSchema.index({ USER_ID: 1 });
-// BusinessRoleSchema.index({ BU_ID: 1 });
-// BusinessRoleSchema.index({ ALLOW_TXN_POSTING_FG: 1 });
+// === INSTANCE METHODS ===
+BusinessRole.prototype.getRoleDetails = function () {
+  return getRoleById(this.ROLE_ID);
+};
 
-// Virtual for role details
-BusinessRoleSchema.virtual('roleDetails').get(function() {
-  return ROLE_MAPPING[this.ROLE_ID] || null;
-});
+BusinessRole.prototype.isActive = function () {
+  return this.REC_ST === 'Active';
+};
 
-// Pre-save validation hook
-BusinessRoleSchema.pre('save', function(next) {
-  this.ROW_TS = new Date();
+BusinessRole.prototype.isSupervisor = function () {
+  return this.SUPERVISOR_FG === 'Y';
+};
+
+BusinessRole.prototype.canPostTransactions = function () {
+  return this.ALLOW_TXN_POSTING_FG === 'Y';
+};
+
+BusinessRole.prototype.getBasicInfo = function () {
+  return {
+    id: this.id,
+    ROLE_NM: this.ROLE_NM,
+    ROLE_ID: this.ROLE_ID,
+    USER_ID: this.USER_ID,
+    BUSINESS_UNIT: this.BUSINESS_UNIT,
+    BU_ID: this.BU_ID,
+    REC_ST: this.REC_ST,
+    SUPERVISOR_FG: this.SUPERVISOR_FG,
+    ALLOW_TXN_POSTING_FG: this.ALLOW_TXN_POSTING_FG,
+    role_details: this.role_details,
+  };
+};
+
+// === STATIC METHODS ===
+BusinessRole.findByUserId = async function (userId, options = {}) {
+  const { includeInactive = false } = options;
   
-  if (this.isModified()) {
-    this.LAST_UPDATED_DT = new Date();
+  const whereClause = { USER_ID: userId.toUpperCase() };
+  if (!includeInactive) {
+    whereClause.REC_ST = 'Active';
   }
   
-  if (this.isNew && ROLE_MAPPING[this.ROLE_ID]?.defaultTransactionPosting) {
-    this.ALLOW_TXN_POSTING_FG = 'Y';
-  }
-  
-  next();
-});
-
-// Pre-update hook
-BusinessRoleSchema.pre('findOneAndUpdate', function(next) {
-  this.set({ 
-    LAST_UPDATED_DT: new Date(),
-    ROW_TS: new Date() 
+  return await this.findAll({
+    where: whereClause,
+    order: [['ROLE_ID', 'ASC']],
   });
-  next();
+};
+
+BusinessRole.findByBusinessUnit = async function (businessUnit, options = {}) {
+  const { includeInactive = false, businessUnitId = null } = options;
+  
+  const whereClause = { BUSINESS_UNIT: businessUnit };
+  if (businessUnitId) {
+    whereClause.BU_ID = businessUnitId;
+  }
+  if (!includeInactive) {
+    whereClause.REC_ST = 'Active';
+  }
+  
+  return await this.findAll({
+    where: whereClause,
+    order: [['USER_ID', 'ASC']],
+  });
+};
+
+BusinessRole.findByRoleId = async function (roleId, options = {}) {
+  const { includeInactive = false } = options;
+  
+  const whereClause = { ROLE_ID: roleId };
+  if (!includeInactive) {
+    whereClause.REC_ST = 'Active';
+  }
+  
+  return await this.findAll({
+    where: whereClause,
+    order: [['BUSINESS_UNIT', 'ASC'], ['USER_ID', 'ASC']],
+  });
+};
+
+BusinessRole.findUserRolesInBusinessUnit = async function (userId, businessUnit, businessUnitId = null) {
+  const whereClause = {
+    USER_ID: userId.toUpperCase(),
+    BUSINESS_UNIT: businessUnit,
+    REC_ST: 'Active',
+  };
+  
+  if (businessUnitId) {
+    whereClause.BU_ID = businessUnitId;
+  }
+  
+  return await this.findAll({
+    where: whereClause,
+  });
+};
+
+BusinessRole.upsertBusinessRole = async function (roleData, transaction = null) {
+  const {
+    ROLE_NM,
+    ROLE_ID,
+    USER_ID,
+    BUSINESS_UNIT,
+    BU_ID,
+    CREATED_BY,
+    CREATED_BY_ROLE = 'Unknown',
+    SUPERVISOR_FG = 'N',
+    ALLOW_TXN_POSTING_FG = null,
+    REC_ST = 'Active',
+    ADMIN_OVERRIDE = false,
+    WF_ITEM_ACCESS_LEVEL = '',
+    LAST_UPDATED_BY = null,
+  } = roleData;
+  
+  // Validate required fields
+  if (!ROLE_NM || !ROLE_ID || !USER_ID || !BUSINESS_UNIT || !BU_ID || !CREATED_BY) {
+    throw new Error('ROLE_NM, ROLE_ID, USER_ID, BUSINESS_UNIT, BU_ID, and CREATED_BY are required');
+  }
+  
+  // Validate role exists
+  if (!isValidRoleId(ROLE_ID)) {
+    throw new Error(`Invalid ROLE_ID: ${ROLE_ID}`);
+  }
+  
+  // Validate role name matches role ID
+  const expectedRoleName = getRoleById(ROLE_ID)?.ROLE_NM;
+  if (expectedRoleName && ROLE_NM.toUpperCase() !== expectedRoleName.toUpperCase()) {
+    throw new Error(`ROLE_NM "${ROLE_NM}" doesn't match ROLE_ID ${ROLE_ID}. Expected: "${expectedRoleName}"`);
+  }
+  
+  // Determine ALLOW_TXN_POSTING_FG
+  let txnPostingFlag = ALLOW_TXN_POSTING_FG;
+  if (txnPostingFlag === null) {
+    const roleConfig = getRoleById(ROLE_ID);
+    txnPostingFlag = roleConfig?.defaultTransactionPosting ? 'Y' : 'N';
+  }
+  
+  const [businessRole, created] = await this.upsert(
+    {
+      ROLE_NM: ROLE_NM.toUpperCase(),
+      ROLE_ID,
+      USER_ID: USER_ID.toUpperCase(),
+      BUSINESS_UNIT,
+      BU_ID,
+      CREATED_BY,
+      CREATED_BY_ROLE,
+      SUPERVISOR_FG,
+      ALLOW_TXN_POSTING_FG: txnPostingFlag,
+      REC_ST,
+      ADMIN_OVERRIDE,
+      WF_ITEM_ACCESS_LEVEL,
+      LAST_UPDATED_BY,
+    },
+    {
+      transaction,
+      returning: true,
+      conflictFields: ['USER_ID', 'ROLE_ID', 'BUSINESS_UNIT', 'BU_ID'],
+    }
+  );
+  
+  return { businessRole, created };
+};
+
+BusinessRole.deactivateRole = async function (userId, roleId, businessUnit, deactivatedBy) {
+  return await this.update(
+    {
+      REC_ST: 'Deactivated',
+      LAST_UPDATED_BY: deactivatedBy,
+      LAST_UPDATED_DT: new Date(),
+    },
+    {
+      where: {
+        USER_ID: userId.toUpperCase(),
+        ROLE_ID: roleId,
+        BUSINESS_UNIT: businessUnit,
+        REC_ST: 'Active',
+      },
+    }
+  );
+};
+
+BusinessRole.activateRole = async function (userId, roleId, businessUnit, activatedBy) {
+  return await this.update(
+    {
+      REC_ST: 'Active',
+      LAST_UPDATED_BY: activatedBy,
+      LAST_UPDATED_DT: new Date(),
+    },
+    {
+      where: {
+        USER_ID: userId.toUpperCase(),
+        ROLE_ID: roleId,
+        BUSINESS_UNIT: businessUnit,
+        REC_ST: 'Deactivated',
+      },
+    }
+  );
+};
+
+BusinessRole.getUserRolesSummary = async function (userId) {
+  const roles = await this.findAll({
+    where: {
+      USER_ID: userId.toUpperCase(),
+      REC_ST: 'Active',
+    },
+    attributes: ['ROLE_ID', 'ROLE_NM', 'BUSINESS_UNIT', 'BU_ID', 'SUPERVISOR_FG', 'ALLOW_TXN_POSTING_FG'],
+    raw: true,
+  });
+  
+  return roles.map(role => ({
+    ...role,
+    role_details: getRoleById(role.ROLE_ID),
+    is_supervisor: role.SUPERVISOR_FG === 'Y',
+    can_post_transactions: role.ALLOW_TXN_POSTING_FG === 'Y',
+  }));
+};
+
+BusinessRole.getBusinessUnitSummary = async function (businessUnit, buId = null) {
+  const whereClause = { BUSINESS_UNIT: businessUnit, REC_ST: 'Active' };
+  if (buId) {
+    whereClause.BU_ID = buId;
+  }
+  
+  const roles = await this.findAll({
+    where: whereClause,
+    attributes: [
+      'ROLE_ID',
+      'ROLE_NM',
+      [sequelize.fn('COUNT', sequelize.col('USER_ID')), 'user_count'],
+      [sequelize.fn('SUM', sequelize.literal("CASE WHEN SUPERVISOR_FG = 'Y' THEN 1 ELSE 0 END")), 'supervisor_count'],
+      [sequelize.fn('SUM', sequelize.literal("CASE WHEN ALLOW_TXN_POSTING_FG = 'Y' THEN 1 ELSE 0 END")), 'txn_poster_count'],
+    ],
+    group: ['ROLE_ID', 'ROLE_NM'],
+    raw: true,
+  });
+  
+  return roles.map(role => ({
+    ROLE_ID: role.ROLE_ID,
+    ROLE_NM: role.ROLE_NM,
+    user_count: parseInt(role.user_count) || 0,
+    supervisor_count: parseInt(role.supervisor_count) || 0,
+    txn_poster_count: parseInt(role.txn_poster_count) || 0,
+    role_details: getRoleById(role.ROLE_ID),
+  }));
+};
+
+BusinessRole.validateRoleData = function (roleData) {
+  const errors = [];
+  
+  // Required fields
+  if (!roleData.ROLE_NM || roleData.ROLE_NM.trim().length === 0) {
+    errors.push('Role name (ROLE_NM) is required');
+  }
+  
+  if (!roleData.ROLE_ID || !isValidRoleId(roleData.ROLE_ID)) {
+    errors.push('Valid role ID (ROLE_ID) is required');
+  }
+  
+  if (!roleData.USER_ID || roleData.USER_ID.trim().length === 0) {
+    errors.push('User ID (USER_ID) is required');
+  }
+  
+  if (!roleData.BUSINESS_UNIT || roleData.BUSINESS_UNIT.trim().length === 0) {
+    errors.push('Business unit (BUSINESS_UNIT) is required');
+  }
+  
+  if (!roleData.BU_ID || roleData.BU_ID < 1) {
+    errors.push('Valid business unit ID (BU_ID) is required');
+  }
+  
+  if (!roleData.CREATED_BY || roleData.CREATED_BY.trim().length === 0) {
+    errors.push('Created by (CREATED_BY) is required');
+  }
+  
+  // Role consistency
+  if (roleData.ROLE_ID && roleData.ROLE_NM) {
+    const roleConfig = getRoleById(roleData.ROLE_ID);
+    if (roleConfig && roleData.ROLE_NM.toUpperCase() !== roleConfig.ROLE_NM.toUpperCase()) {
+      errors.push(`ROLE_NM "${roleData.ROLE_NM}" doesn't match ROLE_ID ${roleData.ROLE_ID}. Expected: "${roleConfig.ROLE_NM}"`);
+    }
+  }
+  
+  // Status validation
+  if (roleData.REC_ST && !['Active', 'Deactivated'].includes(roleData.REC_ST)) {
+    errors.push('REC_ST must be either "Active" or "Deactivated"');
+  }
+  
+  return errors;
+};
+
+// === QUERY SCOPES ===
+BusinessRole.addScope('active', {
+  where: { REC_ST: 'Active' },
 });
 
-const BusinessRole = mongoose.model('BusinessRole', BusinessRoleSchema);
+BusinessRole.addScope('supervisors', {
+  where: { SUPERVISOR_FG: 'Y' },
+});
+
+BusinessRole.addScope('transactionPosters', {
+  where: { ALLOW_TXN_POSTING_FG: 'Y' },
+});
+
+BusinessRole.addScope('byBusinessUnit', (businessUnit) => ({
+  where: { BUSINESS_UNIT: businessUnit },
+}));
+
+BusinessRole.addScope('byRole', (roleId) => ({
+  where: { ROLE_ID: roleId },
+}));
+
 export default BusinessRole;

@@ -13,11 +13,11 @@ import { createGLAccountTransaction } from '../controllers/GLAccountTransactionC
 const generateTransactionRefNo = () => `TRX${Date.now()}${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 const generateNumber = (len) => Math.random().toString().slice(2, 2 + len).padStart(len, '0');
 
-// Validate GL account number format: 6 groups of 1-3 digits separated by '-'
-const isValidGLAcctNo = (glAcctNo) => {
-  const regex = /^(\d{1,3}-){5}\d{1,3}$/;
-  return regex.test(glAcctNo);
-};
+// // Validate GL account number format: 6 groups of 1-3 digits separated by '-'
+// const isValidGLAcctNo = (glAcctNo) => {
+//   const regex = /^(\d{1,3}-){5}\d{1,3}$/;
+//   return regex.test(glAcctNo);
+// };
 
 const GL_ACCOUNT_DEFAULTS = {
   GL_ACCT_CAT: 'ASSET',
@@ -48,7 +48,7 @@ async function updateCustomerAccountAndLedger(deposit, userId, description) {
 
 export const createDepositTransaction = async (req, res) => {
   const {
-    ACCT_ID,
+    ACCT_ID, // Make this optional
     ACCT_NO,
     GL_ACCT_NO,
     ACCT_NM,
@@ -65,11 +65,15 @@ export const createDepositTransaction = async (req, res) => {
     CUST_ID,
   } = req.body;
 
-  // Validate required fields
+  // Updated: ACCT_ID is no longer required
   const requiredFields = ['ACCT_NO', 'DEPOSITOR_NAME', 'VALUE_DATE', 'USER_ID', 'ROLE_NM', 'CUST_ID', 'GL_ACCT_NO'];
   const missingFields = requiredFields.filter((field) => !req.body[field]);
   if (missingFields.length > 0) {
-    return res.status(400).json({ message: 'Missing required fields', missingFields });
+    return res.status(400).json({ 
+      message: 'Missing required fields', 
+      missingFields,
+      note: 'ACCT_ID is optional and not required'
+    });
   }
 
   if (!AMOUNT || AMOUNT <= 0) {
@@ -85,9 +89,11 @@ export const createDepositTransaction = async (req, res) => {
     return res.status(400).json({ message: 'Amount after charges must be positive', finalAmount });
   }
 
-  // Validate CURRENCY_COUNT structure
+  // Validate CURRENCY_COUNT structure - SUPPORT BOTH OLD AND NEW KEY NAMES
   if (CURRENCY_COUNT) {
+    // Support both old keys (OneThousandNaira, FiveHundredNaira) and new keys (NGN1000, NGN500)
     const {
+      // Old key names
       OneThousandNaira = 0,
       FiveHundredNaira = 0,
       TwoHundredNaira = 0,
@@ -96,48 +102,87 @@ export const createDepositTransaction = async (req, res) => {
       TwentyNaira = 0,
       TenNaira = 0,
       FiveNaira = 0,
+      // New key names
+      NGN1000 = 0,
+      NGN500 = 0,
+      NGN200 = 0,
+      NGN100 = 0,
+      NGN50 = 0,
+      NGN20 = 0,
+      NGN10 = 0,
+      NGN5 = 0,
     } = CURRENCY_COUNT;
 
+    // Use new keys if provided, otherwise use old keys
     const calculatedAmount =
-      OneThousandNaira * 1000 +
-      FiveHundredNaira * 500 +
-      TwoHundredNaira * 200 +
-      OneHundredNaira * 100 +
-      FiftyNaira * 50 +
-      TwentyNaira * 20 +
-      TenNaira * 10 +
-      FiveNaira * 5;
+      ((OneThousandNaira || NGN1000) * 1000) +
+      ((FiveHundredNaira || NGN500) * 500) +
+      ((TwoHundredNaira || NGN200) * 200) +
+      ((OneHundredNaira || NGN100) * 100) +
+      ((FiftyNaira || NGN50) * 50) +
+      ((TwentyNaira || NGN20) * 20) +
+      ((TenNaira || NGN10) * 10) +
+      ((FiveNaira || NGN5) * 5);
 
     if (calculatedAmount !== AMOUNT) {
       return res.status(400).json({
         message: 'AMOUNT does not match the sum of currency denominations',
         calculatedAmount,
         providedAmount: AMOUNT,
+        denominationBreakdown: {
+          oneThousandNotes: OneThousandNaira || NGN1000,
+          fiveHundredNotes: FiveHundredNaira || NGN500,
+          twoHundredNotes: TwoHundredNaira || NGN200,
+          oneHundredNotes: OneHundredNaira || NGN100,
+          fiftyNotes: FiftyNaira || NGN50,
+          twentyNotes: TwentyNaira || NGN20,
+          tenNotes: TenNaira || NGN10,
+          fiveNotes: FiveNaira || NGN5
+        },
+        note: 'Currency denominations can use either old keys (OneThousandNaira) or new keys (NGN1000)'
       });
     }
 
+    // Calculate total count for both key naming conventions
     CURRENCY_COUNT.TOTAL_CURRENCY_COUNT =
-      OneThousandNaira +
-      FiveHundredNaira +
-      TwoHundredNaira +
-      OneHundredNaira +
-      FiftyNaira +
-      TwentyNaira +
-      TenNaira +
-      FiveNaira;
+      (OneThousandNaira || NGN1000) +
+      (FiveHundredNaira || NGN500) +
+      (TwoHundredNaira || NGN200) +
+      (OneHundredNaira || NGN100) +
+      (FiftyNaira || NGN50) +
+      (TwentyNaira || NGN20) +
+      (TenNaira || NGN10) +
+      (FiveNaira || NGN5);
+
+    // Ensure all keys are present for backward compatibility
+    CURRENCY_COUNT.OneThousandNaira = OneThousandNaira || NGN1000;
+    CURRENCY_COUNT.FiveHundredNaira = FiveHundredNaira || NGN500;
+    CURRENCY_COUNT.TwoHundredNaira = TwoHundredNaira || NGN200;
+    CURRENCY_COUNT.OneHundredNaira = OneHundredNaira || NGN100;
+    CURRENCY_COUNT.FiftyNaira = FiftyNaira || NGN50;
+    CURRENCY_COUNT.TwentyNaira = TwentyNaira || NGN20;
+    CURRENCY_COUNT.TenNaira = TenNaira || NGN10;
+    CURRENCY_COUNT.FiveNaira = FiveNaira || NGN5;
   }
 
   try {
     // Fetch customer account and validate CUST_ID presence
-    const customer = await CustomerAccount.findOne({ ACCT_NO });
+    const customer = await CustomerAccount.findOne({ ACCT_NO: String(ACCT_NO) });
     if (!customer) {
       return res.status(404).json({
         message: 'Customer must have Customer Account Opening before Deposit Transaction',
         ACCT_NO,
       });
     }
-    if (!customer.CUST_ID) {
-      return res.status(500).json({ message: 'Customer account is missing required CUST_ID', ACCT_NO });
+    
+    // Use customer.CUST_ID if CUST_ID not provided in request
+    const finalCustId = CUST_ID || customer.CUST_ID;
+    if (!finalCustId) {
+      return res.status(500).json({ 
+        message: 'Customer account is missing CUST_ID', 
+        ACCT_NO,
+        suggestion: 'Please provide CUST_ID in the request'
+      });
     }
 
     // Find or create Ledger and GL Account if missing
@@ -147,13 +192,13 @@ export const createDepositTransaction = async (req, res) => {
         GL_ACCT_NO,
         ACCT_DESC: ACCT_NM || 'Auto-created GL Account',
         ...GL_ACCOUNT_DEFAULTS,
-        BU_ID: BUSINESS_UNIT,
+        BU_ID: String(BUSINESS_UNIT),
         CREATED_BY: USER_ID,
         CREATE_DT: new Date(),
         LEDGER_NO: '0000',
         BAL_CD: 'CR',
         SUB_LEDGER_NO: '0000',
-        SEG_NO: BUSINESS_UNIT || '001',
+        SEG_NO: String(BUSINESS_UNIT) || '001',
         subfolderId: 1,
         DELAY_GL_POSTING: false,
         CR_ALLOWED: true,
@@ -177,8 +222,8 @@ export const createDepositTransaction = async (req, res) => {
         GL_ACCT_NO,
         BAL_CD: 'CR',
         SUB_LEDGER_NO: '0000',
-        BU_ID: glAccount.BU_ID || BUSINESS_UNIT,
-        SEG_NO: BUSINESS_UNIT || '001',
+        BU_ID: glAccount.BU_ID || String(BUSINESS_UNIT),
+        SEG_NO: String(BUSINESS_UNIT) || '001',
         CHART_OF_ACCT_ID: glAccount.CHART_OF_ACCT_ID,
         ACCT_DESC: glAccount.ACCT_DESC || ACCT_NM,
         GL_ACCT_ID: glAccount.GL_ACCT_ID,
@@ -192,19 +237,19 @@ export const createDepositTransaction = async (req, res) => {
       await ledger.save();
     }
 
-    // Create deposit transaction doc
+    // Create deposit transaction doc - ACCT_ID is now optional
     const deposit = new DepositTransaction({
-      ACCT_ID,
-      ACCT_NO,
+      ACCT_ID: ACCT_ID || null, // Optional field
+      ACCT_NO: String(ACCT_NO),
       ACCT_NM,
       GL_ACCT_NO,
       TRANSACTION_TYPE: 'Deposit',
       AMOUNT: finalAmount,
       TRANSACTION_REF_NO: generateTransactionRefNo(),
-      BALANCE_AFTER_TRANSACTION: customer.AVAILABLE_BALANCE + finalAmount,
+      BALANCE_AFTER_TRANSACTION: (customer.AVAILABLE_BALANCE || 0) + finalAmount,
       VALUE_DATE: new Date(VALUE_DATE),
       TRANSACTION_DATE: new Date(TRANSACTION_DATE),
-      BUSINESS_UNIT,
+      BUSINESS_UNIT: String(BUSINESS_UNIT),
       DEPOSITOR_NAME,
       CURRENCY_COUNT: CURRENCY_COUNT || {
         OneThousandNaira: 0,
@@ -220,7 +265,7 @@ export const createDepositTransaction = async (req, res) => {
       REC_ST: 'Pending',
       STATUS: 'Pending',
       DESCRIPTION,
-      CUST_ID,
+      CUST_ID: String(finalCustId), // Use the final CUST_ID
       USER_ID,
     });
     await deposit.save();
@@ -243,9 +288,9 @@ export const createDepositTransaction = async (req, res) => {
         ITEM_DESC: `Deposit of ₦${finalAmount} for Account ${ACCT_NO}`,
         ITEM_CLASS_NM: 'Transaction',
         ITEM_TYPE: 'DepositTransaction',
-        CUST_ID: Number(CUST_ID),
+        CUST_ID: Number(finalCustId), // Use the final CUST_ID
         USER_ID,
-        BU_ID: BUSINESS_UNIT,
+        BU_ID: String(BUSINESS_UNIT),
         ORIGINATOR_USER_ROLE_ID: ROLE_NM,
         TARGET_USER_ROLE_ID: range.AUTHORIZED_ROLES?.[0] || 'Manager',
         depositPayload: { _id: deposit._id },
@@ -265,7 +310,7 @@ export const createDepositTransaction = async (req, res) => {
           ROLE_ID: workflowPayload.TARGET_USER_ROLE_ID,
           message: `New deposit transaction of ₦${finalAmount} for Account ${ACCT_NO} requires your approval`,
           WORK_ITEM_ID: workflowResult?.workItem?.WORK_ITEM_ID || 'N/A',
-          CUST_ID,
+          CUST_ID: finalCustId,
           TRANSACTION_REF_NO: deposit.TRANSACTION_REF_NO,
         });
       } catch (notificationErr) {
@@ -274,9 +319,11 @@ export const createDepositTransaction = async (req, res) => {
       }
 
       return res.status(200).json({
+        success: true,
         message: 'Deposit transaction submitted for approval',
         transaction: deposit,
         workflow: workflowResult?.workItem || workflowPayload,
+        note: 'ACCT_ID is optional and was not required for this transaction'
       });
     }
 
@@ -311,7 +358,7 @@ export const createDepositTransaction = async (req, res) => {
             CREATED_BY: USER_ID,
             description: DESCRIPTION,
             SUB_LEDGER_NO: '0000',
-            SEG_NO: BUSINESS_UNIT,
+            SEG_NO: String(BUSINESS_UNIT),
             DRS_ALLOWED_FG: false,
             CRS_ALLOWED_FG: true,
             CREATE_DT: new Date(TRANSACTION_DATE),
@@ -340,7 +387,11 @@ export const createDepositTransaction = async (req, res) => {
       await deposit.save();
     } catch (glErr) {
       console.error('GL Transaction posting failed:', glErr);
-      return res.status(500).json({ message: 'Failed to post GL transaction', error: glErr.message });
+      return res.status(500).json({ 
+        success: false,
+        message: 'Failed to post GL transaction', 
+        error: glErr.message 
+      });
     }
 
     // Update customer account and ledger balances
@@ -351,7 +402,7 @@ export const createDepositTransaction = async (req, res) => {
       await NotificationService.send({
         ROLE_ID: ROLE_NM,
         message: `Deposit of ₦${finalAmount} for Account ${ACCT_NO} completed successfully`,
-        CUST_ID,
+        CUST_ID: finalCustId,
         TRANSACTION_REF_NO: deposit.TRANSACTION_REF_NO,
       });
     } catch (notificationErr) {
@@ -360,15 +411,18 @@ export const createDepositTransaction = async (req, res) => {
     }
 
     return res.status(201).json({
+      success: true,
       message: 'Deposit transaction processed successfully.',
       transaction: deposit,
       updatedCustomerAccount: updateResult.updatedCustomerAccount,
       updatedLedger: updateResult.updatedLedger,
       glTransaction,
+      note: 'ACCT_ID is optional and was not required for this transaction'
     });
   } catch (err) {
     console.error('❌ Deposit processing error:', err);
     return res.status(500).json({
+      success: false,
       message: 'Transaction processing failed',
       error: err.message || err,
     });

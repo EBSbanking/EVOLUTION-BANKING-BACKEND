@@ -1,90 +1,268 @@
-// models/GroupCollection.js - Schema for Group Loan Collection Record
-import mongoose from 'mongoose';
+﻿// models/GroupCollection.js - Schema for Group Loan Collection Record
+import { DataTypes } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const groupCollectionSchema = new mongoose.Schema({
-  group: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Group',
-    required: true,
+const GroupCollection = sequelize.define('GroupCollection', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
   },
-  groupLoan: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'GroupLoan',
-    required: true, // Links this collection to a specific group loan application
+  groupId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'Groups', // Reference to Group model
+      key: 'id'
+    }
   },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // Officer who recorded the collection
-    required: true,
+  groupLoanId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'GroupLoans', // Reference to GroupLoan model
+      key: 'id'
+    }
   },
-  branch: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Branch',
-    required: true,
+  createdById: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'Users', // Reference to User model
+      key: 'id'
+    }
   },
-  relationshipManager: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // RM overseeing the group
-    required: true,
+  branchId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'Branches', // Reference to Branch model
+      key: 'id'
+    }
+  },
+  relationshipManagerId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'Users', // Reference to User model (for RM)
+      key: 'id'
+    }
   },
   date: {
-    type: Date,
-    required: true, // Collection date
+    type: DataTypes.DATE,
+    allowNull: false,
+    validate: {
+      isDate: true,
+      notNull: true
+    }
   },
   total: {
-    type: Number,
-    required: true, // Total amount collected
-    min: 0,
+    type: DataTypes.DECIMAL(15, 2), // For precise monetary values
+    allowNull: false,
+    validate: {
+      isDecimal: true,
+      min: 0
+    }
   },
   status: {
-    type: String,
-    enum: ['Pending', 'Approved', 'Rejected'],
-    default: 'Pending',
+    type: DataTypes.ENUM('Pending', 'Approved', 'Rejected'),
+    defaultValue: 'Pending'
   },
   currency: {
-    type: String,
-    default: 'NGN',
-    uppercase: true,
+    type: DataTypes.STRING(3),
+    defaultValue: 'NGN',
+    validate: {
+      len: [3, 3],
+      isUppercase: true
+    },
+    set(value) {
+      if (value) {
+        this.setDataValue('currency', value.toUpperCase().trim());
+      }
+    }
   },
   lastUpdated: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   offlineId: {
-    type: String, // For offline sync tracking
-    default: null,
+    type: DataTypes.STRING,
+    allowNull: true,
+    defaultValue: null
   },
   channel: {
-    type: Number, // Or ref to Channel model if applicable
-    required: true,
-    min: 1,
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    validate: {
+      isInt: true,
+      min: 1
+    }
   },
   legacyId: {
-    type: Number, // For migration/legacy data mapping
+    type: DataTypes.INTEGER,
+    allowNull: true,
     unique: true,
-    sparse: true, // Allows nulls without uniqueness conflict
-  },
+    validate: {
+      isInt: true
+    }
+  }
 }, {
-  timestamps: true, // Adds createdAt and updatedAt automatically
+  tableName: 'GroupCollections',
+  timestamps: true, // Creates createdAt and updatedAt automatically
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  hooks: {
+    beforeSave: (collection, options) => {
+      // Update lastUpdated on save
+      collection.lastUpdated = new Date();
+    },
+    beforeUpdate: (collection, options) => {
+      // Update lastUpdated on update
+      collection.lastUpdated = new Date();
+    }
+  },
+  indexes: [
+    {
+      name: 'idx_group_id',
+      fields: ['groupId']
+    },
+    {
+      name: 'idx_group_loan_id',
+      fields: ['groupLoanId']
+    },
+    {
+      name: 'idx_status',
+      fields: ['status']
+    },
+    {
+      name: 'idx_date',
+      fields: ['date'],
+      order: [['date', 'DESC']]
+    },
+    {
+      name: 'idx_branch_id',
+      fields: ['branchId']
+    },
+    {
+      name: 'idx_legacy_id',
+      fields: ['legacyId'],
+      unique: true
+    },
+    // Composite indexes for common queries
+    {
+      name: 'idx_group_loan_status',
+      fields: ['groupLoanId', 'status']
+    },
+    {
+      name: 'idx_group_date_status',
+      fields: ['groupId', 'date', 'status']
+    },
+    {
+      name: 'idx_created_by_date',
+      fields: ['createdById', 'date']
+    }
+  ]
 });
 
-// Pre-save middleware to update lastUpdated
-groupCollectionSchema.pre('save', function (next) {
-  this.lastUpdated = new Date();
-  next();
-});
+// Instance methods
+GroupCollection.prototype.isLatest = async function() {
+  // Check if this is the most recent collection for the group loan
+  const latestCollection = await GroupCollection.findOne({
+    where: {
+      groupLoanId: this.groupLoanId
+    },
+    order: [['date', 'DESC'], ['createdAt', 'DESC']],
+    limit: 1
+  });
+  
+  return latestCollection && latestCollection.id === this.id;
+};
 
-// Indexes for efficient queries
-groupCollectionSchema.index({ group: 1 });
-groupCollectionSchema.index({ groupLoan: 1 });
-groupCollectionSchema.index({ status: 1 });
-groupCollectionSchema.index({ date: -1 });
-groupCollectionSchema.index({ branch: 1 });
-groupCollectionSchema.index({ legacyId: 1 });
+GroupCollection.prototype.getSummary = function() {
+  return {
+    id: this.id,
+    groupId: this.groupId,
+    groupLoanId: this.groupLoanId,
+    date: this.date,
+    total: parseFloat(this.total),
+    status: this.status,
+    currency: this.currency
+  };
+};
 
-// Optional: Virtual for total collections per group loan (populate in queries if needed)
-// groupCollectionSchema.virtual('isLatest').get(function () {
-//   // Logic to check if this is the most recent collection for the group loan
-// });
+// Class methods (static methods)
+GroupCollection.findByGroupLoan = function(groupLoanId, options = {}) {
+  const where = { groupLoanId };
+  
+  if (options.status) {
+    where.status = options.status;
+  }
+  
+  if (options.dateRange) {
+    where.date = {
+      [Op.between]: [options.dateRange.start, options.dateRange.end]
+    };
+  }
+  
+  return GroupCollection.findAll({
+    where,
+    order: [['date', 'DESC'], ['createdAt', 'DESC']],
+    limit: options.limit || 100
+  });
+};
 
-export default mongoose.model('GroupCollection', groupCollectionSchema);
+GroupCollection.findByGroup = function(groupId, options = {}) {
+  const where = { groupId };
+  
+  if (options.status) {
+    where.status = options.status;
+  }
+  
+  if (options.dateRange) {
+    where.date = {
+      [Op.between]: [options.dateRange.start, options.dateRange.end]
+    };
+  }
+  
+  return GroupCollection.findAll({
+    where,
+    order: [['date', 'DESC'], ['createdAt', 'DESC']],
+    limit: options.limit || 100
+  });
+};
+
+GroupCollection.getTotalByGroupLoan = async function(groupLoanId) {
+  const result = await GroupCollection.sum('total', {
+    where: {
+      groupLoanId,
+      status: 'Approved' // Only count approved collections
+    }
+  });
+  
+  return result || 0;
+};
+
+GroupCollection.getTotalByGroup = async function(groupId, options = {}) {
+  const where = {
+    groupId,
+    status: 'Approved'
+  };
+  
+  if (options.dateRange) {
+    where.date = {
+      [Op.between]: [options.dateRange.start, options.dateRange.end]
+    };
+  }
+  
+  const result = await GroupCollection.sum('total', { where });
+  return result || 0;
+};
+
+// Associations (to be defined in model initialization file)
+// GroupCollection.belongsTo(Group, { foreignKey: 'groupId' });
+// GroupCollection.belongsTo(GroupLoan, { foreignKey: 'groupLoanId' });
+// GroupCollection.belongsTo(User, { as: 'Creator', foreignKey: 'createdById' });
+// GroupCollection.belongsTo(Branch, { foreignKey: 'branchId' });
+// GroupCollection.belongsTo(User, { as: 'RelationshipManager', foreignKey: 'relationshipManagerId' });
+
+export default GroupCollection;

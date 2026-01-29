@@ -1,6 +1,4 @@
-// routes/branchRoutes.js
 import express from 'express';
-const router = express.Router();
 import {
   createBranch,
   getAllBranches,
@@ -12,36 +10,30 @@ import {
   getBranchesByOrganization
 } from '../controllers/BranchController.js';
 
-// GET all branches with optional query parameters
-// URL: /api/branches?includeBusinessUnits=true&organizationName=ACME
-router.get('/', getAllBranches);
+const router = express.Router();
 
-// GET branches by organization name
-// URL: /api/branches/organization/ACME?includeBusinessUnits=true
-router.get('/organization/:organizationName', getBranchesByOrganization);
+// OPTION A: If you want /api/branches
+router.route('/')
+  .get(getAllBranches)
+  .post(createBranch);
 
-// GET single branch by ID
-// URL: /api/branches/507f1f77bcf86cd799439011?includeBusinessUnits=true
-router.get('/:id', getBranchById);
+// OPTION B: If you want /api/branch/branch (duplicate path)
+router.route('/branch')
+  .post(createBranch); // Add this line
 
-// GET branch by branch code
-// URL: /api/branches/code/010?includeBusinessUnits=true
-router.get('/code/:branchCode', getBranchByCode);
+// Rest of your routes
+router.route('/code/:branchCode')
+  .get(getBranchByCode);
 
-// GET business units for a specific branch
-// URL: /api/branches/507f1f77bcf86cd799439011/business-units
-router.get('/:id/business-units', getBranchBusinessUnits);
+router.route('/organization/:organizationName')
+  .get(getBranchesByOrganization);
 
-// POST create new branch
-// URL: /api/branches
-router.post('/branch', createBranch);
+router.route('/:id')
+  .get(getBranchById)
+  .put(updateBranch)
+  .delete(deleteBranch);
 
-// PUT update branch by ID
-// URL: /api/branches/507f1f77bcf86cd799439011
-router.put('/:id', updateBranch);
-
-// DELETE branch by ID
-// URL: /api/branches/507f1f77bcf86cd799439011
-router.delete('/:id', deleteBranch);
+router.route('/:id/business-units')
+  .get(getBranchBusinessUnits);
 
 export default router;

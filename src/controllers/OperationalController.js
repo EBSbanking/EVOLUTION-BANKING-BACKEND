@@ -6,7 +6,7 @@ import {
   getErrorMessage,
   formatErrorResponse
 } from '../utils/errorUtils.js';
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
 import logAuditTrail from '../Services/AuditService.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -32,7 +32,10 @@ const systemStatus = {
 export class OperationalController {
   static async getCurrentBusinessDate() {
     try {
-      const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+      const systemDate = await SystemDate.findOne({
+        order: [['CREATED_AT', 'DESC']]
+      });
+      
       if (!systemDate) {
         throw createError(ERROR_CODES.RESOURCE_NOT_FOUND, 'System date not initialized');
       }
@@ -47,14 +50,16 @@ export class OperationalController {
   }
 
   static async initializeSystemDate() {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const t = await sequelize.transaction();
 
     try {
-      const existing = await SystemDate.findOne().session(session);
+      const existing = await SystemDate.findOne({
+        transaction: t
+      });
+      
       if (existing) {
         logger.info('System date already exists');
-        await session.commitTransaction();
+        await t.commit();
         return existing.currentBusinessDate;
       }
 
@@ -67,10 +72,18 @@ export class OperationalController {
 
       while (isHoliday && attempts < 30) {
         nextBusinessDate.setDate(nextBusinessDate.getDate() + 1);
-        isHoliday =
-          (await Holiday.isHoliday(nextBusinessDate)) ||
-          nextBusinessDate.getDay() === 0 ||
-          nextBusinessDate.getDay() === 6;
+        
+        // Check if it's a holiday
+        const holidayCheck = await Holiday.findOne({
+          where: {
+            holidayDate: nextBusinessDate
+          },
+          transaction: t
+        });
+        
+        isHoliday = holidayCheck !== null || 
+                   nextBusinessDate.getDay() === 0 || 
+                   nextBusinessDate.getDay() === 6;
         attempts++;
       }
 
@@ -78,15 +91,14 @@ export class OperationalController {
         throw createError(ERROR_CODES.INITIALIZATION_ERROR, 'Failed to find valid business date');
       }
 
-      const systemDate = new SystemDate({
+      const systemDate = await SystemDate.create({
         currentBusinessDate: today,
         nextBusinessDate,
         isEODProcessing: false,
         eodStatus: 'IDLE'
-      });
+      }, { transaction: t });
 
-      await systemDate.save({ session });
-      await session.commitTransaction();
+      await t.commit();
 
       logger.info('System date initialized successfully', {
         currentBusinessDate: today,
@@ -95,20 +107,21 @@ export class OperationalController {
 
       return today;
     } catch (error) {
-      await session.abortTransaction();
+      await t.rollback();
       logger.error('Failed to initialize system date', {
         error: getErrorMessage(error),
         code: error.code
       });
       throw formatErrorResponse(error);
-    } finally {
-      session.endSession();
     }
   }
 
   static async isHoliday(date) {
     try {
-      return await Holiday.isHoliday(date);
+      const holiday = await Holiday.findOne({
+        where: { holidayDate: date }
+      });
+      return holiday !== null;
     } catch (error) {
       logger.error('Failed to check holiday status', {
         error: getErrorMessage(error),
@@ -127,10 +140,14 @@ export class OperationalController {
 
       while (isHoliday && attempts < 30) {
         nextDate.setDate(nextDate.getDate() + 1);
-        isHoliday =
-          (await Holiday.isHoliday(nextDate)) ||
-          nextDate.getDay() === 0 ||
-          nextDate.getDay() === 6;
+        
+        const holidayCheck = await Holiday.findOne({
+          where: { holidayDate: nextDate }
+        });
+        
+        isHoliday = holidayCheck !== null || 
+                   nextDate.getDay() === 0 || 
+                   nextDate.getDay() === 6;
         attempts++;
       }
 
@@ -153,17 +170,15 @@ export class OperationalController {
   }
 
   static async processEndOfDay(userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const t = await sequelize.transaction();
 
     try {
-      const systemDate = await SystemDate.findOneAndUpdate(
-        { isEODProcessing: false },
-        {
-          $set: { isEODProcessing: true, eodStatus: 'IN_PROGRESS' }
-        },
-        { new: true, session }
-      ).session(session);
+      // Find and lock the system date row for update
+      const systemDate = await SystemDate.findOne({
+        where: { isEODProcessing: false },
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
 
       if (!systemDate) {
         throw createError(
@@ -171,6 +186,12 @@ export class OperationalController {
           'EOD already in progress or system date not initialized'
         );
       }
+
+      // Update to mark as processing
+      await systemDate.update({
+        isEODProcessing: true,
+        eodStatus: 'IN_PROGRESS'
+      }, { transaction: t });
 
       const eodRecord = {
         processedDate: systemDate.currentBusinessDate,
@@ -204,6 +225,7 @@ export class OperationalController {
         }
       };
 
+      // Run all services in parallel
       await Promise.all([
         runService('loanStatusUpdates', updateLoanStatusForAllLoans),
         runService('overdueLoans', checkOverdueLoans),
@@ -214,41 +236,46 @@ export class OperationalController {
 
       const nextDate = await this.getNextBusinessDay(systemDate.nextBusinessDate);
 
-      const updated = await SystemDate.findByIdAndUpdate(
-        systemDate._id,
-        {
-          $set: {
-            currentBusinessDate: systemDate.nextBusinessDate,
-            nextBusinessDate: nextDate,
-            isEODProcessing: false,
-            eodStatus: 'COMPLETED',
-            lastEODProcessedBy: userId
-          },
-          $push: { eodHistory: eodRecord }
-        },
-        { new: true, session }
-      );
+      // Update system date with EOD results
+      await systemDate.update({
+        currentBusinessDate: systemDate.nextBusinessDate,
+        nextBusinessDate: nextDate,
+        isEODProcessing: false,
+        eodStatus: 'COMPLETED',
+        lastEODProcessedBy: userId
+      }, { transaction: t });
 
+      // Store EOD history (assuming you have a separate EODHistory model)
+      // If you want to store in SystemDate itself as JSON, you could do:
+      const eodHistory = systemDate.eodHistory || [];
+      eodHistory.push(eodRecord);
+      
+      await SystemDate.update({
+        eodHistory: eodHistory
+      }, {
+        where: { id: systemDate.id },
+        transaction: t
+      });
+
+      // Log audit trail
       await logAuditTrail({
         userId,
         action: 'EOD_PROCESSED',
         entityType: 'SYSTEM',
         description: `EOD processed for ${systemDate.currentBusinessDate}`,
         metadata: eodRecord.services
-      }, session);
+      }, t);
 
-      await session.commitTransaction();
+      await t.commit();
 
-      return { success: true, date: updated.currentBusinessDate };
+      return { success: true, date: systemDate.nextBusinessDate };
     } catch (error) {
-      await session.abortTransaction();
+      await t.rollback();
       logger.error('EOD processing failed', {
         error: getErrorMessage(error),
         code: error.code
       });
       throw formatErrorResponse(error);
-    } finally {
-      session.endSession();
     }
   }
 

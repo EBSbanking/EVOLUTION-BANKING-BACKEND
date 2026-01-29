@@ -1,7 +1,6 @@
 import Thrift from '../models/Thrift.js';
 import Customer from '../models/Customer.js';
 import Transaction from '../models/Transaction.js';
-import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
 import { generateAccountIdentifiersFromCounter } from '../utils/generateAccountNumber.js';

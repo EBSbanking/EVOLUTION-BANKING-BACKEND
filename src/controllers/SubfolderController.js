@@ -1,24 +1,28 @@
-import mongoose from 'mongoose';
+import { Op } from 'sequelize';
+import sequelize from '../../config/db.js'; // Adjust the path as needed
 import Subfolder from '../models/Subfolder.js';
 import Ledger from '../models/Ledger.js';
 
 // For GL Account creation - expects GL_ACCT_NO (original function)
-export const createRootSubfolder = async (transactionId, { GL_ACCT_NO, createdBy, description }, { session } = {}) => {
+export const createRootSubfolder = async (transactionId, { GL_ACCT_NO, createdBy, description }, { transaction } = {}) => {
   try {
     if (!createdBy || !GL_ACCT_NO) {
       throw new Error('createdBy and GL_ACCT_NO are required');
     }
 
     // Fetch ledgerNo from Ledger or use SUB_LEDGER_NO from transaction
-    const ledger = await Ledger.findOne({ GL_ACCT_NO }).session(session).exec();
+    const ledger = await Ledger.findOne({ 
+      where: { GL_ACCT_NO },
+      transaction 
+    });
+    
     const ledgerNo = ledger?.LEDGER_NO || '0000';
 
     // Generate a unique numeric subfolderId
-    const maxSubfolder = await Subfolder.findOne()
-      .sort({ subfolderId: -1 })
-      .lean()
-      .session(session)
-      .exec();
+    const maxSubfolder = await Subfolder.findOne({
+      order: [['subfolderId', 'DESC']],
+      transaction
+    });
 
     let subfolderId = 1;
     if (maxSubfolder && maxSubfolder.subfolderId !== undefined && !isNaN(Number(maxSubfolder.subfolderId))) {
@@ -29,16 +33,15 @@ export const createRootSubfolder = async (transactionId, { GL_ACCT_NO, createdBy
     const isRoot = true;
     const name = description ? `${description} Subfolder ${ledgerNo}`.trim() : `Root Subfolder ${ledgerNo}`.trim();
 
-    const newSubfolder = new Subfolder({
+    const newSubfolder = await Subfolder.create({
       subfolderId,
       parentId,
       createdBy: createdBy.trim(),
       ledgerNo: ledgerNo.trim(),
       isRoot,
       name,
-    });
+    }, { transaction });
 
-    await newSubfolder.save({ session });
     return newSubfolder;
   } catch (error) {
     console.error('Error creating root subfolder:', {
@@ -51,132 +54,128 @@ export const createRootSubfolder = async (transactionId, { GL_ACCT_NO, createdBy
 
 // In your subfolderController.js, update the createSimpleRootSubfolder function:
 export const createSimpleRootSubfolder = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   
   try {
-    await session.withTransaction(async () => {
-      const { name, createdBy, ledgerNo = '001', description, parentId = 1 } = req.body; // Default to 1
+    const { name, createdBy, ledgerNo = '001', description, parentId = 1 } = req.body; // Default to 1
 
-      if (!name || !createdBy) {
-        throw new Error('name and createdBy are required');
-      }
+    if (!name || !createdBy) {
+      throw new Error('name and createdBy are required');
+    }
 
-      // Generate a simple subfolderId
-      const maxSubfolder = await Subfolder.findOne()
-        .sort({ subfolderId: -1 })
-        .session(session);
+    // Generate a simple subfolderId
+    const maxSubfolder = await Subfolder.findOne({
+      order: [['subfolderId', 'DESC']],
+      transaction
+    });
 
-      let subfolderId = 1;
-      if (maxSubfolder && maxSubfolder.subfolderId) {
-        subfolderId = Number(maxSubfolder.subfolderId) + 1;
-      }
+    let subfolderId = 1;
+    if (maxSubfolder && maxSubfolder.subfolderId) {
+      subfolderId = Number(maxSubfolder.subfolderId) + 1;
+    }
 
-      const newSubfolder = new Subfolder({
-        subfolderId: subfolderId,
-        parentId: Number(parentId), // Ensure it's a number
-        createdBy: createdBy.trim().toUpperCase(),
-        ledgerNo: ledgerNo.trim(),
-        isRoot: true,
-        name: name.trim(),
-        description: description || '',
-        createdAt: new Date(),
-      });
+    const newSubfolder = await Subfolder.create({
+      subfolderId: subfolderId,
+      parentId: Number(parentId), // Ensure it's a number
+      createdBy: createdBy.trim().toUpperCase(),
+      ledgerNo: ledgerNo.trim(),
+      isRoot: true,
+      name: name.trim(),
+      description: description || '',
+      createdAt: new Date(),
+    }, { transaction });
 
-      await newSubfolder.save({ session });
+    await transaction.commit();
 
-      res.status(201).json({
-        success: true,
-        message: 'Root subfolder created successfully',
-        data: newSubfolder
-      });
+    res.status(201).json({
+      success: true,
+      message: 'Root subfolder created successfully',
+      data: newSubfolder
     });
   } catch (error) {
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
+    await transaction.rollback();
     console.error('Error creating root subfolder:', error.message);
     res.status(400).json({
       success: false,
       message: 'Error creating root subfolder',
       error: error.message
     });
-  } finally {
-    session.endSession();
   }
 };
 
 // Create subfolder with GL_ACCT_NO (for GL account integration)
 export const createSubfolderWithGLAccount = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   
   try {
-    await session.withTransaction(async () => {
-      const { GL_ACCT_NO, createdBy, description, name } = req.body;
+    const { GL_ACCT_NO, createdBy, description, name } = req.body;
 
-      if (!GL_ACCT_NO || !createdBy) {
-        throw new Error('GL_ACCT_NO and createdBy are required');
-      }
+    if (!GL_ACCT_NO || !createdBy) {
+      throw new Error('GL_ACCT_NO and createdBy are required');
+    }
 
-      // Fetch ledgerNo from Ledger
-      const ledger = await Ledger.findOne({ GL_ACCT_NO }).session(session);
-      const ledgerNo = ledger?.LEDGER_NO || '0000';
+    // Fetch ledgerNo from Ledger
+    const ledger = await Ledger.findOne({ 
+      where: { GL_ACCT_NO },
+      transaction 
+    });
+    
+    const ledgerNo = ledger?.LEDGER_NO || '0000';
 
-      // Generate subfolderId
-      const maxSubfolder = await Subfolder.findOne()
-        .sort({ subfolderId: -1 })
-        .session(session);
+    // Generate subfolderId
+    const maxSubfolder = await Subfolder.findOne({
+      order: [['subfolderId', 'DESC']],
+      transaction
+    });
 
-      let subfolderId = 1;
-      if (maxSubfolder && maxSubfolder.subfolderId) {
-        subfolderId = Number(maxSubfolder.subfolderId) + 1;
-      }
+    let subfolderId = 1;
+    if (maxSubfolder && maxSubfolder.subfolderId) {
+      subfolderId = Number(maxSubfolder.subfolderId) + 1;
+    }
 
-      const finalName = name || (description ? `${description} Subfolder` : `Subfolder for ${GL_ACCT_NO}`);
+    const finalName = name || (description ? `${description} Subfolder` : `Subfolder for ${GL_ACCT_NO}`);
 
-      const newSubfolder = new Subfolder({
-        subfolderId: subfolderId.toString(),
-        parentId: null,
-        createdBy: createdBy.trim(),
-        ledgerNo: ledgerNo.trim(),
-        isRoot: true,
-        name: finalName.trim(),
-        description: description || '',
-        GL_ACCT_NO: GL_ACCT_NO,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
+    const newSubfolder = await Subfolder.create({
+      subfolderId: subfolderId.toString(),
+      parentId: null,
+      createdBy: createdBy.trim(),
+      ledgerNo: ledgerNo.trim(),
+      isRoot: true,
+      name: finalName.trim(),
+      description: description || '',
+      GL_ACCT_NO: GL_ACCT_NO,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }, { transaction });
 
-      await newSubfolder.save({ session });
+    await transaction.commit();
 
-      res.status(201).json({
-        success: true,
-        message: 'Subfolder created successfully',
-        data: newSubfolder
-      });
+    res.status(201).json({
+      success: true,
+      message: 'Subfolder created successfully',
+      data: newSubfolder
     });
   } catch (error) {
-    if (session.inTransaction()) {
-      await session.abortTransaction();
-    }
+    await transaction.rollback();
     console.error('Error creating subfolder:', error.message);
     res.status(400).json({
       success: false,
       message: 'Error creating subfolder',
       error: error.message
     });
-  } finally {
-    session.endSession();
   }
 };
 
 // Original fetch function
-export const fetchSubfolders = async (parentId = null, { session } = {}) => {
+export const fetchSubfolders = async (parentId = null, { transaction } = {}) => {
   try {
-    const filter = parentId ? { parentId } : {};
-    const subfolders = await Subfolder.find(filter)
-      .sort({ subfolderId: 1 })
-      .session(session)
-      .exec();
+    const where = parentId ? { parentId } : {};
+    const subfolders = await Subfolder.findAll({
+      where,
+      order: [['subfolderId', 'ASC']],
+      transaction
+    });
+    
     return subfolders;
   } catch (error) {
     console.error('Error fetching subfolders:', {
@@ -192,10 +191,11 @@ export const getAllSubfolders = async (req, res) => {
   try {
     const { parentId } = req.query;
     
-    const filter = parentId ? { parentId: Number(parentId) } : {};
-    const subfolders = await Subfolder.find(filter)
-      .sort({ subfolderId: 1 })
-      .exec();
+    const where = parentId ? { parentId: Number(parentId) } : {};
+    const subfolders = await Subfolder.findAll({
+      where,
+      order: [['subfolderId', 'ASC']]
+    });
 
     res.status(200).json({
       success: true,
@@ -217,7 +217,9 @@ export const getSubfolderById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const subfolder = await Subfolder.findOne({ subfolderId: id });
+    const subfolder = await Subfolder.findOne({ 
+      where: { subfolderId: id } 
+    });
     
     if (!subfolder) {
       return res.status(404).json({
@@ -241,18 +243,17 @@ export const getSubfolderById = async (req, res) => {
 };
 
 // New function for GL account creation (uses LEDGER_NO directly)
-export const createRootSubfolderWithLedger = async (createdBy, ledgerNo, description = '', { session } = {}) => {
+export const createRootSubfolderWithLedger = async (createdBy, ledgerNo, description = '', { transaction } = {}) => {
   try {
     if (!createdBy || !ledgerNo) {
       throw new Error('createdBy and ledgerNo are required');
     }
 
     // Generate a unique numeric subfolderId
-    const maxSubfolder = await Subfolder.findOne()
-      .sort({ subfolderId: -1 })
-      .lean()
-      .session(session)
-      .exec();
+    const maxSubfolder = await Subfolder.findOne({
+      order: [['subfolderId', 'DESC']],
+      transaction
+    });
 
     let subfolderId = 1;
     if (maxSubfolder && maxSubfolder.subfolderId !== undefined && !isNaN(Number(maxSubfolder.subfolderId))) {
@@ -263,7 +264,7 @@ export const createRootSubfolderWithLedger = async (createdBy, ledgerNo, descrip
     const isRoot = true;
     const name = description ? `${description} Subfolder` : `Root Subfolder ${ledgerNo}`;
 
-    const newSubfolder = new Subfolder({
+    const newSubfolder = await Subfolder.create({
       subfolderId: subfolderId.toString(),
       parentId,
       createdBy: createdBy.trim(),
@@ -273,9 +274,8 @@ export const createRootSubfolderWithLedger = async (createdBy, ledgerNo, descrip
       description: description || '',
       createdAt: new Date(),
       updatedAt: new Date()
-    });
+    }, { transaction });
 
-    await newSubfolder.save({ session });
     return newSubfolder;
   } catch (error) {
     console.error('Error creating root subfolder:', {

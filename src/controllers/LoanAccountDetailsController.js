@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+
 import LoanAccountDetails from '../models/LoanAccountDetails.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import Transaction from '../models/Transaction.js';

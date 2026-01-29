@@ -1,10 +1,11 @@
-import mongoose from 'mongoose';
+// src/utils/glAccountGenerator.js - Sequelize Version
+import { Op } from 'sequelize';
 import Subfolder from '../models/Subfolder.js';
-import { logger } from './logger.js';
 import GLAccount from '../models/GLAccount.js';
 import Branch from '../models/Branch.js';
 import Organization from '../models/organization.js';
 import { addAuditTrail } from '../controllers/AudiTrailController.js';
+import sequelize from '../../config/db.js';
 
 // Fallback logger if import fails
 const fallbackLogger = {
@@ -259,7 +260,7 @@ export const determineDebitAllowed = (accountType) => {
 };
 
 // Updated createInterBranchAccounts function using the new generator
-export const createInterBranchAccounts = async (organizationCode, branchCode, branchName, CREATED_BY, session) => {
+export const createInterBranchAccounts = async (organizationCode, branchCode, branchName, CREATED_BY, transaction) => {
   const interBranchAccounts = [];
   const interBranchTypes = ['INTER_BRANCH', 'INTER_BRANCH_PAYABLE', 'INTER_BRANCH_RECEIVABLE'];
   
@@ -280,15 +281,22 @@ export const createInterBranchAccounts = async (organizationCode, branchCode, br
         { sequenceLength: 4, useRandomSequence: true }
       );
       
-      const existingAccount = await GLAccount.findOne({ GL_ACCT_NO: glAcctNo }).session(session);
+      const existingAccount = await GLAccount.findOne({ 
+        where: { GL_ACCT_NO: glAcctNo },
+        transaction
+      });
+      
       if (existingAccount) {
         (logger.info || fallbackLogger.info)(`Inter-branch account ${glAcctNo} already exists, skipping creation`);
         continue;
       }
 
-      const newGLAccount = new GLAccount({
+      // Generate GL_ACCT_ID
+      const GL_ACCT_ID = await generateNextGLAcctId(transaction);
+
+      const newGLAccount = await GLAccount.create({
         GL_ACCT_NO: glAcctNo,
-        GL_ACCT_ID: await generateNextGLAcctId(session),
+        GL_ACCT_ID: GL_ACCT_ID,
         CREATED_BY,
         organizationName: branchName,
         organizationCode: organizationCode,
@@ -320,9 +328,8 @@ export const createInterBranchAccounts = async (organizationCode, branchCode, br
         },
         createdAt: new Date(),
         updatedAt: new Date()
-      });
+      }, { transaction });
 
-      await newGLAccount.save({ session });
       interBranchAccounts.push(newGLAccount);
       
       (logger.info || fallbackLogger.info)(`Created inter-branch account: ${glAcctNo} for branch ${branchCode}`, {
@@ -347,24 +354,20 @@ export const createInterBranchAccounts = async (organizationCode, branchCode, br
 };
 
 /**
- * Auto-generate next GL_ACCT_ID (7-digit string), scoped to organization/branch if provided.
- * @param {mongoose.ClientSession} session - MongoDB session for transaction
- * @param {string} [organizationName] - Optional filter for organization
- * @param {string} [branchName] - Optional filter for branch
+ * Auto-generate next GL_ACCT_ID (7-digit string)
+ * @param {Object} transaction - Sequelize transaction
  * @returns {string} - Next GL_ACCT_ID (e.g., '0000001')
  */
-/**
- * Fixed version of generateNextGLAcctId to avoid "fn is not a function" error
- */
-export const generateNextGLAcctId = async (session) => {
+export const generateNextGLAcctId = async (transaction = null) => {
   try {
-    console.log('generateNextGLAcctId: Starting with session:', !!session);
+    console.log('generateNextGLAcctId: Starting with transaction:', !!transaction);
     
     // Find the highest GL_ACCT_ID and increment
-    const lastAccount = await GLAccount.findOne()
-      .sort({ GL_ACCT_ID: -1 })
-      .limit(1)
-      .session(session || null);
+    const lastAccount = await GLAccount.findOne({
+      order: [['GL_ACCT_ID', 'DESC']],
+      limit: 1,
+      transaction
+    });
 
     console.log('generateNextGLAcctId: Last account found:', lastAccount ? lastAccount.GL_ACCT_ID : 'None');
 
@@ -459,17 +462,18 @@ export const generateJournalId = () => {
  * Create Root Subfolder
  * @param {string} createdBy - User ID creating the subfolder
  * @param {number} ledgerNo - Ledger number
- * @param {Object} options - Options object containing MongoDB session
+ * @param {Object} options - Options object containing Sequelize transaction
  * @returns {Object} - Created subfolder document
  */
-export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
+export const createRootSubfolder = async (createdBy, ledgerNo, { transaction }) => {
   try {
     console.log('createRootSubfolder: Starting with createdBy:', createdBy, 'ledgerNo:', ledgerNo);
     
     // Find the highest subfolderId to generate the next sequential ID
-    const maxSubfolder = await Subfolder.findOne()
-      .sort({ subfolderId: -1 })
-      .session(session || null);
+    const maxSubfolder = await Subfolder.findOne({
+      order: [['subfolderId', 'DESC']],
+      transaction
+    });
     
     console.log('createRootSubfolder: Max subfolder found:', maxSubfolder ? maxSubfolder.subfolderId : 'None');
     
@@ -478,7 +482,7 @@ export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
 
     console.log('createRootSubfolder: Creating with subfolderId:', subfolderId, 'parentId:', parentId);
 
-    const newSubfolder = new Subfolder({
+    const newSubfolder = await Subfolder.create({
       subfolderId,
       parentId,
       createdBy,
@@ -487,9 +491,7 @@ export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
       name: `Root-${subfolderId}`,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
-
-    await newSubfolder.save({ session });
+    }, { transaction });
     
     console.log('createRootSubfolder: Successfully created subfolder:', newSubfolder.subfolderId);
     
@@ -515,10 +517,10 @@ export const createRootSubfolder = async (createdBy, ledgerNo, { session }) => {
  * Simple fallback function for GL Account ID generation
  * Use this if the main function has issues
  */
-export const generateSimpleGLAcctId = async (session) => {
+export const generateSimpleGLAcctId = async (transaction = null) => {
   try {
     console.log('generateSimpleGLAcctId: Starting simple ID generation');
-    const count = await GLAccount.countDocuments().session(session || null);
+    const count = await GLAccount.count({ transaction });
     const newId = String(count + 1).padStart(7, '0');
     console.log('generateSimpleGLAcctId: Generated ID:', newId);
     return newId;
@@ -533,26 +535,26 @@ export const generateSimpleGLAcctId = async (session) => {
  * Test function to verify GL account ID generation works
  */
 export const testGLAccountIdGeneration = async () => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   try {
     console.log('=== TESTING GL ACCOUNT ID GENERATION ===');
     
-    await session.withTransaction(async () => {
-      console.log('Testing main generateNextGLAcctId...');
-      const mainResult = await generateNextGLAcctId(session);
-      console.log('Main function result:', mainResult);
-      
-      console.log('Testing simple generateSimpleGLAcctId...');
-      const simpleResult = await generateSimpleGLAcctId(session);
-      console.log('Simple function result:', simpleResult);
-    });
+    console.log('Testing main generateNextGLAcctId...');
+    const mainResult = await generateNextGLAcctId(transaction);
+    console.log('Main function result:', mainResult);
+    
+    console.log('Testing simple generateSimpleGLAcctId...');
+    const simpleResult = await generateSimpleGLAcctId(transaction);
+    console.log('Simple function result:', simpleResult);
+    
+    await transaction.commit();
     
     console.log('=== TEST COMPLETED SUCCESSFULLY ===');
   } catch (error) {
     console.error('=== TEST FAILED ===');
     console.error('Error:', error.message);
+    await transaction.rollback();
   } finally {
-    session.endSession();
     console.log('=== TEST SESSION ENDED ===');
   }
 };

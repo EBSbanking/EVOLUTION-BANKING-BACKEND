@@ -1,5 +1,4 @@
-import mongoose from 'mongoose';
-import TermDeposit from '../models/TermDeposit.js';
+import connection from '../../config/db.js'; // Your MySQL connection
 import { createGLAccountTransaction } from '../controllers/GLAccountTransactionController.js';
 import logger from '../utils/logger.js';
 
@@ -9,23 +8,26 @@ import logger from '../utils/logger.js';
 class DailyInterestAccrual {
   constructor() {
     this.today = new Date();
+    this.connection = connection;
   }
 
   /**
    * Accrue daily interest for all active term deposits
    */
   async accrueDailyInterest() {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const conn = await this.connection.getConnection();
+    
     try {
+      await conn.beginTransaction();
       logger.info('Starting daily term deposit interest accrual');
 
-      const termDeposits = await TermDeposit.find({
-        START_DT: { $lte: this.today },
-        MATURITY_DT: { $gte: this.today },
-        STATUS: 'ACTIVE'
-      }).session(session);
+      const [termDeposits] = await conn.execute(`
+        SELECT * FROM term_deposits 
+        WHERE START_DT <= ? 
+          AND MATURITY_DT >= ? 
+          AND STATUS = 'ACTIVE'
+        FOR UPDATE
+      `, [this.today, this.today]);
 
       let totalAccrued = 0;
       let processedDeposits = 0;
@@ -33,7 +35,7 @@ class DailyInterestAccrual {
 
       for (const td of termDeposits) {
         try {
-          const accruedAmount = await this.accrueInterestForTermDeposit(td, session);
+          const accruedAmount = await this.accrueInterestForTermDeposit(td, conn);
           if (accruedAmount > 0) {
             totalAccrued += accruedAmount;
             processedDeposits++;
@@ -45,7 +47,7 @@ class DailyInterestAccrual {
         }
       }
 
-      await session.commitTransaction();
+      await conn.commit();
       
       logger.info('Daily term deposit interest accrual completed', {
         totalProcessed: processedDeposits,
@@ -63,18 +65,18 @@ class DailyInterestAccrual {
       };
 
     } catch (error) {
-      await session.abortTransaction();
+      await conn.rollback();
       logger.error('Daily term deposit interest accrual failed:', error);
       throw error;
     } finally {
-      session.endSession();
+      conn.release();
     }
   }
 
   /**
    * Accrue interest for a single term deposit
    */
-  async accrueInterestForTermDeposit(td, session) {
+  async accrueInterestForTermDeposit(td, conn) {
     // Validate required fields
     if (!td.NOTICE_AMOUNT || !td.EFFECTIVE_RATE) {
       throw new Error(`Missing required fields for term deposit ${td.ACCT_NO}`);
@@ -105,10 +107,14 @@ class DailyInterestAccrual {
 
     // Update accrued interest on term deposit
     const currentAccrued = parseFloat(td.ACCRUED_INTEREST || 0);
-    td.ACCRUED_INTEREST = (currentAccrued + roundedInterest).toFixed(2);
-    td.LAST_ACCRUAL_DATE = this.today;
-
-    await td.save({ session });
+    const newAccrued = (currentAccrued + roundedInterest).toFixed(2);
+    
+    await conn.execute(`
+      UPDATE term_deposits 
+      SET ACCRUED_INTEREST = ?, 
+          LAST_ACCRUAL_DATE = ?
+      WHERE ACCT_NO = ? AND STATUS = 'ACTIVE'
+    `, [newAccrued, this.today, td.ACCT_NO]);
 
     // Create GL transaction for interest accrual
     if (td.INTEREST_GL_ACCT_NO) {
@@ -117,12 +123,12 @@ class DailyInterestAccrual {
         creditAccount: td.INTEREST_GL_ACCT_NO, // TD Interest Holding GL
         amount: roundedInterest,
         description: `Daily interest accrual for Term Deposit ${td.ACCT_NO}`,
-        txnId: `DAILY_INT_${td._id}_${this.today.toISOString().slice(0, 10)}`,
+        txnId: `DAILY_INT_${td.id}_${this.today.toISOString().slice(0, 10)}`,
         transactionDate: this.today,
         currency: td.CURRENCY || 'USD',
         businessUnit: td.BUSINESS_UNIT,
         createdBy: 'SYSTEM_ACCRUAL'
-      }, session);
+      }, conn);
     } else {
       logger.warn(`No interest GL account configured for term deposit ${td.ACCT_NO}`);
     }
@@ -136,53 +142,55 @@ class DailyInterestAccrual {
    */
   async getAccrualSummary() {
     const today = new Date();
+    const conn = await this.connection.getConnection();
     
-    const summary = await TermDeposit.aggregate([
-      {
-        $match: {
-          START_DT: { $lte: today },
-          MATURITY_DT: { $gte: today },
-          STATUS: 'ACTIVE'
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalDeposits: { $sum: 1 },
-          totalPrincipal: { $sum: '$NOTICE_AMOUNT' },
-          totalAccruedInterest: { $sum: '$ACCRUED_INTEREST' },
-          avgInterestRate: { $avg: '$EFFECTIVE_RATE' }
-        }
-      }
-    ]);
+    try {
+      const [summary] = await conn.execute(`
+        SELECT 
+          COUNT(*) as totalDeposits,
+          COALESCE(SUM(NOTICE_AMOUNT), 0) as totalPrincipal,
+          COALESCE(SUM(ACCRUED_INTEREST), 0) as totalAccruedInterest,
+          COALESCE(AVG(EFFECTIVE_RATE), 0) as avgInterestRate
+        FROM term_deposits
+        WHERE START_DT <= ? 
+          AND MATURITY_DT >= ? 
+          AND STATUS = 'ACTIVE'
+      `, [today, today]);
 
-    return summary[0] || {
-      totalDeposits: 0,
-      totalPrincipal: 0,
-      totalAccruedInterest: 0,
-      avgInterestRate: 0
-    };
+      return summary[0] || {
+        totalDeposits: 0,
+        totalPrincipal: 0,
+        totalAccruedInterest: 0,
+        avgInterestRate: 0
+      };
+    } finally {
+      conn.release();
+    }
   }
 
   /**
    * Manual accrual for specific term deposit
    */
   async manualAccrualForDeposit(acctNo) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const conn = await this.connection.getConnection();
+    
     try {
-      const termDeposit = await TermDeposit.findOne({ 
-        ACCT_NO: acctNo,
-        STATUS: 'ACTIVE'
-      }).session(session);
+      await conn.beginTransaction();
 
-      if (!termDeposit) {
+      const [termDeposits] = await conn.execute(`
+        SELECT * FROM term_deposits 
+        WHERE ACCT_NO = ? AND STATUS = 'ACTIVE'
+        FOR UPDATE
+      `, [acctNo]);
+
+      if (termDeposits.length === 0) {
         throw new Error(`Active term deposit not found: ${acctNo}`);
       }
 
-      const accruedAmount = await this.accrueInterestForTermDeposit(termDeposit, session);
-      await session.commitTransaction();
+      const termDeposit = termDeposits[0];
+      const accruedAmount = await this.accrueInterestForTermDeposit(termDeposit, conn);
+      
+      await conn.commit();
 
       logger.info(`Manual interest accrual completed for term deposit ${acctNo}`, {
         amount: accruedAmount,
@@ -197,11 +205,11 @@ class DailyInterestAccrual {
       };
 
     } catch (error) {
-      await session.abortTransaction();
+      await conn.rollback();
       logger.error(`Manual accrual failed for term deposit ${acctNo}:`, error);
       throw error;
     } finally {
-      session.endSession();
+      conn.release();
     }
   }
 }

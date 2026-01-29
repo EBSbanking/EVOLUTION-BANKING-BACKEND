@@ -1,326 +1,641 @@
-// models/Transaction.js - UPDATED VERSION
-import mongoose from 'mongoose';
-import { getAllTransactionTypes } from '../constants/transactionTypes.js';
+﻿// models/Transaction.js - FIXED VERSION
+import { DataTypes, Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const TransactionSchema = new mongoose.Schema(
-  {
-    ACCT_NO: {
-      type: String,
-      required: [true, 'Account number is required'],
-      trim: true,
-      index: true,
-    },
-    ACCT_ID: {
-      type: String,
-      required: [true, 'Account ID is required'],
-      trim: true,
-      index: true,
-    },
-    BU_ID: {
-      type: Number,
-      required: [true, 'Business Unit ID is required'],
-    },
-    CUST_ID: {
-      type: String,
-      required: [true, 'Customer ID is required'],
-      trim: true,
-    },
-    ACCT_NM: {
-      type: String,
-      required: [true, 'Account name is required'],
-      trim: true,
-    },
-    AMOUNT: {
-      type: mongoose.Schema.Types.Decimal128, // Changed from Number to Decimal128
-      required: [true, 'Amount is required'],
-      set: (v) => mongoose.Types.Decimal128.fromString(v.toString()),
-      get: (v) => parseFloat(v.toString())
-    },
-    transactionDirection: {
-      type: String,
-      enum: ['CREDIT', 'DEBIT'],
-      required: true,
-      default: 'CREDIT'
-    },
-    TRANSACTIONDATE: {
-      type: Date,
-      required: [true, 'Transaction date is required'],
-      default: Date.now,
-      index: true,
-    },
-    TRANSACTION_TYPE: {
-      type: String,
-      enum: {
-        values: getAllTransactionTypes(),
-        message: '{VALUE} is not a valid transaction type',
-      },
-      uppercase: true,
-      required: [true, 'Transaction type is required'],
-      index: true,
-    },
-    TRANSACTION_ID: {
-      type: Number,
-      required: [true, 'Transaction ID is required'],
-      unique: true,
-      index: true,
-    },
-    transactionId: {
-      type: String,
-      // Leave it plain
-    },
-    EVENT_ID: {
-      type: Number,
-      required: [true, 'Event ID is required'],
-      index: true,
-    },
-    TRAN_JOURNAL_ID: {
-      type: String,
-      required: [true, 'Journal ID is required'],
-    },
-    REFERENCE: {
-      type: String,
-      unique: true,
-      required: true,
-    },
-    description: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    currency: {
-      type: String,
-      default: 'NGN',
-      uppercase: true,
-      enum: ['NGN', 'USD', 'GBP', 'EUR'],
-    },
-    createdBy: {
-      type: String,
-      required: [true, 'Creator ID is required'],
-      trim: true,
-    },
-    status: {
-      type: String,
-      enum: {
-        values: ['PENDING', 'PENDING_APPROVAL', 'COMPLETED', 'FAILED', 'REVERSED'],
-        message: '{VALUE} is not a valid status',
-      },
-      default: 'PENDING',
-      index: true,
-    },
-    FLAGGED_FOR_AML: {
-      type: Boolean,
-      default: false,
-    },
-    AML_REASON: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    AML_THRESHOLD_USED: {
-      type: Number,
-      default: 0,
-    },
-    APPROVAL_NOTES: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    APPROVED_BY: {
-      type: String,
-      default: null,
-    },
-    APPROVAL_DATE: {
-      type: Date,
-      default: null,
-    },
-    REJECTION_NOTES: {
-      type: String,
-      default: '',
-      trim: true,
-    },
-    REJECTED_BY: {
-      type: String,
-      default: null,
-    },
-    REJECTION_DATE: {
-      type: Date,
-      default: null,
-    },
-    metadata: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {},
-    },
+// Get all transaction types
+const getAllTransactionTypes = () => [
+  'DEPOSIT', 'WITHDRAWAL', 'TRANSFER', 'LOAN_DISBURSEMENT', 'LOAN_REPAYMENT',
+  'FEE_CHARGE', 'INTEREST_CREDIT', 'INTEREST_CHARGE', 'PENALTY_CHARGE',
+  'SALARY_PAYMENT', 'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER',
+  'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 'CHEQUE_DEPOSIT',
+  'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND'
+];
+
+const Transaction = sequelize.define('Transaction', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+    field: 'id'
   },
-  {
-    timestamps: true,
-    toJSON: {
-      virtuals: true,
-      transform: function (doc, ret) {
-        delete ret.__v;
-        delete ret._id;
-        return ret;
-      },
-    },
-    toObject: { virtuals: true },
-    collection: 'transactions',
+  ACCT_NO: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    field: 'account_number'
+  },
+  ACCT_ID: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    field: 'account_id'
+  },
+  BU_ID: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'bu_id'
+  },
+  CUST_ID: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    field: 'customer_id'
+  },
+  ACCT_NM: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'account_name'
+  },
+  AMOUNT: {
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    field: 'amount'
+  },
+  transactionDirection: {
+    type: DataTypes.ENUM('CREDIT', 'DEBIT'),
+    allowNull: false,
+    defaultValue: 'CREDIT',
+    field: 'transaction_direction'
+  },
+  TRANSACTIONDATE: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'transaction_date'
+  },
+  TRANSACTION_TYPE: {
+    type: DataTypes.ENUM(...getAllTransactionTypes()),
+    allowNull: false,
+    field: 'transaction_type'
+  },
+  // **FIXED: This should map to transaction_identifier column**
+  TRANSACTION_IDENTIFIER: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    unique: true,
+    field: 'transaction_identifier' // Map to database column
+  },
+  TRANSACTION_ID: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'transaction_id'
+  },
+  EVENT_ID: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'event_id'
+  },
+  TRAN_JOURNAL_ID: {
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    field: 'journal_id' // Map to journal_id column
+  },
+  REFERENCE: {
+    type: DataTypes.STRING(100),
+    unique: true,
+    allowNull: false,
+    field: 'reference'
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'description'
+  },
+  currency: {
+    type: DataTypes.ENUM('NGN', 'USD', 'GBP', 'EUR'),
+    defaultValue: 'NGN',
+    field: 'currency'
+  },
+  createdBy: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    field: 'created_by'
+  },
+  status: {
+    type: DataTypes.ENUM('PENDING', 'PENDING_APPROVAL', 'COMPLETED', 'FAILED', 'REVERSED'),
+    defaultValue: 'PENDING',
+    field: 'status'
+  },
+  FLAGGED_FOR_AML: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    field: 'flagged_for_aml'
+  },
+  AML_REASON: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    field: 'aml_reason'
+  },
+  AML_THRESHOLD_USED: {
+    type: DataTypes.DECIMAL(15, 2),
+    defaultValue: 0.00,
+    field: 'aml_threshold_used'
+  },
+  APPROVAL_NOTES: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'approval_notes'
+  },
+  APPROVED_BY: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'approved_by'
+  },
+  APPROVAL_DATE: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'approval_date'
+  },
+  REJECTION_NOTES: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'rejection_notes'
+  },
+  REJECTED_BY: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'rejected_by'
+  },
+  REJECTION_DATE: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'rejection_date'
+  },
+  metadata: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    field: 'metadata'
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
+  },
+  updated_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    onUpdate: DataTypes.NOW,
+    field: 'updated_at'
   }
-);
-
-// =========================
-// VIRTUAL FIELDS
-// =========================
-
-TransactionSchema.virtual('formattedAmount').get(function () {
-  const amount = parseFloat(this.AMOUNT.toString());
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: this.currency || 'NGN',
-  }).format(amount);
+}, {
+  tableName: 'transactions',
+  timestamps: true,
+  underscored: false, // **CHANGED: Set to false since we're manually mapping fields**
+  indexes: [
+    {
+      unique: true,
+      fields: ['transaction_identifier']
+    },
+    {
+      unique: true,
+      fields: ['reference']
+    },
+    {
+      unique: false,
+      fields: ['account_number']
+    },
+    {
+      unique: false,
+      fields: ['account_id']
+    },
+    {
+      unique: false,
+      fields: ['transaction_date']
+    },
+    {
+      unique: false,
+      fields: ['transaction_type']
+    },
+    {
+      unique: false,
+      fields: ['customer_id']
+    },
+    {
+      unique: false,
+      fields: ['status']
+    },
+    {
+      unique: false,
+      fields: ['created_by']
+    },
+    // Compound indexes
+    {
+      unique: false,
+      fields: ['account_number', 'transaction_date']
+    },
+    {
+      unique: false,
+      fields: ['customer_id', 'status']
+    },
+    {
+      unique: false,
+      fields: ['transaction_date', 'status']
+    },
+    {
+      unique: false,
+      fields: ['account_number', 'transaction_type']
+    }
+  ]
 });
 
-TransactionSchema.virtual('formattedDate').get(function () {
-  return this.TRANSACTIONDATE.toLocaleString();
-});
-
-TransactionSchema.virtual('actualAmount').get(function () {
-  const amount = parseFloat(this.AMOUNT.toString());
-  return this.transactionDirection === 'DEBIT' ? -amount : amount;
-});
-
-TransactionSchema.virtual('formattedActualAmount').get(function () {
-  const amount = parseFloat(this.AMOUNT.toString());
-  const actualAmount = this.transactionDirection === 'DEBIT' ? -amount : amount;
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: this.currency || 'NGN',
-  }).format(actualAmount);
-});
-
-// =========================
-// PRE-VALIDATE HOOK - UPDATED
-// =========================
-
-TransactionSchema.pre('validate', async function (next) {
-  console.log('Pre-validate hook - Checking IDs:', { 
-    TRANSACTION_ID: this.TRANSACTION_ID, 
-    EVENT_ID: this.EVENT_ID, 
-    TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-    REFERENCE: this.REFERENCE
+// **FIXED: Update the beforeCreate hook to use TRANSACTION_IDENTIFIER**
+Transaction.beforeCreate(async (transaction, options) => {
+  console.log('Before create hook - Checking IDs:', { 
+    TRANSACTION_IDENTIFIER: transaction.TRANSACTION_IDENTIFIER,
+    EVENT_ID: transaction.EVENT_ID, 
+    TRAN_JOURNAL_ID: transaction.TRAN_JOURNAL_ID,
+    REFERENCE: transaction.REFERENCE
   });
 
   // Only auto-generate if IDs are not provided
-  if (this.isNew) {
-    try {
-      // Check if IDs were already provided (e.g., from generateTransactionIds())
-      const hasProvidedIds = this.TRANSACTION_ID && this.EVENT_ID && this.TRAN_JOURNAL_ID && this.REFERENCE;
-      
-      if (!hasProvidedIds) {
-        console.log('Auto-generating transaction IDs...');
-        
-        // Get the next available TRANSACTION_ID
-        const lastTransaction = await this.constructor.findOne({})
-          .sort({ TRANSACTION_ID: -1 })
-          .select('TRANSACTION_ID')
-          .lean();
-        
-        let nextTransactionId = 1;
-        if (lastTransaction && lastTransaction.TRANSACTION_ID) {
-          nextTransactionId = Number(lastTransaction.TRANSACTION_ID) + 1;
-        }
-        
-        const timestamp = Date.now();
-        const randomSuffix = Math.floor(Math.random() * 1000);
-        
-        // Generate identifiers only if not provided
-        if (!this.TRANSACTION_ID) {
-          this.TRANSACTION_ID = nextTransactionId;
-        }
-        if (!this.EVENT_ID) {
-          this.EVENT_ID = nextTransactionId;
-        }
-        if (!this.TRAN_JOURNAL_ID) {
-          this.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
-        }
-        if (!this.REFERENCE) {
-          this.REFERENCE = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
-        }
-        if (!this.transactionId) {
-          this.transactionId = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
-        }
-        
-        console.log('Auto-generated IDs:', { 
-          TRANSACTION_ID: this.TRANSACTION_ID,
-          EVENT_ID: this.EVENT_ID,
-          TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-          REFERENCE: this.REFERENCE
-        });
-      } else {
-        console.log('Using provided IDs:', { 
-          TRANSACTION_ID: this.TRANSACTION_ID,
-          EVENT_ID: this.EVENT_ID,
-          TRAN_JOURNAL_ID: this.TRAN_JOURNAL_ID,
-          REFERENCE: this.REFERENCE
-        });
-      }
-    } catch (error) {
-      console.error('Error in pre-validate hook:', error);
-      // Continue with defaults
-      const timestamp = Date.now();
-      const fallbackId = Number(timestamp.toString().slice(-9));
-      
-      if (!this.TRANSACTION_ID) this.TRANSACTION_ID = fallbackId;
-      if (!this.EVENT_ID) this.EVENT_ID = fallbackId;
-      if (!this.TRAN_JOURNAL_ID) this.TRAN_JOURNAL_ID = `JRN${timestamp}`;
-      if (!this.REFERENCE) this.REFERENCE = `TXN${fallbackId}`;
-      if (!this.transactionId) this.transactionId = `TXN${fallbackId}`;
-    }
-  }
+  const hasProvidedIds = transaction.TRANSACTION_IDENTIFIER && transaction.EVENT_ID && transaction.TRAN_JOURNAL_ID && transaction.REFERENCE;
   
-  next();
+  if (!hasProvidedIds) {
+    console.log('Auto-generating transaction IDs...');
+    
+    try {
+      // Get the next available TRANSACTION_IDENTIFIER
+      const [lastTransaction] = await sequelize.query(
+        'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+        { type: sequelize.QueryTypes.SELECT }
+      );
+      
+      let nextTransactionId = 1;
+      if (lastTransaction && lastTransaction.max_id) {
+        nextTransactionId = Number(lastTransaction.max_id) + 1;
+      }
+      
+      const timestamp = Date.now();
+      const randomSuffix = Math.floor(Math.random() * 1000);
+      
+      // Generate identifiers only if not provided
+      if (!transaction.TRANSACTION_IDENTIFIER) {
+        transaction.TRANSACTION_IDENTIFIER = nextTransactionId;
+      }
+      if (!transaction.EVENT_ID) {
+        transaction.EVENT_ID = nextTransactionId;
+      }
+      if (!transaction.TRAN_JOURNAL_ID) {
+        transaction.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
+      }
+      if (!transaction.REFERENCE) {
+        transaction.REFERENCE = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+      }
+      if (!transaction.TRANSACTION_ID) {
+        transaction.TRANSACTION_ID = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+      }
+      
+      console.log('Auto-generated IDs:', { 
+        TRANSACTION_IDENTIFIER: transaction.TRANSACTION_IDENTIFIER,
+        EVENT_ID: transaction.EVENT_ID,
+        TRAN_JOURNAL_ID: transaction.TRAN_JOURNAL_ID,
+        REFERENCE: transaction.REFERENCE
+      });
+    } catch (error) {
+      console.error('Error generating transaction IDs:', error);
+      // Fallback IDs
+      const fallbackId = Number(Date.now().toString().slice(-9));
+      
+      if (!transaction.TRANSACTION_IDENTIFIER) transaction.TRANSACTION_IDENTIFIER = fallbackId;
+      if (!transaction.EVENT_ID) transaction.EVENT_ID = fallbackId;
+      if (!transaction.TRAN_JOURNAL_ID) transaction.TRAN_JOURNAL_ID = `JRN${Date.now()}`;
+      if (!transaction.REFERENCE) transaction.REFERENCE = `TXN${fallbackId}`;
+      if (!transaction.TRANSACTION_ID) transaction.TRANSACTION_ID = `TXN${fallbackId}`;
+    }
+  } else {
+    console.log('Using provided IDs:', { 
+      TRANSACTION_IDENTIFIER: transaction.TRANSACTION_IDENTIFIER,
+      EVENT_ID: transaction.EVENT_ID,
+      TRAN_JOURNAL_ID: transaction.TRAN_JOURNAL_ID,
+      REFERENCE: transaction.REFERENCE
+    });
+  }
 });
 
-// =========================
-// STATIC METHODS
-// =========================
-
-TransactionSchema.statics.findByAccount = function (accountId) {
-  return this.find({
-    $or: [{ ACCT_ID: accountId }, { ACCT_NO: accountId }],
-  }).sort({ TRANSACTIONDATE: -1 });
+// **FIXED: Update all helper methods to use TRANSACTION_IDENTIFIER**
+Transaction.generateTransactionIds = async () => {
+  try {
+    const [lastTransaction] = await sequelize.query(
+      'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+      { type: sequelize.QueryTypes.SELECT }
+    );
+    
+    const nextTransactionId = (lastTransaction?.max_id || 0) + 1;
+    const timestamp = Date.now();
+    const randomSuffix = Math.floor(Math.random() * 1000);
+    
+    return {
+      TRANSACTION_IDENTIFIER: nextTransactionId,
+      EVENT_ID: nextTransactionId,
+      JOURNAL_ID: `JRN${timestamp}${randomSuffix}`,
+      TRAN_JOURNAL_ID: `TJ${timestamp}${randomSuffix}`,
+      TRANSACTION_ID: `TXN${nextTransactionId}`
+    };
+  } catch (error) {
+    console.error('Error generating transaction IDs:', error.message);
+    throw error;
+  }
 };
 
-TransactionSchema.statics.findRecentByCustomer = function (customerId, limit = 10) {
-  return this.find({ CUST_ID: customerId }).sort({ TRANSACTIONDATE: -1 }).limit(limit);
+
+Transaction.getTransactionByReference = async (reference) => {
+  try {
+    const transaction = await Transaction.findOne({
+      where: { reference: reference }
+    });
+    
+    return transaction;
+  } catch (error) {
+    console.error('Error getting transaction by reference:', error.message);
+    throw error;
+  }
 };
 
-// Helper to generate transaction IDs
-TransactionSchema.statics.generateTransactionIds = function () {
-  const timestamp = Date.now();
-  const randomSuffix = Math.floor(Math.random() * 1000);
-  
-  // You can implement your own logic here
-  // For now, using simple timestamp-based IDs
-  const TRANSACTION_ID = Number(timestamp.toString().slice(-9));
-  
-  return {
-    TRANSACTION_ID: TRANSACTION_ID,
-    EVENT_ID: TRANSACTION_ID,
-    JOURNAL_ID: `JRN${timestamp}${randomSuffix}`,
-    TRAN_JOURNAL_ID: `TJ${timestamp}${randomSuffix}`,
-    transactionId: `TXN${TRANSACTION_ID}`
-  };
+Transaction.getTransactionsByDateRange = async (startDate, endDate, filters = {}) => {
+  try {
+    const whereClause = {
+      transaction_date: {
+        [Op.between]: [startDate, endDate]
+      }
+    };
+    
+    if (filters.account_number) {
+      whereClause.account_number = filters.account_number;
+    }
+    
+    if (filters.customer_id) {
+      whereClause.customer_id = filters.customer_id;
+    }
+    
+    if (filters.transaction_type) {
+      whereClause.transaction_type = filters.transaction_type;
+    }
+    
+    if (filters.status) {
+      whereClause.status = filters.status;
+    }
+    
+    if (filters.bu_id) {
+      whereClause.bu_id = filters.bu_id;
+    }
+    
+    const transactions = await Transaction.findAll({
+      where: whereClause,
+      order: [['transaction_date', 'DESC']]
+    });
+    
+    return transactions;
+  } catch (error) {
+    console.error('Error getting transactions by date range:', error.message);
+    throw error;
+  }
 };
 
-// =========================
-// INDEXES
-// =========================
+Transaction.approveTransaction = async (transactionId, approvedBy, notes = '') => {
+  try {
+    const transaction = await Transaction.findByPk(transactionId);
+    
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+    
+    if (transaction.status !== 'PENDING_APPROVAL') {
+      throw new Error('Transaction is not pending approval');
+    }
+    
+    await transaction.update({
+      status: 'COMPLETED',
+      APPROVED_BY: approvedBy,
+      APPROVAL_DATE: new Date(),
+      APPROVAL_NOTES: notes
+    });
+    
+    return transaction;
+  } catch (error) {
+    console.error('Error approving transaction:', error.message);
+    throw error;
+  }
+};
 
-// Compound indexes for better query performance
-TransactionSchema.index({ ACCT_NO: 1, TRANSACTIONDATE: -1 });
-TransactionSchema.index({ CUST_ID: 1, status: 1 });
-TransactionSchema.index({ TRANSACTIONDATE: -1, status: 1 });
+Transaction.rejectTransaction = async (transactionId, rejectedBy, notes = '') => {
+  try {
+    const transaction = await Transaction.findByPk(transactionId);
+    
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+    
+    if (transaction.status !== 'PENDING_APPROVAL') {
+      throw new Error('Transaction is not pending approval');
+    }
+    
+    await transaction.update({
+      status: 'FAILED',
+      REJECTED_BY: rejectedBy,
+      REJECTION_DATE: new Date(),
+      REJECTION_NOTES: notes
+    });
+    
+    return transaction;
+  } catch (error) {
+    console.error('Error rejecting transaction:', error.message);
+    throw error;
+  }
+};
 
-const Transaction = mongoose.model('Transaction', TransactionSchema);
+Transaction.reverseTransaction = async (transactionId, reversedBy, reason = '') => {
+  try {
+    const transaction = await Transaction.findByPk(transactionId);
+    
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+    
+    if (transaction.status !== 'COMPLETED') {
+      throw new Error('Only completed transactions can be reversed');
+    }
+    
+    // Create reversal transaction
+    const reversalData = {
+      ...transaction.toJSON(),
+      id: undefined,
+      TRANSACTION_ID: await Transaction.getNextTransactionId(),
+      transactionDirection: transaction.transactionDirection === 'CREDIT' ? 'DEBIT' : 'CREDIT',
+      status: 'REVERSED',
+      createdBy: reversedBy,
+      description: `Reversal: ${transaction.description || ''} - ${reason}`,
+      REFERENCE: `REV-${transaction.REFERENCE}`,
+      metadata: {
+        ...transaction.metadata,
+        original_transaction_id: transaction.id,
+        reversal_reason: reason,
+        reversed_by: reversedBy,
+        reversed_at: new Date()
+      }
+    };
+    
+    const reversal = await Transaction.create(reversalData);
+    
+    // Mark original as reversed
+    await transaction.update({
+      status: 'REVERSED',
+      metadata: {
+        ...transaction.metadata,
+        reversed_by: reversedBy,
+        reversed_at: new Date(),
+        reversal_reason: reason,
+        reversal_transaction_id: reversal.id
+      }
+    });
+    
+    return reversal;
+  } catch (error) {
+    console.error('Error reversing transaction:', error.message);
+    throw error;
+  }
+};
 
-export { TransactionSchema, Transaction };
+Transaction.getNextTransactionId = async () => {
+  try {
+    const [lastTransaction] = await sequelize.query(
+      'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+      { type: sequelize.QueryTypes.SELECT }
+    );
+    
+    return (lastTransaction?.max_id || 0) + 1;
+  } catch (error) {
+    console.error('Error getting next transaction ID:', error.message);
+    throw error;
+  }
+};
+
+Transaction.getTransactionStats = async (filters = {}) => {
+  try {
+    let whereClause = '';
+    const replacements = [];
+    
+    if (filters.start_date && filters.end_date) {
+      whereClause = 'WHERE transaction_date BETWEEN ? AND ?';
+      replacements.push(filters.start_date, filters.end_date);
+    }
+    
+    if (filters.bu_id) {
+      whereClause += whereClause ? ' AND bu_id = ?' : 'WHERE bu_id = ?';
+      replacements.push(filters.bu_id);
+    }
+    
+    const [stats] = await sequelize.query(`
+      SELECT 
+        COUNT(*) as total_transactions,
+        SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_transactions,
+        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending_transactions,
+        SUM(CASE WHEN status = 'PENDING_APPROVAL' THEN 1 ELSE 0 END) as pending_approval_transactions,
+        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed_transactions,
+        SUM(CASE WHEN status = 'REVERSED' THEN 1 ELSE 0 END) as reversed_transactions,
+        SUM(CASE WHEN transaction_direction = 'CREDIT' THEN amount ELSE 0 END) as total_credits,
+        SUM(CASE WHEN transaction_direction = 'DEBIT' THEN amount ELSE 0 END) as total_debits,
+        COUNT(DISTINCT customer_id) as unique_customers,
+        COUNT(DISTINCT account_number) as unique_accounts,
+        SUM(CASE WHEN flagged_for_aml = 1 THEN 1 ELSE 0 END) as aml_flagged_transactions
+      FROM transactions 
+      ${whereClause}
+    `, { replacements });
+    
+    return stats[0];
+  } catch (error) {
+    console.error('Error getting transaction stats:', error.message);
+    throw error;
+  }
+};
+
+// Initialize table if it doesn't exist
+Transaction.initializeTable = async () => {
+  try {
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_number VARCHAR(50) NOT NULL,
+        account_id VARCHAR(50) NOT NULL,
+        bu_id INT NOT NULL,
+        customer_id VARCHAR(50) NOT NULL,
+        account_name VARCHAR(255) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        transaction_direction ENUM('CREDIT', 'DEBIT') DEFAULT 'CREDIT',
+        transaction_date DATETIME NOT NULL,
+        transaction_type ENUM(
+          'DEPOSIT', 'WITHDRAWAL', 'TRANSFER', 'LOAN_DISBURSEMENT', 'LOAN_REPAYMENT',
+          'FEE_CHARGE', 'INTEREST_CREDIT', 'INTEREST_CHARGE', 'PENALTY_CHARGE',
+          'SALARY_PAYMENT', 'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER',
+          'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 'CHEQUE_DEPOSIT',
+          'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND'
+        ) NOT NULL,
+        transaction_identifier INT UNIQUE NOT NULL,
+        transaction_id VARCHAR(50),
+        event_id INT NOT NULL,
+        journal_id VARCHAR(100) NOT NULL,
+        reference VARCHAR(100) UNIQUE NOT NULL,
+        description TEXT,
+        currency ENUM('NGN', 'USD', 'GBP', 'EUR') DEFAULT 'NGN',
+        created_by VARCHAR(50) NOT NULL,
+        status ENUM('PENDING', 'PENDING_APPROVAL', 'COMPLETED', 'FAILED', 'REVERSED') DEFAULT 'PENDING',
+        flagged_for_aml BOOLEAN DEFAULT false,
+        aml_reason VARCHAR(255),
+        aml_threshold_used DECIMAL(15,2) DEFAULT 0.00,
+        approval_notes TEXT,
+        approved_by VARCHAR(50),
+        approval_date DATETIME,
+        rejection_notes TEXT,
+        rejected_by VARCHAR(50),
+        rejection_date DATETIME,
+        metadata JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_account_number (account_number),
+        INDEX idx_account_id (account_id),
+        INDEX idx_transaction_date (transaction_date),
+        INDEX idx_transaction_type (transaction_type),
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_status (status),
+        INDEX idx_created_by (created_by),
+        INDEX idx_account_number_date (account_number, transaction_date),
+        INDEX idx_customer_status (customer_id, status),
+        INDEX idx_date_status (transaction_date, status),
+        INDEX idx_account_type (account_number, transaction_type)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    
+    console.log('âœ… Transactions table initialized');
+    
+    // Create sequence table for transaction IDs if it doesn't exist
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS transaction_sequence (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        last_value INT DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      
+      INSERT INTO transaction_sequence (last_value) 
+      SELECT COALESCE(MAX(transaction_identifier), 0) 
+      FROM transactions 
+      WHERE NOT EXISTS (SELECT 1 FROM transaction_sequence LIMIT 1);
+    `);
+    
+    console.log('âœ… Transaction sequence initialized');
+    
+    return true;
+  } catch (error) {
+    console.error('Error initializing transactions table:', error.message);
+    return false;
+  }
+};
+
+// Sync the model (creates table if it doesn't exist)
+Transaction.syncTable = async () => {
+  try {
+    await Transaction.sync({ alter: true });
+    console.log('âœ… Transaction table synced');
+    return true;
+  } catch (error) {
+    console.error('Error syncing Transaction table:', error.message);
+    return false;
+  }
+};
+
 export default Transaction;

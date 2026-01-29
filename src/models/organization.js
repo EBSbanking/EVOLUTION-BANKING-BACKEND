@@ -1,75 +1,179 @@
-import mongoose from 'mongoose';
+// models/Organization.js
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const OrganizationSchema = new mongoose.Schema({
+class Organization extends Model {}
+
+Organization.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   organizationName: {
-    type: String,
-    required: [true, 'organizationName is required'],
+    type: DataTypes.STRING(100),
+    allowNull: false,
     unique: true,
-    trim: true,
-    minlength: [2, 'Organization name must be at least 2 characters long'],
-    maxlength: [100, 'Organization name cannot exceed 100 characters']
+    validate: {
+      notEmpty: {
+        msg: 'organizationName is required'
+      },
+      len: {
+        args: [2, 100],
+        msg: 'Organization name must be between 2 and 100 characters'
+      }
+    },
+    comment: 'Organization name'
   },
   organizationCode: {
-    type: Number,
-    required: [true, 'organizationCode is required'],
+    type: DataTypes.INTEGER,
+    allowNull: false,
     unique: true,
-    
+    validate: {
+      notEmpty: {
+        msg: 'organizationCode is required'
+      },
+      isInt: {
+        msg: 'Organization code must be an integer'
+      }
+    },
+    comment: 'Organization code'
   },
   description: {
-    type: String,
-    trim: true,
-    maxlength: [500, 'Description cannot exceed 500 characters']
+    type: DataTypes.STRING(500),
+    allowNull: true,
+    validate: {
+      len: {
+        args: [0, 500],
+        msg: 'Description cannot exceed 500 characters'
+      }
+    },
+    comment: 'Organization description'
   },
   contactEmail: {
-    type: String,
-    trim: true,
-    lowercase: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email address']
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    validate: {
+      isEmail: {
+        msg: 'Please enter a valid email address'
+      }
+    },
+    comment: 'Contact email'
   },
   phoneNumber: {
-    type: String,
-    trim: true,
-    match: [/^\+?[\d\s\-()]{10,}$/, 'Please enter a valid phone number']
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    validate: {
+      // Custom validation for phone number
+      isValidPhone(value) {
+        if (value && !/^\+?[\d\s\-()]{10,}$/.test(value)) {
+          throw new Error('Please enter a valid phone number');
+        }
+      }
+    },
+    comment: 'Phone number'
   },
   status: {
-    type: String,
-    enum: ['ACTIVE', 'INACTIVE', 'SUSPENDED'],
-    default: 'ACTIVE'
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.ENUM('ACTIVE', 'INACTIVE', 'SUSPENDED'),
+    defaultValue: 'ACTIVE',
+    validate: {
+      isIn: {
+        args: [['ACTIVE', 'INACTIVE', 'SUSPENDED']],
+        msg: 'Status must be ACTIVE, INACTIVE, or SUSPENDED'
+      }
+    },
+    comment: 'Organization status'
   }
 }, {
-  collection: 'organizations',
-  versionKey: false,
-  timestamps: false // We're handling createdAt/updatedAt manually
-});
-
-// Index for better query performance
-OrganizationSchema.index({ organizationName: 1 });
-OrganizationSchema.index({ organizationCode: 1 });
-OrganizationSchema.index({ status: 1 });
-OrganizationSchema.index({ createdAt: -1 });
-
-// Pre-save middleware to update updatedAt
-OrganizationSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
+  sequelize,
+  modelName: 'Organization',
+  tableName: 'organizations',
+  timestamps: true, // Creates createdAt and updatedAt automatically
+  hooks: {
+    beforeValidate: (organization) => {
+      // Trim string fields
+      if (organization.organizationName) {
+        organization.organizationName = organization.organizationName.trim();
+      }
+      if (organization.description) {
+        organization.description = organization.description.trim();
+      }
+      if (organization.contactEmail) {
+        organization.contactEmail = organization.contactEmail.trim().toLowerCase();
+      }
+      if (organization.phoneNumber) {
+        organization.phoneNumber = organization.phoneNumber.trim();
+      }
+    }
+  },
+  indexes: [
+    {
+      name: 'idx_organization_name',
+      fields: ['organizationName']
+    },
+    {
+      name: 'idx_organization_code',
+      fields: ['organizationCode']
+    },
+    {
+      name: 'idx_status',
+      fields: ['status']
+    },
+    {
+      name: 'idx_created_at',
+      fields: ['createdAt']
+    },
+    {
+      name: 'idx_name_status',
+      fields: ['organizationName', 'status']
+    }
+  ]
 });
 
 // Static method to find active organizations
-OrganizationSchema.statics.findActive = function() {
-  return this.find({ status: 'ACTIVE' });
+Organization.findActive = async function() {
+  return await this.findAll({
+    where: { status: 'ACTIVE' },
+    order: [['organizationName', 'ASC']]
+  });
+};
+
+// Static method to check if organization code exists
+Organization.codeExists = async function(code) {
+  const count = await this.count({
+    where: { organizationCode: code }
+  });
+  return count > 0;
+};
+
+// Static method to get organization by code
+Organization.findByCode = async function(code) {
+  return await this.findOne({
+    where: { organizationCode: code }
+  });
 };
 
 // Instance method to check if organization is active
-OrganizationSchema.methods.isActive = function() {
+Organization.prototype.isActive = function() {
   return this.status === 'ACTIVE';
 };
 
-export default mongoose.model('Organization', OrganizationSchema);
+// Instance method to activate organization
+Organization.prototype.activate = async function() {
+  this.status = 'ACTIVE';
+  return await this.save();
+};
+
+// Instance method to deactivate organization
+Organization.prototype.deactivate = async function() {
+  this.status = 'INACTIVE';
+  return await this.save();
+};
+
+// Instance method to suspend organization
+Organization.prototype.suspend = async function() {
+  this.status = 'SUSPENDED';
+  return await this.save();
+};
+
+export default Organization;

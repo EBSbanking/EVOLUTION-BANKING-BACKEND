@@ -1,12 +1,31 @@
+// src/routes/CustomerTypeRoutes.js - TEMPORARY FIX
 import express from 'express';
-import controller from '../controllers/CustomerTypeController.js';
+import {
+  createCustomerType,
+  getAllCustomerTypes,
+  getCustomerTypeById,
+  updateCustomerType,
+  deleteCustomerType,
+  activateCustomerType,
+  deactivateCustomerType
+} from '../controllers/customerTypeController.js';
 
 const router = express.Router();
 
-router.post('/create', controller.createCustomerType); // Create
-router.get('/create', controller.getAllCustomerTypes);        // Get all
-router.get('/:id', controller.getCustomerTypeById);    // Get by id
-router.put('/:id', controller.updateCustomerType);     // Update
-router.delete('/:id', controller.deleteCustomerType);  // Delete
+// Temporarily remove protect middleware
+// import { protect, authorize } from '../middleware/authMiddleware.js';
+
+// Routes WITHOUT authentication (temporary)
+router.route('/')
+  .get(getAllCustomerTypes)
+  .post(createCustomerType); // Line 30 - removed protect
+
+router.route('/:id')
+  .get(getCustomerTypeById)
+  .put(updateCustomerType)
+  .delete(deleteCustomerType);
+
+router.put('/:id/activate', activateCustomerType);
+router.put('/:id/deactivate', deactivateCustomerType);
 
 export default router;

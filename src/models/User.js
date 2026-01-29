@@ -1,1054 +1,640 @@
-// models/User.js - FIXED VERSION with String-based roles
-import mongoose from 'mongoose';
+// src/models/User.js - UPDATED WITH CORRECT ROLE ASSOCIATION
+import { DataTypes, Op, Model } from 'sequelize';
+import {getSequelize}  from '../../config/db.js';
 import bcrypt from 'bcrypt';
+import logger from '../utils/logger.js';
 
-const userSchema = new mongoose.Schema({
-  // Legacy fields to match existing data
-  id: {
-    type: Number,
-    unique: true,
-    sparse: true
-  },
-  user_id: {
-    type: Number,
-    unique: true,
-    sparse: true
-  },
-  username: {
-    type: String,
-    unique: true,
-    sparse: true,
-  },
-  
-  // Modern fields
-  user_name: {
-    type: String,
-    required: false,
-    unique: true,
-    sparse: true
-  },
-  password: {
-    type: String,
-    required: true,
-    minlength: 6,
-    select: false
-  },
-  passwordHistory: {
-    type: [String],
-    select: false,
-    default: []
-  },
-  passwordChangedAt: {
-    type: Date,
-    select: false,
-    default: null
-  },
-  firstLogin: {
-    type: Boolean,
-    default: true,
-  },
-  employer_number: String,
-  first_name: String,
-  last_name: String,
-  middle_name: String,
-  preferred_name: String,
-  job_title: String,
-  email: {
-    type: String,
-    required: false,
-    unique: true,
-    sparse: true,
-    match: /.+\@.+\..+/,
-  },
-  customer_number: String,
-  main_business_unit: {
-    type: String,
-    default: '',
-  },
-  responsibility_centre: String,
-  
-  // CHANGED: Store roles as strings to avoid casting errors
-  roles: [{
-    type: String,
-    default: []
-  }],
-  
-  // CHANGED: Store primary_role as string
-  primary_role: {
-    type: String,
-    sparse: true
-  },
-  
-  // Legacy compatibility - CHANGED to String
-  BU_ROLE_ID: {
-    type: String,
-    sparse: true
-  },
-  
-  primary_business_role: {
-    type: String,
-    required: false,
-    default: 'Staff'
-  },
-  start_date: Date,
-  expiry_date: Date,
-  earliest_login_time: {
-    type: String,
-    default: "00:00",
-    validate: {
-      validator: function(v) {
-        return /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
-      },
-      message: 'Earliest login time must be in HH:MM format (24-hour)'
-    }
-  },
-  latest_login_time: {
-    type: String,
-    default: "23:59",
-    validate: {
-      validator: function(v) {
-        return /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
-      },
-      message: 'Latest login time must be in HH:MM format (24-hour)'
-    }
-  },
-  internal_employee_enabled: {
-    type: Boolean,
-    default: false,
-  },
-  relationship_officer: {
-    type: String,
-    default: '',
-  },
-  enable_multi_session: {
-    type: Boolean,
-    default: false,
-  },
-  validate_ip_address: {
-    type: Boolean,
-    default: false,
-  },
-  note: String,
-  ip_address: String,
-  is_supervisor: {
-    type: Boolean,
-    default: false,
-  },
-  is_main_BU: {
-    type: Boolean,
-    default: false,
-  },
-  status: {
-    type: String,
-    enum: ['Active', 'Deactivated', 'ForceLocked'],
-    default: 'Active',
-  },
-  failed_attempts: {
-    type: Number,
-    default: 0,
-  },
-  lock_until: {
-    type: Date,
-    default: null,
-  },
-  reset_token: {
-    type: String,
-    default: null,
-  },
-  session_token: {
-    type: String,
-    default: null,
-  },
-  
-  // Legacy session compatibility
-  token: {
-    type: String,
-    default: null,
-  },
-  last_updated: {
-    type: Date,
-    default: Date.now
-  },
-  
-  // Modern session management
-  current_sessions: [{
-    session_id: String,
-    login_time: {
-      type: Date,
-      default: Date.now
+const sequelize = getSequelize();
+
+class User extends Model {}
+
+User.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+      allowNull: false,
     },
-    ip_address: String,
-    user_agent: String,
-    last_activity: {
-      type: Date,
-      default: Date.now
+    user_id: {
+      type: DataTypes.INTEGER,
+      unique: true,
+      allowNull: true,
+    },
+    username: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true,
+    },
+    user_name: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true,
+    },
+    password: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    default_password: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: null,
+    },
+    passwordHistory: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    passwordChangedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    password_expiry_date: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    temp_password_token: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    temp_token_expire: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    is_first_login: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+    },
+    force_password_change: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    first_name: DataTypes.STRING,
+    last_name: DataTypes.STRING,
+    middle_name: DataTypes.STRING,
+    preferred_name: DataTypes.STRING,
+    job_title: DataTypes.STRING,
+    email: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true,
+      validate: { isEmail: true },
+    },
+    employer_number: DataTypes.STRING,
+    customer_number: DataTypes.STRING,
+    roles: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    primary_role: DataTypes.STRING,
+    BU_ROLE_ID: DataTypes.STRING,
+    primary_business_role: {
+      type: DataTypes.STRING,
+      defaultValue: 'Staff',
+    },
+    main_business_unit: DataTypes.STRING,
+    responsibility_centre: DataTypes.STRING,
+    branch: DataTypes.INTEGER,
+    start_date: DataTypes.DATE,
+    expiry_date: DataTypes.DATE,
+    earliest_login_time: {
+      type: DataTypes.TIME,
+      defaultValue: '00:00:00',
+    },
+    latest_login_time: {
+      type: DataTypes.TIME,
+      defaultValue: '23:59:59',
+    },
+    internal_employee_enabled: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    enable_multi_session: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    validate_ip_address: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    ip_address: DataTypes.STRING,
+    is_supervisor: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    is_main_BU: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    status: {
+      type: DataTypes.ENUM('Active', 'Deactivated', 'ForceLocked'),
+      defaultValue: 'Active',
+    },
+    failed_attempts: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    },
+    lock_until: DataTypes.DATE,
+    reset_token: DataTypes.STRING,
+    session_token: DataTypes.STRING,
+    token: DataTypes.STRING,
+    current_sessions: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    login_history: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    force_lock_reason: DataTypes.STRING,
+    force_locked_by: DataTypes.INTEGER,
+    force_locked_at: DataTypes.DATE,
+    last_login: DataTypes.DATE,
+    last_updated: DataTypes.DATE,
+    created_by: DataTypes.INTEGER,
+    updated_by: DataTypes.INTEGER,
+    businessUnit: DataTypes.STRING,
+    accessibleBusinessUnits: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    permissions: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    isAdmin: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
     },
     is_active: {
-      type: Boolean,
-      default: true
-    }
-  }],
-  force_lock_reason: {
-    type: String,
-    default: null
+      type: DataTypes.STRING,
+      defaultValue: 'Active',
+    },
+    utype: {
+      type: DataTypes.STRING,
+      defaultValue: 'Staff',
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW,
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW,
+    },
   },
-  force_locked_by: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: null
-  },
-  force_locked_at: {
-    type: Date,
-    default: null
-  },
-  last_login: {
-    type: Date,
-    default: null
-  },
-  login_history: [{
-    login_time: Date,
-    ip_address: String,
-    user_agent: String,
-    logout_time: Date,
-    session_duration: Number,
-    was_forced_logout: {
-      type: Boolean,
-      default: false
-    }
-  }],
+  {
+    sequelize,
+    modelName: 'User',
+    tableName: 'users',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    underscored: false,
+    defaultScope: {
+      attributes: { 
+        exclude: ['password', 'default_password', 'reset_token', 'temp_password_token'] 
+      },
+    },
+    scopes: {
+      withSensitiveData: {
+        attributes: { 
+          include: ['password', 'default_password', 'reset_token', 'temp_password_token'] 
+        },
+      },
+      active: { 
+        where: { status: 'Active' } 
+      },
+      needsPasswordChange: {
+        where: {
+          [Op.or]: [
+            { is_first_login: true },
+            { force_password_change: true },
+            { password_expiry_date: { [Op.lt]: new Date() } },
+          ],
+        },
+      },
+    },
+    hooks: {
+      beforeCreate: async (user) => {
+        await hashPasswordIfNeeded(user);
+        normalizeRoles(user);
 
-  // Legacy fields for migration
-  utype: {
-    type: String,
-    sparse: true
-  },
-  // CHANGED: Store role as string
-  role: {
-    type: String,
-    sparse: true
-  },
-  fname: {
-    type: String,
-    sparse: true
-  },
-  lname: {
-    type: String,
-    sparse: true
-  },
-  is_active: {
-    type: String,
-    sparse: true
-  },
-  branch: {
-    type: Number,
-    sparse: true
-  },
-  changepass_on_first_login: {
-    type: Number,
-    sparse: true
-  },
-  pass_never_expire: {
-    type: Number,
-    sparse: true
-  },
-  is_locked: {
-    type: String,
-    sparse: true
-  },
-  date_joined: {
-    type: Date,
-    sparse: true
-  },
-  date_modified: {
-    type: Date,
-    sparse: true
-  },
-  last_updated_password: {
-    type: Date,
-    sparse: true
-  },
-  ist_log: {
-    type: Number,
-    sparse: true
-  },
-  rofficer: {
-    type: String,
-    sparse: true
-  },
-  staffphoto: {
-    type: String,
-    sparse: true
-  },
-  created_by: {
-    type: Number,
-    sparse: true
-  },
-  us_agent: {
-    type: String,
-    sparse: true
-  },
-  browser_lock: {
-    type: Number,
-    sparse: true
-  },
-  reset_browser: {
-    type: Number,
-    sparse: true
-  },
-  updated_pwd: {
-    type: Number,
-    sparse: true
+        if (!user.default_password && user.password) {
+          user.default_password = user.password;
+        }
+
+        const expiry = new Date();
+        expiry.setDate(expiry.getDate() + 90);
+        user.password_expiry_date = expiry;
+        
+        if (!user.is_active) user.is_active = 'Active';
+        if (!user.utype) user.utype = 'Staff';
+        
+        user.created_at = new Date();
+        user.updated_at = new Date();
+      },
+
+      beforeUpdate: async (user) => {
+        if (user.changed('password')) {
+          await hashPasswordIfNeeded(user);
+          user.passwordChangedAt = new Date();
+
+          const history = user.passwordHistory || [];
+          user.passwordHistory = [user.previous('password'), ...history].slice(0, 5);
+
+          const expiry = new Date();
+          expiry.setDate(expiry.getDate() + 90);
+          user.password_expiry_date = expiry;
+
+          user.is_first_login = false;
+          user.force_password_change = false;
+
+          if (user.default_password === user.previous('password')) {
+            user.default_password = null;
+          }
+        }
+
+        normalizeRoles(user);
+        
+        user.updated_at = new Date();
+      },
+
+      afterUpdate: async (user) => {
+        if (user.changed('password') || user.changed('force_password_change')) {
+          user.temp_password_token = null;
+          user.temp_token_expire = null;
+          await user.save({ fields: ['temp_password_token', 'temp_token_expire'] });
+        }
+      },
+    },
   }
-}, {
-  timestamps: true,
-});
+);
 
-// Index for performance
-userSchema.index({ user_name: 1 });
-userSchema.index({ username: 1 });
-userSchema.index({ roles: 1 });
-userSchema.index({ primary_role: 1 });
+// Helper functions
+async function hashPasswordIfNeeded(user) {
+  if (user.password && !user.password.startsWith('$2')) {
+    user.password = await bcrypt.hash(user.password, 10);
+  }
+  if (user.default_password && !user.default_password.startsWith('$2')) {
+    user.default_password = await bcrypt.hash(user.default_password, 10);
+  }
+}
+
+function normalizeRoles(user) {
+  if (!Array.isArray(user.roles)) user.roles = [];
+}
 
 // ============================================
-// VIRTUAL PROPERTIES FOR NUMERIC ROLE ACCESS
+// ASSOCIATIONS
 // ============================================
 
-// Virtual property for numeric primary role
-userSchema.virtual('primary_role_number').get(function() {
-  if (!this.primary_role) return null;
-  
-  const roleMap = {
-    '1': 1, 'ADMIN': 1, 'ADMINISTRATOR': 1,
-    '24': 24, 'SYSTEM': 24, 'SYSTEM_ADMIN': 24, 'EOD_OPERATOR': 24,
-    '28': 28, 'STAFF': 28, 'USER': 28,
-    '29': 29, 'TELLER': 29
-  };
-  
-  const upperRole = String(this.primary_role).toUpperCase();
-  return roleMap[upperRole] || (() => {
-    const num = parseInt(this.primary_role);
-    return isNaN(num) ? 28 : num; // Default to Customer Service Officer
-  })();
-});
-
-// Virtual property for numeric roles array
-userSchema.virtual('roles_numbers').get(function() {
-  if (!this.roles || !Array.isArray(this.roles)) return [];
-  
-  const roleMap = {
-    '1': 1, 'ADMIN': 1, 'ADMINISTRATOR': 1,
-    '24': 24, 'SYSTEM': 24, 'SYSTEM_ADMIN': 24, 'EOD_OPERATOR': 24,
-    '28': 28, 'STAFF': 28, 'USER': 28,
-    '29': 29, 'TELLER': 29
-  };
-  
-  return this.roles.map(role => {
-    const upperRole = String(role).toUpperCase();
-    return roleMap[upperRole] || (() => {
-      const num = parseInt(role);
-      return isNaN(num) ? 28 : num;
-    })();
+// Add static method for associations
+User.associate = function(models) {
+  // Associate with Role model through user_roles join table
+  User.belongsToMany(models.Role, {
+    through: 'user_roles',
+    foreignKey: 'user_id',
+    otherKey: 'role_id',
+    as: 'roles', // We'll use 'roles' as alias for consistency
+    onDelete: 'CASCADE',
+    onUpdate: 'CASCADE'
   });
-});
-
-// Virtual property for numeric BU_ROLE_ID
-userSchema.virtual('bu_role_id_number').get(function() {
-  if (!this.BU_ROLE_ID) return null;
-  
-  const roleMap = {
-    '1': 1, 'ADMIN': 1, 'ADMINISTRATOR': 1,
-    '24': 24, 'SYSTEM': 24, 'SYSTEM_ADMIN': 24, 'EOD_OPERATOR': 24,
-    '28': 28, 'STAFF': 28, 'USER': 28,
-    '29': 29, 'TELLER': 29
-  };
-  
-  const upperRole = String(this.BU_ROLE_ID).toUpperCase();
-  return roleMap[upperRole] || (() => {
-    const num = parseInt(this.BU_ROLE_ID);
-    return isNaN(num) ? 28 : num;
-  })();
-});
-
-// ============================================
-// PRE-SAVE MIDDLEWARE (FIXED)
-// ============================================
-
-userSchema.pre('save', async function(next) {
-  // Normalize all role fields to strings
-  const normalizeRole = (value) => {
-    if (value === null || value === undefined) return value;
-    return String(value);
-  };
-
-  // Normalize primary_role
-  if (this.primary_role !== undefined && this.primary_role !== null) {
-    this.primary_role = normalizeRole(this.primary_role);
-  }
-
-  // Normalize roles array
-  if (this.roles && Array.isArray(this.roles)) {
-    this.roles = this.roles.map(normalizeRole);
-  }
-
-  // Normalize BU_ROLE_ID
-  if (this.BU_ROLE_ID !== undefined && this.BU_ROLE_ID !== null) {
-    this.BU_ROLE_ID = normalizeRole(this.BU_ROLE_ID);
-  }
-
-  // Normalize legacy role field
-  if (this.role !== undefined && this.role !== null) {
-    this.role = normalizeRole(this.role);
-  }
-
-  // Map legacy username to user_name if missing
-  if (this.username && !this.user_name) {
-    this.user_name = this.username;
-  }
-
-  // Map legacy fname/lname to first_name/last_name
-  if (this.fname && !this.first_name) {
-    this.first_name = this.fname;
-  }
-  if (this.lname && !this.last_name) {
-    this.last_name = this.lname;
-  }
-
-  // Map legacy utype to primary_business_role if missing
-  if (this.utype && !this.primary_business_role) {
-    this.primary_business_role = this.utype;
-  }
-
-  // Set default primary_business_role if still missing
-  if (!this.primary_business_role) {
-    this.primary_business_role = 'Staff';
-  }
-
-  // Map legacy is_active to status
-  if (this.is_active && !this.status) {
-    this.status = this.is_active === 'Active' ? 'Active' : 'Deactivated';
-  }
-
-  // Map legacy role and BU_ROLE_ID to roles array
-  if (this.role && (!this.roles || this.roles.length === 0)) {
-    if (!this.roles) this.roles = [];
-    this.roles.push(normalizeRole(this.role));
-  }
-  
-  if (this.BU_ROLE_ID && (!this.roles || this.roles.length === 0)) {
-    if (!this.roles) this.roles = [];
-    this.roles.push(normalizeRole(this.BU_ROLE_ID));
-  }
-
-  // Set primary role if not set and we have roles
-  if (this.roles && this.roles.length > 0 && !this.primary_role) {
-    this.primary_role = this.roles[0];
-  }
-
-  // Map legacy id to user_id
-  if (this.id && !this.user_id) {
-    this.user_id = this.id;
-  }
-
-  // Auto-generate user_id if not provided (for new users)
-  if (!this.user_id && this.id) {
-    this.user_id = this.id;
-  }
-
-  // Only hash password if it's modified and not already hashed
-  if (!this.isModified('password')) return next();
-  
-  try {
-    if (this.password && !this.password.startsWith('$2')) {
-      this.password = await bcrypt.hash(this.password, 10);
-    } else if (this.isModified('password')) {
-      this.password = await bcrypt.hash(this.password, 10);
-    }
-    this.passwordChangedAt = new Date();
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ============================================
-// UPDATED ROLE MANAGEMENT METHODS (String-based)
-// ============================================
-
-// Get all roles (with fallback to legacy)
-userSchema.methods.getAllRoles = function() {
-  if (this.roles && this.roles.length > 0) {
-    return this.roles;
-  }
-  // Fallback to legacy single role
-  return [this.BU_ROLE_ID].filter(role => role !== null && role !== undefined);
 };
 
-// Check if user has a specific role (handles both string and number inputs)
-userSchema.methods.hasRole = function(roleIdentifier) {
-  const roles = this.getAllRoles();
-  const targetRole = String(roleIdentifier).toUpperCase();
+// ============================================
+// INSTANCE METHODS
+// ============================================
+
+User.prototype.correctPassword = async function (candidate) {
+  return await bcrypt.compare(candidate, this.password);
+};
+
+User.prototype.isDefaultPassword = async function (candidate) {
+  if (!this.default_password) return false;
+  return await bcrypt.compare(candidate, this.default_password);
+};
+
+User.prototype.isPasswordExpired = function () {
+  if (!this.password_expiry_date) return false;
+  return new Date() > this.password_expiry_date;
+};
+
+User.prototype.requiresPasswordChange = function () {
+  return this.is_first_login || this.force_password_change || this.isPasswordExpired();
+};
+
+User.prototype.generateTempToken = async function () {
+  const crypto = await import('crypto');
+  const token = crypto.randomBytes(32).toString('hex');
+  this.temp_password_token = token;
+  this.temp_token_expire = new Date(Date.now() + 10 * 60 * 1000);
+  await this.save();
+  return token;
+};
+
+User.prototype.validateTempToken = function (token) {
+  return (
+    this.temp_password_token === token &&
+    this.temp_token_expire &&
+    new Date() < this.temp_token_expire
+  );
+};
+
+User.prototype.getAllRoles = function () {
+  return this.roles.length ? this.roles : [this.BU_ROLE_ID].filter(Boolean);
+};
+
+User.prototype.hasAnyRole = function (roles) {
+  return roles.some((r) => this.getAllRoles().includes(r));
+};
+
+// UPDATED: Now uses ConfigurationService for global login hours + user overrides
+User.prototype.isWithinLoginHours = async function () {
+  const configService = await import('../Services/ConfigurationService.js');
+  const loginConfig = await configService.default.getLoginHours();
   
-  return roles.some(role => {
-    if (!role) return false;
-    const roleStr = String(role).toUpperCase();
+  // If login hour restriction is globally disabled, allow login
+  if (!loginConfig.enabled) {
+    return true;
+  }
+
+  const now = new Date();
+  const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
+  
+  // Use user-specific times if set, otherwise fall back to config defaults
+  const earliestTime = this.earliest_login_time || loginConfig.earliest;
+  const latestTime = this.latest_login_time || loginConfig.latest;
+  
+  const earliestMinutes = earliestTime 
+    ? (parseInt(earliestTime.split(':')[0]) * 60 + parseInt(earliestTime.split(':')[1] || '0'))
+    : 0;
+  
+  const latestMinutes = latestTime 
+    ? (parseInt(latestTime.split(':')[0]) * 60 + parseInt(latestTime.split(':')[1] || '0'))
+    : 1439; // 23:59
+
+  return currentTimeInMinutes >= earliestMinutes && currentTimeInMinutes <= latestMinutes;
+};
+
+// NEW: Check if user has roles that can bypass login hour restrictions
+User.prototype.canBypassLoginHours = async function () {
+  const configService = await import('../Services/ConfigurationService.js');
+  const userRoles = this.getAllRoles();
+  return await configService.default.canBypassLoginHours(userRoles);
+};
+
+User.prototype.getSafeInfo = function () {
+  return {
+    id: this.id,
+    user_id: this.user_id,
+    username: this.username,
+    user_name: this.user_name,
+    email: this.email,
+    first_name: this.first_name,
+    last_name: this.last_name,
+    middle_name: this.middle_name,
+    preferred_name: this.preferred_name,
+    job_title: this.job_title,
+    roles: this.roles,
+    primary_role: this.primary_role,
+    BU_ROLE_ID: this.BU_ROLE_ID,
+    primary_business_role: this.primary_business_role,
+    main_business_unit: this.main_business_unit,
+    businessUnit: this.businessUnit,
+    accessibleBusinessUnits: this.accessibleBusinessUnits,
+    responsibility_centre: this.responsibility_centre,
+    branch: this.branch,
+    status: this.status,
+    is_supervisor: this.is_supervisor,
+    is_main_BU: this.is_main_BU,
+    isAdmin: this.isAdmin,
+    permissions: this.permissions,
+    last_login: this.last_login,
+    passwordChangedAt: this.passwordChangedAt,
+    password_expiry_date: this.password_expiry_date,
+    is_first_login: this.is_first_login,
+    requiresPasswordChange: this.requiresPasswordChange(),
+    created_at: this.created_at,
+    updated_at: this.updated_at,
+  };
+};
+
+// ============================================
+// STATIC METHODS
+// ============================================
+
+User.findByUsernameWithPassword = function (identifier) {
+  return this.scope('withSensitiveData').findOne({
+    where: {
+      [Op.or]: [
+        { user_name: { [Op.like]: identifier } },
+        { username: { [Op.like]: identifier } }
+      ]
+    }
+  });
+};
+
+User.findByUsernameWithSensitiveData = function (identifier) {
+  return this.scope('withSensitiveData').findOne({
+    where: {
+      [Op.or]: [
+        { user_name: { [Op.like]: identifier } },
+        { username: { [Op.like]: identifier } }
+      ]
+    }
+  });
+};
+
+User.findUsersNeedingPasswordChange = function () {
+  return this.scope('needsPasswordChange').findAll();
+};
+
+User.validatePasswordStrength = function (password) {
+  const minLength = 8;
+  const checks = [
+    { test: password.length >= minLength, msg: `Password must be at least ${minLength} characters` },
+    { test: /[A-Z]/.test(password), msg: 'Must contain uppercase letter' },
+    { test: /[a-z]/.test(password), msg: 'Must contain lowercase letter' },
+    { test: /\d/.test(password), msg: 'Must contain a number' },
+    { test: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password), msg: 'Must contain special character' },
+  ];
+
+  const failed = checks.find((c) => !c.test);
+  return failed ? { valid: false, message: failed.msg } : { valid: true };
+};
+
+User.createLegacySession = async function (sessionData) {
+  this.token = sessionData.session_id;
+  this.last_updated = new Date();
+  
+  const history = this.login_history || [];
+  history.push({
+    session_id: sessionData.session_id,
+    ip_address: sessionData.ip_address,
+    user_agent: sessionData.user_agent,
+    login_time: new Date()
+  });
+  this.login_history = history.slice(-50);
+  
+  await this.save();
+};
+
+// ============================================
+// NEW METHODS FOR PERMISSION SYSTEM
+// ============================================
+
+/**
+ * Get user's roles from database (including associated Role models)
+ */
+User.prototype.getRolesWithPermissions = async function () {
+  try {
+    // Use eager loading to get roles with permissions
+    const userWithRoles = await User.findOne({
+      where: { id: this.id },
+      include: [{
+        association: 'roles', // This matches the alias in the association
+        required: false // LEFT JOIN
+      }]
+    });
     
-    // Direct match
-    if (roleStr === targetRole) return true;
+    return userWithRoles?.roles || [];
+  } catch (error) {
+    logger.error('Error getting user roles with permissions:', error);
+    return [];
+  }
+};
+
+/**
+ * Get all permissions from user's roles
+ */
+User.prototype.getAllPermissions = async function () {
+  try {
+    const roles = await this.getRolesWithPermissions();
+    const allPermissions = new Set();
     
-    // Numeric match
-    const roleNum = parseInt(roleStr);
-    const targetNum = parseInt(targetRole);
-    if (!isNaN(roleNum) && !isNaN(targetNum) && roleNum === targetNum) {
+    // Combine permissions from all roles
+    for (const role of roles) {
+      const permissions = role.permissions || [];
+      
+      // Handle wildcard permission
+      if (permissions.includes('*')) {
+        return ['*']; // Return wildcard if any role has full access
+      }
+      
+      permissions.forEach(perm => {
+        if (perm && typeof perm === 'string') {
+          allPermissions.add(perm);
+        }
+      });
+    }
+    
+    // Also include permissions from the user's permissions field
+    const userPermissions = this.permissions || [];
+    if (Array.isArray(userPermissions)) {
+      userPermissions.forEach(perm => {
+        if (perm && typeof perm === 'string') {
+          allPermissions.add(perm);
+        }
+      });
+    }
+    
+    return Array.from(allPermissions);
+  } catch (error) {
+    logger.error('Error getting user permissions:', error);
+    return [];
+  }
+};
+
+/**
+ * Check if user has a specific permission
+ */
+User.prototype.hasPermission = async function (permission) {
+  try {
+    const allPermissions = await this.getAllPermissions();
+    
+    // Check for wildcard permission
+    if (allPermissions.includes('*')) {
       return true;
     }
     
-    // Alias matching
-    const roleAliases = {
-      '1': ['ADMIN', 'ADMINISTRATOR'],
-      '24': ['SYSTEM', 'SYSTEM_ADMIN', 'EOD_OPERATOR'],
-      '28': ['STAFF', 'USER'],
-      '29': ['TELLER']
-    };
-    
-    // Check if targetRole is an alias for roleStr
-    for (const [num, aliases] of Object.entries(roleAliases)) {
-      if (roleStr === num && aliases.includes(targetRole)) {
-        return true;
-      }
-    }
-    
-    // Check if roleStr is an alias for targetRole
-    for (const [num, aliases] of Object.entries(roleAliases)) {
-      if (targetRole === num && aliases.includes(roleStr)) {
-        return true;
-      }
-    }
-    
+    return allPermissions.includes(permission);
+  } catch (error) {
+    logger.error('Error checking user permission:', error);
     return false;
-  });
-};
-
-// Check if user has any of the specified roles
-userSchema.methods.hasAnyRole = function(roleIdentifiers) {
-  return roleIdentifiers.some(roleId => this.hasRole(roleId));
-};
-
-// Check if user has all of the specified roles
-userSchema.methods.hasAllRoles = function(roleIdentifiers) {
-  return roleIdentifiers.every(roleId => this.hasRole(roleId));
-};
-
-// Add a role to user
-userSchema.methods.addRole = function(roleIdentifier) {
-  if (!this.roles) {
-    this.roles = [];
   }
-  
-  const roleStr = String(roleIdentifier);
-  const alreadyHasRole = this.roles.some(role => 
-    role && String(role).toUpperCase() === roleStr.toUpperCase()
-  );
-  
-  if (!alreadyHasRole) {
-    this.roles.push(roleStr);
-    
-    // Set as primary role if this is the first role
-    if (this.roles.length === 1 && !this.primary_role) {
-      this.primary_role = roleStr;
-    }
-  }
-  
-  return this.save();
 };
 
-// Remove a role from user
-userSchema.methods.removeRole = function(roleIdentifier) {
-  if (!this.roles) return Promise.resolve(this);
-  
-  const targetRole = String(roleIdentifier).toUpperCase();
-  this.roles = this.roles.filter(role => 
-    role && String(role).toUpperCase() !== targetRole
-  );
-  
-  // Update primary role if it was removed
-  if (this.primary_role && String(this.primary_role).toUpperCase() === targetRole) {
-    this.primary_role = this.roles.length > 0 ? this.roles[0] : null;
-  }
-  
-  return this.save();
-};
-
-// Set primary role (must be one of the user's roles)
-userSchema.methods.setPrimaryRole = function(roleIdentifier) {
-  const targetRole = String(roleIdentifier).toUpperCase();
-  const hasRole = this.roles && this.roles.some(role => 
-    role && String(role).toUpperCase() === targetRole
-  );
-  
-  if (hasRole) {
-    this.primary_role = String(roleIdentifier);
-    return this.save();
-  }
-  
-  throw new Error('Cannot set primary role: User does not have this role');
-};
-
-// Get primary role (with fallback)
-userSchema.methods.getPrimaryRole = function() {
-  if (this.primary_role) {
-    return this.primary_role;
-  }
-  
-  // Fallback to first role in array
-  if (this.roles && this.roles.length > 0) {
-    return this.roles[0];
-  }
-  
-  // Fallback to legacy BU_ROLE_ID
-  return this.BU_ROLE_ID;
-};
-
-// Get numeric primary role
-userSchema.methods.getPrimaryRoleNumber = function() {
-  return this.primary_role_number;
-};
-
-// Get numeric roles
-userSchema.methods.getRolesNumbers = function() {
-  return this.roles_numbers;
-};
-
-// Get role count
-userSchema.methods.getRoleCount = function() {
-  return this.roles ? this.roles.length : 0;
-};
-
-// Clear all roles
-userSchema.methods.clearRoles = function() {
-  this.roles = [];
-  this.primary_role = null;
-  return this.save();
-};
-
-// ============================================
-// PASSWORD & SESSION METHODS (Keep as is)
-// ============================================
-
-// Check if password was changed after JWT was issued
-userSchema.methods.changedPasswordAfter = function(JWTTimestamp) {
-  if (this.passwordChangedAt) {
-    const changedTimestamp = parseInt(this.passwordChangedAt.getTime() / 1000, 10);
-    return JWTTimestamp < changedTimestamp;
-  }
-  return false;
-};
-
-// Instance method to check password
-userSchema.methods.correctPassword = async function(candidatePassword, userPassword) {
-  return await bcrypt.compare(candidatePassword, userPassword);
-};
-
-// Always allow login (24-hour access)
-userSchema.methods.isWithinLoginHours = function() {
-  return true;
-};
-
-// ============================================
-// UPDATED STATIC METHODS (String-based)
-// ============================================
-
-// Static method to find user by username with password selected
-userSchema.statics.findByUsernameWithPassword = function(identifier) {
-  return this.findOne({ 
-    $or: [
-      { user_name: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-      { username: { $regex: new RegExp(`^${identifier}$`, 'i') } }
-    ]
-  }).select('+password +passwordHistory +firstLogin');
-};
-
-// Static method to find user by legacy user_id
-userSchema.statics.findByLegacyUserId = function(userId) {
-  return this.findOne({ 
-    $or: [
-      { user_id: userId },
-      { id: userId }
-    ]
-  });
-};
-
-// Static method to find user by legacy token
-userSchema.statics.findByLegacyToken = function(token) {
-  return this.findOne({ 
-    token: token,
-    status: 'Active'
-  });
-};
-
-// Static method to find users by role (handles both string and number)
-userSchema.statics.findByRole = function(roleIdentifier) {
-  const roleStr = String(roleIdentifier);
-  const possibleValues = [roleStr];
-  
-  // Add common aliases
-  if (roleStr === '1' || roleStr.toUpperCase() === 'ADMIN' || roleStr.toUpperCase() === 'ADMINISTRATOR') {
-    possibleValues.push('1', 'ADMIN', 'ADMINISTRATOR');
-  }
-  if (roleStr === '24' || roleStr.toUpperCase() === 'SYSTEM' || roleStr.toUpperCase() === 'SYSTEM_ADMIN' || roleStr.toUpperCase() === 'EOD_OPERATOR') {
-    possibleValues.push('24', 'SYSTEM', 'SYSTEM_ADMIN', 'EOD_OPERATOR');
-  }
-  if (roleStr === '28' || roleStr.toUpperCase() === 'CREDIT SUPPORT OFFICER' || roleStr.toUpperCase() === 'CREDIT SUPPORT OFFICER') {
-    possibleValues.push('28', 'CREDIT SUPPORT OFFICER', 'CREDIT SUPPORT OFFICER');
-  }
-  if (roleStr === '29' || roleStr.toUpperCase() === 'TELLER') {
-    possibleValues.push('29', 'TELLER');
-  }
-  
-  // Make values case-insensitive for regex matching
-  const regexValues = possibleValues.map(val => new RegExp(`^${val}$`, 'i'));
-  
-  return this.find({
-    $or: [
-      { roles: { $in: possibleValues } },
-      { primary_role: { $in: possibleValues } },
-      { BU_ROLE_ID: { $in: possibleValues } },
-      { roles: { $in: regexValues } },
-      { primary_role: { $in: regexValues } },
-      { BU_ROLE_ID: { $in: regexValues } }
-    ]
-  });
-};
-
-// Static method to find users with multiple roles
-userSchema.statics.findByMultipleRoles = function(roleIdentifiers) {
-  const targetRoles = roleIdentifiers.map(roleId => String(roleId));
-  return this.find({
-    roles: { $all: targetRoles }
-  });
-};
-
-// Static method to find users with any of the specified roles
-userSchema.statics.findByAnyRole = function(roleIdentifiers) {
-  const targetRoles = roleIdentifiers.map(roleId => String(roleId));
-  return this.find({
-    roles: { $in: targetRoles }
-  });
-};
-
-// Static method to migrate legacy roles to new system
-userSchema.statics.migrateLegacyRoles = async function() {
-  const usersWithLegacyRoles = await this.find({
-    $or: [
-      { BU_ROLE_ID: { $exists: true, $ne: null } },
-      { role: { $exists: true, $ne: null } }
-    ],
-    $or: [
-      { roles: { $exists: false } },
-      { roles: { $size: 0 } }
-    ]
-  });
-  
-  for (const user of usersWithLegacyRoles) {
-    if (user.BU_ROLE_ID && (!user.roles || !user.roles.includes(String(user.BU_ROLE_ID)))) {
-      if (!user.roles) user.roles = [];
-      user.roles.push(String(user.BU_ROLE_ID));
-    }
-    if (user.role && (!user.roles || !user.roles.includes(String(user.role)))) {
-      if (!user.roles) user.roles = [];
-      user.roles.push(String(user.role));
+/**
+ * Check if user has any of the specified permissions
+ */
+User.prototype.hasAnyPermission = async function (permissions) {
+  try {
+    if (!Array.isArray(permissions)) {
+      permissions = [permissions];
     }
     
-    // Set primary role
-    if (user.roles.length > 0 && !user.primary_role) {
-      user.primary_role = user.roles[0];
+    const allPermissions = await this.getAllPermissions();
+    
+    // Check for wildcard permission
+    if (allPermissions.includes('*')) {
+      return true;
     }
     
-    await user.save();
+    return permissions.some(perm => allPermissions.includes(perm));
+  } catch (error) {
+    logger.error('Error checking user permissions:', error);
+    return false;
   }
-  
-  return usersWithLegacyRoles.length;
 };
 
-// ============================================
-// SESSION MANAGEMENT METHODS (Keep as is)
-// ============================================
-
-// Method to create legacy-compatible session
-userSchema.methods.createLegacySession = function(sessionData) {
-  this.token = sessionData.session_id || `legacy_${Date.now()}`;
-  this.last_updated = new Date();
-  return this.addLoginSession(sessionData);
-};
-
-// Method to validate legacy token
-userSchema.methods.validateLegacyToken = function(token) {
-  return this.token === token && this.status === 'Active';
-};
-
-// Method to get legacy session data
-userSchema.methods.getLegacySessionData = function() {
-  return {
-    id: this.id || this._id.toString(),
-    user_id: this.user_id || this._id.toString(),
-    token: this.token,
-    last_updated: this.last_updated
-  };
-};
-
-// Add a new login session
-userSchema.methods.addLoginSession = function(sessionData) {
-  const session = {
-    session_id: sessionData.session_id || `session_${Date.now()}`,
-    ip_address: sessionData.ip_address,
-    user_agent: sessionData.user_agent,
-    login_time: new Date(),
-    last_activity: new Date(),
-    is_active: true
-  };
-  
-  this.current_sessions.push(session);
-  this.last_login = new Date();
-  this.token = session.session_id;
-  this.last_updated = new Date();
-  
-  this.login_history.unshift({
-    login_time: new Date(),
-    ip_address: sessionData.ip_address,
-    user_agent: sessionData.user_agent
-  });
-  
-  if (this.login_history.length > 50) {
-    this.login_history = this.login_history.slice(0, 50);
-  }
-  
-  return this.save();
-};
-
-// Update session activity
-userSchema.methods.updateSessionActivity = function(sessionId) {
-  const session = this.current_sessions.find(s => s.session_id === sessionId && s.is_active);
-  if (session) {
-    session.last_activity = new Date();
-    this.last_updated = new Date();
-    return this.save();
-  }
-  return Promise.resolve(this);
-};
-
-// Logout a specific session
-userSchema.methods.logoutSession = function(sessionId, isForced = false) {
-  const session = this.current_sessions.find(s => s.session_id === sessionId && s.is_active);
-  if (session) {
-    session.is_active = false;
-    
-    if (this.token === sessionId) {
-      this.token = null;
+/**
+ * Check if user has all specified permissions
+ */
+User.prototype.hasAllPermissions = async function (permissions) {
+  try {
+    if (!Array.isArray(permissions)) {
+      permissions = [permissions];
     }
     
-    const loginRecord = this.login_history.find(record => 
-      !record.logout_time && 
-      record.ip_address === session.ip_address && 
-      record.login_time.getTime() === session.login_time.getTime()
-    );
+    const allPermissions = await this.getAllPermissions();
     
-    if (loginRecord) {
-      loginRecord.logout_time = new Date();
-      loginRecord.was_forced_logout = isForced;
-      loginRecord.session_duration = Math.round(
-        (loginRecord.logout_time - loginRecord.login_time) / (1000 * 60)
-      );
+    // Check for wildcard permission
+    if (allPermissions.includes('*')) {
+      return true;
     }
     
-    return this.save();
+    return permissions.every(perm => allPermissions.includes(perm));
+  } catch (error) {
+    logger.error('Error checking user permissions:', error);
+    return false;
   }
-  return Promise.resolve(this);
 };
 
-// Logout all active sessions
-userSchema.methods.logoutAllSessions = function(isForced = false) {
-  const now = new Date();
-  
-  this.current_sessions.forEach(session => {
-    if (session.is_active) {
-      session.is_active = false;
-      
-      const loginRecord = this.login_history.find(record => 
-        !record.logout_time && 
-        record.ip_address === session.ip_address && 
-        record.login_time.getTime() === session.login_time.getTime()
-      );
-      
-      if (loginRecord) {
-        loginRecord.logout_time = now;
-        loginRecord.was_forced_logout = isForced;
-        loginRecord.session_duration = Math.round(
-          (loginRecord.logout_time - loginRecord.login_time) / (1000 * 60)
-        );
-      }
-    }
-  });
-  
-  this.token = null;
-  this.last_updated = now;
-  
-  return this.save();
-};
-
-// Force lock a user due to fraud
-userSchema.methods.forceLock = function(adminUserId, reason = 'Suspicious activity detected') {
-  this.status = 'ForceLocked';
-  this.force_lock_reason = reason;
-  this.force_locked_by = adminUserId;
-  this.force_locked_at = new Date();
-  this.lock_until = null;
-  this.logoutAllSessions(true);
-  return this.save();
-};
-
-// Unlock a force-locked user
-userSchema.methods.unlock = function() {
-  if (this.status === 'ForceLocked') {
-    this.status = 'Active';
-    this.force_lock_reason = null;
-    this.force_locked_by = null;
-    this.force_locked_at = null;
-    this.failed_attempts = 0;
-    this.lock_until = null;
-    return this.save();
+/**
+ * Get user info with roles and permissions for API responses
+ */
+User.prototype.getUserInfoWithPermissions = async function () {
+  try {
+    const safeInfo = this.getSafeInfo();
+    const roles = await this.getRolesWithPermissions();
+    const permissions = await this.getAllPermissions();
+    
+    return {
+      ...safeInfo,
+      detailedRoles: roles.map(role => ({
+        id: role.id,
+        name: role.name,
+        code: role.code,
+        description: role.description,
+        permissions: role.permissions
+      })),
+      allPermissions: permissions,
+      hasFullAccess: permissions.includes('*')
+    };
+  } catch (error) {
+    logger.error('Error getting user info with permissions:', error);
+    return this.getSafeInfo();
   }
-  return Promise.resolve(this);
 };
 
-// ============================================
-// OTHER STATIC METHODS (Keep as is)
-// ============================================
-
-// Static method to migrate legacy session
-userSchema.statics.migrateLegacySession = async function(legacySessionData) {
-  const user = await this.findByLegacyUserId(legacySessionData.user_id);
-  if (user) {
-    await user.createLegacySession({
-      session_id: legacySessionData.token,
-      ip_address: 'legacy_migration',
-      user_agent: 'legacy_system'
-    });
-    return user;
-  }
-  return null;
-};
-
-// Get all users with active sessions
-userSchema.statics.getAllUsersWithActiveSessions = function() {
-  return this.find({
-    $or: [
-      { 'current_sessions.is_active': true },
-      { token: { $ne: null } }
-    ]
-  }).select('user_name username first_name last_name email current_sessions token status last_updated');
-};
-
-// Get all currently logged-in users
-userSchema.statics.getCurrentlyLoggedInUsers = function() {
-  return this.aggregate([
-    { 
-      $match: { 
-        $or: [
-          { 'current_sessions.is_active': true },
-          { token: { $ne: null } }
-        ]
-      } 
-    },
-    { $unwind: { path: '$current_sessions', preserveNullAndEmptyArrays: true } },
-    { 
-      $match: { 
-        $or: [
-          { 'current_sessions.is_active': true },
-          { token: { $ne: null } }
-        ]
-      } 
-    },
-    { $project: {
-        user_name: 1,
-        username: 1,
-        first_name: 1,
-        last_name: 1,
-        email: 1,
-        status: 1,
-        token: 1,
-        last_updated: 1,
-        session: '$current_sessions'
-      }
-    }
-  ]);
-};
-
-// Force logout all users (admin function)
-userSchema.statics.forceLogoutAllUsers = function(adminUserId) {
-  return this.updateMany(
-    { 
-      $or: [
-        { 'current_sessions.is_active': true },
-        { token: { $ne: null } }
-      ]
-    },
-    { 
-      $set: { 
-        'current_sessions.$[].is_active': false,
-        token: null,
-        last_updated: new Date()
-      } 
-    }
-  ).then(() => {
-    return this.updateMany(
-      { 'login_history': { $exists: true } },
-      [{
-        $set: {
-          login_history: {
-            $map: {
-              input: '$login_history',
-              as: 'record',
-              in: {
-                $cond: [
-                  { $eq: ['$$record.logout_time', null] },
-                  {
-                    $mergeObjects: [
-                      '$$record',
-                      {
-                        logout_time: new Date(),
-                        was_forced_logout: true,
-                        session_duration: {
-                          $divide: [
-                            { $subtract: [new Date(), '$$record.login_time'] },
-                            60000
-                          ]
-                        }
-                      }
-                    ]
-                  },
-                  '$$record'
-                ]
-              }
-            }
-          }
-        }
-      }]
-    );
-  });
-};
-
-// Find force-locked users
-userSchema.statics.getForceLockedUsers = function() {
-  return this.find({ status: 'ForceLocked' })
-    .select('user_name username first_name last_name email force_lock_reason force_locked_at force_locked_by');
-};
-
-// No users have login restrictions
-userSchema.statics.getUsersWithLoginRestrictions = function() {
-  return this.find({
-    _id: null
-  }).select('user_name username first_name last_name earliest_login_time latest_login_time');
-};
-
-// Create and export User model
-const User = mongoose.model('User', userSchema);
 export default User;

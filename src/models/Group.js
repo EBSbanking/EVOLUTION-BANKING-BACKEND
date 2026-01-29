@@ -1,207 +1,296 @@
-// models/Group.js - Updated Mongoose Schema for Group
-import mongoose from 'mongoose';
+// models/Group.js - Updated Sequelize Model for Group
+import { DataTypes } from 'sequelize';
+import sequelize from '../../config/db.js'; // Adjust path as needed
 
-const groupSchema = new mongoose.Schema({
+const Group = sequelize.define('Group', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   // New fields
   groupCode: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING,
+    allowNull: false,
     unique: true,
-    trim: true,
-    uppercase: true, // e.g., 'GRP001'
+    validate: {
+      notEmpty: true,
+      len: [1, 50]
+    },
+    set(value) {
+      this.setDataValue('groupCode', value.trim().toUpperCase());
+    }
   },
   groupName: {
-    type: String,
-    required: true,
-    trim: true,
+    type: DataTypes.STRING,
+    allowNull: false,
+    validate: {
+      notEmpty: true,
+      len: [1, 255]
+    },
+    set(value) {
+      this.setDataValue('groupName', value.trim());
+    }
   },
-  members: [{
-    type: String, // CUST_ID as string
-    default: [], // Changed from required: true to default: []
-  }],
+  members: {
+    type: DataTypes.JSON, // Store as JSON array
+    defaultValue: [],
+    validate: {
+      isArray(value) {
+        if (!Array.isArray(value)) {
+          throw new Error('Members must be an array');
+        }
+      }
+    }
+  },
   memberCount: {
-    type: Number,
-    default: 0, // Auto-updated on add/remove
+    type: DataTypes.INTEGER,
+    defaultValue: 0
   },
   status: {
-    type: String,
-    enum: ['active', 'inactive', 'dissolved'],
-    default: 'active',
+    type: DataTypes.ENUM('active', 'inactive', 'dissolved'),
+    defaultValue: 'active'
   },
   
   // Legacy fields (preserved for migration)
   legacyId: {
-    type: Number, // Store as number instead of ObjectId
+    type: DataTypes.INTEGER,
     unique: true,
-    sparse: true
+    allowNull: true
   },
   branch: {
-    type: Number,
-    required: true,
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    validate: {
+      notNull: true,
+      isInt: true
+    }
   },
   relationshipManager: {
-    type: Number, // staff ID
-    required: true,
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    validate: {
+      notNull: true,
+      isInt: true
+    }
   },
   regDate: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   minMembers: {
-    type: Number,
-    default: 0,
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    validate: {
+      min: 0
+    }
   },
   maxMembers: {
-    type: Number,
-    default: 0,
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    validate: {
+      min: 0
+    }
   },
   meetingDay: {
-    type: String,
-    enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+    type: DataTypes.ENUM('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'),
+    allowNull: true
   },
   meetingFrequency: {
-    type: String,
-    enum: ['Once Every Week', 'Once Every Two Weeks', 'Once Every Month'],
+    type: DataTypes.ENUM('Once Every Week', 'Once Every Two Weeks', 'Once Every Month'),
+    allowNull: true
   },
   unionAddress: {
-    type: String,
-    trim: true,
+    type: DataTypes.STRING,
+    allowNull: true,
+    validate: {
+      len: [0, 500]
+    },
+    set(value) {
+      if (value) {
+        this.setDataValue('unionAddress', value.trim());
+      }
+    }
   },
   createdBy: {
-    type: Number, // staff ID
-    required: true,
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    validate: {
+      notNull: true,
+      isInt: true
+    }
   },
   offlineId: {
-    type: String,
-    default: null,
+    type: DataTypes.STRING,
+    allowNull: true,
+    defaultValue: null
   },
   groupType: {
-    type: String,
-    enum: ['Union', 'Association', 'Cooperative', 'Other'],
-    default: 'Union',
+    type: DataTypes.ENUM('Union', 'Association', 'Cooperative', 'Other'),
+    defaultValue: 'Union'
   },
   unionPurseAccount: {
-    type: Number,
-    default: 0,
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    validate: {
+      min: 0
+    }
   },
   migrationId: {
-    type: String,
-    default: null,
+    type: DataTypes.STRING,
+    allowNull: true,
+    defaultValue: null
   },
   
-  // Migration reference fields (ADD THESE)
+  // Migration reference fields
   mysqlId: {
-    type: Number, // Original MySQL ID
-    sparse: true
+    type: DataTypes.INTEGER,
+    allowNull: true
   },
   originalData: {
-    type: mongoose.Schema.Types.Mixed, // Store original MySQL data if needed
-    default: null
+    type: DataTypes.JSON, // Store original data as JSON
+    allowNull: true,
+    defaultValue: null
   },
   
   // Timestamps
   createdAt: {
-    type: Date,
-    default: Date.now,
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   },
   updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  }
 }, {
-  timestamps: false // Disable automatic timestamps since we have custom ones
+  tableName: 'Groups',
+  timestamps: true, // Use Sequelize's automatic timestamps
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  hooks: {
+    beforeSave: (group, options) => {
+      // Update memberCount based on members array length
+      if (Array.isArray(group.members)) {
+        group.memberCount = group.members.length;
+      } else {
+        group.memberCount = 0;
+        group.members = [];
+      }
+    },
+    beforeUpdate: (group, options) => {
+      // Update memberCount if members array is being updated
+      if (group.changed('members')) {
+        if (Array.isArray(group.members)) {
+          group.memberCount = group.members.length;
+        } else {
+          group.memberCount = 0;
+          group.members = [];
+        }
+      }
+    }
+  },
+  indexes: [
+    {
+      name: 'idx_group_code',
+      fields: ['groupCode'],
+      unique: true
+    },
+    {
+      name: 'idx_group_name',
+      fields: ['groupName']
+    },
+    {
+      name: 'idx_branch',
+      fields: ['branch']
+    },
+    {
+      name: 'idx_relationship_manager',
+      fields: ['relationshipManager']
+    },
+    {
+      name: 'idx_status',
+      fields: ['status']
+    },
+    {
+      name: 'idx_legacy_id',
+      fields: ['legacyId'],
+      unique: true
+    },
+    {
+      name: 'idx_mysql_id',
+      fields: ['mysqlId']
+    },
+    // Full-text index equivalent (if needed, depends on database)
+    {
+      name: 'idx_group_name_text',
+      fields: ['groupName'],
+      using: 'BTREE' // Use GIN/GIST for full-text in PostgreSQL
+    }
+  ]
 });
 
-// Pre-save middleware to update memberCount and timestamps
-groupSchema.pre('save', function (next) {
-  // Update memberCount based on members array length
-  if (Array.isArray(this.members)) {
-    this.memberCount = this.members.length;
-  } else {
-    this.memberCount = 0;
-    this.members = [];
-  }
-  
-  // Always update updatedAt
-  this.updatedAt = new Date();
-  
-  next();
-});
-
-// Pre-update middleware for findOneAndUpdate operations
-groupSchema.pre('findOneAndUpdate', function (next) {
-  const update = this.getUpdate();
-  
-  // If members array is being updated, update memberCount too
-  if (update.$set && update.$set.members) {
-    update.$set.memberCount = update.$set.members.length;
-  } else if (update.members) {
-    update.memberCount = update.members.length;
-  }
-  
-  // Always update updatedAt
-  if (update.$set) {
-    update.$set.updatedAt = new Date();
-  } else {
-    update.updatedAt = new Date();
-  }
-  
-  next();
-});
-
-// Indexes for fast queries
-groupSchema.index({ groupCode: 1 }, { unique: true });
-groupSchema.index({ groupName: 'text' });
-groupSchema.index({ branch: 1 });
-groupSchema.index({ relationshipManager: 1 });
-groupSchema.index({ status: 1 });
-groupSchema.index({ legacyId: 1 }, { unique: true, sparse: true });
-groupSchema.index({ mysqlId: 1 }, { sparse: true });
-
-// Virtual for formatted group display
-groupSchema.virtual('displayName').get(function() {
-  return `${this.groupCode} - ${this.groupName}`;
-});
-
-// Method to check if group can accept more members
-groupSchema.methods.canAddMember = function() {
+// Instance methods
+Group.prototype.canAddMember = function() {
   if (this.maxMembers === 0) return true; // No limit
   return this.memberCount < this.maxMembers;
 };
 
-// Method to add member to group
-groupSchema.methods.addMember = function(customerId) {
+Group.prototype.addMember = async function(customerId) {
   if (!this.members.includes(customerId)) {
-    this.members.push(customerId);
-    return this.save();
+    const members = [...this.members, customerId];
+    return this.update({ members });
   }
-  return Promise.resolve(this);
+  return this;
 };
 
-// Method to remove member from group
-groupSchema.methods.removeMember = function(customerId) {
-  this.members = this.members.filter(member => member !== customerId);
-  return this.save();
+Group.prototype.removeMember = async function(customerId) {
+  const members = this.members.filter(member => member !== customerId);
+  return this.update({ members });
 };
 
-// Static method to find active groups by branch
-groupSchema.statics.findActiveByBranch = function(branchId) {
-  return this.find({ branch: branchId, status: 'active' });
+Group.prototype.getDisplayName = function() {
+  return `${this.groupCode} - ${this.groupName}`;
 };
 
-// Static method to find by legacy ID
-groupSchema.statics.findByLegacyId = function(legacyId) {
-  return this.findOne({ legacyId: Number(legacyId) });
+// Class methods (static methods)
+Group.findActiveByBranch = function(branchId) {
+  return Group.findAll({
+    where: {
+      branch: branchId,
+      status: 'active'
+    }
+  });
 };
 
-// Static method to find by MySQL ID
-groupSchema.statics.findByMysqlId = function(mysqlId) {
-  return this.findOne({ mysqlId: Number(mysqlId) });
+Group.findByLegacyId = function(legacyId) {
+  return Group.findOne({
+    where: {
+      legacyId: Number(legacyId)
+    }
+  });
 };
 
-// Static method to get group by code
-groupSchema.statics.findByGroupCode = function(groupCode) {
-  return this.findOne({ groupCode: groupCode.toUpperCase() });
+Group.findByMysqlId = function(mysqlId) {
+  return Group.findOne({
+    where: {
+      mysqlId: Number(mysqlId)
+    }
+  });
 };
 
-export default mongoose.model('Group', groupSchema);
+Group.findByGroupCode = function(groupCode) {
+  return Group.findOne({
+    where: {
+      groupCode: groupCode.toUpperCase()
+    }
+  });
+};
+
+// Virtual property (getter)
+Object.defineProperty(Group.prototype, 'displayName', {
+  get: function() {
+    return `${this.groupCode} - ${this.groupName}`;
+  }
+});
+
+export default Group;

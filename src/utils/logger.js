@@ -1,5 +1,8 @@
+// logger.js - UPDATED FOR MYSQL/SEQUELIZE
 import winston from 'winston';
-import DailyRotateFile from 'winston-daily-rotate-file';  // Add this import
+import DailyRotateFile from 'winston-daily-rotate-file';
+import fs from 'fs';
+import path from 'path';
 
 // Define logging levels
 const logLevels = {
@@ -15,9 +18,7 @@ const currentLevel = process.env.LOG_LEVEL || 'info';
 // Log directory (env or default)
 const logDir = process.env.LOGS_DIR || 'logs';
 
-// Ensure log directory exists (with error handling)
-import fs from 'fs';
-import path from 'path';
+// Ensure log directory exists
 if (!fs.existsSync(logDir)) {
   try {
     fs.mkdirSync(logDir, { recursive: true });
@@ -32,12 +33,11 @@ export const logger = winston.createLogger({
   levels: logLevels,
   format: winston.format.combine(
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    winston.format.errors({ stack: true }), // NEW: Always include stack traces
+    winston.format.errors({ stack: true }),
     winston.format.json({
       replacer: (key, value) => {
         if (value instanceof Buffer || value?.buffer) return '[Buffer]';
-        if (value?.constructor?.name === 'MongoClient') return '[MongoClient]';
-        if (value?.constructor?.name === 'ClientSession') return '[ClientSession]'; // Added for Mongoose sessions
+        if (value?.constructor?.name === 'Sequelize') return '[Sequelize]';
         if (typeof value === 'object' && value !== null) {
           // Prevent circular references in nested objects
           try {
@@ -80,9 +80,8 @@ export const logger = winston.createLogger({
       maxFiles: '14d',
     }),
   ],
-  // NEW: Disable auto-exit on errors—let app handle
   exitOnError: false,
-  // Handle uncaught exceptions: Log to file + console (prevents silent timeouts)
+  // Handle uncaught exceptions
   exceptionHandlers: [
     new DailyRotateFile({
       filename: `${logDir}/exceptions-%DATE%.log`,
@@ -90,7 +89,6 @@ export const logger = winston.createLogger({
       zippedArchive: true,
       maxFiles: '30d',
     }),
-    // NEW: Add console for immediate visibility (avoids file-only hang)
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
@@ -102,7 +100,7 @@ export const logger = winston.createLogger({
       ),
     }),
   ],
-  // NEW: Handle rejected promises: Log + console
+  // Handle rejected promises
   rejectionHandlers: [
     new DailyRotateFile({
       filename: `${logDir}/rejections-%DATE%.log`,
@@ -123,7 +121,7 @@ export const logger = winston.createLogger({
   ],
 });
 
-// NEW: Graceful close for transports (call in server.js shutdown)
+// Graceful close for transports
 logger.close = async () => {
   return new Promise((resolve) => {
     logger.transports.forEach(transport => {
@@ -131,7 +129,6 @@ logger.close = async () => {
         transport.close();
       }
     });
-    // Give 2s for flush, then force resolve
     setTimeout(resolve, 2000);
   });
 };

@@ -1,6 +1,5 @@
 // routes/analytics.js
 import express from 'express';
-import mongoose from 'mongoose';
 
 // Controllers for general analytics
 import {

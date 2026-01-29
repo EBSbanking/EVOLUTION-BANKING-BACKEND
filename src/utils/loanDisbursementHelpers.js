@@ -1,9 +1,11 @@
-import mongoose from 'mongoose';
+// utils/loanProcessingUtils.js - Sequelize Version (Updated with LoanAccount)
 import Transaction from '../models/Transaction.js';
 import InsurancePolicy from '../models/InsurancePolicy.js';
 import Ledger from '../models/Ledger.js';
 import Branch from '../models/Branch.js';
+import LoanAccount from '../models/LoanAccount.js'; // Added LoanAccount import
 import logger from './logger.js';
+import  sequelize  from '../../config/db.js';
 
 // DYNAMIC GL Account Template Configuration - With wildcards for all branches
 export const GL_ACCOUNT_TEMPLATES = {
@@ -79,9 +81,9 @@ export const getLoanAssetGLAccount = (productType, branchCode, subBranchCode = '
 };
 
 // Get branch by ID and return branchCode
-export const getBranchCode = async (branchId, session = null) => {
+export const getBranchCode = async (branchId, transaction = null) => {
   try {
-    const branch = await Branch.findById(branchId).session(session);
+    const branch = await Branch.findByPk(branchId, { transaction });
     if (!branch) {
       throw new Error(`Branch not found with ID: ${branchId}`);
     }
@@ -91,6 +93,41 @@ export const getBranchCode = async (branchId, session = null) => {
     return branch.branchCode;
   } catch (error) {
     logger.error(`Error getting branch code for branch ${branchId}:`, error);
+    throw error;
+  }
+};
+
+// Get LoanAccount by account number
+export const getLoanAccountByNumber = async (accountNumber, transaction = null) => {
+  try {
+    const loanAccount = await LoanAccount.findOne({
+      where: { ACCT_NO: accountNumber },
+      transaction
+    });
+    
+    if (!loanAccount) {
+      throw new Error(`Loan account not found: ${accountNumber}`);
+    }
+    
+    return loanAccount;
+  } catch (error) {
+    logger.error(`Error getting loan account ${accountNumber}:`, error);
+    throw error;
+  }
+};
+
+// Get LoanAccount by ID
+export const getLoanAccountById = async (loanId, transaction = null) => {
+  try {
+    const loanAccount = await LoanAccount.findByPk(loanId, { transaction });
+    
+    if (!loanAccount) {
+      throw new Error(`Loan account not found with ID: ${loanId}`);
+    }
+    
+    return loanAccount;
+  } catch (error) {
+    logger.error(`Error getting loan account by ID ${loanId}:`, error);
     throw error;
   }
 };
@@ -164,9 +201,12 @@ export const getFeeBreakdown = (fees) => {
 };
 
 // Helper function to verify GL account exists and can post
-export const verifyGLAccount = async (glCode, transactionType, session) => {
+export const verifyGLAccount = async (glCode, transactionType, transaction = null) => {
   try {
-    const ledgerAccount = await Ledger.findOne({ GL_ACCT_NO: glCode }).session(session);
+    const ledgerAccount = await Ledger.findOne({ 
+      where: { GL_ACCT_NO: glCode },
+      transaction
+    });
     
     if (!ledgerAccount) {
       throw new Error(`GL account not found: ${glCode}`);
@@ -198,9 +238,9 @@ export const verifyGLAccount = async (glCode, transactionType, session) => {
 };
 
 // Helper function to create ledger transaction
-export const createLedgerTransaction = async (transactionData, session) => {
+export const createLedgerTransaction = async (transactionData, transaction = null) => {
   try {
-    const ledgerEntry = new Ledger({
+    const ledgerEntry = await Ledger.create({
       GL_ACCT_NO: transactionData.glCode,
       amount: transactionData.amount,
       transactionType: transactionData.transactionType,
@@ -209,9 +249,8 @@ export const createLedgerTransaction = async (transactionData, session) => {
       createdBy: transactionData.userId,
       transactionDate: new Date(),
       metadata: transactionData.metadata
-    });
+    }, { transaction });
 
-    await ledgerEntry.save({ session });
     return ledgerEntry;
   } catch (error) {
     logger.error('Error creating ledger transaction:', error);
@@ -220,8 +259,8 @@ export const createLedgerTransaction = async (transactionData, session) => {
 };
 
 // Helper function to dynamically debit fees from customer account
-export const debitFeesFromCustomerAccount = async (loanAccount, customerAccount, userId, session, branchId) => {
-  const fees = loanAccount.FEE_DETAILS;
+export const debitFeesFromCustomerAccount = async (loanAccount, customerAccount, userId, t, branchId) => {
+  const fees = loanAccount.FEE_DETAILS || {};
   
   // Calculate total fees dynamically from all fee components
   const totalFees = calculateTotalFees(fees);
@@ -232,14 +271,14 @@ export const debitFeesFromCustomerAccount = async (loanAccount, customerAccount,
   }
 
   // Get branch code from branch ID
-  const branchCode = await getBranchCode(branchId, session);
+  const branchCode = await getBranchCode(branchId, t);
 
   // STEP 1: DEBIT TOTAL FEES FROM CUSTOMER ACCOUNT
   const previousBalance = customerAccount.ledger_balance;
   customerAccount.ledger_balance -= totalFees;
   
   // Create debit transaction for customer account
-  await Transaction.create([{
+  await Transaction.create({
     transactionId: `FEE_DEBIT_${loanAccount.ACCT_NO}_${Date.now()}`,
     account_number: customerAccount.account_number,
     amount: totalFees,
@@ -256,18 +295,18 @@ export const debitFeesFromCustomerAccount = async (loanAccount, customerAccount,
       branchCode: branchCode,
       branchId: branchId
     }
-  }], { session });
+  }, { transaction: t });
 
-  await customerAccount.save({ session });
+  await customerAccount.save({ transaction: t });
 
   // STEP 2: DYNAMICALLY CREATE LEDGER ENTRIES FOR ALL FEE TYPES
-  await createDynamicLedgerEntries(loanAccount, customerAccount, fees, userId, session, branchCode);
+  await createDynamicLedgerEntries(loanAccount, customerAccount, fees, userId, t, branchCode);
 
   logger.info(`Fees debited from customer ${loanAccount.CUST_ID} account: ${totalFees} for branch ${branchCode}`);
 };
 
 // Dynamically create Ledger entries for all fee types
-export const createDynamicLedgerEntries = async (loanAccount, customerAccount, fees, userId, session, branchCode) => {
+export const createDynamicLedgerEntries = async (loanAccount, customerAccount, fees, userId, t, branchCode) => {
   const timestamp = Date.now();
   
   // Get customer account GL code for this branch
@@ -275,10 +314,10 @@ export const createDynamicLedgerEntries = async (loanAccount, customerAccount, f
   
   // Process standard fee components
   const standardFees = [
-    { amount: fees.processingFee, type: 'PROCESSING_FEE', name: 'Processing Fee' },
-    { amount: fees.insuranceFee, type: 'INSURANCE_FEE', name: 'Insurance Premium' },
-    { amount: fees.otherFees, type: 'OTHER_FEES', name: 'Other Fees' },
-    { amount: fees.upfrontInterest, type: 'UPFRONT_INTEREST', name: 'Upfront Interest' }
+    { amount: fees.processingFee || 0, type: 'PROCESSING_FEE', name: 'Processing Fee' },
+    { amount: fees.insuranceFee || 0, type: 'INSURANCE_FEE', name: 'Insurance Premium' },
+    { amount: fees.otherFees || 0, type: 'OTHER_FEES', name: 'Other Fees' },
+    { amount: fees.upfrontInterest || 0, type: 'UPFRONT_INTEREST', name: 'Upfront Interest' }
   ];
   
   for (const [index, fee] of standardFees.entries()) {
@@ -287,11 +326,10 @@ export const createDynamicLedgerEntries = async (loanAccount, customerAccount, f
       const glCode = getGLAccountForBranch(fee.type, branchCode);
       
       // Verify GL account before creating entry
-      await verifyGLAccount(glCode, 'CREDIT', session);
+      await verifyGLAccount(glCode, 'CREDIT', t);
       
       // Create ledger transaction
       await createLedgerTransaction({
-        transactionId: `FEE_${loanAccount.ACCT_NO}_${timestamp}_${index + 1}`,
         glCode: glCode,
         amount: fee.amount,
         transactionType: GL_ACCOUNT_TEMPLATES[fee.type]?.transactionType || 'FEE_COLLECTION',
@@ -305,7 +343,7 @@ export const createDynamicLedgerEntries = async (loanAccount, customerAccount, f
           customerAccount: customerAccount.account_number,
           contraAccount: customerGLCode
         }
-      }, session);
+      }, t);
     }
   }
   
@@ -324,10 +362,9 @@ export const createDynamicLedgerEntries = async (loanAccount, customerAccount, f
         }
         
         // Verify GL account before creating entry
-        await verifyGLAccount(glCode, 'CREDIT', session);
+        await verifyGLAccount(glCode, 'CREDIT', t);
         
         await createLedgerTransaction({
-          transactionId: `CHG_${loanAccount.ACCT_NO}_${charge.chargeCode || 'CHG'}_${timestamp}_${index + 1}`,
           glCode: glCode,
           amount: charge.amount,
           transactionType: GL_ACCOUNT_TEMPLATES[chargeType]?.transactionType || 'CHARGE_COLLECTION',
@@ -343,7 +380,7 @@ export const createDynamicLedgerEntries = async (loanAccount, customerAccount, f
             customerAccount: customerAccount.account_number,
             contraAccount: customerGLCode
           }
-        }, session);
+        }, t);
       }
     }
   }
@@ -365,8 +402,8 @@ export const getDisbursementMethodDescription = (method) => {
 };
 
 // Dynamic loan disbursement function
-export const disburseFullAmount = async (loanAccount, customerAccount, userId, session, branchId, disbursementMethod = null) => {
-  const fullAmount = loanAccount.DISBURSEMENT_LIMIT;
+export const disburseFullAmount = async (loanAccount, customerAccount, userId, t, branchId, disbursementMethod = null) => {
+  const fullAmount = loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount;
   
   if (fullAmount <= 0) {
     logger.warn(`Zero or negative loan amount for ${loanAccount.ACCT_NO}`);
@@ -374,7 +411,7 @@ export const disburseFullAmount = async (loanAccount, customerAccount, userId, s
   }
 
   // Get branch code from branch ID
-  const branchCode = await getBranchCode(branchId, session);
+  const branchCode = await getBranchCode(branchId, t);
 
   const previousBalance = customerAccount.ledger_balance;
   
@@ -386,7 +423,7 @@ export const disburseFullAmount = async (loanAccount, customerAccount, userId, s
   const methodDescription = getDisbursementMethodDescription(method);
   
   // Create credit transaction for customer account
-  await Transaction.create([{
+  await Transaction.create({
     transactionId: `LOAN_DISB_${loanAccount.ACCT_NO}_${Date.now()}`,
     account_number: customerAccount.account_number,
     amount: fullAmount,
@@ -404,36 +441,36 @@ export const disburseFullAmount = async (loanAccount, customerAccount, userId, s
       branchCode: branchCode,
       branchId: branchId
     }
-  }], { session });
+  }, { transaction: t });
 
-  await customerAccount.save({ session });
+  await customerAccount.save({ transaction: t });
 
   // Get the appropriate loan asset GL code for this branch
-  const loanAssetGLCode = getLoanAssetGLAccount(loanAccount.PRODUCT_TYPE, branchCode);
+  const productType = loanAccount.PRODUCT_TYPE || loanAccount.productType;
+  const loanAssetGLCode = getLoanAssetGLAccount(productType, branchCode);
   const customerGLCode = getGLAccountForBranch('CUSTOMER_ACCOUNT', branchCode);
   
   // Verify both GL accounts before creating entries
-  await verifyGLAccount(loanAssetGLCode, 'DEBIT', session);
-  await verifyGLAccount(customerGLCode, 'CREDIT', session);
+  await verifyGLAccount(loanAssetGLCode, 'DEBIT', t);
+  await verifyGLAccount(customerGLCode, 'CREDIT', t);
 
   // Create dynamic ledger entry for loan disbursement
   await createLedgerTransaction({
-    transactionId: `DISB_${loanAccount.ACCT_NO}_${Date.now()}`,
     glCode: loanAssetGLCode,
     amount: fullAmount,
     transactionType: 'LOAN_DISBURSEMENT',
-    description: `Loan disbursement to ${loanAccount.ACCT_NM} via ${methodDescription}`,
+    description: `Loan disbursement to ${loanAccount.ACCT_NM || loanAccount.customerName} via ${methodDescription}`,
     userId: userId,
     branchCode: branchCode,
     metadata: {
-      productType: loanAccount.PRODUCT_TYPE,
+      productType: productType,
       disbursementMethod: method,
       loanTerm: loanAccount.loanTerm,
       customerId: loanAccount.CUST_ID,
       customerAccount: customerAccount.account_number,
       contraAccount: customerGLCode
     }
-  }, session);
+  }, t);
 
   logger.info(`Full loan amount disbursed to ${loanAccount.ACCT_NM}: ${fullAmount} via ${method} in branch ${branchCode}`);
 };
@@ -448,7 +485,7 @@ export const generatePolicyNumber = (loanAccount, insurance) => {
 
 // Calculate default insurance coverage
 export const calculateDefaultCoverage = (loanAccount) => {
-  const loanAmount = loanAccount.DISBURSEMENT_LIMIT;
+  const loanAmount = loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount;
   // Default coverage: loan amount + 20% for additional protection
   return loanAmount * 1.2;
 };
@@ -461,20 +498,23 @@ export const calculateCoveragePeriod = (loanAccount, insurance) => {
   // Extend coverage slightly beyond loan maturity for safety
   const extensionDays = 30; // 30-day grace period
   
-  switch (loanAccount.loanTerm?.toLowerCase()) {
+  const loanTerm = loanAccount.loanTerm?.toLowerCase();
+  const termValue = loanAccount.TERM_VALUE || loanAccount.loanTermValue || 1;
+  
+  switch (loanTerm) {
     case 'weekly':
-      endDate.setDate(endDate.getDate() + (loanAccount.TERM_VALUE * 7) + extensionDays);
+      endDate.setDate(endDate.getDate() + (termValue * 7) + extensionDays);
       break;
     case 'monthly':
-      endDate.setMonth(endDate.getMonth() + loanAccount.TERM_VALUE);
+      endDate.setMonth(endDate.getMonth() + termValue);
       endDate.setDate(endDate.getDate() + extensionDays);
       break;
     case 'yearly':
-      endDate.setFullYear(endDate.getFullYear() + loanAccount.TERM_VALUE);
+      endDate.setFullYear(endDate.getFullYear() + termValue);
       endDate.setDate(endDate.getDate() + extensionDays);
       break;
     default:
-      endDate.setMonth(endDate.getMonth() + loanAccount.TERM_VALUE);
+      endDate.setMonth(endDate.getMonth() + termValue);
       endDate.setDate(endDate.getDate() + extensionDays);
   }
   
@@ -486,7 +526,7 @@ export const calculateCoveragePeriod = (loanAccount, insurance) => {
 };
 
 // Enhanced insurance activation with dynamic policy generation
-export const activateInsurance = async (loanAccount, userId, session) => {
+export const activateInsurance = async (loanAccount, userId, t) => {
   const insurance = loanAccount.insuranceDetails;
   
   if (!insurance) {
@@ -503,11 +543,11 @@ export const activateInsurance = async (loanAccount, userId, session) => {
   // Determine coverage period
   const coveragePeriod = calculateCoveragePeriod(loanAccount, insurance);
   
-  const insurancePolicy = new InsurancePolicy({
+  const insurancePolicy = await InsurancePolicy.create({
     policyNumber: policyNumber,
-    loanAccount: loanAccount._id,
+    loanAccount: loanAccount.id,
     customerId: loanAccount.CUST_ID,
-    customerName: loanAccount.ACCT_NM,
+    customerName: loanAccount.ACCT_NM || loanAccount.customerName,
     premiumAmount: insurance.premiumAmount,
     insuredAmount: insuredAmount,
     coverageType: insurance.coverageType || 'LOAN_PROTECTION',
@@ -521,14 +561,12 @@ export const activateInsurance = async (loanAccount, userId, session) => {
     paymentMethod: 'LOAN_DISBURSEMENT',
     createdBy: userId,
     metadata: {
-      loanAmount: loanAccount.DISBURSEMENT_LIMIT,
+      loanAmount: loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount,
       loanTerm: loanAccount.loanTerm,
-      termValue: loanAccount.TERM_VALUE,
-      productType: loanAccount.PRODUCT_TYPE
+      termValue: loanAccount.TERM_VALUE || loanAccount.loanTermValue,
+      productType: loanAccount.PRODUCT_TYPE || loanAccount.productType
     }
-  });
-
-  await insurancePolicy.save({ session });
+  }, { transaction: t });
 
   logger.info(`Insurance activated for loan ${loanAccount.ACCT_NO}: ${policyNumber} with coverage ${insuredAmount}`);
   
@@ -542,7 +580,10 @@ export const getGLAccountTypes = () => {
 
 // Utility to get GL accounts for all branches
 export const getGLAccountsForAllBranches = async () => {
-  const branches = await Branch.find({ status: 'ACTIVE' });
+  const branches = await Branch.findAll({ 
+    where: { status: 'ACTIVE' }
+  });
+  
   const branchAccounts = {};
   
   for (const branch of branches) {
@@ -557,27 +598,290 @@ export const getGLAccountsForAllBranches = async () => {
   return branchAccounts;
 };
 
+// Complete loan processing with all steps in a single transaction
+export const processLoanDisbursement = async (loanAccount, customerAccount, userId, branchId, disbursementMethod = null) => {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    logger.info(`Starting loan processing for ${loanAccount.ACCT_NO}`);
+    
+    // Validate loan for disbursement
+    const validation = validateLoanForDisbursement(loanAccount, customerAccount);
+    if (!validation.isValid) {
+      throw new Error(`Loan validation failed: ${validation.errors.join(', ')}`);
+    }
+    
+    // Step 1: Debit fees from customer account
+    await debitFeesFromCustomerAccount(loanAccount, customerAccount, userId, transaction, branchId);
+    
+    // Step 2: Activate insurance if applicable
+    if (loanAccount.insuranceDetails?.premiumAmount > 0) {
+      await activateInsurance(loanAccount, userId, transaction);
+    }
+    
+    // Step 3: Disburse full loan amount
+    await disburseFullAmount(loanAccount, customerAccount, userId, transaction, branchId, disbursementMethod);
+    
+    // Step 4: Update loan status and disbursement details
+    loanAccount.status = 'ACTIVE';
+    loanAccount.disbursementDate = new Date();
+    loanAccount.disbursementMethod = disbursementMethod || loanAccount.disbursementMethod || 'BANK_TRANSFER';
+    loanAccount.disbursedAmount = loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount;
+    loanAccount.lastModifiedBy = userId;
+    loanAccount.lastModifiedDate = new Date();
+    
+    await loanAccount.save({ transaction });
+    
+    // Commit transaction
+    await transaction.commit();
+    
+    logger.info(`Loan processing completed successfully for ${loanAccount.ACCT_NO}`);
+    
+    return {
+      success: true,
+      loanAccountNo: loanAccount.ACCT_NO,
+      customerAccount: customerAccount.account_number,
+      disbursementAmount: loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount,
+      feesDebited: calculateTotalFees(loanAccount.FEE_DETAILS || {}),
+      timestamp: new Date()
+    };
+    
+  } catch (error) {
+    await transaction.rollback();
+    logger.error(`Loan processing failed for ${loanAccount.ACCT_NO}:`, error);
+    
+    throw new Error(`Loan processing failed: ${error.message}`);
+  }
+};
+
+// Validate loan for disbursement
+export const validateLoanForDisbursement = (loanAccount, customerAccount) => {
+  const errors = [];
+  
+  if (!loanAccount || !customerAccount) {
+    errors.push('Loan account or customer account not provided');
+  }
+  
+  if (loanAccount.status !== 'APPROVED') {
+    errors.push(`Loan status must be APPROVED, current status: ${loanAccount.status}`);
+  }
+  
+  const disbursementAmount = loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount;
+  if (disbursementAmount <= 0) {
+    errors.push('Loan disbursement limit must be greater than 0');
+  }
+  
+  if (customerAccount.ledger_balance < 0) {
+    errors.push('Customer account has insufficient balance');
+  }
+  
+  const productType = loanAccount.PRODUCT_TYPE || loanAccount.productType;
+  if (!productType) {
+    errors.push('Loan product type is required');
+  }
+  
+  if (!loanAccount.CUST_ID) {
+    errors.push('Customer ID is required');
+  }
+  
+  if (!loanAccount.ACCT_NO) {
+    errors.push('Loan account number is required');
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+};
+
+// Get transaction summary for a loan
+export const getLoanTransactionSummary = async (loanAccountNo) => {
+  try {
+    const transactions = await Transaction.findAll({
+      where: {
+        metadata: {
+          loanAccountNo: loanAccountNo
+        }
+      },
+      order: [['transactionDate', 'DESC']],
+      limit: 50
+    });
+    
+    const ledgerEntries = await Ledger.findAll({
+      where: {
+        metadata: {
+          loanAccountNo: loanAccountNo
+        }
+      },
+      order: [['transactionDate', 'DESC']],
+      limit: 50
+    });
+    
+    const totalDebits = transactions
+      .filter(t => t.transactionType === 'DEBIT')
+      .reduce((sum, t) => sum + t.amount, 0);
+    
+    const totalCredits = transactions
+      .filter(t => t.transactionType === 'CREDIT')
+      .reduce((sum, t) => sum + t.amount, 0);
+    
+    return {
+      loanAccountNo,
+      transactionCount: transactions.length,
+      ledgerEntryCount: ledgerEntries.length,
+      totalDebits,
+      totalCredits,
+      netAmount: totalCredits - totalDebits,
+      transactions,
+      ledgerEntries,
+      lastUpdated: new Date()
+    };
+    
+  } catch (error) {
+    logger.error(`Error getting transaction summary for ${loanAccountNo}:`, error);
+    throw error;
+  }
+};
+
+// Get loan application details for processing
+export const getLoanApplicationForProcessing = async (loanId) => {
+  try {
+    const loanAccount = await LoanAccount.findByPk(loanId);
+    
+    if (!loanAccount) {
+      throw new Error(`Loan application not found: ${loanId}`);
+    }
+    
+    // Get associated customer account
+    // This assumes you have a Customer model with an account
+    // Adjust based on your actual data model
+    const Customer = (await import('../models/Customer.js')).default;
+    const customer = await Customer.findOne({
+      where: { CUST_ID: loanAccount.CUST_ID }
+    });
+    
+    if (!customer) {
+      throw new Error(`Customer not found for loan: ${loanId}`);
+    }
+    
+    return {
+      loanAccount,
+      customer,
+      isValid: loanAccount.status === 'APPROVED',
+      validation: validateLoanForDisbursement(loanAccount, customer)
+    };
+  } catch (error) {
+    logger.error(`Error getting loan application ${loanId}:`, error);
+    throw error;
+  }
+};
+
+// Update loan account status
+export const updateLoanAccountStatus = async (loanId, status, userId, transaction = null) => {
+  try {
+    const loanAccount = await LoanAccount.findByPk(loanId, { transaction });
+    
+    if (!loanAccount) {
+      throw new Error(`Loan account not found: ${loanId}`);
+    }
+    
+    loanAccount.status = status;
+    loanAccount.lastModifiedBy = userId;
+    loanAccount.lastModifiedDate = new Date();
+    
+    await loanAccount.save({ transaction });
+    
+    logger.info(`Updated loan ${loanAccount.ACCT_NO} status to ${status}`);
+    
+    return loanAccount;
+  } catch (error) {
+    logger.error(`Error updating loan status for ${loanId}:`, error);
+    throw error;
+  }
+};
+
+// Get loan statistics for dashboard
+export const getLoanStatistics = async (branchId = null) => {
+  try {
+    const whereClause = branchId ? { branchId } : {};
+    
+    const totalLoans = await LoanAccount.count({ where: whereClause });
+    const activeLoans = await LoanAccount.count({ 
+      where: { ...whereClause, status: 'ACTIVE' } 
+    });
+    const approvedLoans = await LoanAccount.count({ 
+      where: { ...whereClause, status: 'APPROVED' } 
+    });
+    const pendingLoans = await LoanAccount.count({ 
+      where: { ...whereClause, status: 'PENDING' } 
+    });
+    
+    const totalDisbursed = await LoanAccount.sum('DISBURSEMENT_LIMIT', {
+      where: { ...whereClause, status: 'ACTIVE' }
+    }) || 0;
+    
+    return {
+      totalLoans,
+      activeLoans,
+      approvedLoans,
+      pendingLoans,
+      totalDisbursed,
+      averageLoanAmount: activeLoans > 0 ? totalDisbursed / activeLoans : 0
+    };
+  } catch (error) {
+    logger.error('Error getting loan statistics:', error);
+    throw error;
+  }
+};
+
 export default {
+  // Core templates
   GL_ACCOUNT_TEMPLATES,
   LOAN_PRODUCT_TEMPLATES,
+  
+  // Account generation
   generateGLAccount,
   getGLAccountForBranch,
   getLoanAssetGLAccount,
   getAllGLAccountsForBranch,
   getGLAccountsForAllBranches,
+  
+  // Branch operations
   getBranchCode,
+  
+  // Loan account operations
+  getLoanAccountByNumber,
+  getLoanAccountById,
+  getLoanApplicationForProcessing,
+  updateLoanAccountStatus,
+  getLoanStatistics,
+  
+  // Fee processing
   detectFeeType,
   calculateTotalFees,
   getFeeBreakdown,
+  
+  // GL account operations
   verifyGLAccount,
   createLedgerTransaction,
+  
+  // Loan processing functions
   debitFeesFromCustomerAccount,
   createDynamicLedgerEntries,
   getDisbursementMethodDescription,
   disburseFullAmount,
+  
+  // Insurance operations
   generatePolicyNumber,
   calculateDefaultCoverage,
   calculateCoveragePeriod,
   activateInsurance,
-  getGLAccountTypes
+  
+  // GL account types
+  getGLAccountTypes,
+  
+  // Complete loan processing
+  processLoanDisbursement,
+  validateLoanForDisbursement,
+  getLoanTransactionSummary
 };

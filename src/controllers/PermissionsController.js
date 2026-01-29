@@ -1,4 +1,5 @@
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
+import { Op } from 'sequelize';
 import Permissions from '../models/Permissions.js';
 import UserRole from '../models/UserRole.js'; // Import UserRole model
 import BusinessRole from '../models/BusinessRole.js'; // Import BusinessRole model
@@ -8,16 +9,26 @@ import { ForbiddenError, NotFoundError } from '../middlewares/errors/index.js';
 // rolePermissionService object for common operations
 const rolePermissionService = {
   async fetchUserFromDB(userId) {
-    // Fetch from UserRole model
-    const userRole = await UserRole.findOne({ USER_ID: userId }).lean();
-    if (!userRole) {
+    try {
+      // Fetch from UserRole model
+      const userRole = await UserRole.findOne({ 
+        where: { USER_ID: userId },
+        include: [{
+          model: BusinessRole,
+          as: 'businessRole',
+          attributes: ['ROLE_ID', 'ROLE_NM', 'DESCRIPTION', 'IS_ACTIVE']
+        }]
+      });
+
+      if (!userRole) {
+        return null;
+      }
+
+      return userRole.toJSON();
+    } catch (error) {
+      console.error('Error fetching user from DB:', error);
       return null;
     }
-    // Optionally populate BusinessRole if needed
-    return {
-      ...userRole,
-      businessRole: await BusinessRole.findOne({ ROLE_ID: userRole.USER_ROLE_ID }).lean()
-    };
   },
 
   hasPermission(roleId, permission) {
@@ -73,27 +84,30 @@ export const transformRoleData = (backendData) => {
   const rolePermissions = getDefaultPermissionsForRole(backendData.USER_ROLE_ID);
   
   return {
-    id: backendData._id || backendData.USER_ID,
+    id: backendData.id || backendData.USER_ID,
     USER_ROLE_ID: backendData.USER_ROLE_ID,
-    ROLE_NM: backendData.ROLE_NM,
-    ROLE_NAME: backendData.ROLE_NM,
+    ROLE_NM: backendData.ROLE_NM || backendData.businessRole?.ROLE_NM,
+    ROLE_NAME: backendData.ROLE_NM || backendData.businessRole?.ROLE_NM,
     USER_ID: backendData.USER_ID,
-    BUSINESS_UNIT: backendData.Business_Unit,
+    BUSINESS_UNIT: backendData.Business_Unit || backendData.BU_ID,
     BU_ID: backendData.BU_ID,
     REC_ST: backendData.REC_ST,
     VERSION_NO: backendData.VERSION_NO,
     CREATE_DT: backendData.CREATE_DT,
     SYS_CREATE_TS: backendData.SYS_CREATE_TS || backendData.ROW_TS,
-    IS_ACTIVE: backendData.REC_ST === 'Active',
+    IS_ACTIVE: backendData.REC_ST === 'Active' || backendData.REC_ST === 'A',
     SUPERVISOR_FG: backendData.SUPERVISOR_FG,
     ALLOW_TXN_POSTING_FG: backendData.ALLOW_TXN_POSTING_FG,
     WF_ITEM_ACCESS_LEVEL: backendData.WF_ITEM_ACCESS_LEVEL,
-    permissions: rolePermissions
+    permissions: rolePermissions,
+    businessRole: backendData.businessRole
   };
 };
 
 // Helper function to sync permissions with predefined roles
 async function syncPermissionsWithRoles() {
+  const transaction = await sequelize.transaction();
+  
   try {
     const roles = Object.keys(ROLE_PERMISSION_MAPPING);
     const results = {
@@ -109,7 +123,10 @@ async function syncPermissionsWithRoles() {
         const defaultPermissions = ROLE_PERMISSION_MAPPING[roleId];
         
         // Check if permissions already exist for this role using BU_ROLE_ID
-        const existing = await Permissions.findOne({ BU_ROLE_ID: parseInt(roleId, 10) });
+        const existing = await Permissions.findOne({ 
+          where: { BU_ROLE_ID: parseInt(roleId, 10) },
+          transaction
+        });
         
         const permissionsData = {
           BU_ROLE_ID: parseInt(roleId, 10),
@@ -121,16 +138,11 @@ async function syncPermissionsWithRoles() {
 
         if (existing) {
           // Update existing permissions with default mappings
-          await Permissions.findOneAndUpdate(
-            { BU_ROLE_ID: parseInt(roleId, 10) },
-            { $set: permissionsData },
-            { new: true, runValidators: true }
-          );
+          await existing.update(permissionsData, { transaction });
           results.rolesUpdated++;
         } else {
           // Create new permissions with default mappings
-          const newPermission = new Permissions(permissionsData);
-          await newPermission.save();
+          await Permissions.create(permissionsData, { transaction });
           results.rolesCreated++;
         }
         
@@ -143,8 +155,10 @@ async function syncPermissionsWithRoles() {
       }
     }
 
+    await transaction.commit();
     return results;
   } catch (error) {
+    await transaction.rollback();
     console.error('Error syncing permissions:', error);
     throw error;
   }
@@ -157,17 +171,25 @@ function getDefaultPermissionsForRole(roleId) {
 
 // Create permission for a role
 export const createPermissionForRole = async (req, res, next) => {
-  const { roleId, roleName } = req.body;
-
+  const transaction = await sequelize.transaction();
+  
   try {
+    const { roleId, roleName } = req.body;
+
     // Validate roleId exists in ROLE_MAPPING
     if (!ROLE_MAPPING[roleId]) {
+      await transaction.rollback();
       throw new ForbiddenError(`Invalid role ID: ${roleId}. Must be one of ${Object.keys(ROLE_MAPPING).join(', ')}`);
     }
 
     // Check if permissions already exist
-    const existing = await Permissions.findOne({ BU_ROLE_ID: parseInt(roleId, 10) });
+    const existing = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(roleId, 10) },
+      transaction
+    });
+    
     if (existing) {
+      await transaction.rollback();
       throw new ForbiddenError('Permissions already exist for this role');
     }
 
@@ -182,30 +204,40 @@ export const createPermissionForRole = async (req, res, next) => {
       ...defaultPermissions
     };
 
-    const newPermission = new Permissions(permissionData);
-    await newPermission.save();
+    const newPermission = await Permissions.create(permissionData, { transaction });
+    await transaction.commit();
     
     res.status(201).json({
       success: true,
       message: 'Permission template created successfully',
-      data: transformPermissions(newPermission.toObject())
+      data: transformPermissions(newPermission.toJSON())
     });
   } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };
 
 export const checkUserPermission = async (req, res, next) => {
   const { userId, permission } = req.params;
+  
   try {
     const userData = await rolePermissionService.fetchUserFromDB(userId);
     if (!userData) {
       throw new NotFoundError('User not found');
     }
+    
     const hasPerm = rolePermissionService.hasPermission(userData.USER_ROLE_ID, permission);
+    
     res.status(200).json({
       success: true,
-      data: { hasPermission: hasPerm, userId, permission, roleId: userData.USER_ROLE_ID }
+      data: { 
+        hasPermission: hasPerm, 
+        userId, 
+        permission, 
+        roleId: userData.USER_ROLE_ID,
+        roleName: userData.ROLE_NM || userData.businessRole?.ROLE_NM
+      }
     });
   } catch (error) {
     next(error);
@@ -215,10 +247,13 @@ export const checkUserPermission = async (req, res, next) => {
 // Get all roles with permissions
 export const listAllRoles = async (req, res, next) => {
   try {
-    const permissions = await Permissions.find().lean();
+    const permissions = await Permissions.findAll({
+      order: [['BU_ROLE_ID', 'ASC']]
+    });
+    
     res.status(200).json({
       success: true,
-      data: permissions.map(transformPermissions)
+      data: permissions.map(permission => transformPermissions(permission.toJSON()))
     });
   } catch (error) {
     next(error);
@@ -230,14 +265,17 @@ export const getPermissionsForRole = async (req, res, next) => {
   const { roleId } = req.params;
 
   try {
-    const permission = await Permissions.findOne({ BU_ROLE_ID: parseInt(roleId, 10) }).lean();
+    const permission = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(roleId, 10) }
+    });
+    
     if (!permission) {
       throw new NotFoundError('Permissions not found for this role');
     }
 
     res.status(200).json({
       success: true,
-      data: transformPermissions(permission)
+      data: transformPermissions(permission.toJSON())
     });
   } catch (error) {
     next(error);
@@ -246,128 +284,254 @@ export const getPermissionsForRole = async (req, res, next) => {
 
 // Clone permissions from one role to another
 export const cloneRolePermissions = async (req, res, next) => {
-  const { sourceRoleId, targetRoleId } = req.body;
-
+  const transaction = await sequelize.transaction();
+  
   try {
+    const { sourceRoleId, targetRoleId } = req.body;
+
     // Validate source and target are different
     if (sourceRoleId === targetRoleId) {
+      await transaction.rollback();
       throw new ForbiddenError('Cannot clone permissions to the same role');
     }
 
     // Get source permissions
-    const sourcePermissions = await Permissions.findOne({ BU_ROLE_ID: parseInt(sourceRoleId, 10) }).lean();
+    const sourcePermissions = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(sourceRoleId, 10) },
+      transaction
+    });
+    
     if (!sourcePermissions) {
+      await transaction.rollback();
       throw new NotFoundError('Source role permissions not found');
     }
 
     // Check if target already has permissions
-    const targetExists = await Permissions.findOne({ BU_ROLE_ID: parseInt(targetRoleId, 10) });
+    const targetExists = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(targetRoleId, 10) },
+      transaction
+    });
+    
     if (targetExists) {
+      await transaction.rollback();
       throw new ForbiddenError('Target role already has permissions');
     }
 
     // Create new permissions object for target role
-    const permissionData = { ...sourcePermissions };
-    delete permissionData._id;
+    const sourceData = sourcePermissions.toJSON();
+    const permissionData = { ...sourceData };
+    
+    // Remove sequelize-specific fields
+    delete permissionData.id;
     delete permissionData.createdAt;
     delete permissionData.updatedAt;
-    delete permissionData.__v;
+    
     permissionData.BU_ROLE_ID = parseInt(targetRoleId, 10);
     permissionData.ROLE_NAME = ROLE_MAPPING[targetRoleId]?.ROLE_NM || `Role ${targetRoleId}`;
 
-    const newPermissions = new Permissions(permissionData);
-    await newPermissions.save();
+    const newPermissions = await Permissions.create(permissionData, { transaction });
+    await transaction.commit();
 
     res.status(201).json({
       success: true,
       message: 'Permissions cloned successfully',
-      data: transformPermissions(newPermissions.toObject())
+      data: transformPermissions(newPermissions.toJSON())
     });
   } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };
 
 // Full update (PUT) - replaces entire permissions object
 export const updatePermissionsForRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const updates = req.body;
-
+  const transaction = await sequelize.transaction();
+  
   try {
+    const { roleId } = req.params;
+    const updates = req.body;
+
+    // Find existing permissions
+    const permission = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(roleId, 10) },
+      transaction
+    });
+
+    if (!permission) {
+      await transaction.rollback();
+      throw new NotFoundError('Role permissions not found');
+    }
+
     // Validate all permission types
+    // Note: You'll need to define PERMISSIONS constant or adjust this validation
     const invalidTypes = Object.keys(updates).filter(
-      key => !key.endsWith('_ACCESS_LEVEL') || !PERMISSIONS[key.replace('_ACCESS_LEVEL', '')]
+      key => !key.endsWith('_ACCESS_LEVEL')
     );
 
     if (invalidTypes.length > 0) {
+      await transaction.rollback();
       throw new ForbiddenError(`Invalid permission types: ${invalidTypes.join(', ')}`);
     }
 
-    // Validate all permission values
-    for (const [type, permissions] of Object.entries(updates)) {
-      const validPermissions = Object.values(
-        PERMISSIONS[type.replace('_ACCESS_LEVEL', '')] || {}
-      );
-      const invalid = permissions.filter(p => !validPermissions.includes(p));
-      
-      if (invalid.length > 0) {
-        throw new ForbiddenError(`Invalid permissions for ${type}: ${invalid.join(', ')}`);
-      }
-    }
+    // Update the permission record
+    await permission.update(updates, { transaction });
+    await transaction.commit();
 
-    const updated = await Permissions.findOneAndUpdate(
-      { BU_ROLE_ID: parseInt(roleId, 10) },
-      { $set: updates },
-      { new: true, runValidators: true, upsert: true }
-    );
+    // Refresh to get updated values
+    await permission.reload();
 
     res.status(200).json({
       success: true,
       message: 'Permissions fully updated',
-      data: transformPermissions(updated.toObject())
+      data: transformPermissions(permission.toJSON())
     });
   } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };
 
 // Partial update (PATCH) - updates specific permission types
 export const patchPermissionsForRole = async (req, res, next) => {
-  const { roleId } = req.params;
-  const { permissionType, permissions } = req.body;
-
+  const transaction = await sequelize.transaction();
+  
   try {
+    const { roleId } = req.params;
+    const { permissionType, permissions } = req.body;
+
     // Validate permission type
-    if (!permissionType.endsWith('_ACCESS_LEVEL') || 
-        !PERMISSIONS[permissionType.replace('_ACCESS_LEVEL', '')]) {
+    if (!permissionType.endsWith('_ACCESS_LEVEL')) {
+      await transaction.rollback();
       throw new ForbiddenError('Invalid permission type');
     }
 
-    // Validate permissions
-    const validPermissions = Object.values(
-      PERMISSIONS[permissionType.replace('_ACCESS_LEVEL', '')] || {}
-    );
-    const invalid = permissions.filter(p => !validPermissions.includes(p));
-    
-    if (invalid.length > 0) {
-      throw new ForbiddenError(`Invalid permissions: ${invalid.join(', ')}`);
-    }
+    // Find existing permissions
+    const permission = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(roleId, 10) },
+      transaction
+    });
 
-    const updated = await Permissions.findOneAndUpdate(
-      { BU_ROLE_ID: parseInt(roleId, 10) },
-      { $set: { [permissionType]: permissions } },
-      { new: true, runValidators: true }
-    );
-
-    if (!updated) {
+    if (!permission) {
+      await transaction.rollback();
       throw new NotFoundError('Role permissions not found');
     }
+
+    // Update specific permission type
+    await permission.update({ [permissionType]: permissions }, { transaction });
+    await transaction.commit();
+
+    // Refresh to get updated values
+    await permission.reload();
 
     res.status(200).json({
       success: true,
       message: 'Permissions partially updated',
       data: {
-        [permissionType]: updated[permissionType]
+        [permissionType]: permission[permissionType],
+        roleId: permission.BU_ROLE_ID,
+        roleName: permission.ROLE_NAME
+      }
+    });
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+// Delete role permissions (System Admin only)
+export const deleteRolePermissions = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    const { roleId } = req.params;
+
+    const permission = await Permissions.findOne({ 
+      where: { BU_ROLE_ID: parseInt(roleId, 10) },
+      transaction
+    });
+
+    if (!permission) {
+      await transaction.rollback();
+      throw new NotFoundError('Role permissions not found');
+    }
+
+    // Store info for response before deletion
+    const deletedInfo = {
+      BU_ROLE_ID: permission.BU_ROLE_ID,
+      ROLE_NAME: permission.ROLE_NAME,
+      deletedAt: new Date()
+    };
+
+    await permission.destroy({ transaction });
+    await transaction.commit();
+
+    res.status(200).json({
+      success: true,
+      message: 'Role permissions deleted successfully',
+      data: deletedInfo
+    });
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+// Enhanced: Search permissions with filtering
+export const searchPermissions = async (req, res, next) => {
+  try {
+    const { 
+      roleId, 
+      roleName, 
+      isActive, 
+      page = 1, 
+      limit = 10,
+      sortBy = 'BU_ROLE_ID',
+      sortOrder = 'ASC'
+    } = req.query;
+
+    const where = {};
+
+    // Build where clause
+    if (roleId) {
+      where.BU_ROLE_ID = parseInt(roleId, 10);
+    }
+
+    if (roleName) {
+      where.ROLE_NAME = { [Op.iLike]: `%${roleName}%` };
+    }
+
+    if (isActive !== undefined) {
+      where.IS_ACTIVE = isActive === 'true' || isActive === true;
+    }
+
+    // Calculate pagination
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Validate sort order
+    const orderDirection = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+    // Fetch permissions with pagination and sorting
+    const { count, rows: permissions } = await Permissions.findAndCountAll({
+      where,
+      order: [[sortBy, orderDirection]],
+      offset,
+      limit: parseInt(limit)
+    });
+
+    res.status(200).json({
+      success: true,
+      data: permissions.map(permission => transformPermissions(permission.toJSON())),
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / parseInt(limit)),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
+      },
+      filters: {
+        roleId,
+        roleName,
+        isActive,
+        results: count
       }
     });
   } catch (error) {
@@ -375,29 +539,220 @@ export const patchPermissionsForRole = async (req, res, next) => {
   }
 };
 
-// Delete role permissions (System Admin only)
-export const deleteRolePermissions = async (req, res, next) => {
-  const { roleId } = req.params;
-
+// Enhanced: Get permission statistics
+export const getPermissionStatistics = async (req, res, next) => {
   try {
-    const deleted = await Permissions.findOneAndDelete({ BU_ROLE_ID: parseInt(roleId, 10) });
-    if (!deleted) {
-      throw new NotFoundError('Role permissions not found');
-    }
+    const statistics = await Permissions.findAll({
+      attributes: [
+        [sequelize.fn('COUNT', sequelize.col('id')), 'totalPermissions'],
+        [sequelize.fn('SUM', sequelize.literal('CASE WHEN "IS_ACTIVE" = true THEN 1 ELSE 0 END')), 'activePermissions'],
+        [sequelize.fn('SUM', sequelize.literal('CASE WHEN "IS_ACTIVE" = false THEN 1 ELSE 0 END')), 'inactivePermissions'],
+        [sequelize.fn('MIN', sequelize.col('BU_ROLE_ID')), 'lowestRoleId'],
+        [sequelize.fn('MAX', sequelize.col('BU_ROLE_ID')), 'highestRoleId']
+      ],
+      raw: true
+    });
+
+    const stats = statistics[0] || {
+      totalPermissions: 0,
+      activePermissions: 0,
+      inactivePermissions: 0,
+      lowestRoleId: null,
+      highestRoleId: null
+    };
+
+    // Get role distribution by permissions
+    const roleDistribution = await Permissions.findAll({
+      attributes: [
+        'ROLE_NAME',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['ROLE_NAME'],
+      order: [[sequelize.fn('COUNT', sequelize.col('id')), 'DESC']],
+      raw: true
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Role permissions deleted successfully'
+      message: 'Permission statistics retrieved successfully',
+      data: {
+        statistics: {
+          totalPermissions: parseInt(stats.totalPermissions) || 0,
+          activePermissions: parseInt(stats.activePermissions) || 0,
+          inactivePermissions: parseInt(stats.inactivePermissions) || 0,
+          activationRate: parseInt(stats.totalPermissions) > 0 
+            ? Math.round((parseInt(stats.activePermissions) / parseInt(stats.totalPermissions)) * 10000) / 100 
+            : 0,
+          roleIdRange: stats.highestRoleId && stats.lowestRoleId 
+            ? `${stats.lowestRoleId} - ${stats.highestRoleId}` 
+            : 'N/A'
+        },
+        roleDistribution: roleDistribution.map(item => ({
+          roleName: item.ROLE_NAME,
+          count: parseInt(item.count) || 0,
+          percentage: parseInt(stats.totalPermissions) > 0 
+            ? Math.round((parseInt(item.count) / parseInt(stats.totalPermissions)) * 10000) / 100 
+            : 0
+        })),
+        lastSync: (await Permissions.max('updatedAt')) || 'Never',
+        recommendations: generatePermissionRecommendations(stats)
+      }
     });
   } catch (error) {
     next(error);
   }
 };
 
+// Enhanced: Bulk update permissions
+export const bulkUpdatePermissions = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    const { updates } = req.body; // Array of { roleId, permissionType, permissions }
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Updates array is required and must not be empty'
+      });
+    }
+
+    const results = {
+      successful: [],
+      failed: [],
+      totalProcessed: 0
+    };
+
+    // Process each update
+    for (const update of updates) {
+      try {
+        const { roleId, permissionType, permissions } = update;
+
+        if (!roleId || !permissionType || !Array.isArray(permissions)) {
+          results.failed.push({
+            ...update,
+            error: 'Missing required fields or invalid permissions array'
+          });
+          continue;
+        }
+
+        // Validate permission type
+        if (!permissionType.endsWith('_ACCESS_LEVEL')) {
+          results.failed.push({
+            ...update,
+            error: 'Invalid permission type'
+          });
+          continue;
+        }
+
+        // Find and update permission
+        const permission = await Permissions.findOne({ 
+          where: { BU_ROLE_ID: parseInt(roleId, 10) },
+          transaction
+        });
+
+        if (!permission) {
+          results.failed.push({
+            ...update,
+            error: 'Role permissions not found'
+          });
+          continue;
+        }
+
+        await permission.update({ [permissionType]: permissions }, { transaction });
+        results.successful.push({
+          ...update,
+          updatedAt: new Date()
+        });
+
+        results.totalProcessed++;
+      } catch (error) {
+        results.failed.push({
+          ...update,
+          error: error.message
+        });
+      }
+    }
+
+    await transaction.commit();
+
+    res.status(200).json({
+      success: true,
+      message: 'Bulk permission update completed',
+      data: {
+        summary: {
+          totalSubmitted: updates.length,
+          totalProcessed: results.totalProcessed,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          successRate: updates.length > 0 
+            ? (results.successful.length / updates.length) * 100 
+            : 0
+        },
+        successful: results.successful,
+        failed: results.failed.length > 0 ? results.failed : undefined
+      }
+    });
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
 // Helper function to transform permissions to client-friendly format
 function transformPermissions(permissionDoc) {
-  return Object.entries(PERMISSIONS).reduce((acc, [key]) => {
-    acc[key] = permissionDoc[`${key}_ACCESS_LEVEL`] || [];
-    return acc;
-  }, { BU_ROLE_ID: permissionDoc.BU_ROLE_ID });
+  if (!permissionDoc) return null;
+
+  // Extract all permission fields that end with _ACCESS_LEVEL
+  const permissionFields = {};
+  Object.keys(permissionDoc).forEach(key => {
+    if (key.endsWith('_ACCESS_LEVEL') && Array.isArray(permissionDoc[key])) {
+      permissionFields[key] = permissionDoc[key];
+    }
+  });
+
+  return {
+    id: permissionDoc.id,
+    BU_ROLE_ID: permissionDoc.BU_ROLE_ID,
+    ROLE_NAME: permissionDoc.ROLE_NAME,
+    IS_ACTIVE: permissionDoc.IS_ACTIVE,
+    DESCRIPTION: permissionDoc.DESCRIPTION,
+    ...permissionFields,
+    createdAt: permissionDoc.createdAt,
+    updatedAt: permissionDoc.updatedAt
+  };
+}
+
+// Helper function to generate permission recommendations
+function generatePermissionRecommendations(stats) {
+  const recommendations = [];
+  const totalPermissions = parseInt(stats.totalPermissions) || 0;
+  const activePermissions = parseInt(stats.activePermissions) || 0;
+
+  if (activePermissions < totalPermissions * 0.5) {
+    recommendations.push(
+      'Low active permission rate. Review inactive permissions for cleanup.',
+      'Consider reactivating or archiving inactive permissions.'
+    );
+  }
+
+  if (totalPermissions > 100) {
+    recommendations.push(
+      'Large number of permissions. Consider implementing permission grouping.',
+      'Review permission structure for optimization.'
+    );
+  }
+
+  if (stats.lowestRoleId && stats.highestRoleId) {
+    const range = stats.highestRoleId - stats.lowestRoleId;
+    if (range > 50) {
+      recommendations.push(
+        'Wide role ID range detected. Consider role ID allocation strategy.',
+        'Review role ID assignment for consistency.'
+      );
+    }
+  }
+
+  return recommendations;
 }

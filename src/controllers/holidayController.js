@@ -1,5 +1,5 @@
 import Holiday from '../models/Holiday.js';
-import mongoose from 'mongoose';
+
 
 // Check if a date is a holiday
 export const isDateHoliday = async (req, res) => {

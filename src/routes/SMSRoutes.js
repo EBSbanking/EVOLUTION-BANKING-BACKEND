@@ -1,9 +1,10 @@
 import express from 'express';
-import sendSMSAfterTransaction  from '../controllers/SMSController.js';
+import SMSController from '../controllers/SMSController.js'; // ← Import the object
 
 const router = express.Router();
 
-// POST route to create an SMS
-router.post('/create', sendSMSAfterTransaction);
+router.post('/create', SMSController.sendSMSAfterTransaction); // ← Access the method
+// router.get('/status/:smsId', SMSController.getSMSStatus);
+// router.post('/resend/:smsId', SMSController.resendSMS);
 
 export default router;

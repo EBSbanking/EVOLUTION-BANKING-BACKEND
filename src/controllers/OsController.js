@@ -1,4 +1,4 @@
-// src/controllers/OsController.js - Complete imports
+// src/controllers/OsController.js - CORRECTED IMPORTS
 import { getServerTime, getBusinessDate, setServerTimeOffset } from '../utils/serverTime.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -7,13 +7,13 @@ import { updateDormantAccounts, countDormantAccountsToUpdate } from '../Services
 import { postDailyAccruedInterest } from '../Services/InterestPostingController.js';
 import { createLedgerEntry } from '../controllers/GLAccountController.js';
 import { accrueDailyInterest } from '../cronJobs/dailyInterestAccrual.js';
-import { calculateNextBusinessDateSafe } from '../utils/dateUtils.js';
+import { calculateNextBusinessDate } from '../utils/dateUtils.js'; // Use from dateUtils.js
 import { checkIfLoanIsOverdue } from '../Services/loanOverdueChecker.js';
 import { createAuditTrail } from '../controllers/AudiTrailController.js';
 import ThriftController from '../controllers/ThriftController.js';
 import { processAutoCollections } from '../Services/autoCollectionService.js';
 
-// Models
+// Import Sequelize models
 import SystemDate from '../models/SystemDate.js';
 import Holiday from '../models/Holiday.js';
 import LoanAccount from '../models/LoanAccount.js';
@@ -21,16 +21,383 @@ import Ledger from '../models/Ledger.js';
 import GLTransactionQueue from '../models/GLTransactionQueue.js';
 import Reconciliation from '../models/Reconciliation.js';
 import Customer from '../models/Customer.js';
-import mongoose from 'mongoose';
+
+// Import DirectDebit model for loan repayment processing
+import DirectDebit from '../models/DirectDebit.js';
+import Deposit from '../models/Deposit.js';
+
+// Import database connection
+import sequelize  from '../../config/db.js';
+import { Op } from 'sequelize';
 
 // Utils
 import logger from '../utils/logger.js';
 
 // Import SystemDateController and its helper function
-import SystemDateController, { calculateNextBusinessDate } from './SystemDateController.js';
+// Use separate imports for clarity
+import SystemDateController from './SystemDateController.js';
+// import { calculateNextBusinessDate } from './SystemDateController.js';
+
+// ==================== DIRECT DEBIT LOAN REPAYMENT SERVICE ====================
+
+/**
+ * Process loan repayment direct debits
+ * This function runs as part of the EOD process to handle scheduled loan repayments
+ */
+const processLoanRepaymentDirectDebits = async () => {
+  const startTime = Date.now();
+  logger.info('💰 Starting Loan Repayment Direct Debit Processing...');
+  
+  try {
+    const batchDate = new Date();
+    
+    // Find all due loan repayments for today
+    const dueRepayments = await DirectDebit.findAll({
+      where: {
+        DIRECT_DR_MANDATE_TY_CD: 'LOAN_REPAYMENT',
+        REC_ST: 'Y',
+        NEXT_PAY_DT: {
+          [Op.lte]: batchDate
+        },
+        EXPIRY_DT: {
+          [Op.gt]: batchDate
+        }
+      },
+      order: [['NEXT_PAY_DT', 'ASC']]
+    });
+
+    if (dueRepayments.length === 0) {
+      logger.info('✅ No loan repayment direct debits due for processing');
+      return {
+        success: true,
+        results: {
+          totalProcessed: 0,
+          successful: [],
+          failed: [],
+          skipped: 0
+        },
+        executionTime: Date.now() - startTime
+      };
+    }
+
+    const transaction = await sequelize.transaction();
+    const results = {
+      totalProcessed: 0,
+      successful: [],
+      failed: [],
+      skipped: 0
+    };
+
+    for (const repayment of dueRepayments) {
+      try {
+        // Check if customer has sufficient balance in source account
+        const sourceAccount = await Deposit.findOne({
+          where: { ACCOUNT_NO: repayment.FROM_DEPOSIT_ACCT_NO }
+        });
+
+        if (!sourceAccount) {
+          results.failed.push({
+            directDebitId: repayment.DIRECT_DR_ID,
+            loanId: repayment.LOAN_ID,
+            reason: `Source account ${repayment.FROM_DEPOSIT_ACCT_NO} not found`
+          });
+          continue;
+        }
+
+        const requiredAmount = parseFloat(repayment.PAY_AMT);
+        const currentBalance = parseFloat(sourceAccount.LEDGER_BAL || 0);
+
+        if (currentBalance < requiredAmount) {
+          results.failed.push({
+            directDebitId: repayment.DIRECT_DR_ID,
+            loanId: repayment.LOAN_ID,
+            reason: 'Insufficient balance',
+            balance: currentBalance,
+            required: requiredAmount
+          });
+          continue;
+        }
+
+        // Process the repayment transaction
+        const transactionRef = await processLoanRepaymentTransaction({
+          fromAccount: repayment.FROM_DEPOSIT_ACCT_NO,
+          toAccount: repayment.LOAN_ACCOUNT_NO || repayment.TO_DEPOSIT_ACCT_NO,
+          amount: requiredAmount,
+          principalAmount: parseFloat(repayment.PRINCIPAL_AMOUNT || 0),
+          interestAmount: parseFloat(repayment.INTEREST_AMOUNT || 0),
+          penaltyAmount: parseFloat(repayment.PENALTY_AMOUNT || 0),
+          loanId: repayment.LOAN_ID,
+          directDebitId: repayment.DIRECT_DR_ID,
+          installmentNumber: repayment.INSTALLMENT_NUMBER
+        }, transaction);
+
+        // Update direct debit record
+        const nextPaymentDate = calculateNextPaymentDate(
+          repayment.NEXT_PAY_DT,
+          repayment.PAY_FREQ_CD,
+          repayment.PAY_FREQ_VALUE
+        );
+
+        await repayment.update({
+          NEXT_PAY_DT: nextPaymentDate,
+          INSTALLMENT_NUMBER: (repayment.INSTALLMENT_NUMBER || 0) + 1,
+          ROW_TS: new Date(),
+          VERSION_NO: (repayment.VERSION_NO || 0) + 1
+        }, { transaction });
+
+        // Mark as completed if all installments paid
+        if (repayment.INSTALLMENT_NUMBER >= repayment.TOTAL_INSTALLMENTS) {
+          await repayment.update({
+            REC_ST: 'C', // Completed
+            EXPIRY_DT: new Date() // Set expiry to today
+          }, { transaction });
+        }
+
+        // Update loan account balance if available
+        if (repayment.LOAN_ID) {
+          await updateLoanBalance({
+            loanId: repayment.LOAN_ID,
+            principalAmount: parseFloat(repayment.PRINCIPAL_AMOUNT || 0),
+            interestAmount: parseFloat(repayment.INTEREST_AMOUNT || 0),
+            penaltyAmount: parseFloat(repayment.PENALTY_AMOUNT || 0),
+            transactionRef,
+            transaction
+          });
+        }
+
+        results.successful.push({
+          directDebitId: repayment.DIRECT_DR_ID,
+          loanId: repayment.LOAN_ID,
+          transactionRef,
+          amount: requiredAmount,
+          nextPaymentDate,
+          processedAt: new Date()
+        });
+        
+        results.totalProcessed++;
+
+      } catch (error) {
+        results.failed.push({
+          directDebitId: repayment.DIRECT_DR_ID,
+          loanId: repayment.LOAN_ID,
+          reason: error.message,
+          error: error.stack
+        });
+        
+        logger.error(`Failed to process loan repayment ${repayment.DIRECT_DR_ID}:`, error);
+      }
+    }
+
+    await transaction.commit();
+    
+    const executionTime = Date.now() - startTime;
+    
+    logger.info('✅ Loan Repayment Direct Debit Processing Completed', {
+      totalProcessed: results.totalProcessed,
+      successful: results.successful.length,
+      failed: results.failed.length,
+      skipped: results.skipped,
+      executionTime: `${executionTime}ms`
+    });
+    
+    // Send notifications for failures
+    if (results.failed.length > 0) {
+      await sendDirectDebitFailureNotification(results.failed);
+    }
+    
+    return {
+      success: true,
+      results,
+      executionTime
+    };
+    
+  } catch (error) {
+    logger.error('❌ Loan Repayment Direct Debit Processing Failed:', {
+      error: error.message,
+      stack: error.stack
+    });
+    
+    await sendDirectDebitErrorNotification(error);
+    
+    return {
+      success: false,
+      error: error.message,
+      results: {
+        totalProcessed: 0,
+        successful: [],
+        failed: [{ reason: error.message }],
+        skipped: 0
+      }
+    };
+  }
+};
+
+/**
+ * Calculate next payment date
+ */
+function calculateNextPaymentDate(currentDate, frequency, frequencyValue) {
+  const nextDate = new Date(currentDate);
+  
+  switch (frequency) {
+    case 'DAILY':
+      nextDate.setDate(nextDate.getDate() + frequencyValue);
+      break;
+    case 'WEEKLY':
+      nextDate.setDate(nextDate.getDate() + (7 * frequencyValue));
+      break;
+    case 'MONTHLY':
+      nextDate.setMonth(nextDate.getMonth() + frequencyValue);
+      break;
+    case 'QUARTERLY':
+      nextDate.setMonth(nextDate.getMonth() + (3 * frequencyValue));
+      break;
+    case 'YEARLY':
+      nextDate.setFullYear(nextDate.getFullYear() + frequencyValue);
+      break;
+    default:
+      nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+  
+  return nextDate;
+}
+
+/**
+ * Helper function to process loan repayment transaction
+ */
+async function processLoanRepaymentTransaction(paymentData, transaction) {
+  try {
+    // 1. Create debit transaction from savings account
+    const debitTransaction = await createLedgerEntry(null, null, {
+      GL_ACCT_NO: paymentData.fromAccount, // This should be the GL account for the deposit
+      AMOUNT: paymentData.amount,
+      TRANSACTION_TYPE: 'DR',
+      CREATED_BY: 'SYSTEM',
+      ACCT_DESC: `Loan Repayment - ${paymentData.loanId} - Installment ${paymentData.installmentNumber}`,
+      JOURNAL_ID: `LOAN_REPAY_${paymentData.loanId}_${Date.now()}`
+    }, { transaction });
+
+    // 2. Create credit transaction to loan account
+    await createLedgerEntry(null, null, {
+      GL_ACCT_NO: paymentData.toAccount, // This should be the GL account for the loan
+      AMOUNT: paymentData.amount,
+      TRANSACTION_TYPE: 'CR',
+      CREATED_BY: 'SYSTEM',
+      ACCT_DESC: `Loan Repayment Received - ${paymentData.loanId}`,
+      JOURNAL_ID: debitTransaction.journalId || `LOAN_REPAY_${paymentData.loanId}_${Date.now()}`
+    }, { transaction });
+
+    return debitTransaction.journalId || `TRX_${Date.now()}_${paymentData.loanId}`;
+    
+  } catch (error) {
+    logger.error('Error processing loan repayment transaction:', error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to update loan balance
+ */
+async function updateLoanBalance(repaymentData, transaction) {
+  try {
+    const loan = await LoanAccount.findOne({
+      where: { LOAN_ID: repaymentData.loanId },
+      transaction
+    });
+    
+    if (!loan) {
+      logger.warn(`Loan ${repaymentData.loanId} not found for balance update`);
+      return;
+    }
+
+    // Update loan balances
+    const currentPrincipal = parseFloat(loan.OUTSTANDING_PRINCIPAL || 0);
+    const currentInterest = parseFloat(loan.ACCRUED_INTEREST || 0);
+    const currentPenalty = parseFloat(loan.PENALTY_AMOUNT || 0);
+    
+    const newPrincipal = Math.max(0, currentPrincipal - repaymentData.principalAmount);
+    const newInterest = Math.max(0, currentInterest - repaymentData.interestAmount);
+    const newPenalty = Math.max(0, currentPenalty - repaymentData.penaltyAmount);
+    
+    await loan.update({
+      OUTSTANDING_PRINCIPAL: newPrincipal,
+      ACCRUED_INTEREST: newInterest,
+      PENALTY_AMOUNT: newPenalty,
+      LAST_REPAYMENT_DATE: new Date(),
+      LAST_REPAYMENT_AMOUNT: repaymentData.principalAmount + repaymentData.interestAmount + repaymentData.penaltyAmount,
+      STATUS: newPrincipal <= 0 ? 'PAID' : loan.STATUS
+    }, { transaction });
+
+    logger.info(`Updated loan ${repaymentData.loanId} balance`, {
+      previousPrincipal: currentPrincipal,
+      newPrincipal,
+      previousInterest: currentInterest,
+      newInterest,
+      previousPenalty: currentPenalty,
+      newPenalty
+    });
+    
+  } catch (error) {
+    logger.error(`Error updating loan balance for ${repaymentData.loanId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to send failure notifications
+ */
+const sendDirectDebitFailureNotification = async (failedTransactions) => {
+  try {
+    logger.warn(`📧 ${failedTransactions.length} loan repayment direct debits failed`);
+    
+    // Implement your notification logic here
+    // This could be email, SMS, Slack, etc.
+    
+    // Example: Log to audit trail
+    for (const failed of failedTransactions) {
+      await createAuditTrail({
+        eventId: `DIRECT_DEBIT_FAIL_${Date.now()}`,
+        userId: 'SYSTEM',
+        eventType: 'DIRECT_DEBIT_FAILURE',
+        action: 'Loan Repayment Direct Debit Failed',
+        oldValue: null,
+        newValue: failed,
+        ipAddress: '127.0.0.1'
+      });
+    }
+    
+  } catch (notifyError) {
+    logger.error('Failed to send direct debit failure notification:', notifyError.message);
+  }
+};
+
+/**
+ * Helper function to send error notifications
+ */
+const sendDirectDebitErrorNotification = async (error) => {
+  try {
+    logger.error('📧 Sending error notification for loan repayment processing failure');
+    
+    // Log to audit trail
+    await createAuditTrail({
+      eventId: `DIRECT_DEBIT_ERROR_${Date.now()}`,
+      userId: 'SYSTEM',
+      eventType: 'SYSTEM_ERROR',
+      action: 'Loan Repayment Direct Debit Processing Error',
+      oldValue: null,
+      newValue: { error: error.message, stack: error.stack },
+      ipAddress: '127.0.0.1'
+    });
+    
+  } catch (notifyError) {
+    logger.error('Failed to send error notification:', notifyError.message);
+  }
+};
 
 // ==================== MISSING SERVICE FUNCTION PLACEHOLDERS ====================
 
+/**
+ * Update loan statuses
+ */
 const updateLoanStatuses = async () => {
   logger.info('🔄 Processing loan status updates...');
   return { 
@@ -41,6 +408,9 @@ const updateLoanStatuses = async () => {
   };
 };
 
+/**
+ * Post interest
+ */
 const postInterest = async () => {
   logger.info('💰 Processing interest posting...');
   return { 
@@ -52,6 +422,9 @@ const postInterest = async () => {
   };
 };
 
+/**
+ * Process GL transactions
+ */
 const processGLTransactions = async () => {
   logger.info('📊 Processing GL transactions...');
   return { 
@@ -63,6 +436,9 @@ const processGLTransactions = async () => {
   };
 };
 
+/**
+ * Process term deposit interest
+ */
 const processTermDepositInterest = async () => {
   logger.info('🏦 Processing term deposit interest...');
   return { 
@@ -74,6 +450,9 @@ const processTermDepositInterest = async () => {
   };
 };
 
+/**
+ * Perform reconciliation
+ */
 const performReconciliation = async () => {
   logger.info('🔍 Performing reconciliation...');
   return { 
@@ -86,6 +465,9 @@ const performReconciliation = async () => {
   };
 };
 
+/**
+ * Process dormant accounts
+ */
 const processDormantAccounts = async () => {
   logger.info('💤 Processing dormant accounts...');
   return { 
@@ -98,6 +480,9 @@ const processDormantAccounts = async () => {
   };
 };
 
+/**
+ * Process overdue loans
+ */
 const processOverdueLoans = async () => {
   logger.info('⏰ Processing overdue loans...');
   return await processLoanOverdueAndStatus();
@@ -105,11 +490,17 @@ const processOverdueLoans = async () => {
 
 // ==================== HELPER FUNCTIONS ====================
 
+/**
+ * Fetch bank statement data
+ */
 const fetchBankStatementData = async () => {
   logger.info('Fetching bank statement data');
   return [];
 };
 
+/**
+ * Generate transaction ID
+ */
 const generateTransactionId = () => {
   const base = Date.now().toString();
   const random = Math.floor(1000 + Math.random() * 9000);
@@ -118,23 +509,29 @@ const generateTransactionId = () => {
 
 // ==================== MAIN SERVICE FUNCTIONS ====================
 
+/**
+ * Process loan overdue and status
+ */
 export const processLoanOverdueAndStatus = async () => {
   try {
     logger.info('🔄 Processing loan overdue status...');
     
-    const loans = await LoanAccount.find({
-      LOAN_STATUS: { $in: ['ACTIVE', 'APPROVED'] }
-    }).lean();
+    const loans = await LoanAccount.findAll({
+      where: {
+        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED'] }
+      },
+      raw: true
+    });
 
     let updatedCount = 0;
     
     for (const loanData of loans) {
       try {
-        if (!loanData || !loanData.MATURITY_DT || !loanData.ACCT_NO || !loanData._id) {
+        if (!loanData || !loanData.MATURITY_DT || !loanData.ACCT_NO || !loanData.id) {
           logger.warn(`Skipping invalid loan data:`, { 
             hasMaturityDate: !!loanData?.MATURITY_DT,
             hasAccountNo: !!loanData?.ACCT_NO,
-            hasId: !!loanData?._id 
+            hasId: !!loanData?.id 
           });
           continue;
         }
@@ -148,11 +545,13 @@ export const processLoanOverdueAndStatus = async () => {
         }
 
         if (maturityDate < currentDate && loanData.LOAN_STATUS === 'ACTIVE') {
-          await LoanAccount.findByIdAndUpdate(
-            loanData._id, 
+          await LoanAccount.update(
             { 
               LOAN_STATUS: 'OVERDUE', 
-              lastUpdated: new Date() 
+              last_updated: new Date() 
+            },
+            { 
+              where: { id: loanData.id } 
             }
           );
           updatedCount++;
@@ -166,7 +565,7 @@ export const processLoanOverdueAndStatus = async () => {
       } catch (loanError) {
         logger.error(`❌ Error processing loan ${loanData?.ACCT_NO || 'unknown'}:`, {
           error: loanError.message,
-          loanId: loanData?._id
+          loanId: loanData?.id
         });
         continue;
       }
@@ -263,198 +662,266 @@ const systemStatus = {
       skipped: [],
       individualLoans: {},
       groupLoans: {}
+    },
+    // NEW: Direct Debit Loan Repayment Service
+    directDebitLoanRepayment: {
+      healthy: true,
+      lastError: null,
+      lastRun: null,
+      executionTime: null,
+      processed: 0,
+      failed: 0,
+      skipped: 0,
+      successfulTransactions: [],
+      failedTransactions: []
     }
   }
 };
 
 // ==================== EOD TRANSACTION PROCESSING ====================
 
-export const processEODGLTransactions = async (session = null) => {
-  const localSession = session || await mongoose.startSession();
+/**
+ * Process EOD GL transactions
+ */
+export const processEODGLTransactions = async (transaction = null) => {
   let transactionCompleted = false;
 
   try {
-    const result = await localSession.withTransaction(async () => {
-      const pendingTransactions = await GLTransactionQueue.find({ QUEUE_STATUS: 'Pending' }).session(localSession);
-      if (!pendingTransactions.length) {
-        logger.info('No pending GL transactions to process');
-        return { success: true, message: 'No pending GL transactions to process', processed: [], failed: [], skipped: [] };
-      }
+    // Using Sequelize transaction instead of MongoDB session
+    const t = transaction || await sequelize.transaction();
 
-      const processedTransactions = [];
-      const failedTransactions = [];
-      const skippedTransactions = [];
-
-      for (const txn of pendingTransactions) {
-        if (!txn || !txn.QUEUE_STATUS) {
-          logger.warn('Invalid transaction object, skipping:', { transactionId: txn?._id });
-          skippedTransactions.push({ transactionId: txn?._id, reason: 'Invalid transaction object' });
-          continue;
-        }
-
-        if (txn.APPROVAL_STATUS && txn.APPROVAL_STATUS !== 'Approved') {
-          logger.warn(`Transaction ${txn._id} is not approved, skipping`, {
-            approvalStatus: txn.APPROVAL_STATUS,
-            journalId: txn.JOURNAL_ID,
-            glAcctNo: txn.GL_ACCT_NO
-          });
-          skippedTransactions.push({
-            transactionId: txn._id,
-            reason: `Transaction not approved (status: ${txn.APPROVAL_STATUS})`
-          });
-          continue;
-        }
-
-        const { GL_ACCT_NO, TRANSACTION_TYPE, AMOUNT, CREATED_BY, JOURNAL_ID, SUB_LEDGER_NO, SEG_NO, ACCT_DESC, CURRENCY_CODE, EXCHANGE_RATE } = txn;
-
-        const glAccount = await Ledger.findOne({ GL_ACCT_NO }).session(localSession);
-        if (!glAccount) {
-          logger.warn(`GL Account ${GL_ACCT_NO} not found, failing txn ${txn._id}`);
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Failed', ERROR_MESSAGE: `GL Account ${GL_ACCT_NO} not found`, PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-          failedTransactions.push({ transactionId: txn._id, reason: `GL Account ${GL_ACCT_NO} not found` });
-          continue;
-        }
-
-        if (!glAccount.DELAY_GL_POSTING) {
-          logger.warn(`GL Account ${GL_ACCT_NO} does not have DELAY_GL_POSTING enabled, failing txn ${txn._id}`);
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Failed', ERROR_MESSAGE: `DELAY_GL_POSTING not enabled`, PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-          failedTransactions.push({ transactionId: txn._id, reason: `DELAY_GL_POSTING not enabled` });
-          continue;
-        }
-
-        if (!glAccount.canPost(TRANSACTION_TYPE)) {
-          logger.warn(`GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions, failing txn ${txn._id}`);
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Failed', ERROR_MESSAGE: `GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions`, PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-          failedTransactions.push({ transactionId: txn._id, reason: `GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions` });
-          continue;
-        }
-
-        if (TRANSACTION_TYPE === 'DR' && glAccount.GL_ACCT_CAT === 'ASSET' && (glAccount.LEDGER_BALANCE || 0) < AMOUNT) {
-          logger.warn(`Insufficient funds in GL Account ${GL_ACCT_NO}, failing txn ${txn._id}`);
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Failed', ERROR_MESSAGE: `Insufficient funds in GL Account ${GL_ACCT_NO}`, PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-          failedTransactions.push({ transactionId: txn._id, reason: `Insufficient funds in GL Account ${GL_ACCT_NO}` });
-          continue;
-        }
-
-        const transactionData = {
-          GL_ACCT_NO,
-          AMOUNT,
-          TRANSACTION_TYPE: TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'DR' : 'CR',
-          CREATED_BY,
-          SUB_LEDGER_NO: SUB_LEDGER_NO || '000',
-          SEG_NO: SEG_NO || '001',
-          ACCT_DESC: ACCT_DESC || `EOD processed transaction ${JOURNAL_ID}`,
-          JOURNAL_ID,
-          BAL_CD: glAccount.BAL_CD || '01',
-          GL_ACCT_CAT: glAccount.GL_ACCT_CAT,
-          CURRENCY_CODE: CURRENCY_CODE || 'NGN',
-          EXCHANGE_RATE: EXCHANGE_RATE || 1,
-        };
-
-        try {
-          const result = await createLedgerEntry(null, null, transactionData, { session: localSession });
-
-          if (result.queued) {
-            logger.warn(`Transaction ${txn._id} was re-queued due to DELAY_GL_POSTING`);
-            skippedTransactions.push({ transactionId: txn._id, reason: `Transaction re-queued due to DELAY_GL_POSTING` });
-            continue;
-          }
-
-          const reconciliation = new Reconciliation({
-            JOURNAL_ID,
-            GL_ACCT_NO,
-            TRANSACTION_ID: generateTransactionId(),
-            AMOUNT,
-            CURRENCY_CODE: CURRENCY_CODE || 'NGN',
-            EXTERNAL_REF: '',
-            STATUS: 'Pending',
-            CREATED_AT: new Date(),
-          });
-          await reconciliation.save({ session: localSession });
-
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Processed', PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-
-          await createAuditTrail({
-            eventId: JOURNAL_ID,
-            userId: CREATED_BY || 'system',
-            eventType: `GL_ACCOUNT_${TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'DR' : 'CR'}`,
-            action: `${TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'Debit' : 'Credit'} GL Account ${GL_ACCT_NO}`,
-            oldValue: { LEDGER_BALANCE: glAccount.LEDGER_BALANCE },
-            newValue: { LEDGER_BALANCE: result.transaction.LEDGER_BALANCE },
-            ipAddress: '127.0.0.1',
-            accountNo: GL_ACCT_NO,
-          }, { session: localSession });
-
-          processedTransactions.push({
-            transactionId: txn._id,
-            GL_ACCT_NO,
-            TRANSACTION_TYPE,
-            AMOUNT,
-            JOURNAL_ID,
-            PROCESSED_AT: new Date(),
-            status: 'PROCESSED',
-          });
-        } catch (txnError) {
-          logger.error(`Failed to process transaction ${txn._id}`, { error: txnError.message });
-          await GLTransactionQueue.updateOne(
-            { _id: txn._id },
-            { $set: { QUEUE_STATUS: 'Failed', ERROR_MESSAGE: txnError.message, PROCESSED_AT: new Date() } },
-            { session: localSession }
-          );
-          failedTransactions.push({ transactionId: txn._id, reason: txnError.message });
-        }
-      }
-
-      logger.info('EOD GL transactions processed', {
-        processedCount: processedTransactions.length,
-        failedCount: failedTransactions.length,
-        skippedCount: skippedTransactions.length,
-      });
-
-      return {
-        success: true,
-        message: 'EOD GL transactions processed successfully',
-        processed: processedTransactions,
-        failed: failedTransactions,
-        skipped: skippedTransactions,
+    const pendingTransactions = await GLTransactionQueue.findAll({ 
+      where: { QUEUE_STATUS: 'Pending' },
+      transaction: t
+    });
+    
+    if (!pendingTransactions.length) {
+      logger.info('No pending GL transactions to process');
+      await t.commit();
+      return { 
+        success: true, 
+        message: 'No pending GL transactions to process', 
+        processed: [], 
+        failed: [], 
+        skipped: [] 
       };
+    }
+
+    const processedTransactions = [];
+    const failedTransactions = [];
+    const skippedTransactions = [];
+
+    for (const txn of pendingTransactions) {
+      if (!txn || !txn.QUEUE_STATUS) {
+        logger.warn('Invalid transaction object, skipping:', { transactionId: txn?.id });
+        skippedTransactions.push({ transactionId: txn?.id, reason: 'Invalid transaction object' });
+        continue;
+      }
+
+      if (txn.APPROVAL_STATUS && txn.APPROVAL_STATUS !== 'Approved') {
+        logger.warn(`Transaction ${txn.id} is not approved, skipping`, {
+          approvalStatus: txn.APPROVAL_STATUS,
+          journalId: txn.JOURNAL_ID,
+          glAcctNo: txn.GL_ACCT_NO
+        });
+        skippedTransactions.push({
+          transactionId: txn.id,
+          reason: `Transaction not approved (status: ${txn.APPROVAL_STATUS})`
+        });
+        continue;
+      }
+
+      const { GL_ACCT_NO, TRANSACTION_TYPE, AMOUNT, CREATED_BY, JOURNAL_ID, SUB_LEDGER_NO, SEG_NO, ACCT_DESC, CURRENCY_CODE, EXCHANGE_RATE } = txn;
+
+      const glAccount = await Ledger.findOne({ 
+        where: { GL_ACCT_NO },
+        transaction: t
+      });
+      
+      if (!glAccount) {
+        logger.warn(`GL Account ${GL_ACCT_NO} not found, failing txn ${txn.id}`);
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Failed', 
+            ERROR_MESSAGE: `GL Account ${GL_ACCT_NO} not found`, 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+        failedTransactions.push({ transactionId: txn.id, reason: `GL Account ${GL_ACCT_NO} not found` });
+        continue;
+      }
+
+      if (!glAccount.DELAY_GL_POSTING) {
+        logger.warn(`GL Account ${GL_ACCT_NO} does not have DELAY_GL_POSTING enabled, failing txn ${txn.id}`);
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Failed', 
+            ERROR_MESSAGE: `DELAY_GL_POSTING not enabled`, 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+        failedTransactions.push({ transactionId: txn.id, reason: `DELAY_GL_POSTING not enabled` });
+        continue;
+      }
+
+      // Check if account allows transaction type
+      if (!glAccount.canPost || !glAccount.canPost(TRANSACTION_TYPE)) {
+        logger.warn(`GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions, failing txn ${txn.id}`);
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Failed', 
+            ERROR_MESSAGE: `GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions`, 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+        failedTransactions.push({ transactionId: txn.id, reason: `GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions` });
+        continue;
+      }
+
+      if (TRANSACTION_TYPE === 'DR' && glAccount.GL_ACCT_CAT === 'ASSET' && (glAccount.LEDGER_BALANCE || 0) < AMOUNT) {
+        logger.warn(`Insufficient funds in GL Account ${GL_ACCT_NO}, failing txn ${txn.id}`);
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Failed', 
+            ERROR_MESSAGE: `Insufficient funds in GL Account ${GL_ACCT_NO}`, 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+        failedTransactions.push({ transactionId: txn.id, reason: `Insufficient funds in GL Account ${GL_ACCT_NO}` });
+        continue;
+      }
+
+      const transactionData = {
+        GL_ACCT_NO,
+        AMOUNT,
+        TRANSACTION_TYPE: TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'DR' : 'CR',
+        CREATED_BY,
+        SUB_LEDGER_NO: SUB_LEDGER_NO || '000',
+        SEG_NO: SEG_NO || '001',
+        ACCT_DESC: ACCT_DESC || `EOD processed transaction ${JOURNAL_ID}`,
+        JOURNAL_ID,
+        BAL_CD: glAccount.BAL_CD || '01',
+        GL_ACCT_CAT: glAccount.GL_ACCT_CAT,
+        CURRENCY_CODE: CURRENCY_CODE || 'NGN',
+        EXCHANGE_RATE: EXCHANGE_RATE || 1,
+      };
+
+      try {
+        const result = await createLedgerEntry(null, null, transactionData, { transaction: t });
+
+        if (result.queued) {
+          logger.warn(`Transaction ${txn.id} was re-queued due to DELAY_GL_POSTING`);
+          skippedTransactions.push({ transactionId: txn.id, reason: `Transaction re-queued due to DELAY_GL_POSTING` });
+          continue;
+        }
+
+        // Create reconciliation record
+        await Reconciliation.create({
+          JOURNAL_ID,
+          GL_ACCT_NO,
+          TRANSACTION_ID: generateTransactionId(),
+          AMOUNT,
+          CURRENCY_CODE: CURRENCY_CODE || 'NGN',
+          EXTERNAL_REF: '',
+          STATUS: 'Pending',
+          CREATED_AT: new Date(),
+        }, { transaction: t });
+
+        // Update transaction status
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Processed', 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+
+        // Create audit trail
+        await createAuditTrail({
+          eventId: JOURNAL_ID,
+          userId: CREATED_BY || 'system',
+          eventType: `GL_ACCOUNT_${TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'DR' : 'CR'}`,
+          action: `${TRANSACTION_TYPE.toUpperCase() === 'DEBIT' ? 'Debit' : 'Credit'} GL Account ${GL_ACCT_NO}`,
+          oldValue: { LEDGER_BALANCE: glAccount.LEDGER_BALANCE },
+          newValue: { LEDGER_BALANCE: result.transaction?.LEDGER_BALANCE || glAccount.LEDGER_BALANCE + AMOUNT },
+          ipAddress: '127.0.0.1',
+          accountNo: GL_ACCT_NO,
+        }, { transaction: t });
+
+        processedTransactions.push({
+          transactionId: txn.id,
+          GL_ACCT_NO,
+          TRANSACTION_TYPE,
+          AMOUNT,
+          JOURNAL_ID,
+          PROCESSED_AT: new Date(),
+          status: 'PROCESSED',
+        });
+      } catch (txnError) {
+        logger.error(`Failed to process transaction ${txn.id}`, { error: txnError.message });
+        await GLTransactionQueue.update(
+          { 
+            QUEUE_STATUS: 'Failed', 
+            ERROR_MESSAGE: txnError.message, 
+            PROCESSED_AT: new Date() 
+          },
+          { 
+            where: { id: txn.id },
+            transaction: t
+          }
+        );
+        failedTransactions.push({ transactionId: txn.id, reason: txnError.message });
+      }
+    }
+
+    logger.info('EOD GL transactions processed', {
+      processedCount: processedTransactions.length,
+      failedCount: failedTransactions.length,
+      skippedCount: skippedTransactions.length,
     });
 
     transactionCompleted = true;
-    await localSession.commitTransaction();
+    await t.commit();
+    
     systemStatus.services.glTransactions = {
       ...systemStatus.services.glTransactions,
-      healthy: result.failed.length === 0,
-      lastError: result.failed.length > 0 ? result.failed[0].reason : null,
+      healthy: failedTransactions.length === 0,
+      lastError: failedTransactions.length > 0 ? failedTransactions[0].reason : null,
       lastRun: new Date(),
-      processed: result.processed,
-      failed: result.failed,
-      skipped: result.skipped,
+      processed: processedTransactions,
+      failed: failedTransactions,
+      skipped: skippedTransactions,
     };
-    return result;
+    
+    return {
+      success: true,
+      message: 'EOD GL transactions processed successfully',
+      processed: processedTransactions,
+      failed: failedTransactions,
+      skipped: skippedTransactions,
+    };
   } catch (error) {
-    if (localSession.inTransaction() && !transactionCompleted) {
-      await localSession.abortTransaction();
+    if (!transactionCompleted) {
+      await t.rollback();
     }
     logger.error('Error in processEODGLTransactions:', { error: error.message, stack: error.stack });
     systemStatus.services.glTransactions = {
@@ -473,109 +940,113 @@ export const processEODGLTransactions = async (session = null) => {
       failed: [{ reason: error.message }],
       skipped: [],
     };
-  } finally {
-    if (!session) localSession.endSession();
   }
 };
 
-export const processReconciliation = async (session = null) => {
-  const localSession = session || await mongoose.startSession();
+/**
+ * Process reconciliation
+ */
+export const processReconciliation = async (transaction = null) => {
   let transactionCompleted = false;
 
   try {
-    const result = await localSession.withTransaction(async () => {
-      const bankStatementData = await fetchBankStatementData();
-      if (!bankStatementData.length) {
-        logger.info('No bank statement data to process for reconciliation');
-        return { success: true, message: 'No bank statement data to process', processed: [], failed: [], skipped: [], updated: 0 };
-      }
+    const t = transaction || await sequelize.transaction();
 
-      const reconciliationOps = [];
-      const processedRecords = [];
-      const failedRecords = [];
-      const skippedRecords = [];
+    const bankStatementData = await fetchBankStatementData();
+    if (!bankStatementData.length) {
+      logger.info('No bank statement data to process for reconciliation');
+      await t.commit();
+      return { 
+        success: true, 
+        message: 'No bank statement data to process', 
+        processed: [], 
+        failed: [], 
+        skipped: [], 
+        updated: 0 
+      };
+    }
 
-      for (const statement of bankStatementData) {
-        const reconciliation = await Reconciliation.findOne({
+    const reconciliationOps = [];
+    const processedRecords = [];
+    const failedRecords = [];
+    const skippedRecords = [];
+
+    for (const statement of bankStatementData) {
+      const reconciliation = await Reconciliation.findOne({
+        where: {
           TRANSACTION_ID: statement.transactionId,
           GL_ACCT_NO: statement.accountNo,
-        }).session(localSession);
-
-        if (!reconciliation) {
-          logger.warn(`No reconciliation record found for transaction ${statement.transactionId}`, {
-            accountNo: statement.accountNo,
-          });
-          skippedRecords.push({
-            transactionId: statement.transactionId,
-            status: 'SKIPPED',
-            reason: 'No matching reconciliation record',
-          });
-          continue;
-        }
-
-        if (statement.amount === reconciliation.AMOUNT && statement.currency === reconciliation.CURRENCY_CODE) {
-          reconciliationOps.push({
-            updateOne: {
-              filter: { _id: reconciliation._id },
-              update: {
-                $set: {
-                  STATUS: 'Reconciled',
-                  RECONCILED_AT: new Date(),
-                  EXTERNAL_REF: statement.externalRef || reconciliation.EXTERNAL_REF,
-                },
-              },
-            },
-          });
-          processedRecords.push({
-            transactionId: statement.transactionId,
-            status: 'RECONCILED',
-            reconciledAt: new Date(),
-          });
-        } else {
-          failedRecords.push({
-            transactionId: statement.transactionId,
-            status: 'FAILED',
-            reason: 'Amount or currency mismatch',
-          });
-        }
-      }
-
-      if (reconciliationOps.length) {
-        await Reconciliation.bulkWrite(reconciliationOps, { session: localSession });
-      }
-
-      logger.info('Reconciliation processed', {
-        processedCount: processedRecords.length,
-        failedCount: failedRecords.length,
-        skippedCount: skippedRecords.length,
+        },
+        transaction: t
       });
 
-      return {
-        success: true,
-        message: 'Reconciliation processed successfully',
-        processed: processedRecords,
-        failed: failedRecords,
-        skipped: skippedRecords,
-        updated: reconciliationOps.length,
-      };
-    });
+      if (!reconciliation) {
+        logger.warn(`No reconciliation record found for transaction ${statement.transactionId}`, {
+          accountNo: statement.accountNo,
+        });
+        skippedRecords.push({
+          transactionId: statement.transactionId,
+          status: 'SKIPPED',
+          reason: 'No matching reconciliation record',
+        });
+        continue;
+      }
+
+      if (statement.amount === reconciliation.AMOUNT && statement.currency === reconciliation.CURRENCY_CODE) {
+        await reconciliation.update(
+          {
+            STATUS: 'Reconciled',
+            RECONCILED_AT: new Date(),
+            EXTERNAL_REF: statement.externalRef || reconciliation.EXTERNAL_REF,
+          },
+          { transaction: t }
+        );
+        
+        processedRecords.push({
+          transactionId: statement.transactionId,
+          status: 'RECONCILED',
+          reconciledAt: new Date(),
+        });
+      } else {
+        failedRecords.push({
+          transactionId: statement.transactionId,
+          status: 'FAILED',
+          reason: 'Amount or currency mismatch',
+        });
+      }
+    }
 
     transactionCompleted = true;
-    await localSession.commitTransaction();
+    await t.commit();
+    
+    logger.info('Reconciliation processed', {
+      processedCount: processedRecords.length,
+      failedCount: failedRecords.length,
+      skippedCount: skippedRecords.length,
+    });
+
     systemStatus.services.reconciliation = {
       ...systemStatus.services.reconciliation,
-      healthy: result.failed.length === 0,
-      lastError: result.failed.length > 0 ? result.failed[0].reason : null,
+      healthy: failedRecords.length === 0,
+      lastError: failedRecords.length > 0 ? failedRecords[0].reason : null,
       lastRun: new Date(),
-      processed: result.processed,
-      failed: result.failed,
-      skipped: result.skipped,
-      updated: result.updated,
+      processed: processedRecords,
+      failed: failedRecords,
+      skipped: skippedRecords,
+      updated: processedRecords.length,
     };
-    return result;
+    
+    return {
+      success: true,
+      message: 'Reconciliation processed successfully',
+      processed: processedRecords,
+      failed: failedRecords,
+      skipped: skippedRecords,
+      updated: processedRecords.length,
+    };
   } catch (error) {
-    if (localSession.inTransaction() && !transactionCompleted) {
-      await localSession.abortTransaction();
+    if (!transactionCompleted) {
+      await t.rollback();
     }
     logger.error('Error in processReconciliation:', { error: error.message, stack: error.stack });
     systemStatus.services.reconciliation = {
@@ -596,13 +1067,15 @@ export const processReconciliation = async (session = null) => {
       skipped: [],
       updated: 0,
     };
-  } finally {
-    if (!session) localSession.endSession();
   }
 };
 
 // ==================== BUSINESS DATE FUNCTIONS ====================
 
+/**
+ * Calculate next business date (OS version)
+ * Renamed to avoid conflict with imported function
+ */
 export const calculateNextBusinessDateOS = (currentDate) => {
     try {
         let nextDate = new Date(currentDate);
@@ -632,6 +1105,34 @@ export const calculateNextBusinessDateOS = (currentDate) => {
     }
 };
 
+/**
+ * Safe version that returns a fallback date if calculation fails
+ */
+export const calculateNextBusinessDateSafe = async (currentDate) => {
+  try {
+    // Try the main method first
+    return await calculateNextBusinessDate(currentDate); // This is from dateUtils.js
+  } catch (error) {
+    logger.warn('Main holiday method failed, using fallback weekend-only calculation', { 
+      error: error.message 
+    });
+    
+    // Fallback: simple weekend skipping without holiday check
+    let nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    
+    while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
+      nextDate.setDate(nextDate.getDate() + 1);
+    }
+    
+    nextDate.setHours(0, 0, 0, 0);
+    return nextDate;
+  }
+};
+
+/**
+ * Set next business date (OS version)
+ */
 export const setNextBusinessDateOS = () => {
     try {
         const currentDate = systemStatus.currentBusinessDate || new Date();
@@ -655,6 +1156,9 @@ export const setNextBusinessDateOS = () => {
     }
 };
 
+/**
+ * Calculate next business date with holidays (OS version)
+ */
 export const calculateNextBusinessDateWithHolidaysOS = async (currentDate) => {
     try {
         let nextDate = new Date(currentDate);
@@ -680,6 +1184,9 @@ export const calculateNextBusinessDateWithHolidaysOS = async (currentDate) => {
 
 // ==================== SERVICE EXECUTOR ====================
 
+/**
+ * Execute service function with error handling
+ */
 const executeService = async (serviceName, serviceFn) => {
   const startTime = Date.now();
   try {
@@ -858,6 +1365,9 @@ const executeService = async (serviceName, serviceFn) => {
 
 // ==================== END OF DAY PROCESS ====================
 
+/**
+ * Trigger End of Day process
+ */
 export const triggerEndOfDayProcess = async (req, res) => {
     try {
         const { skipServices = [], runServices = [], userId = 'system' } = req.body;
@@ -913,31 +1423,22 @@ export const triggerEndOfDayProcess = async (req, res) => {
         }
 
         // Use the SystemDateController's processEOD method
-        // Get a valid user ID instead of "system"
         let validUserId = userId;
         
         try {
-            // If userId is "system", try to find an admin user
             if (userId === 'system') {
-                const User = (await import('../models/User.js')).default;
-                const adminUser = await User.findOne({ 
-                    primary_role: { $in: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
-                    status: 'ACTIVE'
-                });
-                
-                if (adminUser) {
-                    validUserId = adminUser._id.toString();
-                    logger.info(`Using admin user for EOD: ${adminUser.username} (${validUserId})`);
-                } else {
-                    // If no admin found, try any active user
-                    const anyUser = await User.findOne({ status: 'ACTIVE' });
-                    if (anyUser) {
-                        validUserId = anyUser._id.toString();
-                        logger.info(`Using active user for EOD: ${anyUser.username} (${validUserId})`);
-                    } else {
-                        logger.warn('No active users found in database, using "system" as userId');
-                    }
-                }
+                // You'll need to import your User model if needed
+                // const User = await import('../models/User.js');
+                // const adminUser = await User.findOne({ 
+                //     where: {
+                //         primary_role: { [sequelize.Op.in]: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
+                //         status: 'ACTIVE'
+                //     }
+                // });
+                // if (adminUser) {
+                //     validUserId = adminUser.id.toString();
+                // }
+                logger.warn('User model import commented out, using provided userId');
             }
         } catch (userError) {
             logger.warn('Failed to find valid user for EOD, using provided userId:', {
@@ -1024,9 +1525,12 @@ export const triggerEndOfDayProcess = async (req, res) => {
 
 // ==================== OTHER CONTROLLER FUNCTIONS ====================
 
+/**
+ * Get current business date (OS version)
+ */
 export const getCurrentBusinessDateOS = async (req, res) => {
   try {
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     if (!systemDate) {
       return res.status(404).json({
         success: false,
@@ -1059,6 +1563,9 @@ export const getCurrentBusinessDateOS = async (req, res) => {
   }
 };
 
+/**
+ * Get service errors
+ */
 export const getServiceErrors = async (req, res) => {
   systemStatus.serverTime = getServerTime();
   const errors = Object.entries(systemStatus.services)
@@ -1080,6 +1587,9 @@ export const getServiceErrors = async (req, res) => {
   });
 };
 
+/**
+ * Get dormant accounts count
+ */
 export const getDormantAccountsCount = async (req, res) => {
   try {
     const count = await countDormantAccountsToUpdate();
@@ -1101,6 +1611,9 @@ export const getDormantAccountsCount = async (req, res) => {
   }
 };
 
+/**
+ * Set business date manually (OS version)
+ */
 export const setBusinessDateManuallyOS = async (req, res) => {
   try {
     const { newDate, updatedBy = 'system', reason = 'Manual adjustment' } = req.body;
@@ -1155,9 +1668,12 @@ export const setBusinessDateManuallyOS = async (req, res) => {
   }
 };
 
+/**
+ * Debug date issues (OS version)
+ */
 export const debugDateIssuesOS = async (req, res) => {
   try {
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     const businessDate = getBusinessDate();
     const serverTime = getServerTime();
     
@@ -1207,10 +1723,13 @@ export const debugDateIssuesOS = async (req, res) => {
   }
 };
 
+/**
+ * Get status (OS version)
+ */
 export const getStatusOS = async (req, res) => {
   try {
     const dormantCount = await countDormantAccountsToUpdate();
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     
     const serviceStatuses = Object.keys(systemStatus.services).map((serviceName) => ({
       name: serviceName,
@@ -1295,6 +1814,9 @@ export const getStatusOS = async (req, res) => {
   }
 };
 
+/**
+ * Initialize system dates (OS version)
+ */
 export const initializeSystemDatesOS = async (req, res) => {
   try {
     const { maxRetries = 3, retryDelay = 5000 } = req.body;
@@ -1304,21 +1826,16 @@ export const initializeSystemDatesOS = async (req, res) => {
       try {
         logger.info(`📅 Initializing system dates (attempt ${retryCount + 1}/${maxRetries})`);
         
-        if (mongoose.connection.readyState !== 1) {
-          logger.info('⏳ Waiting for MongoDB connection...');
-          await new Promise((resolve) => {
-            const checkConnection = () => {
-              if (mongoose.connection.readyState === 1) {
-                resolve();
-              } else {
-                setTimeout(checkConnection, 1000);
-              }
-            };
-            checkConnection();
-          });
+        // Check database connection
+        try {
+          await sequelize.authenticate();
+          logger.info('✅ Database connection established');
+        } catch (dbError) {
+          logger.error('❌ Database connection failed:', dbError.message);
+          throw new Error('Database connection failed');
         }
 
-        const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
+        const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
         
         if (systemDate) {
           systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
@@ -1336,14 +1853,12 @@ export const initializeSystemDatesOS = async (req, res) => {
           const currentBusinessDate = defaultStartDate;
           const nextBusinessDate = await calculateNextBusinessDateSafe(currentBusinessDate);
 
-          const newSystemDate = new SystemDate({
+          const newSystemDate = await SystemDate.create({
             currentBusinessDate,
             nextBusinessDate,
             eodStatus: 'IDLE',
-            eodHistory: [],
           });
 
-          await newSystemDate.save();
           systemStatus.currentBusinessDate = currentBusinessDate;
           systemStatus.nextBusinessDate = nextBusinessDate;
           systemStatus.eodStatus = 'IDLE';
@@ -1411,6 +1926,9 @@ export const initializeSystemDatesOS = async (req, res) => {
   }
 };
 
+/**
+ * Get system status (OS version)
+ */
 export const getSystemStatusOS = () => {
   if (!systemStatus || typeof systemStatus !== 'object') {
     return {
@@ -1435,39 +1953,49 @@ export const getSystemStatusOS = () => {
     status: systemStatus.currentBusinessDate ? 'Initialized' : 'Not Initialized'
   };
 };
-// Add this function somewhere in OsController.js before the exports:
 
+/**
+ * Debug holiday system
+ */
 export const debugHolidaySystem = async (req, res) => {
   try {
-    const Holiday = (await import('../models/Holiday.js')).default;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const upcomingHolidays = await Holiday.find({
-      date: { $gte: today }
-    }).sort({ date: 1 }).limit(10);
+    const upcomingHolidays = await Holiday.findAll({
+      where: {
+        date: { [sequelize.Op.gte]: today }
+      },
+      order: [['date', 'ASC']],
+      limit: 10
+    });
     
     const currentYear = today.getFullYear();
-    const yearHolidays = await Holiday.find({
-      date: {
-        $gte: new Date(`${currentYear}-01-01`),
-        $lte: new Date(`${currentYear}-12-31`)
-      }
-    }).sort({ date: 1 });
+    const yearHolidays = await Holiday.findAll({
+      where: {
+        date: {
+          [sequelize.Op.gte]: new Date(`${currentYear}-01-01`),
+          [sequelize.Op.lte]: new Date(`${currentYear}-12-31`)
+        }
+      },
+      order: [['date', 'ASC']]
+    });
+    
+    const isHolidayToday = upcomingHolidays.length > 0 && 
+                          upcomingHolidays[0].date.toISOString().split('T')[0] === today.toISOString().split('T')[0];
     
     return res.status(200).json({
       success: true,
       data: {
         today: today.toISOString().split('T')[0],
-        isHolidayToday: upcomingHolidays.length > 0 && 
-                       upcomingHolidays[0].date.toISOString().split('T')[0] === today.toISOString().split('T')[0],
+        isHolidayToday,
         upcomingHolidays: upcomingHolidays.map(h => ({
           date: h.date.toISOString().split('T')[0],
           name: h.name,
           description: h.description
         })),
         currentYearHolidays: yearHolidays.length,
-        holidayCount: await Holiday.countDocuments(),
+        holidayCount: await Holiday.count(),
         nextBusinessDate: await calculateNextBusinessDateWithHolidaysOS(today)
       }
     });
@@ -1482,21 +2010,26 @@ export const debugHolidaySystem = async (req, res) => {
 };
 
 // ==================== ADD NAMED EXPORTS ====================
-// Add these exports at the end of the file to fix the import error
 
+/**
+ * Additional named exports for backward compatibility
+ */
 export {
   // processLoanOverdueAndStatus,
   // processEODGLTransactions,
   // getCurrentBusinessDateOS as getCurrentBusinessDate,
   // getStatusOS as getStatus,
   // debugDateIssuesOS as debugDateIssues,
-  initializeSystemDatesOS as initializeSystemDates
+  initializeSystemDatesOS as initializeSystemDates,
+  processLoanRepaymentDirectDebits
 };
+
 
 // ==================== DEFAULT EXPORT ====================
 
-// ==================== EXPORTS ====================
-
+/**
+ * Default export with all controller functions
+ */
 export default {
   triggerEndOfDayProcess,
   getCurrentBusinessDate: getCurrentBusinessDateOS,
@@ -1507,7 +2040,6 @@ export default {
   initializeSystemDates: initializeSystemDatesOS,
   debugDates: debugDateIssuesOS,
   debugHolidaySystem,
-  // debugHolidaySystem: debugHolidaySystem, // REMOVE - function doesn't exist
   debugDateIssues: debugDateIssuesOS,
   processLoanOverdueAndStatus,
   processEODGLTransactions,
@@ -1516,6 +2048,9 @@ export default {
   processEndOfDay: SystemDateController.processEOD,
   setBusinessDateManually: setBusinessDateManuallyOS,
   calculateNextBusinessDate: calculateNextBusinessDateOS,
+  calculateNextBusinessDateSafe: calculateNextBusinessDateSafe, // Add this
   calculateNextBusinessDateWithHolidays: calculateNextBusinessDateWithHolidaysOS,
-  setNextBusinessDate: setNextBusinessDateOS
+  setNextBusinessDate: setNextBusinessDateOS,
+  // Add the new direct debit loan repayment processing function
+  processLoanRepaymentDirectDebits
 };

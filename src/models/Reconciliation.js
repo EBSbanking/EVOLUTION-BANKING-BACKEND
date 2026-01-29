@@ -1,22 +1,87 @@
-import mongoose from 'mongoose';
+// models/reconciliation.js
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-// Reconciliation Schema
-const ReconciliationSchema = new mongoose.Schema({
-  JOURNAL_ID: { type: String, required: true },
-  GL_ACCT_NO: { type: String, required: true },
-  TRANSACTION_ID: { type: String, required: true, unique: true },
-  AMOUNT: { type: Number, required: true, min: 0 },
-  CURRENCY_CODE: { type: String, default: 'NGN' },
-  EXTERNAL_REF: { type: String, default: '' },
-  STATUS: { type: String, enum: ['Pending', 'Reconciled', 'Discrepancy'], default: 'Pending' },
-  CREATED_AT: { type: Date, default: Date.now },
-  // Additional fields for reconciliation details
-}, {
-  timestamps: true,
-  collection: 'reconciliations',
+class Reconciliation extends Model {}
+
+Reconciliation.init(
+  {
+    JOURNAL_ID: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      validate: {
+        notEmpty: true
+      }
+    },
+    GL_ACCT_NO: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      validate: {
+        notEmpty: true
+      }
+    },
+    TRANSACTION_ID: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+      validate: {
+        notEmpty: true
+      }
+    },
+    AMOUNT: {
+      type: DataTypes.DECIMAL(15, 2), // Using DECIMAL for currency amounts
+      allowNull: false,
+      validate: {
+        min: 0
+      }
+    },
+    CURRENCY_CODE: {
+      type: DataTypes.STRING(3),
+      defaultValue: 'NGN',
+      validate: {
+        len: [3, 3] // Currency codes are typically 3 characters
+      }
+    },
+    EXTERNAL_REF: {
+      type: DataTypes.STRING,
+      defaultValue: ''
+    },
+    STATUS: {
+      type: DataTypes.ENUM('Pending', 'Reconciled', 'Discrepancy'),
+      defaultValue: 'Pending'
+    },
+    CREATED_AT: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW
+    }
+  },
+  {
+    sequelize,
+    modelName: 'Reconciliation',
+    tableName: 'reconciliations',
+    timestamps: true, // This will add createdAt and updatedAt automatically
+    underscored: true, // Optional: if you want snake_case column names
+    indexes: [
+      {
+        unique: true,
+        fields: ['TRANSACTION_ID']
+      },
+      {
+        fields: ['STATUS']
+      },
+      {
+        fields: ['GL_ACCT_NO']
+      }
+    ]
+  }
+);
+
+// Optional: Add hooks or custom methods
+Reconciliation.beforeValidate((reconciliation) => {
+  // Any pre-validation logic
+  if (!reconciliation.CURRENCY_CODE) {
+    reconciliation.CURRENCY_CODE = 'NGN';
+  }
 });
-
-// Prevent model overwrite by checking if model exists
-const Reconciliation = mongoose.models.Reconciliation || mongoose.model('Reconciliation', ReconciliationSchema);
 
 export default Reconciliation;

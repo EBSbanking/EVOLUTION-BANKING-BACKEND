@@ -1,13 +1,15 @@
-// utils/idGenerators.js
-import Guarantor from '../models/Guarantor.js'; // Adjust path as needed
+// utils/generateGuarantorId.js - UPDATED FOR SEQUELIZE
+import Guarantor from '../models/Guarantor.js';
+import { Op } from 'sequelize';
 
 export const generateGuarantorId = async () => {
   try {
-    // 1. Find the highest existing ID
-    const lastGuarantor = await Guarantor.findOne({})
-      .sort({ GUARANTOR_ID: -1 })
-      .select('GUARANTOR_ID')
-      .lean();
+    // 1. Find the highest existing ID using Sequelize syntax
+    const lastGuarantor = await Guarantor.findOne({
+      order: [['GUARANTOR_ID', 'DESC']],
+      attributes: ['GUARANTOR_ID'],
+      raw: true
+    });
 
     // 2. Determine next ID
     let nextId = 1000000; // Starting number (will become 1000001 on first increment)

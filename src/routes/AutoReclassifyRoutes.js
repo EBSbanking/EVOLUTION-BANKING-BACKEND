@@ -1,18 +1,42 @@
+// routes/autoReclassificationRoutes.js
 import express from 'express';
-import AutoReclassifyInformationController, { 
-  createReclassification, 
-  getReclassificationById, 
-  updateReclassification, 
-  deleteReclassification, 
-  getAllReclassifications 
-} from '../controllers/AutoReclassifyInformationController.js'; // Fixed syntax
+import {
+  createReclassification,
+  getAllReclassifications,
+  getReclassificationById,
+  getReclassificationByProductCode,
+  updateReclassification,
+  patchReclassification,
+  deleteReclassification,
+  reactivateReclassification,
+  getReclassificationsByCriteria,
+  validateReclassification,
+  getReclassificationStats,
+  applyReclassificationToLoan,
+  bulkUpdateReclassifications
+} from '../controllers/AutoReclassifyInformationController.js';
 
-const router = express.Router(); // Initialize router
+const router = express.Router();
 
-router.post('/', createReclassification);
+// REMOVED: router.use(authenticate);
+
+// Public routes (read-only)
 router.get('/', getAllReclassifications);
+router.get('/stats', getReclassificationStats);
+router.get('/validate', validateReclassification);
+router.get('/criteria', getReclassificationsByCriteria);
+router.get('/product/:prod_cd', getReclassificationByProductCode);
 router.get('/:id', getReclassificationById);
-router.put('/:id', updateReclassification);
-router.delete('/:id', deleteReclassification);
 
-export default router; // Use ES Module export
+// Admin routes (require admin role)
+router.post('/', createReclassification);
+router.put('/:id', updateReclassification);
+router.patch('/:id', patchReclassification);
+router.delete('/:id', deleteReclassification);
+router.patch('/:id/reactivate', reactivateReclassification);
+
+// Special operation routes
+router.post('/apply-to-loan', applyReclassificationToLoan);
+router.post('/bulk-update', bulkUpdateReclassifications);
+
+export default router;

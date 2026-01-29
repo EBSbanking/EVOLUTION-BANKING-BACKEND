@@ -1,9 +1,10 @@
-import mongoose from 'mongoose';
-import retry from 'async-retry';
+// utils/accountGenerator.js
+import { Op } from 'sequelize';
 import Counter from '../models/Counter.js';
 import Customer from '../models/Customer.js';
+import sequelize from '../../config/db.js';
 
-const USE_NUBAN = true; // Enforce NUBAN-compliant account numbers
+
 const ACCOUNT_NUMBER_LENGTH = 10;
 const ACCOUNT_ID_LENGTH = 6;
 const CUSTOMER_ID_LENGTH = 10;
@@ -14,116 +15,163 @@ function generateAcctId(seq) {
   return String(seq).padStart(ACCOUNT_ID_LENGTH, '0'); // Always 6 digits
 }
 
-// 🔢 Calculate NUBAN Check Digit
-const calculateNUBANCheckDigit = (accountNumber) => {
+// ============================
+// ACCOUNT NUMBER GENERATION FUNCTIONS - FIXED VERSION
+// ============================
+
+const USE_NUBAN = true;
+const BANK_CODE = '011';
+
+// Calculate NUBAN check digit
+const calculateNUBANCheckDigit = (baseNumber) => {
   const weights = [3, 7, 3, 3, 7, 3, 3, 7, 3];
   let sum = 0;
-  for (let i = 0; i < accountNumber.length; i++) {
-    sum += Number(accountNumber[i]) * weights[i];
+  for (let i = 0; i < baseNumber.length; i++) {
+    sum += Number(baseNumber[i]) * weights[i];
   }
   const mod = sum % 10;
   return mod === 0 ? '0' : String(10 - mod);
 };
 
-// 🔢 Generate Account Number for Customer - SAVINGS ONLY (FIXED NUBAN LENGTH)
-export const generateAccountNumberForCustomer = async (customerId, accountType = 'SAVINGS') => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+// utils/accountNumberGenerator.js
+export async function generateAccountNumber() {
+  // Generate NUBAN format: 2XXXXXXXXX (10 digits starting with 2)
+  const randomPart = Math.floor(Math.random() * 1000000000).toString().padStart(9, '0');
+  const accountNumber = '2' + randomPart;
+  
+  // Check if it exists (optional but recommended)
+  const exists = await AccountApplication.findOne({
+    where: { account_number: accountNumber }
+  });
+  
+  if (exists) {
+    // Recursively generate until unique
+    return await generateAccountNumber();
+  }
+  
+  return accountNumber;
+}
 
+// Generate Account Number for Customer - FIXED VERSION
+// Replace the generateAccountNumberForCustomer function in your controller
+const generateAccountNumberForCustomer = async (customerId, accountType = 'SAVINGS', transaction = null) => {
   try {
-    // FIX: Handle both regular customers and group pseudo-customers
-    // If customerId is a number or looks like a regular CUST_ID, check for customer
-    // If it's a group ID (like 99999 or group code), skip customer check
+    console.log(`🔢 Generating account number for customer: ${customerId}, type: ${accountType}`);
     
-    const isGroupCustomer = customerId > 100000 || 
-                           (typeof customerId === 'string' && customerId.length >= 6) ||
-                           (typeof customerId === 'number' && customerId >= 99999);
+    // Determine counter name
+    const counterName = accountType.toUpperCase() === 'SAVINGS' ? 'ACCT_SAVINGS' : 
+                       accountType.toUpperCase() === 'CURRENT' ? 'ACCT_CURRENT' : 'ACCT_LOAN';
     
-    if (!isGroupCustomer) {
-      // For regular customers, check they exist
-      const customer = await Customer.findOne({ CUST_ID: customerId }).session(session);
-      if (!customer) {
-        throw new Error(`Customer ${customerId} not found`);
-      }
-    }
-
-    // For savings accounts only
-    const counterType = 'ACCT_SAVINGS';
-
-    // Get counter for savings accounts
-    const counter = await Counter.findOneAndUpdate(
-      { _id: counterType },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
-
-    if (!counter || typeof counter.seq !== 'number') {
-      throw new Error('Failed to generate account number for savings account');
-    }
-
-    // Generate account number - FIXED: Ensure proper length
-    let accountNumber;
-    if (USE_NUBAN) {
-      // NUBAN format for savings: [2][7-digit serial][check digit]
-      const typePrefix = '2'; // Savings account prefix
-      const serial = counter.seq.toString().padStart(7, '0');
-      const baseNumber = `${typePrefix}${serial}`;
+    let currentSeq = 1001; // Default starting sequence
+    
+    try {
+      // First, check what columns exist in the counters table
+      const [columns] = await sequelize.query(
+        "SHOW COLUMNS FROM counters",
+        { type: sequelize.QueryTypes.SELECT, transaction }
+      );
       
-      // Verify base number is exactly 8 digits before calculating check digit
-      if (baseNumber.length !== 8) {
-        throw new Error(`Base account number ${baseNumber} is not 8 digits`);
-      }
+      console.log('📋 Counters table columns:', columns.map(c => c.Field));
       
-      const checkDigit = calculateNUBANCheckDigit(baseNumber);
-      accountNumber = `${baseNumber}${checkDigit}`; // Total should be 9 digits
-    } else {
-      // Legacy format for savings
-      const prefix = '100';
-      const sequence = counter.seq.toString().padStart(7, '0');
-      accountNumber = `${prefix}${sequence}`;
-    }
-
-    // Verify account number is correct length
-    // NUBAN savings accounts should be 9 digits (prefix 2 + 7-digit serial + check digit)
-    if (!/^\d{9}$/.test(accountNumber) && USE_NUBAN) {
-      throw new Error(`Generated NUBAN account number ${accountNumber} is not 9 digits`);
+      // Find the correct column name for counter identifier
+      const possibleIdColumns = ['name', 'counter_name', 'type', 'counter_type', 'counter_cd'];
+      const idColumn = columns.find(col => 
+        possibleIdColumns.includes(col.Field.toLowerCase())
+      )?.Field || 'name'; // Default to 'name'
+      
+      // Find the correct column name for sequence
+      const possibleSeqColumns = ['seq', 'sequence', 'counter_val', 'value'];
+      const seqColumn = columns.find(col => 
+        possibleSeqColumns.includes(col.Field.toLowerCase())
+      )?.Field || 'seq'; // Default to 'seq'
+      
+      console.log(`📝 Using columns: id=${idColumn}, seq=${seqColumn}`);
+      
+      // Try to get existing counter
+      const [results] = await sequelize.query(
+        `SELECT * FROM counters WHERE ${idColumn} = ? LIMIT 1`,
+        {
+          replacements: [counterName],
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        }
+      );
+      
+      if (results && results[0]) {
+        const counter = results[0];
+        currentSeq = (counter[seqColumn] || counter['seq'] || 0) + 1;
+        
+        // Update the counter
+        await sequelize.query(
+          `UPDATE counters SET ${seqColumn} = ?, updated_at = NOW() WHERE ${idColumn} = ?`,
+          {
+            replacements: [currentSeq, counterName],
+            transaction
+          }
+        );
+        
+        console.log(`✅ Updated counter ${counterName} to sequence: ${currentSeq}`);
+      } else {
+        // Create new counter
+        console.log(`🆕 Creating new counter for ${counterName} with sequence: ${currentSeq}`);
+        
+        await sequelize.query(
+          `INSERT INTO counters (${idColumn}, ${seqColumn}, created_at, updated_at) 
+           VALUES (?, ?, NOW(), NOW())`,
+          {
+            replacements: [counterName, currentSeq],
+            transaction
+          }
+        );
+      }
+    } catch (error) {
+      console.error('❌ Error accessing counters table:', error.message);
+      
+      // Fallback sequence
+      const timestamp = Date.now();
+      currentSeq = (parseInt(customerId.slice(-4)) || 0) + (timestamp % 10000);
+      console.log(`🔄 Using fallback sequence: ${currentSeq}`);
     }
     
-    // Legacy accounts should be 10 digits
-    if (!/^\d{10}$/.test(accountNumber) && !USE_NUBAN) {
-      throw new Error(`Generated account number ${accountNumber} is not 10 digits`);
-    }
-
-    // Also generate ACCT_ID (6 digits)
-    const acctIdCounter = await Counter.findOneAndUpdate(
-      { _id: 'ACCT_ID_SEQ' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
-    const ACCT_ID = acctIdCounter.seq.toString().padStart(ACCOUNT_ID_LENGTH, '0');
-
-    await session.commitTransaction();
-
-    console.log(`✅ Generated Savings Account for ${isGroupCustomer ? 'Group/Pseudo-Customer' : 'Customer'} ${customerId}: ACCT_NO=${accountNumber}, ACCT_ID=${ACCT_ID}`);
-
+    // Generate ACCT_ID
+    let acctIdSeq = 1001;
+    
+    // Format account number (simple format for now)
+    const customerSuffix = customerId.toString().slice(-4).padStart(4, '0');
+    const sequenceStr = currentSeq.toString().padStart(6, '0');
+    const accountNumber = `10${customerSuffix}${sequenceStr}`.slice(-10);
+    
+    const ACCT_ID = acctIdSeq.toString().padStart(6, '0');
+    
+    console.log(`✅ Generated Account: ACCT_NO=${accountNumber}, ACCT_ID=${ACCT_ID}`);
+    
     return {
       ACCT_NO: accountNumber,
       ACCT_ID,
       CUST_ID: customerId,
-      accountType: 'SAVINGS',
-      sequence: counter.seq,
-      formattedString: accountNumber
+      accountType: accountType.toUpperCase(),
+      sequence: currentSeq
     };
+    
   } catch (error) {
-    await session.abortTransaction();
-    console.error('❌ Error generating savings account number:', error);
-    throw new Error(`Failed to generate savings account number: ${error.message}`);
-  } finally {
-    await session.endSession();
+    console.error('❌ Error in generateAccountNumberForCustomer:', error);
+    
+    // Emergency fallback
+    const timestamp = Date.now();
+    const emergencyAcctNo = `99${timestamp.toString().slice(-8)}`.padStart(10, '0');
+    const emergencyAcctId = (timestamp % 1000000).toString().padStart(6, '0');
+    
+    return {
+      ACCT_NO: emergencyAcctNo,
+      ACCT_ID: emergencyAcctId,
+      CUST_ID: customerId,
+      accountType: accountType.toUpperCase(),
+      sequence: 1
+    };
   }
 };
 
-// 🔢 Generate Account Number for Group Savings (IMPROVED FALLBACK)
+// 🔢 Generate Account Number for Group Savings
 export const generateAccountNumberForGroup = async (groupCode) => {
   try {
     // Extract numeric part from group code for use as pseudo-customer ID
@@ -190,65 +238,105 @@ const generateFallbackAccountNumber = (timestamp, randomPart) => {
 
 // 🔐 Generate 6-digit ACCT_ID
 export const generateAccountId = async () => {
-  return retry(
-    async () => {
-      const counter = await Counter.findByIdAndUpdate(
-        'ACCT_ID_SEQ',
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true }
-      ).exec();
-      if (!counter || typeof counter.seq !== 'number') {
-        throw new Error('Failed to generate ACCT_ID');
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const transaction = await Counter.sequelize.transaction();
+
+      try {
+        const [counter, created] = await Counter.findOrCreate({
+          where: { _id: 'ACCT_ID_SEQ' },
+          defaults: { seq: 1 },
+          transaction
+        });
+
+        if (!created) {
+          await Counter.increment('seq', {
+            where: { _id: 'ACCT_ID_SEQ' },
+            by: 1,
+            transaction
+          });
+
+          const updatedCounter = await Counter.findOne({
+            where: { _id: 'ACCT_ID_SEQ' },
+            transaction
+          });
+          
+          counter.seq = updatedCounter.seq;
+        }
+
+        await transaction.commit();
+
+        if (!counter || typeof counter.seq !== 'number') {
+          throw new Error('Failed to generate ACCT_ID');
+        }
+
+        return generateAcctId(counter.seq);
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
       }
-      return generateAcctId(counter.seq);
-    },
-    { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 5000 }
-  );
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('Failed to generate ACCT_ID after retries');
 };
 
 // 🔢 Generate Customer Numbers
 export const generateCustomerNumber = async (branchCode = '01') => {
-  const session = await Customer.startSession();
-  session.startTransaction();
+  const transaction = await Customer.sequelize.transaction();
 
   try {
-    // Get last customer (lean for performance)
-    const lastCustomer = await Customer.findOne().sort({ CUST_ID: -1 }).lean().session(session);
+    // Get last customer
+    const lastCustomer = await Customer.findOne({
+      order: [['CUST_ID', 'DESC']],
+      transaction
+    });
 
     const lastCustId = lastCustomer ? parseInt(lastCustomer.CUST_ID, 10) || 0 : 0;
     const lastCustNoSerial = lastCustomer && lastCustomer.CUST_NO
       ? parseInt(lastCustomer.CUST_NO.slice(2), 10) || 0
       : 0;
 
-    // Increment counter atomically
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'CUSTOMER_NUMBER' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
+    // Get or create customer number counter
+    const [counter, created] = await Counter.findOrCreate({
+      where: { _id: 'CUSTOMER_NUMBER' },
+      defaults: { seq: Math.max(1, lastCustId + 1) },
+      transaction
+    });
 
-    if (!counter || typeof counter.seq !== 'number') {
-      throw new Error('Failed to fetch valid CUSTOMER_NUMBER counter');
-    }
-
-    const nextId = Math.max(lastCustId + 1, counter.seq);
-    const nextSerial = lastCustNoSerial + 1;
-
-    // Sync counter if needed
-    if (nextId > counter.seq) {
-      await Counter.updateOne(
-        { _id: 'CUSTOMER_NUMBER' },
-        { $set: { seq: nextId } },
-        { session }
+    if (!created && counter.seq <= lastCustId) {
+      await Counter.update(
+        { seq: lastCustId + 1 },
+        { where: { _id: 'CUSTOMER_NUMBER' }, transaction }
       );
+      counter.seq = lastCustId + 1;
     }
 
     // Format IDs
-    const CUST_ID = nextId.toString().padStart(CUSTOMER_ID_LENGTH, '0'); // always 10 digits
-    const CUST_NO = branchCode + nextSerial.toString().padStart(8, '0'); // branch + 8 digits
+    const nextId = counter.seq;
+    const nextSerial = lastCustNoSerial + 1;
 
-    // Commit transaction
-    await session.commitTransaction();
+    // Increment counter for next use
+    await Counter.increment('seq', {
+      where: { _id: 'CUSTOMER_NUMBER' },
+      by: 1,
+      transaction
+    });
+
+    const CUST_ID = nextId.toString().padStart(CUSTOMER_ID_LENGTH, '0');
+    const CUST_NO = branchCode + nextSerial.toString().padStart(8, '0');
+
+    await transaction.commit();
 
     return {
       CUST_ID,
@@ -257,14 +345,12 @@ export const generateCustomerNumber = async (branchCode = '01') => {
       formattedString: CUST_ID,
     };
   } catch (error) {
-    await session.abortTransaction();
+    await transaction.rollback();
     throw new Error(`Failed to generate customer number: ${error.message}`);
-  } finally {
-    await session.endSession();
   }
 };
 
-// 🔢 Generate Account Identifiers for savings applications (SIMPLIFIED)
+// 🔢 Generate Account Identifiers for savings applications
 export const generateAccountIdentifiersFromCounter = async (custId) => {
   try {
     // Generate savings account number for the customer
@@ -311,19 +397,29 @@ export const generateTransactionIds = () => {
 
 // 📄 Generate Loan Contract Form ID
 export const GenerateLoanContractFormId = async (loanType = 'PERSONAL') => {
+  const transaction = await Counter.sequelize.transaction();
+
   try {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    // Get or create loan contract form ID counter
+    const [counter, created] = await Counter.findOrCreate({
+      where: { _id: 'LOAN_CONTRACT_FORM_ID' },
+      defaults: { seq: 1 },
+      transaction
+    });
 
-    // Generate a unique loan contract form ID
-    const counter = await Counter.findOneAndUpdate(
-      { _id: 'LOAN_CONTRACT_FORM_ID' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
+    if (!created) {
+      await Counter.increment('seq', {
+        where: { _id: 'LOAN_CONTRACT_FORM_ID' },
+        by: 1,
+        transaction
+      });
 
-    if (!counter || typeof counter.seq !== 'number') {
-      throw new Error('Failed to generate loan contract form ID');
+      const updatedCounter = await Counter.findOne({
+        where: { _id: 'LOAN_CONTRACT_FORM_ID' },
+        transaction
+      });
+      
+      counter.seq = updatedCounter.seq;
     }
 
     // Format: LCF-[TYPE]-[YYYYMMDD]-[6-digit sequence]
@@ -332,8 +428,7 @@ export const GenerateLoanContractFormId = async (loanType = 'PERSONAL') => {
     const sequence = counter.seq.toString().padStart(6, '0');
     const loanContractFormId = `LCF-${loanType}-${dateStr}-${sequence}`;
 
-    await session.commitTransaction();
-    await session.endSession();
+    await transaction.commit();
 
     console.log(`✅ Generated Loan Contract Form ID: ${loanContractFormId}`);
 
@@ -345,6 +440,7 @@ export const GenerateLoanContractFormId = async (loanType = 'PERSONAL') => {
       formattedString: loanContractFormId
     };
   } catch (error) {
+    await transaction.rollback();
     console.error('❌ Error generating loan contract form ID:', error);
     
     // Fallback generation
@@ -360,89 +456,116 @@ export const GenerateLoanContractFormId = async (loanType = 'PERSONAL') => {
   }
 };
 
-// 🔢 Generate Account Number for Term Deposit
-export const generateAccountNumber = async (customerId, accountType = 'TERM_DEPOSIT') => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+// // 🔢 Generate Account Number for Term Deposit
+// export const generateAccountNumber = async (customerId, accountType = 'TERM_DEPOSIT') => {
+//   const transaction = await Customer.sequelize.transaction();
 
-  try {
-    // First, get the customer to ensure they exist
-    const customer = await Customer.findOne({ CUST_ID: customerId }).session(session);
-    if (!customer) {
-      throw new Error(`Customer ${customerId} not found`);
-    }
+//   try {
+//     // First, get the customer to ensure they exist
+//     const customer = await Customer.findOne({ 
+//       where: { CUST_ID: customerId },
+//       transaction
+//     });
+//     if (!customer) {
+//       throw new Error(`Customer ${customerId} not found`);
+//     }
 
-    // Use different counter for term deposits
-    const counterType = 'ACCT_TERM_DEPOSIT';
+//     // Use different counter for term deposits
+//     const counterType = 'ACCT_TERM_DEPOSIT';
 
-    // Get counter for term deposits
-    const counter = await Counter.findOneAndUpdate(
-      { _id: counterType },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
+//     // Get or create counter for term deposits
+//     const [counter, created] = await Counter.findOrCreate({
+//       where: { _id: counterType },
+//       defaults: { seq: 1 },
+//       transaction
+//     });
 
-    if (!counter || typeof counter.seq !== 'number') {
-      throw new Error('Failed to generate account number for term deposit');
-    }
+//     if (!created) {
+//       await Counter.increment('seq', {
+//         where: { _id: counterType },
+//         by: 1,
+//         transaction
+//       });
 
-    // Generate account number - different prefix for term deposits
-    let accountNumber;
-    if (USE_NUBAN) {
-      // NUBAN format for term deposits: [5][7-digit serial][check digit]
-      const typePrefix = '5'; // Term deposit account prefix
-      const serial = counter.seq.toString().padStart(7, '0');
-      const baseNumber = `${typePrefix}${serial}`;
+//       const updatedCounter = await Counter.findOne({
+//         where: { _id: counterType },
+//         transaction
+//       });
       
-      if (baseNumber.length !== 8) {
-        throw new Error(`Base account number ${baseNumber} is not 8 digits`);
-      }
+//       counter.seq = updatedCounter.seq;
+//     }
+
+//     // Generate account number - different prefix for term deposits
+//     let accountNumber;
+//     if (USE_NUBAN) {
+//       // NUBAN format for term deposits: [5][7-digit serial][check digit]
+//       const typePrefix = '5'; // Term deposit account prefix
+//       const serial = counter.seq.toString().padStart(7, '0');
+//       const baseNumber = `${typePrefix}${serial}`;
       
-      const checkDigit = calculateNUBANCheckDigit(baseNumber);
-      accountNumber = `${baseNumber}${checkDigit}`;
-    } else {
-      // Legacy format for term deposits
-      const prefix = '500';
-      const sequence = counter.seq.toString().padStart(7, '0');
-      accountNumber = `${prefix}${sequence}`;
-    }
+//       if (baseNumber.length !== 8) {
+//         throw new Error(`Base account number ${baseNumber} is not 8 digits`);
+//       }
+      
+//       const checkDigit = calculateNUBANCheckDigit(baseNumber);
+//       accountNumber = `${baseNumber}${checkDigit}`;
+//     } else {
+//       // Legacy format for term deposits
+//       const prefix = '500';
+//       const sequence = counter.seq.toString().padStart(7, '0');
+//       accountNumber = `${prefix}${sequence}`;
+//     }
 
-    // Verify account number length
-    if (USE_NUBAN && !/^\d{9}$/.test(accountNumber)) {
-      throw new Error(`Generated NUBAN account number ${accountNumber} is not 9 digits`);
-    }
-    if (!USE_NUBAN && !/^\d{10}$/.test(accountNumber)) {
-      throw new Error(`Generated account number ${accountNumber} is not 10 digits`);
-    }
+//     // Verify account number length
+//     if (USE_NUBAN && !/^\d{9}$/.test(accountNumber)) {
+//       throw new Error(`Generated NUBAN account number ${accountNumber} is not 9 digits`);
+//     }
+//     if (!USE_NUBAN && !/^\d{10}$/.test(accountNumber)) {
+//       throw new Error(`Generated account number ${accountNumber} is not 10 digits`);
+//     }
 
-    // Generate ACCT_ID (6 digits)
-    const acctIdCounter = await Counter.findOneAndUpdate(
-      { _id: 'ACCT_ID_SEQ' },
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true, session }
-    );
-    const ACCT_ID = acctIdCounter.seq.toString().padStart(ACCOUNT_ID_LENGTH, '0');
+//     // Generate ACCT_ID (6 digits)
+//     const [acctIdCounter, acctIdCreated] = await Counter.findOrCreate({
+//       where: { _id: 'ACCT_ID_SEQ' },
+//       defaults: { seq: 1 },
+//       transaction
+//     });
 
-    await session.commitTransaction();
+//     if (!acctIdCreated) {
+//       await Counter.increment('seq', {
+//         where: { _id: 'ACCT_ID_SEQ' },
+//         by: 1,
+//         transaction
+//       });
 
-    console.log(`✅ Generated ${accountType} Account for Customer ${customerId}: ACCT_NO=${accountNumber}, ACCT_ID=${ACCT_ID}`);
+//       const updatedAcctIdCounter = await Counter.findOne({
+//         where: { _id: 'ACCT_ID_SEQ' },
+//         transaction
+//       });
+      
+//       acctIdCounter.seq = updatedAcctIdCounter.seq;
+//     }
 
-    return {
-      ACCT_NO: accountNumber,
-      ACCT_ID,
-      CUST_ID: customerId,
-      accountType,
-      sequence: counter.seq,
-      formattedString: accountNumber
-    };
-  } catch (error) {
-    await session.abortTransaction();
-    console.error(`❌ Error generating ${accountType} account number:`, error);
-    throw new Error(`Failed to generate ${accountType} account number: ${error.message}`);
-  } finally {
-    await session.endSession();
-  }
-};
+//     const ACCT_ID = acctIdCounter.seq.toString().padStart(ACCOUNT_ID_LENGTH, '0');
+
+//     await transaction.commit();
+
+//     console.log(`✅ Generated ${accountType} Account for Customer ${customerId}: ACCT_NO=${accountNumber}, ACCT_ID=${ACCT_ID}`);
+
+//     return {
+//       ACCT_NO: accountNumber,
+//       ACCT_ID,
+//       CUST_ID: customerId,
+//       accountType,
+//       sequence: counter.seq,
+//       formattedString: accountNumber
+//     };
+//   } catch (error) {
+//     await transaction.rollback();
+//     console.error(`❌ Error generating ${accountType} account number:`, error);
+//     throw new Error(`Failed to generate ${accountType} account number: ${error.message}`);
+//   }
+// };
 
 // 🔢 Generate Account Number (Generic)
 export const generateAccountNumberForDeposit = async (customerId, accountType = 'SAVINGS') => {

@@ -1,7 +1,8 @@
 // controllers/loanRepaymentTransactionController.js
 import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 import LoanAccount from '../models/LoanAccount.js';
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
+import { Op } from 'sequelize';
 
 // Async handler utility
 const asyncHandler = (fn) => (req, res, next) => {
@@ -49,18 +50,20 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
     });
   }
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const t = await sequelize.transaction();
 
   try {
     // Find the loan account to get ACCT_ID
-    const loanAccount = await LoanAccount.findOne({ 
-      ACCT_NO,
-      CUST_ID 
-    }).session(session);
+    const loanAccount = await LoanAccount.findOne({
+      where: { 
+        ACCT_NO,
+        CUST_ID 
+      },
+      transaction: t
+    });
 
     if (!loanAccount) {
-      await session.abortTransaction();
+      await t.rollback();
       return res.status(404).json({
         success: false,
         message: `Loan account not found for ACCT_NO: ${ACCT_NO} and CUST_ID: ${CUST_ID}`
@@ -69,11 +72,12 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
 
     // Check for duplicate transaction reference
     const existingTransaction = await LoanRepaymentTransaction.findOne({
-      TRANSACTION_REFERENCE
-    }).session(session);
+      where: { TRANSACTION_REFERENCE },
+      transaction: t
+    });
 
     if (existingTransaction) {
-      await session.abortTransaction();
+      await t.rollback();
       return res.status(400).json({
         success: false,
         message: 'Transaction with this reference already exists.'
@@ -81,8 +85,8 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
     }
 
     // Create the repayment transaction
-    const repaymentTransaction = new LoanRepaymentTransaction({
-      ACCT_ID: loanAccount._id,
+    const repaymentTransaction = await LoanRepaymentTransaction.create({
+      ACCT_ID: loanAccount.ACCT_ID,
       ACCT_NO,
       CUST_ID,
       TRANSACTION_DATE: TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date(),
@@ -97,10 +101,9 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
       CREATED_BY: req.user?.id || 'system',
       STATUS,
       RECEIPT_NO: RECEIPT_NO || TRANSACTION_REFERENCE
-    });
+    }, { transaction: t });
 
-    await repaymentTransaction.save({ session });
-    await session.commitTransaction();
+    await t.commit();
 
     console.log(`✅ Repayment transaction created: ${TRANSACTION_REFERENCE} for account ${ACCT_NO}`);
 
@@ -111,10 +114,10 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    await session.abortTransaction();
+    await t.rollback();
     console.error('💥 Error creating repayment transaction:', error);
     
-    if (error.code === 11000) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({
         success: false,
         message: 'Transaction reference must be unique.'
@@ -126,8 +129,6 @@ export const createRepaymentTransaction = asyncHandler(async (req, res) => {
       message: 'Failed to create repayment transaction.',
       error: error.message
     });
-  } finally {
-    session.endSession();
   }
 });
 
@@ -145,45 +146,48 @@ export const getRepaymentTransactions = asyncHandler(async (req, res) => {
     REPAYMENT_TYPE
   } = req.query;
 
-  const filter = {};
+  const whereClause = {};
 
-  // Build filter object
-  if (ACCT_NO) filter.ACCT_NO = ACCT_NO;
-  if (CUST_ID) filter.CUST_ID = CUST_ID;
-  if (PAYMENT_METHOD) filter.PAYMENT_METHOD = PAYMENT_METHOD;
-  if (STATUS) filter.STATUS = STATUS;
-  if (REPAYMENT_TYPE) filter.REPAYMENT_TYPE = REPAYMENT_TYPE;
+  // Build where clause
+  if (ACCT_NO) whereClause.ACCT_NO = ACCT_NO;
+  if (CUST_ID) whereClause.CUST_ID = CUST_ID;
+  if (PAYMENT_METHOD) whereClause.PAYMENT_METHOD = PAYMENT_METHOD;
+  if (STATUS) whereClause.STATUS = STATUS;
+  if (REPAYMENT_TYPE) whereClause.REPAYMENT_TYPE = REPAYMENT_TYPE;
 
   // Date range filter
   if (startDate || endDate) {
-    filter.TRANSACTION_DATE = {};
-    if (startDate) filter.TRANSACTION_DATE.$gte = new Date(startDate);
-    if (endDate) filter.TRANSACTION_DATE.$lte = new Date(endDate);
+    whereClause.TRANSACTION_DATE = {};
+    if (startDate) whereClause.TRANSACTION_DATE[Op.gte] = new Date(startDate);
+    if (endDate) whereClause.TRANSACTION_DATE[Op.lte] = new Date(endDate);
   }
 
-  const options = {
-    page: parseInt(page),
-    limit: parseInt(limit),
-    sort: { TRANSACTION_DATE: -1 },
-    populate: {
-      path: 'ACCT_ID',
-      select: 'ACCT_NM LOAN_AMOUNT LOAN_STATUS'
-    }
-  };
+  const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  const transactions = await LoanRepaymentTransaction.paginate(filter, options);
+  const { count, rows: transactions } = await LoanRepaymentTransaction.findAndCountAll({
+    where: whereClause,
+    limit: parseInt(limit),
+    offset: offset,
+    order: [['TRANSACTION_DATE', 'DESC']],
+    include: [{
+      model: LoanAccount,
+      attributes: ['ACCT_NM', 'LOAN_AMOUNT', 'LOAN_STATUS']
+    }]
+  });
+
+  const totalPages = Math.ceil(count / parseInt(limit));
 
   res.status(200).json({
     success: true,
     message: 'Repayment transactions retrieved successfully.',
     data: {
-      transactions: transactions.docs,
+      transactions,
       pagination: {
-        currentPage: transactions.page,
-        totalPages: transactions.totalPages,
-        totalItems: transactions.totalDocs,
-        hasNextPage: transactions.hasNextPage,
-        hasPrevPage: transactions.hasPrevPage
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: count,
+        hasNextPage: parseInt(page) < totalPages,
+        hasPrevPage: parseInt(page) > 1
       }
     }
   });
@@ -193,15 +197,19 @@ export const getRepaymentTransactions = asyncHandler(async (req, res) => {
 export const getRepaymentTransactionById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
+  if (!id || isNaN(id)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid transaction ID format.'
+      message: 'Invalid transaction ID format. Must be a number.'
     });
   }
 
-  const transaction = await LoanRepaymentTransaction.findById(id)
-    .populate('ACCT_ID', 'ACCT_NM LOAN_AMOUNT LOAN_STATUS PRODUCT_TYPE');
+  const transaction = await LoanRepaymentTransaction.findByPk(id, {
+    include: [{
+      model: LoanAccount,
+      attributes: ['ACCT_NM', 'LOAN_AMOUNT', 'LOAN_STATUS', 'PRODUCT_TYPE']
+    }]
+  });
 
   if (!transaction) {
     return res.status(404).json({
@@ -227,62 +235,63 @@ export const getTransactionsByAccount = asyncHandler(async (req, res) => {
     endDate
   } = req.query;
 
-  const filter = { ACCT_NO: accountNo };
+  const whereClause = { ACCT_NO: accountNo };
 
   // Date range filter
   if (startDate || endDate) {
-    filter.TRANSACTION_DATE = {};
-    if (startDate) filter.TRANSACTION_DATE.$gte = new Date(startDate);
-    if (endDate) filter.TRANSACTION_DATE.$lte = new Date(endDate);
+    whereClause.TRANSACTION_DATE = {};
+    if (startDate) whereClause.TRANSACTION_DATE[Op.gte] = new Date(startDate);
+    if (endDate) whereClause.TRANSACTION_DATE[Op.lte] = new Date(endDate);
   }
 
-  const options = {
-    page: parseInt(page),
-    limit: parseInt(limit),
-    sort: { TRANSACTION_DATE: -1 }
-  };
+  const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  const transactions = await LoanRepaymentTransaction.paginate(filter, options);
+  const { count, rows: transactions } = await LoanRepaymentTransaction.findAndCountAll({
+    where: whereClause,
+    limit: parseInt(limit),
+    offset: offset,
+    order: [['TRANSACTION_DATE', 'DESC']]
+  });
 
   // Calculate totals
-  const totalStats = await LoanRepaymentTransaction.aggregate([
-    { $match: filter },
-    {
-      $group: {
-        _id: null,
-        totalAmount: { $sum: '$AMOUNT' },
-        totalPrincipal: { $sum: '$PRINCIPAL_AMOUNT' },
-        totalInterest: { $sum: '$INTEREST_AMOUNT' },
-        transactionCount: { $sum: 1 }
-      }
-    }
-  ]);
+  const totalStats = await LoanRepaymentTransaction.findOne({
+    where: whereClause,
+    attributes: [
+      [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.col('PRINCIPAL_AMOUNT')), 'totalPrincipal'],
+      [sequelize.fn('SUM', sequelize.col('INTEREST_AMOUNT')), 'totalInterest'],
+      [sequelize.fn('COUNT', sequelize.col('TRANSACTION_ID')), 'transactionCount']
+    ],
+    raw: true
+  });
 
-  const stats = totalStats.length > 0 ? totalStats[0] : {
+  const stats = totalStats || {
     totalAmount: 0,
     totalPrincipal: 0,
     totalInterest: 0,
     transactionCount: 0
   };
 
+  const totalPages = Math.ceil(count / parseInt(limit));
+
   res.status(200).json({
     success: true,
     message: 'Account repayment transactions retrieved successfully.',
     data: {
       accountNo,
-      transactions: transactions.docs,
+      transactions,
       summary: {
-        totalAmount: stats.totalAmount,
-        totalPrincipal: stats.totalPrincipal,
-        totalInterest: stats.totalInterest,
-        transactionCount: stats.transactionCount
+        totalAmount: parseFloat(stats.totalAmount) || 0,
+        totalPrincipal: parseFloat(stats.totalPrincipal) || 0,
+        totalInterest: parseFloat(stats.totalInterest) || 0,
+        transactionCount: parseInt(stats.transactionCount) || 0
       },
       pagination: {
-        currentPage: transactions.page,
-        totalPages: transactions.totalPages,
-        totalItems: transactions.totalDocs,
-        hasNextPage: transactions.hasNextPage,
-        hasPrevPage: transactions.hasPrevPage
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: count,
+        hasNextPage: parseInt(page) < totalPages,
+        hasPrevPage: parseInt(page) > 1
       }
     }
   });
@@ -298,69 +307,70 @@ export const getTransactionsByCustomer = asyncHandler(async (req, res) => {
     endDate
   } = req.query;
 
-  const filter = { CUST_ID: customerId };
+  const whereClause = { CUST_ID: customerId };
 
   // Date range filter
   if (startDate || endDate) {
-    filter.TRANSACTION_DATE = {};
-    if (startDate) filter.TRANSACTION_DATE.$gte = new Date(startDate);
-    if (endDate) filter.TRANSACTION_DATE.$lte = new Date(endDate);
+    whereClause.TRANSACTION_DATE = {};
+    if (startDate) whereClause.TRANSACTION_DATE[Op.gte] = new Date(startDate);
+    if (endDate) whereClause.TRANSACTION_DATE[Op.lte] = new Date(endDate);
   }
 
-  const options = {
-    page: parseInt(page),
-    limit: parseInt(limit),
-    sort: { TRANSACTION_DATE: -1 },
-    populate: {
-      path: 'ACCT_ID',
-      select: 'ACCT_NM LOAN_AMOUNT PRODUCT_TYPE'
-    }
-  };
+  const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  const transactions = await LoanRepaymentTransaction.paginate(filter, options);
+  const { count, rows: transactions } = await LoanRepaymentTransaction.findAndCountAll({
+    where: whereClause,
+    limit: parseInt(limit),
+    offset: offset,
+    order: [['TRANSACTION_DATE', 'DESC']],
+    include: [{
+      model: LoanAccount,
+      attributes: ['ACCT_NM', 'LOAN_AMOUNT', 'PRODUCT_TYPE']
+    }]
+  });
 
   // Calculate customer totals
-  const customerStats = await LoanRepaymentTransaction.aggregate([
-    { $match: filter },
-    {
-      $group: {
-        _id: '$CUST_ID',
-        totalAmount: { $sum: '$AMOUNT' },
-        totalPrincipal: { $sum: '$PRINCIPAL_AMOUNT' },
-        totalInterest: { $sum: '$INTEREST_AMOUNT' },
-        transactionCount: { $sum: 1 },
-        accountsCount: { $addToSet: '$ACCT_NO' }
-      }
-    }
-  ]);
+  const customerStats = await LoanRepaymentTransaction.findOne({
+    where: whereClause,
+    attributes: [
+      [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.col('PRINCIPAL_AMOUNT')), 'totalPrincipal'],
+      [sequelize.fn('SUM', sequelize.col('INTEREST_AMOUNT')), 'totalInterest'],
+      [sequelize.fn('COUNT', sequelize.col('TRANSACTION_ID')), 'transactionCount'],
+      [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('ACCT_NO'))), 'uniqueAccountsCount']
+    ],
+    raw: true
+  });
 
-  const stats = customerStats.length > 0 ? customerStats[0] : {
+  const stats = customerStats || {
     totalAmount: 0,
     totalPrincipal: 0,
     totalInterest: 0,
     transactionCount: 0,
-    accountsCount: []
+    uniqueAccountsCount: 0
   };
+
+  const totalPages = Math.ceil(count / parseInt(limit));
 
   res.status(200).json({
     success: true,
     message: 'Customer repayment transactions retrieved successfully.',
     data: {
       customerId,
-      transactions: transactions.docs,
+      transactions,
       summary: {
-        totalAmount: stats.totalAmount,
-        totalPrincipal: stats.totalPrincipal,
-        totalInterest: stats.totalInterest,
-        transactionCount: stats.transactionCount,
-        uniqueAccounts: stats.accountsCount?.length || 0
+        totalAmount: parseFloat(stats.totalAmount) || 0,
+        totalPrincipal: parseFloat(stats.totalPrincipal) || 0,
+        totalInterest: parseFloat(stats.totalInterest) || 0,
+        transactionCount: parseInt(stats.transactionCount) || 0,
+        uniqueAccounts: parseInt(stats.uniqueAccountsCount) || 0
       },
       pagination: {
-        currentPage: transactions.page,
-        totalPages: transactions.totalPages,
-        totalItems: transactions.totalDocs,
-        hasNextPage: transactions.hasNextPage,
-        hasPrevPage: transactions.hasPrevPage
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: count,
+        hasNextPage: parseInt(page) < totalPages,
+        hasPrevPage: parseInt(page) > 1
       }
     }
   });
@@ -371,10 +381,10 @@ export const updateTransactionStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { STATUS, updatedBy } = req.body;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
+  if (!id || isNaN(id)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid transaction ID format.'
+      message: 'Invalid transaction ID format. Must be a number.'
     });
   }
 
@@ -386,7 +396,7 @@ export const updateTransactionStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  const transaction = await LoanRepaymentTransaction.findById(id);
+  const transaction = await LoanRepaymentTransaction.findByPk(id);
 
   if (!transaction) {
     return res.status(404).json({
@@ -422,14 +432,14 @@ export const deleteRepaymentTransaction = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { reason, deletedBy } = req.body;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
+  if (!id || isNaN(id)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid transaction ID format.'
+      message: 'Invalid transaction ID format. Must be a number.'
     });
   }
 
-  const transaction = await LoanRepaymentTransaction.findById(id);
+  const transaction = await LoanRepaymentTransaction.findByPk(id);
 
   if (!transaction) {
     return res.status(404).json({
@@ -449,13 +459,11 @@ export const deleteRepaymentTransaction = asyncHandler(async (req, res) => {
   transaction.STATUS = 'CANCELLED';
   transaction.UPDATED_BY = deletedBy || req.user?.id || 'system';
   
-  // Store cancellation reason in metadata if needed
-  transaction.metadata = {
-    ...transaction.metadata,
-    cancellationReason: reason,
-    cancelledAt: new Date(),
-    cancelledBy: deletedBy || req.user?.id || 'system'
-  };
+  // Store cancellation reason in a separate column or JSON field
+  // Assuming you have a CANCELLATION_REASON column
+  if (transaction.CANCELLATION_REASON !== undefined) {
+    transaction.CANCELLATION_REASON = reason;
+  }
 
   await transaction.save();
 
@@ -472,95 +480,71 @@ export const deleteRepaymentTransaction = asyncHandler(async (req, res) => {
 export const getRepaymentStatistics = asyncHandler(async (req, res) => {
   const { startDate, endDate, groupBy = 'day' } = req.query;
 
-  const matchStage = { STATUS: 'COMPLETED' };
+  const whereClause = { STATUS: 'COMPLETED' };
 
   // Date range filter
   if (startDate || endDate) {
-    matchStage.TRANSACTION_DATE = {};
-    if (startDate) matchStage.TRANSACTION_DATE.$gte = new Date(startDate);
-    if (endDate) matchStage.TRANSACTION_DATE.$lte = new Date(endDate);
+    whereClause.TRANSACTION_DATE = {};
+    if (startDate) whereClause.TRANSACTION_DATE[Op.gte] = new Date(startDate);
+    if (endDate) whereClause.TRANSACTION_DATE[Op.lte] = new Date(endDate);
   }
 
-  let groupStage = {};
+  let groupColumn;
   switch (groupBy) {
     case 'day':
-      groupStage = {
-        _id: {
-          year: { $year: '$TRANSACTION_DATE' },
-          month: { $month: '$TRANSACTION_DATE' },
-          day: { $dayOfMonth: '$TRANSACTION_DATE' }
-        },
-        date: { $first: '$TRANSACTION_DATE' }
-      };
+      groupColumn = sequelize.fn('DATE', sequelize.col('TRANSACTION_DATE'));
       break;
     case 'week':
-      groupStage = {
-        _id: {
-          year: { $year: '$TRANSACTION_DATE' },
-          week: { $week: '$TRANSACTION_DATE' }
-        },
-        date: { $first: '$TRANSACTION_DATE' }
-      };
+      groupColumn = sequelize.fn('YEARWEEK', sequelize.col('TRANSACTION_DATE'));
       break;
     case 'month':
-      groupStage = {
-        _id: {
-          year: { $year: '$TRANSACTION_DATE' },
-          month: { $month: '$TRANSACTION_DATE' }
-        },
-        date: { $first: '$TRANSACTION_DATE' }
-      };
+      groupColumn = sequelize.literal("DATE_FORMAT(TRANSACTION_DATE, '%Y-%m')");
       break;
     default:
-      groupStage = {
-        _id: {
-          year: { $year: '$TRANSACTION_DATE' },
-          month: { $month: '$TRANSACTION_DATE' },
-          day: { $dayOfMonth: '$TRANSACTION_DATE' }
-        },
-        date: { $first: '$TRANSACTION_DATE' }
-      };
+      groupColumn = sequelize.fn('DATE', sequelize.col('TRANSACTION_DATE'));
   }
 
-  const statistics = await LoanRepaymentTransaction.aggregate([
-    { $match: matchStage },
-    {
-      $group: {
-        ...groupStage,
-        totalAmount: { $sum: '$AMOUNT' },
-        totalPrincipal: { $sum: '$PRINCIPAL_AMOUNT' },
-        totalInterest: { $sum: '$INTEREST_AMOUNT' },
-        transactionCount: { $sum: 1 },
-        averageAmount: { $avg: '$AMOUNT' }
-      }
-    },
-    { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
-  ]);
+  const statistics = await LoanRepaymentTransaction.findAll({
+    where: whereClause,
+    attributes: [
+      [groupColumn, 'date'],
+      [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.col('PRINCIPAL_AMOUNT')), 'totalPrincipal'],
+      [sequelize.fn('SUM', sequelize.col('INTEREST_AMOUNT')), 'totalInterest'],
+      [sequelize.fn('COUNT', sequelize.col('TRANSACTION_ID')), 'transactionCount'],
+      [sequelize.fn('AVG', sequelize.col('AMOUNT')), 'averageAmount']
+    ],
+    group: ['date'],
+    order: [[sequelize.col('date'), 'ASC']],
+    raw: true
+  });
 
   // Overall totals
-  const overallStats = await LoanRepaymentTransaction.aggregate([
-    { $match: matchStage },
-    {
-      $group: {
-        _id: null,
-        totalAmount: { $sum: '$AMOUNT' },
-        totalPrincipal: { $sum: '$PRINCIPAL_AMOUNT' },
-        totalInterest: { $sum: '$INTEREST_AMOUNT' },
-        transactionCount: { $sum: 1 },
-        uniqueAccounts: { $addToSet: '$ACCT_NO' },
-        uniqueCustomers: { $addToSet: '$CUST_ID' }
-      }
-    }
-  ]);
+  const overallStats = await LoanRepaymentTransaction.findOne({
+    where: whereClause,
+    attributes: [
+      [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.col('PRINCIPAL_AMOUNT')), 'totalPrincipal'],
+      [sequelize.fn('SUM', sequelize.col('INTEREST_AMOUNT')), 'totalInterest'],
+      [sequelize.fn('COUNT', sequelize.col('TRANSACTION_ID')), 'transactionCount'],
+      [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('ACCT_NO'))), 'uniqueAccountsCount'],
+      [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('CUST_ID'))), 'uniqueCustomersCount']
+    ],
+    raw: true
+  });
 
-  const overall = overallStats.length > 0 ? overallStats[0] : {
+  const overall = overallStats || {
     totalAmount: 0,
     totalPrincipal: 0,
     totalInterest: 0,
     transactionCount: 0,
-    uniqueAccounts: [],
-    uniqueCustomers: []
+    uniqueAccountsCount: 0,
+    uniqueCustomersCount: 0
   };
+
+  const avgAmount = overall.transactionCount > 0 
+    ? parseFloat(overall.totalAmount) / parseInt(overall.transactionCount)
+    : 0;
 
   res.status(200).json({
     success: true,
@@ -568,13 +552,13 @@ export const getRepaymentStatistics = asyncHandler(async (req, res) => {
     data: {
       statistics,
       overview: {
-        totalAmount: overall.totalAmount,
-        totalPrincipal: overall.totalPrincipal,
-        totalInterest: overall.totalInterest,
-        transactionCount: overall.transactionCount,
-        uniqueAccountsCount: overall.uniqueAccounts?.length || 0,
-        uniqueCustomersCount: overall.uniqueCustomers?.length || 0,
-        averageTransactionAmount: overall.transactionCount > 0 ? overall.totalAmount / overall.transactionCount : 0
+        totalAmount: parseFloat(overall.totalAmount) || 0,
+        totalPrincipal: parseFloat(overall.totalPrincipal) || 0,
+        totalInterest: parseFloat(overall.totalInterest) || 0,
+        transactionCount: parseInt(overall.transactionCount) || 0,
+        uniqueAccountsCount: parseInt(overall.uniqueAccountsCount) || 0,
+        uniqueCustomersCount: parseInt(overall.uniqueCustomersCount) || 0,
+        averageTransactionAmount: avgAmount
       }
     }
   });

@@ -1,14 +1,68 @@
-// backend/models/FileUpload.js
-import mongoose from 'mongoose';
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const FileUploadSchema = new mongoose.Schema({
-    CUST_NO: {type: Number, required: true},
-    filename: { type: String, required: true },
-    url: { type: String, required: true },
-    size: { type: Number, required: true },
-    format: { type: String, required: true },
-    uploadedAt: { type: Date, default: Date.now },
-    uploadedBy: { type: String, required: false }, // Optional: Track who uploaded the file
-}, { timestamps: true });
+class FileUpload extends Model {}
 
-export default mongoose.model('FileUpload', FileUploadSchema);
+FileUpload.init({
+  CUST_NO: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  filename: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  url: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  size: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  format: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+  },
+  uploadedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+  uploadedBy: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+}, {
+  sequelize,
+  modelName: 'FileUpload',
+  tableName: 'file_uploads',
+  timestamps: true, // This creates createdAt and updatedAt automatically
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  indexes: [
+    {
+      fields: ['CUST_NO'],
+    },
+    {
+      fields: ['filename'],
+    },
+    {
+      fields: ['uploadedAt'],
+    },
+    {
+      fields: ['format'],
+    },
+  ],
+});
+
+// Optional: Add associations if needed
+FileUpload.associate = (models) => {
+  // If you have a Customer model, you could add:
+  // FileUpload.belongsTo(models.Customer, {
+  //   foreignKey: 'CUST_NO',
+  //   targetKey: 'customerNumber',
+  //   as: 'customer'
+  // });
+};
+
+export default FileUpload;

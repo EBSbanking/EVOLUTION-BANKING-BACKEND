@@ -1,22 +1,60 @@
 version: '3.8'
 
 services:
-  mongodb_exporter:
-    image: percona/mongodb_exporter:0.40.0
-    container_name: mongodb_exporter
+  mysql:
+    image: mysql:8
+    container_name: evolution-mysql
     restart: unless-stopped
-    ports:
-      - "${EXPORTER_PORT:-9216}:9216"  # Default to 9216 if not set
     environment:
-      MONGODB_URI: "${MONGODB_ATLAS_URI}"  # Use full MongoDB Atlas URI here
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: core_banking
+      MYSQL_USER: evolution_user
+      MYSQL_PASSWORD: evolution_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    command: 
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=2G
+      - --innodb-log-file-size=512M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
 
-  mongo-express:
-    image: mongo-express
-    container_name: mongo-express
+  app:
+    build: .
+    container_name: evolution-backend
     restart: unless-stopped
-    ports:
-      - "${MONGO_EXPRESS_PORT:-8081}:8081"  # Default to 8081 if not set
     environment:
-      ME_CONFIG_MONGODB_URL: "${MONGODB_ATLAS_URI}"
-      ME_CONFIG_BASICAUTH_USERNAME: "${MONGO_USER:-admin}"  # Default fallback
-      ME_CONFIG_BASICAUTH_PASSWORD: "${MONGO_PASS:-admin}"  # Default fallback
+      NODE_ENV: production
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: core_banking
+      DB_USER: evolution_user
+      DB_PASSWORD: evolution_pass
+      PORT: 5000
+    ports:
+      - "5000:5000"
+      - "9229:9229" # For debugging
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    command: npm run start
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mysql_data:
+    driver: local

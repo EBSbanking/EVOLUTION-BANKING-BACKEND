@@ -1,5 +1,5 @@
-import LoanFee from '../models/LoanFee.js';
-import mongoose from 'mongoose';
+// src/controllers/LoanFeeController.js - MySQL VERSION
+import { getPool } from '../../config/db.js'; // MySQL connection pool
 import { logAuditTrail } from '../Services/AuditService.js';
 import generateWorkflowIdentifiers from '../utils/generateWorkflowIdentifiers.js';
 
@@ -9,10 +9,12 @@ class LoanFeeController {
    * @description Create a new loan fee with workflow tracking
    */
   static async createFee(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    const pool = getPool();
+    const connection = await pool.getConnection();
     
     try {
+      await connection.beginTransaction();
+
       const { 
         PROD_ID, 
         name, 
@@ -36,53 +38,63 @@ class LoanFeeController {
         throw new Error('PROD_ID, name, type, and value are required');
       }
 
-      // Convert createdBy to proper format
-      let createdById;
-      if (createdBy === 'system') {
+      // Validate user ID
+      let createdById = createdBy;
+      if (createdById === 'system') {
         createdById = 'system';
-      } else if (mongoose.isValidObjectId(createdBy)) {
-        createdById = new mongoose.Types.ObjectId(createdBy);
-      } else {
-        throw new Error('Invalid createdBy value - must be either "system" or a valid ObjectId');
+      } else if (!createdById || createdById.length < 1) {
+        throw new Error('Invalid createdBy value');
       }
 
-      const newFee = new LoanFee({
-        PROD_ID,
-        name,
-        type,
-        isPercentage,
-        value,
-        minAmount: isPercentage ? minAmount || 0 : 0,
-        maxAmount: isPercentage ? maxAmount || 0 : 0,
-        glAccountCode,
-        taxable,
-        taxRate: taxable ? taxRate || 0 : 0,
-        appliesToDisbursement,
-        appliesToRepayment,
-        createdBy: createdById,
-        workflowMetadata: {
-          workItemId,
-          processId,
-          ...req.workflowIdentifiers
-        }
-      });
+      // Insert new fee
+      const [result] = await connection.query(`
+        INSERT INTO LoanFee (
+          PROD_ID, name, type, isPercentage, value, minAmount, maxAmount,
+          glAccountCode, taxable, taxRate, appliesToDisbursement, appliesToRepayment,
+          createdBy, workItemId, processId, createdAt, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)
+      `, [
+        PROD_ID, 
+        name, 
+        type, 
+        isPercentage || false, 
+        parseFloat(value),
+        isPercentage ? (minAmount || 0) : 0,
+        isPercentage ? (maxAmount || 0) : 0,
+        glAccountCode || null,
+        taxable || false,
+        taxable ? (taxRate || 0) : 0,
+        appliesToDisbursement || false,
+        appliesToRepayment || false,
+        createdById,
+        workItemId,
+        processId
+      ]);
 
-      await newFee.save({ session });
+      const feeId = result.insertId;
 
+      // Get the created fee
+      const [feeRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ?',
+        [feeId]
+      );
+      const newFee = feeRows[0];
+
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         processId,
-        userId: createdById === 'system' ? 'system' : createdById,
+        userId: createdById,
         action: 'FEE_CREATED',
         entityType: 'LOAN_FEE',
-        entityId: newFee._id,
+        entityId: feeId,
         description: `Created fee ${name} for product ${PROD_ID}`,
         oldValue: {},
-        newValue: newFee.toObject(),
-        session
+        newValue: newFee,
+        connection // Pass connection for transaction consistency
       });
 
-      await session.commitTransaction();
+      await connection.commit();
 
       res.status(201).json({
         success: true,
@@ -91,14 +103,14 @@ class LoanFeeController {
         workflowId: workItemId
       });
     } catch (error) {
-      await session.abortTransaction();
+      await connection.rollback();
       res.status(400).json({
         success: false,
         message: 'Failed to create loan fee',
         error: error.message
       });
     } finally {
-      session.endSession();
+      connection.release();
     }
   }
 
@@ -107,19 +119,47 @@ class LoanFeeController {
    * @description Get all fees for a specific loan product
    */
   static async getFeesByProduct(req, res) {
+    const pool = getPool();
+    let connection;
+    
     try {
+      connection = await pool.getConnection();
+      
       const { productId } = req.params;
       const { activeOnly = 'true' } = req.query;
       const { workItemId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
 
-      const query = { PROD_ID: productId };
-      if (activeOnly === 'true') query.active = true;
+      let query = 'SELECT * FROM LoanFee WHERE PROD_ID = ?';
+      const params = [productId];
+      
+      if (activeOnly === 'true') {
+        query += ' AND active = 1';
+      }
 
-      const fees = await LoanFee.find(query)
-        .populate('createdBy', 'firstName lastName')
-        .populate('updatedBy', 'firstName lastName')
-        .lean();
+      const [fees] = await connection.query(query, params);
 
+      // Get user details for createdBy and updatedBy
+      if (fees.length > 0) {
+        const userIds = [...new Set(fees.map(fee => fee.createdBy).filter(Boolean))];
+        if (userIds.length > 0) {
+          const [users] = await connection.query(
+            'SELECT id, firstName, lastName FROM Users WHERE id IN (?)',
+            [userIds]
+          );
+          
+          const userMap = users.reduce((map, user) => {
+            map[user.id] = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+            return map;
+          }, {});
+
+          fees.forEach(fee => {
+            fee.createdByUser = userMap[fee.createdBy] || null;
+            fee.updatedByUser = userMap[fee.updatedBy] || null;
+          });
+        }
+      }
+
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         userId: req.user?.id || 'system',
@@ -141,6 +181,8 @@ class LoanFeeController {
         message: 'Failed to fetch loan fees',
         error: error.message
       });
+    } finally {
+      if (connection) connection.release();
     }
   }
 
@@ -149,10 +191,12 @@ class LoanFeeController {
    * @description Update an existing loan fee with workflow tracking
    */
   static async updateFee(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    
     try {
+      await connection.beginTransaction();
+
       const { feeId } = req.params;
       const updates = req.body;
       const { workItemId, processId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
@@ -161,55 +205,91 @@ class LoanFeeController {
         throw new Error('Product ID and created by cannot be modified');
       }
 
-      const existingFee = await LoanFee.findById(feeId).session(session);
-      if (!existingFee) {
+      // Get existing fee
+      const [existingRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ? FOR UPDATE',
+        [feeId]
+      );
+
+      if (existingRows.length === 0) {
         throw new Error('Loan fee not found');
       }
 
-      const oldFee = existingFee.toObject();
-      Object.assign(existingFee, {
-        ...updates,
-        updatedBy: req.user?.id || 'system',
-        updatedAt: new Date(),
-        workflowMetadata: {
-          ...existingFee.workflowMetadata,
-          lastWorkItemId: workItemId,
-          lastProcessId: processId
+      const existingFee = existingRows[0];
+      const oldFee = { ...existingFee };
+
+      // Prepare update data
+      const updateFields = [];
+      const updateValues = [];
+      
+      const allowedFields = [
+        'name', 'type', 'isPercentage', 'value', 'minAmount', 'maxAmount',
+        'glAccountCode', 'taxable', 'taxRate', 'appliesToDisbursement',
+        'appliesToRepayment', 'updatedBy', 'workItemId', 'processId'
+      ];
+
+      allowedFields.forEach(field => {
+        if (updates[field] !== undefined) {
+          if (field === 'value' || field === 'minAmount' || field === 'maxAmount' || field === 'taxRate') {
+            updateValues.push(parseFloat(updates[field]));
+          } else if (field === 'isPercentage' || field === 'taxable' || 
+                   field === 'appliesToDisbursement' || field === 'appliesToRepayment') {
+            updateValues.push(updates[field] ? 1 : 0);
+          } else {
+            updateValues.push(updates[field]);
+          }
+          updateFields.push(`${field} = ?`);
         }
       });
 
-      await existingFee.save({ session });
+      // Always update these fields
+      updateFields.push('updatedAt = NOW()');
+      updateValues.push(feeId);
 
+      // Update the fee
+      await connection.query(
+        `UPDATE LoanFee SET ${updateFields.join(', ')} WHERE id = ?`,
+        updateValues
+      );
+
+      // Get updated fee
+      const [updatedRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ?',
+        [feeId]
+      );
+      const updatedFee = updatedRows[0];
+
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         processId,
         userId: req.user?.id || 'system',
         action: 'FEE_UPDATED',
         entityType: 'LOAN_FEE',
-        entityId: existingFee._id,
-        description: `Updated fee ${existingFee.name}`,
+        entityId: feeId,
+        description: `Updated fee ${updatedFee.name}`,
         oldValue: oldFee,
-        newValue: existingFee.toObject(),
-        session
+        newValue: updatedFee,
+        connection
       });
 
-      await session.commitTransaction();
+      await connection.commit();
 
       res.status(200).json({
         success: true,
         message: 'Loan fee updated successfully',
-        data: existingFee,
+        data: updatedFee,
         workflowId: workItemId
       });
     } catch (error) {
-      await session.abortTransaction();
+      await connection.rollback();
       res.status(400).json({
         success: false,
         message: 'Failed to update loan fee',
         error: error.message
       });
     } finally {
-      session.endSession();
+      connection.release();
     }
   }
 
@@ -218,60 +298,74 @@ class LoanFeeController {
    * @description Toggle fee active status with workflow tracking
    */
   static async toggleFeeStatus(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    
     try {
+      await connection.beginTransaction();
+
       const { feeId } = req.params;
       const { workItemId, processId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
 
-      const fee = await LoanFee.findById(feeId).session(session);
-      if (!fee) {
+      // Get fee with lock
+      const [feeRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ? FOR UPDATE',
+        [feeId]
+      );
+
+      if (feeRows.length === 0) {
         throw new Error('Loan fee not found');
       }
 
+      const fee = feeRows[0];
       const oldStatus = fee.active;
-      fee.active = !fee.active;
-      fee.updatedBy = req.user?.id || 'system';
-      fee.updatedAt = new Date();
-      fee.workflowMetadata = {
-        ...fee.workflowMetadata,
-        lastWorkItemId: workItemId,
-        lastProcessId: processId
-      };
 
-      await fee.save({ session });
+      // Toggle active status
+      const newStatus = oldStatus ? 0 : 1;
+      await connection.query(`
+        UPDATE LoanFee 
+        SET active = ?, updatedBy = ?, updatedAt = NOW(),
+            lastWorkItemId = ?, lastProcessId = ?
+        WHERE id = ?
+      `, [
+        newStatus,
+        req.user?.id || 'system',
+        workItemId,
+        processId,
+        feeId
+      ]);
 
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         processId,
         userId: req.user?.id || 'system',
         action: 'FEE_STATUS_CHANGED',
         entityType: 'LOAN_FEE',
-        entityId: fee._id,
-        description: `Changed fee ${fee.name} status from ${oldStatus} to ${fee.active}`,
+        entityId: feeId,
+        description: `Changed fee ${fee.name} status from ${oldStatus} to ${newStatus}`,
         oldValue: { active: oldStatus },
-        newValue: { active: fee.active },
-        session
+        newValue: { active: newStatus },
+        connection
       });
 
-      await session.commitTransaction();
+      await connection.commit();
 
       res.status(200).json({
         success: true,
-        message: `Fee ${fee.active ? 'activated' : 'deactivated'} successfully`,
-        data: { active: fee.active },
+        message: `Fee ${newStatus ? 'activated' : 'deactivated'} successfully`,
+        data: { active: newStatus },
         workflowId: workItemId
       });
     } catch (error) {
-      await session.abortTransaction();
+      await connection.rollback();
       res.status(400).json({
         success: false,
         message: 'Failed to toggle fee status',
         error: error.message
       });
     } finally {
-      session.endSession();
+      connection.release();
     }
   }
 
@@ -280,7 +374,12 @@ class LoanFeeController {
    * @description Calculate all fees for a specific loan amount
    */
   static async calculateFeesForAmount(req, res) {
+    const pool = getPool();
+    let connection;
+    
     try {
+      connection = await pool.getConnection();
+      
       const { productId, amount } = req.params;
       const { workItemId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
       
@@ -288,8 +387,56 @@ class LoanFeeController {
         throw new Error('Amount must be a positive number');
       }
 
-      const calculatedFees = await LoanFee.calculateFees(productId, parseFloat(amount));
+      const loanAmount = parseFloat(amount);
 
+      // Get all active fees for the product
+      const [fees] = await connection.query(`
+        SELECT * FROM LoanFee 
+        WHERE PROD_ID = ? AND active = 1
+      `, [productId]);
+
+      // Calculate fees
+      const calculatedFees = fees.map(fee => {
+        let feeAmount = 0;
+        
+        if (fee.isPercentage) {
+          feeAmount = loanAmount * (fee.value / 100);
+          
+          // Apply min/max constraints
+          if (fee.minAmount && feeAmount < fee.minAmount) {
+            feeAmount = parseFloat(fee.minAmount);
+          }
+          if (fee.maxAmount && feeAmount > fee.maxAmount) {
+            feeAmount = parseFloat(fee.maxAmount);
+          }
+        } else {
+          feeAmount = parseFloat(fee.value);
+        }
+
+        // Apply tax if applicable
+        let taxAmount = 0;
+        if (fee.taxable && fee.taxRate > 0) {
+          taxAmount = feeAmount * (fee.taxRate / 100);
+        }
+
+        return {
+          feeId: fee.id,
+          name: fee.name,
+          type: fee.type,
+          isPercentage: fee.isPercentage,
+          rate: fee.isPercentage ? fee.value : null,
+          amount: feeAmount,
+          taxable: fee.taxable,
+          taxRate: fee.taxRate,
+          taxAmount: taxAmount,
+          totalAmount: feeAmount + taxAmount,
+          appliesToDisbursement: fee.appliesToDisbursement,
+          appliesToRepayment: fee.appliesToRepayment,
+          glAccountCode: fee.glAccountCode
+        };
+      });
+
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         userId: req.user?.id || 'system',
@@ -300,17 +447,24 @@ class LoanFeeController {
         newValue: {
           productId,
           amount,
-          fees: calculatedFees
+          feesCount: calculatedFees.length
         }
       });
+
+      const totalFees = calculatedFees.reduce((sum, fee) => sum + fee.totalAmount, 0);
 
       res.status(200).json({
         success: true,
         data: {
           productId,
-          loanAmount: parseFloat(amount),
+          loanAmount,
           fees: calculatedFees,
-          totalFees: calculatedFees.reduce((sum, fee) => sum + fee.amount, 0),
+          totalFees,
+          summary: {
+            totalFeeAmount: calculatedFees.reduce((sum, fee) => sum + fee.amount, 0),
+            totalTaxAmount: calculatedFees.reduce((sum, fee) => sum + fee.taxAmount, 0),
+            feeCount: calculatedFees.length
+          },
           workflowId: workItemId
         }
       });
@@ -320,6 +474,8 @@ class LoanFeeController {
         message: 'Failed to calculate fees',
         error: error.message
       });
+    } finally {
+      if (connection) connection.release();
     }
   }
 
@@ -328,7 +484,12 @@ class LoanFeeController {
    * @description Calculate only the processing fee for a loan amount
    */
   static async getProcessingFee(req, res) {
+    const pool = getPool();
+    let connection;
+    
     try {
+      connection = await pool.getConnection();
+      
       const { productId, amount } = req.params;
       const { workItemId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
 
@@ -336,8 +497,55 @@ class LoanFeeController {
         throw new Error('Amount must be a positive number');
       }
 
-      const processingFee = await LoanFee.getProcessingFee(productId, parseFloat(amount));
+      const loanAmount = parseFloat(amount);
 
+      // Get processing fee for the product
+      const [feeRows] = await connection.query(`
+        SELECT * FROM LoanFee 
+        WHERE PROD_ID = ? AND active = 1 AND type = 'PROCESSING'
+        LIMIT 1
+      `, [productId]);
+
+      if (feeRows.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            productId,
+            loanAmount,
+            processingFee: 0,
+            currency: 'NGN',
+            message: 'No processing fee configured for this product'
+          },
+          workflowId: workItemId
+        });
+      }
+
+      const fee = feeRows[0];
+      let processingFee = 0;
+
+      if (fee.isPercentage) {
+        processingFee = loanAmount * (fee.value / 100);
+        
+        // Apply min/max constraints
+        if (fee.minAmount && processingFee < fee.minAmount) {
+          processingFee = parseFloat(fee.minAmount);
+        }
+        if (fee.maxAmount && processingFee > fee.maxAmount) {
+          processingFee = parseFloat(fee.maxAmount);
+        }
+      } else {
+        processingFee = parseFloat(fee.value);
+      }
+
+      // Apply tax if applicable
+      let taxAmount = 0;
+      if (fee.taxable && fee.taxRate > 0) {
+        taxAmount = processingFee * (fee.taxRate / 100);
+      }
+
+      const totalProcessingFee = processingFee + taxAmount;
+
+      // Log audit trail
       await logAuditTrail({
         eventId: workItemId,
         userId: req.user?.id || 'system',
@@ -348,7 +556,7 @@ class LoanFeeController {
         newValue: {
           productId,
           amount,
-          processingFee
+          processingFee: totalProcessingFee
         }
       });
 
@@ -356,8 +564,15 @@ class LoanFeeController {
         success: true,
         data: {
           productId,
-          loanAmount: parseFloat(amount),
-          processingFee,
+          loanAmount,
+          processingFee: totalProcessingFee,
+          breakdown: {
+            baseFee: processingFee,
+            taxAmount: taxAmount,
+            taxRate: fee.taxRate,
+            isPercentage: fee.isPercentage,
+            rate: fee.isPercentage ? fee.value : null
+          },
           currency: 'NGN',
           workflowId: workItemId
         }
@@ -368,6 +583,129 @@ class LoanFeeController {
         message: 'Failed to calculate processing fee',
         error: error.message
       });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+
+  /**
+   * @method getFeeById
+   * @description Get a single fee by ID
+   */
+  static async getFeeById(req, res) {
+    const pool = getPool();
+    let connection;
+    
+    try {
+      connection = await pool.getConnection();
+      
+      const { feeId } = req.params;
+      const { workItemId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
+
+      const [feeRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ?',
+        [feeId]
+      );
+
+      if (feeRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Loan fee not found'
+        });
+      }
+
+      const fee = feeRows[0];
+
+      // Log audit trail
+      await logAuditTrail({
+        eventId: workItemId,
+        userId: req.user?.id || 'system',
+        action: 'FEE_VIEWED',
+        entityType: 'LOAN_FEE',
+        entityId: feeId,
+        description: `Viewed fee ${fee.name}`,
+        newValue: { feeId }
+      });
+
+      res.status(200).json({
+        success: true,
+        data: fee,
+        workflowId: workItemId
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch loan fee',
+        error: error.message
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+
+  /**
+   * @method deleteFee
+   * @description Soft delete a loan fee
+   */
+  static async deleteFee(req, res) {
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    
+    try {
+      await connection.beginTransaction();
+
+      const { feeId } = req.params;
+      const { workItemId, processId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
+
+      // Check if fee exists
+      const [feeRows] = await connection.query(
+        'SELECT * FROM LoanFee WHERE id = ?',
+        [feeId]
+      );
+
+      if (feeRows.length === 0) {
+        throw new Error('Loan fee not found');
+      }
+
+      const fee = feeRows[0];
+
+      // Soft delete by setting deleted flag
+      await connection.query(`
+        UPDATE LoanFee 
+        SET deleted = 1, deletedAt = NOW(), deletedBy = ?, updatedAt = NOW()
+        WHERE id = ?
+      `, [req.user?.id || 'system', feeId]);
+
+      // Log audit trail
+      await logAuditTrail({
+        eventId: workItemId,
+        processId,
+        userId: req.user?.id || 'system',
+        action: 'FEE_DELETED',
+        entityType: 'LOAN_FEE',
+        entityId: feeId,
+        description: `Deleted fee ${fee.name}`,
+        oldValue: fee,
+        newValue: { deleted: true },
+        connection
+      });
+
+      await connection.commit();
+
+      res.status(200).json({
+        success: true,
+        message: 'Loan fee deleted successfully',
+        workflowId: workItemId
+      });
+    } catch (error) {
+      await connection.rollback();
+      res.status(400).json({
+        success: false,
+        message: 'Failed to delete loan fee',
+        error: error.message
+      });
+    } finally {
+      connection.release();
     }
   }
 }

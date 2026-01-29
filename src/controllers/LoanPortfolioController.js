@@ -1,5 +1,6 @@
 // src/controllers/LoanPortfolioController.js
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
+import { Op } from 'sequelize';
 import LoanPortfolio from '../models/LoanPortfolio.js';
 import LoanAccount from '../models/LoanAccount.js';
 import CreditApplication from '../models/CreditApplication.js';
@@ -16,78 +17,87 @@ const LoanPortfolioController = {
    * Create a new portfolio record
    */
   createPortfolioRecord: async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
+    
     try {
-      await session.withTransaction(async () => {
-        const {
-          BRANCH_ID,
-          PROD_ID,
-          MONTH,
-          YEAR,
-          CURRENCY = 'NGN',
-          CREATED_BY = req.user?.id || 'SYSTEM'
-        } = req.body;
+      const {
+        BRANCH_ID,
+        PROD_ID,
+        MONTH,
+        YEAR,
+        CURRENCY = 'NGN',
+        CREATED_BY = req.user?.id || 'SYSTEM'
+      } = req.body;
 
-        // Validate required fields
-        if (!BRANCH_ID || !PROD_ID || !MONTH || !YEAR) {
-          throw new Error('BRANCH_ID, PROD_ID, MONTH, and YEAR are required');
-        }
-
-        // Check if record already exists for this period
-        const existingRecord = await LoanPortfolio.findOne({
-          BRANCH_ID,
-          PROD_ID,
-          YEAR,
-          MONTH
-        }).session(session);
-
-        if (existingRecord) {
-          throw new Error(`Portfolio record already exists for ${YEAR}-${MONTH}`);
-        }
-
-        // Get product details
-        const loanProduct = await LoanProduct.findById(PROD_ID).session(session);
-        if (!loanProduct) {
-          throw new Error(`Product not found with ID: ${PROD_ID}`);
-        }
-
-        // Build portfolio data
-        const portfolioData = {
-          BRANCH_ID,
-          PROD_ID,
-          PRODUCT_CODE: product.productCode || product.PROD_ID?.toString(),
-          PRODUCT_NAME: product.name || product.PRODUCT_NAME,
-          PRODUCT_TYPE: product.PRODUCT_TYPE || product.productType,
-          MONTH: parseInt(MONTH),
-          YEAR: parseInt(YEAR),
-          CURRENCY,
-          CREATED_BY,
-          UPDATED_BY: CREATED_BY,
-          STATUS: 'ACTIVE'
-        };
-
-        // Calculate portfolio metrics
-        await calculatePortfolioMetrics(portfolioData, session);
-
-        // Create portfolio record
-        const portfolioRecord = new LoanPortfolio(portfolioData);
-        await portfolioRecord.save({ session });
-
-        res.status(201).json({
-          success: true,
-          message: 'Portfolio record created successfully',
-          data: portfolioRecord
+      // Validate required fields
+      if (!BRANCH_ID || !PROD_ID || !MONTH || !YEAR) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'BRANCH_ID, PROD_ID, MONTH, and YEAR are required'
         });
+      }
+
+      // Check if record already exists for this period
+      const existingRecord = await LoanPortfolio.findOne({
+        where: { BRANCH_ID, PROD_ID, YEAR, MONTH },
+        transaction
+      });
+
+      if (existingRecord) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Portfolio record already exists for ${YEAR}-${MONTH}`
+        });
+      }
+
+      // Get product details
+      const loanProduct = await LoanProduct.findByPk(PROD_ID, { transaction });
+      if (!loanProduct) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Product not found with ID: ${PROD_ID}`
+        });
+      }
+
+      // Build portfolio data
+      const portfolioData = {
+        BRANCH_ID,
+        PROD_ID,
+        PRODUCT_CODE: loanProduct.productCode || loanProduct.PROD_ID?.toString(),
+        PRODUCT_NAME: loanProduct.name || loanProduct.PRODUCT_NAME,
+        PRODUCT_TYPE: loanProduct.PRODUCT_TYPE || loanProduct.productType,
+        MONTH: parseInt(MONTH),
+        YEAR: parseInt(YEAR),
+        CURRENCY,
+        CREATED_BY,
+        UPDATED_BY: CREATED_BY,
+        STATUS: 'ACTIVE'
+      };
+
+      // Calculate portfolio metrics
+      await calculatePortfolioMetrics(portfolioData, transaction);
+
+      // Create portfolio record
+      const portfolioRecord = await LoanPortfolio.create(portfolioData, { transaction });
+
+      await transaction.commit();
+
+      res.status(201).json({
+        success: true,
+        message: 'Portfolio record created successfully',
+        data: portfolioRecord.toJSON()
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error creating portfolio record:', error);
       res.status(error.status || 500).json({
         success: false,
         message: error.message || 'Failed to create portfolio record',
         code: error.code || 'PORTFOLIO_CREATION_ERROR'
       });
-    } finally {
-      await session.endSession();
     }
   },
 
@@ -95,62 +105,66 @@ const LoanPortfolioController = {
    * Update portfolio record
    */
   updatePortfolioRecord: async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
+    
     try {
-      await session.withTransaction(async () => {
-        const { id } = req.params;
-        const updateData = req.body;
-        const UPDATED_BY = req.user?.id || 'SYSTEM';
+      const { id } = req.params;
+      const updateData = req.body;
+      const UPDATED_BY = req.user?.id || 'SYSTEM';
 
-        // Find the portfolio record
-        const portfolioRecord = await LoanPortfolio.findById(id).session(session);
-        if (!portfolioRecord) {
-          throw { status: 404, message: 'Portfolio record not found' };
-        }
-
-        // Don't allow updates to BRANCH_ID, PROD_ID, YEAR, MONTH
-        delete updateData.BRANCH_ID;
-        delete updateData.PROD_ID;
-        delete updateData.YEAR;
-        delete updateData.MONTH;
-
-        // Update the record
-        Object.assign(portfolioRecord, {
-          ...updateData,
-          UPDATED_BY,
-          UPDATED_DATE: new Date()
+      // Find the portfolio record
+      const portfolioRecord = await LoanPortfolio.findByPk(id, { transaction });
+      if (!portfolioRecord) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Portfolio record not found'
         });
+      }
 
-        // Recalculate metrics if financial data changed
-        const financialFields = [
-          'TOTAL_DISBURSED', 'TOTAL_PRINCIPAL', 'OUTSTANDING_PRINCIPAL',
-          'TOTAL_INTEREST_ACCRUED', 'TOTAL_INTEREST_RECEIVED', 'TOTAL_FEES_RECEIVED',
-          'NUMBER_OF_LOANS', 'ACTIVE_LOANS', 'TOTAL_REPAYMENTS', 'TOTAL_RECOVERED',
-          'TOTAL_DEFAULTS', 'PORTFOLIO_AT_RISK', 'PROVISION_AMOUNT'
-        ];
+      // Don't allow updates to BRANCH_ID, PROD_ID, YEAR, MONTH
+      delete updateData.BRANCH_ID;
+      delete updateData.PROD_ID;
+      delete updateData.YEAR;
+      delete updateData.MONTH;
 
-        const hasFinancialUpdates = financialFields.some(field => field in updateData);
-        if (hasFinancialUpdates) {
-          await recalculatePortfolioRatios(portfolioRecord);
-        }
+      // Update the record
+      Object.assign(portfolioRecord, {
+        ...updateData,
+        UPDATED_BY,
+        UPDATED_DATE: new Date()
+      });
 
-        await portfolioRecord.save({ session });
+      // Recalculate metrics if financial data changed
+      const financialFields = [
+        'TOTAL_DISBURSED', 'TOTAL_PRINCIPAL', 'OUTSTANDING_PRINCIPAL',
+        'TOTAL_INTEREST_ACCRUED', 'TOTAL_INTEREST_RECEIVED', 'TOTAL_FEES_RECEIVED',
+        'NUMBER_OF_LOANS', 'ACTIVE_LOANS', 'TOTAL_REPAYMENTS', 'TOTAL_RECOVERED',
+        'TOTAL_DEFAULTS', 'PORTFOLIO_AT_RISK', 'PROVISION_AMOUNT'
+      ];
 
-        res.json({
-          success: true,
-          message: 'Portfolio record updated successfully',
-          data: portfolioRecord
-        });
+      const hasFinancialUpdates = financialFields.some(field => field in updateData);
+      if (hasFinancialUpdates) {
+        await recalculatePortfolioRatios(portfolioRecord);
+      }
+
+      await portfolioRecord.save({ transaction });
+
+      await transaction.commit();
+
+      res.json({
+        success: true,
+        message: 'Portfolio record updated successfully',
+        data: portfolioRecord.toJSON()
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error updating portfolio record:', error);
       res.status(error.status || 500).json({
         success: false,
         message: error.message || 'Failed to update portfolio record',
         code: error.code || 'PORTFOLIO_UPDATE_ERROR'
       });
-    } finally {
-      await session.endSession();
     }
   },
 
@@ -158,39 +172,43 @@ const LoanPortfolioController = {
    * Recalculate portfolio metrics
    */
   recalculatePortfolio: async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
+    
     try {
-      await session.withTransaction(async () => {
-        const { id } = req.params;
-        const UPDATED_BY = req.user?.id || 'SYSTEM';
+      const { id } = req.params;
+      const UPDATED_BY = req.user?.id || 'SYSTEM';
 
-        // Find the portfolio record
-        const portfolioRecord = await LoanPortfolio.findById(id).session(session);
-        if (!portfolioRecord) {
-          throw { status: 404, message: 'Portfolio record not found' };
-        }
-
-        // Recalculate all metrics from scratch
-        await calculatePortfolioMetrics(portfolioRecord, session, true);
-
-        portfolioRecord.UPDATED_BY = UPDATED_BY;
-        await portfolioRecord.save({ session });
-
-        res.json({
-          success: true,
-          message: 'Portfolio metrics recalculated successfully',
-          data: portfolioRecord
+      // Find the portfolio record
+      const portfolioRecord = await LoanPortfolio.findByPk(id, { transaction });
+      if (!portfolioRecord) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Portfolio record not found'
         });
+      }
+
+      // Recalculate all metrics from scratch
+      await calculatePortfolioMetrics(portfolioRecord, transaction, true);
+
+      portfolioRecord.UPDATED_BY = UPDATED_BY;
+      await portfolioRecord.save({ transaction });
+
+      await transaction.commit();
+
+      res.json({
+        success: true,
+        message: 'Portfolio metrics recalculated successfully',
+        data: portfolioRecord.toJSON()
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error recalculating portfolio:', error);
       res.status(error.status || 500).json({
         success: false,
         message: error.message || 'Failed to recalculate portfolio',
         code: error.code || 'PORTFOLIO_RECALCULATION_ERROR'
       });
-    } finally {
-      await session.endSession();
     }
   },
 
@@ -205,9 +223,13 @@ const LoanPortfolioController = {
     try {
       const { id } = req.params;
 
-      const portfolioRecord = await LoanPortfolio.findById(id)
-        .populate('PROD_ID', 'name productCode description')
-        .lean();
+      const portfolioRecord = await LoanPortfolio.findByPk(id, {
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode', 'description']
+        }]
+      });
 
       if (!portfolioRecord) {
         return res.status(404).json({
@@ -216,18 +238,20 @@ const LoanPortfolioController = {
         });
       }
 
+      const portfolioData = portfolioRecord.toJSON();
+      
       // Calculate virtual fields
-      portfolioRecord.PERIOD = `${portfolioRecord.YEAR}-${portfolioRecord.MONTH.toString().padStart(2, '0')}`;
-      portfolioRecord.COLLECTION_EFFICIENCY = portfolioRecord.TOTAL_REPAYMENTS > 0 
-        ? (portfolioRecord.TOTAL_RECOVERED / portfolioRecord.TOTAL_REPAYMENTS) * 100 
+      portfolioData.PERIOD = `${portfolioData.YEAR}-${portfolioData.MONTH.toString().padStart(2, '0')}`;
+      portfolioData.COLLECTION_EFFICIENCY = portfolioData.TOTAL_REPAYMENTS > 0 
+        ? (portfolioData.TOTAL_RECOVERED / portfolioData.TOTAL_REPAYMENTS) * 100 
         : 0;
-      portfolioRecord.DEFAULT_RATE = portfolioRecord.NUMBER_OF_LOANS > 0 
-        ? (portfolioRecord.TOTAL_DEFAULTS / portfolioRecord.NUMBER_OF_LOANS) * 100 
+      portfolioData.DEFAULT_RATE = portfolioData.NUMBER_OF_LOANS > 0 
+        ? (portfolioData.TOTAL_DEFAULTS / portfolioData.NUMBER_OF_LOANS) * 100 
         : 0;
 
       res.json({
         success: true,
-        data: portfolioRecord
+        data: portfolioData
       });
     } catch (error) {
       console.error('Error fetching portfolio record:', error);
@@ -253,26 +277,34 @@ const LoanPortfolioController = {
         });
       }
 
-      const query = { YEAR: parseInt(YEAR), MONTH: parseInt(MONTH) };
-      if (BRANCH_ID) query.BRANCH_ID = BRANCH_ID;
-      if (PROD_ID) query.PROD_ID = PROD_ID;
+      const where = { YEAR: parseInt(YEAR), MONTH: parseInt(MONTH) };
+      if (BRANCH_ID) where.BRANCH_ID = BRANCH_ID;
+      if (PROD_ID) where.PROD_ID = PROD_ID;
 
-      const portfolioRecords = await LoanPortfolio.find(query)
-        .populate('PROD_ID', 'name productCode')
-        .sort({ BRANCH_ID: 1, PRODUCT_CODE: 1 })
-        .lean();
+      const portfolioRecords = await LoanPortfolio.findAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode']
+        }],
+        order: [['BRANCH_ID', 'ASC'], ['PRODUCT_CODE', 'ASC']]
+      });
 
       // Calculate virtual fields for each record
-      const enhancedRecords = portfolioRecords.map(record => ({
-        ...record,
-        PERIOD: `${record.YEAR}-${record.MONTH.toString().padStart(2, '0')}`,
-        COLLECTION_EFFICIENCY: record.TOTAL_REPAYMENTS > 0 
-          ? (record.TOTAL_RECOVERED / record.TOTAL_REPAYMENTS) * 100 
-          : 0,
-        DEFAULT_RATE: record.NUMBER_OF_LOANS > 0 
-          ? (record.TOTAL_DEFAULTS / record.NUMBER_OF_LOANS) * 100 
-          : 0
-      }));
+      const enhancedRecords = portfolioRecords.map(record => {
+        const recordData = record.toJSON();
+        return {
+          ...recordData,
+          PERIOD: `${recordData.YEAR}-${recordData.MONTH.toString().padStart(2, '0')}`,
+          COLLECTION_EFFICIENCY: recordData.TOTAL_REPAYMENTS > 0 
+            ? (recordData.TOTAL_RECOVERED / recordData.TOTAL_REPAYMENTS) * 100 
+            : 0,
+          DEFAULT_RATE: recordData.NUMBER_OF_LOANS > 0 
+            ? (recordData.TOTAL_DEFAULTS / recordData.NUMBER_OF_LOANS) * 100 
+            : 0
+        };
+      });
 
       res.json({
         success: true,
@@ -303,23 +335,30 @@ const LoanPortfolioController = {
         });
       }
 
-      const query = { BRANCH_ID };
-      if (YEAR) query.YEAR = parseInt(YEAR);
-      if (MONTH) query.MONTH = parseInt(MONTH);
+      const where = { BRANCH_ID };
+      if (YEAR) where.YEAR = parseInt(YEAR);
+      if (MONTH) where.MONTH = parseInt(MONTH);
 
-      const portfolioRecords = await LoanPortfolio.find(query)
-        .populate('PROD_ID', 'name productCode PRODUCT_TYPE')
-        .sort({ YEAR: -1, MONTH: -1, PRODUCT_TYPE: 1 })
-        .lean();
+      const portfolioRecords = await LoanPortfolio.findAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode', 'PRODUCT_TYPE']
+        }],
+        order: [['YEAR', 'DESC'], ['MONTH', 'DESC'], ['PRODUCT_TYPE', 'ASC']]
+      });
 
       // Group by period and calculate totals
       const groupedData = {};
       portfolioRecords.forEach(record => {
-        const periodKey = `${record.YEAR}-${record.MONTH.toString().padStart(2, '0')}`;
+        const recordData = record.toJSON();
+        const periodKey = `${recordData.YEAR}-${recordData.MONTH.toString().padStart(2, '0')}`;
+        
         if (!groupedData[periodKey]) {
           groupedData[periodKey] = {
             PERIOD: periodKey,
-            BRANCH_ID: record.BRANCH_ID,
+            BRANCH_ID: recordData.BRANCH_ID,
             TOTAL_DISBURSED: 0,
             OUTSTANDING_PRINCIPAL: 0,
             TOTAL_INTEREST_RECEIVED: 0,
@@ -330,23 +369,23 @@ const LoanPortfolioController = {
           };
         }
 
-        groupedData[periodKey].TOTAL_DISBURSED += record.TOTAL_DISBURSED || 0;
-        groupedData[periodKey].OUTSTANDING_PRINCIPAL += record.OUTSTANDING_PRINCIPAL || 0;
-        groupedData[periodKey].TOTAL_INTEREST_RECEIVED += record.TOTAL_INTEREST_RECEIVED || 0;
-        groupedData[periodKey].NUMBER_OF_LOANS += record.NUMBER_OF_LOANS || 0;
-        groupedData[periodKey].ACTIVE_LOANS += record.ACTIVE_LOANS || 0;
-        groupedData[periodKey].PORTFOLIO_AT_RISK += record.PORTFOLIO_AT_RISK || 0;
+        groupedData[periodKey].TOTAL_DISBURSED += recordData.TOTAL_DISBURSED || 0;
+        groupedData[periodKey].OUTSTANDING_PRINCIPAL += recordData.OUTSTANDING_PRINCIPAL || 0;
+        groupedData[periodKey].TOTAL_INTEREST_RECEIVED += recordData.TOTAL_INTEREST_RECEIVED || 0;
+        groupedData[periodKey].NUMBER_OF_LOANS += recordData.NUMBER_OF_LOANS || 0;
+        groupedData[periodKey].ACTIVE_LOANS += recordData.ACTIVE_LOANS || 0;
+        groupedData[periodKey].PORTFOLIO_AT_RISK += recordData.PORTFOLIO_AT_RISK || 0;
 
         groupedData[periodKey].products.push({
-          PRODUCT_ID: record.PROD_ID?._id,
-          PRODUCT_CODE: record.PRODUCT_CODE,
-          PRODUCT_NAME: record.PRODUCT_NAME,
-          PRODUCT_TYPE: record.PRODUCT_TYPE,
-          TOTAL_DISBURSED: record.TOTAL_DISBURSED,
-          OUTSTANDING_PRINCIPAL: record.OUTSTANDING_PRINCIPAL,
-          NUMBER_OF_LOANS: record.NUMBER_OF_LOANS,
-          NPL_RATIO: record.NPL_RATIO,
-          YIELD_RATE: record.YIELD_RATE
+          PRODUCT_ID: recordData.PROD_ID,
+          PRODUCT_CODE: recordData.PRODUCT_CODE,
+          PRODUCT_NAME: recordData.PRODUCT_NAME,
+          PRODUCT_TYPE: recordData.PRODUCT_TYPE,
+          TOTAL_DISBURSED: recordData.TOTAL_DISBURSED,
+          OUTSTANDING_PRINCIPAL: recordData.OUTSTANDING_PRINCIPAL,
+          NUMBER_OF_LOANS: recordData.NUMBER_OF_LOANS,
+          NPL_RATIO: recordData.NPL_RATIO,
+          YIELD_RATE: recordData.YIELD_RATE
         });
       });
 
@@ -381,23 +420,30 @@ const LoanPortfolioController = {
         });
       }
 
-      const query = { PRODUCT_TYPE };
-      if (YEAR) query.YEAR = parseInt(YEAR);
-      if (MONTH) query.MONTH = parseInt(MONTH);
+      const where = { PRODUCT_TYPE };
+      if (YEAR) where.YEAR = parseInt(YEAR);
+      if (MONTH) where.MONTH = parseInt(MONTH);
 
-      const portfolioRecords = await LoanPortfolio.find(query)
-        .populate('PROD_ID', 'name productCode')
-        .sort({ YEAR: -1, MONTH: -1, BRANCH_ID: 1 })
-        .lean();
+      const portfolioRecords = await LoanPortfolio.findAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode']
+        }],
+        order: [['YEAR', 'DESC'], ['MONTH', 'DESC'], ['BRANCH_ID', 'ASC']]
+      });
 
       // Calculate totals by period
       const summaryByPeriod = {};
       portfolioRecords.forEach(record => {
-        const periodKey = `${record.YEAR}-${record.MONTH.toString().padStart(2, '0')}`;
+        const recordData = record.toJSON();
+        const periodKey = `${recordData.YEAR}-${recordData.MONTH.toString().padStart(2, '0')}`;
+        
         if (!summaryByPeriod[periodKey]) {
           summaryByPeriod[periodKey] = {
             PERIOD: periodKey,
-            PRODUCT_TYPE: record.PRODUCT_TYPE,
+            PRODUCT_TYPE: recordData.PRODUCT_TYPE,
             TOTAL_DISBURSED: 0,
             OUTSTANDING_PRINCIPAL: 0,
             TOTAL_INTEREST_RECEIVED: 0,
@@ -407,25 +453,26 @@ const LoanPortfolioController = {
           };
         }
 
-        summaryByPeriod[periodKey].TOTAL_DISBURSED += record.TOTAL_DISBURSED || 0;
-        summaryByPeriod[periodKey].OUTSTANDING_PRINCIPAL += record.OUTSTANDING_PRINCIPAL || 0;
-        summaryByPeriod[periodKey].TOTAL_INTEREST_RECEIVED += record.TOTAL_INTEREST_RECEIVED || 0;
-        summaryByPeriod[periodKey].NUMBER_OF_LOANS += record.NUMBER_OF_LOANS || 0;
-        summaryByPeriod[periodKey].ACTIVE_LOANS += record.ACTIVE_LOANS || 0;
+        summaryByPeriod[periodKey].TOTAL_DISBURSED += recordData.TOTAL_DISBURSED || 0;
+        summaryByPeriod[periodKey].OUTSTANDING_PRINCIPAL += recordData.OUTSTANDING_PRINCIPAL || 0;
+        summaryByPeriod[periodKey].TOTAL_INTEREST_RECEIVED += recordData.TOTAL_INTEREST_RECEIVED || 0;
+        summaryByPeriod[periodKey].NUMBER_OF_LOANS += recordData.NUMBER_OF_LOANS || 0;
+        summaryByPeriod[periodKey].ACTIVE_LOANS += recordData.ACTIVE_LOANS || 0;
 
         // Add branch details
         const existingBranch = summaryByPeriod[periodKey].branches.find(
-          b => b.BRANCH_ID === record.BRANCH_ID
+          b => b.BRANCH_ID === recordData.BRANCH_ID
         );
+        
         if (existingBranch) {
-          existingBranch.TOTAL_DISBURSED += record.TOTAL_DISBURSED || 0;
-          existingBranch.OUTSTANDING_PRINCIPAL += record.OUTSTANDING_PRINCIPAL || 0;
+          existingBranch.TOTAL_DISBURSED += recordData.TOTAL_DISBURSED || 0;
+          existingBranch.OUTSTANDING_PRINCIPAL += recordData.OUTSTANDING_PRINCIPAL || 0;
         } else {
           summaryByPeriod[periodKey].branches.push({
-            BRANCH_ID: record.BRANCH_ID,
-            TOTAL_DISBURSED: record.TOTAL_DISBURSED || 0,
-            OUTSTANDING_PRINCIPAL: record.OUTSTANDING_PRINCIPAL || 0,
-            NUMBER_OF_LOANS: record.NUMBER_OF_LOANS || 0
+            BRANCH_ID: recordData.BRANCH_ID,
+            TOTAL_DISBURSED: recordData.TOTAL_DISBURSED || 0,
+            OUTSTANDING_PRINCIPAL: recordData.OUTSTANDING_PRINCIPAL || 0,
+            NUMBER_OF_LOANS: recordData.NUMBER_OF_LOANS || 0
           });
         }
       });
@@ -465,48 +512,53 @@ const LoanPortfolioController = {
         limit = 20
       } = req.query;
 
-      const query = {};
+      const where = {};
 
-      // Build query
-      if (BRANCH_ID) query.BRANCH_ID = BRANCH_ID;
-      if (PROD_ID) query.PROD_ID = PROD_ID;
-      if (PRODUCT_TYPE) query.PRODUCT_TYPE = PRODUCT_TYPE;
-      if (YEAR) query.YEAR = parseInt(YEAR);
-      if (MONTH) query.MONTH = parseInt(MONTH);
-      if (STATUS) query.STATUS = STATUS;
+      // Build where clause
+      if (BRANCH_ID) where.BRANCH_ID = BRANCH_ID;
+      if (PROD_ID) where.PROD_ID = PROD_ID;
+      if (PRODUCT_TYPE) where.PRODUCT_TYPE = PRODUCT_TYPE;
+      if (YEAR) where.YEAR = parseInt(YEAR);
+      if (MONTH) where.MONTH = parseInt(MONTH);
+      if (STATUS) where.STATUS = STATUS;
 
       // Date range filter
       if (startDate || endDate) {
-        query.CREATED_DATE = {};
-        if (startDate) query.CREATED_DATE.$gte = new Date(startDate);
-        if (endDate) query.CREATED_DATE.$lte = new Date(endDate);
+        where.CREATED_DATE = {};
+        if (startDate) where.CREATED_DATE[Op.gte] = new Date(startDate);
+        if (endDate) where.CREATED_DATE[Op.lte] = new Date(endDate);
       }
 
       // Calculate pagination
-      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const offset = (parseInt(page) - 1) * parseInt(limit);
 
       // Execute query with pagination
-      const [portfolioRecords, total] = await Promise.all([
-        LoanPortfolio.find(query)
-          .populate('PROD_ID', 'name productCode')
-          .sort({ YEAR: -1, MONTH: -1, BRANCH_ID: 1 })
-          .skip(skip)
-          .limit(parseInt(limit))
-          .lean(),
-        LoanPortfolio.countDocuments(query)
-      ]);
+      const { count, rows: portfolioRecords } = await LoanPortfolio.findAndCountAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode']
+        }],
+        order: [['YEAR', 'DESC'], ['MONTH', 'DESC'], ['BRANCH_ID', 'ASC']],
+        offset,
+        limit: parseInt(limit)
+      });
 
       // Enhance records with virtual fields
-      const enhancedRecords = portfolioRecords.map(record => ({
-        ...record,
-        PERIOD: `${record.YEAR}-${record.MONTH.toString().padStart(2, '0')}`,
-        COLLECTION_EFFICIENCY: record.TOTAL_REPAYMENTS > 0 
-          ? (record.TOTAL_RECOVERED / record.TOTAL_REPAYMENTS) * 100 
-          : 0,
-        DEFAULT_RATE: record.NUMBER_OF_LOANS > 0 
-          ? (record.TOTAL_DEFAULTS / record.NUMBER_OF_LOANS) * 100 
-          : 0
-      }));
+      const enhancedRecords = portfolioRecords.map(record => {
+        const recordData = record.toJSON();
+        return {
+          ...recordData,
+          PERIOD: `${recordData.YEAR}-${recordData.MONTH.toString().padStart(2, '0')}`,
+          COLLECTION_EFFICIENCY: recordData.TOTAL_REPAYMENTS > 0 
+            ? (recordData.TOTAL_RECOVERED / recordData.TOTAL_REPAYMENTS) * 100 
+            : 0,
+          DEFAULT_RATE: recordData.NUMBER_OF_LOANS > 0 
+            ? (recordData.TOTAL_DEFAULTS / recordData.NUMBER_OF_LOANS) * 100 
+            : 0
+        };
+      });
 
       res.json({
         success: true,
@@ -514,8 +566,8 @@ const LoanPortfolioController = {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / parseInt(limit))
+          total: count,
+          pages: Math.ceil(count / parseInt(limit))
         }
       });
     } catch (error) {
@@ -539,37 +591,35 @@ const LoanPortfolioController = {
     try {
       const { BRANCH_ID, YEAR, MONTH } = req.query;
 
-      const query = {};
-      if (BRANCH_ID) query.BRANCH_ID = BRANCH_ID;
-      if (YEAR) query.YEAR = parseInt(YEAR);
-      if (MONTH) query.MONTH = parseInt(MONTH);
+      const where = {};
+      if (BRANCH_ID) where.BRANCH_ID = BRANCH_ID;
+      if (YEAR) where.YEAR = parseInt(YEAR);
+      if (MONTH) where.MONTH = parseInt(MONTH);
 
-      // Aggregate total statistics
-      const aggregation = await LoanPortfolio.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: null,
-            TOTAL_DISBURSED: { $sum: "$TOTAL_DISBURSED" },
-            TOTAL_PRINCIPAL: { $sum: "$TOTAL_PRINCIPAL" },
-            OUTSTANDING_PRINCIPAL: { $sum: "$OUTSTANDING_PRINCIPAL" },
-            TOTAL_INTEREST_ACCRUED: { $sum: "$TOTAL_INTEREST_ACCRUED" },
-            TOTAL_INTEREST_RECEIVED: { $sum: "$TOTAL_INTEREST_RECEIVED" },
-            TOTAL_FEES_RECEIVED: { $sum: "$TOTAL_FEES_RECEIVED" },
-            NUMBER_OF_LOANS: { $sum: "$NUMBER_OF_LOANS" },
-            ACTIVE_LOANS: { $sum: "$ACTIVE_LOANS" },
-            DISBURSEMENT_COUNT: { $sum: "$DISBURSEMENT_COUNT" },
-            TOTAL_REPAYMENTS: { $sum: "$TOTAL_REPAYMENTS" },
-            TOTAL_RECOVERED: { $sum: "$TOTAL_RECOVERED" },
-            TOTAL_DEFAULTS: { $sum: "$TOTAL_DEFAULTS" },
-            PORTFOLIO_AT_RISK: { $sum: "$PORTFOLIO_AT_RISK" },
-            PROVISION_AMOUNT: { $sum: "$PROVISION_AMOUNT" },
-            recordCount: { $sum: 1 }
-          }
-        }
-      ]);
+      // Aggregate total statistics using Sequelize aggregation
+      const result = await LoanPortfolio.findAll({
+        where,
+        attributes: [
+          [sequelize.fn('SUM', sequelize.col('TOTAL_DISBURSED')), 'TOTAL_DISBURSED'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_PRINCIPAL')), 'TOTAL_PRINCIPAL'],
+          [sequelize.fn('SUM', sequelize.col('OUTSTANDING_PRINCIPAL')), 'OUTSTANDING_PRINCIPAL'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_INTEREST_ACCRUED')), 'TOTAL_INTEREST_ACCRUED'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_INTEREST_RECEIVED')), 'TOTAL_INTEREST_RECEIVED'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_FEES_RECEIVED')), 'TOTAL_FEES_RECEIVED'],
+          [sequelize.fn('SUM', sequelize.col('NUMBER_OF_LOANS')), 'NUMBER_OF_LOANS'],
+          [sequelize.fn('SUM', sequelize.col('ACTIVE_LOANS')), 'ACTIVE_LOANS'],
+          [sequelize.fn('SUM', sequelize.col('DISBURSEMENT_COUNT')), 'DISBURSEMENT_COUNT'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_REPAYMENTS')), 'TOTAL_REPAYMENTS'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_RECOVERED')), 'TOTAL_RECOVERED'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_DEFAULTS')), 'TOTAL_DEFAULTS'],
+          [sequelize.fn('SUM', sequelize.col('PORTFOLIO_AT_RISK')), 'PORTFOLIO_AT_RISK'],
+          [sequelize.fn('SUM', sequelize.col('PROVISION_AMOUNT')), 'PROVISION_AMOUNT'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'recordCount']
+        ],
+        raw: true
+      });
 
-      const result = aggregation[0] || {
+      const summary = result[0] || {
         TOTAL_DISBURSED: 0,
         TOTAL_PRINCIPAL: 0,
         OUTSTANDING_PRINCIPAL: 0,
@@ -587,33 +637,40 @@ const LoanPortfolioController = {
         recordCount: 0
       };
 
+      // Convert string values to numbers
+      Object.keys(summary).forEach(key => {
+        if (summary[key] !== null && summary[key] !== undefined) {
+          summary[key] = parseFloat(summary[key]) || 0;
+        }
+      });
+
       // Calculate derived metrics
-      const collectionEfficiency = result.TOTAL_REPAYMENTS > 0 
-        ? (result.TOTAL_RECOVERED / result.TOTAL_REPAYMENTS) * 100 
+      const collectionEfficiency = summary.TOTAL_REPAYMENTS > 0 
+        ? (summary.TOTAL_RECOVERED / summary.TOTAL_REPAYMENTS) * 100 
         : 0;
       
-      const defaultRate = result.NUMBER_OF_LOANS > 0 
-        ? (result.TOTAL_DEFAULTS / result.NUMBER_OF_LOANS) * 100 
+      const defaultRate = summary.NUMBER_OF_LOANS > 0 
+        ? (summary.TOTAL_DEFAULTS / summary.NUMBER_OF_LOANS) * 100 
         : 0;
       
-      const nplRatio = result.OUTSTANDING_PRINCIPAL > 0 
-        ? (result.PORTFOLIO_AT_RISK / result.OUTSTANDING_PRINCIPAL) * 100 
+      const nplRatio = summary.OUTSTANDING_PRINCIPAL > 0 
+        ? (summary.PORTFOLIO_AT_RISK / summary.OUTSTANDING_PRINCIPAL) * 100 
         : 0;
       
-      const averageLoanSize = result.NUMBER_OF_LOANS > 0 
-        ? result.TOTAL_PRINCIPAL / result.NUMBER_OF_LOANS 
+      const averageLoanSize = summary.NUMBER_OF_LOANS > 0 
+        ? summary.TOTAL_PRINCIPAL / summary.NUMBER_OF_LOANS 
         : 0;
 
       res.json({
         success: true,
         data: {
-          ...result,
+          ...summary,
           COLLECTION_EFFICIENCY: Math.round(collectionEfficiency * 100) / 100,
           DEFAULT_RATE: Math.round(defaultRate * 100) / 100,
           NPL_RATIO: Math.round(nplRatio * 100) / 100,
           AVERAGE_LOAN_SIZE: Math.round(averageLoanSize * 100) / 100,
-          RECOVERY_RATE: result.TOTAL_DEFAULTS > 0 
-            ? (result.TOTAL_RECOVERED / result.TOTAL_DEFAULTS) * 100 
+          RECOVERY_RATE: summary.TOTAL_DEFAULTS > 0 
+            ? (summary.TOTAL_RECOVERED / summary.TOTAL_DEFAULTS) * 100 
             : 0
         },
         filters: { BRANCH_ID, YEAR, MONTH }
@@ -635,51 +692,57 @@ const LoanPortfolioController = {
     try {
       const { BRANCH_ID, PROD_ID, PRODUCT_TYPE, months = 12 } = req.query;
 
-      const query = {};
-      if (BRANCH_ID) query.BRANCH_ID = BRANCH_ID;
-      if (PROD_ID) query.PROD_ID = PROD_ID;
-      if (PRODUCT_TYPE) query.PRODUCT_TYPE = PRODUCT_TYPE;
+      const where = {};
+      if (BRANCH_ID) where.BRANCH_ID = BRANCH_ID;
+      if (PROD_ID) where.PROD_ID = PROD_ID;
+      if (PRODUCT_TYPE) where.PRODUCT_TYPE = PRODUCT_TYPE;
 
       // Calculate date range
       const endDate = new Date();
       const startDate = new Date();
       startDate.setMonth(startDate.getMonth() - parseInt(months));
 
-      query.CREATED_DATE = { $gte: startDate, $lte: endDate };
+      where.CREATED_DATE = { [Op.between]: [startDate, endDate] };
 
       // Group by month and year
-      const trendData = await LoanPortfolio.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: { year: "$YEAR", month: "$MONTH" },
-            TOTAL_DISBURSED: { $sum: "$TOTAL_DISBURSED" },
-            OUTSTANDING_PRINCIPAL: { $sum: "$OUTSTANDING_PRINCIPAL" },
-            TOTAL_INTEREST_RECEIVED: { $sum: "$TOTAL_INTEREST_RECEIVED" },
-            NUMBER_OF_LOANS: { $sum: "$NUMBER_OF_LOANS" },
-            ACTIVE_LOANS: { $sum: "$ACTIVE_LOANS" },
-            PORTFOLIO_AT_RISK: { $sum: "$PORTFOLIO_AT_RISK" },
-            recordCount: { $sum: 1 }
-          }
-        },
-        { $sort: { "_id.year": 1, "_id.month": 1 } }
-      ]);
+      const trendData = await LoanPortfolio.findAll({
+        where,
+        attributes: [
+          'YEAR',
+          'MONTH',
+          [sequelize.fn('SUM', sequelize.col('TOTAL_DISBURSED')), 'TOTAL_DISBURSED'],
+          [sequelize.fn('SUM', sequelize.col('OUTSTANDING_PRINCIPAL')), 'OUTSTANDING_PRINCIPAL'],
+          [sequelize.fn('SUM', sequelize.col('TOTAL_INTEREST_RECEIVED')), 'TOTAL_INTEREST_RECEIVED'],
+          [sequelize.fn('SUM', sequelize.col('NUMBER_OF_LOANS')), 'NUMBER_OF_LOANS'],
+          [sequelize.fn('SUM', sequelize.col('ACTIVE_LOANS')), 'ACTIVE_LOANS'],
+          [sequelize.fn('SUM', sequelize.col('PORTFOLIO_AT_RISK')), 'PORTFOLIO_AT_RISK']
+        ],
+        group: ['YEAR', 'MONTH'],
+        order: [['YEAR', 'ASC'], ['MONTH', 'ASC']],
+        raw: true
+      });
 
       // Format trend data
-      const formattedTrend = trendData.map(item => ({
-        PERIOD: `${item._id.year}-${item._id.month.toString().padStart(2, '0')}`,
-        YEAR: item._id.year,
-        MONTH: item._id.month,
-        TOTAL_DISBURSED: item.TOTAL_DISBURSED,
-        OUTSTANDING_PRINCIPAL: item.OUTSTANDING_PRINCIPAL,
-        TOTAL_INTEREST_RECEIVED: item.TOTAL_INTEREST_RECEIVED,
-        NUMBER_OF_LOANS: item.NUMBER_OF_LOANS,
-        ACTIVE_LOANS: item.ACTIVE_LOANS,
-        PORTFOLIO_AT_RISK: item.PORTFOLIO_AT_RISK,
-        NPL_RATIO: item.OUTSTANDING_PRINCIPAL > 0 
-          ? (item.PORTFOLIO_AT_RISK / item.OUTSTANDING_PRINCIPAL) * 100 
-          : 0
-      }));
+      const formattedTrend = trendData.map(item => {
+        const totalDisbursed = parseFloat(item.TOTAL_DISBURSED) || 0;
+        const outstandingPrincipal = parseFloat(item.OUTSTANDING_PRINCIPAL) || 0;
+        const portfolioAtRisk = parseFloat(item.PORTFOLIO_AT_RISK) || 0;
+        
+        return {
+          PERIOD: `${item.YEAR}-${item.MONTH.toString().padStart(2, '0')}`,
+          YEAR: item.YEAR,
+          MONTH: item.MONTH,
+          TOTAL_DISBURSED: totalDisbursed,
+          OUTSTANDING_PRINCIPAL: outstandingPrincipal,
+          TOTAL_INTEREST_RECEIVED: parseFloat(item.TOTAL_INTEREST_RECEIVED) || 0,
+          NUMBER_OF_LOANS: parseInt(item.NUMBER_OF_LOANS) || 0,
+          ACTIVE_LOANS: parseInt(item.ACTIVE_LOANS) || 0,
+          PORTFOLIO_AT_RISK: portfolioAtRisk,
+          NPL_RATIO: outstandingPrincipal > 0 
+            ? (portfolioAtRisk / outstandingPrincipal) * 100 
+            : 0
+        };
+      });
 
       res.json({
         success: true,
@@ -707,21 +770,35 @@ const LoanPortfolioController = {
     try {
       const { BRANCH_ID, YEAR, MONTH } = req.query;
 
-      const query = {};
-      if (BRANCH_ID) query.BRANCH_ID = BRANCH_ID;
-      if (YEAR) query.YEAR = parseInt(YEAR);
-      if (MONTH) query.MONTH = parseInt(MONTH);
+      const where = {};
+      if (BRANCH_ID) where.BRANCH_ID = BRANCH_ID;
+      if (YEAR) where.YEAR = parseInt(YEAR);
+      if (MONTH) where.MONTH = parseInt(MONTH);
 
-      const portfolioRecords = await LoanPortfolio.find(query)
-        .populate('PROD_ID', 'name productCode')
-        .lean();
+      const portfolioRecords = await LoanPortfolio.findAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode']
+        }]
+      });
 
       // Calculate health metrics
-      const totalOutstanding = portfolioRecords.reduce((sum, record) => sum + (record.OUTSTANDING_PRINCIPAL || 0), 0);
-      const totalPar = portfolioRecords.reduce((sum, record) => sum + (record.PORTFOLIO_AT_RISK || 0), 0);
-      const totalProvision = portfolioRecords.reduce((sum, record) => sum + (record.PROVISION_AMOUNT || 0), 0);
-      const totalLoans = portfolioRecords.reduce((sum, record) => sum + (record.NUMBER_OF_LOANS || 0), 0);
-      const totalDefaults = portfolioRecords.reduce((sum, record) => sum + (record.TOTAL_DEFAULTS || 0), 0);
+      let totalOutstanding = 0;
+      let totalPar = 0;
+      let totalProvision = 0;
+      let totalLoans = 0;
+      let totalDefaults = 0;
+
+      portfolioRecords.forEach(record => {
+        const recordData = record.toJSON();
+        totalOutstanding += recordData.OUTSTANDING_PRINCIPAL || 0;
+        totalPar += recordData.PORTFOLIO_AT_RISK || 0;
+        totalProvision += recordData.PROVISION_AMOUNT || 0;
+        totalLoans += recordData.NUMBER_OF_LOANS || 0;
+        totalDefaults += recordData.TOTAL_DEFAULTS || 0;
+      });
 
       const nplRatio = totalOutstanding > 0 ? (totalPar / totalOutstanding) * 100 : 0;
       const provisionCoverage = totalPar > 0 ? (totalProvision / totalPar) * 100 : 0;
@@ -784,92 +861,96 @@ const LoanPortfolioController = {
    * Generate portfolio for a specific period
    */
   generatePortfolioForPeriod: async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
+    
     try {
-      await session.withTransaction(async () => {
-        const { YEAR, MONTH, BRANCH_ID, PROD_ID } = req.body;
-        const CREATED_BY = req.user?.id || 'SYSTEM';
+      const { YEAR, MONTH, BRANCH_ID, PROD_ID } = req.body;
+      const CREATED_BY = req.user?.id || 'SYSTEM';
 
-        if (!YEAR || !MONTH) {
-          throw { status: 400, message: 'YEAR and MONTH are required' };
-        }
+      if (!YEAR || !MONTH) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'YEAR and MONTH are required'
+        });
+      }
 
-        // Check if already exists
-        const existingQuery = { YEAR, MONTH };
-        if (BRANCH_ID) existingQuery.BRANCH_ID = BRANCH_ID;
-        if (PROD_ID) existingQuery.PROD_ID = PROD_ID;
+      // Check if already exists
+      const existingWhere = { YEAR, MONTH };
+      if (BRANCH_ID) existingWhere.BRANCH_ID = BRANCH_ID;
+      if (PROD_ID) existingWhere.PROD_ID = PROD_ID;
 
-        const existingRecords = await LoanPortfolio.find(existingQuery).session(session);
-        if (existingRecords.length > 0) {
-          return res.status(409).json({
-            success: false,
-            message: 'Portfolio records already exist for this period',
-            existingCount: existingRecords.length
-          });
-        }
+      const existingRecords = await LoanPortfolio.findAll({ where: existingWhere, transaction });
+      if (existingRecords.length > 0) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: 'Portfolio records already exist for this period',
+          existingCount: existingRecords.length
+        });
+      }
 
-        // Determine what to generate
-        let branches = BRANCH_ID ? [BRANCH_ID] : await getDistinctBranches(session);
-        let products = PROD_ID ? [{ _id: PROD_ID }] : await getDistinctProducts(session);
+      // Determine what to generate
+      let branches = BRANCH_ID ? [BRANCH_ID] : await getDistinctBranches(transaction);
+      let products = PROD_ID ? [{ id: PROD_ID }] : await getDistinctProducts(transaction);
 
-        const generatedRecords = [];
-        const errors = [];
+      const generatedRecords = [];
+      const errors = [];
 
-        // Generate for each combination
-        for (const branch of branches) {
-          for (const product of products) {
-            try {
-              const portfolioData = {
-                BRANCH_ID: branch,
-                PROD_ID: product._id,
-                PRODUCT_CODE: product.productCode || product.PROD_ID?.toString(),
-                PRODUCT_NAME: product.name || product.PRODUCT_NAME,
-                PRODUCT_TYPE: product.PRODUCT_TYPE || product.productType,
-                MONTH: parseInt(MONTH),
-                YEAR: parseInt(YEAR),
-                CURRENCY: 'NGN',
-                CREATED_BY,
-                UPDATED_BY: CREATED_BY,
-                STATUS: 'ACTIVE'
-              };
+      // Generate for each combination
+      for (const branch of branches) {
+        for (const product of products) {
+          try {
+            const portfolioData = {
+              BRANCH_ID: branch,
+              PROD_ID: product.id,
+              PRODUCT_CODE: product.productCode || product.PROD_ID?.toString(),
+              PRODUCT_NAME: product.name || product.PRODUCT_NAME,
+              PRODUCT_TYPE: product.PRODUCT_TYPE || product.productType,
+              MONTH: parseInt(MONTH),
+              YEAR: parseInt(YEAR),
+              CURRENCY: 'NGN',
+              CREATED_BY,
+              UPDATED_BY: CREATED_BY,
+              STATUS: 'ACTIVE'
+            };
 
-              // Calculate metrics from actual loan data
-              await calculatePortfolioMetrics(portfolioData, session);
+            // Calculate metrics from actual loan data
+            await calculatePortfolioMetrics(portfolioData, transaction);
 
-              const portfolioRecord = new LoanPortfolio(portfolioData);
-              await portfolioRecord.save({ session });
-              generatedRecords.push(portfolioRecord);
-            } catch (error) {
-              errors.push({
-                branch,
-                product: product._id,
-                error: error.message
-              });
-            }
+            const portfolioRecord = await LoanPortfolio.create(portfolioData, { transaction });
+            generatedRecords.push(portfolioRecord);
+          } catch (error) {
+            errors.push({
+              branch,
+              product: product.id,
+              error: error.message
+            });
           }
         }
+      }
 
-        res.status(201).json({
-          success: true,
-          message: 'Portfolio generated successfully',
-          summary: {
-            generated: generatedRecords.length,
-            errors: errors.length,
-            totalAttempted: branches.length * products.length
-          },
-          data: generatedRecords,
-          errors: errors.length > 0 ? errors : undefined
-        });
+      await transaction.commit();
+
+      res.status(201).json({
+        success: true,
+        message: 'Portfolio generated successfully',
+        summary: {
+          generated: generatedRecords.length,
+          errors: errors.length,
+          totalAttempted: branches.length * products.length
+        },
+        data: generatedRecords.map(r => r.toJSON()),
+        errors: errors.length > 0 ? errors : undefined
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error generating portfolio:', error);
       res.status(error.status || 500).json({
         success: false,
         message: error.message || 'Failed to generate portfolio',
         code: error.code || 'PORTFOLIO_GENERATION_ERROR'
       });
-    } finally {
-      await session.endSession();
     }
   },
 
@@ -877,46 +958,51 @@ const LoanPortfolioController = {
    * Delete portfolio record
    */
   deletePortfolioRecord: async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
+    
     try {
-      await session.withTransaction(async () => {
-        const { id } = req.params;
+      const { id } = req.params;
 
-        const portfolioRecord = await LoanPortfolio.findById(id).session(session);
-        if (!portfolioRecord) {
-          throw { status: 404, message: 'Portfolio record not found' };
-        }
-
-        // Check if record can be deleted (only if not referenced elsewhere)
-        if (portfolioRecord.STATUS === 'ACTIVE') {
-          throw { 
-            status: 400, 
-            message: 'Active portfolio records cannot be deleted. Archive it first.' 
-          };
-        }
-
-        await LoanPortfolio.findByIdAndDelete(id).session(session);
-
-        res.json({
-          success: true,
-          message: 'Portfolio record deleted successfully',
-          deletedRecord: {
-            id: portfolioRecord._id,
-            PERIOD: `${portfolioRecord.YEAR}-${portfolioRecord.MONTH}`,
-            BRANCH_ID: portfolioRecord.BRANCH_ID,
-            PRODUCT_CODE: portfolioRecord.PRODUCT_CODE
-          }
+      const portfolioRecord = await LoanPortfolio.findByPk(id, { transaction });
+      if (!portfolioRecord) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Portfolio record not found'
         });
+      }
+
+      // Check if record can be deleted (only if not referenced elsewhere)
+      if (portfolioRecord.STATUS === 'ACTIVE') {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Active portfolio records cannot be deleted. Archive it first.'
+        });
+      }
+
+      await portfolioRecord.destroy({ transaction });
+
+      await transaction.commit();
+
+      res.json({
+        success: true,
+        message: 'Portfolio record deleted successfully',
+        deletedRecord: {
+          id: portfolioRecord.id,
+          PERIOD: `${portfolioRecord.YEAR}-${portfolioRecord.MONTH}`,
+          BRANCH_ID: portfolioRecord.BRANCH_ID,
+          PRODUCT_CODE: portfolioRecord.PRODUCT_CODE
+        }
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error deleting portfolio record:', error);
       res.status(error.status || 500).json({
         success: false,
         message: error.message || 'Failed to delete portfolio record',
         code: error.code || 'PORTFOLIO_DELETION_ERROR'
       });
-    } finally {
-      await session.endSession();
     }
   },
 
@@ -924,12 +1010,15 @@ const LoanPortfolioController = {
    * Archive portfolio record
    */
   archivePortfolioRecord: async (req, res) => {
+    const transaction = await sequelize.transaction();
+    
     try {
       const { id } = req.params;
       const UPDATED_BY = req.user?.id || 'SYSTEM';
 
-      const portfolioRecord = await LoanPortfolio.findById(id);
+      const portfolioRecord = await LoanPortfolio.findByPk(id, { transaction });
       if (!portfolioRecord) {
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: 'Portfolio record not found'
@@ -940,14 +1029,16 @@ const LoanPortfolioController = {
       portfolioRecord.UPDATED_BY = UPDATED_BY;
       portfolioRecord.UPDATED_DATE = new Date();
 
-      await portfolioRecord.save();
+      await portfolioRecord.save({ transaction });
+      await transaction.commit();
 
       res.json({
         success: true,
         message: 'Portfolio record archived successfully',
-        data: portfolioRecord
+        data: portfolioRecord.toJSON()
       });
     } catch (error) {
+      await transaction.rollback();
       console.error('Error archiving portfolio record:', error);
       res.status(500).json({
         success: false,
@@ -965,15 +1056,22 @@ const LoanPortfolioController = {
       const { format = 'json', ...filters } = req.query;
 
       // Build query from filters
-      const query = buildPortfolioQuery(filters);
+      const where = buildPortfolioQuery(filters);
 
-      const portfolioRecords = await LoanPortfolio.find(query)
-        .populate('PROD_ID', 'name productCode description')
-        .lean();
+      const portfolioRecords = await LoanPortfolio.findAll({
+        where,
+        include: [{
+          model: LoanProduct,
+          as: 'product',
+          attributes: ['name', 'productCode', 'description']
+        }]
+      });
+
+      const recordsData = portfolioRecords.map(record => record.toJSON());
 
       if (format === 'csv') {
         // Convert to CSV
-        const csvData = convertToCSV(portfolioRecords);
+        const csvData = convertToCSV(recordsData);
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', 'attachment; filename=portfolio-export.csv');
         return res.send(csvData);
@@ -983,9 +1081,9 @@ const LoanPortfolioController = {
       res.json({
         success: true,
         format,
-        count: portfolioRecords.length,
+        count: recordsData.length,
         generatedAt: new Date(),
-        data: portfolioRecords
+        data: recordsData
       });
     } catch (error) {
       console.error('Error exporting portfolio data:', error);
@@ -1005,7 +1103,7 @@ const LoanPortfolioController = {
 /**
  * Calculate portfolio metrics from loan data
  */
-async function calculatePortfolioMetrics(portfolioData, session, forceRecalculation = false) {
+async function calculatePortfolioMetrics(portfolioData, transaction, forceRecalculation = false) {
   const { BRANCH_ID, PROD_ID, YEAR, MONTH } = portfolioData;
 
   // Build date range for the month
@@ -1013,14 +1111,14 @@ async function calculatePortfolioMetrics(portfolioData, session, forceRecalculat
   const endDate = new Date(YEAR, MONTH, 0); // Last day of month
 
   // Query for loans in this period and branch/product
-  const loanQuery = {
-    DISBURSEMENT_DATE: { $gte: startDate, $lte: endDate },
+  const where = {
+    DISBURSEMENT_DATE: { [Op.between]: [startDate, endDate] },
     BU_ID: BRANCH_ID,
     PROD_ID: PROD_ID
   };
 
   // Get all relevant loans
-  const loans = await LoanAccount.find(loanQuery).session(session);
+  const loans = await LoanAccount.findAll({ where, transaction });
   
   // Calculate metrics
   let totalDisbursed = 0;
@@ -1034,35 +1132,40 @@ async function calculatePortfolioMetrics(portfolioData, session, forceRecalculat
   let totalDefaults = 0;
 
   for (const loan of loans) {
-    const disbursed = parseFloat(loan.DISBURSED_AMOUNT?.toString() || '0');
-    const principal = parseFloat(loan.OUTSTANDING_PRINCIPAL?.toString() || '0');
+    const loanData = loan.toJSON();
+    const disbursed = parseFloat(loanData.DISBURSED_AMOUNT || 0);
+    const principal = parseFloat(loanData.OUTSTANDING_PRINCIPAL || 0);
     
     totalDisbursed += disbursed;
-    totalPrincipal += parseFloat(loan.DISBURSEMENT_LIMIT?.toString() || '0');
+    totalPrincipal += parseFloat(loanData.DISBURSEMENT_LIMIT || 0);
     outstandingPrincipal += principal;
 
     // Check if loan is active
-    if (loan.LOAN_STATUS === 'ACTIVE') {
+    if (loanData.LOAN_STATUS === 'ACTIVE') {
       activeLoans++;
     }
 
     // Check if loan is at risk (delinquent)
-    if (loan.LOAN_STATUS === 'DELINQUENT' || loan.LOAN_STATUS === 'DEFAULT') {
+    if (loanData.LOAN_STATUS === 'DELINQUENT' || loanData.LOAN_STATUS === 'DEFAULT') {
       portfolioAtRisk += principal;
-      if (loan.LOAN_STATUS === 'DEFAULT') {
+      if (loanData.LOAN_STATUS === 'DEFAULT') {
         totalDefaults++;
       }
     }
 
     // Get repayment data for this loan
-    const repayments = await LoanRepayment.find({
-      LOAN_ACCOUNT_ID: loan._id,
-      date: { $gte: startDate, $lte: endDate }
-    }).session(session);
+    const repayments = await LoanRepayment.findAll({
+      where: {
+        LOAN_ACCOUNT_ID: loan.id,
+        date: { [Op.between]: [startDate, endDate] }
+      },
+      transaction
+    });
 
     for (const repayment of repayments) {
-      totalInterestReceived += parseFloat(repayment.interestPaid?.toString() || '0');
-      totalFeesReceived += parseFloat(repayment.feesPaid?.toString() || '0');
+      const repaymentData = repayment.toJSON();
+      totalInterestReceived += parseFloat(repaymentData.interestPaid || 0);
+      totalFeesReceived += parseFloat(repaymentData.feesPaid || 0);
     }
   }
 
@@ -1084,24 +1187,29 @@ async function calculatePortfolioMetrics(portfolioData, session, forceRecalculat
   portfolioData.TOTAL_DEFAULTS = totalDefaults;
 
   // Get repayment totals for the period
-  const repayments = await LoanRepayment.aggregate([
-    {
-      $match: {
-        date: { $gte: startDate, $lte: endDate },
-        LOAN_ACCOUNT_ID: { $in: loans.map(l => l._id) }
-      }
-    },
-    {
-      $group: {
-        _id: null,
-        TOTAL_REPAYMENTS: { $sum: { $toDouble: "$amount" } },
-        TOTAL_RECOVERED: { $sum: { $toDouble: "$principalPaid" } }
-      }
-    }
-  ]).session(session);
+  const loanIds = loans.map(loan => loan.id);
+  
+  if (loanIds.length > 0) {
+    const repayments = await LoanRepayment.findAll({
+      where: {
+        date: { [Op.between]: [startDate, endDate] },
+        LOAN_ACCOUNT_ID: { [Op.in]: loanIds }
+      },
+      attributes: [
+        [sequelize.fn('SUM', sequelize.col('amount')), 'TOTAL_REPAYMENTS'],
+        [sequelize.fn('SUM', sequelize.col('principalPaid')), 'TOTAL_RECOVERED']
+      ],
+      transaction,
+      raw: true
+    });
 
-  portfolioData.TOTAL_REPAYMENTS = repayments[0]?.TOTAL_REPAYMENTS || 0;
-  portfolioData.TOTAL_RECOVERED = repayments[0]?.TOTAL_RECOVERED || 0;
+    const repaymentData = repayments[0] || {};
+    portfolioData.TOTAL_REPAYMENTS = parseFloat(repaymentData.TOTAL_REPAYMENTS) || 0;
+    portfolioData.TOTAL_RECOVERED = parseFloat(repaymentData.TOTAL_RECOVERED) || 0;
+  } else {
+    portfolioData.TOTAL_REPAYMENTS = 0;
+    portfolioData.TOTAL_RECOVERED = 0;
+  }
 
   // Calculate provision (simplified: 10% of portfolio at risk)
   portfolioData.PROVISION_AMOUNT = portfolioAtRisk * 0.1;
@@ -1121,6 +1229,7 @@ async function calculatePortfolioMetrics(portfolioData, session, forceRecalculat
  * Recalculate portfolio ratios
  */
 async function recalculatePortfolioRatios(portfolioRecord) {
+  const portfolioData = portfolioRecord.toJSON();
   const {
     OUTSTANDING_PRINCIPAL,
     PORTFOLIO_AT_RISK,
@@ -1129,7 +1238,7 @@ async function recalculatePortfolioRatios(portfolioRecord) {
     TOTAL_INTEREST_RECEIVED,
     TOTAL_FEES_RECEIVED,
     COST_OF_FUNDS = 0
-  } = portfolioRecord;
+  } = portfolioData;
 
   // NPL Ratio
   portfolioRecord.NPL_RATIO = OUTSTANDING_PRINCIPAL > 0 
@@ -1153,16 +1262,22 @@ async function recalculatePortfolioRatios(portfolioRecord) {
 /**
  * Get distinct branches
  */
-async function getDistinctBranches(session) {
-  const branches = await LoanAccount.distinct('BU_ID').session(session);
-  return branches.filter(Boolean);
+async function getDistinctBranches(transaction) {
+  const branches = await LoanAccount.findAll({
+    attributes: [[sequelize.fn('DISTINCT', sequelize.col('BU_ID')), 'BU_ID']],
+    where: { BU_ID: { [Op.ne]: null } },
+    transaction,
+    raw: true
+  });
+  
+  return branches.map(b => b.BU_ID);
 }
 
 /**
  * Get distinct products
  */
-async function getDistinctProducts(session) {
-  const products = await Product.find({}).session(session);
+async function getDistinctProducts(transaction) {
+  const products = await LoanProduct.findAll({ transaction });
   return products;
 }
 
@@ -1170,22 +1285,22 @@ async function getDistinctProducts(session) {
  * Build portfolio query from filters
  */
 function buildPortfolioQuery(filters) {
-  const query = {};
+  const where = {};
 
-  if (filters.BRANCH_ID) query.BRANCH_ID = filters.BRANCH_ID;
-  if (filters.PROD_ID) query.PROD_ID = filters.PROD_ID;
-  if (filters.PRODUCT_TYPE) query.PRODUCT_TYPE = filters.PRODUCT_TYPE;
-  if (filters.YEAR) query.YEAR = parseInt(filters.YEAR);
-  if (filters.MONTH) query.MONTH = parseInt(filters.MONTH);
-  if (filters.STATUS) query.STATUS = filters.STATUS;
+  if (filters.BRANCH_ID) where.BRANCH_ID = filters.BRANCH_ID;
+  if (filters.PROD_ID) where.PROD_ID = filters.PROD_ID;
+  if (filters.PRODUCT_TYPE) where.PRODUCT_TYPE = filters.PRODUCT_TYPE;
+  if (filters.YEAR) where.YEAR = parseInt(filters.YEAR);
+  if (filters.MONTH) where.MONTH = parseInt(filters.MONTH);
+  if (filters.STATUS) where.STATUS = filters.STATUS;
 
   if (filters.startDate || filters.endDate) {
-    query.CREATED_DATE = {};
-    if (filters.startDate) query.CREATED_DATE.$gte = new Date(filters.startDate);
-    if (filters.endDate) query.CREATED_DATE.$lte = new Date(filters.endDate);
+    where.CREATED_DATE = {};
+    if (filters.startDate) where.CREATED_DATE[Op.gte] = new Date(filters.startDate);
+    if (filters.endDate) where.CREATED_DATE[Op.lte] = new Date(filters.endDate);
   }
 
-  return query;
+  return where;
 }
 
 /**
@@ -1259,15 +1374,15 @@ function convertToCSV(portfolioRecords) {
       record.PRODUCT_CODE,
       `"${record.PRODUCT_NAME}"`,
       record.PRODUCT_TYPE,
-      record.TOTAL_DISBURSED?.toFixed(2) || '0.00',
-      record.OUTSTANDING_PRINCIPAL?.toFixed(2) || '0.00',
-      record.TOTAL_INTEREST_RECEIVED?.toFixed(2) || '0.00',
+      (record.TOTAL_DISBURSED || 0).toFixed(2),
+      (record.OUTSTANDING_PRINCIPAL || 0).toFixed(2),
+      (record.TOTAL_INTEREST_RECEIVED || 0).toFixed(2),
       record.NUMBER_OF_LOANS || 0,
       record.ACTIVE_LOANS || 0,
-      record.PORTFOLIO_AT_RISK?.toFixed(2) || '0.00',
+      (record.PORTFOLIO_AT_RISK || 0).toFixed(2),
       nplRatio.toFixed(2),
-      record.YIELD_RATE?.toFixed(2) || '0.00',
-      record.AVERAGE_LOAN_SIZE?.toFixed(2) || '0.00',
+      (record.YIELD_RATE || 0).toFixed(2),
+      (record.AVERAGE_LOAN_SIZE || 0).toFixed(2),
       record.STATUS
     ];
   });

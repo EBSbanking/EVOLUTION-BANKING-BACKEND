@@ -1,4 +1,4 @@
-// app.js
+// app.js - EXPRESS APP ONLY (NO SERVER STARTUP)
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -7,60 +7,50 @@ import { dirname } from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import hpp from 'hpp';
+import morgan from 'morgan';
 import expressSession from 'express-session';
 import fileUpload from 'express-fileupload';
+import rateLimit from 'express-rate-limit';
+import compression from 'compression';
+import cookieParser from 'cookie-parser';
 import { v2 as cloudinaryV2 } from 'cloudinary';
 import monitor from 'express-status-monitor';
-import rateLimit from 'express-rate-limit';
-import mongoose from 'mongoose';
-import logger from './utils/logger.js';
-import permissionSync from './utils/permissionSync.js';
 
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Load environment variables
 dotenv.config();
 
-// Log environment variables for debugging
-logger.info('Environment variables loaded', {
-  CLIENT_URL: process.env.CLIENT_URL,
-  CLIENT_URL_LOCAL: process.env.CLIENT_URL_LOCAL,
-  CLIENT_URL_NETWORK: process.env.CLIENT_URL_NETWORK,
-  NODE_ENV: process.env.NODE_ENV,
-  PORT: process.env.PORT,
-  RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS,
-  RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
-  MONGODB_URI: process.env.MONGODB_URI ? 'Set' : 'Missing'
-});
+// Import middleware
+import { errorHandler } from './middlewares/errorHandler.js';
+import { notFound } from './middlewares/errors/NotFoundError.js';
 
+// Initialize express app
 const app = express();
 
-// Mongoose Config
-mongoose.set('bufferTimeoutMS', 30000);
-mongoose.set('bufferCommands', false);
+// ============================================
+// SECURITY & MIDDLEWARE CONFIGURATION
+// ============================================
 
-// Security & Middleware
-app.use(helmet());
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+}));
 app.use(hpp());
 app.use(monitor());
 
-// Rate Limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
-  message: 'Too many requests from this IP, please try again later.',
-  skip: (req) => {
-    const isDev = process.env.NODE_ENV === 'development';
-    const isLogin = req.path === '/api/users/users/login';
-    const isLicense = req.path === '/api/license/validate-file';
-    return isDev || isLogin || isLicense;
-  }
-});
-app.use(limiter);
-
 // Enhanced CORS Configuration
 const allowedOrigins = [
+  process.env.REACT_APP_FRONTEND_URL,
   process.env.CLIENT_URL,
   process.env.CLIENT_URL_LOCAL,
   process.env.CLIENT_URL_NETWORK,
@@ -85,7 +75,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-request-id', 'x-auth-token']
 }));
 
-// Additional CORS handling
+// Additional CORS headers
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -98,9 +88,32 @@ app.use((req, res, next) => {
   next();
 });
 
-// Body Parsers
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
+  message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => {
+    const isDev = process.env.NODE_ENV === 'development';
+    const isLogin = req.path === '/api/users/users/login';
+    const isLicense = req.path === '/api/license/validate-file';
+    return isDev || isLogin || isLicense;
+  }
+});
+app.use('/api', limiter);
+
+// Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb', parameterLimit: 100000 }));
+app.use(cookieParser());
+
+// Compression middleware
+app.use(compression());
+
+// Logging middleware
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+}
 
 // File Upload
 app.use(fileUpload({
@@ -120,22 +133,14 @@ app.use(expressSession({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 86400000,
+    maxAge: 86400000, // 24 hours
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax'
   }
 }));
 
-// Request Logging
-app.use((req, res, next) => {
-  const start = Date.now();
-  const { method, url, headers, ip } = req;
-  logger.info('Incoming request', { method, url, ip, origin: headers.origin });
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    logger.info('Request completed', { method, url, ip, status: res.statusCode, duration: `${duration}ms` });
-  });
-  next();
-});
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Cloudinary Config
 const cloudinaryConfig = {
@@ -147,10 +152,39 @@ if (cloudinaryConfig.cloud_name && cloudinaryConfig.api_key && cloudinaryConfig.
   cloudinaryV2.config(cloudinaryConfig);
   console.log('✅ Cloudinary configured');
 } else {
-  console.warn('⚠️ Cloudinary not configured');
+  console.warn('⚠️ Cloudinary not configured - missing credentials');
 }
 
-// Health Endpoints
+// ============================================
+// HEALTH & UTILITY ENDPOINTS
+// ============================================
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  let dbStatus = 'UNHEALTHY';
+  let dbDetails = 'Disconnected';
+
+  try {
+    const { sequelize } = await import('../config/db.js');
+    await sequelize.authenticate();
+    dbStatus = 'HEALTHY';
+    dbDetails = 'Connected';
+  } catch (err) {
+    dbDetails = err.message;
+  }
+
+  res.status(dbStatus === 'HEALTHY' ? 200 : 503).json({
+    status: dbStatus,
+    timestamp: new Date().toISOString(),
+    service: 'Evolution Banking System API',
+    version: '1.0.0',
+    dbStatus: dbDetails,
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    cors: { allowedOrigins: allowedOrigins.length, currentOrigin: req.headers.origin || 'none' }
+  });
+});
+
 app.get('/server-time', (req, res) => res.json({
   iso: new Date().toISOString(),
   local: new Date().toLocaleString(),
@@ -158,42 +192,125 @@ app.get('/server-time', (req, res) => res.json({
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
 }));
 
-app.get('/health', async (req, res) => {
-  const dbStatus = mongoose.connection.readyState;
-  res.status(dbStatus === 1 ? 200 : 503).json({
-    status: dbStatus === 1 ? 'HEALTHY' : 'UNHEALTHY',
-    timestamp: new Date().toISOString(),
-    service: 'Banking System API',
+// ============================================
+// API ROOT ENDPOINTS - ADDED
+// ============================================
+
+// Root API endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Evolution Banking System API',
     version: '1.0.0',
-     endpoints: {
-      systemDate: '/api/system/date',
-      os: '/api/os',
-      vaults: '/api/vaults',
-      vaultTransactions: '/api/vault/transactions',
-      drawers: '/api/drawers'
-    },
-    dbStatus,
-    uptime: process.uptime(),
-    memoryUsage: process.memoryUsage(),
-    environment: process.env.NODE_ENV || 'development',
-    cors: { allowedOrigins: allowedOrigins.length, currentOrigin: req.headers.origin || 'none' }
+    timestamp: new Date().toISOString(),
+    documentation: '/api-docs',
+    health: '/health',
+    serverTime: '/server-time',
+    corsInfo: '/cors-info',
+    endpoints: {
+      // Customer Management
+      customer: '/api/customer',
+      nextOfKin: '/api/next-of-kins',
+      customerTypes: '/api/customer-types',
+      
+      // User Management
+      users: '/api/users',
+      login: '/api/login',
+      userRoles: '/api/user-role',
+      permissions: '/api/permissions',
+      
+      // Account Management
+      accounts: '/api/accounts',
+      deposits: '/api/deposit',
+      loans: '/api/loans',
+      transactions: '/api/transaction',
+      
+      // Workflow
+      workflow: '/api/workflow',
+      workItems: '/api/work-items',
+      
+      // AML & Compliance
+      aml: '/api/aml',
+      amlThreshold: '/api/aml-threshold',
+      
+      // System
+      system: '/api/system',
+      configuration: '/api/configuration',
+      license: '/api/license',
+      
+      // Reports
+      reports: '/api/reports',
+      analytics: '/api/analytics',
+      dashboard: '/api/dashboard',
+      
+      // Test & Debug
+      test: '/api/test',
+      debug: '/api/debug',
+      health: '/health'
+    }
   });
 });
 
-// CORS Debug
-app.get('/cors-info', (req, res) => res.json({ allowedOrigins, currentOrigin: req.headers.origin || 'No origin' }));
-app.options('/cors-test', (req, res) => res.status(200).end());
-app.post('/cors-test', (req, res) => res.json({ message: 'CORS test successful', origin: req.headers.origin }));
-
-// CORS Error Handler
-app.use((err, req, res, next) => {
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ error: 'CORS Policy Failed', allowedOrigins });
-  }
-  next(err);
+// API version endpoint
+app.get('/api/v1', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API v1',
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    documentation: 'Visit /api for full endpoint list'
+  });
 });
 
-// API Route Imports
+// API Documentation
+app.get('/api-docs', (req, res) => {
+  res.json({
+    name: 'Evolution Banking System API',
+    version: '1.0.0',
+    description: 'Complete banking system API with customer management, transactions, loans, deposits, and workflow automation',
+    baseUrl: '/api',
+    endpoints: {
+      // New MySQL/Sequelize endpoints
+      penalty: '/api/penalties',
+      organization: '/api/organizations',
+      overdue_loans: '/api/overdue-loans',
+      notifications: '/api/notifications',
+      guarantor_audits: '/api/guarantor-audits',
+      insurance_policies: '/api/insurance-policies',
+      interest_accruals: '/api/interest-accruals',
+      // Legacy endpoints (from your existing system)
+      users: '/api/users',
+      customers: '/api/customer',
+      deposits: '/api/deposit',
+      loans: '/api/loans',
+      workflow: '/api/workflow',
+      gl_accounts: '/api/gl-accounts',
+      vault: '/api/vault',
+      nextOfKin: '/api/next-of-kins',
+      configuration: '/api/configuration'
+    }
+  });
+});
+
+// CORS Debug endpoints
+app.get('/cors-info', (req, res) => res.json({ 
+  allowedOrigins, 
+  currentOrigin: req.headers.origin || 'No origin',
+  allowedMethods: 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+  allowedHeaders: 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-request-id, x-auth-token'
+}));
+app.options('/cors-test', (req, res) => res.status(200).end());
+app.post('/cors-test', (req, res) => res.json({ 
+  message: 'CORS test successful', 
+  origin: req.headers.origin,
+  timestamp: new Date().toISOString()
+}));
+
+// ============================================
+// IMPORT ALL EXISTING ROUTES
+// ============================================
+
+// Import your existing routes (unchanged)
 import amlRoutes from './routes/amlRoutes.js';
 import AMLThresholdRoutes from './routes/AMLThresholdRoutes.js';
 import userRoutes from './routes/userRoutes.js';
@@ -288,7 +405,7 @@ import CleanupDB from './routes/CleanupDB.js';
 import StandingOrderRoutes from './routes/StandingOrderRoutes.js';
 import LoanPortfolioRoutes from './routes/LoanPortfolioRoutes.js';
 import GroupRoutes from './routes/GroupRoutes.js';
-import groupSavingsRoutes from './routes/groupSavingsRoutes.js';
+import groupSavingsRoutes from './routes/GroupSavingsRoutes.js';
 import uploadTestRoutes from './routes/uploadTest.js';
 import LoanAccountSummaryRoutes from './routes/LoanAccountSummaryRoutes.js';
 import loanRepaymentTransactionRoutes from './routes/loanRepaymentTransactionRoutes.js';
@@ -304,10 +421,25 @@ import loanCalculatorRoutes from './routes/loanCalculatorRoutes.js';
 import PortfolioRoutes from './routes/PorfolioRoutes.js';
 import RateIndexRoutes from './routes/RateIndexRoutes.js';
 import customerTransactionRoutes from './routes/customerTransactionRoutes.js';
-import DisbursementReportRoutes from './routes/DisbursementReportRoutes.js'
+import DisbursementReportRoutes from './routes/DisbursementReportRoutes.js';
+import ConfigurationRoutes from './routes/ConfigurationRoutes.js';
 
+// Import new MySQL/Sequelize routes
+import penaltyRoutes from './routes/LoanpenaltyRoutes.js';
+import organizationRoutes from './routes/OrganizationRoutes.js';
+import overdueLoanRoutes from './routes/OverdueLoansRoutes.js';
+import notificationRoutes from './routes/NotificationServiceRoutes.js';
+import guarantorAuditRoutes from './routes/guarantorAuditRoutes.js';
+import NextOfKinRoutes from './routes/NextOfKinRoutes.js';
+import AccountApplicationRoutes from './routes/AccountApplicationRoutes.js';
+import TransactionRoutes from './routes/TransactionRoutes.js';
+import EncrytionRoutes from './routes/EncryptionRoutes.js';
 
-// Mount API Routes
+// ============================================
+// MOUNT ALL ROUTES
+// ============================================
+
+// Mount your existing routes (unchanged)
 app.use('/api/users', userRoutes);
 app.use('/api/login', LoginRoutes);
 app.use('/api/user-role', UserRoleRoutes);
@@ -449,83 +581,78 @@ app.use('/api/index-rates', RateIndexRoutes);
 app.use("/api/customer-transactions", customerTransactionRoutes);
 app.use("/api/Loan-disbursement-report", DisbursementReportRoutes);
 
+// Mount new MySQL/Sequelize routes
+app.use('/api/penalties', penaltyRoutes);
+app.use('/api/organizations', organizationRoutes);
+app.use('/api/overdue-loans', overdueLoanRoutes);
+app.use('/api/notifications', NotificationServiceRoutes);
+app.use('/api/guarantor-audits', guarantorAuditRoutes);
+app.use('/api/next-of-kins', NextOfKinRoutes);
+app.use('/api/configuration', ConfigurationRoutes);
+app.use('/api/account-applications', AccountApplicationRoutes);
+app.use('/api/post-transactions', TransactionRoutes);
 
+//EncytionRoutes//
+app.use('/api/encyption-post-transactions', EncrytionRoutes);
 
+// ============================================
+// ERROR HANDLING
+// ============================================
 
-// Static Files (Production)
-if (process.env.NODE_ENV === 'production') {
-  const staticPath = path.join(__dirname, 'build');
-  app.use(express.static(staticPath));
-  app.get('*', (req, res) => res.sendFile(path.join(staticPath, 'index.html')));
-}
-
-// General Error Handler
+// CORS Error Handler
 app.use((err, req, res, next) => {
-  logger.error('Server error', { error: err.message, stack: err.stack, url: req.originalUrl });
-  res.status(500).json({
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ 
+      error: 'CORS Policy Failed', 
+      allowedOrigins,
+      currentOrigin: req.headers.origin,
+      timestamp: new Date().toISOString()
+    });
+  }
+  next(err);
+});
+
+// 404 handler - Enhanced to provide more information
+app.use('*', (req, res) => {
+  res.status(404).json({
     success: false,
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: `Route not found: ${req.originalUrl}`,
+    method: req.method,
+    timestamp: new Date().toISOString(),
+    suggestions: [
+      'Check the API documentation at /api-docs',
+      'Verify the endpoint URL',
+      'Ensure the HTTP method is correct',
+      'Check if you have proper permissions'
+    ],
+    availableEndpoints: {
+      apiRoot: '/api',
+      documentation: '/api-docs',
+      health: '/health',
+      serverTime: '/server-time'
+    }
   });
 });
 
-// Initialization Function
-async function initializeApplication() {
-  console.log('🚀 Initializing application...');
-  try {
-    await permissionSync.syncPermissionsWithValidation();
-    console.log('✅ Application initialization complete');
-  } catch (error) {
-    console.error('❌ Application initialization failed:', error);
-    try {
-      console.log('🔄 Running quick permission check...');
-      await permissionSync.quickPermissionCheck();
-    } catch (checkError) {
-      console.error('❌ Quick check also failed:', checkError.message);
-    }
-  }
-}
+// Global error handler
+app.use(errorHandler);
 
-// Start Server Function
-async function startServer() {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-    });
-    console.log('✅ MongoDB connected successfully');
-
-    await initializeApplication();
-
-    const PORT = process.env.PORT || 5000;
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
-    });
-
-    process.on('SIGTERM', () => {
-      console.log('SIGTERM received, closing gracefully');
-      mongoose.connection.close(() => {
-        server.close(() => process.exit(0));
+// Static Files for Production (React build)
+if (process.env.NODE_ENV === 'production') {
+  const staticPath = path.join(__dirname, 'build');
+  app.use(express.static(staticPath));
+  app.get('*', (req, res) => {
+    // Don't show React app for API routes
+    if (req.originalUrl.startsWith('/api')) {
+      return res.status(404).json({
+        success: false,
+        message: `API route not found: ${req.originalUrl}`,
+        timestamp: new Date().toISOString()
       });
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
+    }
+    res.sendFile(path.join(staticPath, 'index.html'));
+  });
 }
 
-// Global Error Handlers
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
-  process.exit(1);
-});
-
-// Start Everything
-// startServer();
-
+// Export the Express app (NO SERVER STARTUP HERE)
 export default app;

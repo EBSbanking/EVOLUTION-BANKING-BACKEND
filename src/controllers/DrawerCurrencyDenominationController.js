@@ -1,6 +1,5 @@
 import DrawerCurrencyDenomination from '../models/DrawerCurrencyDenomination.js';
 import Drawer from '../models/Drawer.js';
-import mongoose from 'mongoose';
 
 export const createDrawerCurrencyDenomination = async (req, res) => {
   const session = await mongoose.startSession();

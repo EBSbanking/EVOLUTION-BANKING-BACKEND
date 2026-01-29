@@ -1,32 +1,39 @@
-// src/routes/DisbursementReportRoutes.js
+// src/routes/DisbursementReportRoutes.js - MySQL VERSION
 import express from 'express';
-import mongoose from 'mongoose';
+import { getPool } from '../../config/db.js'; // MySQL connection pool
 
 const router = express.Router();
 
-// Helper function to safely convert Decimal128 to number
+// Helper function to safely convert values to number
 const toNumber = (value) => {
   if (!value && value !== 0) return 0;
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return parseFloat(value) || 0;
-  if (value && typeof value === 'object' && value._bsontype === 'Decimal128') {
-    return parseFloat(value.toString()) || 0;
-  }
   return 0;
 };
 
-// Get model safely
-const getModel = (modelName) => {
-  if (!mongoose.models[modelName]) {
-    throw new Error(`${modelName} model not found`);
+// Helper function to build date range query
+const buildDateRangeQuery = (startDate, endDate, field = 'createdAt') => {
+  if (!startDate && !endDate) return '';
+  
+  let query = '';
+  if (startDate) {
+    query += `AND ${field} >= '${new Date(startDate).toISOString().slice(0, 19).replace('T', ' ')}' `;
   }
-  return mongoose.models[modelName];
+  if (endDate) {
+    query += `AND ${field} <= '${new Date(endDate).toISOString().slice(0, 19).replace('T', ' ')}' `;
+  }
+  
+  return query;
 };
 
 // Get all loan disbursements
 router.get('/disbursements', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
+    connection = await pool.getConnection();
     
     const {
       page = 1,
@@ -41,66 +48,64 @@ router.get('/disbursements', async (req, res) => {
       sortOrder = 'desc'
     } = req.query;
 
-    // Build query
-    const query = {};
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Filter by status
+    // Build WHERE clause
+    let whereClause = 'WHERE 1=1 ';
+    const params = [];
+
     if (status && status !== 'ALL') {
-      query.STATUS = status;
+      whereClause += 'AND STATUS = ? ';
+      params.push(status);
     }
 
-    // Filter by date range
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) {
-        query.createdAt.$gte = new Date(startDate);
-      }
-      if (endDate) {
-        query.createdAt.$lte = new Date(endDate);
-      }
-    }
+    // Date range filter
+    const dateRangeQuery = buildDateRangeQuery(startDate, endDate);
+    whereClause += dateRangeQuery;
 
     // Filter by branch
     if (branchId) {
-      query.BU_ID = branchId;
+      whereClause += 'AND BU_ID = ? ';
+      params.push(branchId);
     }
 
     // Filter by product
     if (productId) {
-      query.PROD_ID = productId;
+      whereClause += 'AND PROD_ID = ? ';
+      params.push(productId);
     }
 
     // Search functionality
     if (search) {
-      query.$or = [
-        { ACCT_NO: { $regex: search, $options: 'i' } },
-        { ACCT_NM: { $regex: search, $options: 'i' } },
-        { CUST_ID: { $regex: search, $options: 'i' } },
-        { APPL_ID: { $regex: search, $options: 'i' } },
-        { 'Borrower_address.street': { $regex: search, $options: 'i' } },
-        { 'Borrower_address.city': { $regex: search, $options: 'i' } }
-      ];
+      whereClause += `AND (
+        ACCT_NO LIKE ? OR 
+        ACCT_NM LIKE ? OR 
+        CUST_ID LIKE ? OR 
+        APPL_ID LIKE ? OR 
+        Borrower_street LIKE ? OR 
+        Borrower_city LIKE ?
+      ) `;
+      const searchTerm = `%${search}%`;
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
-    // Execute query with pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    // Count total records
+    const [countResult] = await connection.query(
+      `SELECT COUNT(*) as total FROM LoanDisbursement ${whereClause}`,
+      params
+    );
+    const total = countResult[0].total;
 
-    const [disbursements, total] = await Promise.all([
-      LoanDisbursement.find(query)
-        .populate('LOAN_ACCOUNT_ID', 'ACCT_NO ACCT_NM CUST_ID LOAN_STATUS')
-        .populate('CREDIT_APPLICATION_ID', 'APPL_ID CUST_NM CREATED_AT')
-        .populate('GUARANTOR_ID', 'GUARANTOR_ID fullName phoneNumber email')
-        .populate('REPAYMENT_SCHEDULE_ID', 'ACCT_NO EMI_AMOUNT TOTAL_REPAYMENT')
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
-      LoanDisbursement.countDocuments(query)
-    ]);
+    // Build ORDER BY clause
+    const orderByClause = `ORDER BY ${sortBy} ${sortOrder.toUpperCase()} `;
 
-    // Format Decimal128 values in disbursements
+    // Fetch disbursements with pagination
+    const [disbursements] = await connection.query(
+      `SELECT * FROM LoanDisbursement ${whereClause} ${orderByClause} LIMIT ? OFFSET ?`,
+      [...params, parseInt(limit), offset]
+    );
+
+    // Format decimal values
     const formattedDisbursements = disbursements.map(disb => ({
       ...disb,
       AMOUNT: toNumber(disb.AMOUNT),
@@ -114,45 +119,38 @@ router.get('/disbursements', async (req, res) => {
     }));
 
     // Calculate summary statistics
-    const summaryPipeline = [
-      { $match: query },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: { $toDouble: '$AMOUNT' } },
-          totalDisbursements: { $sum: 1 },
-          avgLoanAmount: { $avg: { $toDouble: '$AMOUNT' } },
-          totalInterest: { $sum: { $toDouble: '$TOTAL_INTEREST' } },
-          totalNetDisbursement: { $sum: { $toDouble: '$NET_DISBURSEMENT_AMOUNT' } }
-        }
-      }
-    ];
-
-    const summary = await LoanDisbursement.aggregate(summaryPipeline);
+    const [summaryResult] = await connection.query(
+      `SELECT 
+        SUM(AMOUNT) as totalAmount,
+        COUNT(*) as totalDisbursements,
+        AVG(AMOUNT) as avgLoanAmount,
+        SUM(TOTAL_INTEREST) as totalInterest,
+        SUM(NET_DISBURSEMENT_AMOUNT) as totalNetDisbursement
+       FROM LoanDisbursement ${whereClause}`,
+      params
+    );
 
     // Status distribution
-    const statusDistribution = await LoanDisbursement.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: '$STATUS',
-          count: { $sum: 1 },
-          amount: { $sum: { $toDouble: '$AMOUNT' } }
-        }
-      }
-    ]);
+    const [statusDistribution] = await connection.query(
+      `SELECT 
+        STATUS as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+       FROM LoanDisbursement ${whereClause}
+       GROUP BY STATUS`,
+      params
+    );
 
     // Product-wise distribution
-    const productDistribution = await LoanDisbursement.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: '$PROD_ID',
-          count: { $sum: 1 },
-          amount: { $sum: { $toDouble: '$AMOUNT' } }
-        }
-      }
-    ]);
+    const [productDistribution] = await connection.query(
+      `SELECT 
+        PROD_ID as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+       FROM LoanDisbursement ${whereClause}
+       GROUP BY PROD_ID`,
+      params
+    );
 
     res.status(200).json({
       success: true,
@@ -164,7 +162,7 @@ router.get('/disbursements', async (req, res) => {
           limit: parseInt(limit),
           totalPages: Math.ceil(total / parseInt(limit))
         },
-        summary: summary[0] || {
+        summary: summaryResult[0] || {
           totalAmount: 0,
           totalDisbursements: 0,
           avgLoanAmount: 0,
@@ -185,41 +183,36 @@ router.get('/disbursements', async (req, res) => {
       message: 'Failed to fetch loan disbursements',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
 // Get single loan disbursement by ID
 router.get('/disbursements/:id', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
-    const Customer = getModel('Customer');
-    const Guarantor = getModel('Guarantor');
-    const RepaymentSchedule = getModel('RepaymentSchedule');
-    
+    connection = await pool.getConnection();
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid disbursement ID'
-      });
-    }
+    // Get disbursement
+    const [disbursementRows] = await connection.query(
+      'SELECT * FROM LoanDisbursement WHERE id = ?',
+      [id]
+    );
 
-    const disbursement = await LoanDisbursement.findById(id)
-      .populate('LOAN_ACCOUNT_ID')
-      .populate('CREDIT_APPLICATION_ID')
-      .populate('GUARANTOR_ID')
-      .populate('REPAYMENT_SCHEDULE_ID')
-      .lean();
-
-    if (!disbursement) {
+    if (disbursementRows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Loan disbursement not found'
       });
     }
 
-    // Format Decimal128 values
+    const disbursement = disbursementRows[0];
+
+    // Format Decimal values
     const formattedDisbursement = {
       ...disbursement,
       AMOUNT: toNumber(disbursement.AMOUNT),
@@ -233,13 +226,26 @@ router.get('/disbursements/:id', async (req, res) => {
     };
 
     // Get related data
-    const [customer, guarantorDetails, repaymentSchedule] = await Promise.all([
-      Customer.findOne({ CUST_ID: disbursement.CUST_ID }).lean(),
-      Guarantor.findById(disbursement.GUARANTOR_ID).lean(),
-      RepaymentSchedule.findById(disbursement.REPAYMENT_SCHEDULE_ID).lean()
-    ]);
+    const [customerRows] = await connection.query(
+      'SELECT * FROM Customer WHERE CUST_ID = ?',
+      [disbursement.CUST_ID]
+    );
 
-    // Format related data if needed
+    const [guarantorRows] = await connection.query(
+      'SELECT * FROM Guarantor WHERE id = ?',
+      [disbursement.GUARANTOR_ID]
+    );
+
+    const [repaymentRows] = await connection.query(
+      'SELECT * FROM RepaymentSchedule WHERE id = ?',
+      [disbursement.REPAYMENT_SCHEDULE_ID]
+    );
+
+    const customer = customerRows[0] || null;
+    const guarantorDetails = guarantorRows[0] || null;
+    const repaymentSchedule = repaymentRows[0] || null;
+
+    // Format repayment schedule if exists
     const formattedRepaymentSchedule = repaymentSchedule ? {
       ...repaymentSchedule,
       PRINCIPAL_AMOUNT: toNumber(repaymentSchedule.PRINCIPAL_AMOUNT),
@@ -266,120 +272,113 @@ router.get('/disbursements/:id', async (req, res) => {
       message: 'Failed to fetch loan disbursement',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
 // Get disbursement statistics
 router.get('/disbursements/statistics', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
+    connection = await pool.getConnection();
     
     const { startDate, endDate, branchId } = req.query;
 
-    const matchStage = {};
+    // Build WHERE clause
+    let whereClause = 'WHERE 1=1 ';
+    const params = [];
 
     // Date range filter
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
-      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
-    }
+    const dateRangeQuery = buildDateRangeQuery(startDate, endDate);
+    whereClause += dateRangeQuery;
 
     // Branch filter
     if (branchId) {
-      matchStage.BU_ID = branchId;
+      whereClause += 'AND BU_ID = ? ';
+      params.push(branchId);
     }
 
-    const statistics = await LoanDisbursement.aggregate([
-      { $match: matchStage },
-      {
-        $facet: {
-          // Daily statistics for last 30 days
-          dailyStats: [
-            {
-              $match: {
-                createdAt: {
-                  $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-                }
-              }
-            },
-            {
-              $group: {
-                _id: {
-                  $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
-                },
-                count: { $sum: 1 },
-                amount: { $sum: { $toDouble: '$AMOUNT' } }
-              }
-            },
-            { $sort: { '_id': 1 } }
-          ],
-          // Monthly statistics
-          monthlyStats: [
-            {
-              $group: {
-                _id: {
-                  $dateToString: { format: '%Y-%m', date: '$createdAt' }
-                },
-                count: { $sum: 1 },
-                amount: { $sum: { $toDouble: '$AMOUNT' } }
-              }
-            },
-            { $sort: { '_id': 1 } }
-          ],
-          // Status summary
-          statusSummary: [
-            {
-              $group: {
-                _id: '$STATUS',
-                count: { $sum: 1 },
-                amount: { $sum: { $toDouble: '$AMOUNT' } }
-              }
-            }
-          ],
-          // Product summary
-          productSummary: [
-            {
-              $group: {
-                _id: '$PROD_ID',
-                count: { $sum: 1 },
-                amount: { $sum: { $toDouble: '$AMOUNT' } }
-              }
-            },
-            { $sort: { amount: -1 } }
-          ],
-          // Branch summary
-          branchSummary: [
-            {
-              $group: {
-                _id: '$BU_ID',
-                count: { $sum: 1 },
-                amount: { $sum: { $toDouble: '$AMOUNT' } }
-              }
-            },
-            { $sort: { amount: -1 } }
-          ],
-          // Overall summary
-          overallSummary: [
-            {
-              $group: {
-                _id: null,
-                totalDisbursements: { $sum: 1 },
-                totalAmount: { $sum: { $toDouble: '$AMOUNT' } },
-                totalInterest: { $sum: { $toDouble: '$TOTAL_INTEREST' } },
-                totalNetDisbursed: { $sum: { $toDouble: '$NET_DISBURSEMENT_AMOUNT' } },
-                avgLoanAmount: { $avg: { $toDouble: '$AMOUNT' } },
-                avgInterestRate: { $avg: { $toDouble: '$INTEREST_RATE' } }
-              }
-            }
-          ]
-        }
-      }
-    ]);
+    // Execute multiple queries for statistics
+    const [dailyStats] = await connection.query(`
+      SELECT 
+        DATE(createdAt) as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      WHERE createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      ${whereClause}
+      GROUP BY DATE(createdAt)
+      ORDER BY _id ASC
+    `, params);
+
+    const [monthlyStats] = await connection.query(`
+      SELECT 
+        DATE_FORMAT(createdAt, '%Y-%m') as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY DATE_FORMAT(createdAt, '%Y-%m')
+      ORDER BY _id ASC
+    `, params);
+
+    const [statusSummary] = await connection.query(`
+      SELECT 
+        STATUS as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY STATUS
+    `, params);
+
+    const [productSummary] = await connection.query(`
+      SELECT 
+        PROD_ID as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY PROD_ID
+      ORDER BY amount DESC
+    `, params);
+
+    const [branchSummary] = await connection.query(`
+      SELECT 
+        BU_ID as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY BU_ID
+      ORDER BY amount DESC
+    `, params);
+
+    const [overallSummary] = await connection.query(`
+      SELECT 
+        COUNT(*) as totalDisbursements,
+        SUM(AMOUNT) as totalAmount,
+        SUM(TOTAL_INTEREST) as totalInterest,
+        SUM(NET_DISBURSEMENT_AMOUNT) as totalNetDisbursed,
+        AVG(AMOUNT) as avgLoanAmount,
+        AVG(INTEREST_RATE) as avgInterestRate
+      FROM LoanDisbursement 
+      ${whereClause}
+    `, params);
 
     res.status(200).json({
       success: true,
-      data: statistics[0]
+      data: {
+        dailyStats,
+        monthlyStats,
+        statusSummary,
+        productSummary,
+        branchSummary,
+        overallSummary: overallSummary[0] || {}
+      }
     });
 
   } catch (error) {
@@ -389,48 +388,53 @@ router.get('/disbursements/statistics', async (req, res) => {
       message: 'Failed to fetch disbursement statistics',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
 // Export disbursements to CSV/Excel
 router.get('/disbursements/export', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
+    connection = await pool.getConnection();
     
     const { format = 'csv', ...filters } = req.query;
 
-    // Build query from filters
-    const query = {};
+    // Build WHERE clause from filters
+    let whereClause = 'WHERE 1=1 ';
+    const params = [];
     
     if (filters.status && filters.status !== 'ALL') {
-      query.STATUS = filters.status;
+      whereClause += 'AND STATUS = ? ';
+      params.push(filters.status);
     }
     
-    if (filters.startDate) {
-      query.createdAt = { $gte: new Date(filters.startDate) };
-    }
-    
-    if (filters.endDate) {
-      query.createdAt = { ...query.createdAt, $lte: new Date(filters.endDate) };
-    }
+    // Date range filter
+    const dateRangeQuery = buildDateRangeQuery(filters.startDate, filters.endDate);
+    whereClause += dateRangeQuery;
     
     if (filters.branchId) {
-      query.BU_ID = filters.branchId;
+      whereClause += 'AND BU_ID = ? ';
+      params.push(filters.branchId);
     }
     
     if (filters.productId) {
-      query.PROD_ID = filters.productId;
+      whereClause += 'AND PROD_ID = ? ';
+      params.push(filters.productId);
     }
 
-    const disbursements = await LoanDisbursement.find(query)
-      .populate('LOAN_ACCOUNT_ID', 'ACCT_NO ACCT_NM')
-      .populate('CREDIT_APPLICATION_ID', 'APPL_ID')
-      .populate('GUARANTOR_ID', 'fullName')
-      .lean();
+    // Fetch disbursements
+    const [disbursements] = await connection.query(
+      `SELECT * FROM LoanDisbursement ${whereClause} ORDER BY createdAt DESC`,
+      params
+    );
 
     // Transform data for export
     const exportData = disbursements.map(disb => ({
-      'Disbursement ID': disb._id,
+      'Disbursement ID': disb.id,
       'Account Number': disb.ACCT_NO,
       'Account Name': disb.ACCT_NM,
       'Customer ID': disb.CUST_ID,
@@ -458,13 +462,18 @@ router.get('/disbursements/export', async (req, res) => {
       'Start Date': disb.START_DT,
       'Maturity Date': disb.MATURITY_DT,
       'Net Disbursement': toNumber(disb.NET_DISBURSEMENT_AMOUNT),
-      'Guarantor': disb.GUARANTOR_ID?.fullName || 'N/A',
-      'Borrower Address': disb.Borrower_address ? 
-        `${disb.Borrower_address.street || ''}, ${disb.Borrower_address.city || ''}, ${disb.Borrower_address.state || ''}` : 'N/A'
+      'Borrower Address': `${disb.Borrower_street || ''}, ${disb.Borrower_city || ''}, ${disb.Borrower_state || ''}`
     }));
 
     if (format === 'csv') {
       // Convert to CSV
+      if (exportData.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No data to export'
+        });
+      }
+
       const headers = Object.keys(exportData[0] || {});
       const csv = [
         headers.join(','),
@@ -498,24 +507,21 @@ router.get('/disbursements/export', async (req, res) => {
       message: 'Failed to export disbursements',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
 // Update disbursement status
 router.put('/disbursements/:id/status', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
-    const LoanAccount = getModel('LoanAccount');
+    connection = await pool.getConnection();
     
     const { id } = req.params;
     const { status, notes, updatedBy } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid disbursement ID'
-      });
-    }
 
     const validStatuses = ['PENDING', 'APPROVED', 'DISBURSED', 'REJECTED', 'CANCELLED'];
     if (!validStatuses.includes(status)) {
@@ -525,53 +531,57 @@ router.put('/disbursements/:id/status', async (req, res) => {
       });
     }
 
-    const updateData = {
-      STATUS: status,
-      updatedAt: new Date()
-    };
-
-    // Add status history if field exists in schema
-    // Check if statusHistory field exists in the model
-    if (LoanDisbursement.schema && LoanDisbursement.schema.path('statusHistory')) {
-      updateData.$push = {
-        statusHistory: {
-          status,
-          changedBy: updatedBy || 'SYSTEM',
-          changedAt: new Date(),
-          notes: notes || ''
-        }
-      };
-    }
-
-    const disbursement = await LoanDisbursement.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true }
+    // Check if disbursement exists
+    const [existingRows] = await connection.query(
+      'SELECT * FROM LoanDisbursement WHERE id = ?',
+      [id]
     );
 
-    if (!disbursement) {
+    if (existingRows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Loan disbursement not found'
       });
     }
 
+    const disbursement = existingRows[0];
+
+    // Update disbursement status
+    const [updateResult] = await connection.query(
+      `UPDATE LoanDisbursement 
+       SET STATUS = ?, updatedAt = NOW() 
+       WHERE id = ?`,
+      [status, id]
+    );
+
+    // Add to status history if table exists
+    try {
+      await connection.query(
+        `INSERT INTO StatusHistory 
+         (record_id, status, changed_by, changed_at, notes, module) 
+         VALUES (?, ?, ?, NOW(), ?, 'LoanDisbursement')`,
+        [id, status, updatedBy || 'SYSTEM', notes || '']
+      );
+    } catch (error) {
+      console.log('StatusHistory table might not exist:', error.message);
+    }
+
     // If status is DISBURSED, update related LoanAccount
     if (status === 'DISBURSED' && disbursement.LOAN_ACCOUNT_ID) {
-      await LoanAccount.findByIdAndUpdate(
-        disbursement.LOAN_ACCOUNT_ID,
-        {
-          LOAN_STATUS: 'ACTIVE',
-          DISBURSEMENT_DATE: new Date(),
-          DISBURSED_AMOUNT: disbursement.AMOUNT
-        }
+      await connection.query(
+        `UPDATE LoanAccount 
+         SET LOAN_STATUS = 'ACTIVE', 
+             DISBURSEMENT_DATE = NOW(), 
+             DISBURSED_AMOUNT = ? 
+         WHERE id = ?`,
+        [disbursement.AMOUNT, disbursement.LOAN_ACCOUNT_ID]
       );
     }
 
     res.status(200).json({
       success: true,
       message: 'Disbursement status updated successfully',
-      data: disbursement
+      data: { id, status, updatedAt: new Date() }
     });
 
   } catch (error) {
@@ -581,98 +591,74 @@ router.put('/disbursements/:id/status', async (req, res) => {
       message: 'Failed to update disbursement status',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
 // Get disbursement dashboard data
 router.get('/dashboard', async (req, res) => {
+  const pool = getPool();
+  let connection;
+  
   try {
-    const LoanDisbursement = getModel('LoanDisbursement');
+    connection = await pool.getConnection();
     
     const { branchId } = req.query;
-    const matchStage = branchId ? { BU_ID: branchId } : {};
+    const whereClause = branchId ? 'WHERE BU_ID = ? ' : 'WHERE 1=1 ';
+    const params = branchId ? [branchId] : [];
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Execute multiple queries for dashboard data
+    const [todayStats] = await connection.query(`
+      SELECT 
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      AND DATE(createdAt) = CURDATE()
+    `, params);
 
-    const [
-      todayStats,
-      monthlyStats,
-      statusStats,
-      topProducts,
-      recentDisbursements
-    ] = await Promise.all([
-      // Today's disbursements
-      LoanDisbursement.aggregate([
-        {
-          $match: {
-            ...matchStage,
-            createdAt: {
-              $gte: new Date(new Date().setHours(0, 0, 0, 0)),
-              $lte: new Date()
-            }
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            count: { $sum: 1 },
-            amount: { $sum: { $toDouble: '$AMOUNT' } }
-          }
-        }
-      ]),
-      // Last 30 days trend
-      LoanDisbursement.aggregate([
-        {
-          $match: {
-            ...matchStage,
-            createdAt: { $gte: thirtyDaysAgo }
-          }
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: '%Y-%m-%d', date: '$createdAt' }
-            },
-            count: { $sum: 1 },
-            amount: { $sum: { $toDouble: '$AMOUNT' } }
-          }
-        },
-        { $sort: { '_id': 1 } },
-        { $limit: 30 }
-      ]),
-      // Status distribution
-      LoanDisbursement.aggregate([
-        { $match: matchStage },
-        {
-          $group: {
-            _id: '$STATUS',
-            count: { $sum: 1 },
-            amount: { $sum: { $toDouble: '$AMOUNT' } }
-          }
-        }
-      ]),
-      // Top 5 products
-      LoanDisbursement.aggregate([
-        { $match: matchStage },
-        {
-          $group: {
-            _id: '$PROD_ID',
-            count: { $sum: 1 },
-            amount: { $sum: { $toDouble: '$AMOUNT' } }
-          }
-        },
-        { $sort: { amount: -1 } },
-        { $limit: 5 }
-      ]),
-      // Recent disbursements
-      LoanDisbursement.find(matchStage)
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .populate('LOAN_ACCOUNT_ID', 'ACCT_NO ACCT_NM')
-        .populate('CREDIT_APPLICATION_ID', 'APPL_ID')
-        .lean()
-    ]);
+    const [monthlyTrend] = await connection.query(`
+      SELECT 
+        DATE(createdAt) as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      AND createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(createdAt)
+      ORDER BY _id ASC
+      LIMIT 30
+    `, params);
+
+    const [statusDistribution] = await connection.query(`
+      SELECT 
+        STATUS as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY STATUS
+    `, params);
+
+    const [topProducts] = await connection.query(`
+      SELECT 
+        PROD_ID as _id,
+        COUNT(*) as count,
+        SUM(AMOUNT) as amount
+      FROM LoanDisbursement 
+      ${whereClause}
+      GROUP BY PROD_ID
+      ORDER BY amount DESC
+      LIMIT 5
+    `, params);
+
+    const [recentDisbursements] = await connection.query(`
+      SELECT * FROM LoanDisbursement 
+      ${whereClause}
+      ORDER BY createdAt DESC 
+      LIMIT 10
+    `, params);
 
     // Format recent disbursements
     const formattedRecentDisbursements = recentDisbursements.map(disb => ({
@@ -686,8 +672,8 @@ router.get('/dashboard', async (req, res) => {
       success: true,
       data: {
         today: todayStats[0] || { count: 0, amount: 0 },
-        monthlyTrend: monthlyStats,
-        statusDistribution: statusStats,
+        monthlyTrend,
+        statusDistribution,
         topProducts,
         recentDisbursements: formattedRecentDisbursements
       }
@@ -700,6 +686,8 @@ router.get('/dashboard', async (req, res) => {
       message: 'Failed to fetch dashboard data',
       error: error.message
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 

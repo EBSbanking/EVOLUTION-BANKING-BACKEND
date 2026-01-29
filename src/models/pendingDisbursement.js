@@ -1,59 +1,83 @@
-import mongoose from 'mongoose';
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const pendingDisbursementSchema = new mongoose.Schema({
+class PendingDisbursement extends Model {}
+
+PendingDisbursement.init({
   workItemId: {
-    type: String,
-    required: true,
-    index: true
+    type: DataTypes.STRING,
+    allowNull: false,
   },
   loanAccountId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'LoanAccount',
-    required: true
+    type: DataTypes.INTEGER, // Or DataTypes.BIGINT if using numeric IDs
+    allowNull: false,
+    // If using string/ObjectId format, use DataTypes.STRING instead
+    references: {
+      model: 'LoanAccounts', // Assuming 'LoanAccount' table is named 'LoanAccounts'
+      key: 'id'
+    }
   },
   transactionData: {
-    type: Object,
-    required: true
+    type: DataTypes.JSON, // Use JSON for PostgreSQL, TEXT for MySQL, or JSONB for PostgreSQL
+    allowNull: false,
   },
   status: { 
-    type: String, 
-    enum: ['PENDING', 'APPROVED', 'REJECTED'], 
-    default: 'PENDING',
-    index: true
+    type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'), 
+    allowNull: false,
+    defaultValue: 'PENDING',
   },
   createdBy: {
-    type: String,
-    required: true
+    type: DataTypes.STRING,
+    allowNull: false,
   },
   createdAt: { 
-    type: Date, 
-    default: Date.now 
+    type: DataTypes.DATE, 
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
   },
   approvedBy: {
-    type: String,
-    default: null
+    type: DataTypes.STRING,
+    allowNull: true,
   },
   approvedAt: {
-    type: Date,
-    default: null
+    type: DataTypes.DATE,
+    allowNull: true,
   },
   loanAccountNo: {
-    type: String,
-    required: true
+    type: DataTypes.STRING,
+    allowNull: false,
   },
   amount: {
-    type: Number,
-    required: true
+    type: DataTypes.DECIMAL(20, 2), // Adjust precision and scale as needed
+    allowNull: false,
   }
 }, {
+  sequelize,
+  modelName: 'PendingDisbursement',
+  tableName: 'PendingDisbursements',
   timestamps: false,
-  versionKey: false
+  indexes: [
+    // Single column indexes
+    {
+      name: 'pending_disbursements_workitemid_idx',
+      fields: ['workItemId']
+    },
+    {
+      name: 'pending_disbursements_status_idx',
+      fields: ['status']
+    },
+    {
+      name: 'pending_disbursements_createdat_idx',
+      fields: ['createdAt']
+    },
+    // Composite index
+    {
+      name: 'pending_disbursements_loanaccountid_status_idx',
+      fields: ['loanAccountId', 'status']
+    }
+  ],
+  // If you need to disable versioning (like versionKey: false in Mongoose)
+  // Sequelize doesn't have built-in versioning by default
 });
-
-// Indexes
-pendingDisbursementSchema.index({ loanAccountId: 1, status: 1 });
-pendingDisbursementSchema.index({ createdAt: 1 });
-
-const PendingDisbursement = mongoose.model('PendingDisbursement', pendingDisbursementSchema);
 
 export default PendingDisbursement;

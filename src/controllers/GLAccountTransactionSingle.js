@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+
 import { logger } from '../utils/logger.js'; // Assuming logger is available
 import Branch from '../models/Branch.js';
 import GLAccount from '../models/GLAccount.js';

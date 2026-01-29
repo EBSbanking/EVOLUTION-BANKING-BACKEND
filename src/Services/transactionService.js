@@ -1,11 +1,76 @@
 // services/transactionService.js
-import mongoose from 'mongoose';
+import { Op } from 'sequelize';
+import sequelize from '../../config/db.js'; // Adjust the path as needed
 import CustomerAccount from '../models/CustomerAccount.js';
 import DepositAccountApplication from '../models/DepositAccountApplication.js';
 import { processDrawerTransaction } from '../controllers/DrawerController.js';
 
 export class TransactionService {
-  static async processCashTransaction(transactionData, session = null) {
+  static async createTransaction(transactionData) {
+    try {
+      // Determine which processing method to use based on transaction type
+      const { transactionType, amount, isCashTransaction = true } = transactionData;
+      
+      if (isCashTransaction) {
+        // For cash transactions, use processCashTransaction
+        const result = await this.processCashTransaction(transactionData);
+        
+        return {
+          success: true,
+          data: result,
+          message: 'Cash transaction created successfully'
+        };
+      } else {
+        // For non-cash transactions (transfers, etc.)
+        const result = await this.processNonCashTransaction(transactionData);
+        
+        return {
+          success: true,
+          data: result,
+          message: 'Transaction created successfully'
+        };
+      }
+    } catch (error) {
+      console.error('Error creating transaction:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to create transaction'
+      };
+    }
+  }
+
+  static async processNonCashTransaction(transactionData) {
+    // Implementation for non-cash transactions (transfers, etc.)
+    const { accountInfo, amount, transactionType, referenceNo, description } = transactionData;
+    
+    // Start a transaction
+    const t = await sequelize.transaction();
+    
+    try {
+      // Process account transaction without drawer involvement
+      const accountResult = await this.processAccountTransaction(accountInfo, {
+        amount,
+        transactionType,
+        referenceNo,
+        description
+      }, t);
+      
+      // Commit the transaction
+      await t.commit();
+      
+      return {
+        success: true,
+        account: accountResult,
+        message: 'Non-cash transaction processed successfully'
+      };
+    } catch (error) {
+      // Rollback transaction on error
+      await t.rollback();
+      throw error;
+    }
+  }
+
+  static async processCashTransaction(transactionData, transaction = null) {
     const {
       drawerId,
       transactionType,
@@ -20,14 +85,13 @@ export class TransactionService {
       isOpeningCashDeposit = false
     } = transactionData;
 
-    let internalSession = session;
-    let shouldEndSession = false;
+    let internalTransaction = transaction;
+    let shouldCommitTransaction = false;
 
     try {
-      if (!internalSession) {
-        internalSession = await mongoose.startSession();
-        internalSession.startTransaction();
-        shouldEndSession = true;
+      if (!internalTransaction) {
+        internalTransaction = await sequelize.transaction();
+        shouldCommitTransaction = true;
       }
 
       // 1. Process drawer transaction
@@ -44,7 +108,7 @@ export class TransactionService {
         }
       };
 
-      const drawerResult = await processDrawerTransaction(drawerReq, {}, internalSession);
+      const drawerResult = await processDrawerTransaction(drawerReq, {}, internalTransaction);
       
       if (!drawerResult.success) {
         throw new Error(`Drawer transaction failed: ${drawerResult.message}`);
@@ -58,11 +122,11 @@ export class TransactionService {
           transactionType: normalizedTransactionType,
           referenceNo,
           description
-        }, internalSession);
+        }, internalTransaction);
       }
 
-      if (shouldEndSession) {
-        await internalSession.commitTransaction();
+      if (shouldCommitTransaction) {
+        await internalTransaction.commit();
       }
 
       return {
@@ -73,18 +137,14 @@ export class TransactionService {
       };
 
     } catch (error) {
-      if (shouldEndSession && internalSession) {
-        await internalSession.abortTransaction();
+      if (shouldCommitTransaction && internalTransaction) {
+        await internalTransaction.rollback();
       }
       throw error;
-    } finally {
-      if (shouldEndSession && internalSession) {
-        internalSession.endSession();
-      }
     }
   }
 
-  static async processAccountTransaction(accountInfo, transactionData, session) {
+  static async processAccountTransaction(accountInfo, transactionData, transaction) {
     const { amount, transactionType, referenceNo, description } = transactionData;
     
     let { ledgerBalance, availableBalance, clearedBalance } = accountInfo;
@@ -109,7 +169,7 @@ export class TransactionService {
       ledgerBalance,
       availableBalance,
       clearedBalance
-    }, session);
+    }, transaction);
 
     return {
       accountNumber: accountInfo.accountNumber,
@@ -120,7 +180,7 @@ export class TransactionService {
     };
   }
 
-  static async updateAccountBalances(accountInfo, newBalances, session) {
+  static async updateAccountBalances(accountInfo, newBalances, transaction) {
     const { model, accountNumber } = accountInfo;
     const { ledgerBalance, availableBalance, clearedBalance } = newBalances;
     
@@ -136,20 +196,21 @@ export class TransactionService {
     };
     
     // Add balance fields based on model structure
+    // Note: Sequelize automatically handles decimal conversions
     switch (model) {
       case 'CustomerAccount':
-        updateData.ledger_balance = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-        updateData.available_balance = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-        updateData.cleared_balance = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
-        updateData.LEDGER_BAL = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-        updateData.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-        updateData.CLEARED_BAL = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
+        updateData.ledger_balance = ledgerBalance.toFixed(2);
+        updateData.available_balance = availableBalance.toFixed(2);
+        updateData.cleared_balance = clearedBalance.toFixed(2);
+        updateData.LEDGER_BAL = ledgerBalance.toFixed(2);
+        updateData.AVAILABLE_BALANCE = availableBalance.toFixed(2);
+        updateData.CLEARED_BAL = clearedBalance.toFixed(2);
         break;
         
       case 'DepositAccountApplication':
-        updateData.LEDGER_BAL = mongoose.Types.Decimal128.fromString(ledgerBalance.toFixed(2));
-        updateData.AVAILABLE_BALANCE = mongoose.Types.Decimal128.fromString(availableBalance.toFixed(2));
-        updateData.CLEARED_BAL = mongoose.Types.Decimal128.fromString(clearedBalance.toFixed(2));
+        updateData.LEDGER_BAL = ledgerBalance.toFixed(2);
+        updateData.AVAILABLE_BALANCE = availableBalance.toFixed(2);
+        updateData.CLEARED_BAL = clearedBalance.toFixed(2);
         break;
     }
     
@@ -157,38 +218,40 @@ export class TransactionService {
     
     switch (model) {
       case 'CustomerAccount':
-        updateResult = await CustomerAccount.updateOne(
-          { account_number: accountNumber },
-          { $set: updateData },
-          { session }
+        updateResult = await CustomerAccount.update(
+          updateData,
+          { 
+            where: { 
+              [Op.or]: [
+                { account_number: accountNumber },
+                { ACCT_NO: accountNumber }
+              ]
+            },
+            transaction 
+          }
         );
-        
-        if (updateResult.matchedCount === 0) {
-          updateResult = await CustomerAccount.updateOne(
-            { ACCT_NO: accountNumber },
-            { $set: updateData },
-            { session }
-          );
-        }
         break;
         
       case 'DepositAccountApplication':
-        updateResult = await DepositAccountApplication.updateOne(
-          { ACCT_NO: accountNumber },
-          { $set: updateData },
-          { session }
+        updateResult = await DepositAccountApplication.update(
+          updateData,
+          { 
+            where: { ACCT_NO: accountNumber },
+            transaction 
+          }
         );
         break;
     }
     
-    if (updateResult.matchedCount === 0) {
+    if (updateResult[0] === 0) { // Sequelize update returns [affectedCount]
       throw new Error(`Account ${accountNumber} not found in ${model} during update`);
     }
     
-    if (updateResult.modifiedCount === 0) {
-      console.warn(`No changes made to account ${accountNumber} - balances may be the same`);
-    }
+    console.log(`✅ Updated ${updateResult[0]} record(s) for account ${accountNumber}`);
     
     return updateResult;
   }
 }
+
+// Export a named function for backward compatibility
+export const createTransaction = TransactionService.createTransaction.bind(TransactionService);

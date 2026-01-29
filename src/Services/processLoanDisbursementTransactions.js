@@ -1,3 +1,5 @@
+// utils/loanDisbursementProcessor.js - Sequelize Version
+import { Op, where, fn, col, cast, QueryTypes } from 'sequelize'; // Added QueryTypes here
 import LoanAccount from '../models/LoanAccount.js';
 import RepaymentSchedule from '../models/RepaymentSchedules.js';
 import Transaction from '../models/Transaction.js';
@@ -5,15 +7,15 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import GLAccount from '../models/GLAccount.js';
 import LoanPortfolio from '../models/LoanPortfolio.js';
 import LoanProduct from '../models/LoanProduct.js';
-import LoanInterestRate from '../models/LoanInterestRate.js'; // ADD THIS IMPORT
+import LoanInterestRate from '../models/LoanInterestRate.js';
 import Guarantor from '../models/Guarantor.js';
-import mongoose from 'mongoose';
 import { generateTransactionId } from '../utils/generateLoanAccountId.js';
+import sequelize from '../../config/db.js';
 
 /**
  * Get GL accounts from product configuration
  */
-async function getGLAccountsFromProduct(productId, session) {
+async function getGLAccountsFromProduct(productId, transaction = null) {
   try {
     console.log('Looking for product with PROD_ID:', productId);
     
@@ -24,12 +26,18 @@ async function getGLAccountsFromProduct(productId, session) {
       throw new Error(`Invalid product ID: ${productId}. Must be a number`);
     }
 
-    // Query by PROD_ID (numeric field) not _id
-    const loanProduct = await LoanProduct.findOne({ PROD_ID: numericProductId }).session(session);
+    // Query by PROD_ID (numeric field) not id
+    const loanProduct = await LoanProduct.findOne({ 
+      where: { PROD_ID: numericProductId },
+      transaction 
+    });
     
     if (!loanProduct) {
       // Try also by productCode as fallback
-      const loanProductByCode = await LoanProduct.findOne({ productCode: String(productId) }).session(session);
+      const loanProductByCode = await LoanProduct.findOne({ 
+        where: { productCode: String(productId) },
+        transaction 
+      });
       if (!loanProductByCode) {
         throw new Error(`Product not found with PROD_ID: ${productId}`);
       }
@@ -112,141 +120,109 @@ function extractGLAccounts(loanProduct) {
 }
 
 /**
- * Helper function to safely convert values to Decimal128
+ * Helper function to safely convert values to Decimal
  */
-function toDecimal128(value) {
-  if (!value && value !== 0) return mongoose.Types.Decimal128.fromString('0.00');
+function toDecimal(value) {
+  if (!value && value !== 0) return 0.00;
   try {
-    return mongoose.Types.Decimal128.fromString(value.toString());
+    const num = parseFloat(value.toString());
+    return isNaN(num) ? 0.00 : parseFloat(num.toFixed(2));
   } catch (error) {
-    console.warn('Error converting to Decimal128:', error.message, { value });
-    return mongoose.Types.Decimal128.fromString('0.00');
+    console.warn('Error converting to Decimal:', error.message, { value });
+    return 0.00;
   }
-}
-
-/**
- * Helper function to ensure loanAccount is a Mongoose document
- */
-async function ensureLoanAccountIsDocument(loanAccount, loanId, session) {
-  // If loanAccount is already a Mongoose document, return it
-  if (loanAccount instanceof mongoose.Document) {
-    console.log('Loan account is already a Mongoose document');
-    return loanAccount;
-  }
-  
-  // If loanAccount has an _id, fetch the document from database
-  if (loanAccount._id) {
-    console.log('Fetching loan account document from database by _id');
-    const freshLoan = await LoanAccount.findById(loanAccount._id).session(session);
-    if (freshLoan) {
-      // Copy properties from the plain object to the document
-      Object.keys(loanAccount).forEach(key => {
-        if (key !== '_id' && key !== '__v' && key !== 'id') {
-          freshLoan[key] = loanAccount[key];
-        }
-      });
-      return freshLoan;
-    }
-  }
-  
-  // If we have a loanId, fetch by that
-  if (loanId) {
-    console.log('Fetching loan account document from database by loanId');
-    const freshLoan = await LoanAccount.findOne({ _id: loanId }).session(session);
-    if (freshLoan) {
-      return freshLoan;
-    }
-  }
-  
-  // Last resort: create a new document instance
-  console.log('Creating new LoanAccount document instance');
-  return new LoanAccount(loanAccount);
 }
 
 /**
  * Helper function to handle guarantor ID processing
  */
-async function processGuarantorId(guarantorId, loanDoc, guaranteedAmount, guarantorName, session) {
+async function processGuarantorId(guarantorId, loanDoc, guaranteedAmount, guarantorName, transaction = null) {
   if (!guarantorId) return null;
   
   console.log('Processing guarantor ID:', {
     guarantorId,
     type: typeof guarantorId,
-    isString: typeof guarantorId === 'string',
-    isValidObjectId: mongoose.Types.ObjectId.isValid(guarantorId)
+    isString: typeof guarantorId === 'string'
   });
   
   try {
     let guarantorDoc = null;
     
+    // Convert to string for comparison
+    const guarantorIdStr = String(guarantorId);
+    
+    // Try with padding to 7 digits
+    const paddedId = guarantorIdStr.padStart(7, '0');
+    
     // Try to find guarantor by different methods
-    if (mongoose.Types.ObjectId.isValid(guarantorId)) {
-      // If it's a valid ObjectId, find by _id
-      guarantorDoc = await Guarantor.findById(guarantorId).session(session);
-    } else {
-      // If it's a string (likely GUARANTOR_ID like "1000006"), find by GUARANTOR_ID
-      const guarantorIdStr = String(guarantorId);
-      
-      // Try with padding to 7 digits
-      const paddedId = guarantorIdStr.padStart(7, '0');
+    guarantorDoc = await Guarantor.findOne({ 
+      where: { GUARANTOR_ID: paddedId },
+      transaction
+    });
+    
+    // If not found with padding, try without padding
+    if (!guarantorDoc) {
       guarantorDoc = await Guarantor.findOne({ 
-        GUARANTOR_ID: paddedId 
-      }).session(session);
+        where: { GUARANTOR_ID: guarantorIdStr },
+        transaction
+      });
+    }
+    
+    // If still not found, try by other fields
+    if (!guarantorDoc) {
+      // Try by phone number
+      guarantorDoc = await Guarantor.findOne({ 
+        where: { phoneNumber: guarantorIdStr },
+        transaction
+      });
       
-      // If not found with padding, try without padding
-      if (!guarantorDoc) {
+      if (!guarantorDoc && guarantorName) {
+        // Try by name (partial match)
         guarantorDoc = await Guarantor.findOne({ 
-          GUARANTOR_ID: guarantorIdStr 
-        }).session(session);
-      }
-      
-      // If still not found, try by other fields
-      if (!guarantorDoc) {
-        // Try by phone number
-        guarantorDoc = await Guarantor.findOne({ 
-          phoneNumber: guarantorIdStr 
-        }).session(session);
-        
-        if (!guarantorDoc && guarantorName) {
-          // Try by name (partial match)
-          guarantorDoc = await Guarantor.findOne({ 
-            fullName: new RegExp(guarantorName, 'i') 
-          }).session(session);
-        }
+          where: {
+            fullName: {
+              [Op.like]: `%${guarantorName}%`
+            }
+          },
+          transaction
+        });
       }
     }
     
     if (guarantorDoc) {
       console.log('Found guarantor document:', {
-        _id: guarantorDoc._id,
+        id: guarantorDoc.id,
         GUARANTOR_ID: guarantorDoc.GUARANTOR_ID,
         fullName: guarantorDoc.fullName
       });
       
       // Update guarantor details in loan document
       const guarantorDetails = {
-        guarantorId: guarantorDoc._id, // MongoDB ObjectId
-        guarantorNumberId: guarantorDoc.GUARANTOR_ID, // 7-digit string ID
+        guarantorId: guarantorDoc.id,
+        guarantorNumberId: guarantorDoc.GUARANTOR_ID,
         name: guarantorName || guarantorDoc.fullName || '',
         phone: guarantorDoc.phoneNumber || '',
         relationship: guarantorDoc.relationshipToBorrower || '',
         email: guarantorDoc.email || '',
         address: guarantorDoc.address || '',
         status: 'ACTIVE',
-        guaranteedAmount: toDecimal128(guaranteedAmount || guarantorDoc.GUARANTEED_AMT || 0)
+        guaranteedAmount: toDecimal(guaranteedAmount || guarantorDoc.GUARANTEED_AMT || 0)
       };
       
       // Also update the Guarantor document to reference this loan
       try {
-        if (!guarantorDoc.guaranteedLoans) {
-          guarantorDoc.guaranteedLoans = [];
-        }
-        
-        if (!guarantorDoc.guaranteedLoans.includes(loanDoc._id)) {
-          guarantorDoc.guaranteedLoans.push(loanDoc._id);
-          await guarantorDoc.save({ session });
-          console.log('Updated guarantor document with new loan reference');
-        }
+        // Assuming Guarantor model has a guaranteedLoans field
+        await Guarantor.update(
+          {
+            // Add loan ID to guaranteedLoans if it's an array field
+            // This depends on your model structure
+          },
+          {
+            where: { id: guarantorDoc.id },
+            transaction
+          }
+        );
+        console.log('Updated guarantor document with new loan reference');
       } catch (guarantorUpdateError) {
         console.warn('Could not update guarantor document:', guarantorUpdateError.message);
         // Non-critical error, continue with loan disbursement
@@ -263,8 +239,7 @@ async function processGuarantorId(guarantorId, loanDoc, guaranteedAmount, guaran
         phone: '',
         relationship: '',
         status: 'PENDING',
-        guaranteedAmount: toDecimal128(guaranteedAmount)
-        // Note: No guarantorId field since we don't have a valid ObjectId
+        guaranteedAmount: toDecimal(guaranteedAmount)
       };
     }
     
@@ -276,16 +251,17 @@ async function processGuarantorId(guarantorId, loanDoc, guaranteedAmount, guaran
       guarantorNumberId: String(guarantorId).padStart(7, '0'),
       name: guarantorName || '',
       status: 'PENDING',
-      guaranteedAmount: toDecimal128(guaranteedAmount)
+      guaranteedAmount: toDecimal(guaranteedAmount)
     };
   }
 }
+
 
 /**
  * Main loan disbursement transaction processing
  */
 async function processLoanDisbursementTransactions({
-  session,
+  transaction: t,
   loanAccount,
   customerAccount,
   AMOUNT,
@@ -304,13 +280,15 @@ async function processLoanDisbursementTransactions({
   guarantorId,
   guaranteedAmount = 0,
   guarantorName,
-  TRANSACTION_ID,
+  TRANSACTION_IDENTIFIER, // **CHANGED: Use TRANSACTION_IDENTIFIER**
+  TRANSACTION_ID, // Keep for backward compatibility
   EVENT_ID,
   JOURNAL_ID,
+  TRAN_JOURNAL_ID,
   transactionReferences = {},
   branchId
 }) {
-  if (!session) throw new Error('Database session is required');
+  if (!t) throw new Error('Database transaction is required');
   if (!loanAccount) throw new Error('Loan account is required');
   if (!customerAccount) throw new Error('Customer account is required');
   if (!fundingAcctNo || !ACCT_NO) throw new Error('Account numbers are required');
@@ -321,12 +299,22 @@ async function processLoanDisbursementTransactions({
   console.log('Loan Interest Rate ID (LOAN_PROUD_INT_ID):', loanAccount.LOAN_INTEREST_RATE_ID);
 
   // Generate IDs if not provided
-  if (!TRANSACTION_ID || !EVENT_ID || !JOURNAL_ID) {
-    const ids = generateTransactionId();
-    TRANSACTION_ID = ids.TRANSACTION_ID;
+  if (!TRANSACTION_IDENTIFIER || !EVENT_ID || !JOURNAL_ID || !TRAN_JOURNAL_ID) {
+    const ids = await Transaction.generateTransactionIds(t); // **CHANGED: Use Transaction model method**
+    TRANSACTION_IDENTIFIER = ids.TRANSACTION_IDENTIFIER;
+    TRANSACTION_ID = ids.TRANSACTION_ID; // Also set TRANSACTION_ID for backward compatibility
     EVENT_ID = ids.EVENT_ID;
     JOURNAL_ID = ids.JOURNAL_ID;
+    TRAN_JOURNAL_ID = ids.TRAN_JOURNAL_ID || ids.JOURNAL_ID;
   }
+
+  console.log('🔍 Using Transaction IDs:', {
+    TRANSACTION_IDENTIFIER,
+    TRANSACTION_ID,
+    EVENT_ID,
+    JOURNAL_ID,
+    TRAN_JOURNAL_ID
+  });
 
   // Generate transaction references
   const timestamp = Date.now();
@@ -343,7 +331,7 @@ async function processLoanDisbursementTransactions({
     interestGLAccountNo, 
     feeGLAccountNo,
     productDetails 
-  } = await getGLAccountsFromProduct(productId, session);
+  } = await getGLAccountsFromProduct(productId, t);
 
   console.log('Using GL accounts for disbursement:', {
     loanGLAccount,
@@ -377,20 +365,6 @@ async function processLoanDisbursementTransactions({
   });
 
   // ============================================
-  // 1. ENSURE loanAccount IS A MONGOOSE DOCUMENT
-  // ============================================
-  let loanDoc = await ensureLoanAccountIsDocument(loanAccount, loanAccount._id, session);
-  
-  console.log('\n=== LOAN ACCOUNT DETAILS ===');
-  console.log('Document _id:', loanDoc._id);
-  console.log('LOAN_INTEREST_RATE_ID:', loanDoc.LOAN_INTEREST_RATE_ID);
-  console.log('Existing INTEREST_RATE:', loanDoc.INTEREST_RATE ? parseFloat(loanDoc.INTEREST_RATE.toString()) : 'N/A');
-
-  if (!(loanDoc instanceof mongoose.Document)) {
-    throw new Error('Failed to obtain a valid Mongoose document for loan account');
-  }
-
-  // ============================================
   // 2. FETCH AND USE ANNUAL_PERCENTAGE_RATE FROM LOAN_INTEREST_RATE
   // ============================================
   console.log('\n=== FETCHING ANNUAL_PERCENTAGE_RATE FROM LOAN_INTEREST_RATE ===');
@@ -400,13 +374,16 @@ async function processLoanDisbursementTransactions({
   let interestRateSource;
   let annualPercentageRate = null;
 
-  if (loanDoc.LOAN_INTEREST_RATE_ID) {
+  if (loanAccount.LOAN_INTEREST_RATE_ID) {
     try {
       // Fetch LoanInterestRate by LOAN_PROUD_INT_ID
       const loanInterestRate = await LoanInterestRate.findOne({
-        LOAN_PROUD_INT_ID: parseInt(loanDoc.LOAN_INTEREST_RATE_ID),
-        STATUS: 'ACTIVE'
-      }).session(session);
+        where: {
+          LOAN_PROUD_INT_ID: parseInt(loanAccount.LOAN_INTEREST_RATE_ID),
+          STATUS: 'ACTIVE'
+        },
+        transaction: t
+      });
       
       if (loanInterestRate) {
         loanInterestRateDetails = {
@@ -437,14 +414,14 @@ async function processLoanDisbursementTransactions({
           annualPercentageRate = parseFloat(loanInterestRate.ANNUAL_PERCENTAGE_RATE);
           
           if (!isNaN(annualPercentageRate) && annualPercentageRate > 0) {
-            finalInterestRate = toDecimal128(annualPercentageRate);
+            finalInterestRate = toDecimal(annualPercentageRate);
             interestRateSource = 'LOAN_INTEREST_RATE_ANNUAL';
             
             console.log(`✓ USING ANNUAL_PERCENTAGE_RATE from LoanInterestRate: ${annualPercentageRate}%`);
             
             // Log what we're ignoring
-            const existingLoanAccountRate = loanDoc.INTEREST_RATE ? 
-              parseFloat(loanDoc.INTEREST_RATE.toString()) : null;
+            const existingLoanAccountRate = loanAccount.INTEREST_RATE ? 
+              parseFloat(loanAccount.INTEREST_RATE.toString()) : null;
             
             if (existingLoanAccountRate && Math.abs(existingLoanAccountRate - annualPercentageRate) > 0.1) {
               console.warn(`⚠️ OVERRIDING loan account rate of ${existingLoanAccountRate}%`);
@@ -462,7 +439,7 @@ async function processLoanDisbursementTransactions({
           throw new Error('ANNUAL_PERCENTAGE_RATE not found in LoanInterestRate configuration');
         }
       } else {
-        throw new Error(`LoanInterestRate with LOAN_PROUD_INT_ID ${loanDoc.LOAN_INTEREST_RATE_ID} not found or not active`);
+        throw new Error(`LoanInterestRate with LOAN_PROUD_INT_ID ${loanAccount.LOAN_INTEREST_RATE_ID} not found or not active`);
       }
     } catch (error) {
       console.error('❌ Error fetching/using LoanInterestRate:', error.message);
@@ -474,13 +451,16 @@ async function processLoanDisbursementTransactions({
     
     try {
       const defaultLoanInterestRate = await LoanInterestRate.findOne({
-        IS_DEFAULT: true,
-        STATUS: 'ACTIVE'
-      }).session(session);
+        where: {
+          IS_DEFAULT: true,
+          STATUS: 'ACTIVE'
+        },
+        transaction: t
+      });
       
       if (defaultLoanInterestRate && defaultLoanInterestRate.ANNUAL_PERCENTAGE_RATE) {
         annualPercentageRate = parseFloat(defaultLoanInterestRate.ANNUAL_PERCENTAGE_RATE);
-        finalInterestRate = toDecimal128(annualPercentageRate);
+        finalInterestRate = toDecimal(annualPercentageRate);
         interestRateSource = 'DEFAULT_LOAN_INTEREST_RATE_ANNUAL';
         
         console.log(`✓ Using default LoanInterestRate ANNUAL_PERCENTAGE_RATE: ${annualPercentageRate}%`);
@@ -501,10 +481,10 @@ async function processLoanDisbursementTransactions({
   if (guarantorId) {
     guarantorDetails = await processGuarantorId(
       guarantorId, 
-      loanDoc, 
+      loanAccount, 
       guaranteedAmount, 
       guarantorName, 
-      session
+      t
     );
   }
 
@@ -514,157 +494,88 @@ async function processLoanDisbursementTransactions({
   console.log('\n=== UPDATING LOAN ACCOUNT WITH ANNUAL_PERCENTAGE_RATE ===');
   console.log(`Setting interest rate to: ${annualPercentageRate}%`);
   
-  loanDoc.LOAN_STATUS = 'ACTIVE';
-  loanDoc.ACTUAL_DISBURSEMENT = toDecimal128(netDisbursement);
-  loanDoc.DISBURSEMENT_DATE = transactionDate;
-  loanDoc.OUTSTANDING_PRINCIPAL = toDecimal128(disbursementAmount);
-  loanDoc.outstanding_balance = toDecimal128(disbursementAmount);
-  loanDoc.START_DT = transactionDate;
-  loanDoc.INTEREST_RATE = finalInterestRate; // Set from ANNUAL_PERCENTAGE_RATE
-  
-  // Store LoanInterestRate details
-  if (loanInterestRateDetails) {
-    loanDoc.loanInterestRateDetails = loanInterestRateDetails;
-  }
-  
-  // Store interest rate source info
-  loanDoc.interestRateSource = interestRateSource;
-  
   // Calculate next payment date
   const nextPaymentDate = new Date(transactionDate);
-  if (loanDoc.PAYMENT_FREQUENCY === 'MONTHLY') {
-    nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
-  } else if (loanDoc.PAYMENT_FREQUENCY === 'WEEKLY') {
-    nextPaymentDate.setDate(nextPaymentDate.getDate() + 7);
-  } else if (loanDoc.PAYMENT_FREQUENCY === 'DAILY') {
-    nextPaymentDate.setDate(nextPaymentDate.getDate() + 1);
-  } else {
-    nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+  const paymentFrequency = loanAccount.PAYMENT_FREQUENCY || 'MONTHLY';
+  
+  switch(paymentFrequency.toUpperCase()) {
+    case 'MONTHLY':
+      nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+      break;
+    case 'WEEKLY':
+      nextPaymentDate.setDate(nextPaymentDate.getDate() + 7);
+      break;
+    case 'DAILY':
+      nextPaymentDate.setDate(nextPaymentDate.getDate() + 1);
+      break;
+    default:
+      nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
   }
-  loanDoc.NEXT_PAYMENT_DATE = nextPaymentDate;
-  
-  // Update other fields
-  loanDoc.PRIMARY_OFFICER_ID = loanDoc.PRIMARY_OFFICER_ID || CREATED_BY;
-  loanDoc.JOURNAL_ID = JOURNAL_ID;
-  loanDoc.TRANSACTION_ID = TRANSACTION_ID;
-  loanDoc.EVENT_ID = EVENT_ID;
-  
-  // Update upfront interest if applicable
-  if (upfrontInterestAmount > 0) {
-    loanDoc.upfrontInterestDeducted = true;
-    loanDoc.upfrontInterestAmount = toDecimal128(upfrontInterestAmount);
-    loanDoc.deductUpfrontInterest = deductUpfrontInterest;
-    loanDoc.partialUpfrontInterest = partialUpfrontInterest;
-    if (partialUpfrontInterest) {
-      loanDoc.upfrontInterestPercentage = toDecimal128(upfrontInterestPercentage);
-    }
-  }
-  
-  // Update guarantor details if provided
-  if (guarantorDetails) {
-    loanDoc.HAS_GUARANTOR = true;
-    loanDoc.guarantorDetails = {
-      ...loanDoc.guarantorDetails,
-      ...guarantorDetails
-    };
-  }
-  
-  // Save GL accounts used
-  loanDoc.FEE_DETAILS = {
-    ...loanDoc.FEE_DETAILS,
-    processingFee: toDecimal128(feeAmount),
-    totalFees: toDecimal128(feeAmount),
-    upfrontInterest: toDecimal128(upfrontInterestAmount),
-    upfrontInterestPercentage: toDecimal128(upfrontInterestPercentage)
+
+  // Prepare loan account update data
+  const loanUpdateData = {
+    LOAN_STATUS: 'ACTIVE',
+    ACTUAL_DISBURSEMENT: toDecimal(disbursementAmount),
+    DISBURSEMENT_DATE: transactionDate,
+    OUTSTANDING_PRINCIPAL: toDecimal(disbursementAmount),
+    outstanding_balance: toDecimal(disbursementAmount),
+    START_DT: transactionDate,
+    INTEREST_RATE: finalInterestRate,
+    NEXT_PAYMENT_DATE: nextPaymentDate,
+    PRIMARY_OFFICER_ID: loanAccount.PRIMARY_OFFICER_ID || CREATED_BY,
+    JOURNAL_ID: JOURNAL_ID,
+    TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
+    TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER, // **CHANGED: Use TRANSACTION_IDENTIFIER**
+    TRANSACTION_ID: TRANSACTION_ID, // Keep for backward compatibility
+    EVENT_ID: EVENT_ID,
+    interestRateSource,
+    lastUpdated: new Date()
   };
 
-  console.log('Saving loan account with ANNUAL_PERCENTAGE_RATE...');
+  // Add fee details
+  loanUpdateData.processingFee = toDecimal(feeAmount);
+  loanUpdateData.totalFees = toDecimal(feeAmount);
+  loanUpdateData.upfrontInterest = toDecimal(upfrontInterestAmount);
+  loanUpdateData.upfrontInterestPercentage = toDecimal(upfrontInterestPercentage);
+
+  // Add LoanInterestRate details
+  if (loanInterestRateDetails) {
+    loanUpdateData.loanInterestRateDetails = JSON.stringify(loanInterestRateDetails);
+  }
+
+  // Add upfront interest fields
+  if (upfrontInterestAmount > 0) {
+    loanUpdateData.upfrontInterestDeducted = true;
+    loanUpdateData.upfrontInterestAmount = toDecimal(upfrontInterestAmount);
+    loanUpdateData.deductUpfrontInterest = deductUpfrontInterest;
+    loanUpdateData.partialUpfrontInterest = partialUpfrontInterest;
+    if (partialUpfrontInterest) {
+      loanUpdateData.upfrontInterestPercentage = toDecimal(upfrontInterestPercentage);
+    }
+  }
+
+  // Add guarantor details
+  if (guarantorDetails) {
+    loanUpdateData.HAS_GUARANTOR = true;
+    loanUpdateData.guarantorDetails = JSON.stringify(guarantorDetails);
+  }
+
+  console.log('Updating loan account with ANNUAL_PERCENTAGE_RATE...');
   
   try {
-    await loanDoc.save({ session });
+    await LoanAccount.update(
+      loanUpdateData,
+      {
+        where: { id: loanAccount.id },
+        transaction: t
+      }
+    );
     console.log('✅ Loan account updated successfully');
     console.log(`✅ Final interest rate: ${annualPercentageRate}% (from ANNUAL_PERCENTAGE_RATE)`);
   } catch (saveError) {
-    console.error('❌ Error saving loan account:', saveError.message);
-    console.error('Save error stack:', saveError.stack);
-    
-    // Try alternative save method
-    try {
-      console.log('Trying alternative save method using findByIdAndUpdate...');
-      
-      const updateData = {
-        LOAN_STATUS: 'ACTIVE',
-        ACTUAL_DISBURSEMENT: toDecimal128(netDisbursement),
-        DISBURSEMENT_DATE: transactionDate,
-        OUTSTANDING_PRINCIPAL: toDecimal128(disbursementAmount),
-        outstanding_balance: toDecimal128(disbursementAmount),
-        START_DT: transactionDate,
-        NEXT_PAYMENT_DATE: nextPaymentDate,
-        INTEREST_RATE: finalInterestRate, // From ANNUAL_PERCENTAGE_RATE
-        PRIMARY_OFFICER_ID: loanDoc.PRIMARY_OFFICER_ID || CREATED_BY,
-        JOURNAL_ID,
-        TRANSACTION_ID,
-        EVENT_ID,
-        interestRateSource,
-        ...(loanInterestRateDetails && { loanInterestRateDetails }),
-        ...(upfrontInterestAmount > 0 && {
-          upfrontInterestDeducted: true,
-          upfrontInterestAmount: toDecimal128(upfrontInterestAmount),
-          deductUpfrontInterest,
-          partialUpfrontInterest,
-          ...(partialUpfrontInterest && { upfrontInterestPercentage: toDecimal128(upfrontInterestPercentage) })
-        }),
-        'FEE_DETAILS.processingFee': toDecimal128(feeAmount),
-        'FEE_DETAILS.totalFees': toDecimal128(feeAmount),
-        'FEE_DETAILS.upfrontInterest': toDecimal128(upfrontInterestAmount),
-        'FEE_DETAILS.upfrontInterestPercentage': toDecimal128(upfrontInterestPercentage),
-        lastUpdated: new Date()
-      };
-      
-      // Add guarantor details safely
-      if (guarantorDetails) {
-        updateData.HAS_GUARANTOR = true;
-        
-        if (guarantorDetails.guarantorNumberId) {
-          updateData['guarantorDetails.guarantorNumberId'] = guarantorDetails.guarantorNumberId;
-        }
-        if (guarantorDetails.name) {
-          updateData['guarantorDetails.name'] = guarantorDetails.name;
-        }
-        if (guarantorDetails.phone) {
-          updateData['guarantorDetails.phone'] = guarantorDetails.phone;
-        }
-        if (guarantorDetails.relationship) {
-          updateData['guarantorDetails.relationship'] = guarantorDetails.relationship;
-        }
-        if (guarantorDetails.email) {
-          updateData['guarantorDetails.email'] = guarantorDetails.email;
-        }
-        if (guarantorDetails.address) {
-          updateData['guarantorDetails.address'] = guarantorDetails.address;
-        }
-        if (guarantorDetails.status) {
-          updateData['guarantorDetails.status'] = guarantorDetails.status;
-        }
-        if (guarantorDetails.guaranteedAmount) {
-          updateData['guarantorDetails.guaranteedAmount'] = guarantorDetails.guaranteedAmount;
-        }
-        
-        if (guarantorDetails.guarantorId && mongoose.Types.ObjectId.isValid(guarantorDetails.guarantorId)) {
-          updateData['guarantorDetails.guarantorId'] = guarantorDetails.guarantorId;
-        }
-      }
-      
-      await LoanAccount.findByIdAndUpdate(
-        loanDoc._id,
-        updateData,
-        { session, new: true }
-      );
-      console.log('✅ Loan account updated via findByIdAndUpdate');
-    } catch (updateError) {
-      console.error('❌ Both save methods failed:', updateError.message);
-      throw new Error(`Failed to save loan account: ${updateError.message}`);
-    }
+    console.error('❌ Error updating loan account:', saveError.message);
+    console.error('Update error stack:', saveError.stack);
+    throw new Error(`Failed to update loan account: ${saveError.message}`);
   }
 
   // ============================================
@@ -672,33 +583,47 @@ async function processLoanDisbursementTransactions({
   // ============================================
   const transactionsToCreate = [];
 
-  // Helper function to ensure field names match Transaction schema
-  const createTransactionData = (baseData) => ({
-    TRANSACTION_ID: Number(baseData.TRANSACTION_ID || TRANSACTION_ID),
-    EVENT_ID: Number(baseData.EVENT_ID || EVENT_ID),
-    TRAN_JOURNAL_ID: baseData.TRAN_JOURNAL_ID || JOURNAL_ID,
-    ACCT_NO: baseData.ACCT_NO || ACCT_NO,
-    ACCT_ID: String(baseData.ACCT_ID || loanDoc._id),
-    BU_ID: Number(baseData.BU_ID || loanDoc.BU_ID || branchId || 1),
-    CUST_ID: String(baseData.CUST_ID || loanDoc.CUST_ID),
-    ACCT_NM: baseData.ACCT_NM || loanDoc.ACCT_NM,
-    AMOUNT: Number(baseData.AMOUNT || 0),
-    TRANSACTIONDATE: baseData.TRANSACTIONDATE || transactionDate,
-    TRANSACTION_TYPE: baseData.TRANSACTION_TYPE,
-    description: baseData.description || '',
-    currency: baseData.currency || productDetails.CRNCY_ID || 'NGN',
-    createdBy: baseData.createdBy || CREATED_BY,
-    status: baseData.status || 'COMPLETED',
-    REFERENCE: baseData.REFERENCE || `TXN${Date.now()}`,
-    metadata: baseData.metadata || {}
-  });
+  // **UPDATED: Helper function to create transaction data with TRANSACTION_IDENTIFIER**
+  const createTransactionData = (baseData) => {
+    const txData = {
+      TRANSACTION_IDENTIFIER: baseData.TRANSACTION_IDENTIFIER || TRANSACTION_IDENTIFIER,
+      TRANSACTION_ID: baseData.TRANSACTION_ID || TRANSACTION_ID, // For transaction_id column
+      EVENT_ID: baseData.EVENT_ID || EVENT_ID,
+      TRAN_JOURNAL_ID: baseData.TRAN_JOURNAL_ID || TRAN_JOURNAL_ID || JOURNAL_ID,
+      ACCT_NO: baseData.ACCT_NO || ACCT_NO,
+      ACCT_ID: String(baseData.ACCT_ID || loanAccount.id),
+      BU_ID: Number(baseData.BU_ID || loanAccount.BU_ID || branchId || 1),
+      CUST_ID: String(baseData.CUST_ID || loanAccount.CUST_ID),
+      ACCT_NM: baseData.ACCT_NM || loanAccount.ACCT_NM,
+      AMOUNT: Number(baseData.AMOUNT || 0),
+      TRANSACTIONDATE: baseData.TRANSACTIONDATE || transactionDate,
+      TRANSACTION_TYPE: baseData.TRANSACTION_TYPE,
+      description: baseData.description || '',
+      currency: baseData.currency || productDetails.CRNCY_ID || 'NGN',
+      createdBy: baseData.createdBy || CREATED_BY,
+      status: baseData.status || 'COMPLETED',
+      REFERENCE: baseData.REFERENCE || `TXN${Date.now()}`,
+      metadata: baseData.metadata || {}
+    };
+    
+    console.log('📝 Created transaction data:', {
+      TRANSACTION_IDENTIFIER: txData.TRANSACTION_IDENTIFIER,
+      TRANSACTION_ID: txData.TRANSACTION_ID,
+      TRAN_JOURNAL_ID: txData.TRAN_JOURNAL_ID,
+      EVENT_ID: txData.EVENT_ID
+    });
+    
+    return txData;
+  };
 
   // 1. Main disbursement transaction
   transactionsToCreate.push(createTransactionData({
-    TRANSACTION_ID: Number(TRANSACTION_ID),
+    TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER,
+    TRANSACTION_ID: TRANSACTION_ID,
+    TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
     AMOUNT: disbursementAmount,
     TRANSACTION_TYPE: 'LOAN_DISBURSEMENT',
-    description: `Loan Disbursement to ${loanDoc.ACCT_NM}`,
+    description: `Loan Disbursement to ${loanAccount.ACCT_NM}`,
     REFERENCE: refs.main,
     metadata: {
       loanAccountNo: ACCT_NO,
@@ -709,17 +634,16 @@ async function processLoanDisbursementTransactions({
       upfrontInterestDeducted: upfrontInterestAmount,
       glAccountUsed: loanGLAccount,
       transactionType: 'loan_disbursement',
-      loanInterestRateId: loanDoc.LOAN_INTEREST_RATE_ID,
-      // ANNUAL_PERCENTAGE_RATE info
+      loanInterestRateId: loanAccount.LOAN_INTEREST_RATE_ID,
       interestRate: {
         appliedRate: annualPercentageRate,
         rateSource: interestRateSource,
         loanProudIntId: loanInterestRateDetails?.LOAN_PROUD_INT_ID || null,
         annualPercentageRate: annualPercentageRate,
-        rateType: loanInterestRateDetails?.RATE_TYPE || loanDoc.INTEREST_RATE_TYPE || 'FIXED',
-        calculationMethod: loanInterestRateDetails?.CALCULATION_METHOD || loanDoc.INTEREST_CALCULATION_METHOD || 'FLAT_RATE',
+        rateType: loanInterestRateDetails?.RATE_TYPE || loanAccount.INTEREST_RATE_TYPE || 'FIXED',
+        calculationMethod: loanInterestRateDetails?.CALCULATION_METHOD || loanAccount.INTEREST_CALCULATION_METHOD || 'FLAT_RATE',
         interestType: loanInterestRateDetails?.INTEREST_TYPE || 'SIMPLE',
-        isTermBased: loanDoc.IS_TERM_BASED_RATE || true,
+        isTermBased: loanAccount.IS_TERM_BASED_RATE || true,
         note: `Using ANNUAL_PERCENTAGE_RATE from LoanInterestRate configuration`
       }
     }
@@ -728,7 +652,9 @@ async function processLoanDisbursementTransactions({
   // 2. Fee transaction
   if (feeAmount > 0) {
     transactionsToCreate.push(createTransactionData({
-      TRANSACTION_ID: Number(TRANSACTION_ID) + 1,
+      TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER + 1,
+      TRANSACTION_ID: TRANSACTION_ID ? `TXN${Number(TRANSACTION_IDENTIFIER) + 1}` : undefined,
+      TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
       AMOUNT: feeAmount,
       TRANSACTION_TYPE: 'PROCESSING_FEE',
       description: `Processing Fee for Loan ${ACCT_NO}`,
@@ -747,7 +673,9 @@ async function processLoanDisbursementTransactions({
     const interestType = partialUpfrontInterest ? 'PARTIAL_UPFRONT' : 'FULL_UPFRONT';
     
     transactionsToCreate.push(createTransactionData({
-      TRANSACTION_ID: Number(TRANSACTION_ID) + 2,
+      TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER + 2,
+      TRANSACTION_ID: TRANSACTION_ID ? `TXN${Number(TRANSACTION_IDENTIFIER) + 2}` : undefined,
+      TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
       AMOUNT: upfrontInterestAmount,
       TRANSACTION_TYPE: 'INTEREST',
       description: `${interestType} Interest for Loan ${ACCT_NO}`,
@@ -763,20 +691,35 @@ async function processLoanDisbursementTransactions({
     }));
   }
 
-  // Save transactions
+  // **UPDATED: Save transactions with TRANSACTION_IDENTIFIER**
   try {
     console.log('Creating transactions...');
-    await Transaction.insertMany(transactionsToCreate, { session });
+    for (const transactionData of transactionsToCreate) {
+      // Ensure metadata is stringified for database storage
+      const txData = {
+        ...transactionData,
+        metadata: JSON.stringify(transactionData.metadata)
+      };
+      
+      console.log('🔍 Saving transaction:', {
+        TRANSACTION_IDENTIFIER: txData.TRANSACTION_IDENTIFIER,
+        TRANSACTION_ID: txData.TRANSACTION_ID,
+        TRAN_JOURNAL_ID: txData.TRAN_JOURNAL_ID,
+        TRANSACTION_TYPE: txData.TRANSACTION_TYPE,
+        AMOUNT: txData.AMOUNT
+      });
+      
+      await Transaction.create(txData, { transaction: t });
+    }
     console.log('✅ Transactions created:', transactionsToCreate.length);
   } catch (error) {
     console.error('❌ Error creating transactions:', error.message);
-    
-    if (error.errors) {
-      Object.keys(error.errors).forEach(key => {
-        console.error(`Field ${key}:`, error.errors[key].message);
-      });
-    }
-    
+    console.error('❌ Transaction error details:', {
+      name: error.name,
+      errors: error.errors,
+      sql: error.sql,
+      parameters: error.parameters
+    });
     throw new Error(`Transaction creation failed: ${error.message}`);
   }
 
@@ -785,10 +728,13 @@ async function processLoanDisbursementTransactions({
   // ============================================
   try {
     let customerDoc;
-    if (customerAccount instanceof mongoose.Document) {
+    if (customerAccount.id) {
       customerDoc = customerAccount;
     } else {
-      customerDoc = await CustomerAccount.findOne({ ACCT_NO: fundingAcctNo }).session(session);
+      customerDoc = await CustomerAccount.findOne({ 
+        where: { ACCT_NO: fundingAcctNo },
+        transaction: t 
+      });
       if (!customerDoc) {
         throw new Error(`Customer account ${fundingAcctNo} not found`);
       }
@@ -804,16 +750,22 @@ async function processLoanDisbursementTransactions({
       newBalance
     });
     
-    customerDoc.LEDGER_BALANCE = toDecimal128(newBalance);
-    customerDoc.CLEARED_BALANCE = toDecimal128(newBalance);
-    customerDoc.AVAILABLE_BALANCE = toDecimal128(newBalance);
-    customerDoc.LAST_UPDATED = new Date();
-    
-    if (!customerDoc.transactionHistory) {
-      customerDoc.transactionHistory = [];
+    // Get current transaction history - handle as string or array
+    let transactionHistory = [];
+    try {
+      if (customerDoc.transactionHistory) {
+        if (typeof customerDoc.transactionHistory === 'string') {
+          transactionHistory = JSON.parse(customerDoc.transactionHistory);
+        } else if (Array.isArray(customerDoc.transactionHistory)) {
+          transactionHistory = customerDoc.transactionHistory;
+        }
+      }
+    } catch (parseError) {
+      console.warn('Could not parse transaction history:', parseError.message);
     }
     
-    customerDoc.transactionHistory.push({
+    // Add new transaction
+    transactionHistory.push({
       date: new Date(),
       type: 'LOAN_DISBURSEMENT',
       amount: netDisbursement,
@@ -822,7 +774,19 @@ async function processLoanDisbursementTransactions({
       balanceAfter: newBalance
     });
     
-    await customerDoc.save({ session });
+    await CustomerAccount.update(
+      {
+        LEDGER_BALANCE: toDecimal(newBalance),
+        CLEARED_BALANCE: toDecimal(newBalance),
+        AVAILABLE_BALANCE: toDecimal(newBalance),
+        LAST_UPDATED: new Date(),
+        transactionHistory: JSON.stringify(transactionHistory)
+      },
+      {
+        where: { id: customerDoc.id },
+        transaction: t
+      }
+    );
     
     console.log(`✅ Customer account ${fundingAcctNo} updated. Balance change: +${netDisbursement}`);
   } catch (error) {
@@ -833,82 +797,99 @@ async function processLoanDisbursementTransactions({
   // ============================================
   // 6. UPDATE LOAN PORTFOLIO (SINGLE LOCATION)
   // ============================================
-  if (LoanPortfolio && (branchId || loanDoc.BU_ID)) {
+  if (LoanPortfolio && (branchId || loanAccount.BU_ID)) {
     try {
-      const actualBranchId = branchId || loanDoc.BU_ID;
+      const actualBranchId = branchId || loanAccount.BU_ID;
       const portfolioProductId = Number(productId);
+      const month = transactionDate.getMonth() + 1;
+      const year = transactionDate.getFullYear();
       
       console.log('Updating LoanPortfolio:', {
         BRANCH_ID: actualBranchId,
         PROD_ID: portfolioProductId,
-        MONTH: transactionDate.getMonth() + 1,
-        YEAR: transactionDate.getFullYear(),
+        MONTH: month,
+        YEAR: year,
         productCode: productDetails.productCode
       });
       
-      const updatedPortfolio = await LoanPortfolio.findOneAndUpdate(
-        { 
+      // Find existing portfolio record
+      const existingPortfolio = await LoanPortfolio.findOne({
+        where: {
           BRANCH_ID: actualBranchId,
           PROD_ID: portfolioProductId,
-          MONTH: transactionDate.getMonth() + 1,
-          YEAR: transactionDate.getFullYear()
+          MONTH: month,
+          YEAR: year
         },
-        {
-          $inc: {
-            TOTAL_DISBURSED: disbursementAmount,
-            TOTAL_NET_DISBURSEMENT: netDisbursement,
-            TOTAL_PRINCIPAL: disbursementAmount,
-            OUTSTANDING_PRINCIPAL: disbursementAmount,
-            TOTAL_INTEREST_RECEIVED: upfrontInterestAmount,
-            TOTAL_FEES_RECEIVED: feeAmount,
-            NUMBER_OF_LOANS: 1,
-            ACTIVE_LOANS: 1,
-            DISBURSEMENT_COUNT: 1
-          },
-          $setOnInsert: {
-            BRANCH_ID: actualBranchId,
-            PROD_ID: portfolioProductId,
-            PRODUCT_CODE: productDetails.productCode,
-            PRODUCT_NAME: productDetails.PRODUCT_SHORT_NAME || productDetails.name,
-            PRODUCT_TYPE: productDetails.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
-            MONTH: transactionDate.getMonth() + 1,
-            YEAR: transactionDate.getFullYear(),
-            CURRENCY: productDetails.CRNCY_ID || 'NGN',
-            CREATED_DATE: new Date(),
-            STATUS: 'ACTIVE',
-            CREATED_BY: CREATED_BY,
-            UPDATED_BY: CREATED_BY,
-            YIELD_RATE: annualPercentageRate, // Use ANNUAL_PERCENTAGE_RATE
-            TOTAL_INTEREST_ACCRUED: 0,
-            TOTAL_REPAYMENTS: 0,
-            TOTAL_RECOVERED: 0,
-            TOTAL_DEFAULTS: 0,
-            PORTFOLIO_AT_RISK: 0,
-            PROVISION_AMOUNT: 0,
-            NPL_RATIO: 0,
-            COST_OF_FUNDS: 0,
-            NET_INTEREST_MARGIN: annualPercentageRate, // Use ANNUAL_PERCENTAGE_RATE
-            AVERAGE_LOAN_SIZE: disbursementAmount
-          },
-          $set: {
-            UPDATED_DATE: new Date()
-          }
-        },
-        { 
-          upsert: true, 
-          new: true, 
-          session 
-        }
-      );
+        transaction: t
+      });
       
-      console.log('✅ Loan portfolio updated successfully. Document ID:', updatedPortfolio?._id);
+      if (existingPortfolio) {
+        // Update existing portfolio
+        await LoanPortfolio.update(
+          {
+            TOTAL_DISBURSED: (existingPortfolio.TOTAL_DISBURSED || 0) + disbursementAmount,
+            TOTAL_NET_DISBURSEMENT: (existingPortfolio.TOTAL_NET_DISBURSEMENT || 0) + netDisbursement,
+            TOTAL_PRINCIPAL: (existingPortfolio.TOTAL_PRINCIPAL || 0) + disbursementAmount,
+            OUTSTANDING_PRINCIPAL: (existingPortfolio.OUTSTANDING_PRINCIPAL || 0) + disbursementAmount,
+            TOTAL_INTEREST_RECEIVED: (existingPortfolio.TOTAL_INTEREST_RECEIVED || 0) + upfrontInterestAmount,
+            TOTAL_FEES_RECEIVED: (existingPortfolio.TOTAL_FEES_RECEIVED || 0) + feeAmount,
+            NUMBER_OF_LOANS: (existingPortfolio.NUMBER_OF_LOANS || 0) + 1,
+            ACTIVE_LOANS: (existingPortfolio.ACTIVE_LOANS || 0) + 1,
+            DISBURSEMENT_COUNT: (existingPortfolio.DISBURSEMENT_COUNT || 0) + 1,
+            UPDATED_DATE: new Date(),
+            UPDATED_BY: CREATED_BY
+          },
+          {
+            where: { id: existingPortfolio.id },
+            transaction: t
+          }
+        );
+      } else {
+        // Create new portfolio record
+        await LoanPortfolio.create({
+          BRANCH_ID: actualBranchId,
+          PROD_ID: portfolioProductId,
+          PRODUCT_CODE: productDetails.productCode,
+          PRODUCT_NAME: productDetails.PRODUCT_SHORT_NAME || productDetails.name,
+          PRODUCT_TYPE: productDetails.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
+          MONTH: month,
+          YEAR: year,
+          CURRENCY: productDetails.CRNCY_ID || 'NGN',
+          CREATED_DATE: new Date(),
+          STATUS: 'ACTIVE',
+          TOTAL_DISBURSED: disbursementAmount,
+          TOTAL_NET_DISBURSEMENT: netDisbursement,
+          TOTAL_PRINCIPAL: disbursementAmount,
+          OUTSTANDING_PRINCIPAL: disbursementAmount,
+          TOTAL_INTEREST_RECEIVED: upfrontInterestAmount,
+          TOTAL_FEES_RECEIVED: feeAmount,
+          NUMBER_OF_LOANS: 1,
+          ACTIVE_LOANS: 1,
+          DISBURSEMENT_COUNT: 1,
+          YIELD_RATE: annualPercentageRate,
+          TOTAL_INTEREST_ACCRUED: 0,
+          TOTAL_REPAYMENTS: 0,
+          TOTAL_RECOVERED: 0,
+          TOTAL_DEFAULTS: 0,
+          PORTFOLIO_AT_RISK: 0,
+          PROVISION_AMOUNT: 0,
+          NPL_RATIO: 0,
+          COST_OF_FUNDS: 0,
+          NET_INTEREST_MARGIN: annualPercentageRate,
+          AVERAGE_LOAN_SIZE: disbursementAmount,
+          CREATED_BY: CREATED_BY,
+          UPDATED_BY: CREATED_BY
+        }, { transaction: t });
+      }
+      
+      console.log('✅ Loan portfolio updated successfully.');
     } catch (error) {
       console.error('⚠️ Error updating loan portfolio (non-critical):', error.message);
     }
   } else {
     console.log('⚠️ LoanPortfolio update skipped:');
     if (!LoanPortfolio) console.log('  - LoanPortfolio model not available');
-    if (!branchId && !loanDoc.BU_ID) console.log('  - No branch ID provided');
+    if (!branchId && !loanAccount.BU_ID) console.log('  - No branch ID provided');
   }
 
   console.log('=== LOAN DISBURSEMENT COMPLETED SUCCESSFULLY ===');
@@ -936,9 +917,11 @@ async function processLoanDisbursementTransactions({
     transactionReferences: refs,
     guarantorDetails: guarantorDetails || { guarantorId, guarantorName, guaranteedAmount },
     transactionIds: {
+      TRANSACTION_IDENTIFIER,
       TRANSACTION_ID,
       EVENT_ID,
-      JOURNAL_ID
+      JOURNAL_ID,
+      TRAN_JOURNAL_ID
     },
     accountingSummary: {
       totalLoanAmount: disbursementAmount,
@@ -956,93 +939,361 @@ async function processLoanDisbursementTransactions({
   };
 }
 
-async function processDisbursement({
-  session,
-  loanContract,
-  repaymentSchedule,
-  loanProduct,
-  totalFees,
-  interestRate, // This parameter is IGNORED - we use ANNUAL_PERCENTAGE_RATE instead
-  PRODUCT_TYPE,
-  deductUpfrontInterest = false,
-  partialUpfrontInterest = false,
-  upfrontInterestAmount = 0,
-  upfrontInterestPercentage = 0,
-  guarantorDetails,
-  guaranteedAmount,
-  TRANSACTION_ID,
-  EVENT_ID,
-  JOURNAL_ID,
-  workflowId,
-  transactionReferences = {},
-  branchId
-}) {
-  console.log('=== DISBURSEMENT WRAPPER - ANNUAL_PERCENTAGE_RATE WILL BE USED ===');
-  console.log('Note: interestRate parameter will be ignored');
-  console.log('LoanInterestRate.ANNUAL_PERCENTAGE_RATE will be used instead');
+async function processDisbursement(params) {
+  // ==================== CRITICAL VALIDATION ====================
+  console.log('🔍 Starting processDisbursement validation...');
   
-  // The loanContract should have LOAN_INTEREST_RATE_ID which points to LoanInterestRate
-  console.log('Loan Contract Details:', {
-    LOAN_INTEREST_RATE_ID: loanContract.LOAN_INTEREST_RATE_ID,
-    loanAccountNumber: loanContract.loanAccountNumber,
-    PROD_ID: loanProduct?.PROD_ID
+  if (!params) {
+    throw new Error('processDisbursement: params object is required');
+  }
+  
+  if (!params.customerAccount) {
+    console.error('❌ processDisbursement: customerAccount parameter is missing');
+    console.error('❌ Available params:', Object.keys(params));
+    throw new Error('customerAccount parameter is required');
+  }
+  
+  if (!params.customerAccount.id) {
+    console.error('❌ processDisbursement: Invalid customerAccount object:', {
+      hasId: !!params.customerAccount.id,
+      hasAccountNumber: !!params.customerAccount.account_number,
+      customerAccount: params.customerAccount
+    });
+    throw new Error('customerAccount.id is required');
+  }
+  
+  if (!params.loanContract) {
+    throw new Error('loanContract parameter is required');
+  }
+  
+  if (!params.transaction) {
+    throw new Error('transaction parameter is required');
+  }
+  
+  console.log('✅ processDisbursement validation passed:', {
+    customerAccountId: params.customerAccount.id,
+    customerAccountNumber: params.customerAccount.account_number,
+    loanContractId: params.loanContract?.id,
+    hasTransaction: !!params.transaction
   });
   
-  // Validate required parameters
-  if (!loanContract) {
-    throw new Error('loanContract is required');
-  }
-  
-  if (!loanProduct) {
-    throw new Error('loanProduct is required');
-  }
-  
-  if (!loanContract.loanAccountNumber) {
-    throw new Error('loanAccountNumber is required in loanContract');
-  }
-  
-  if (!loanContract.fundingAccountNumber) {
-    throw new Error('fundingAccountNumber is required in loanContract');
-  }
-  
-  if (!loanContract.loanAmount) {
-    throw new Error('loanAmount is required in loanContract');
-  }
-  
-  // IMPORTANT: We're NOT using the interestRate parameter at all
-  // The processLoanDisbursementTransactions function will fetch and use
-  // ANNUAL_PERCENTAGE_RATE from LoanInterestRate configuration
-  
-  return await processLoanDisbursementTransactions({
-    session,
-    loanAccount: loanContract,
-    customerAccount: loanContract.customerAccount,
-    AMOUNT: loanContract.loanAmount,
-    loanFeeAmount: totalFees,
-    fundingAcctNo: loanContract.fundingAccountNumber,
-    ACCT_NO: loanContract.loanAccountNumber,
-    CREATED_BY: loanContract.createdBy || 'SYSTEM',
-    DISBURSEMENT_DATE: new Date(),
-    INTEREST_RATE: null, // Explicitly pass null since we're ignoring this parameter
+  // ==================== FUNCTION PARAMETERS ====================
+  const {
+    transaction,
+    loanContract,
+    customerAccount,
+    repaymentSchedule,
+    loanProduct,
+    totalFees = 0,
+    interestRate,
     PRODUCT_TYPE,
-    productId: loanProduct.PROD_ID,
-    deductUpfrontInterest,
-    partialUpfrontInterest,
-    upfrontInterestAmount,
-    upfrontInterestPercentage,
-    guarantorId: guarantorDetails?.guarantorId,
-    guaranteedAmount,
-    guarantorName: guarantorDetails?.name,
+    deductUpfrontInterest = false,
+    partialUpfrontInterest = false,
+    upfrontInterestAmount = 0,
+    upfrontInterestPercentage = 0,
+    guarantorDetails = null,
+    guaranteedAmount = 0,
     TRANSACTION_ID,
     EVENT_ID,
     JOURNAL_ID,
-    transactionReferences,
-    branchId
+    transactionReferences = {},
+    branchId = 1,
+    CREATED_BY = 'SYSTEM'
+  } = params;
+  
+  // ==================== ADDITIONAL VALIDATION WITH FALLBACKS ====================
+  console.log('🔍 Validating disbursement parameters with fallbacks...');
+  
+  // Check for missing fields with fallbacks
+  const missingFields = [];
+  
+  // 1. Check loanContract fields with multiple possible names
+  if (!loanContract.loanAccountNumber && 
+      !loanContract.LOAN_ACCOUNT_NUMBER && 
+      !loanContract.ACCT_NO) {
+    missingFields.push('loanContract.loanAccountNumber');
+  } else {
+    // Set the field with fallback logic
+    loanContract.loanAccountNumber = loanContract.loanAccountNumber || 
+                                    loanContract.LOAN_ACCOUNT_NUMBER || 
+                                    loanContract.ACCT_NO;
+    console.log('📝 Set loanAccountNumber:', loanContract.loanAccountNumber);
+  }
+  
+  // 2. Check principal amount with multiple possible names
+  if ((!loanContract.principal || loanContract.principal === 0) && 
+      (!loanContract.LOAN_AMOUNT || loanContract.LOAN_AMOUNT === 0) &&
+      (!loanContract.PRINCIPAL || loanContract.PRINCIPAL === 0)) {
+    missingFields.push('loanContract.principal');
+  } else {
+    // Set the field with fallback logic
+    loanContract.principal = loanContract.principal || 
+                           loanContract.LOAN_AMOUNT || 
+                           loanContract.PRINCIPAL || 
+                           0;
+    loanContract.principal = parseFloat(loanContract.principal);
+    console.log('📝 Set principal:', loanContract.principal);
+  }
+  
+  // 3. Check repaymentSchedule.totalRepaymentAmount with fallbacks
+  if ((!repaymentSchedule || !repaymentSchedule.totalRepaymentAmount) && 
+      (!repaymentSchedule?.TOTAL_REPAYMENT_AMOUNT) &&
+      (!repaymentSchedule?.totalRepayable)) {
+    missingFields.push('repaymentSchedule.totalRepaymentAmount');
+  } else if (repaymentSchedule) {
+    // Set the field with fallback logic
+    repaymentSchedule.totalRepaymentAmount = repaymentSchedule.totalRepaymentAmount || 
+                                           repaymentSchedule.TOTAL_REPAYMENT_AMOUNT || 
+                                           repaymentSchedule.totalRepayable || 
+                                           0;
+    repaymentSchedule.totalRepaymentAmount = parseFloat(repaymentSchedule.totalRepaymentAmount);
+    console.log('📝 Set totalRepaymentAmount:', repaymentSchedule.totalRepaymentAmount);
+  } else {
+    missingFields.push('repaymentSchedule (object missing)');
+  }
+  
+  // 4. Validate numeric values
+  if (loanContract.principal <= 0) {
+    console.error('❌ Invalid principal amount:', loanContract.principal);
+    missingFields.push('loanContract.principal (must be > 0)');
+  }
+  
+  if (typeof interestRate !== 'number' || interestRate < 0) {
+    console.error('❌ Invalid interest rate:', interestRate);
+    missingFields.push('interestRate (must be >= 0)');
+  }
+  
+  // 5. Log what we have for debugging
+  console.log('🔍 Field Status:', {
+    loanAccountNumber: loanContract.loanAccountNumber || 'MISSING',
+    principal: loanContract.principal || 'MISSING',
+    totalRepaymentAmount: repaymentSchedule?.totalRepaymentAmount || 'MISSING',
+    loanProductId: loanProduct?.PROD_ID || loanProduct?.id || 'MISSING',
+    transactionId: TRANSACTION_ID || 'MISSING',
+    eventId: EVENT_ID || 'MISSING',
+    journalId: JOURNAL_ID || 'MISSING'
   });
+  
+  if (missingFields.length > 0) {
+    console.error('❌ Missing/Invalid fields:', missingFields);
+    console.error('❌ Loan Contract:', loanContract);
+    console.error('❌ Repayment Schedule:', repaymentSchedule);
+    console.error('❌ Loan Product:', loanProduct);
+    
+    throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+  }
+  
+  console.log('✅ All parameters validated successfully');
+  
+  // ==================== CALL THE MAIN DISBURSEMENT FUNCTION ====================
+  console.log('🚀 Calling processLoanDisbursementTransactions...');
+  
+  try {
+    // Convert parameters for the main disbursement function
+    const disbursementParams = {
+      transaction: transaction,
+      loanAccount: {
+        id: loanContract.id,
+        LOAN_ACCOUNT_NUMBER: loanContract.loanAccountNumber,
+        ACCT_NO: loanContract.loanAccountNumber,
+        ACCT_NM: loanContract.accountName || customerAccount.account_name || 'Unknown',
+        CUST_ID: loanContract.customerId || customerAccount.customer_id,
+        PROD_ID: loanProduct.PROD_ID,
+        PRODUCT_TYPE: PRODUCT_TYPE,
+        INTEREST_RATE: interestRate,
+        principal: loanContract.principal,
+        BU_ID: branchId,
+        // Add any other fields that processLoanDisbursementTransactions expects
+        ...loanContract
+      },
+      customerAccount: customerAccount,
+      AMOUNT: loanContract.principal,
+      loanFeeAmount: totalFees,
+      fundingAcctNo: loanContract.fundingAccountNumber || customerAccount.account_number,
+      ACCT_NO: loanContract.loanAccountNumber,
+      CREATED_BY: CREATED_BY,
+      PRODUCT_TYPE: PRODUCT_TYPE,
+      productId: loanProduct.PROD_ID,
+      deductUpfrontInterest: deductUpfrontInterest,
+      partialUpfrontInterest: partialUpfrontInterest,
+      upfrontInterestAmount: upfrontInterestAmount,
+      upfrontInterestPercentage: upfrontInterestPercentage,
+      guarantorId: guarantorDetails?.guarantorId,
+      guaranteedAmount: guaranteedAmount,
+      guarantorName: guarantorDetails?.name,
+      TRANSACTION_ID: TRANSACTION_ID,
+      EVENT_ID: EVENT_ID,
+      JOURNAL_ID: JOURNAL_ID,
+      transactionReferences: transactionReferences,
+      branchId: branchId
+    };
+    
+    console.log('📤 Passing to processLoanDisbursementTransactions:', {
+      loanAccountNumber: disbursementParams.loanAccount.LOAN_ACCOUNT_NUMBER,
+      amount: disbursementParams.AMOUNT,
+      productId: disbursementParams.productId
+    });
+    
+    // Call the main disbursement function
+    const result = await processLoanDisbursementTransactions(disbursementParams);
+    
+    console.log('✅ processLoanDisbursementTransactions completed successfully');
+    
+    // Return formatted result
+    return {
+      success: true,
+      loanAmount: result.loanAmount,
+      netDisbursementToCustomer: result.netDisbursementToCustomer,
+      feeCollected: result.feeCollected,
+      upfrontInterestCollected: result.upfrontInterestCollected,
+      interestRateDetails: result.interestRateDetails,
+      transactionIds: result.transactionIds,
+      accountingSummary: result.accountingSummary,
+      disbursementDate: new Date()
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in processDisbursement:', error.message);
+    console.error('Stack trace:', error.stack);
+    throw new Error(`Disbursement process failed: ${error.message}`);
+  }
+}
+
+// Helper function for complete loan disbursement
+export async function completeLoanDisbursement(loanId, userId, branchId, options = {}) {
+  let localTransaction = null;
+  let createdTransaction = false;
+  
+  try {
+    // Create transaction if not provided in options
+    if (!options.transaction) {
+      localTransaction = await sequelize.transaction();
+      createdTransaction = true;
+    } else {
+      localTransaction = options.transaction;
+    }
+    
+    console.log(`🚀 Starting complete loan disbursement for loan ID: ${loanId}`);
+    
+    // Fetch loan account
+    const loanAccount = await LoanAccount.findByPk(loanId, { 
+      transaction: localTransaction 
+    });
+    
+    if (!loanAccount) {
+      throw new Error(`Loan account not found: ${loanId}`);
+    }
+    
+    // Fetch customer account
+    const customerAccount = await CustomerAccount.findOne({
+      where: { 
+        [Op.or]: [
+          { ACCT_NO: loanAccount.savingsAccountNo },
+          { account_number: loanAccount.savingsAccountNo }
+        ]
+      },
+      transaction: localTransaction
+    });
+    
+    if (!customerAccount) {
+      throw new Error(`Customer account not found for savings account: ${loanAccount.savingsAccountNo}`);
+    }
+    
+    // Fetch loan product
+    const loanProduct = await LoanProduct.findOne({
+      where: { PROD_ID: loanAccount.PROD_ID },
+      transaction: localTransaction
+    });
+    
+    if (!loanProduct) {
+      throw new Error(`Loan product not found: ${loanAccount.PROD_ID}`);
+    }
+    
+    // Calculate fees and upfront interest
+    const totalFees = parseFloat(loanAccount.FEE_DETAILS?.totalFees || 0);
+    const upfrontInterestAmount = parseFloat(loanAccount.UPFRONT_INTEREST_AMOUNT || 0);
+    
+    // Process disbursement
+    const result = await processLoanDisbursementTransactions({
+      transaction: localTransaction,
+      loanAccount,
+      customerAccount,
+      AMOUNT: loanAccount.DISBURSEMENT_LIMIT || loanAccount.loanAmount,
+      loanFeeAmount: totalFees,
+      fundingAcctNo: loanAccount.savingsAccountNo,
+      ACCT_NO: loanAccount.ACCT_NO,
+      CREATED_BY: userId,
+      PRODUCT_TYPE: loanAccount.PRODUCT_TYPE,
+      productId: loanAccount.PROD_ID,
+      deductUpfrontInterest: loanAccount.deductUpfrontInterest || false,
+      partialUpfrontInterest: loanAccount.partialUpfrontInterest || false,
+      upfrontInterestAmount: upfrontInterestAmount,
+      upfrontInterestPercentage: loanAccount.upfrontInterestPercentage || 0,
+      guarantorId: loanAccount.guarantorDetails?.guarantorId,
+      guaranteedAmount: loanAccount.guarantorDetails?.guaranteedAmount,
+      guarantorName: loanAccount.guarantorDetails?.name,
+      branchId: branchId || loanAccount.BU_ID
+    });
+    
+    // Update repayment schedule if it exists
+    const repaymentSchedule = await RepaymentSchedule.findOne({
+      where: { LOAN_ACCOUNT_ID: loanAccount.id },
+      transaction: localTransaction
+    });
+    
+    if (repaymentSchedule) {
+      await RepaymentSchedule.update(
+        {
+          STATUS: 'ACTIVE',
+          DISBURSEMENT_STATUS: 'COMPLETED',
+          START_DATE: new Date()
+        },
+        {
+          where: { id: repaymentSchedule.id },
+          transaction: localTransaction
+        }
+      );
+    }
+    
+    // Commit transaction if we created it
+    if (createdTransaction) {
+      await localTransaction.commit();
+    }
+    
+    console.log(`✅ Loan disbursement completed successfully for ${loanAccount.ACCT_NO}`);
+    
+    return {
+      success: true,
+      message: 'Loan disbursement completed successfully',
+      ...result
+    };
+    
+  } catch (error) {
+    // Rollback transaction if we created it
+    if (createdTransaction && localTransaction) {
+      await localTransaction.rollback();
+    }
+    
+    console.error('❌ Loan disbursement failed:', error);
+    
+    return {
+      success: false,
+      message: `Loan disbursement failed: ${error.message}`,
+      error: error.message
+    };
+  }
 }
 
 export {
   processLoanDisbursementTransactions,
   processDisbursement,
-  getGLAccountsFromProduct
+  getGLAccountsFromProduct,
+  // completeLoanDisbursement
+};
+
+export default {
+  processLoanDisbursementTransactions,
+  processDisbursement,
+  getGLAccountsFromProduct,
+  completeLoanDisbursement
 };

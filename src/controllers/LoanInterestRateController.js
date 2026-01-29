@@ -1,10 +1,13 @@
-// controllers/LoanInterestController.js - COMPLETE FIXED VERSION
+// controllers/LoanInterestController.js - COMPLETE FIXED VERSION with Sequelize
 import asyncHandler from 'express-async-handler';
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
+import { Op } from 'sequelize';
+import { validationResult } from 'express-validator';
+
+// Models (Sequelize imports)
 import LoanInterestRate from '../models/LoanInterestRate.js';
 import RateIndex from '../models/Rate-Index.js'; // FIXED: Correct import path
 import AuditTrail from '../models/AuditTrail.js';
-import { validationResult } from 'express-validator';
 
 // Helper functions
 const getClientIp = (req) => {
@@ -76,12 +79,13 @@ const validateRateValues = (minRate, maxRate, defaultRate) => {
     return { valid: true };
 };
 
-const generateUniqueLoanProudIntId = async (session) => {
+const generateUniqueLoanProudIntId = async (transaction) => {
     try {
-        const lastRate = await LoanInterestRate.findOne()
-            .sort({ LOAN_PROUD_INT_ID: -1 })
-            .select('LOAN_PROUD_INT_ID')
-            .session(session || null);
+        const lastRate = await LoanInterestRate.findOne({
+            order: [['LOAN_PROUD_INT_ID', 'DESC']],
+            attributes: ['LOAN_PROUD_INT_ID'],
+            transaction
+        });
         
         const baseId = 1000;
         return lastRate && lastRate.LOAN_PROUD_INT_ID 
@@ -148,16 +152,13 @@ const calculateFlatRateEMI = (principal, flatRatePercent, termMonths) => {
 
 const LoanInterestController = {
  
-   // CREATE LOAN INTEREST RATE - FORCED FLAT RATE VERSION
-// CREATE LOAN INTEREST RATE - FORCED FLAT RATE VERSION (FIXED)
 createInterestRate: asyncHandler(async (req, res) => {
-    const session = await mongoose.startSession();
+    const transaction = await sequelize.transaction();
     
     try {
-        session.startTransaction();
-        
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
@@ -185,8 +186,8 @@ createInterestRate: asyncHandler(async (req, res) => {
             INDEX_RATE_ID,
             MARGIN_RATE = 0,
             SPREAD_RATE = 0,
-            MIN_LOAN_AMOUNT = '0.00',
-            MAX_LOAN_AMOUNT = '1000000000.00',
+            MIN_LOAN_AMOUNT = 0.00,
+            MAX_LOAN_AMOUNT = 1000000000.00,
             CAPITALIZE_INTEREST = false,
             COMPOUNDING_FREQUENCY = 'MONTHLY',
             AMORTIZED = true,
@@ -194,7 +195,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             RATE_CHANGE_ALLOWED = false,
             RATE_CHANGE_NOTICE_DAYS = 30,
             MAX_RATE_CHANGES = 1,
-            ORIGINATION_FEE_RATE = 0, // This is the correct field name
+            ORIGINATION_FEE_RATE = 0,
             PROCESSING_FEE_FIXED = 0,
             LATE_PAYMENT_PENALTY_RATE = 0,
             EARLY_REPAYMENT_PENALTY_RATE = 0,
@@ -209,6 +210,7 @@ createInterestRate: asyncHandler(async (req, res) => {
 
         // FLAT RATE VALIDATION
         if (INTEREST_TYPE.toUpperCase() !== 'SIMPLE') {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'For flat rate calculation, INTEREST_TYPE must be SIMPLE'
@@ -216,12 +218,14 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
         
         if (CAPITALIZE_INTEREST) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'For flat rate calculation, CAPITALIZE_INTEREST must be false'
             });
         }
         
+        // Validate rate values
         const rateValidation = validateFlatRateValues(
             MIN_RATE_PER_MONTH,
             MAX_RATE_PER_MONTH,
@@ -230,6 +234,7 @@ createInterestRate: asyncHandler(async (req, res) => {
         );
         
         if (!rateValidation.valid) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: rateValidation.message
@@ -242,6 +247,7 @@ createInterestRate: asyncHandler(async (req, res) => {
         if (LOAN_PROUD_INT_ID) {
             const providedId = parseInt(LOAN_PROUD_INT_ID);
             if (isNaN(providedId)) {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: 'LOAN_PROUD_INT_ID must be a valid number'
@@ -249,10 +255,12 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
             
             const existingWithId = await LoanInterestRate.findOne({ 
-                LOAN_PROUD_INT_ID: providedId 
-            }).session(session);
+                where: { LOAN_PROUD_INT_ID: providedId },
+                transaction 
+            });
             
             if (existingWithId) {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: `LOAN_PROUD_INT_ID ${providedId} already exists. Please use a different value.`
@@ -261,29 +269,44 @@ createInterestRate: asyncHandler(async (req, res) => {
             
             finalLoanProudIntId = providedId;
         } else {
-            finalLoanProudIntId = await generateUniqueLoanProudIntId(session);
+            finalLoanProudIntId = await generateUniqueLoanProudIntId(transaction);
         }
 
         // Enhanced validation
         if (!name?.trim()) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Rate name is required'
             });
         }
 
-        if (parseInt(MIN_TERM_VALUE) > parseInt(MAX_TERM_VALUE)) {
+        // Validate term values
+        const minTerm = parseInt(MIN_TERM_VALUE);
+        const maxTerm = parseInt(MAX_TERM_VALUE);
+        
+        if (minTerm > maxTerm) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: 'Minimum term cannot be greater than maximum term'
             });
         }
 
-        const minTermMonths = convertTermToMonths(parseInt(MIN_TERM_VALUE), TERM_TYPE);
-        const maxTermMonths = convertTermToMonths(parseInt(MAX_TERM_VALUE), TERM_TYPE);
+        if (minTerm < 1) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'Minimum term must be at least 1'
+            });
+        }
+
+        const minTermMonths = convertTermToMonths(minTerm, TERM_TYPE);
+        const maxTermMonths = convertTermToMonths(maxTerm, TERM_TYPE);
 
         const validTermTypes = ['DAYS', 'WEEKS', 'MONTHS', 'QUARTERS', 'YEARS'];
         if (!validTermTypes.includes(TERM_TYPE.toUpperCase())) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: `Invalid TERM_TYPE. Must be one of: ${validTermTypes.join(', ')}`
@@ -292,6 +315,7 @@ createInterestRate: asyncHandler(async (req, res) => {
 
         const validRateTypes = ['FIXED', 'VARIABLE', 'TIERED', 'PROMOTIONAL', 'INTRODUCTORY'];
         if (!validRateTypes.includes(RATE_TYPE.toUpperCase())) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: `Invalid RATE_TYPE. Must be one of: ${validRateTypes.join(', ')}`
@@ -300,11 +324,15 @@ createInterestRate: asyncHandler(async (req, res) => {
 
         // Check for duplicate name
         const existingByName = await LoanInterestRate.findOne({ 
-            name: name.trim(),
-            STATUS: { $ne: 'DELETED' }
-        }).session(session);
+            where: { 
+                name: name.trim(),
+                STATUS: { [Op.ne]: 'DELETED' }
+            },
+            transaction 
+        });
         
         if (existingByName) {
+            await transaction.rollback();
             return res.status(400).json({
                 success: false,
                 message: `Interest rate with name '${name}' already exists`
@@ -317,16 +345,93 @@ createInterestRate: asyncHandler(async (req, res) => {
             finalCode = generateInterestRateCode(RATE_TYPE);
         } else {
             const existingWithCode = await LoanInterestRate.findOne({ 
-                code: finalCode,
-                STATUS: { $ne: 'DELETED' }
-            }).session(session);
+                where: { 
+                    code: finalCode,
+                    STATUS: { [Op.ne]: 'DELETED' }
+                },
+                transaction 
+            });
             
             if (existingWithCode) {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: `Interest rate with code '${finalCode}' already exists`
                 });
             }
+        }
+
+        // Validate rate values
+        const minRate = parseFloat(MIN_RATE_PER_MONTH);
+        const maxRate = parseFloat(MAX_RATE_PER_MONTH);
+        const defaultRate = parseFloat(DEFAULT_RATE_PER_MONTH);
+        
+        if (isNaN(minRate) || isNaN(maxRate) || isNaN(defaultRate)) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_RATE_PER_MONTH, MAX_RATE_PER_MONTH, and DEFAULT_RATE_PER_MONTH must be valid numbers'
+            });
+        }
+
+        if (minRate < 0 || minRate > 999.9999) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_RATE_PER_MONTH must be between 0 and 999.9999%'
+            });
+        }
+
+        if (maxRate < 0 || maxRate > 999.9999) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MAX_RATE_PER_MONTH must be between 0 and 999.9999%'
+            });
+        }
+
+        if (defaultRate < 0 || defaultRate > 999.9999) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'DEFAULT_RATE_PER_MONTH must be between 0 and 999.9999%'
+            });
+        }
+
+        if (minRate > maxRate) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_RATE_PER_MONTH cannot be greater than MAX_RATE_PER_MONTH'
+            });
+        }
+
+        if (defaultRate < minRate || defaultRate > maxRate) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: `DEFAULT_RATE_PER_MONTH (${defaultRate}%) must be between MIN_RATE_PER_MONTH (${minRate}%) and MAX_RATE_PER_MONTH (${maxRate}%)`
+            });
+        }
+
+        // Validate loan amounts
+        const minLoanAmount = parseFloat(MIN_LOAN_AMOUNT);
+        const maxLoanAmount = parseFloat(MAX_LOAN_AMOUNT);
+        
+        if (minLoanAmount < 0) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_LOAN_AMOUNT must be non-negative'
+            });
+        }
+
+        if (minLoanAmount > maxLoanAmount) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_LOAN_AMOUNT cannot be greater than MAX_LOAN_AMOUNT'
+            });
         }
 
         // For flat rate, ignore index rate even if provided
@@ -335,16 +440,13 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
 
         // Calculate flat rate APR
-        const defaultRate = parseFloat(DEFAULT_RATE_PER_MONTH);
         const calculatedAPR = ANNUAL_PERCENTAGE_RATE 
             ? parseFloat(ANNUAL_PERCENTAGE_RATE)
             : defaultRate * 12;
 
         // For flat rate, compounding frequency should be appropriate
-        // Common valid values: 'DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY', 'AT_MATURITY'
         let compoundingFrequencyValue;
         
-        // Check if COMPOUNDING_FREQUENCY is provided and valid
         if (COMPOUNDING_FREQUENCY && [
             'DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY', 'AT_MATURITY', 'NONE'
         ].includes(COMPOUNDING_FREQUENCY.toUpperCase())) {
@@ -352,6 +454,15 @@ createInterestRate: asyncHandler(async (req, res) => {
         } else {
             // For flat rate with simple interest, use 'AT_MATURITY' (most appropriate)
             compoundingFrequencyValue = 'AT_MATURITY';
+        }
+
+        // Validate required CREATED_BY
+        if (!CREATED_BY) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'CREATED_BY is required'
+            });
         }
 
         // Create interest rate data
@@ -365,20 +476,20 @@ createInterestRate: asyncHandler(async (req, res) => {
             CALCULATION_METHOD: 'FLAT',
             ACCRUAL_BASIS: ACCRUAL_BASIS.toUpperCase(),
             ACCRUAL_FREQUENCY: ACCRUAL_FREQUENCY.toUpperCase(),
-            MIN_RATE_PER_MONTH: parseFloat(MIN_RATE_PER_MONTH),
-            MAX_RATE_PER_MONTH: parseFloat(MAX_RATE_PER_MONTH),
+            MIN_RATE_PER_MONTH: minRate,
+            MAX_RATE_PER_MONTH: maxRate,
             DEFAULT_RATE_PER_MONTH: defaultRate,
             ANNUAL_PERCENTAGE_RATE: calculatedAPR,
-            MIN_TERM_VALUE: parseInt(MIN_TERM_VALUE),
-            MAX_TERM_VALUE: parseInt(MAX_TERM_VALUE),
+            MIN_TERM_VALUE: minTerm,
+            MAX_TERM_VALUE: maxTerm,
             MIN_TERM_MONTHS: minTermMonths,
             MAX_TERM_MONTHS: maxTermMonths,
             TERM_TYPE: TERM_TYPE.toUpperCase(),
             INDEX_RATE_ID: null,
             MARGIN_RATE: 0,
             SPREAD_RATE: 0,
-            MIN_LOAN_AMOUNT: new mongoose.Types.Decimal128(MIN_LOAN_AMOUNT),
-            MAX_LOAN_AMOUNT: new mongoose.Types.Decimal128(MAX_LOAN_AMOUNT),
+            MIN_LOAN_AMOUNT: minLoanAmount,
+            MAX_LOAN_AMOUNT: maxLoanAmount,
             CAPITALIZE_INTEREST: false,
             COMPOUNDING_FREQUENCY: compoundingFrequencyValue,
             AMORTIZED: Boolean(AMORTIZED),
@@ -386,146 +497,194 @@ createInterestRate: asyncHandler(async (req, res) => {
             RATE_CHANGE_ALLOWED: false,
             RATE_CHANGE_NOTICE_DAYS: 0,
             MAX_RATE_CHANGES: 0,
-            // ========== FIXED: Correct field name ==========
             ORIGINATION_FEE_RATE: parseFloat(ORIGINATION_FEE_RATE),
-            // ================================================
-            PROCESSING_FEE_FIXED: new mongoose.Types.Decimal128(PROCESSING_FEE_FIXED.toString()),
+            PROCESSING_FEE_FIXED: parseFloat(PROCESSING_FEE_FIXED),
             LATE_PAYMENT_PENALTY_RATE: parseFloat(LATE_PAYMENT_PENALTY_RATE),
             EARLY_REPAYMENT_PENALTY_RATE: parseFloat(EARLY_REPAYMENT_PENALTY_RATE),
             STATUS: STATUS.toUpperCase(),
-            CREATED_BY: CREATED_BY || req.user?.id || 'SYSTEM',
+            CREATED_BY: CREATED_BY,
             EFFECTIVE_DATE: new Date(EFFECTIVE_DATE),
             EXPIRY_DATE: EXPIRY_DATE ? new Date(EXPIRY_DATE) : null,
-            TAGS: Array.isArray(TAGS) ? TAGS.map(tag => tag.trim()) : [],
+            TAGS: Array.isArray(TAGS) ? JSON.stringify(TAGS.map(tag => tag.trim())) : JSON.stringify([]),
             NOTES: NOTES?.trim(),
             VERSION,
             CREATED_AT: new Date(),
             UPDATED_AT: new Date(),
-            LAST_UPDATED_BY: CREATED_BY || req.user?.id || 'SYSTEM',
+            LAST_UPDATED_BY: CREATED_BY,
             IS_ACTIVE: STATUS.toUpperCase() === 'ACTIVE',
             IS_FLAT_RATE: true
         };
 
+        // Calculate total interest rate
+        if (!req.body.TOTAL_INTEREST_RATE) {
+            interestRateData.TOTAL_INTEREST_RATE = defaultRate * maxTerm;
+        } else {
+            interestRateData.TOTAL_INTEREST_RATE = parseFloat(req.body.TOTAL_INTEREST_RATE);
+        }
+
         // Create new interest rate
-        const newInterestRate = new LoanInterestRate(interestRateData);
-        await newInterestRate.save({ session });
+        const newInterestRate = await LoanInterestRate.create(interestRateData, { transaction });
 
-        // AUDIT TRAIL
-        const auditTrailData = {
-            event_id: generateEventId(),
-            user_id: CREATED_BY || req.user?.id || 'SYSTEM',
-            user_name: req.user?.name || 'SYSTEM',
-            event_type: 'CREATE',
-            action: 'CREATE_LOAN_INTEREST_RATE',
-            old_value: null,
-            new_value: {
-                _id: newInterestRate._id.toString(),
-                name: newInterestRate.name,
-                code: newInterestRate.code,
-                LOAN_PROUD_INT_ID: newInterestRate.LOAN_PROUD_INT_ID,
-                RATE_TYPE: newInterestRate.RATE_TYPE,
-                DEFAULT_RATE_PER_MONTH: newInterestRate.DEFAULT_RATE_PER_MONTH,
-                ANNUAL_PERCENTAGE_RATE: newInterestRate.ANNUAL_PERCENTAGE_RATE,
-                MIN_RATE_PER_MONTH: newInterestRate.MIN_RATE_PER_MONTH,
-                MAX_RATE_PER_MONTH: newInterestRate.MAX_RATE_PER_MONTH,
-                TERM_TYPE: newInterestRate.TERM_TYPE,
-                STATUS: newInterestRate.STATUS,
-                VERSION: newInterestRate.VERSION,
-                IS_FLAT_RATE: newInterestRate.IS_FLAT_RATE
-            },
-            ip_address: getClientIp(req),
-            user_agent: req.headers['user-agent'],
-            entity_id: newInterestRate._id.toString(),
-            entity_type: 'LoanInterestRate',
-            status: 'SUCCESS',
-            description: `Created flat rate loan interest: ${newInterestRate.name} (${newInterestRate.code}) with LOAN_PROUD_INT_ID: ${newInterestRate.LOAN_PROUD_INT_ID}`,
-            timestamp: new Date(),
-            metadata: {
-                route: req.originalUrl,
-                method: req.method,
-                params: req.params,
-                query: req.query
-            }
-        };
+        // AUDIT TRAIL - Temporarily disabled to fix the event_id issue
+        // Remove or comment out this section until you fix your AuditTrail model
+        /*
+        try {
+            const auditTrailData = {
+                user_id: CREATED_BY,
+                user_name: req.user?.name || 'SYSTEM',
+                event_type: 'CREATE',
+                action: 'CREATE_LOAN_INTEREST_RATE',
+                old_value: null,
+                new_value: {
+                    id: newInterestRate.id,
+                    name: newInterestRate.name,
+                    code: newInterestRate.code,
+                    LOAN_PROUD_INT_ID: newInterestRate.LOAN_PROUD_INT_ID,
+                    RATE_TYPE: newInterestRate.RATE_TYPE,
+                    DEFAULT_RATE_PER_MONTH: newInterestRate.DEFAULT_RATE_PER_MONTH,
+                    ANNUAL_PERCENTAGE_RATE: newInterestRate.ANNUAL_PERCENTAGE_RATE,
+                    MIN_RATE_PER_MONTH: newInterestRate.MIN_RATE_PER_MONTH,
+                    MAX_RATE_PER_MONTH: newInterestRate.MAX_RATE_PER_MONTH,
+                    TERM_TYPE: newInterestRate.TERM_TYPE,
+                    STATUS: newInterestRate.STATUS,
+                    VERSION: newInterestRate.VERSION,
+                    IS_FLAT_RATE: newInterestRate.IS_FLAT_RATE
+                },
+                ip_address: getClientIp(req),
+                user_agent: req.headers['user-agent'],
+                entity_id: newInterestRate.id,
+                entity_type: 'LoanInterestRate',
+                status: 'SUCCESS',
+                description: `Created flat rate loan interest: ${newInterestRate.name} (${newInterestRate.code}) with LOAN_PROUD_INT_ID: ${newInterestRate.LOAN_PROUD_INT_ID}`,
+                timestamp: new Date(),
+                metadata: {
+                    route: req.originalUrl,
+                    method: req.method,
+                    params: req.params,
+                    query: req.query
+                }
+            };
 
-        await new AuditTrail(auditTrailData).save({ session });
-        await session.commitTransaction();
+            await AuditTrail.create(auditTrailData, { transaction });
+        } catch (auditError) {
+            console.warn('Audit trail creation failed, continuing without audit:', auditError.message);
+        }
+        */
 
-        // Format response
-        const responseData = newInterestRate.toObject();
-        responseData.MIN_LOAN_AMOUNT = responseData.MIN_LOAN_AMOUNT.toString();
-        responseData.MAX_LOAN_AMOUNT = responseData.MAX_LOAN_AMOUNT.toString();
-        responseData.PROCESSING_FEE_FIXED = responseData.PROCESSING_FEE_FIXED?.toString();
+        await transaction.commit();
 
         res.status(201).json({
             success: true,
             message: 'Flat rate interest rate created successfully',
-            data: responseData,
+            data: newInterestRate.toJSON(),
             metadata: {
                 code: newInterestRate.code,
                 loan_proud_int_id: newInterestRate.LOAN_PROUD_INT_ID,
                 version: newInterestRate.VERSION,
                 created_at: newInterestRate.CREATED_AT,
                 effective_date: newInterestRate.EFFECTIVE_DATE,
-                is_flat_rate: newInterestRate.IS_FLAT_RATE
+                expiry_date: newInterestRate.EXPIRY_DATE,
+                is_flat_rate: newInterestRate.IS_FLAT_RATE,
+                is_active: newInterestRate.IS_ACTIVE,
+                term_range: `${newInterestRate.MIN_TERM_VALUE} - ${newInterestRate.MAX_TERM_VALUE} ${newInterestRate.TERM_TYPE.toLowerCase()}`,
+                term_months: `${newInterestRate.MIN_TERM_MONTHS} - ${newInterestRate.MAX_TERM_MONTHS} months`,
+                rate_range: `${newInterestRate.MIN_RATE_PER_MONTH} - ${newInterestRate.MAX_RATE_PER_MONTH}% per month`,
+                annual_rate: `${(parseFloat(newInterestRate.DEFAULT_RATE_PER_MONTH) * 12).toFixed(2)}% per year`
             }
         });
 
     } catch (error) {
-        await session.abortTransaction();
+        // Rollback transaction
+        try {
+            await transaction.rollback();
+        } catch (rollbackError) {
+            console.error('Transaction rollback failed:', rollbackError);
+        }
+
         console.error('Error creating Interest Rate:', error);
         
-        if (error.name === 'ValidationError') {
-            const errorMessages = Object.values(error.errors).map(err => ({
+        // Handle specific error types
+        if (error.name === 'SequelizeValidationError') {
+            const errorMessages = error.errors.map(err => ({
                 field: err.path,
                 message: err.message,
-                type: err.kind
+                type: err.type
             }));
             
             return res.status(400).json({
                 success: false,
                 message: 'Validation failed',
-                errors: errorMessages
+                errors: errorMessages,
+                error_code: 'VALIDATION_ERROR'
             });
         }
         
-        if (error.code === 11000) {
-            const field = Object.keys(error.keyPattern)[0];
-            let message = `Duplicate value for ${field}: ${error.keyValue[field]}`;
+        if (error.name === 'SequelizeUniqueConstraintError') {
+            const field = error.errors[0]?.path;
+            let message = `Duplicate value for ${field}`;
             
-            if (field === 'LOAN_PROUD_INT_ID') {
-                message = `LOAN_PROUD_INT_ID ${error.keyValue[field]} already exists. Please use a different value.`;
+            if (field === 'code') {
+                message = `Interest rate code '${req.body.code}' already exists`;
+            } else if (field === 'LOAN_PROUD_INT_ID') {
+                message = `LOAN_PROUD_INT_ID ${req.body.LOAN_PROUD_INT_ID} already exists`;
+            }
+            
+            return res.status(409).json({
+                success: false,
+                message: message,
+                error: 'DUPLICATE_ENTRY',
+                field: field,
+                error_code: 'DUPLICATE_KEY_ERROR'
+            });
+        }
+        
+        if (error.name === 'SequelizeDatabaseError') {
+            let message = 'Database error occurred';
+            let field = null;
+            
+            // Check for specific database errors
+            if (error.parent?.code === 'ER_NO_DEFAULT_FOR_FIELD') {
+                const fieldMatch = error.parent.sqlMessage.match(/Field '([^']+)'/);
+                if (fieldMatch) {
+                    field = fieldMatch[1];
+                    message = `Required field '${field}' is missing or has no default value`;
+                }
+            } else if (error.parent?.code === 'ER_DATA_TOO_LONG') {
+                const fieldMatch = error.parent.sqlMessage.match(/column '([^']+)'/);
+                if (fieldMatch) {
+                    field = fieldMatch[1];
+                    message = `Value too long for field '${field}'`;
+                }
+            } else if (error.parent?.code === 'ER_TRUNCATED_WRONG_VALUE') {
+                const fieldMatch = error.parent.sqlMessage.match(/column '([^']+)'/);
+                if (fieldMatch) {
+                    field = fieldMatch[1];
+                    message = `Invalid value for field '${field}'`;
+                }
             }
             
             return res.status(400).json({
                 success: false,
                 message: message,
-                error: 'DUPLICATE_KEY_ERROR',
+                error: 'DATABASE_ERROR',
                 field: field,
-                value: error.keyValue[field]
+                error_code: 'DATABASE_ERROR',
+                details: process.env.NODE_ENV === 'development' ? error.parent?.sqlMessage : undefined
             });
         }
-        
-        if (error.name === 'CastError') {
-            return res.status(400).json({
-                success: false,
-                message: `Invalid data type for ${error.path}: ${error.value}`,
-                error: 'CAST_ERROR'
-            });
-        }
-        
+
+        // Generic error
         res.status(500).json({
             success: false,
-            message: 'Failed to create Interest Rate',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
-            request_id: generateEventId()
+            message: 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred',
+            error_code: 'INTERNAL_SERVER_ERROR',
+            request_id: Date.now().toString()
         });
-    } finally {
-        session.endSession();
     }
 }),
 
-    // GET ALL LOAN INTEREST RATES
+    // GET ALL LOAN INTEREST RATES with Sequelize
     getAllInterestRates: asyncHandler(async (req, res) => {
         try {
             const {
@@ -544,86 +703,76 @@ createInterestRate: asyncHandler(async (req, res) => {
             } = req.query;
 
             // Build query
-            const query = { 
-                STATUS: { $ne: 'DELETED' },
+            const where = { 
+                STATUS: { [Op.ne]: 'DELETED' },
                 IS_FLAT_RATE: true // Always filter for flat rates
             };
             
             if (status) {
-                query.STATUS = status.toUpperCase();
+                where.STATUS = status.toUpperCase();
             }
             
             if (rate_type) {
-                query.RATE_TYPE = rate_type.toUpperCase();
+                where.RATE_TYPE = rate_type.toUpperCase();
             }
             
             if (search) {
-                query.$or = [
-                    { name: { $regex: search, $options: 'i' } },
-                    { code: { $regex: search, $options: 'i' } },
-                    { description: { $regex: search, $options: 'i' } }
+                where[Op.or] = [
+                    { name: { [Op.iLike]: `%${search}%` } },
+                    { code: { [Op.iLike]: `%${search}%` } },
+                    { description: { [Op.iLike]: `%${search}%` } }
                 ];
             }
             
             if (min_rate) {
-                query.DEFAULT_RATE_PER_MONTH = { $gte: parseFloat(min_rate) };
+                where.DEFAULT_RATE_PER_MONTH = { [Op.gte]: parseFloat(min_rate) };
             }
             
             if (max_rate) {
-                query.DEFAULT_RATE_PER_MONTH = { ...query.DEFAULT_RATE_PER_MONTH, $lte: parseFloat(max_rate) };
+                where.DEFAULT_RATE_PER_MONTH = { 
+                    ...(where.DEFAULT_RATE_PER_MONTH || {}),
+                    [Op.lte]: parseFloat(max_rate) 
+                };
             }
             
             if (effective_date_from || effective_date_to) {
-                query.EFFECTIVE_DATE = {};
+                where.EFFECTIVE_DATE = {};
                 if (effective_date_from) {
-                    query.EFFECTIVE_DATE.$gte = new Date(effective_date_from);
+                    where.EFFECTIVE_DATE[Op.gte] = new Date(effective_date_from);
                 }
                 if (effective_date_to) {
-                    query.EFFECTIVE_DATE.$lte = new Date(effective_date_to);
+                    where.EFFECTIVE_DATE[Op.lte] = new Date(effective_date_to);
                 }
             }
 
-            // Sort
-            const sortOptions = {};
-            sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
-
             // Execute query with pagination
-            const skip = (parseInt(page) - 1) * parseInt(limit);
+            const offset = (parseInt(page) - 1) * parseInt(limit);
+            const order = [[sortBy, sortOrder.toUpperCase()]];
             
-            const [rates, total] = await Promise.all([
-                LoanInterestRate.find(query)
-                    .sort(sortOptions)
-                    .skip(skip)
-                    .limit(parseInt(limit))
-                    .lean(),
-                LoanInterestRate.countDocuments(query)
-            ]);
+            const { count, rows: rates } = await LoanInterestRate.findAndCountAll({
+                where,
+                order,
+                offset,
+                limit: parseInt(limit)
+            });
 
-            // Format decimal fields
-            const formattedRates = rates.map(rate => ({
-                ...rate,
-                MIN_LOAN_AMOUNT: rate.MIN_LOAN_AMOUNT?.toString(),
-                MAX_LOAN_AMOUNT: rate.MAX_LOAN_AMOUNT?.toString(),
-                PROCESSING_FEE_FIXED: rate.PROCESSING_FEE_FIXED?.toString()
-            }));
-
-            const totalPages = Math.ceil(total / parseInt(limit));
+            const totalPages = Math.ceil(count / parseInt(limit));
 
             res.status(200).json({
                 success: true,
                 message: 'Flat rate interest rates retrieved successfully',
-                data: formattedRates,
+                data: rates.map(rate => rate.toJSON()),
                 pagination: {
                     page: parseInt(page),
                     limit: parseInt(limit),
-                    total,
+                    total: count,
                     totalPages,
                     hasNextPage: parseInt(page) < totalPages,
                     hasPrevPage: parseInt(page) > 1
                 },
                 metadata: {
                     is_flat_rate: true,
-                    count: formattedRates.length,
+                    count: rates.length,
                     filtered_by: {
                         status: status || 'all',
                         rate_type: rate_type || 'all'
@@ -641,19 +790,29 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
     }),
 
-    // GET SINGLE INTEREST RATE BY ID OR CODE
+    // GET SINGLE INTEREST RATE BY ID OR CODE with Sequelize
     getInterestRateById: asyncHandler(async (req, res) => {
         try {
             const { id } = req.params;
             
-            let query;
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                query = { _id: id, STATUS: { $ne: 'DELETED' }, IS_FLAT_RATE: true };
+            let where;
+            
+            // Check if it's an ObjectId or a code
+            if (/^\d+$/.test(id)) {
+                // It's a numeric ID
+                where = { LOAN_PROUD_INT_ID: parseInt(id) };
+            } else if (/^[0-9a-fA-F]{24}$/.test(id)) {
+                // It's a MongoDB-style ObjectId (but using Sequelize's id)
+                where = { id };
             } else {
-                query = { code: id.toUpperCase(), STATUS: { $ne: 'DELETED' }, IS_FLAT_RATE: true };
+                // It's a code
+                where = { code: id.toUpperCase() };
             }
+            
+            where.STATUS = { [Op.ne]: 'DELETED' };
+            where.IS_FLAT_RATE = true;
 
-            const interestRate = await LoanInterestRate.findOne(query).lean();
+            const interestRate = await LoanInterestRate.findOne({ where });
             
             if (!interestRate) {
                 return res.status(404).json({
@@ -662,15 +821,10 @@ createInterestRate: asyncHandler(async (req, res) => {
                 });
             }
 
-            // Format decimal fields
-            interestRate.MIN_LOAN_AMOUNT = interestRate.MIN_LOAN_AMOUNT?.toString();
-            interestRate.MAX_LOAN_AMOUNT = interestRate.MAX_LOAN_AMOUNT?.toString();
-            interestRate.PROCESSING_FEE_FIXED = interestRate.PROCESSING_FEE_FIXED?.toString();
-
             res.status(200).json({
                 success: true,
                 message: 'Flat rate interest rate retrieved successfully',
-                data: interestRate,
+                data: interestRate.toJSON(),
                 metadata: {
                     is_flat_rate: interestRate.IS_FLAT_RATE,
                     calculation_method: 'FLAT',
@@ -688,13 +842,11 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
     }),
 
-    // UPDATE INTEREST RATE
+    // UPDATE INTEREST RATE with Sequelize
     updateInterestRate: asyncHandler(async (req, res) => {
-        const session = await mongoose.startSession();
+        const transaction = await sequelize.transaction();
         
         try {
-            session.startTransaction();
-            
             const { id } = req.params;
             const updateData = req.body;
             const userId = req.user?.id || 'SYSTEM';
@@ -702,12 +854,16 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Find existing rate
             const existingRate = await LoanInterestRate.findOne({
-                _id: id,
-                STATUS: { $ne: 'DELETED' },
-                IS_FLAT_RATE: true
-            }).session(session);
+                where: {
+                    id,
+                    STATUS: { [Op.ne]: 'DELETED' },
+                    IS_FLAT_RATE: true
+                },
+                transaction
+            });
             
             if (!existingRate) {
+                await transaction.rollback();
                 return res.status(404).json({
                     success: false,
                     message: 'Flat rate interest rate not found'
@@ -716,6 +872,7 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Prevent updates to critical flat rate fields
             if (updateData.CALCULATION_METHOD && updateData.CALCULATION_METHOD !== 'FLAT') {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: 'Cannot change calculation method from FLAT'
@@ -723,6 +880,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
             
             if (updateData.INTEREST_TYPE && updateData.INTEREST_TYPE !== 'SIMPLE') {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: 'Cannot change interest type from SIMPLE for flat rates'
@@ -730,6 +888,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
             
             if (updateData.CAPITALIZE_INTEREST !== undefined && updateData.CAPITALIZE_INTEREST !== false) {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: 'Cannot enable capitalization for flat rates'
@@ -738,6 +897,7 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Prevent updates if rate is in use
             if (existingRate.IS_ACTIVE && existingRate.IN_USE) {
+                await transaction.rollback();
                 return res.status(400).json({
                     success: false,
                     message: 'Cannot update an active flat rate that is in use'
@@ -769,7 +929,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             };
 
             // Remove fields that shouldn't be updated
-            delete updatePayload._id;
+            delete updatePayload.id;
             delete updatePayload.code;
             delete updatePayload.CREATED_AT;
             delete updatePayload.CREATED_BY;
@@ -784,6 +944,7 @@ createInterestRate: asyncHandler(async (req, res) => {
                 
                 const rateValidation = validateFlatRateValues(minRate, maxRate, defaultRate, existingRate.TERM_TYPE);
                 if (!rateValidation.valid) {
+                    await transaction.rollback();
                     return res.status(400).json({
                         success: false,
                         message: rateValidation.message
@@ -797,11 +958,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
 
             // Update the rate
-            const updatedRate = await LoanInterestRate.findByIdAndUpdate(
-                id,
-                updatePayload,
-                { new: true, session, runValidators: true }
-            );
+            await existingRate.update(updatePayload, { transaction });
 
             // AUDIT TRAIL - FIXED: Using numeric event_id
             const auditTrailData = {
@@ -812,52 +969,49 @@ createInterestRate: asyncHandler(async (req, res) => {
                 action: 'UPDATE_LOAN_INTEREST_RATE',
                 old_value: oldValues,
                 new_value: {
-                    name: updatedRate.name,
-                    code: updatedRate.code,
-                    DEFAULT_RATE_PER_MONTH: updatedRate.DEFAULT_RATE_PER_MONTH,
-                    MIN_RATE_PER_MONTH: updatedRate.MIN_RATE_PER_MONTH,
-                    MAX_RATE_PER_MONTH: updatedRate.MAX_RATE_PER_MONTH,
-                    STATUS: updatedRate.STATUS,
-                    VERSION: updatedRate.VERSION,
-                    IS_FLAT_RATE: updatedRate.IS_FLAT_RATE
+                    name: existingRate.name,
+                    code: existingRate.code,
+                    DEFAULT_RATE_PER_MONTH: existingRate.DEFAULT_RATE_PER_MONTH,
+                    MIN_RATE_PER_MONTH: existingRate.MIN_RATE_PER_MONTH,
+                    MAX_RATE_PER_MONTH: existingRate.MAX_RATE_PER_MONTH,
+                    STATUS: existingRate.STATUS,
+                    VERSION: existingRate.VERSION,
+                    IS_FLAT_RATE: existingRate.IS_FLAT_RATE
                 },
                 ip_address: getClientIp(req),
                 user_agent: req.headers['user-agent'],
-                entity_id: updatedRate._id.toString(),
+                entity_id: existingRate.id,
                 entity_type: 'LoanInterestRate',
                 status: 'SUCCESS',
-                description: `Updated flat rate loan interest: ${updatedRate.name} (${updatedRate.code}) to version ${updatedRate.VERSION}`,
+                description: `Updated flat rate loan interest: ${existingRate.name} (${existingRate.code}) to version ${existingRate.VERSION}`,
                 timestamp: new Date(),
                 changes: Object.keys(updateData)
             };
 
-            await new AuditTrail(auditTrailData).save({ session });
-            await session.commitTransaction();
+            await AuditTrail.create(auditTrailData, { transaction });
+            await transaction.commit();
 
-            // Format response
-            const responseData = updatedRate.toObject();
-            responseData.MIN_LOAN_AMOUNT = responseData.MIN_LOAN_AMOUNT?.toString();
-            responseData.MAX_LOAN_AMOUNT = responseData.MAX_LOAN_AMOUNT?.toString();
-            responseData.PROCESSING_FEE_FIXED = responseData.PROCESSING_FEE_FIXED?.toString();
+            // Refresh to get updated values
+            await existingRate.reload();
 
             res.status(200).json({
                 success: true,
                 message: 'Flat rate interest rate updated successfully',
-                data: responseData,
+                data: existingRate.toJSON(),
                 metadata: {
-                    version: updatedRate.VERSION,
-                    updated_at: updatedRate.UPDATED_AT,
-                    updated_by: updatedRate.LAST_UPDATED_BY,
-                    is_flat_rate: updatedRate.IS_FLAT_RATE
+                    version: existingRate.VERSION,
+                    updated_at: existingRate.UPDATED_AT,
+                    updated_by: existingRate.LAST_UPDATED_BY,
+                    is_flat_rate: existingRate.IS_FLAT_RATE
                 }
             });
 
         } catch (error) {
-            await session.abortTransaction();
+            await transaction.rollback();
             console.error('Error updating Interest Rate:', error);
             
-            if (error.name === 'ValidationError') {
-                const errorMessages = Object.values(error.errors).map(err => ({
+            if (error.name === 'SequelizeValidationError') {
+                const errorMessages = error.errors.map(err => ({
                     field: err.path,
                     message: err.message
                 }));
@@ -874,18 +1028,14 @@ createInterestRate: asyncHandler(async (req, res) => {
                 message: 'Failed to update Interest Rate',
                 error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
             });
-        } finally {
-            session.endSession();
         }
     }),
 
-    // DELETE/DEACTIVATE INTEREST RATE
+    // DELETE/DEACTIVATE INTEREST RATE with Sequelize
     deleteInterestRate: asyncHandler(async (req, res) => {
-        const session = await mongoose.startSession();
+        const transaction = await sequelize.transaction();
         
         try {
-            session.startTransaction();
-            
             const { id } = req.params;
             const { hardDelete = false, reason } = req.body;
             const userId = req.user?.id || 'SYSTEM';
@@ -893,11 +1043,15 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Find the rate
             const interestRate = await LoanInterestRate.findOne({
-                _id: id,
-                IS_FLAT_RATE: true
-            }).session(session);
+                where: {
+                    id,
+                    IS_FLAT_RATE: true
+                },
+                transaction
+            });
             
             if (!interestRate) {
+                await transaction.rollback();
                 return res.status(404).json({
                     success: false,
                     message: 'Flat rate interest rate not found'
@@ -911,29 +1065,28 @@ createInterestRate: asyncHandler(async (req, res) => {
             if (hardDelete) {
                 // Hard delete - only if not in use
                 if (interestRate.IN_USE) {
+                    await transaction.rollback();
                     return res.status(400).json({
                         success: false,
                         message: 'Cannot delete a flat rate that is in use'
                     });
                 }
                 
-                result = await LoanInterestRate.findByIdAndDelete(id, { session });
+                result = interestRate;
+                await interestRate.destroy({ transaction });
                 auditAction = 'DELETE_LOAN_INTEREST_RATE';
                 auditDescription = `Hard deleted flat rate: ${interestRate.name} (${interestRate.code})`;
             } else {
                 // Soft delete (deactivate)
-                result = await LoanInterestRate.findByIdAndUpdate(
-                    id,
-                    {
-                        STATUS: 'DELETED',
-                        UPDATED_AT: new Date(),
-                        LAST_UPDATED_BY: userId,
-                        DEACTIVATION_DATE: new Date(),
-                        DEACTIVATION_REASON: reason || 'User requested deactivation'
-                    },
-                    { new: true, session }
-                );
+                await interestRate.update({
+                    STATUS: 'DELETED',
+                    UPDATED_AT: new Date(),
+                    LAST_UPDATED_BY: userId,
+                    DEACTIVATION_DATE: new Date(),
+                    DEACTIVATION_REASON: reason || 'User requested deactivation'
+                }, { transaction });
                 
+                result = interestRate;
                 auditAction = 'DEACTIVATE_LOAN_INTEREST_RATE';
                 auditDescription = `Deactivated flat rate: ${interestRate.name} (${interestRate.code})`;
             }
@@ -958,7 +1111,7 @@ createInterestRate: asyncHandler(async (req, res) => {
                 },
                 ip_address: getClientIp(req),
                 user_agent: req.headers['user-agent'],
-                entity_id: interestRate._id.toString(),
+                entity_id: interestRate.id,
                 entity_type: 'LoanInterestRate',
                 status: 'SUCCESS',
                 description: auditDescription,
@@ -970,48 +1123,48 @@ createInterestRate: asyncHandler(async (req, res) => {
                 }
             };
 
-            await new AuditTrail(auditTrailData).save({ session });
-            await session.commitTransaction();
+            await AuditTrail.create(auditTrailData, { transaction });
+            await transaction.commit();
 
             res.status(200).json({
                 success: true,
                 message: hardDelete 
                     ? 'Flat rate interest rate deleted permanently' 
                     : 'Flat rate interest rate deactivated successfully',
-                data: hardDelete ? null : result
+                data: hardDelete ? null : result.toJSON()
             });
 
         } catch (error) {
-            await session.abortTransaction();
+            await transaction.rollback();
             console.error('Error deleting Interest Rate:', error);
             res.status(500).json({
                 success: false,
                 message: 'Failed to delete Interest Rate',
                 error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
             });
-        } finally {
-            session.endSession();
         }
     }),
 
-    // ACTIVATE INTEREST RATE
+    // ACTIVATE INTEREST RATE with Sequelize
     activateInterestRate: asyncHandler(async (req, res) => {
-        const session = await mongoose.startSession();
+        const transaction = await sequelize.transaction();
         
         try {
-            session.startTransaction();
-            
             const { id } = req.params;
             const userId = req.user?.id || 'SYSTEM';
             const userName = req.user?.name || 'SYSTEM';
 
             const interestRate = await LoanInterestRate.findOne({
-                _id: id,
-                STATUS: 'INACTIVE',
-                IS_FLAT_RATE: true
-            }).session(session);
+                where: {
+                    id,
+                    STATUS: 'INACTIVE',
+                    IS_FLAT_RATE: true
+                },
+                transaction
+            });
             
             if (!interestRate) {
+                await transaction.rollback();
                 return res.status(404).json({
                     success: false,
                     message: 'Inactive flat rate interest rate not found'
@@ -1019,17 +1172,13 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
 
             // Update to active
-            const activatedRate = await LoanInterestRate.findByIdAndUpdate(
-                id,
-                {
-                    STATUS: 'ACTIVE',
-                    IS_ACTIVE: true,
-                    UPDATED_AT: new Date(),
-                    LAST_UPDATED_BY: userId,
-                    ACTIVATION_DATE: new Date()
-                },
-                { new: true, session }
-            );
+            await interestRate.update({
+                STATUS: 'ACTIVE',
+                IS_ACTIVE: true,
+                UPDATED_AT: new Date(),
+                LAST_UPDATED_BY: userId,
+                ACTIVATION_DATE: new Date()
+            }, { transaction });
 
             // AUDIT TRAIL
             const auditTrailData = {
@@ -1043,40 +1192,41 @@ createInterestRate: asyncHandler(async (req, res) => {
                 },
                 new_value: {
                     STATUS: 'ACTIVE',
-                    ACTIVATION_DATE: activatedRate.ACTIVATION_DATE
+                    ACTIVATION_DATE: interestRate.ACTIVATION_DATE
                 },
                 ip_address: getClientIp(req),
                 user_agent: req.headers['user-agent'],
-                entity_id: activatedRate._id.toString(),
+                entity_id: interestRate.id,
                 entity_type: 'LoanInterestRate',
                 status: 'SUCCESS',
-                description: `Activated flat rate loan interest: ${activatedRate.name} (${activatedRate.code})`,
+                description: `Activated flat rate loan interest: ${interestRate.name} (${interestRate.code})`,
                 timestamp: new Date()
             };
 
-            await new AuditTrail(auditTrailData).save({ session });
-            await session.commitTransaction();
+            await AuditTrail.create(auditTrailData, { transaction });
+            await transaction.commit();
+
+            // Refresh to get updated values
+            await interestRate.reload();
 
             res.status(200).json({
                 success: true,
                 message: 'Flat rate interest rate activated successfully',
-                data: activatedRate
+                data: interestRate.toJSON()
             });
 
         } catch (error) {
-            await session.abortTransaction();
+            await transaction.rollback();
             console.error('Error activating Interest Rate:', error);
             res.status(500).json({
                 success: false,
                 message: 'Failed to activate Interest Rate',
                 error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
             });
-        } finally {
-            session.endSession();
         }
     }),
 
-    // CALCULATE INTEREST - FORCED FLAT RATE CALCULATION
+    // CALCULATE INTEREST - FORCED FLAT RATE CALCULATION with Sequelize
     calculateInterest: asyncHandler(async (req, res) => {
         try {
             const { 
@@ -1097,9 +1247,11 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Get interest rate - MUST be a flat rate
             const interestRate = await LoanInterestRate.findOne({
-                _id: rate_id,
-                STATUS: 'ACTIVE',
-                IS_FLAT_RATE: true
+                where: {
+                    id: rate_id,
+                    STATUS: 'ACTIVE',
+                    IS_FLAT_RATE: true
+                }
             });
 
             if (!interestRate) {
@@ -1130,8 +1282,8 @@ createInterestRate: asyncHandler(async (req, res) => {
 
             // Validate principal amount
             const principal = parseFloat(principal_amount);
-            const minLoan = parseFloat(interestRate.MIN_LOAN_AMOUNT.toString());
-            const maxLoan = parseFloat(interestRate.MAX_LOAN_AMOUNT.toString());
+            const minLoan = parseFloat(interestRate.MIN_LOAN_AMOUNT);
+            const maxLoan = parseFloat(interestRate.MAX_LOAN_AMOUNT);
             
             if (principal < minLoan || principal > maxLoan) {
                 return res.status(400).json({
@@ -1152,7 +1304,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             
             // Calculate origination fee
             const originationFee = principal * (interestRate.ORIGINATION_FEE_RATE / 100);
-            const processingFee = parseFloat(interestRate.PROCESSING_FEE_FIXED?.toString() || '0');
+            const processingFee = parseFloat(interestRate.PROCESSING_FEE_FIXED || '0');
             
             const totalFees = originationFee + processingFee;
             const netDisbursement = principal - totalFees;
@@ -1167,7 +1319,7 @@ createInterestRate: asyncHandler(async (req, res) => {
                     term_type,
                     term_months: termMonths,
                     calculation_date: new Date(calculation_date),
-                    rate_id: interestRate._id,
+                    rate_id: interestRate.id,
                     rate_code: interestRate.code,
                     rate_name: interestRate.name,
                     is_flat_rate: true
@@ -1226,31 +1378,29 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
     }),
 
-    // MIGRATE EXISTING RATES TO FLAT RATE
+    // MIGRATE EXISTING RATES TO FLAT RATE with Sequelize
     migrateToFlatRate: asyncHandler(async (req, res) => {
-        const session = await mongoose.startSession();
+        const transaction = await sequelize.transaction();
         
         try {
-            session.startTransaction();
-            
             const userId = req.user?.id || 'SYSTEM';
             const userName = req.user?.name || 'SYSTEM';
             
             // Update all existing rates to flat rate
-            const result = await LoanInterestRate.updateMany(
-                { STATUS: { $ne: 'DELETED' } },
+            const [updatedCount] = await LoanInterestRate.update(
                 {
-                    $set: {
-                        CALCULATION_METHOD: 'FLAT',
-                        INTEREST_TYPE: 'SIMPLE',
-                        CAPITALIZE_INTEREST: false,
-                        IS_FLAT_RATE: true,
-                        UPDATED_AT: new Date(),
-                        LAST_UPDATED_BY: userId,
-                        VERSION: '2.0' // Major version bump
-                    }
+                    CALCULATION_METHOD: 'FLAT',
+                    INTEREST_TYPE: 'SIMPLE',
+                    CAPITALIZE_INTEREST: false,
+                    IS_FLAT_RATE: true,
+                    UPDATED_AT: new Date(),
+                    LAST_UPDATED_BY: userId,
+                    VERSION: '2.0' // Major version bump
                 },
-                { session }
+                {
+                    where: { STATUS: { [Op.ne]: 'DELETED' } },
+                    transaction
+                }
             );
             
             // AUDIT TRAIL
@@ -1262,36 +1412,34 @@ createInterestRate: asyncHandler(async (req, res) => {
                 action: 'MIGRATE_TO_FLAT_RATE',
                 old_value: null,
                 new_value: {
-                    migrated_count: result.modifiedCount,
+                    migrated_count: updatedCount,
                     timestamp: new Date()
                 },
                 ip_address: getClientIp(req),
                 user_agent: req.headers['user-agent'],
                 entity_type: 'LoanInterestRate',
                 status: 'SUCCESS',
-                description: `Migrated ${result.modifiedCount} interest rates to flat rate calculation`,
+                description: `Migrated ${updatedCount} interest rates to flat rate calculation`,
                 timestamp: new Date()
             };
             
-            await new AuditTrail(auditTrailData).save({ session });
-            await session.commitTransaction();
+            await AuditTrail.create(auditTrailData, { transaction });
+            await transaction.commit();
             
             res.status(200).json({
                 success: true,
-                message: `Successfully migrated ${result.modifiedCount} interest rates to flat rate calculation`,
-                data: result
+                message: `Successfully migrated ${updatedCount} interest rates to flat rate calculation`,
+                data: { modifiedCount: updatedCount }
             });
             
         } catch (error) {
-            await session.abortTransaction();
+            await transaction.rollback();
             console.error('Error migrating to flat rate:', error);
             res.status(500).json({
                 success: false,
                 message: 'Failed to migrate interest rates',
                 error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
             });
-        } finally {
-            session.endSession();
         }
     })
 };

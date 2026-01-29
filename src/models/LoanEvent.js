@@ -1,27 +1,33 @@
-import mongoose from 'mongoose';
+import { DataTypes } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const loanEventSchema = new mongoose.Schema({
+const LoanEvent = sequelize.define('LoanEvent', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   // Core References
   ACCT_NO: { 
-    type: String, 
-    required: true,
-    index: true 
+    type: DataTypes.STRING, 
+    allowNull: false
   },
   LOAN_ACCOUNT_ID: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'LoanAccount',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'LoanAccounts',
+      key: 'id'
+    }
   },
   CUST_ID: {
-    type: Number,
-    required: true
+    type: DataTypes.STRING, // Changed to STRING to be consistent with other models
+    allowNull: false
   },
   
   // Event Information
   eventType: { 
-    type: String, 
-    required: true,
-    enum: [
+    type: DataTypes.ENUM(
       'SERVICING_UPDATE',
       'INSTALLMENT_PAID',
       'INSTALLMENT_DUE',
@@ -33,113 +39,221 @@ const loanEventSchema = new mongoose.Schema({
       'STATUS_CHANGE',
       'GUARANTOR_UPDATE',
       'GROUP_COLLECTION'
-    ]
+    ),
+    allowNull: false
   },
   
   status: { 
-    type: String, 
-    required: true,
-    enum: ['SERVICED', 'UNSERVICED', 'PROCESSED', 'FAILED', 'PENDING']
+    type: DataTypes.ENUM('SERVICED', 'UNSERVICED', 'PROCESSED', 'FAILED', 'PENDING'),
+    allowNull: false
   },
   
   // Installment Details
-  installmentNumber: { type: Number },
-  dueDate: { type: Date },
-  paymentDate: { type: Date },
+  installmentNumber: { 
+    type: DataTypes.INTEGER,
+    allowNull: true 
+  },
+  dueDate: { 
+    type: DataTypes.DATE,
+    allowNull: true 
+  },
+  paymentDate: { 
+    type: DataTypes.DATE,
+    allowNull: true 
+  },
   
   // Financial Details
   amount: {
-    type: mongoose.Schema.Types.Decimal128,
-    get: v => parseFloat(v.toString()),
-    set: v => mongoose.Types.Decimal128.fromString(v.toString()),
-    default: '0.00'
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   principalAmount: {
-    type: mongoose.Schema.Types.Decimal128,
-    get: v => parseFloat(v.toString()),
-    set: v => mongoose.Types.Decimal128.fromString(v.toString()),
-    default: '0.00'
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   interestAmount: {
-    type: mongoose.Schema.Types.Decimal128,
-    get: v => parseFloat(v.toString()),
-    set: v => mongoose.Types.Decimal128.fromString(v.toString()),
-    default: '0.00'
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   
   // Transaction References
   transactionId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Transaction'
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'Transactions',
+      key: 'id'
+    }
   },
   repaymentScheduleId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'RepaymentSchedule'
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    references: {
+      model: 'RepaymentSchedules',
+      key: 'id'
+    }
   },
   
   // Enhanced Details
   details: { 
-    type: mongoose.Schema.Types.Mixed,
-    default: {}
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {}
   },
   
   // Metadata
   timestamp: { 
-    type: Date, 
-    default: Date.now,
-    index: true 
+    type: DataTypes.DATE, 
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   effectiveDate: { 
-    type: Date, 
-    default: Date.now 
+    type: DataTypes.DATE, 
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   createdBy: { 
-    type: String, 
-    required: true 
+    type: DataTypes.STRING, 
+    allowNull: false 
   },
   branchId: { 
-    type: String 
+    type: DataTypes.STRING,
+    allowNull: true 
   },
   
   // Error Handling
-  errorMessage: { type: String },
-  retryCount: { type: Number, default: 0 },
-  lastRetryAt: { type: Date }
-  
+  errorMessage: { 
+    type: DataTypes.TEXT,
+    allowNull: true 
+  },
+  retryCount: { 
+    type: DataTypes.INTEGER, 
+    allowNull: false,
+    defaultValue: 0 
+  },
+  lastRetryAt: { 
+    type: DataTypes.DATE,
+    allowNull: true 
+  }
 }, {
+  tableName: 'loan_events',
   timestamps: true,
-  toJSON: { getters: true },
-  toObject: { getters: true }
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  getterMethods: {
+    isSuccessful() {
+      return this.status === 'PROCESSED' || this.status === 'SERVICED';
+    },
+    
+    canRetry() {
+      return this.status === 'FAILED' && this.retryCount < 3;
+    }
+  },
+  indexes: [
+    {
+      fields: ['ACCT_NO']
+    },
+    {
+      fields: ['timestamp']
+    },
+    {
+      fields: ['ACCT_NO', 'eventType', 'timestamp']
+    },
+    {
+      fields: ['LOAN_ACCOUNT_ID', 'status']
+    },
+    {
+      fields: ['CUST_ID', 'timestamp']
+    },
+    {
+      fields: ['timestamp', 'status']
+    },
+    {
+      fields: ['eventType']
+    },
+    {
+      fields: ['status']
+    },
+    {
+      fields: ['branchId']
+    },
+    {
+      fields: ['createdBy']
+    },
+    {
+      fields: ['effectiveDate']
+    }
+  ]
 });
 
-// Indexes
-loanEventSchema.index({ ACCT_NO: 1, eventType: 1, timestamp: -1 });
-loanEventSchema.index({ LOAN_ACCOUNT_ID: 1, status: 1 });
-loanEventSchema.index({ CUST_ID: 1, timestamp: -1 });
-loanEventSchema.index({ timestamp: -1, status: 1 });
-
-// Static Methods
-loanEventSchema.statics.findByAccountNumber = function(accountNo, options = {}) {
-  const query = { ACCT_NO: accountNo };
-  if (options.eventType) query.eventType = options.eventType;
-  if (options.status) query.status = options.status;
+// Define associations
+LoanEvent.associate = (models) => {
+  LoanEvent.belongsTo(models.LoanAccount, {
+    foreignKey: 'LOAN_ACCOUNT_ID',
+    as: 'loanAccount'
+  });
   
-  return this.find(query)
-    .sort({ timestamp: -1 })
-    .limit(options.limit || 100);
+  LoanEvent.belongsTo(models.Transaction, {
+    foreignKey: 'transactionId',
+    as: 'transaction'
+  });
+  
+  LoanEvent.belongsTo(models.RepaymentSchedule, {
+    foreignKey: 'repaymentScheduleId',
+    as: 'repaymentSchedule'
+  });
+  
+  LoanEvent.belongsTo(models.Customer, {
+    foreignKey: 'CUST_ID',
+    targetKey: 'CUST_ID', // Adjust based on your Customer model
+    as: 'customer'
+  });
+  
+  LoanEvent.belongsTo(models.User, {
+    foreignKey: 'createdBy',
+    targetKey: 'user_id', // Adjust based on your User model
+    as: 'creator'
+  });
+  
+  LoanEvent.belongsTo(models.Branch, {
+    foreignKey: 'branchId',
+    targetKey: 'branch_id', // Adjust based on your Branch model
+    as: 'branch'
+  });
 };
 
-loanEventSchema.statics.findRecentEvents = function(days = 7) {
+// Static methods
+LoanEvent.findByAccountNumber = async function(accountNo, options = {}) {
+  const where = { ACCT_NO: accountNo };
+  
+  if (options.eventType) where.eventType = options.eventType;
+  if (options.status) where.status = options.status;
+  
+  return this.findAll({
+    where,
+    order: [['timestamp', 'DESC']],
+    limit: options.limit || 100,
+    include: options.include || []
+  });
+};
+
+LoanEvent.findRecentEvents = async function(days = 7) {
   const date = new Date();
   date.setDate(date.getDate() - days);
   
-  return this.find({
-    timestamp: { $gte: date }
-  }).sort({ timestamp: -1 });
+  return this.findAll({
+    where: {
+      timestamp: { [Op.gte]: date }
+    },
+    order: [['timestamp', 'DESC']]
+  });
 };
 
-loanEventSchema.statics.createServicingEvent = async function(data) {
-  const event = new this({
+LoanEvent.createServicingEvent = async function(data) {
+  return this.create({
     ACCT_NO: data.ACCT_NO,
     LOAN_ACCOUNT_ID: data.LOAN_ACCOUNT_ID,
     CUST_ID: data.CUST_ID,
@@ -148,27 +262,27 @@ loanEventSchema.statics.createServicingEvent = async function(data) {
     installmentNumber: data.installmentNumber,
     dueDate: data.dueDate,
     paymentDate: data.paymentDate,
-    amount: data.amount,
-    principalAmount: data.principalAmount,
-    interestAmount: data.interestAmount,
+    amount: data.amount || 0.00,
+    principalAmount: data.principalAmount || 0.00,
+    interestAmount: data.interestAmount || 0.00,
     transactionId: data.transactionId,
     repaymentScheduleId: data.repaymentScheduleId,
     details: data.details || {},
     createdBy: data.createdBy,
-    branchId: data.branchId
+    branchId: data.branchId,
+    timestamp: new Date(),
+    effectiveDate: new Date()
   });
-  
-  return await event.save();
 };
 
-// Instance Methods
-loanEventSchema.methods.markAsProcessed = function() {
+// Instance methods (added to prototype)
+LoanEvent.prototype.markAsProcessed = async function() {
   this.status = 'PROCESSED';
   this.timestamp = new Date();
   return this.save();
 };
 
-loanEventSchema.methods.markAsFailed = function(errorMessage) {
+LoanEvent.prototype.markAsFailed = async function(errorMessage) {
   this.status = 'FAILED';
   this.errorMessage = errorMessage;
   this.retryCount += 1;
@@ -176,13 +290,4 @@ loanEventSchema.methods.markAsFailed = function(errorMessage) {
   return this.save();
 };
 
-// Virtuals
-loanEventSchema.virtual('isSuccessful').get(function() {
-  return this.status === 'PROCESSED' || this.status === 'SERVICED';
-});
-
-loanEventSchema.virtual('canRetry').get(function() {
-  return this.status === 'FAILED' && this.retryCount < 3;
-});
-
-export default mongoose.model('LoanEvent', loanEventSchema);
+export default LoanEvent;

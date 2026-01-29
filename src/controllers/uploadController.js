@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
 import fs from 'fs';
 import { v2 as cloudinaryV2 } from 'cloudinary';
 import dotenv from 'dotenv';
 // import DepositAccountApplication from '../models/DepositAccountApplication.js';
 import FileUpload from '../models/FileUpload.js';
+import File from '../models/File.js'; // Assuming you have a File model for cloudinary uploads
 
 // Load environment variables
 dotenv.config();
@@ -63,15 +63,15 @@ export const uploadFileAndUpdateStatus = async (req, res) => {
 
         // Upload files to Cloudinary
         const imageResult = await cloudinaryV2.uploader.upload(imagePath, {
-            folder: 'PEOPLE CHOICE BANKING DOCUMENT/IMAGE', // Specify folder in Cloudinary
+            folder: 'EVOLUTION BANKING DOCUMENT/IMAGE', // Specify folder in Cloudinary
         });
 
         const documentResult = await cloudinaryV2.uploader.upload(documentPath, {
-            folder: 'PEOPLE CHOICE BANKING DOCUMENT/DOCUMENT', // Specify folder in Cloudinary
+            folder: 'EVOLUTION BANKING DOCUMENT/DOCUMENT', // Specify folder in Cloudinary
         });
 
         const bankMandateResult = await cloudinaryV2.uploader.upload(bankMandatePath, {
-            folder: 'PEOPLE CHOICE BANKING DOCUMENT/BANK_MANDATE', // Specify folder in Cloudinary
+            folder: 'EVOLUTION BANKING DOCUMENT/BANK_MANDATE', // Specify folder in Cloudinary
         });
 
         // Log Cloudinary results
@@ -79,82 +79,188 @@ export const uploadFileAndUpdateStatus = async (req, res) => {
         console.log("Cloudinary Document upload result:", documentResult);
         console.log("Cloudinary Bank Mandate upload result:", bankMandateResult);
 
-        // Save the file metadata to the database with CUST_NO
-        const imageMetadata = new FileUpload({
-            CUST_NO, 
-            filename: imageResult.original_filename,
-            url: imageResult.secure_url,
-            size: imageFile.size,
-            format: imageResult.format,
-            uploadedBy: uploadedBy || 'Unknown User',
-        });
+        // Save the file metadata to the FileUpload table
+        const [imageMetadata, documentMetadata, bankMandateMetadata] = await Promise.all([
+            FileUpload.create({
+                CUST_NO, 
+                filename: imageResult.original_filename,
+                url: imageResult.secure_url,
+                size: imageFile.size,
+                format: imageResult.format,
+                uploadedBy: uploadedBy || 'Unknown User',
+            }),
+            FileUpload.create({
+                CUST_NO,
+                filename: documentResult.original_filename,
+                url: documentResult.secure_url,
+                size: documentFile.size,
+                format: documentResult.format,
+                uploadedBy: uploadedBy || 'Unknown User',
+            }),
+            FileUpload.create({
+                CUST_NO,
+                filename: bankMandateResult.original_filename,
+                url: bankMandateResult.secure_url,
+                size: bankMandateFile.size,
+                format: bankMandateResult.format,
+                uploadedBy: uploadedBy || 'Unknown User',
+            })
+        ]);
 
-        const documentMetadata = new FileUpload({
-            CUST_NO,
-            filename: documentResult.original_filename,
-            url: documentResult.secure_url,
-            size: documentFile.size,
-            format: documentResult.format,
-            uploadedBy: uploadedBy || 'Unknown User',
-        });
+        // Also save to File table (if you're using it for cloudinary references)
+        const [imageFileRecord, documentFileRecord, bankMandateFileRecord] = await Promise.all([
+            File.create({
+                url: imageResult.secure_url,
+                publicId: imageResult.public_id,
+            }),
+            File.create({
+                url: documentResult.secure_url,
+                publicId: documentResult.public_id,
+            }),
+            File.create({
+                url: bankMandateResult.secure_url,
+                publicId: bankMandateResult.public_id,
+            })
+        ]);
 
-        const bankMandateMetadata = new FileUpload({
-            CUST_NO,
-            filename: bankMandateResult.original_filename,
-            url: bankMandateResult.secure_url,
-            size: bankMandateFile.size,
-            format: bankMandateResult.format,
-            uploadedBy: uploadedBy || 'Unknown User',
-        });
-
-        // Save file metadata to the database
-        await imageMetadata.save();
-        await documentMetadata.save();
-        await bankMandateMetadata.save();
-
-        // Update the application status in the database
-        const updatedApplication = await DepositAccountApplication.findOneAndUpdate(
-            { CUST_ID: CUST_NO },
-            {
-                IMAGE: imageResult.secure_url,
+        // Update the application status in the database (commented out as DepositAccountApplication is not defined)
+        /*
+        const updatedApplication = await DepositAccountApplication.update(
+            { IMAGE: imageResult.secure_url,
                 DOCUMENT: documentResult.secure_url,
                 BANK_MANDATE: bankMandateResult.secure_url,
                 STATUS: STATUS === 'APPROVED' ? 'Active' : 'pending',
             },
-            { new: true }
+            {
+                where: { CUST_ID: CUST_NO }
+            }
         );
 
         // If no application is found
-        if (!updatedApplication) {
+        if (!updatedApplication || updatedApplication[0] === 0) {
             return res.status(404).json({ message: 'Application not found.' });
         }
 
+        // Get the updated application
+        const application = await DepositAccountApplication.findOne({
+            where: { CUST_ID: CUST_NO }
+        });
+        */
+
+        // Clean up temporary files if they were created
+        if (fs.existsSync('./temp_image_file')) fs.unlinkSync('./temp_image_file');
+        if (fs.existsSync('./temp_document_file')) fs.unlinkSync('./temp_document_file');
+        if (fs.existsSync('./temp_bank_mandate_file')) fs.unlinkSync('./temp_bank_mandate_file');
+
         // Success response
         res.status(200).json({
-            message: 'Files uploaded successfully and application updated.',
-            data: updatedApplication,
+            message: 'Files uploaded successfully.',
+            files: {
+                image: imageMetadata,
+                document: documentMetadata,
+                bankMandate: bankMandateMetadata
+            },
+            // data: application // Uncomment when DepositAccountApplication is defined
         });
     } catch (error) {
         console.error('Error uploading files and updating application:', error);
-        res.status(500).json({ error: 'Error uploading files and updating application.', details: error.message });
+        
+        // Clean up temporary files on error
+        try {
+            if (fs.existsSync('./temp_image_file')) fs.unlinkSync('./temp_image_file');
+            if (fs.existsSync('./temp_document_file')) fs.unlinkSync('./temp_document_file');
+            if (fs.existsSync('./temp_bank_mandate_file')) fs.unlinkSync('./temp_bank_mandate_file');
+        } catch (cleanupError) {
+            console.error('Error cleaning up temp files:', cleanupError);
+        }
+        
+        res.status(500).json({ 
+            error: 'Error uploading files and updating application.', 
+            details: error.message 
+        });
     }
 };
 
 export const getFileByCUSTNO = async (req, res) => {
     try {
-      const { CUSTNO } = req.params;  // Get the CUSTNO from the route parameter
-  
-      // Find the file associated with the CUSTNO
-      const file = await FileUpload.findOne({ CUST_NO: CUSTNO });
-  
-      if (!file) {
-        return res.status(404).json({ message: 'File not found for the given CUST_NO.' });
-      }
-  
-      res.status(200).json({ data: file });
+        const { CUSTNO } = req.params;  // Get the CUSTNO from the route parameter
+
+        // Find the file associated with the CUSTNO
+        const file = await FileUpload.findOne({
+            where: { CUST_NO: CUSTNO },
+            order: [['uploadedAt', 'DESC']] // Get the most recent file
+        });
+
+        if (!file) {
+            return res.status(404).json({ message: 'File not found for the given CUST_NO.' });
+        }
+
+        res.status(200).json({ data: file });
     } catch (error) {
-      console.error('Error fetching file by CUSTNO:', error);
-      res.status(500).json({ message: 'Error fetching file by CUSTNO', error: error.message });
+        console.error('Error fetching file by CUSTNO:', error);
+        res.status(500).json({ 
+            message: 'Error fetching file by CUSTNO', 
+            error: error.message 
+        });
     }
-  };
-  
+};
+
+// New function to get all files for a customer
+export const getFilesByCUSTNO = async (req, res) => {
+    try {
+        const { CUSTNO } = req.params;
+
+        const files = await FileUpload.findAll({
+            where: { CUST_NO: CUSTNO },
+            order: [['uploadedAt', 'DESC']]
+        });
+
+        if (!files || files.length === 0) {
+            return res.status(404).json({ message: 'No files found for the given CUST_NO.' });
+        }
+
+        res.status(200).json({ 
+            count: files.length,
+            data: files 
+        });
+    } catch (error) {
+        console.error('Error fetching files by CUSTNO:', error);
+        res.status(500).json({ 
+            message: 'Error fetching files by CUSTNO', 
+            error: error.message 
+        });
+    }
+};
+
+// Function to delete a file
+export const deleteFile = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const file = await FileUpload.findByPk(id);
+        
+        if (!file) {
+            return res.status(404).json({ message: 'File not found.' });
+        }
+
+        // Optionally delete from Cloudinary
+        try {
+            await cloudinaryV2.uploader.destroy(file.publicId || '');
+        } catch (cloudinaryError) {
+            console.warn('Could not delete from Cloudinary:', cloudinaryError);
+        }
+
+        await file.destroy();
+
+        res.status(200).json({ 
+            message: 'File deleted successfully.',
+            deletedFile: file 
+        });
+    } catch (error) {
+        console.error('Error deleting file:', error);
+        res.status(500).json({ 
+            message: 'Error deleting file', 
+            error: error.message 
+        });
+    }
+};

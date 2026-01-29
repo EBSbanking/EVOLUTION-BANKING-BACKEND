@@ -1,351 +1,395 @@
 // models/DrawerCloseOut.js
-import mongoose from 'mongoose';
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const DrawerCloseOutSchema = new mongoose.Schema({
+class DrawerCloseOut extends Model {
+  // Virtual getter for net cash movement
+  get netCashMovement() {
+    const deposits = parseFloat(this.TOTAL_DEPOSITS) || 0;
+    const withdrawals = parseFloat(this.TOTAL_WITHDRAWALS) || 0;
+    const receipts = parseFloat(this.TOTAL_CASH_RECEIPTS) || 0;
+    const disbursements = parseFloat(this.TOTAL_CASH_DISBURSEMENTS) || 0;
+    
+    return (deposits + receipts) - (withdrawals + disbursements);
+  }
+
+  // Virtual getter for total transactions
+  get totalTransactions() {
+    return (this.DEPOSIT_COUNT || 0) + 
+           (this.WITHDRAWAL_COUNT || 0) + 
+           (this.CASH_RECEIPT_COUNT || 0) + 
+           (this.CASH_DISBURSEMENT_COUNT || 0);
+  }
+
+  // Method to verify closeout
+  verifyCloseout(verifiedBy, notes = '') {
+    this.CLOSEOUT_STATUS = 'VERIFIED';
+    this.VERIFIED_BY = verifiedBy;
+    this.VERIFICATION_NOTES = notes;
+    this.VERSION_NO += 1;
+  }
+
+  // Method to approve closeout
+  approveCloseout(approvedBy) {
+    this.CLOSEOUT_STATUS = 'APPROVED';
+    this.SUPERVISOR_APPROVAL = approvedBy;
+    this.VERSION_NO += 1;
+  }
+
+  // Method to flag as disputed
+  flagAsDisputed(reason) {
+    this.CLOSEOUT_STATUS = 'DISPUTED';
+    this.VERIFICATION_NOTES = reason;
+    this.VERSION_NO += 1;
+  }
+
+  // Static method to find closeouts by drawer
+  static async findByDrawer(drawerId, limit = 50) {
+    return await this.findAll({
+      where: {
+        DRAWER_ID: drawerId,
+        REC_ST: 'A'
+      },
+      order: [['SESSION_END_DT', 'DESC']],
+      limit: limit
+    });
+  }
+
+  // Static method to find closeouts by date range
+  static async findByDateRange(startDate, endDate, businessUnitId = null) {
+    const where = {
+      SESSION_END_DT: {
+        [DataTypes.Op.between]: [startDate, endDate]
+      },
+      REC_ST: 'A'
+    };
+    
+    if (businessUnitId) {
+      where.BU_ID = businessUnitId;
+    }
+    
+    return await this.findAll({
+      where,
+      order: [['SESSION_END_DT', 'DESC']]
+    });
+  }
+
+  // Static method to find pending closeouts
+  static async findPendingCloseouts(businessUnitId = null) {
+    const where = {
+      CLOSEOUT_STATUS: 'PENDING',
+      REC_ST: 'A'
+    };
+    
+    if (businessUnitId) {
+      where.BU_ID = businessUnitId;
+    }
+    
+    return await this.findAll({
+      where,
+      order: [['SESSION_END_DT', 'DESC']]
+    });
+  }
+}
+
+DrawerCloseOut.init({
   // Primary Identification
   DRAWER_CLOSEOUT_ID: {
-    type: Number,
-    required: true,
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+    allowNull: false,
     unique: true,
   },
   
   // Drawer Reference
   DRAWER_ID: {
-    type: Number,
-    required: true,
-    ref: 'Drawer'
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'Drawers',
+      key: 'DRAWER_ID'
+    }
   },
-  DRAWER_NO: { // Denormalized for easier queries
-    type: String,
-    required: true,
-    maxlength: 20
+  DRAWER_NO: {
+    type: DataTypes.STRING(20),
+    allowNull: false
   },
   
   // Session Information
   SESSION_START_DT: {
-    type: Date,
-    required: true
+    type: DataTypes.DATE,
+    allowNull: false
   },
   SESSION_END_DT: {
-    type: Date,
-    required: true,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
-  SESSION_DURATION: { // Calculated duration in minutes
-    type: Number,
-    required: true
+  SESSION_DURATION: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    comment: 'Calculated duration in minutes'
   },
   
-  // Financial Summary
+  // Financial Summary (using DECIMAL for precise financial calculations)
   OPENING_BALANCE: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   CLOSING_BALANCE: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   EXPECTED_BALANCE: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   
   // Transaction Totals
   TOTAL_DEPOSITS: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   TOTAL_WITHDRAWALS: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   TOTAL_CASH_RECEIPTS: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   TOTAL_CASH_DISBURSEMENTS: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   
   // Transaction Counts
   DEPOSIT_COUNT: {
-    type: Number,
-    required: true,
-    default: 0
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
   },
   WITHDRAWAL_COUNT: {
-    type: Number,
-    required: true,
-    default: 0
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
   },
   CASH_RECEIPT_COUNT: {
-    type: Number,
-    required: true,
-    default: 0
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
   },
   CASH_DISBURSEMENT_COUNT: {
-    type: Number,
-    required: true,
-    default: 0
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
   },
   
   // Settlement Information
   OVERAGE_AMT: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   SHORTAGE_AMT: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   DIFFERENCE_AMT: {
-    type: mongoose.Schema.Types.Decimal128,
-    required: true,
-    default: mongoose.Types.Decimal128.fromString('0.00')
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    defaultValue: 0.00
   },
   
-  // Currency Information
+  // Currency Information (using JSON for flexible denomination storage)
   CURRENCY_ID: {
-    type: Number,
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false
   },
   CURRENCY_DENOMINATIONS: {
-    OneThousandNaira: { type: Number, default: 0 },
-    FiveHundredNaira: { type: Number, default: 0 },
-    TwoHundredNaira: { type: Number, default: 0 },
-    OneHundredNaira: { type: Number, default: 0 },
-    FiftyNaira: { type: Number, default: 0 },
-    TwentyNaira: { type: Number, default: 0 },
-    TenNaira: { type: Number, default: 0 },
-    FiveNaira: { type: Number, default: 0 },
-    TOTAL_CURRENCY_COUNT: { type: Number, default: 0 },
-    CALCULATED_AMOUNT: { type: mongoose.Schema.Types.Decimal128, default: mongoose.Types.Decimal128.fromString('0.00') }
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: {
+      OneThousandNaira: 0,
+      FiveHundredNaira: 0,
+      TwoHundredNaira: 0,
+      OneHundredNaira: 0,
+      FiftyNaira: 0,
+      TwentyNaira: 0,
+      TenNaira: 0,
+      FiveNaira: 0,
+      TOTAL_CURRENCY_COUNT: 0,
+      CALCULATED_AMOUNT: 0.00
+    }
   },
   
   // Verification Details
   VERIFIED_BY: {
-    type: String,
-    required: true,
-    maxlength: 24
+    type: DataTypes.STRING(24),
+    allowNull: false
   },
   COUNTED_BY: {
-    type: String,
-    maxlength: 24
+    type: DataTypes.STRING(24)
   },
   SUPERVISOR_APPROVAL: {
-    type: String,
-    maxlength: 24
+    type: DataTypes.STRING(24)
   },
   VERIFICATION_NOTES: {
-    type: String,
-    maxlength: 500
+    type: DataTypes.STRING(500)
   },
   
   // Closeout Status
   CLOSEOUT_STATUS: {
-    type: String,
-    required: true,
-    enum: ['PENDING', 'VERIFIED', 'APPROVED', 'DISPUTED', 'ADJUSTED'],
-    default: 'PENDING'
+    type: DataTypes.ENUM('PENDING', 'VERIFIED', 'APPROVED', 'DISPUTED', 'ADJUSTED'),
+    allowNull: false,
+    defaultValue: 'PENDING'
   },
   FORCE_CLOSED: {
-    type: Boolean,
-    default: false
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
   FORCE_CLOSE_REASON: {
-    type: String,
-    maxlength: 200
+    type: DataTypes.STRING(200)
   },
   
   // Business Context
   BU_ID: {
-    type: Number,
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false
   },
-  USER_ID: { // Teller who operated the drawer
-    type: String,
-    required: true,
-    maxlength: 24
+  USER_ID: {
+    type: DataTypes.STRING(24),
+    allowNull: false
   },
-  CURRENT_ASSIGNEE_ID: { // For assignment tracking
-    type: Number,
-    required: true
+  CURRENT_ASSIGNEE_ID: {
+    type: DataTypes.INTEGER,
+    allowNull: false
   },
   
   // Audit Fields
   REC_ST: {
-    type: String,
-    required: true,
-    enum: ['A', 'I', 'C'],
-    default: 'A',
-    maxlength: 1
+    type: DataTypes.CHAR(1),
+    allowNull: false,
+    defaultValue: 'A',
+    validate: {
+      isIn: [['A', 'I', 'C']]
+    }
   },
   VERSION_NO: {
-    type: Number,
-    required: true,
-    default: 1
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1
   },
   ROW_TS: {
-    type: Date,
-    required: true,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   CREATE_DT: {
-    type: Date,
-    required: true,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   SYS_CREATE_TS: {
-    type: Date,
-    required: true,
-    default: Date.now
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW
   },
   CREATED_BY: {
-    type: String,
-    required: true,
-    maxlength: 24
+    type: DataTypes.STRING(24),
+    allowNull: false
   }
-
 }, {
+  sequelize,
+  modelName: 'DrawerCloseOut',
+  tableName: 'drawer_close_outs',
   timestamps: true, // Adds createdAt and updatedAt
-  toJSON: { 
-    transform: function(doc, ret) {
-      // Convert Decimal128 to string for JSON response
-      const decimalFields = [
-        'OPENING_BALANCE', 'CLOSING_BALANCE', 'EXPECTED_BALANCE',
-        'TOTAL_DEPOSITS', 'TOTAL_WITHDRAWALS', 'TOTAL_CASH_RECEIPTS', 'TOTAL_CASH_DISBURSEMENTS',
-        'OVERAGE_AMT', 'SHORTAGE_AMT', 'DIFFERENCE_AMT'
-      ];
-      
-      decimalFields.forEach(field => {
-        if (ret[field]) ret[field] = parseFloat(ret[field].toString());
-      });
-      
-      if (ret.CURRENCY_DENOMINATIONS && ret.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT) {
-        ret.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT = parseFloat(ret.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT.toString());
+  underscored: false,
+  hooks: {
+    beforeSave: async (drawerCloseOut, options) => {
+      if (drawerCloseOut.changed()) {
+        drawerCloseOut.VERSION_NO += 1;
+        drawerCloseOut.ROW_TS = new Date();
       }
       
-      return ret;
-    }
-  }
-});
-
-// Indexes for better performance
-DrawerCloseOutSchema.index({ DRAWER_ID: 1, SESSION_END_DT: -1 });
-DrawerCloseOutSchema.index({ USER_ID: 1, SESSION_END_DT: -1 });
-DrawerCloseOutSchema.index({ BU_ID: 1, SESSION_END_DT: -1 });
-DrawerCloseOutSchema.index({ SESSION_END_DT: -1 });
-DrawerCloseOutSchema.index({ CLOSEOUT_STATUS: 1 });
-
-// Virtual for net cash movement
-DrawerCloseOutSchema.virtual('netCashMovement').get(function() {
-  const deposits = parseFloat(this.TOTAL_DEPOSITS.toString());
-  const withdrawals = parseFloat(this.TOTAL_WITHDRAWALS.toString());
-  const receipts = parseFloat(this.TOTAL_CASH_RECEIPTS.toString());
-  const disbursements = parseFloat(this.TOTAL_CASH_DISBURSEMENTS.toString());
-  
-  return (deposits + receipts) - (withdrawals + disbursements);
-});
-
-// Virtual for total transactions
-DrawerCloseOutSchema.virtual('totalTransactions').get(function() {
-  return this.DEPOSIT_COUNT + this.WITHDRAWAL_COUNT + this.CASH_RECEIPT_COUNT + this.CASH_DISBURSEMENT_COUNT;
-});
-
-// Static method to find closeouts by drawer
-DrawerCloseOutSchema.statics.findByDrawer = function(drawerId, limit = 50) {
-  return this.find({ 
-    DRAWER_ID: drawerId,
-    REC_ST: 'A'
-  })
-  .sort({ SESSION_END_DT: -1 })
-  .limit(limit);
-};
-
-// Static method to find closeouts by date range
-DrawerCloseOutSchema.statics.findByDateRange = function(startDate, endDate, businessUnitId = null) {
-  const query = {
-    SESSION_END_DT: {
-      $gte: startDate,
-      $lte: endDate
+      // Calculate difference
+      if (drawerCloseOut.CLOSING_BALANCE !== undefined && drawerCloseOut.EXPECTED_BALANCE !== undefined) {
+        const closing = parseFloat(drawerCloseOut.CLOSING_BALANCE);
+        const expected = parseFloat(drawerCloseOut.EXPECTED_BALANCE);
+        drawerCloseOut.DIFFERENCE_AMT = parseFloat((closing - expected).toFixed(2));
+      }
+      
+      // Calculate session duration in minutes
+      if (drawerCloseOut.SESSION_START_DT && drawerCloseOut.SESSION_END_DT) {
+        const durationMs = new Date(drawerCloseOut.SESSION_END_DT) - new Date(drawerCloseOut.SESSION_START_DT);
+        drawerCloseOut.SESSION_DURATION = Math.floor(durationMs / (1000 * 60)); // Convert to minutes
+      }
     },
-    REC_ST: 'A'
-  };
-  
-  if (businessUnitId) {
-    query.BU_ID = businessUnitId;
-  }
-  
-  return this.find(query).sort({ SESSION_END_DT: -1 });
-};
-
-// Static method to find pending closeouts
-DrawerCloseOutSchema.statics.findPendingCloseouts = function(businessUnitId = null) {
-  const query = {
-    CLOSEOUT_STATUS: 'PENDING',
-    REC_ST: 'A'
-  };
-  
-  if (businessUnitId) {
-    query.BU_ID = businessUnitId;
-  }
-  
-  return this.find(query).sort({ SESSION_END_DT: -1 });
-};
-
-// Method to verify closeout
-DrawerCloseOutSchema.methods.verifyCloseout = function(verifiedBy, notes = '') {
-  this.CLOSEOUT_STATUS = 'VERIFIED';
-  this.VERIFIED_BY = verifiedBy;
-  this.VERIFICATION_NOTES = notes;
-  this.VERSION_NO += 1;
-};
-
-// Method to approve closeout
-DrawerCloseOutSchema.methods.approveCloseout = function(approvedBy) {
-  this.CLOSEOUT_STATUS = 'APPROVED';
-  this.SUPERVISOR_APPROVAL = approvedBy;
-  this.VERSION_NO += 1;
-};
-
-// Method to flag as disputed
-DrawerCloseOutSchema.methods.flagAsDisputed = function(reason) {
-  this.CLOSEOUT_STATUS = 'DISPUTED';
-  this.VERIFICATION_NOTES = reason;
-  this.VERSION_NO += 1;
-};
-
-// Pre-save middleware to calculate derived fields
-DrawerCloseOutSchema.pre('save', function(next) {
-  if (this.isModified()) {
-    this.VERSION_NO += 1;
-    this.ROW_TS = new Date();
-  }
-  
-  // Calculate difference
-  const closing = parseFloat(this.CLOSING_BALANCE.toString());
-  const expected = parseFloat(this.EXPECTED_BALANCE.toString());
-  this.DIFFERENCE_AMT = mongoose.Types.Decimal128.fromString((closing - expected).toFixed(2));
-  
-  // Calculate session duration in minutes
-  if (this.SESSION_START_DT && this.SESSION_END_DT) {
-    const durationMs = this.SESSION_END_DT - this.SESSION_START_DT;
-    this.SESSION_DURATION = Math.floor(durationMs / (1000 * 60)); // Convert to minutes
-  }
-  
-  next();
+    afterFind: (results) => {
+      if (!results) return;
+      
+      const processResult = (result) => {
+        // Ensure decimal values are properly converted
+        if (result && result.dataValues) {
+          // Convert decimal fields to numbers for consistency
+          const decimalFields = [
+            'OPENING_BALANCE', 'CLOSING_BALANCE', 'EXPECTED_BALANCE',
+            'TOTAL_DEPOSITS', 'TOTAL_WITHDRAWALS', 'TOTAL_CASH_RECEIPTS', 'TOTAL_CASH_DISBURSEMENTS',
+            'OVERAGE_AMT', 'SHORTAGE_AMT', 'DIFFERENCE_AMT'
+          ];
+          
+          decimalFields.forEach(field => {
+            if (result[field] !== null && result[field] !== undefined) {
+              result.dataValues[field] = parseFloat(result[field]);
+            }
+          });
+          
+          // Process CURRENCY_DENOMINATIONS JSON
+          if (result.CURRENCY_DENOMINATIONS && result.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT) {
+            result.dataValues.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT = 
+              parseFloat(result.CURRENCY_DENOMINATIONS.CALCULATED_AMOUNT);
+          }
+        }
+      };
+      
+      if (Array.isArray(results)) {
+        results.forEach(processResult);
+      } else {
+        processResult(results);
+      }
+    }
+  },
+  indexes: [
+    {
+      name: 'idx_drawer_closeouts_drawer_session',
+      fields: ['DRAWER_ID', 'SESSION_END_DT']
+    },
+    {
+      name: 'idx_drawer_closeouts_user_session',
+      fields: ['USER_ID', 'SESSION_END_DT']
+    },
+    {
+      name: 'idx_drawer_closeouts_bu_session',
+      fields: ['BU_ID', 'SESSION_END_DT']
+    },
+    {
+      name: 'idx_drawer_closeouts_session_end',
+      fields: ['SESSION_END_DT']
+    },
+    {
+      name: 'idx_drawer_closeouts_status',
+      fields: ['CLOSEOUT_STATUS']
+    }
+  ]
 });
-
-const DrawerCloseOut = mongoose.model('DrawerCloseOut', DrawerCloseOutSchema);
 
 export default DrawerCloseOut;

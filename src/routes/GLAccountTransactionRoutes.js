@@ -15,7 +15,6 @@ import {
   processEODGLTransactionsService,
 } from '../controllers/GLAccountTransactionController.js'; // Consolidated imports from controller
 
-import mongoose from 'mongoose';
 
 const router = express.Router();
 

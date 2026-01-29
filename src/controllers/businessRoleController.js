@@ -1,5 +1,5 @@
 // src/controllers/businessRoleController.js
-import mongoose from 'mongoose';
+import sequelize from '../../config/db.js';
 import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
 import BusinessUnit from '../models/BusinessUnit.js';
@@ -10,11 +10,9 @@ import { isBUAccessible, getAccessibleBusinessUnits } from "../utils/businessUni
 
 // Create BusinessRole — full flow with branch integration
 export const createBusinessRole = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   
   try {
-    session.startTransaction();
-    
     const {
       ROLE_NM,
       REC_ST,
@@ -35,7 +33,7 @@ export const createBusinessRole = async (req, res) => {
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
-      await session.abortTransaction();
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Missing required fields',
@@ -46,7 +44,7 @@ export const createBusinessRole = async (req, res) => {
     // 2. VERIFY ROLE_ID AND ROLE_NM MATCH
     const roleMapping = ROLE_MAPPING[ROLE_ID];
     if (!roleMapping || roleMapping.ROLE_NM.toUpperCase() !== ROLE_NM.toUpperCase()) {
-      await session.abortTransaction();
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Role ID and Role Name mismatch',
@@ -60,9 +58,13 @@ export const createBusinessRole = async (req, res) => {
     let branchReference = null;
 
     if (BU_ID) {
-      const branch = await Branch.findOne({ branchCode: BU_ID }).session(session);
+      const branch = await Branch.findOne({ 
+        where: { branchCode: BU_ID },
+        transaction 
+      });
+      
       if (!branch) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Branch with code ${BU_ID} not found`
@@ -70,12 +72,15 @@ export const createBusinessRole = async (req, res) => {
       }
 
       const businessUnit = await BusinessUnit.findOne({ 
-        BU_ID: BU_ID,
-        branch: branch._id 
-      }).session(session);
+        where: { 
+          BU_ID: BU_ID,
+          branchId: branch.id 
+        },
+        transaction
+      });
 
       if (!businessUnit) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Business Unit not found for branch ${BU_ID}`
@@ -84,23 +89,27 @@ export const createBusinessRole = async (req, res) => {
 
       finalBusinessUnit = businessUnit.BUSINESS_UNIT || branch.branchName;
       finalBU_ID = businessUnit.BU_ID;
-      branchReference = branch._id;
+      branchReference = branch.id;
     } else if (BUSINESS_UNIT) {
       const businessUnit = await BusinessUnit.findOne({ 
-        BUSINESS_UNIT: new RegExp(BUSINESS_UNIT, 'i') 
-      }).session(session);
+        where: sequelize.where(
+          sequelize.fn('LOWER', sequelize.col('BUSINESS_UNIT')),
+          sequelize.fn('LOWER', BUSINESS_UNIT)
+        ),
+        transaction
+      });
       
       if (!businessUnit) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Business Unit "${BUSINESS_UNIT}" not found`
         });
       }
 
-      const branch = await Branch.findById(businessUnit.branch).session(session);
+      const branch = await Branch.findByPk(businessUnit.branchId, { transaction });
       if (!branch) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Branch not found for business unit ${BUSINESS_UNIT}`
@@ -109,9 +118,9 @@ export const createBusinessRole = async (req, res) => {
 
       finalBusinessUnit = businessUnit.BUSINESS_UNIT;
       finalBU_ID = businessUnit.BU_ID;
-      branchReference = branch._id;
+      branchReference = branch.id;
     } else {
-      await session.abortTransaction();
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Either BUSINESS_UNIT or BU_ID (branch code) is required'
@@ -120,14 +129,15 @@ export const createBusinessRole = async (req, res) => {
 
     // 4. CHECK FOR DUPLICATES
     const existingRole = await BusinessRole.findOne({
-      $or: [
+      where: sequelize.or(
         { ROLE_ID, USER_ID, BU_ID: finalBU_ID },
         { ROLE_NM, USER_ID, BUSINESS_UNIT: finalBusinessUnit }
-      ]
-    }).session(session);
+      ),
+      transaction
+    });
 
     if (existingRole) {
-      await session.abortTransaction();
+      await transaction.rollback();
       return res.status(409).json({
         success: false,
         message: 'Role assignment already exists for this user and branch'
@@ -135,7 +145,7 @@ export const createBusinessRole = async (req, res) => {
     }
 
     // 5. CREATE NEW ROLE
-    const newRole = new BusinessRole({
+    const newRole = await BusinessRole.create({
       ROLE_NM: roleMapping.ROLE_NM,
       ROLE_ID,
       USER_ID,
@@ -151,31 +161,35 @@ export const createBusinessRole = async (req, res) => {
       CREATED_BY_ROLE: req.user?.role || 'system',
       CREATE_DT: new Date(),
       ROW_TS: new Date()
+    }, { transaction });
+
+    // 6. GET BRANCH INFO FOR RESPONSE
+    const populatedRole = await BusinessRole.findByPk(newRole.id, {
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status']
+      }],
+      transaction
     });
 
-    await newRole.save({ session });
-
-    // 6. POPULATE BRANCH INFO FOR RESPONSE
-    const populatedRole = await BusinessRole.findById(newRole._id)
-      .populate('BRANCH_REF', 'branchName branchCode organizationName organizationCode address status');
-
-    await session.commitTransaction();
+    await transaction.commit();
 
     // 7. SUCCESS RESPONSE
     return res.status(201).json({
       success: true,
       data: {
-        id: populatedRole._id,
+        id: populatedRole.id,
         role: populatedRole.ROLE_NM,
         user: populatedRole.USER_ID,
         businessUnit: populatedRole.BUSINESS_UNIT,
         buId: populatedRole.BU_ID,
-        branch: populatedRole.BRANCH_REF ? {
-          name: populatedRole.BRANCH_REF.branchName,
-          code: populatedRole.BRANCH_REF.branchCode,
-          organization: populatedRole.BRANCH_REF.organizationName,
-          address: populatedRole.BRANCH_REF.address,
-          status: populatedRole.BRANCH_REF.status
+        branch: populatedRole.branch ? {
+          name: populatedRole.branch.branchName,
+          code: populatedRole.branch.branchCode,
+          organization: populatedRole.branch.organizationName,
+          address: populatedRole.branch.address,
+          status: populatedRole.branch.status
         } : null,
         permissions: {
           isSupervisor: populatedRole.SUPERVISOR_FG,
@@ -186,26 +200,36 @@ export const createBusinessRole = async (req, res) => {
     });
 
   } catch (error) {
-    await session.abortTransaction();
+    await transaction.rollback();
     console.error('Role Creation Error:', error);
 
-    if (error.name === 'ValidationError') {
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
-        errors: Object.values(error.errors).map(err => ({
+        errors: error.errors.map(err => ({
           field: err.path,
-          message: err.message
+          message: err.message,
+          value: err.value
         }))
+      });
+    }
+
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      const duplicateMessage = getDuplicateKeyMessage(error);
+      return res.status(409).json({
+        success: false,
+        message: duplicateMessage,
+        code: 'DUPLICATE_RECORD'
       });
     }
 
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      referenceId: `ERR-${Date.now()}`,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
-  } finally {
-    session.endSession();
   }
 };
 
@@ -214,8 +238,14 @@ export const getBusinessRoleByUserId = async (req, res) => {
   try {
     const { USER_ID } = req.params;
 
-    const businessRole = await BusinessRole.findOne({ USER_ID })
-      .populate('BRANCH_REF', 'branchName branchCode organizationName organizationCode address status branchType');
+    const businessRole = await BusinessRole.findOne({ 
+      where: { USER_ID },
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status', 'branchType']
+      }]
+    });
 
     if (!businessRole) {
       return res.status(404).json({ 
@@ -235,23 +265,21 @@ export const getBusinessRoleByUserId = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Error fetching BusinessRole', 
-      error: error.message 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
 // Update a BusinessRole by USER_ID
 export const updateBusinessRole = async (req, res) => {
-  const session = await mongoose.startSession();
+  const transaction = await sequelize.transaction();
   
   try {
-    session.startTransaction();
-    
     const { USER_ID } = req.params;
     const updateData = req.body;
 
     if (updateData.ROLE_ID && !ROLE_MAPPING[updateData.ROLE_ID]) {
-      await session.abortTransaction();
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Invalid Role ID',
@@ -269,7 +297,7 @@ export const updateBusinessRole = async (req, res) => {
     if (updateData.ROLE_NM && !updateData.ROLE_ID) {
       const matchingKey = Object.keys(ROLE_MAPPING).find(key => ROLE_MAPPING[key].ROLE_NM === updateData.ROLE_NM);
       if (!matchingKey) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(400).json({
           success: false,
           message: 'Invalid Role Name',
@@ -280,9 +308,13 @@ export const updateBusinessRole = async (req, res) => {
     }
 
     if (updateData.BU_ID) {
-      const branch = await Branch.findOne({ branchCode: updateData.BU_ID }).session(session);
+      const branch = await Branch.findOne({ 
+        where: { branchCode: updateData.BU_ID },
+        transaction 
+      });
+      
       if (!branch) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Branch with code ${updateData.BU_ID} not found`
@@ -290,11 +322,12 @@ export const updateBusinessRole = async (req, res) => {
       }
 
       const businessUnit = await BusinessUnit.findOne({ 
-        BU_ID: updateData.BU_ID 
-      }).session(session);
+        where: { BU_ID: updateData.BU_ID },
+        transaction
+      });
 
       if (!businessUnit) {
-        await session.abortTransaction();
+        await transaction.rollback();
         return res.status(404).json({
           success: false,
           message: `Business Unit with ID ${updateData.BU_ID} not found`
@@ -302,27 +335,17 @@ export const updateBusinessRole = async (req, res) => {
       }
 
       updateData.BUSINESS_UNIT = businessUnit.BUSINESS_UNIT;
-      updateData.BRANCH_REF = branch._id;
+      updateData.BRANCH_REF = branch.id;
     }
 
-    const updatedRole = await BusinessRole.findOneAndUpdate(
-      { USER_ID },
-      {
-        ...updateData,
-        LAST_UPDATED_BY: req.user?.user_name || 'system',
-        LAST_UPDATED_DT: new Date(),
-        ROW_TS: new Date()
-      },
-      { 
-        new: true,
-        runValidators: true,
-        context: 'query',
-        session
-      }
-    ).populate('BRANCH_REF', 'branchName branchCode organizationName organizationCode');
+    // Find existing role
+    const existingRole = await BusinessRole.findOne({ 
+      where: { USER_ID },
+      transaction 
+    });
 
-    if (!updatedRole) {
-      await session.abortTransaction();
+    if (!existingRole) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Business role not found',
@@ -330,41 +353,73 @@ export const updateBusinessRole = async (req, res) => {
       });
     }
 
-    await session.commitTransaction();
+    // Update role
+    const [updatedRows] = await BusinessRole.update(
+      {
+        ...updateData,
+        LAST_UPDATED_BY: req.user?.user_name || 'system',
+        LAST_UPDATED_DT: new Date(),
+        ROW_TS: new Date()
+      },
+      {
+        where: { USER_ID },
+        transaction,
+        validate: true,
+        returning: true
+      }
+    );
+
+    // Get updated role with branch info
+    const updatedRole = await BusinessRole.findOne({
+      where: { USER_ID },
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode']
+      }],
+      transaction
+    });
+
+    await transaction.commit();
 
     return res.status(200).json({
       success: true,
       message: 'Business role updated successfully',
       data: {
-        roleId: updatedRole._id,
+        roleId: updatedRole.id,
         roleName: updatedRole.ROLE_NM,
         businessUnit: updatedRole.BUSINESS_UNIT,
         buId: updatedRole.BU_ID,
         userId: updatedRole.USER_ID,
         status: updatedRole.REC_ST,
-        branch: updatedRole.BRANCH_REF ? {
-          name: updatedRole.BRANCH_REF.branchName,
-          code: updatedRole.BRANCH_REF.branchCode
+        branch: updatedRole.branch ? {
+          name: updatedRole.branch.branchName,
+          code: updatedRole.branch.branchCode
         } : null
       }
     });
 
   } catch (error) {
-    await session.abortTransaction();
+    await transaction.rollback();
     console.error('Business Role Update Error:', error);
 
-    if (error.name === 'ValidationError') {
-      const errors = {};
-      Object.keys(error.errors).forEach(key => {
-        errors[key] = {
-          message: error.errors[key].message,
-          value: error.errors[key].value
-        };
-      });
+    if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
-        errors
+        errors: error.errors.map(err => ({
+          field: err.path,
+          message: err.message,
+          value: err.value
+        }))
+      });
+    }
+
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({
+        success: false,
+        message: getDuplicateKeyMessage(error),
+        code: 'DUPLICATE_RECORD'
       });
     }
 
@@ -373,19 +428,21 @@ export const updateBusinessRole = async (req, res) => {
       message: 'Internal server error',
       referenceId: `ERR-${Date.now()}`
     });
-  } finally {
-    session.endSession();
   }
 };
 
-// Delete a BusinessRole by _id
+// Delete a BusinessRole by id
 export const deleteBusinessRole = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
 
-    const deletedBusinessRole = await BusinessRole.findByIdAndDelete(id);
+    // Find role first to include in response
+    const roleToDelete = await BusinessRole.findByPk(id, { transaction });
 
-    if (!deletedBusinessRole) {
+    if (!roleToDelete) {
+      await transaction.rollback();
       return res.status(404).json({ 
         success: false,
         message: 'BusinessRole not found',
@@ -393,61 +450,95 @@ export const deleteBusinessRole = async (req, res) => {
       });
     }
 
+    // Delete the role
+    await BusinessRole.destroy({
+      where: { id },
+      transaction
+    });
+
+    await transaction.commit();
+
     res.status(200).json({ 
       success: true,
       message: 'BusinessRole deleted successfully',
       deletedRole: {
-        roleName: deletedBusinessRole.ROLE_NM,
-        userId: deletedBusinessRole.USER_ID,
-        branchCode: deletedBusinessRole.BU_ID
+        roleName: roleToDelete.ROLE_NM,
+        userId: roleToDelete.USER_ID,
+        branchCode: roleToDelete.BU_ID
       }
     });
   } catch (error) {
+    await transaction.rollback();
     console.error('Error deleting BusinessRole:', error);
     res.status(500).json({ 
       success: false,
       message: 'Error deleting BusinessRole', 
-      error: error.message 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// ✅ ADD BACK THE MISSING FUNCTION
+// Assign BusinessRole to User
 export const assignBusinessRoleToUser = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { USER_ID, ROLE_NM } = req.body;
 
     const [user, role] = await Promise.all([
-      User.findOne({ USER_ID }),
-      BusinessRole.findOne({ ROLE_NM })
+      User.findOne({ where: { USER_ID }, transaction }),
+      BusinessRole.findOne({ where: { ROLE_NM }, transaction })
     ]);
 
     if (!user) {
+      await transaction.rollback();
       return res.status(404).json({ 
+        success: false,
         message: 'User not found',
         USER_ID 
       });
     }
 
     if (!role) {
+      await transaction.rollback();
       return res.status(404).json({ 
+        success: false,
         message: 'Business Role not found',
         ROLE_NM 
       });
     }
 
-    if (user.roles && user.roles.includes(role._id)) {
+    // Check if role already assigned (assuming UserRole model or similar)
+    const existingUserRole = await UserRole.findOne({
+      where: { 
+        userId: user.id,
+        businessRoleId: role.id 
+      },
+      transaction
+    });
+
+    if (existingUserRole) {
+      await transaction.rollback();
       return res.status(400).json({ 
+        success: false,
         message: 'Role is already assigned to this user',
         USER_ID,
         ROLE_NM
       });
     }
 
-    user.roles = [...(user.roles || []), role._id];
-    await user.save();
+    // Create user-role association
+    await UserRole.create({
+      userId: user.id,
+      businessRoleId: role.id,
+      assignedBy: req.user?.user_name || 'system',
+      assignedDate: new Date()
+    }, { transaction });
+
+    await transaction.commit();
 
     res.status(200).json({ 
+      success: true,
       message: 'Business Role assigned to user successfully', 
       data: { 
         USER_ID, 
@@ -457,15 +548,17 @@ export const assignBusinessRoleToUser = async (req, res) => {
       } 
     });
   } catch (error) {
+    await transaction.rollback();
     console.error('Error assigning role:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Error assigning role', 
-      error: error.message 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// Get all BusinessRoles
+// Get all BusinessRoles with pagination and filtering
 export const getAllBusinessRoles = async (req, res) => {
   try {
     const { 
@@ -478,18 +571,28 @@ export const getAllBusinessRoles = async (req, res) => {
     } = req.query;
     
     const query = {};
-    if (businessUnit) query.BUSINESS_UNIT = new RegExp(businessUnit, 'i');
-    if (branchCode) query.BU_ID = branchCode;
-    if (role) query.ROLE_NM = new RegExp(role, 'i');
-    if (status) query.REC_ST = status;
+    
+    // Build query conditions
+    const conditions = {};
+    if (businessUnit) conditions.BUSINESS_UNIT = { [sequelize.Op.iLike]: `%${businessUnit}%` };
+    if (branchCode) conditions.BU_ID = branchCode;
+    if (role) conditions.ROLE_NM = { [sequelize.Op.iLike]: `%${role}%` };
+    if (status) conditions.REC_ST = status;
 
-    const businessRoles = await BusinessRole.find(query)
-      .populate('BRANCH_REF', 'branchName branchCode organizationName organizationCode branchType status')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ CREATE_DT: -1 });
+    const offset = (page - 1) * limit;
 
-    const count = await BusinessRole.countDocuments(query);
+    // Get roles with pagination
+    const { rows: businessRoles, count } = await BusinessRole.findAndCountAll({
+      where: conditions,
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'branchType', 'status']
+      }],
+      limit: parseInt(limit),
+      offset: offset,
+      order: [['CREATE_DT', 'DESC']]
+    });
 
     res.status(200).json({ 
       success: true,
@@ -498,7 +601,8 @@ export const getAllBusinessRoles = async (req, res) => {
       meta: {
         total: count,
         pages: Math.ceil(count / limit),
-        currentPage: page
+        currentPage: parseInt(page),
+        limit: parseInt(limit)
       }
     });
   } catch (error) {
@@ -506,7 +610,7 @@ export const getAllBusinessRoles = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Error fetching BusinessRoles', 
-      error: error.message 
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -517,19 +621,25 @@ export const getBusinessRolesByBranch = async (req, res) => {
     const { branchCode } = req.params;
     const { role, status, page = 1, limit = 10 } = req.query;
 
-    const query = { BU_ID: branchCode };
-    if (role) query.ROLE_NM = new RegExp(role, 'i');
-    if (status) query.REC_ST = status;
+    const conditions = { BU_ID: branchCode };
+    if (role) conditions.ROLE_NM = { [sequelize.Op.iLike]: `%${role}%` };
+    if (status) conditions.REC_ST = status;
 
-    const businessRoles = await BusinessRole.find(query)
-      .populate('BRANCH_REF', 'branchName branchCode organizationName organizationCode branchType address status')
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .sort({ CREATE_DT: -1 });
+    const offset = (page - 1) * limit;
 
-    const count = await BusinessRole.countDocuments(query);
+    const { rows: businessRoles, count } = await BusinessRole.findAndCountAll({
+      where: conditions,
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'branchType', 'address', 'status']
+      }],
+      limit: parseInt(limit),
+      offset: offset,
+      order: [['CREATE_DT', 'DESC']]
+    });
 
-    const branch = await Branch.findOne({ branchCode });
+    const branch = await Branch.findOne({ where: { branchCode } });
 
     res.status(200).json({
       success: true,
@@ -545,7 +655,7 @@ export const getBusinessRolesByBranch = async (req, res) => {
         count: businessRoles.length,
         total: count,
         pages: Math.ceil(count / limit),
-        currentPage: page
+        currentPage: parseInt(page)
       }
     });
   } catch (error) {
@@ -553,7 +663,7 @@ export const getBusinessRolesByBranch = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching business roles',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -563,11 +673,18 @@ export const getUsersByBranchAndRole = async (req, res) => {
   try {
     const { branchCode, roleName } = req.params;
 
-    const businessRoles = await BusinessRole.find({
-      BU_ID: branchCode,
-      ROLE_NM: new RegExp(roleName, 'i'),
-      REC_ST: 'Active'
-    }).populate('BRANCH_REF', 'branchName branchCode organizationName');
+    const businessRoles = await BusinessRole.findAll({
+      where: {
+        BU_ID: branchCode,
+        ROLE_NM: { [sequelize.Op.iLike]: `%${roleName}%` },
+        REC_ST: 'Active'
+      },
+      include: [{
+        model: Branch,
+        as: 'branch',
+        attributes: ['branchName', 'branchCode', 'organizationName']
+      }]
+    });
 
     res.status(200).json({
       success: true,
@@ -588,24 +705,65 @@ export const getUsersByBranchAndRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching users',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// Helper function for duplicate key messages
+// Helper function for duplicate key messages (Sequelize version)
 export function getDuplicateKeyMessage(error) {
-  if (error.keyPattern?.USER_ID && error.keyPattern?.BU_ID) {
+  const fields = error.fields || {};
+  
+  if (fields.USER_ID && fields.BU_ID) {
     return 'User already has a role assigned to this branch';
   }
-  if (error.keyPattern?.USER_ID) {
+  if (fields.USER_ID) {
     return 'User already has a business role assigned';
   }
-  if (error.keyPattern?.ROLE_ID) {
+  if (fields.ROLE_ID) {
     return 'Role ID already exists';
   }
-  if (error.keyPattern?.BUSINESS_UNIT) {
+  if (fields.BUSINESS_UNIT) {
     return 'Business unit already assigned';
   }
+  
   return 'Duplicate key violation';
 }
+
+// Get role statistics
+export const getRoleStatistics = async (req, res) => {
+  try {
+    const statistics = await BusinessRole.findAll({
+      attributes: [
+        'ROLE_NM',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+        [sequelize.fn('SUM', sequelize.literal("CASE WHEN REC_ST = 'Active' THEN 1 ELSE 0 END")), 'activeCount'],
+        [sequelize.fn('SUM', sequelize.literal("CASE WHEN SUPERVISOR_FG = 'Y' THEN 1 ELSE 0 END")), 'supervisorCount']
+      ],
+      group: ['ROLE_NM'],
+      order: [[sequelize.fn('COUNT', sequelize.col('id')), 'DESC']]
+    });
+
+    const total = await BusinessRole.count();
+    const activeTotal = await BusinessRole.count({ where: { REC_ST: 'Active' } });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        statistics,
+        totals: {
+          total,
+          active: activeTotal,
+          inactive: total - activeTotal
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching role statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching statistics',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};

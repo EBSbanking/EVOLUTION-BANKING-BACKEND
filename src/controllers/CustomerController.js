@@ -1,17 +1,135 @@
-import Customer from "../models/Customer.js";
-import AML from "../models/AML.js";
+// src/controllers/CustomerController.js - FIXED VERSION
+import { Op, QueryTypes } from 'sequelize';
+import { initializeModels, getCustomer, getAML, getSequelize, getWF_WORK_ITEM } from '../models/index.js';
 import WF_WORK_ITEMController from "../controllers/WF_WORK_ITEMController.js";
-import auditLogger from "../utils/AuditLogger.js"; // Fixed: Default import for hybrid logger
+import auditLogger from "../utils/AuditLogger.js";
 import { checkSanctionList } from "../utils/checkSanctionList.js";
 import { validateAMLInput } from "../utils/amlValidator.js";
 import generateCustomerNumber from "../utils/generateCustomerNumber.js";
+import { getCurrentCounterStatus, resetCounter } from "../utils/generateCustomerNumber.js";
 import NotificationService from "../Services/NotificationService.js";
-import WF_WORK_ITEM from "../models/WF_WORK_ITEM.js";
-import CustomerBatchService from "../Services/customerBatchService.js";
-
-
 import moment from "moment";
-import mongoose from "mongoose";
+import { 
+  ensureEventIdColumn, 
+  ensureEssentialCustomerColumns,
+  getCustomerAttributesWithOptional 
+} from '../utils/customerTableUtils.js';
+
+// Global model references
+let Customer = null;
+let WF_WORK_ITEM = null;
+let AML = null;
+let sequelize = null;
+let modelsInitialized = false;
+
+// ============================================
+// MODEL INITIALIZATION FUNCTIONS
+// ============================================
+
+/**
+ * Initialize models safely (replaces getModelsSafe)
+ */
+export const getModelsSafe = async () => {
+  console.log('🔄 getModelsSafe called - using initModels instead...');
+  return await initModels();
+};
+
+/**
+ * Initialize models
+ */
+const initModels = async () => {
+  if (modelsInitialized) {
+    console.log('📦 Models already initialized');
+    return { Customer, AML, WF_WORK_ITEM, sequelize };
+  }
+  
+  try {
+    console.log('🔄 Initializing models...');
+    
+    // Initialize models from models/index.js
+    console.log('📦 Calling initializeModels()...');
+    const models = await initializeModels();
+    console.log('✅ initializeModels() completed');
+    
+    // Get models using getter functions
+    Customer = getCustomer();
+    AML = getAML();
+    WF_WORK_ITEM = getWF_WORK_ITEM();
+    sequelize = getSequelize();
+    
+    if (!sequelize) {
+      throw new Error('Sequelize instance not loaded');
+    }
+    
+    // CRITICAL FIX: If Customer is a function, we need to call it with sequelize
+    if (Customer && typeof Customer === 'function') {
+      console.log('🔄 Customer is a function, initializing it with sequelize...');
+      
+      // Check if it's already an initialized Sequelize model
+      if (Customer.prototype && typeof Customer.findOne === 'function') {
+        console.log('✅ Customer is already an initialized Sequelize model');
+      } else {
+        // Initialize the model by calling the function with sequelize
+        console.log('🔧 Calling Customer function with sequelize...');
+        try {
+          Customer = Customer(sequelize);
+          console.log('✅ Customer model initialized via function call');
+        } catch (callError) {
+          console.error('❌ Failed to call Customer function:', callError.message);
+          throw new Error('Could not initialize Customer model');
+        }
+      }
+    }
+    
+    // Test database connection
+    console.log('🔍 Testing database connection...');
+    try {
+      await sequelize.authenticate();
+      console.log('✅ Database connection successful');
+    } catch (authError) {
+      console.error('❌ Database authentication failed:', authError.message);
+      throw new Error(`Database connection failed: ${authError.message}`);
+    }
+    
+    // Check if customers table exists
+    console.log('🔍 Ensuring customers table exists...');
+    try {
+      const [tables] = await sequelize.query(`
+        SELECT TABLE_NAME 
+        FROM INFORMATION_SCHEMA.TABLES 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'customers'
+      `);
+      
+      if (tables.length === 0) {
+        console.log('❌ customers table does NOT exist');
+        console.log('🔄 Creating customers table...');
+        
+        // Try to sync the model to create table
+        await Customer.sync({ force: true });
+        console.log('✅ customers table created successfully');
+      } else {
+        console.log('✅ customers table exists');
+      }
+      
+    } catch (tableError) {
+      console.error('❌ Failed to ensure customers table exists:', tableError.message);
+      throw new Error(`Table initialization failed: ${tableError.message}`);
+    }
+    
+    modelsInitialized = true;
+    console.log('✅ Models initialized successfully');
+    return { Customer, AML, WF_WORK_ITEM, sequelize };
+    
+  } catch (error) {
+    console.error('❌ Failed to initialize models:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    // Reset initialization flag on failure
+    modelsInitialized = false;
+    throw error;
+  }
+};
 
 // ===== Helper Functions =====
 const parseDate = (dateStr, format) => {
@@ -41,376 +159,878 @@ const calculateNextReviewDate = (rating, providedDate) => {
   return date;
 };
 
-// ===== Validation for Next of Kin =====
-const validateNextOfKin = (nextOfKinArray) => {
-  if (!(Array.isArray(nextOfKinArray))) return "nextOfKin must be an array";
-  console.log("✅ Next of Kin is an array with length:", nextOfKinArray.length, nextOfKinArray);
-  if (nextOfKinArray.length > 5) return "Maximum 5 next of kin allowed";
-
-  // Ensure at least one primary
-  const hasPrimary = nextOfKinArray.some((nok) => nok.IS_PRIMARY === true);
-  if (!hasPrimary && nextOfKinArray.length > 0) {
-    return "At least one next of kin must be marked as primary";
+const calculateAge = (birthDate) => {
+  if (!birthDate) return null;
+  const today = new Date();
+  const birth = new Date(birthDate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
   }
-  console.log("✅ Next of Kin primary check passed");
-
-  // Validate required fields for each
-  for (let i = 0; i < nextOfKinArray.length; i++) {
-    const nok = nextOfKinArray[i];
-    if (
-      !nok.NEXTOF_KIN_NM ||
-      !nok.RELATIONSHIP ||
-      !nok.PHONE_NO ||
-      !nok.ADDRESS
-    ) {
-      return `Next of kin ${
-        i + 1
-      } missing required fields (NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, ADDRESS)`;
-    }
-
-    console.log("✅ Next of Kin required fields check passed for NOK", i + 1);
-    if (nok.PHONE_NO && !/^\+?\d{10,15}$/.test(nok.PHONE_NO)) {
-      return `Invalid phone number format for next of kin ${i + 1}`;
-    }
-    console.log("✅ Next of Kin phone format check passed for NOK", i + 1);
-  }
-
-  return null; // Valid
+  return age;
 };
 
-// ===== Controller =====
-// ===== Controller =====
-export const createCustomer = async (req, res) => {
-  const session = await Customer.startSession();
-  let transactionCompleted = false; // ✅ Add transaction flag
-
-  try {
-    await session.startTransaction();
-
-    const {
-      CUST_ID,
-      CUST_NO,
-      TITLE_ID,
-      FIRST_NAME,
-      MIDDLE_NAME,
-      LAST_NAME,
-      CUST_NM,
-      HOME_ADDRESS,
-      EMAIL_ADDRESS,
-      BU_ID,
-      MAIDEN_NM,
-      BIRTH_DT,
-      CNTRY_OF_BIRTH_ID,
-      CUST_CAT,
-      CAMPAIGN_ID,
-      GENDER_TY,
-      COUNTRY_NM,
-      STATE,
-      NIN,
-      BVN,
-      LOCAL_GOV,
-      OPENING_RSN_ID,
-      OPENED_DT,
-      RESIDENT_CNTRY_ID,
-      RISK_CLASS,
-      STMNT_FREQ_CD,
-      STMNT_FREQ_VALUE,
-      CREATED_BY,
-      USER_ID,
-      CREATE_DT,
-      INDUSTRY_ID,
-      INDUSTRY_CD,
-      TAX_STATUS,
-      MARITAL_ST,
-      TAX_GRP_ID,
-      OPERATIONS_CRNCY_ID,
-      EMP_ST,
-      ORGANISATION_NM,
-      REGISTRATION_ADDRESS,
-      REGISTRATION_DT,
-      ALERT_DELIVERY_METHOD,
-      KYC_LEVEL,
-      PHONE_NO,
-      SMS,
-      IS_PEP,
-      SANCTION_SCORE,
-      DOCUMENT_VERIFICATION_STATUS,
-      REC_ST = "Pending",
-    } = req.body;
-
-    const nextOfKin = req.body?.nextOfKin.map(nok => ({
-      ...nok,
-      IS_PRIMARY: nok.IS_PRIMARY === "Y" // Cast to boolean
-    }));
-
-    const ipAddress =
-      req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-
-    // Structured JSON log - prints a single-line JSON object suitable for systemd/journald
-    try {
-      console.log(
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          level: "info",
-          message: "Create Customer Request Body",
-          ip: ipAddress,
-          pid: process.pid,
-          body: Array.isArray(nextOfKin),
-        })
-      );
-    } catch (logErr) {
-      // Fallback if body contains non-serializable values
-      console.log("Create Customer Request Body (unserializable):", req.body);
-    }
-
-    // ===== Basic Validation =====
-    if (!HOME_ADDRESS || !BU_ID) {
-      await session.abortTransaction();
-      session.endSession();
-      return res
-        .status(400)
-        .json({ message: "HOME_ADDRESS and BU_ID are required." });
-    }
-
-    if (NIN && !/^\d{11}$/.test(NIN)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res
-        .status(400)
-        .json({ message: "NIN must be exactly 11 digits." });
-    }
-    if (BVN && !/^\d{11}$/.test(BVN)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res
-        .status(400)
-        .json({ message: "BVN must be exactly 11 digits." });
-    }
-
-    // ✅ Validation for Next of Kin (matches model fields: NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY)
-    const nokValidationError = validateNextOfKin(nextOfKin);
-    if (!!nokValidationError) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: nokValidationError });
-    }
-    console.log("✅ Next of Kin validation passed");
-    const existingCustomer = await Customer.findOne({
-      $or: [{ CUST_NO: CUST_NO || "" }, { EMAIL_ADDRESS: EMAIL_ADDRESS || "" }],
-    }).session(session);
-
-    if (existingCustomer) {
-      await session.abortTransaction();
-      session.endSession();
-      return res
-        .status(400)
-        .json({
-          message: "Customer with this CUST_NO or EMAIL_ADDRESS already exists",
-        });
+// ===== Validation for Next of Kin =====
+const validateNextOfKin = (nextOfKinArray) => {
+  if (!Array.isArray(nextOfKinArray)) {
+    return "Next of Kin must be an array";
+  }
+  
+  for (let i = 0; i < nextOfKinArray.length; i++) {
+    const nok = nextOfKinArray[i];
+    
+    // Check required fields
+    if (!nok.NEXTOF_KIN_NM || !nok.NEXTOF_KIN_NM.trim()) {
+      return `Next of Kin ${i + 1}: Name is required`;
     }
     
-    // ===== Auto-generate Customer ID & Number if not provided =====
-    const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } =
-      await generateCustomerNumber();
-    const finalCUST_ID = CUST_ID || generatedCUST_ID;
-    const finalCUST_NO = CUST_NO || generatedCUST_NO;
-
-    const userId = USER_ID || CREATED_BY || "SYSTEM";
-    const fullName =
-      CUST_NM ||
-      `${FIRST_NAME ?? ""} ${MIDDLE_NAME ?? ""} ${LAST_NAME ?? ""}`.trim();
-
-    // ===== Prepare Customer Data (includes nextOfKin array matching model) =====
-    const customerData = {
-      CUST_ID: finalCUST_ID,
-      CUST_NO: finalCUST_NO,
-      TITLE_ID,
-      FIRST_NAME,
-      MIDDLE_NAME,
-      LAST_NAME,
-      CUST_NM: fullName,
-      HOME_ADDRESS,
-      EMAIL_ADDRESS,
-      BU_ID,
-      MAIDEN_NM,
-      BIRTH_DT: parseDate(BIRTH_DT, "MM-DD-YYYY"),
-      CNTRY_OF_BIRTH_ID: CNTRY_OF_BIRTH_ID || "NGA",
-      CUST_CAT,
-      CAMPAIGN_ID,
-      GENDER_TY,
-      COUNTRY_NM: COUNTRY_NM || "Nigeria",
-      STATE,
-      NIN,
-      BVN,
-      LOCAL_GOV,
-      OPENING_RSN_ID,
-      OPENED_DT: parseDate(OPENED_DT, "MM-DD-YYYY"),
-      RESIDENT_CNTRY_ID: RESIDENT_CNTRY_ID || "NGA",
-      RISK_CLASS,
-      STMNT_FREQ_CD,
-      STMNT_FREQ_VALUE,
-      CREATED_BY,
-      USER_ID: userId,
-      CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : new Date(),
-      INDUSTRY_ID,
-      INDUSTRY_CD,
-      TAX_STATUS,
-      MARITAL_ST,
-      TAX_GRP_ID,
-      OPERATIONS_CRNCY_ID: OPERATIONS_CRNCY_ID || "NGN",
-      EMP_ST,
-      ORGANISATION_NM,
-      REGISTRATION_ADDRESS,
-      REGISTRATION_DT: parseDate(REGISTRATION_DT, "MM-DD-YYYY"),
-      ALERT_DELIVERY_METHOD,
-      KYC_LEVEL,
-      PHONE_NO,
-      SMS,
-      IS_PEP,
-      SANCTION_SCORE,
-      DOCUMENT_VERIFICATION_STATUS,
-      nextOfKin: nextOfKin || [], // ✅ Next of Kin array (directly from req.body, validated above)
-      REC_ST,
-    };
-
-    // ===== Insert Customer =====
-    const [newCustomer] = await Customer.create([customerData], { session });
-    console.log("✅Customer created with ID:", newCustomer.CUST_ID);
-
-    // ===== Audit Log via hybrid logger =====
-    auditLogger.info("Audit Event", {
-      entity_type: "CUSTOMER_CREATE",
-      entity_id: newCustomer._id,
-      user_id: userId,
-      action: `Created customer ${fullName}${
-        nextOfKin && nextOfKin.length > 0
-          ? ` with ${nextOfKin.length} next of kin`
-          : ""
-      }`,
-      old_value: null,
-      new_value: JSON.stringify(newCustomer),
-      ip_address: ipAddress,
-      event_type: "CUSTOMER_CREATE",
-      outcome: "success",
-    });
-
-    // ===== AML & Sanction List Check for PEP =====
-    let amlWorkItemId = null;
-    if (IS_PEP) {
-      const validationError = validateAMLInput({
-        CUST_ID: finalCUST_ID,
-        BVN,
-        NIN,
-        IS_PEP,
-        SANCTION_SCORE,
-        DOCUMENT_VERIFICATION_STATUS,
-      });
-      if (validationError) throw new Error(validationError);
-
-      const { isSanctioned, sanctionDetails } = await checkSanctionList(
-        BVN,
-        NIN
-      );
-
-      const CUSTOMER_RISK_RATING = calculateRiskRating({
-        IS_PEP,
-        SANCTION_SCORE,
-        isSanctioned,
-        DOCUMENT_VERIFICATION_STATUS,
-      });
-
-      const amlRecord = await AML.create(
-        [
-          {
-            fullName,
-            CUST_ID: finalCUST_ID,
-            BVN,
-            NIN,
-            IS_PEP,
-            SANCTION_SCORE,
-            LAST_RISK_ASSESSMENT_DT: new Date(),
-            SANCTION_MATCH: isSanctioned,
-            SANCTION_DETAILS: sanctionDetails,
-            CUSTOMER_RISK_RATING,
-            AML_STATUS: "Pending",
-            RISK_REASON: IS_PEP
-              ? "PEP"
-              : isSanctioned
-              ? "Sanction Hit"
-              : SANCTION_SCORE > 70
-              ? "High Risk Score"
-              : "Normal",
-            NEXT_REVIEW_DATE: calculateNextReviewDate(CUSTOMER_RISK_RATING),
-            DOCUMENT_VERIFICATION_STATUS:
-              DOCUMENT_VERIFICATION_STATUS || "Pending",
-            UPDATED_AT: new Date(),
-            UPDATED_BY: userId || "system",
-          },
-        ],
-        { session }
-      );
-
-      // Audit AML creation via hybrid logger
-      auditLogger.info("Audit Event", {
-        entity_type: "AML_CREATE",
-        entity_id: amlRecord[0]._id,
-        user_id: userId,
-        action: "Created AML record (Auto due to PEP)",
-        old_value: null,
-        new_value: JSON.stringify(amlRecord[0]),
-        ip_address: ipAddress,
-        event_type: "AML_CREATE",
-        outcome: "success",
-      });
-
-      // ===== Workflow Submission for AML =====
-      const amlWorkflowResponse =
-        await WF_WORK_ITEMController.submitTransaction({
-          body: {
-            ITEM_VALUE: finalCUST_ID,
-            ITEM_DESC: `Customer AML Profile for ${fullName}`,
-            ITEM_CLASS_NM: "Customer",
-            ITEM_TYPE: "AML",
-            ITEM_ID: amlRecord[0]._id,
-            CUST_ID: finalCUST_ID,
-            USER_ID: userId,
-            BU_ID,
-            HOME_ADDRESS,
-            TARGET_USER_ROLE_ID: "Manager",
-            ORIGINATOR_USER_ROLE_ID: "Originator",
-            CREATE_DT: new Date(),
-            REC_ST: "Pending",
-            WAIT_ST: "Pending",
-            VERSION: 1,
-            ITEM_BU_ID: BU_ID,
-            RISK_RATING: CUSTOMER_RISK_RATING,
-            PRIORITY: CUSTOMER_RISK_RATING === "High" ? "High" : "Normal",
-          },
-        });
-
-      if (amlWorkflowResponse.success) {
-        amlWorkItemId = amlWorkflowResponse.data.WORK_ITEM_ID;
-      } else {
-        throw new Error("Failed to create AML workflow item");
+    if (!nok.RELATIONSHIP || !nok.RELATIONSHIP.trim()) {
+      return `Next of Kin ${i + 1}: Relationship is required`;
+    }
+    
+    if (!nok.PHONE_NO || !nok.PHONE_NO.trim()) {
+      return `Next of Kin ${i + 1}: Phone number is required`;
+    }
+    
+    if (!nok.ADDRESS || !nok.ADDRESS.trim()) {
+      return `Next of Kin ${i + 1}: Address is required`;
+    }
+    
+    // Validate phone number format (basic check)
+    const phoneRegex = /^[0-9]{10,15}$/;
+    if (!phoneRegex.test(nok.PHONE_NO.replace(/\D/g, ''))) {
+      return `Next of Kin ${i + 1}: Phone number must be 10-15 digits`;
+    }
+    
+    // Validate email if provided
+    if (nok.EMAIL && nok.EMAIL.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(nok.EMAIL.trim())) {
+        return `Next of Kin ${i + 1}: Invalid email format`;
       }
     }
+  }
+  
+  return null; // No errors
+};
 
-    // ✅ COMMIT TRANSACTION FIRST
-    await session.commitTransaction();
-    transactionCompleted = true; // ✅ Mark transaction as completed
-    session.endSession();
+// ============================================
+// CUSTOMER CONTROLLER FUNCTIONS
+// ============================================
 
-    // ✅ THEN SUBMIT CUSTOMER WORKFLOW (outside transaction)
-    let customerWorkItemId = null;
+/**
+ * Get pending customers
+ */
+export const getPendingCustomers = async (req, res) => {
+  try {
+    console.log('📋 Getting pending customers...');
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!sequelize) {
+      throw new Error('Database connection not available');
+    }
+    
+    // Get parameters
+    const { bu_id, page = 1, limit = 50 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get user role and BU_ID from authentication
+    const userRole = req.user?.role || req.headers['x-user-role'];
+    const userBU_ID = req.user?.BU_ID || req.headers['x-bu-id'] || bu_id;
+    
+    // Build query conditions
+    let whereClause = `WHERE (REC_ST = 'PENDING' OR status = 'Pending')`;
+    const replacements = [];
+    
+    // If user is not admin/superuser, filter by their BU_ID
+    const isAdmin = userRole === 'admin' || userRole === 'superuser' || userRole === 'ADMIN';
+    
+    if (!isAdmin && userBU_ID) {
+      whereClause += ` AND BU_ID = ?`;
+      replacements.push(userBU_ID);
+    } else if (bu_id) {
+      // If BU_ID is provided in query, use it
+      whereClause += ` AND BU_ID = ?`;
+      replacements.push(bu_id);
+    }
+    
+    console.log(`🔍 Query conditions: ${whereClause}`);
+    console.log(`🔍 User role: ${userRole}, BU_ID: ${userBU_ID}, Is Admin: ${isAdmin}`);
+    
+    // Get total count
+    const [countResult] = await sequelize.query(`
+      SELECT COUNT(*) as total 
+      FROM customers 
+      ${whereClause}
+    `, {
+      replacements: replacements
+    });
+    
+    const total = countResult[0]?.total || 0;
+    const totalPages = Math.ceil(total / parseInt(limit));
+    
+    // Get customers with pagination
+    const [pendingCustomers] = await sequelize.query(`
+      SELECT 
+        id, CUST_ID, CUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, 
+        LAST_NAME, CUST_NM, HOME_ADDRESS, EMAIL_ADDRESS, BU_ID,
+        PHONE_NO, status, REC_ST, CREATE_DT, CREATED_BY
+      FROM customers 
+      ${whereClause}
+      ORDER BY CREATE_DT DESC 
+      LIMIT ? OFFSET ?
+    `, {
+      replacements: [...replacements, parseInt(limit), offset]
+    });
+    
+    console.log(`✅ Found ${pendingCustomers.length} pending customers (Total: ${total})`);
+    
+    res.json({
+      success: true,
+      message: 'Pending customers retrieved successfully',
+      data: pendingCustomers,
+      count: pendingCustomers.length,
+      total: total,
+      bu_id: userBU_ID || bu_id,
+      filtered_by_bu: !isAdmin && (!!userBU_ID || !!bu_id),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: totalPages,
+        hasNext: parseInt(page) < totalPages,
+        hasPrev: parseInt(page) > 1
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting pending customers:', error.message);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving pending customers',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get all customers (using models)
+ */
+export const getAllCustomers = async (req, res) => {
+  try {
+    console.log('📋 Getting all customers...');
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Customer model not available');
+    }
+    
+    // Function to check and add missing columns to customers table
+    const ensureCustomerTableColumns = async () => {
+      try {
+        console.log('🔍 Checking customers table structure...');
+        
+        // List of columns that might be missing but are in the model
+        const columnsToCheck = [
+          'EVENT_ID', 'createdAt', 'updatedAt', 'customer_type_id', 
+          'relationship_officer_id', 'APPROVED_BY', 'APPROVED_DT',
+          'SUSPENDED_BY', 'SUSPENDED_DT', 'CLOSED_BY', 'CLOSED_DT',
+          'REJECTED_BY', 'REJECTED_DT'
+        ];
+        
+        for (const column of columnsToCheck) {
+          const [columnCheck] = await sequelize.query(
+            `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = 'customers' 
+             AND COLUMN_NAME = ?`,
+            { replacements: [column] }
+          );
+          
+          if (columnCheck[0].count === 0) {
+            console.log(`ℹ️ Column ${column} does not exist in customers table, but it's expected in the model`);
+            // We'll exclude this column from SELECT queries
+          }
+        }
+        
+        console.log('✅ Customers table structure checked');
+        return true;
+      } catch (error) {
+        console.error('❌ Error checking customers table structure:', error.message);
+        // Don't throw error, just log and continue
+        return false;
+      }
+    };
+    
+    // Check table structure first
+    await ensureCustomerTableColumns();
+    
+    const { page = 1, limit = 50, search = '', status = '' } = req.query;
+    const offset = (page - 1) * limit;
+    
+    // Build WHERE clause with explicit column selection to avoid missing columns
+    let whereConditions = {};
+    
+    if (search) {
+      whereConditions = {
+        [Op.or]: [
+          { CUST_ID: { [Op.like]: `%${search}%` } },
+          { CUST_NO: { [Op.like]: `%${search}%` } },
+          { FIRST_NAME: { [Op.like]: `%${search}%` } },
+          { LAST_NAME: { [Op.like]: `%${search}%` } },
+          { CUST_NM: { [Op.like]: `%${search}%` } },
+          { EMAIL_ADDRESS: { [Op.like]: `%${search}%` } },
+          { PHONE_NO: { [Op.like]: `%${search}%` } }
+        ]
+      };
+    }
+    
+    if (status) {
+      whereConditions.status = status;
+    }
+    
+    // Use raw query to avoid Sequelize model issues with missing columns
+    let countQuery = 'SELECT COUNT(*) as total FROM customers WHERE 1=1';
+    let dataQuery = 'SELECT * FROM customers WHERE 1=1';
+    const replacements = [];
+    
+    if (search) {
+      countQuery += ` AND (
+        CUST_ID LIKE ? OR 
+        CUST_NO LIKE ? OR 
+        FIRST_NAME LIKE ? OR 
+        LAST_NAME LIKE ? OR 
+        CUST_NM LIKE ? OR 
+        EMAIL_ADDRESS LIKE ? OR 
+        PHONE_NO LIKE ?
+      )`;
+      dataQuery += ` AND (
+        CUST_ID LIKE ? OR 
+        CUST_NO LIKE ? OR 
+        FIRST_NAME LIKE ? OR 
+        LAST_NAME LIKE ? OR 
+        CUST_NM LIKE ? OR 
+        EMAIL_ADDRESS LIKE ? OR 
+        PHONE_NO LIKE ?
+      )`;
+      const searchPattern = `%${search}%`;
+      for (let i = 0; i < 7; i++) {
+        replacements.push(searchPattern);
+      }
+    }
+    
+    if (status) {
+      countQuery += ' AND status = ?';
+      dataQuery += ' AND status = ?';
+      replacements.push(status);
+    }
+    
+    // Get total count
+    const [[countResult]] = await sequelize.query(countQuery, {
+      replacements: status ? [status] : []
+    });
+    const total = countResult.total;
+    const totalPages = Math.ceil(total / limit);
+    
+    // Get customers with pagination
+    dataQuery += ' ORDER BY CREATE_DT DESC LIMIT ? OFFSET ?';
+    const dataReplacements = [...replacements, parseInt(limit), offset];
+    
+    const [customers] = await sequelize.query(dataQuery, {
+      replacements: dataReplacements
+    });
+    
+    // Clean up customer data - remove null/undefined EVENT_ID if column doesn't exist
+    const cleanedCustomers = customers.map(customer => {
+      const cleaned = { ...customer };
+      
+      // Remove EVENT_ID if it's null/undefined (column might not exist)
+      if (cleaned.EVENT_ID === null || cleaned.EVENT_ID === undefined) {
+        delete cleaned.EVENT_ID;
+      }
+      
+      // Ensure all expected fields have values
+      const expectedFields = [
+        'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM',
+        'EMAIL_ADDRESS', 'PHONE_NO', 'BU_ID', 'status', 'REC_ST',
+        'CREATE_DT', 'CREATED_BY'
+      ];
+      
+      expectedFields.forEach(field => {
+        if (cleaned[field] === undefined) {
+          cleaned[field] = null;
+        }
+      });
+      
+      return cleaned;
+    });
+    
+    console.log(`✅ Retrieved ${cleanedCustomers.length} customers`);
+    
+    res.json({
+      success: true,
+      message: 'Customers retrieved successfully',
+      data: cleanedCustomers,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting customers:', error.message);
+    console.error('Error stack:', error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve customers',
+      error: error.message,
+      details: 'The customers table structure may be different from the model definition. Try running /api/customer/test-db-connection to check database structure.'
+    });
+  }
+};
+
+/**
+ * Get customer by ID
+ */
+export const getCustomerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer) {
+      throw new Error('Customer model not available');
+    }
+    
+    const customer = await Customer.findByPk(id);
+    
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Customer retrieved successfully',
+      customer: customer
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting customer:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve customer',
+      error: error.message
+    });
+  }
+};
+
+
+export const createCustomer = async (req, res) => {
+  const startTime = Date.now();
+  console.log('🚀 Starting createCustomer (advanced version)...');
+  console.log('📥 Request body keys:', Object.keys(req.body || {}));
+  
+  // Early validation of required fields
+  const body = req.body || {};
+  if (!body.HOME_ADDRESS || !body.BU_ID) {
+    return res.status(400).json({
+      success: false,
+      message: "HOME_ADDRESS and BU_ID are required."
+    });
+  }
+  
+  try {
+    // Initialize models
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Models not initialized properly');
+    }
+    
+    let transaction = null;
+    let transactionCompleted = false;
+
     try {
-      const customerWorkflowResponse =
-        await WF_WORK_ITEMController.submitTransaction({
+      // Start transaction
+      console.log('🔄 Starting database transaction...');
+      transaction = await sequelize.transaction();
+      console.log('✅ Transaction started');
+      
+      // Destructure with cleaned up defaults
+      const {
+        CUST_ID,
+        CUST_NO,
+        TITLE_ID = '',
+        FIRST_NAME = '',
+        MIDDLE_NAME = '',
+        LAST_NAME = '',
+        CUST_NM,
+        HOME_ADDRESS,
+        EMAIL_ADDRESS,
+        BU_ID,
+        MAIDEN_NM = '',
+        BIRTH_DT,
+        CNTRY_OF_BIRTH_ID = 'NGA',
+        CUST_CAT = '',
+        CAMPAIGN_ID = '',
+        GENDER_TY = '',
+        COUNTRY_NM = 'Nigeria',
+        STATE = '',
+        NIN,
+        BVN,
+        LOCAL_GOV = '',
+        OPENING_RSN_ID = '',
+        OPENED_DT,
+        RESIDENT_CNTRY_ID = 'NGA',
+        RISK_CLASS = '',
+        STMNT_FREQ_CD = '',
+        STMNT_FREQ_VALUE = '',
+        CREATED_BY = 'system',
+        USER_ID = 'system',
+        CREATE_DT,
+        INDUSTRY_ID = '',
+        INDUSTRY_CD = '',
+        TAX_STATUS = '',
+        MARITAL_ST = '',
+        TAX_GRP_ID = '',
+        OPERATIONS_CRNCY_ID = 'NGN',
+        EMP_ST = '',
+        ORGANISATION_NM = '',
+        REGISTRATION_ADDRESS = '',
+        REGISTRATION_DT,
+        ALERT_DELIVERY_METHOD = '',
+        KYC_LEVEL = '',
+        PHONE_NO = '',
+        SMS = 'Enabled',
+        IS_PEP = false,
+        SANCTION_SCORE = 10,
+        DOCUMENT_VERIFICATION_STATUS = 'Pending',
+        REC_ST = "PENDING",
+      } = body;
+
+      // Handle nextOfKin data
+      const nextOfKinData = body.nextOfKin || [];
+      console.log(`📋 Next of Kin data received: ${nextOfKinData.length} entries`);
+      
+      // Process Next of Kin data
+      let processedNextOfKin = [];
+      if (nextOfKinData.length > 0) {
+        processedNextOfKin = nextOfKinData.map(nok => ({
+          ...nok,
+          IS_PRIMARY: nok.IS_PRIMARY === "Y" || nok.IS_PRIMARY === true || nok.IS_PRIMARY === "true"
+        }));
+        
+        // Next of Kin validation
+        const nokValidationError = validateNextOfKin(processedNextOfKin);
+        if (nokValidationError) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            success: false,
+            message: nokValidationError 
+          });
+        }
+        
+        // Check if multiple primary next of kin
+        const primaryCount = processedNextOfKin.filter(nok => nok.IS_PRIMARY).length;
+        if (primaryCount > 1) {
+          await transaction.rollback();
+          return res.status(400).json({ 
+            success: false,
+            message: "Only one Next of Kin can be set as primary." 
+          });
+        }
+      }
+      
+      console.log("✅ Validations passed");
+
+      const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+
+      console.log('📝 Processing customer creation request:');
+      console.log('  - Name:', FIRST_NAME, LAST_NAME);
+      console.log('  - Email:', EMAIL_ADDRESS || "Not provided");
+      console.log('  - BU_ID:', BU_ID);
+      console.log('  - Next of Kin count:', processedNextOfKin.length);
+
+      // Basic Validation
+      if (NIN && !/^\d{11}$/.test(NIN)) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          success: false,
+          message: "NIN must be exactly 11 digits." 
+        });
+      }
+      
+      if (BVN && !/^\d{11}$/.test(BVN)) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          success: false,
+          message: "BVN must be exactly 11 digits." 
+        });
+      }
+
+      // Check for existing customer
+      console.log('🔍 Checking for existing customer...');
+      let existingCustomer = null;
+      
+      // Check by CUST_NO if provided
+      if (CUST_NO) {
+        console.log(`🔍 Checking for CUST_NO: ${CUST_NO}`);
+        try {
+          existingCustomer = await Customer.findOne({
+            where: { CUST_NO: CUST_NO },
+            attributes: ['id', 'CUST_ID', 'CUST_NO', 'EMAIL_ADDRESS', 'FIRST_NAME', 'LAST_NAME'],
+            transaction
+          });
+          console.log(`✅ CUST_NO check completed: ${existingCustomer ? 'Found' : 'Not found'}`);
+        } catch (custNoError) {
+          console.warn(`⚠️ CUST_NO check error: ${custNoError.message}`);
+        }
+      }
+      
+      // If not found by CUST_NO, check by EMAIL_ADDRESS
+      if (!existingCustomer && EMAIL_ADDRESS) {
+        console.log(`🔍 Checking for EMAIL_ADDRESS: ${EMAIL_ADDRESS}`);
+        try {
+          existingCustomer = await Customer.findOne({
+            where: { EMAIL_ADDRESS: EMAIL_ADDRESS.toLowerCase() },
+            attributes: ['id', 'CUST_ID', 'CUST_NO', 'EMAIL_ADDRESS', 'FIRST_NAME', 'LAST_NAME'],
+            transaction
+          });
+          console.log(`✅ EMAIL_ADDRESS check completed: ${existingCustomer ? 'Found' : 'Not found'}`);
+        } catch (emailError) {
+          console.warn(`⚠️ EMAIL_ADDRESS check error: ${emailError.message}`);
+        }
+      }
+
+      if (existingCustomer) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: existingCustomer.CUST_NO === CUST_NO 
+            ? `Customer with CUST_NO ${CUST_NO} already exists (${existingCustomer.FIRST_NAME} ${existingCustomer.LAST_NAME})` 
+            : `Customer with email ${EMAIL_ADDRESS} already exists (${existingCustomer.FIRST_NAME} ${existingCustomer.LAST_NAME})`,
+          existingCustomer: {
+            CUST_ID: existingCustomer.CUST_ID,
+            CUST_NO: existingCustomer.CUST_NO,
+            name: `${existingCustomer.FIRST_NAME} ${existingCustomer.LAST_NAME}`,
+            EMAIL_ADDRESS: existingCustomer.EMAIL_ADDRESS
+          }
+        });
+      }
+      
+      console.log('✅ No existing customer found, proceeding...');
+      
+      // Auto-generate Customer ID & Number if not provided
+      const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } = await generateCustomerNumber();
+      const finalCUST_ID = CUST_ID || generatedCUST_ID;
+      const finalCUST_NO = CUST_NO || generatedCUST_NO;
+
+      const userId = USER_ID || CREATED_BY || "SYSTEM";
+      const fullName = CUST_NM || `${FIRST_NAME} ${MIDDLE_NAME} ${LAST_NAME}`.trim();
+      const now = new Date();
+
+      // Prepare Customer Data
+      const customerData = {
+        CUST_ID: finalCUST_ID,
+        CUST_NO: finalCUST_NO,
+        TITLE_ID,
+        FIRST_NAME,
+        MIDDLE_NAME,
+        LAST_NAME,
+        CUST_NM: fullName,
+        HOME_ADDRESS,
+        EMAIL_ADDRESS: EMAIL_ADDRESS ? EMAIL_ADDRESS.toLowerCase() : null,
+        BU_ID,
+        MAIDEN_NM,
+        BIRTH_DT: BIRTH_DT ? parseDate(BIRTH_DT, "YYYY-MM-DD") : null,
+        CNTRY_OF_BIRTH_ID,
+        CUST_CAT,
+        CAMPAIGN_ID,
+        GENDER_TY,
+        COUNTRY_NM,
+        STATE,
+        NIN,
+        BVN,
+        LOCAL_GOV,
+        OPENING_RSN_ID,
+        OPENED_DT: OPENED_DT ? parseDate(OPENED_DT, "YYYY-MM-DD") : null,
+        RESIDENT_CNTRY_ID,
+        RISK_CLASS,
+        STMNT_FREQ_CD,
+        STMNT_FREQ_VALUE,
+        CREATED_BY,
+        USER_ID: userId,
+        CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : now,
+        INDUSTRY_ID,
+        INDUSTRY_CD,
+        TAX_STATUS,
+        MARITAL_ST,
+        TAX_GRP_ID,
+        OPERATIONS_CRNCY_ID,
+        EMP_ST,
+        ORGANISATION_NM,
+        REGISTRATION_ADDRESS,
+        REGISTRATION_DT: REGISTRATION_DT ? parseDate(REGISTRATION_DT, "YYYY-MM-DD") : null,
+        ALERT_DELIVERY_METHOD,
+        KYC_LEVEL,
+        PHONE_NO,
+        SMS,
+        IS_PEP,
+        SANCTION_SCORE,
+        DOCUMENT_VERIFICATION_STATUS,
+        REC_ST,
+        status: 'Pending',
+        // 🔥 Add timestamp columns
+        createdAt: now,
+        updatedAt: now
+      };
+
+      console.log('📄 Creating customer with data:');
+      console.log('  - CUST_ID:', finalCUST_ID);
+      console.log('  - CUST_NO:', finalCUST_NO);
+      console.log('  - Name:', fullName);
+
+      // ========== CHECK AND ADD MISSING COLUMNS ==========
+      console.log('🔍 Checking customers table structure...');
+      
+      // Function to check and add missing columns
+      const ensureCustomerTableColumns = async () => {
+        try {
+          // Check if createdAt column exists
+          const [createdAtCheck] = await sequelize.query(
+            `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = 'customers' 
+             AND COLUMN_NAME = 'createdAt'`,
+            { transaction }
+          );
+          
+          if (createdAtCheck[0].count === 0) {
+            console.log('➕ Adding createdAt column to customers table...');
+            await sequelize.query(
+              `ALTER TABLE customers 
+               ADD COLUMN createdAt DATETIME DEFAULT CURRENT_TIMESTAMP`,
+              { transaction }
+            );
+            console.log('✅ createdAt column added successfully');
+          }
+          
+          // Check if updatedAt column exists
+          const [updatedAtCheck] = await sequelize.query(
+            `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = 'customers' 
+             AND COLUMN_NAME = 'updatedAt'`,
+            { transaction }
+          );
+          
+          if (updatedAtCheck[0].count === 0) {
+            console.log('➕ Adding updatedAt column to customers table...');
+            await sequelize.query(
+              `ALTER TABLE customers 
+               ADD COLUMN updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`,
+              { transaction }
+            );
+            console.log('✅ updatedAt column added successfully');
+          }
+          
+          console.log('✅ Customers table structure verified');
+          return true;
+        } catch (error) {
+          console.error('❌ Error checking/updating customers table structure:', error.message);
+          throw error;
+        }
+      };
+
+      // Ensure the table has required columns before inserting
+      await ensureCustomerTableColumns();
+      
+      // ========== CREATE CUSTOMER ==========
+      console.log('👨‍👩‍👧‍👦 Creating customer...');
+      
+      let newCustomer;
+      
+      // Create customer using raw query to ensure all columns are included
+      const [result] = await sequelize.query(
+        `INSERT INTO customers (
+          CUST_ID, CUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME, 
+          CUST_NM, HOME_ADDRESS, EMAIL_ADDRESS, BU_ID, MAIDEN_NM, CNTRY_OF_BIRTH_ID, CUST_CAT, 
+          CAMPAIGN_ID, GENDER_TY, COUNTRY_NM, STATE, NIN, BVN, LOCAL_GOV, OPENING_RSN_ID, 
+          RESIDENT_CNTRY_ID, RISK_CLASS, STMNT_FREQ_CD, STMNT_FREQ_VALUE, CREATED_BY, USER_ID, 
+          CREATE_DT, INDUSTRY_ID, INDUSTRY_CD, TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, 
+          EMP_ST, ORGANISATION_NM, REGISTRATION_ADDRESS, ALERT_DELIVERY_METHOD, KYC_LEVEL, PHONE_NO, 
+          SMS, IS_PEP, SANCTION_SCORE, DOCUMENT_VERIFICATION_STATUS, REC_ST, status, 
+          createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        {
+          replacements: [
+            finalCUST_ID, finalCUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME,
+            fullName, HOME_ADDRESS, EMAIL_ADDRESS ? EMAIL_ADDRESS.toLowerCase() : null, BU_ID,
+            MAIDEN_NM, CNTRY_OF_BIRTH_ID, CUST_CAT, CAMPAIGN_ID, GENDER_TY, COUNTRY_NM,
+            STATE, NIN, BVN, LOCAL_GOV, OPENING_RSN_ID, RESIDENT_CNTRY_ID, RISK_CLASS,
+            STMNT_FREQ_CD, STMNT_FREQ_VALUE, CREATED_BY, userId,
+            CREATE_DT ? new Date(CREATE_DT) : now, INDUSTRY_ID, INDUSTRY_CD,
+            TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, EMP_ST, ORGANISATION_NM,
+            REGISTRATION_ADDRESS, ALERT_DELIVERY_METHOD, KYC_LEVEL, PHONE_NO, SMS,
+            IS_PEP, SANCTION_SCORE, DOCUMENT_VERIFICATION_STATUS, REC_ST, 'Pending',
+            now, now
+          ],
+          transaction
+        }
+      );
+
+      // Get the created customer ID
+      const customerId = result.insertId;
+      newCustomer = { id: customerId, ...customerData };
+      console.log("✅ Customer created with ID:", newCustomer.id);
+      
+      // Create Next of Kin records if provided
+      if (processedNextOfKin.length > 0) {
+        const NextOfKin = sequelize.models.NextOfKin;
+        
+        // Process next of kin data
+        const nextOfKinRecords = processedNextOfKin.map(kin => ({
+          NEXTOF_KIN_NM: kin.NEXTOF_KIN_NM || '',
+          RELATIONSHIP: kin.RELATIONSHIP || '',
+          PHONE_NO: kin.PHONE_NO || '',
+          EMAIL: kin.EMAIL || '',
+          ADDRESS: kin.ADDRESS || '',
+          IS_PRIMARY: kin.IS_PRIMARY || false,
+          customerId: customerId,
+          CREATED_DT: now
+        }));
+        
+        console.log(`📝 Creating ${nextOfKinRecords.length} Next of Kin records...`);
+        await NextOfKin.bulkCreate(nextOfKinRecords, { transaction });
+        console.log(`✅ Created ${nextOfKinRecords.length} Next of Kin records`);
+      }
+      
+      // AML & Sanction List Check for PEP
+      let amlWorkItemId = null;
+      let amlRecord = null;
+      let customerRiskRating = "Low";
+      
+      if (IS_PEP && AML) {
+        console.log('🔍 Creating AML record for PEP customer...');
+        
+        const validationError = validateAMLInput({
+          CUST_ID: finalCUST_ID,
+          BVN,
+          NIN,
+          IS_PEP,
+          SANCTION_SCORE,
+          DOCUMENT_VERIFICATION_STATUS,
+        });
+        
+        if (validationError) {
+          await transaction.rollback();
+          throw new Error(validationError);
+        }
+
+        const { isSanctioned, sanctionDetails } = await checkSanctionList(BVN, NIN);
+
+        customerRiskRating = calculateRiskRating({
+          IS_PEP,
+          SANCTION_SCORE,
+          isSanctioned,
+          DOCUMENT_VERIFICATION_STATUS,
+        });
+
+        amlRecord = await AML.create({
+          fullName,
+          CUST_ID: finalCUST_ID,
+          BVN,
+          NIN,
+          IS_PEP,
+          SANCTION_SCORE,
+          LAST_RISK_ASSESSMENT_DT: new Date(),
+          SANCTION_MATCH: isSanctioned,
+          SANCTION_DETAILS: sanctionDetails,
+          CUSTOMER_RISK_RATING: customerRiskRating,
+          AML_STATUS: "Pending",
+          RISK_REASON: IS_PEP
+            ? "PEP"
+            : isSanctioned
+            ? "Sanction Hit"
+            : SANCTION_SCORE > 70
+            ? "High Risk Score"
+            : "Normal",
+          NEXT_REVIEW_DATE: calculateNextReviewDate(customerRiskRating),
+          DOCUMENT_VERIFICATION_STATUS: DOCUMENT_VERIFICATION_STATUS || "Pending",
+          UPDATED_AT: new Date(),
+          UPDATED_BY: userId || "system",
+        }, { transaction });
+
+        console.log("✅ AML record created for PEP customer");
+
+        // Workflow Submission for AML
+        try {
+          const amlWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
+            body: {
+              ITEM_VALUE: finalCUST_ID,
+              ITEM_DESC: `Customer AML Profile for ${fullName}`,
+              ITEM_CLASS_NM: "Customer",
+              ITEM_TYPE: "AML",
+              ITEM_ID: amlRecord.id,
+              CUST_ID: finalCUST_ID,
+              USER_ID: userId,
+              BU_ID,
+              HOME_ADDRESS,
+              TARGET_USER_ROLE_ID: "Manager",
+              ORIGINATOR_USER_ROLE_ID: "Originator",
+              CREATE_DT: new Date(),
+              REC_ST: "Pending",
+              WAIT_ST: "Pending",
+              VERSION: 1,
+              ITEM_BU_ID: BU_ID,
+              RISK_RATING: customerRiskRating,
+              PRIORITY: customerRiskRating === "High" ? "High" : "Normal",
+            },
+          });
+
+          if (amlWorkflowResponse.success) {
+            amlWorkItemId = amlWorkflowResponse.data.WORK_ITEM_ID;
+            console.log("✅ AML workflow item created:", amlWorkItemId);
+          } else {
+            console.warn("⚠️ AML workflow creation failed:", amlWorkflowResponse.message);
+          }
+        } catch (workflowError) {
+          console.warn("⚠️ AML workflow submission error:", workflowError.message);
+        }
+      } else if (IS_PEP && !AML) {
+        console.warn('⚠️ IS_PEP is true but AML model not available');
+      }
+
+      // COMMIT TRANSACTION
+      await transaction.commit();
+      transactionCompleted = true;
+      console.log("✅ Transaction committed successfully");
+
+      // THEN SUBMIT CUSTOMER WORKFLOW (outside transaction)
+      let customerWorkItemId = null;
+      let workflowDetails = null;
+      try {
+        const customerWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
           body: {
             ITEM_VALUE: finalCUST_NO,
             ITEM_DESC: `Customer Account Application for ${fullName}`,
             ITEM_CLASS_NM: "Customer",
             ITEM_TYPE: "Customer",
-            ITEM_ID: newCustomer._id,
+            ITEM_ID: newCustomer.id,
             CUST_ID: finalCUST_ID,
             USER_ID: userId,
             BU_ID,
@@ -425,87 +1045,959 @@ export const createCustomer = async (req, res) => {
           },
         });
 
-      if (customerWorkflowResponse.success) {
-        customerWorkItemId = customerWorkflowResponse.data.WORK_ITEM_ID;
-      } else {
-        customerWorkItemId = "Workflow creation failed";
-        console.warn(
-          "Customer workflow creation failed:",
-          customerWorkflowResponse.message
-        );
+        if (customerWorkflowResponse.success) {
+          customerWorkItemId = customerWorkflowResponse.data.WORK_ITEM_ID;
+          workflowDetails = customerWorkflowResponse.data;
+          console.log("✅ Customer workflow item created:", customerWorkItemId);
+        } else {
+          customerWorkItemId = "Workflow creation failed";
+          console.warn("⚠️ Customer workflow creation failed:", customerWorkflowResponse.message);
+        }
+      } catch (workflowError) {
+        customerWorkItemId = "Workflow error";
+        console.warn("⚠️ Customer workflow submission failed:", workflowError.message);
       }
-    } catch (workflowError) {
-      customerWorkItemId = "Workflow error: " + workflowError.message;
-      console.warn(
-        "Customer workflow submission failed:",
-        workflowError.message
-      );
+
+      // Prepare response
+      const enhancedResponse = {
+        success: true,
+        message: `Customer ${fullName} created successfully${IS_PEP ? " with AML profile" : ""}.`,
+        timestamp: new Date().toISOString(),
+        customerId: newCustomer.id,
+        
+        // Quick reference for essential info
+        quickReference: {
+          CUST_ID: finalCUST_ID,
+          CUST_NO: finalCUST_NO,
+          CUST_NM: fullName,
+          WORK_ITEM_ID: customerWorkItemId,
+          AML_WORK_ITEM_ID: amlWorkItemId,
+          isPEP: IS_PEP,
+          riskRating: customerRiskRating
+        },
+        
+        // Processing metadata
+        metadata: {
+          processingTime: `${Date.now() - startTime}ms`,
+          ipAddress: ipAddress,
+          businessUnit: BU_ID,
+          transactionStatus: 'completed',
+          databaseOperation: 'successful',
+          method: 'Advanced (with workflow)'
+        }
+      };
+
+      return res.status(201).json(enhancedResponse);
+      
+    } catch (error) {
+      // ROLLBACK TRANSACTION IF NOT COMPLETED
+      if (!transactionCompleted && transaction) {
+        try {
+          await transaction.rollback();
+          console.log("🔄 Transaction rolled back due to error");
+        } catch (rollbackError) {
+          console.error("❌ Failed to rollback transaction:", rollbackError.message);
+        }
+      }
+
+      console.error("❌ Create Customer Error:", error.message);
+      console.error("❌ Error stack:", error.stack);
+      
+      if (error.sql) {
+        console.error("SQL Error:", error.sql);
+        console.error("Parameters:", error.parameters);
+      }
+
+      // Audit failure
+      try {
+        await auditLogger.error("Audit Event", {
+          entity_type: "CUSTOMER_CREATE",
+          entity_id: null,
+          user_id: "system",
+          action: "create_customer",
+          old_value: null,
+          new_value: null,
+          ip_address: req.ip || "unknown",
+          event_type: "CUSTOMER_ERROR",
+          outcome: "failure",
+          error: error.message
+        });
+      } catch (auditError) {
+        console.error('❌ Audit logging failed:', auditError.message);
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create customer",
+        error: error.message,
+        timestamp: new Date().toISOString(),
+        suggestion: "Please run /api/customer/test-db-connection first to check database connection"
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in createCustomer (model initialization):", error.message);
+    
+    return res.status(500).json({
+      success: false,
+      message: "Failed to initialize models or connect to database",
+      error: error.message,
+      timestamp: new Date().toISOString(),
+      suggestion: "Please run /api/customer/test-db-connection first to check database connection"
+    });
+  }
+};
+
+/**
+ * Update customer
+ */
+export const updateCustomer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer) {
+      throw new Error('Customer model not available');
+    }
+    
+    // Check if customer exists
+    const existingCustomer = await Customer.findByPk(id);
+    
+    if (!existingCustomer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    // Add updated timestamp
+    updateData.updatedAt = new Date();
+    
+    // Update customer
+    await existingCustomer.update(updateData);
+    
+    res.json({
+      success: true,
+      message: 'Customer updated successfully',
+      customer: existingCustomer
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating customer:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update customer',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Delete customer (soft delete by updating status)
+ */
+export const deleteCustomer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer) {
+      throw new Error('Customer model not available');
+    }
+    
+    // Check if customer exists
+    const existingCustomer = await Customer.findByPk(id);
+    
+    if (!existingCustomer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    // Soft delete by updating status
+    await existingCustomer.update({
+      status: 'Deleted',
+      updatedAt: new Date()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Customer deleted successfully'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deleting customer:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete customer',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Search customers with advanced filtering
+ */
+export const searchCustomers = async (req, res) => {
+  try {
+    const { 
+      query = '',
+      field = 'all',
+      status = '',
+      cust_cat = '',
+      from_date = '',
+      to_date = '',
+      limit = 100 
+    } = req.query;
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Customer model or sequelize not available');
+    }
+    
+    let whereConditions = {};
+    
+    // Build where conditions based on parameters
+    if (query) {
+      if (field === 'all' || !field) {
+        whereConditions = {
+          [Op.or]: [
+            { CUST_ID: { [Op.like]: `%${query}%` } },
+            { CUST_NO: { [Op.like]: `%${query}%` } },
+            { FIRST_NAME: { [Op.like]: `%${query}%` } },
+            { LAST_NAME: { [Op.like]: `%${query}%` } },
+            { CUST_NM: { [Op.like]: `%${query}%` } },
+            { EMAIL_ADDRESS: { [Op.like]: `%${query}%` } },
+            { PHONE_NO: { [Op.like]: `%${query}%` } },
+            { NIN: { [Op.like]: `%${query}%` } },
+            { BVN: { [Op.like]: `%${query}%` } }
+          ]
+        };
+      } else {
+        whereConditions[field] = { [Op.like]: `%${query}%` };
+      }
+    }
+    
+    if (status) {
+      whereConditions.status = status;
+    }
+    
+    if (cust_cat) {
+      whereConditions.CUST_CAT = cust_cat;
+    }
+    
+    if (from_date) {
+      whereConditions.createdAt = { [Op.gte]: new Date(from_date) };
+    }
+    
+    if (to_date) {
+      whereConditions.createdAt = { [Op.lte]: new Date(to_date) };
+    }
+    
+    // Get customers
+    const customers = await Customer.findAll({
+      where: whereConditions,
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit)
+    });
+    
+    res.json({
+      success: true,
+      message: 'Search completed successfully',
+      results: customers,
+      count: customers.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error searching customers:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search customers',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get customer statistics
+ */
+export const getCustomerStats = async (req, res) => {
+  try {
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Customer model or sequelize not available');
+    }
+    
+    // Get various statistics using Sequelize
+    const total = await Customer.count();
+    
+    const statusStats = await Customer.findAll({
+      attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+      group: ['status']
+    });
+    
+    const categoryStats = await Customer.findAll({
+      attributes: ['CUST_CAT', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+      where: { CUST_CAT: { [Op.ne]: null } },
+      group: ['CUST_CAT']
+    });
+    
+    const recentCustomers = await Customer.count({
+      where: {
+        createdAt: { [Op.gte]: sequelize.literal('DATE_SUB(NOW(), INTERVAL 7 DAY)') }
+      }
+    });
+    
+    const todayCustomers = await Customer.count({
+      where: sequelize.where(sequelize.fn('DATE', sequelize.col('createdAt')), sequelize.fn('CURDATE'))
+    });
+    
+    res.json({
+      success: true,
+      message: 'Customer statistics retrieved',
+      stats: {
+        total,
+        byStatus: statusStats,
+        byCategory: categoryStats,
+        recent7Days: recentCustomers,
+        today: todayCustomers
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting customer stats:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get customer statistics',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get customer summary dashboard
+ */
+export const getCustomerSummary = async (req, res) => {
+  try {
+    console.log("📊 Getting customer dashboard summary...");
+    
+    // Initialize models first
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      console.error("❌ Customer model or sequelize not available");
+      return res.status(500).json({
+        success: false,
+        message: "Database model initialization failed"
+      });
     }
 
-    return res.status(201).json({
-      message: `Customer ${fullName} created successfully${
-        IS_PEP ? " with AML profile" : ""
-      }${
-        nextOfKin && nextOfKin.length > 0
-          ? ` with ${nextOfKin.length} next of kin`
-          : ""
-      }.${
-        customerWorkItemId ? ` Workflow item ID: ${customerWorkItemId}` : ""
-      }${amlWorkItemId ? `, AML Workflow item ID: ${amlWorkItemId}` : ""}.`,
-      customerInfo: {
-        CUST_ID: finalCUST_ID,
-        CUST_NO: finalCUST_NO,
-        CUST_NM: fullName,
-        nextOfKinCount: nextOfKin ? nextOfKin.length : 0,
-        WORK_ITEM_ID: customerWorkItemId,
-        AML_WORK_ITEM_ID: amlWorkItemId,
-      },
+    // Get summary statistics
+    let totalCustomers = 0;
+    let activeCustomers = 0;
+    let pendingCustomers = 0;
+    let rejectedCustomers = 0;
+    let inactiveCustomers = 0;
+    let closedCustomers = 0;
+
+    try {
+      totalCustomers = await Customer.count();
+      console.log(`✅ Total customers: ${totalCustomers}`);
+    } catch (error) {
+      console.warn("⚠️ Error counting total customers:", error.message);
+    }
+
+    // Count by status
+    const statusCounts = {};
+    const statuses = ['ACTIVE', 'PENDING', 'REJECTED', 'INACTIVE', 'CLOSED'];
+    
+    for (const status of statuses) {
+      try {
+        const count = await Customer.count({ 
+          where: { REC_ST: status.toUpperCase() } 
+        });
+        statusCounts[status] = count;
+        console.log(`✅ ${status} customers: ${count}`);
+      } catch (error) {
+        console.warn(`⚠️ Error counting ${status} customers:`, error.message);
+        statusCounts[status] = 0;
+      }
+    }
+
+    activeCustomers = statusCounts.ACTIVE || 0;
+    pendingCustomers = statusCounts.PENDING || 0;
+    rejectedCustomers = statusCounts.REJECTED || 0;
+    inactiveCustomers = statusCounts.INACTIVE || 0;
+    closedCustomers = statusCounts.CLOSED || 0;
+
+    // Get latest customers
+    let latestCustomers = [];
+    try {
+      latestCustomers = await Customer.findAll({
+        attributes: ['CUST_ID', 'CUST_NM', 'REC_ST', 'CREATE_DT', 'FIRST_NAME', 'LAST_NAME'],
+        order: [['CREATE_DT', 'DESC']],
+        limit: 5
+      });
+      console.log(`✅ Latest customers retrieved: ${latestCustomers.length}`);
+    } catch (error) {
+      console.warn("⚠️ Error getting latest customers:", error.message);
+    }
+
+    // Get customers by risk class
+    let riskDistribution = {};
+    try {
+      const riskClasses = await Customer.findAll({
+        attributes: ['RISK_CLASS', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+        group: ['RISK_CLASS'],
+        where: { RISK_CLASS: { [Op.ne]: null } }
+      });
+      
+      riskDistribution = riskClasses.reduce((acc, item) => {
+        acc[item.RISK_CLASS] = item.dataValues.count;
+        return acc;
+      }, {});
+      console.log("✅ Risk distribution retrieved");
+    } catch (error) {
+      console.warn("⚠️ Error getting risk distribution:", error.message);
+    }
+
+    // Calculate other statuses
+    const calculatedStatuses = activeCustomers + pendingCustomers + rejectedCustomers + inactiveCustomers + closedCustomers;
+    const otherCustomers = totalCustomers > calculatedStatuses ? totalCustomers - calculatedStatuses : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          total: totalCustomers,
+          active: activeCustomers,
+          pending: pendingCustomers,
+          rejected: rejectedCustomers,
+          inactive: inactiveCustomers,
+          closed: closedCustomers,
+          other: otherCustomers,
+          calculatedStatuses: calculatedStatuses
+        },
+        riskDistribution: riskDistribution,
+        latestCustomers: latestCustomers.map(customer => ({
+          CUST_ID: customer.CUST_ID,
+          name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
+          status: customer.REC_ST,
+          createdDate: customer.CREATE_DT,
+          fullName: customer.CUST_NM
+        })),
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    // ✅ ONLY ABORT IF TRANSACTION WASN'T COMPLETED
-    if (session.inTransaction() && !transactionCompleted) {
-      await session.abortTransaction();
-    }
-
-    // ✅ ALWAYS END SESSION
-    if (!session.hasEnded) {
-      session.endSession();
-    }
-
-    console.error("❌ Create Customer Error:", error);
-
-    // Audit failure (non-blocking)
-    auditLogger.error("Audit Event", {
-      entity_type: "CUSTOMER_CREATE",
-      entity_id: null,
-      user_id: req.body.USER_ID || "system",
-      action: "create_customer",
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || "unknown",
-      event_type: "CUSTOMER_ERROR",
-      outcome: "failure",
-      error: error.message,
+    console.error("❌ Error fetching customer summary:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching customer summary",
+      error: error.message
     });
+  }
+};
 
-    return res.status(500).json({
-      message: "Failed to create customer",
-      error: error.message,
+// ===== DEBUG ROUTES =====
+
+
+
+/**
+ * Test database connection (legacy route)
+ */
+export const testDbConnection = async (req, res) => {
+  try {
+    await testDatabaseConnection(req, res);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed',
+      error: error.message
     });
   }
 };
 
 
 
-// controllers/CustomerController.js
+/**
+ * Fix customers table (add missing columns if needed)
+ */
+export const fixCustomersTable = async (req, res) => {
+  try {
+    const sequelize = req.db.sequelize;
+    
+    console.log('🔧 Fixing customers table...');
+    
+    // Common columns that might be missing
+    const columnsToAdd = [
+      { name: 'CNTRY_OF_BIRTH_ID', type: 'VARCHAR(100)' },
+      { name: 'CUST_CAT', type: 'VARCHAR(100)' },
+      { name: 'CAMPAIGN_ID', type: 'VARCHAR(100)' },
+      { name: 'GENDER_TY', type: 'VARCHAR(50)' },
+      { name: 'NIN', type: 'VARCHAR(50)' },
+      { name: 'BVN', type: 'VARCHAR(50)' }
+    ];
+    
+    let fixesApplied = [];
+    
+    for (const column of columnsToAdd) {
+      try {
+        await sequelize.query(`
+          ALTER TABLE customers 
+          ADD COLUMN IF NOT EXISTS ${column.name} ${column.type}
+        `);
+        fixesApplied.push(`✅ Added column: ${column.name}`);
+      } catch (error) {
+        if (!error.message.includes('Duplicate column name')) {
+          fixesApplied.push(`⚠️ Failed to add ${column.name}: ${error.message}`);
+        }
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Table fix completed',
+      fixes: fixesApplied,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fixing table:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fix table',
+      error: error.message
+    });
+  }
+};
 
-// Update your batchUploadCustomers function to accept buffer
+
+
+// ===== DEBUG ROUTES =====
+
+/**
+ * Test database connection and schema
+ */
+export const testDatabaseConnection = async (req, res) => {
+  try {
+    console.log('🧪 Testing database connection and schema...');
+    
+    // Initialize models
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Models not initialized properly');
+    }
+    
+    // Test 1: Database connection
+    await sequelize.authenticate();
+    console.log('✅ Database connection successful');
+    
+    // Test 2: Check if customers table exists
+    const [tables] = await sequelize.query(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'customers'
+    `);
+    
+    const tableExists = tables.length > 0;
+    console.log('✅ Customers table exists:', tableExists);
+    
+    // Test 3: Describe the customers table
+    let columns = [];
+    if (tableExists) {
+      [columns] = await sequelize.query(`DESCRIBE customers`);
+      
+      console.log('📋 Customers table columns (total:', columns.length, '):');
+      columns.slice(0, 10).forEach(col => {
+        console.log(`  - ${col.Field}: ${col.Type} (${col.Null === 'YES' ? 'Nullable' : 'Not Null'})`);
+      });
+      if (columns.length > 10) {
+        console.log(`  ... and ${columns.length - 10} more columns`);
+      }
+    }
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Database test completed',
+      data: {
+        databaseConnected: true,
+        customersTableExists: tableExists,
+        columnCount: columns.length,
+        sampleColumns: columns.slice(0, 10).map(c => ({ name: c.Field, type: c.Type })),
+        customerModel: Customer ? '✅ Loaded' : '❌ Not loaded',
+        sequelize: sequelize ? '✅ Loaded' : '❌ Not loaded'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Database test failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Database test failed',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+/**
+ * Sync database schema
+ */
+export const syncDatabase = async (req, res) => {
+  try {
+    console.log('🔄 Syncing database schema...');
+    
+    // Initialize models
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Models not initialized properly');
+    }
+    
+    // Test connection first
+    await sequelize.authenticate();
+    console.log('✅ Database connection verified');
+    
+    // Sync the Customer model
+    console.log('🔄 Syncing Customer model...');
+    await Customer.sync({ alter: true });
+    console.log('✅ Customer model synced with alter');
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Database schema synced successfully',
+      data: {
+        customerSynced: true
+      }
+    });
+  } catch (error) {
+    console.error('❌ Database sync failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Database sync failed',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+/**
+ * Fix database schema (force recreate)
+ */
+export const fixDatabaseSchema = async (req, res) => {
+  try {
+    console.log('🔧 Fixing database schema (force recreate)...');
+    
+    // Initialize models
+    await initModels();
+    
+    if (!Customer || !sequelize) {
+      throw new Error('Models not initialized properly');
+    }
+    
+    // Step 1: Force recreate table
+    console.log('🔄 Force recreating customers table...');
+    await Customer.sync({ force: true });
+    console.log('✅ Customers table recreated');
+    
+    // Step 2: Get new table info
+    console.log('📋 Getting new table info...');
+    const [newColumns] = await sequelize.query(`DESCRIBE customers`);
+    console.log('New columns:', newColumns.length);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Database schema fixed successfully (table recreated)',
+      data: {
+        newColumnCount: newColumns.length,
+        warning: 'ALL EXISTING DATA WAS DELETED (if any existed)',
+        sampleColumns: newColumns.slice(0, 10).map(c => c.Field)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fix database schema:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fix database schema',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+/**
+ * Create table if not exists
+ */
+export const createTable = async (req, res) => {
+  try {
+    console.log('🔄 Creating customers table if not exists...');
+    
+    // Initialize models
+    await initModels();
+    
+    if (!sequelize) {
+      throw new Error('Sequelize not available');
+    }
+    
+    // Test connection first
+    await sequelize.authenticate();
+    console.log('✅ Database connection verified');
+    
+    // Manual table creation SQL
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS customers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        CUST_ID VARCHAR(255),
+        CUST_NO VARCHAR(255),
+        TITLE_ID VARCHAR(50),
+        FIRST_NAME VARCHAR(255),
+        MIDDLE_NAME VARCHAR(255),
+        LAST_NAME VARCHAR(255),
+        CUST_NM VARCHAR(255),
+        HOME_ADDRESS TEXT,
+        EMAIL_ADDRESS VARCHAR(255),
+        BU_ID VARCHAR(100),
+        MAIDEN_NM VARCHAR(255),
+        BIRTH_DT DATE,
+        CNTRY_OF_BIRTH_ID VARCHAR(100),
+        CUST_CAT VARCHAR(100),
+        CAMPAIGN_ID VARCHAR(100),
+        GENDER_TY VARCHAR(50),
+        COUNTRY_NM VARCHAR(100),
+        STATE VARCHAR(100),
+        NIN VARCHAR(50),
+        BVN VARCHAR(50),
+        LOCAL_GOV VARCHAR(100),
+        OPENING_RSN_ID VARCHAR(100),
+        OPENED_DT DATE,
+        RESIDENT_CNTRY_ID VARCHAR(100),
+        RISK_CLASS VARCHAR(50),
+        STMNT_FREQ_CD VARCHAR(50),
+        STMNT_FREQ_VALUE VARCHAR(50),
+        CREATED_BY VARCHAR(255),
+        USER_ID VARCHAR(255),
+        CREATE_DT DATETIME,
+        INDUSTRY_ID VARCHAR(100),
+        INDUSTRY_CD VARCHAR(100),
+        TAX_STATUS VARCHAR(50),
+        MARITAL_ST VARCHAR(50),
+        TAX_GRP_ID VARCHAR(100),
+        OPERATIONS_CRNCY_ID VARCHAR(100),
+        EMP_ST VARCHAR(50),
+        ORGANISATION_NM VARCHAR(255),
+        REGISTRATION_ADDRESS TEXT,
+        REGISTRATION_DT DATE,
+        ALERT_DELIVERY_METHOD VARCHAR(50),
+        KYC_LEVEL VARCHAR(50),
+        PHONE_NO VARCHAR(50),
+        SMS VARCHAR(50) DEFAULT 'Enabled',
+        IS_PEP BOOLEAN DEFAULT FALSE,
+        SANCTION_SCORE INT DEFAULT 10,
+        DOCUMENT_VERIFICATION_STATUS VARCHAR(50) DEFAULT 'Pending',
+        REC_ST VARCHAR(50) DEFAULT 'PENDING',
+        status VARCHAR(50) DEFAULT 'Pending',
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `;
+    
+    await sequelize.query(createTableSQL);
+    console.log('✅ customers table created or already exists');
+    
+    // Verify table exists
+    const [tables] = await sequelize.query(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'customers'
+    `);
+    
+    if (tables.length > 0) {
+      const [columns] = await sequelize.query(`DESCRIBE customers`);
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Customers table created successfully',
+        data: {
+          tableCreated: true,
+          columnCount: columns.length,
+          columns: columns.map(col => col.Field)
+        }
+      });
+    } else {
+      throw new Error('Failed to create customers table');
+    }
+  } catch (error) {
+    console.error('❌ Failed to create table:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create customers table',
+      error: error.message,
+      sql: error.sql
+    });
+  }
+};
+
+// ===== Counter Management Routes =====
+
+export const testCounter = async (req, res) => {
+  try {
+    console.log('🧪 Testing customer number generator...');
+    
+    // Test the generator
+    const result = await generateCustomerNumber();
+    
+    // Get counter status
+    const status = await getCurrentCounterStatus();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Counter test completed',
+      generated: result,
+      status: status,
+      modelsInitialized: modelsInitialized
+    });
+  } catch (error) {
+    console.error('❌ Counter test failed:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Counter test failed',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+export const resetCounterEndpoint = async (req, res) => {
+  try {
+    const { CUST_ID } = req.body || {};
+    const newCustId = CUST_ID || '0000000000';
+    
+    console.log(`🔄 Resetting counter to: ${newCustId}`);
+    
+    const result = await resetCounter(newCustId);
+    
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('❌ Counter reset failed:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Counter reset failed',
+      error: error.message
+    });
+  }
+};
+
+export const getCounterStatusEndpoint = async (req, res) => {
+  try {
+    const status = await getCurrentCounterStatus();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Counter status retrieved',
+      data: status
+    });
+  } catch (error) {
+    console.error('❌ Failed to get counter status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get counter status',
+      error: error.message
+    });
+  }
+};
+
+// // ===== Helper Function: getCustomerSummary =====
+// const getCustomerSummary = (customer, nextOfKin, workflowDetails, amlRecord) => {
+//   return {
+//     id: customer.id,
+//     CUST_ID: customer.CUST_ID,
+//     CUST_NO: customer.CUST_NO,
+//     fullName: customer.CUST_NM || `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
+//     email: customer.EMAIL_ADDRESS,
+//     phone: customer.PHONE_NO,
+//     status: customer.status || customer.REC_ST,
+//     businessUnit: customer.BU_ID,
+//     kycLevel: customer.KYC_LEVEL,
+//     isPEP: customer.IS_PEP || false,
+//     createdDate: customer.CREATE_DT,
+//     nextOfKin: nextOfKin ? nextOfKin.map(nok => ({
+//       name: nok.NEXTOF_KIN_NM,
+//       relationship: nok.RELATIONSHIP,
+//       phone: nok.PHONE_NO,
+//       isPrimary: nok.IS_PRIMARY || false
+//     })) : [],
+//     workflow: workflowDetails ? {
+//       workItemId: workflowDetails.WORK_ITEM_ID,
+//       status: workflowDetails.REC_ST,
+//       priority: workflowDetails.PRIORITY
+//     } : null,
+//     amlProfile: amlRecord ? {
+//       riskRating: amlRecord.CUSTOMER_RISK_RATING,
+//       sanctionMatch: amlRecord.SANCTION_MATCH,
+//       status: amlRecord.AML_STATUS
+//     } : null
+//   };
+// };
+
+// Simple test function
+export const testCustomerModel = async (req, res) => {
+  try {
+    console.log('🔍 Testing Customer model...');
+    
+    // Initialize models
+    await initModels();
+    
+    if (!Customer) {
+      return res.status(500).json({
+        success: false,
+        message: 'Customer model not initialized'
+      });
+    }
+    
+    // Try a simple query with limited columns
+    const count = await Customer.count();
+    
+    // Try to get column names
+    const [columns] = await sequelize.query(`DESCRIBE customers`);
+    const columnNames = columns.map(col => col.Field);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Customer model test successful',
+      data: {
+        customerCount: count,
+        columnCount: columns.length,
+        columns: columnNames,
+        customerModel: Customer ? '✅ Loaded' : '❌ Not loaded',
+        sequelize: sequelize ? '✅ Loaded' : '❌ Not loaded'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Test failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Test failed',
+      error: error.message
+    });
+  }
+};
+
+
+
 export const batchUploadCustomers = async (fileBuffer) => {
   try {
-    console.log(
-      "📁 Processing batch upload with buffer length:",
-      fileBuffer?.length
-    );
+    console.log("📁 Processing batch upload with buffer length:", fileBuffer?.length);
 
     if (!fileBuffer || fileBuffer.length === 0) {
       return {
@@ -519,20 +2011,64 @@ export const batchUploadCustomers = async (fileBuffer) => {
       };
     }
 
-    const result = await CustomerBatchService.processExcelBatch(fileBuffer);
-    console.log("✅ Batch processing result:", result);
+    // 🔥 Ensure table has all required columns before starting batch upload
+    await ensureCustomerTableColumns(sequelize);
 
-    // Ensure the result has all required fields
-    return {
-      success: result.success || false,
-      message: result.message || "Processing completed",
-      total: result.total || 0,
-      created: result.created || 0,
-      duplicates: result.duplicates || 0,
-      failed: result.failed || 0,
-      errors: result.errors || [],
-      ...result, // Spread any additional properties
-    };
+    // ✅ Use the imported sequelize instance
+    const transaction = await sequelize.transaction();
+
+    try {
+      // Also check if CustomerBatchService needs initialization
+      let CustomerBatchService;
+      try {
+        const batchServiceModule = await import('../services/CustomerBatchService.js');
+        CustomerBatchService = batchServiceModule.default || batchServiceModule.CustomerBatchService;
+      } catch (importError) {
+        console.error('❌ Failed to import CustomerBatchService:', importError.message);
+        await transaction.rollback();
+        return {
+          success: false,
+          message: "Batch processing service not available",
+          total: 0,
+          created: 0,
+          duplicates: 0,
+          failed: 0,
+          errors: ["Batch processing service initialization failed"]
+        };
+      }
+
+      if (!CustomerBatchService || typeof CustomerBatchService.processExcelBatch !== 'function') {
+        await transaction.rollback();
+        return {
+          success: false,
+          message: "Batch processing service not properly initialized",
+          total: 0,
+          created: 0,
+          duplicates: 0,
+          failed: 0,
+          errors: ["Batch processing function not available"]
+        };
+      }
+
+      const result = await CustomerBatchService.processExcelBatch(fileBuffer, transaction);
+      
+      await transaction.commit();
+      
+      return {
+        success: result.success || false,
+        message: result.message || "Processing completed",
+        total: result.total || 0,
+        created: result.created || 0,
+        duplicates: result.duplicates || 0,
+        failed: result.failed || 0,
+        errors: result.errors || [],
+        ...result,
+      };
+    } catch (batchError) {
+      await transaction.rollback();
+      console.error("❌ Batch processing error:", batchError);
+      throw batchError;
+    }
   } catch (error) {
     console.error("❌ Batch upload error in controller:", error);
     return {
@@ -547,63 +2083,111 @@ export const batchUploadCustomers = async (fileBuffer) => {
     };
   }
 };
+// IMPORTANT: The following functions need to be updated to use Sequelize syntax
+// They're currently using Mongoose syntax (findOne, findOneAndUpdate, etc.)
 
-// Or if you want to keep the original signature, create a wrapper:
-export const handleBatchUpload = async (req, res) => {
+// src/controllers/CustomerController.js
+
+
+
+export const initializeCustomerApprovalSystem = async () => {
   try {
-    if (!req.files || !req.files.customersFile) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded",
-      });
+    console.log('🚀 Initializing customer approval system...');
+    
+    // Get sequelize instance
+    const sequelize = getSequelize();
+    
+    if (!sequelize) {
+      console.error('❌ Database connection not available');
+      return false;
     }
-
-    const file = req.files.customersFile;
-    const result = await CustomerBatchService.processExcelBatch(file.data);
-
-    return res.status(result.success ? 200 : 400).json(result);
+    
+    // Test database connection
+    await sequelize.authenticate();
+    console.log('✅ Database connection verified');
+    
+    // Check if customers table exists
+    const [tables] = await sequelize.query(
+      "SHOW TABLES LIKE 'customers'"
+    );
+    
+    if (tables.length === 0) {
+      console.log('⚠️ Customers table does not exist');
+      return false;
+    }
+    
+    // Ensure all required columns exist
+    const columnsToEnsure = [
+      { name: 'APPROVED_BY', type: 'VARCHAR(100)', nullable: true },
+      { name: 'APPROVED_DT', type: 'DATETIME', nullable: true },
+      { name: 'SUSPENDED_BY', type: 'VARCHAR(100)', nullable: true },
+      { name: 'SUSPENDED_DT', type: 'DATETIME', nullable: true },
+      { name: 'CLOSED_BY', type: 'VARCHAR(100)', nullable: true },
+      { name: 'CLOSED_DT', type: 'DATETIME', nullable: true },
+      { name: 'REJECTED_BY', type: 'VARCHAR(100)', nullable: true },
+      { name: 'REJECTED_DT', type: 'DATETIME', nullable: true },
+      { name: 'createdAt', type: 'DATETIME', nullable: false, defaultValue: 'CURRENT_TIMESTAMP' },
+      { name: 'updatedAt', type: 'DATETIME', nullable: false, defaultValue: 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' }
+    ];
+    
+    console.log('🔍 Checking customer table columns...');
+    const [existingColumns] = await sequelize.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() 
+       AND TABLE_NAME = 'customers'`
+    );
+    
+    const existingColumnNames = existingColumns.map(col => col.COLUMN_NAME);
+    
+    for (const column of columnsToEnsure) {
+      if (!existingColumnNames.includes(column.name)) {
+        console.log(`   ➕ Adding ${column.name} column...`);
+        
+        let alterQuery = `ALTER TABLE customers ADD COLUMN ${column.name} ${column.type}`;
+        
+        if (column.nullable === false) {
+          alterQuery += ' NOT NULL';
+        } else {
+          alterQuery += ' NULL';
+        }
+        
+        if (column.defaultValue) {
+          alterQuery += ` DEFAULT ${column.defaultValue}`;
+        }
+        
+        try {
+          await sequelize.query(alterQuery);
+          console.log(`   ✅ ${column.name} column added`);
+        } catch (error) {
+          console.warn(`   ⚠️ Failed to add ${column.name}:`, error.message);
+        }
+      } else {
+        console.log(`   ✓ ${column.name} already exists`);
+      }
+    }
+    
+    console.log('✅ Customer approval system initialized');
+    return true;
   } catch (error) {
-    console.error("Batch upload error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
+    console.error('❌ Failed to initialize customer approval system:', error.message);
+    console.error('Error stack:', error.stack);
+    return false;
   }
 };
 
 export const approveCustomer = async (req, res) => {
   try {
-    console.log("🔍 FULL REQUEST ANALYSIS:", {
-      "req.params": req.params,
-      "req.body": req.body,
-      "req.originalUrl": req.originalUrl,
-    });
+    console.log("✅ APPROVE CUSTOMER REQUEST");
+    console.log("Params:", req.params);
+    console.log("Body:", req.body);
 
-    // --- Extract customerId from BOTH URL params and request body ---
-    const CUSTOMER_ID = String(
-      req.params.customerId || req.body.customerId || ""
-    ).trim();
-
+    const CUSTOMER_ID = String(req.params.customerId || req.body.customerId || "").trim();
     const APPROVED_BY = String(req.body.approvedBy || "").trim();
 
-    console.log("🔍 EXTRACTED VALUES:", {
-      customerIdFromParams: req.params.customerId,
-      customerIdFromBody: req.body.customerId,
-      finalCustomerId: CUSTOMER_ID,
-      approvedBy: APPROVED_BY,
-    });
-
-    // --- Validation ---
     if (!CUSTOMER_ID) {
       return res.status(400).json({
         success: false,
         message: "Customer ID is required",
-        help: 'Provide it in URL (/approve/0000000109) OR request body ({ "customerId": "0000000109" })',
-        received: {
-          params: req.params,
-          body: req.body,
-        },
       });
     }
 
@@ -611,204 +2195,243 @@ export const approveCustomer = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "approvedBy is required in request body",
-        example: { approvedBy: "PCO006" },
       });
     }
 
-    const paddedCustomerId = CUSTOMER_ID.padStart(10, "0");
-    console.log("🔍 Processing approval for:", paddedCustomerId);
+    // Get sequelize instance
+    const sequelize = getSequelize();
+    
+    if (!sequelize) {
+      throw new Error('Database connection not available');
+    }
 
-    // --- Find the customer ---
-    const customer = await Customer.findOne({ CUST_ID: paddedCustomerId });
+    console.log('🔍 Finding customer in database...');
+    
+    // Direct SQL query to find customer (most reliable)
+    const [customers] = await sequelize.query(
+      `SELECT * FROM customers WHERE CUST_ID = ?`,
+      {
+        replacements: [CUSTOMER_ID]
+      }
+    );
 
-    if (!customer) {
-      console.log("❌ Customer not found:", paddedCustomerId);
+    if (customers.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Customer not found: ${paddedCustomerId}`,
+        message: `Customer not found: ${CUSTOMER_ID}`,
       });
     }
 
-    console.log("🔍 FOUND CUSTOMER:", {
-      CUST_ID: customer.CUST_ID,
-      CURRENT_STATUS: customer.REC_ST,
-      _id: customer._id,
-      nextOfKinCount: customer.nextOfKin ? customer.nextOfKin.length : 0,
-    });
+    const customer = customers[0];
+    
+    console.log(`📋 Customer found: ${customer.CUST_NM || customer.FIRST_NAME || 'Unknown'}`);
+    console.log(`📊 Current status: ${customer.REC_ST || customer.status || 'Unknown'}`);
 
-    // --- IMPROVED: Check current status ---
-    if (customer.REC_ST === "Active" || customer.REC_ST === "ACTIVE") {
-      console.log("ℹ️ Customer already Active - returning success");
-
-      // Update workflow if still pending
-      try {
-        await WF_WORK_ITEM.findOneAndUpdate(
-          {
-            ITEM_CLASS_NM: "Customer",
-            ITEM_VALUE: paddedCustomerId,
-            REC_ST: "Pending",
-          },
-          {
-            REC_ST: "Completed",
-            WAIT_ST: "Approved",
-            APPROVED_BY: APPROVED_BY,
-            APPROVED_DT: new Date(),
-            COMPLETED_DT: new Date(),
-            ACTION_TAKEN: "Approved",
-            UPDATED_AT: new Date(),
-            UPDATED_BY: APPROVED_BY,
-          }
-        );
-        console.log("✅ Workflow updated for already Active customer");
-      } catch (wfError) {
-        console.warn("⚠ Workflow update failed:", wfError.message);
-      }
-
+    // Check if already active
+    if ((customer.REC_ST && customer.REC_ST === "ACTIVE") || 
+        (customer.status && customer.status === "Active")) {
       return res.status(200).json({
         success: true,
         message: "Customer is already Active",
-        currentStatus: customer.REC_ST,
+        currentStatus: customer.REC_ST || customer.status,
         data: {
           CUST_ID: customer.CUST_ID,
-          CUST_NO: customer.CUST_NO,
-          CUST_NM: customer.CUST_NM,
-          status: customer.REC_ST,
-          approvedBy: customer.approved_by || APPROVED_BY,
+          CUST_NO: customer.CUST_NO || 'N/A',
+          CUST_NM: customer.CUST_NM || `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim(),
+          status: customer.REC_ST || customer.status,
         },
       });
     }
 
-    // FIX: Case-insensitive check for allowed initial states
-    const allowedInitialStates = ["pending", "in review", "draft", "p", "pending review"];
-    const currentStatusLower = customer.REC_ST.toLowerCase();
+    // Update customer
+    console.log(`🔄 Updating customer ${CUSTOMER_ID} to ACTIVE...`);
+    const now = new Date();
     
-    if (!allowedInitialStates.includes(currentStatusLower)) {
-      console.log("❌ Customer not in approvable state:", customer.REC_ST);
-      return res.status(400).json({
-        success: false,
-        message: `Customer cannot be approved from current status: ${customer.REC_ST}`,
-        currentStatus: customer.REC_ST,
-        allowedStates: ["PENDING", "IN REVIEW", "DRAFT", "P", "PENDING REVIEW"],
-      });
+    const updateQuery = `
+      UPDATE customers 
+      SET REC_ST = 'ACTIVE', 
+          status = 'Active',
+          APPROVED_BY = ?,
+          APPROVED_DT = ?,
+          updatedAt = ?
+      WHERE CUST_ID = ?
+    `;
+    
+    await sequelize.query(updateQuery, {
+      replacements: [APPROVED_BY, now, now, CUSTOMER_ID]
+    });
+
+    // Update workflow if exists
+    try {
+      console.log('🔍 Checking for workflow table...');
+      const [workflowTables] = await sequelize.query(
+        `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'wf_work_items'`
+      );
+      
+      if (workflowTables[0].count > 0) {
+        console.log('🔄 Updating workflow...');
+        await sequelize.query(
+          `UPDATE wf_work_items 
+           SET REC_ST = 'Completed',
+               WAIT_ST = 'Approved',
+               APPROVED_BY = ?,
+               APPROVED_DT = ?,
+               COMPLETED_DT = ?,
+               ACTION_TAKEN = 'Approved',
+               updatedAt = ?
+           WHERE ITEM_CLASS_NM = 'Customer' 
+             AND ITEM_VALUE = ? 
+             AND REC_ST = 'Pending'`,
+          {
+            replacements: [APPROVED_BY, now, now, now, CUSTOMER_ID]
+          }
+        );
+        console.log("✅ Workflow updated successfully");
+      } else {
+        console.log("ℹ️ wf_work_items table doesn't exist, skipping workflow update");
+      }
+    } catch (wfError) {
+      console.warn("⚠️ Workflow update failed:", wfError.message);
     }
 
-    // --- APPROVE THE CUSTOMER ---
-    console.log("✅ Approving customer from", customer.REC_ST, "to Active");
-
-    const updateResult = await Customer.findOneAndUpdate(
+    // Get updated customer data
+    const [updatedCustomers] = await sequelize.query(
+      `SELECT CUST_ID, CUST_NO, CUST_NM, FIRST_NAME, LAST_NAME, 
+              REC_ST, status, APPROVED_BY, APPROVED_DT 
+       FROM customers WHERE CUST_ID = ?`,
       {
-        CUST_ID: paddedCustomerId,
-        REC_ST: customer.REC_ST, // Use current status for atomic update
-      },
-      {
-        $set: {
-          REC_ST: "Active",
-          approved_by: APPROVED_BY,
-          approved_at: new Date(),
-          UPDATED_BY: APPROVED_BY,
-          UPDATED_AT: new Date(),
-        },
-      },
-      { new: true }
+        replacements: [CUSTOMER_ID]
+      }
     );
 
-    if (!updateResult) {
-      console.log("❌ Customer status changed during approval process");
-      return res.status(409).json({
-        success: false,
-        message:
-          "Customer status was changed by another process. Please refresh and try again.",
-      });
-    }
+    console.log(`✅ Customer ${CUSTOMER_ID} approved by ${APPROVED_BY}`);
 
-    console.log("✅ CUSTOMER APPROVED SUCCESSFULLY:", {
-      CUST_ID: updateResult.CUST_ID,
-      NEW_STATUS: updateResult.REC_ST,
-      approved_by: updateResult.approved_by,
-      nextOfKinCount: updateResult.nextOfKin
-        ? updateResult.nextOfKin.length
-        : 0,
-    });
-
-    // --- Update workflow ---
-    try {
-      await WF_WORK_ITEM.findOneAndUpdate(
-        {
-          ITEM_CLASS_NM: "Customer",
-          ITEM_VALUE: paddedCustomerId,
-          REC_ST: { $in: ["Pending", "In Review", "PENDING", "IN REVIEW"] }, // Multiple possible workflow states
-        },
-        {
-          REC_ST: "Completed",
-          WAIT_ST: "Approved",
-          APPROVED_BY: APPROVED_BY,
-          APPROVED_DT: new Date(),
-          COMPLETED_DT: new Date(),
-          ACTION_TAKEN: "Approved",
-          UPDATED_AT: new Date(),
-          UPDATED_BY: APPROVED_BY,
-        }
-      );
-      console.log("✅ Workflow updated");
-    } catch (wfError) {
-      console.warn("⚠ Workflow update failed:", wfError.message);
-    }
-
-    const ipAddress =
-      req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-
-    // --- Audit trail ---
-    auditLogger.info("Audit Event", {
-      entity_type: "CUSTOMER_APPROVE",
-      entity_id: customer._id,
-      user_id: APPROVED_BY,
-      action: `Customer ${paddedCustomerId} approved by ${APPROVED_BY}. Status changed from ${customer.REC_ST} to Active`,
-      old_value: customer.REC_ST,
-      new_value: "Active",
-      ip_address: ipAddress,
-      event_type: "CUSTOMER_APPROVE",
-      outcome: "success",
-    });
-
-    // --- Success response ---
     return res.status(200).json({
       success: true,
       message: "Customer approved successfully",
       data: {
-        CUST_ID: updateResult.CUST_ID,
-        CUST_NO: updateResult.CUST_NO,
-        CUST_NM: updateResult.CUST_NM,
-        previousStatus: customer.REC_ST,
-        newStatus: "Active",
+        CUST_ID: updatedCustomers[0]?.CUST_ID || CUSTOMER_ID,
+        CUST_NO: updatedCustomers[0]?.CUST_NO || 'N/A',
+        CUST_NM: updatedCustomers[0]?.CUST_NM || 
+                `${updatedCustomers[0]?.FIRST_NAME || ''} ${updatedCustomers[0]?.LAST_NAME || ''}`.trim(),
+        newStatus: "ACTIVE",
         approvedBy: APPROVED_BY,
-        approvedAt: updateResult.approved_at,
-        nextOfKinCount: updateResult.nextOfKin
-          ? updateResult.nextOfKin.length
-          : 0,
+        approvedAt: now,
+        previousStatus: customer.REC_ST || customer.status,
       },
     });
   } catch (error) {
-    console.error("❌ APPROVAL ERROR:", error);
-    const ipAddress =
-      req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-    auditLogger.error("Audit Event", {
-      entity_type: "CUSTOMER_APPROVE",
-      entity_id: req.params.customerId || null,
-      user_id: req.body.approvedBy || "system",
-      action: "approve_customer",
-      old_value: null,
-      new_value: null,
-      ip_address: ipAddress,
-      event_type: "CUSTOMER_ERROR",
-      outcome: "failure",
-      error: error.message,
-    });
+    console.error("❌ APPROVAL ERROR:", error.message);
+    console.error("Error stack:", error.stack);
+    
     return res.status(500).json({
       success: false,
       message: "Internal server error during approval",
-      error: error.message,
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Please contact support',
+      ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
     });
   }
+};
+
+
+export const getCustomerDetails = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID is required'
+      });
+    }
+    
+    const [customers] = await sequelize.query(
+      `SELECT * FROM customers WHERE CUST_ID = ?`,
+      { replacements: [customerId] }
+    );
+    
+    if (customers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    return res.json({
+      success: true,
+      data: customers[0]
+    });
+  } catch (error) {
+    console.error('Error fetching customer details:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch customer details',
+      error: error.message
+    });
+  }
+};
+
+// Health check for customer approval system
+export const approvalSystemHealth = async (req, res) => {
+  try {
+    // Test database connection
+    await sequelize.authenticate();
+    
+    // Check if customers table exists
+    const [tables] = await sequelize.query("SHOW TABLES LIKE 'customers'");
+    
+    // Check if required columns exist
+    const requiredColumns = ['APPROVED_BY', 'APPROVED_DT', 'REC_ST', 'status'];
+    const missingColumns = [];
+    
+    for (const column of requiredColumns) {
+      const [exists] = await sequelize.query(
+        `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'customers' 
+         AND COLUMN_NAME = ?`,
+        { replacements: [column] }
+      );
+      
+      if (exists[0].count === 0) {
+        missingColumns.push(column);
+      }
+    }
+    
+    return res.json({
+      success: true,
+      system: 'Customer Approval System',
+      database: 'Connected',
+      customersTable: tables.length > 0 ? 'Exists' : 'Missing',
+      requiredColumns: missingColumns.length === 0 ? 'All present' : `Missing: ${missingColumns.join(', ')}`,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      system: 'Customer Approval System',
+      database: 'Connection failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+// For now, you can add this placeholder for other functions to be updated:
+const updateFunctionsForSequelize = async () => {
+  console.log("⚠️ IMPORTANT: The following functions need to be updated to use Sequelize syntax:");
+  console.log("  - rejectCustomer");
+  console.log("  - getAllCustomer");
+  console.log("  - getCustomerById");
+  console.log("  - getPendingCustomers");
+  console.log("  - updateCustomer");
+  console.log("  - deactivateCustomer");
+  console.log("  - searchCustomers");
+  console.log("  - advancedSearchCustomers");
+  console.log("");
+  console.log("✅ createCustomer and batchUploadCustomers are already updated for Sequelize");
 };
 
 export const rejectCustomer = async (req, res) => {
@@ -846,8 +2469,40 @@ export const rejectCustomer = async (req, res) => {
     const paddedCustomerId = CUSTOMER_ID.padStart(10, "0");
     console.log("🔍 Looking up customer for rejection:", paddedCustomerId);
 
+    // --- Initialize models first ---
+    const models = await getModelsSafe();
+    const Customer = models.Customer;
+    
+    if (!Customer || typeof Customer.findOne !== 'function') {
+      console.error("❌ Customer model not properly initialized");
+      return res.status(500).json({
+        success: false,
+        message: "Database model initialization failed",
+        error: "Customer model not available"
+      });
+    }
+
+    // Safe attributes list
+    const safeAttributes = [
+      'id', 'CUST_ID', 'CUST_NO', 'TITLE_ID', 'FIRST_NAME', 'MIDDLE_NAME', 
+      'LAST_NAME', 'CUST_NM', 'HOME_ADDRESS', 'EMAIL_ADDRESS', 'BU_ID', 
+      'MAIDEN_NM', 'BIRTH_DT', 'CNTRY_OF_BIRTH_ID', 'CUST_CAT', 'CAMPAIGN_ID', 
+      'GENDER_TY', 'COUNTRY_NM', 'STATE', 'NIN', 'BVN', 'LOCAL_GOV', 
+      'OPENING_RSN_ID', 'OPENED_DT', 'RESIDENT_CNTRY_ID', 'RISK_CLASS', 
+      'STMNT_FREQ_CD', 'STMNT_FREQ_VALUE', 'CREATED_BY', 'USER_ID', 'CREATE_DT', 
+      'INDUSTRY_ID', 'INDUSTRY_CD', 'TAX_STATUS', 'MARITAL_ST', 'TAX_GRP_ID', 
+      'OPERATIONS_CRNCY_ID', 'EMP_ST', 'ORGANISATION_NM', 'REGISTRATION_ADDRESS', 
+      'REGISTRATION_DT', 'ALERT_DELIVERY_METHOD', 'KYC_LEVEL', 'PHONE_NO', 'SMS', 
+      'IS_PEP', 'SANCTION_SCORE', 'DOCUMENT_VERIFICATION_STATUS', 'REC_ST', 
+      'status', 'EVENT_ID', 'REJECTED_BY', 'REJECTED_DT', 'REJECTION_REASON',
+      'UPDATED_BY', 'UPDATED_AT', 'createdAt', 'updatedAt'
+    ];
+
     // --- Find the customer first to check current status ---
-    const customer = await Customer.findOne({ CUST_ID: paddedCustomerId });
+    const customer = await Customer.findOne({ 
+      where: { CUST_ID: paddedCustomerId },
+      attributes: safeAttributes
+    });
 
     if (!customer) {
       console.log("❌ Customer not found for rejection:", paddedCustomerId);
@@ -860,12 +2515,11 @@ export const rejectCustomer = async (req, res) => {
     console.log("🔍 CUSTOMER FOUND FOR REJECTION:", {
       CUST_ID: customer.CUST_ID,
       CURRENT_STATUS: customer.REC_ST,
-      _id: customer._id,
-      nextOfKinCount: customer.nextOfKin ? customer.nextOfKin.length : 0,
+      id: customer.id,
     });
 
     // --- Check if customer can be rejected (case-insensitive) ---
-    const currentStatusUpper = customer.REC_ST.toUpperCase();
+    const currentStatusUpper = (customer.REC_ST || '').toUpperCase();
     
     if (currentStatusUpper === "REJECTED") {
       return res.status(400).json({
@@ -883,7 +2537,7 @@ export const rejectCustomer = async (req, res) => {
 
     // --- Check allowed states for rejection (case-insensitive) ---
     const allowedRejectionStates = ["pending", "in review", "submitted", "under review", "draft", "p"];
-    const currentStatusLower = customer.REC_ST.toLowerCase();
+    const currentStatusLower = (customer.REC_ST || '').toLowerCase();
     
     if (!allowedRejectionStates.includes(currentStatusLower)) {
       return res.status(400).json({
@@ -897,86 +2551,86 @@ export const rejectCustomer = async (req, res) => {
     // --- REJECT THE CUSTOMER ---
     console.log("✅ Rejecting customer from", customer.REC_ST, "to Rejected");
 
-    // Use case-insensitive query for atomic update
-    const updateResult = await Customer.findOneAndUpdate(
-      {
-        CUST_ID: paddedCustomerId,
-        REC_ST: { $regex: new RegExp(`^${customer.REC_ST}$`, 'i') }, // Case-insensitive match
-      },
-      {
-        $set: {
-          REC_ST: "Rejected",
-          rejected_by: REJECTED_BY,
-          rejected_at: new Date(),
-          rejection_reason: REJECTION_REASON,
-          UPDATED_BY: REJECTED_BY,
-          UPDATED_AT: new Date(),
-        },
-      },
-      { new: true }
-    );
+    // Update customer using Sequelize
+    const updateData = {
+      REC_ST: "Rejected",
+      REJECTED_BY: REJECTED_BY,
+      REJECTED_DT: new Date(),
+      REJECTION_REASON: REJECTION_REASON,
+      UPDATED_BY: REJECTED_BY,
+      UPDATED_AT: new Date(),
+      updatedAt: new Date()
+    };
 
-    if (!updateResult) {
+    // Update with case-insensitive check for current status
+    const [affectedRows, [updatedCustomer]] = await Customer.update(updateData, {
+      where: {
+        CUST_ID: paddedCustomerId,
+        REC_ST: customer.REC_ST // Match exact current status
+      },
+      returning: true,
+      individualHooks: true
+    });
+
+    if (affectedRows === 0) {
       console.log("❌ Customer status changed during rejection process");
       return res.status(409).json({
         success: false,
-        message:
-          "Customer status was changed by another process. Please refresh and try again.",
+        message: "Customer status was changed by another process. Please refresh and try again.",
       });
     }
 
     console.log("✅ CUSTOMER REJECTED SUCCESSFULLY:", {
-      CUST_ID: updateResult.CUST_ID,
-      NEW_STATUS: updateResult.REC_ST,
-      rejected_by: updateResult.rejected_by,
-      nextOfKinCount: updateResult.nextOfKin
-        ? updateResult.nextOfKin.length
-        : 0,
+      CUST_ID: updatedCustomer.CUST_ID,
+      NEW_STATUS: updatedCustomer.REC_ST,
+      REJECTED_BY: updatedCustomer.REJECTED_BY,
     });
 
     // --- Update workflow ---
     let workflowUpdated = false;
     try {
-      const workItem = await WF_WORK_ITEM.findOneAndUpdate(
-        {
-          ITEM_CLASS_NM: "Customer",
-          ITEM_VALUE: paddedCustomerId,
-          REC_ST: { $regex: /pending|submitted|in review/i }, // Case-insensitive regex
-        },
-        {
-          REC_ST: "Completed",
-          WAIT_ST: "Rejected",
-          REJECTED_BY: REJECTED_BY,
-          REJECTED_DT: new Date(),
-          COMPLETED_DT: new Date(),
-          ACTION_TAKEN: "Rejected",
-          REJECTION_REASON: REJECTION_REASON,
-          UPDATED_AT: new Date(),
-          UPDATED_BY: REJECTED_BY,
-        },
-        { new: true }
-      );
-
-      if (workItem) {
-        workflowUpdated = true;
-        console.log("✅ Workflow updated for rejection:", workItem._id);
-      } else {
-        console.warn(
-          "⚠ Workflow item not found for customer:",
-          paddedCustomerId
+      const { WF_WORK_ITEM: WFModel } = models;
+      if (WFModel && typeof WFModel.update === 'function') {
+        const [wfAffectedRows] = await WFModel.update(
+          {
+            REC_ST: "Completed",
+            WAIT_ST: "Rejected",
+            REJECTED_BY: REJECTED_BY,
+            REJECTED_DT: new Date(),
+            COMPLETED_DT: new Date(),
+            ACTION_TAKEN: "Rejected",
+            REJECTION_REASON: REJECTION_REASON,
+            UPDATED_AT: new Date(),
+            UPDATED_BY: REJECTED_BY,
+          },
+          {
+            where: {
+              ITEM_CLASS_NM: "Customer",
+              ITEM_VALUE: paddedCustomerId,
+              REC_ST: { [Op.in]: ["Pending", "Submitted", "In Review"] }
+            }
+          }
         );
+
+        if (wfAffectedRows > 0) {
+          workflowUpdated = true;
+          console.log(`✅ Workflow updated: ${wfAffectedRows} record(s) affected`);
+        } else {
+          console.warn("⚠ Workflow item not found for customer:", paddedCustomerId);
+        }
+      } else {
+        console.warn("⚠ WF_WORK_ITEM model not available");
       }
     } catch (wfError) {
       console.warn("⚠ Workflow update failed:", wfError.message);
     }
 
-    const ipAddress =
-      req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+    const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
 
     // --- Audit trail via hybrid logger ---
     auditLogger.info("Audit Event", {
       entity_type: "CUSTOMER_REJECT",
-      entity_id: customer._id,
+      entity_id: customer.id,
       user_id: REJECTED_BY,
       action: `Customer ${paddedCustomerId} rejected by ${REJECTED_BY}. Reason: ${REJECTION_REASON}`,
       old_value: customer.REC_ST,
@@ -1011,25 +2665,22 @@ export const rejectCustomer = async (req, res) => {
       success: true,
       message: "Customer rejected successfully",
       data: {
-        CUST_ID: updateResult.CUST_ID,
-        CUST_NO: updateResult.CUST_NO,
-        CUST_NM: updateResult.CUST_NM,
+        CUST_ID: updatedCustomer.CUST_ID,
+        CUST_NO: updatedCustomer.CUST_NO,
+        CUST_NM: updatedCustomer.CUST_NM,
         previousStatus: customer.REC_ST,
         newStatus: "Rejected",
         rejectedBy: REJECTED_BY,
         rejectionReason: REJECTION_REASON,
-        rejectedAt: updateResult.rejected_at,
+        rejectedAt: updatedCustomer.REJECTED_DT,
         workflowUpdated: workflowUpdated,
-        nextOfKinCount: updateResult.nextOfKin
-          ? updateResult.nextOfKin.length
-          : 0,
       },
     });
   } catch (error) {
     console.error("❌ REJECTION ERROR:", error);
+    
     // Audit failure (non-blocking)
-    const ipAddress =
-      req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+    const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
     auditLogger.error("Audit Event", {
       entity_type: "CUSTOMER_REJECT",
       entity_id: req.params.customerId || null,
@@ -1043,6 +2694,7 @@ export const rejectCustomer = async (req, res) => {
       error: error.message,
       rejection_reason: req.body.rejectionReason || null,
     });
+    
     return res.status(500).json({
       success: false,
       message: "Internal server error during rejection",
@@ -1051,433 +2703,7 @@ export const rejectCustomer = async (req, res) => {
   }
 };
 
-export const getAllCustomer = async (req, res) => {
-  try {
-    const { status, page = 1, limit = 10 } = req.query;
-    const userId = req.user_id || "system"; // From middleware
-    const ipAddress = req.ip_address || "0.0.0.0";
 
-    let query = {};
-
-    if (status) {
-      query.REC_ST = status;
-    }
-
-    const customers = await Customer.find(query)
-      .sort({ CREATE_DT: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .populate("nextOfKin"); // ✅ ADDED: Populate nextOfKin
-
-    const total = await Customer.countDocuments(query);
-
-    // Self-audit the query (optional)
-    auditLogger.info("Audit Event", {
-      entity_type: "customer_list_query",
-      entity_id: null,
-      user_id: userId,
-      action: "get_all_customer",
-      old_value: null,
-      new_value: {
-        count: customers.length,
-        filter: { status },
-        pagination: { page, limit, total },
-      },
-      ip_address: ipAddress,
-      event_type: "QUERY_SUCCESS",
-      outcome: "success",
-    });
-
-    res.status(200).json({
-      success: true,
-      data: customers,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching customers:", error);
-    // Audit failure (non-blocking)
-    auditLogger.error("Audit Event", {
-      entity_type: "customer_list_query",
-      entity_id: null,
-      user_id: req.user_id || "system",
-      action: "get_all_customer",
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || "unknown",
-      event_type: "QUERY_ERROR",
-      outcome: "failure",
-      error: error.message,
-    });
-    res.status(500).json({
-      success: false,
-      message: "Error fetching customers",
-      error: error.message,
-    });
-  }
-};
-
-// Update the getCustomerById function to support name-based search if CUST_ID doesn't match an ID format
-export const getCustomerById = async (req, res) => {
-  try {
-    let { CUST_ID } = req.params;
-    const userId = req.user_id || "system";
-    const ipAddress = req.ip_address || "0.0.0.0";
-
-    if (!CUST_ID) {
-      return res.status(400).json({ message: "CUST_ID parameter is required" });
-    }
-
-    // Convert to string and remove any accidental whitespace
-    const searchTerm = CUST_ID.toString().trim().toLowerCase();
-
-    console.log(`🔍 Searching for customer with term: ${searchTerm}`);
-    console.log(`📋 Search term length: ${searchTerm.length}, isNumeric: ${!isNaN(searchTerm)}`);
-
-    let customer;
-
-    // Check if searchTerm looks like an ID (e.g., numeric or ID-like format)
-    if (!isNaN(searchTerm) || searchTerm.match(/^\d{1,10}$/)) {
-      // Treat as ID search (existing logic)
-      const originalCustId = searchTerm;
-      const cleanCustId = searchTerm.replace(/^0+/, ""); // Remove leading zeros
-      const numericCustId = parseInt(searchTerm, 10); // Convert to number for legacy ID matching
-
-      console.log(`🔍 ID Search formats: original=${originalCustId}, clean=${cleanCustId}, numeric=${numericCustId}`);
-
-      // Search for customer in MULTIPLE formats including legacy IDs
-      customer = await Customer.findOne({
-        $or: [
-          { CUST_ID: originalCustId }, // Try with original format (with leading zeros)
-          { CUST_ID: cleanCustId }, // Try without leading zeros
-          { CUST_ID: numericCustId.toString() }, // Try as number string
-          { legacy_customer_id: numericCustId }, // Try legacy customer_id (numeric)
-          { legacy_customer_id: originalCustId }, // Try legacy customer_id (string)
-          { legacy_customer_id: cleanCustId }, // Try legacy customer_id (clean string)
-        ],
-      }).populate("nextOfKin");
-
-      if (customer) {
-        // Determine which field was matched
-        let matchedField = "unknown";
-        let matchedValue = "unknown";
-
-        if (
-          customer.CUST_ID === originalCustId ||
-          customer.CUST_ID === cleanCustId ||
-          customer.CUST_ID === numericCustId.toString()
-        ) {
-          matchedField = "CUST_ID";
-          matchedValue = customer.CUST_ID;
-        } else if (
-          customer.legacy_customer_id == numericCustId ||
-          customer.legacy_customer_id == originalCustId ||
-          customer.legacy_customer_id == cleanCustId
-        ) {
-          matchedField = "legacy_customer_id";
-          matchedValue = customer.legacy_customer_id;
-        }
-
-        console.log(
-          `✅ Customer found by ID: ${customer.FIRST_NAME} ${customer.LAST_NAME}`
-        );
-        console.log(`📝 Matched on: ${matchedField} = ${matchedValue}`);
-
-        // Self-audit success - log which format was found
-        auditLogger.info("Audit Event", {
-          entity_type: "customer_query",
-          entity_id: originalCustId,
-          user_id: userId,
-          action: "get_customer_by_id",
-          old_value: null,
-          new_value: {
-            event_id: customer.event_id,
-            found_cust_id: customer.CUST_ID,
-            legacy_customer_id: customer.legacy_customer_id,
-            matched_field: matchedField,
-            matched_value: matchedValue,
-            customer_name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
-          },
-          ip_address: ipAddress,
-          event_type: "QUERY_SUCCESS",
-          outcome: "success",
-        });
-
-        return res.status(200).json({
-          success: true,
-          data: customer,
-          match_details: {
-            type: "ID",
-            matched_field: matchedField,
-            matched_value: matchedValue,
-            searched_id: originalCustId,
-          },
-        });
-      }
-    }
-
-    // If no ID match, treat as name search (partial match on first, last, or full name)
-    console.log(`🔍 Treating "${searchTerm}" as name search`);
-    const nameRegex = new RegExp(searchTerm, "i"); // Case-insensitive partial match
-
-    customer = await Customer.findOne({
-      $or: [
-        { FIRST_NAME: nameRegex },
-        { LAST_NAME: nameRegex },
-        { CUST_NM: nameRegex },
-        { MIDDLE_NAME: nameRegex },
-      ],
-    }).populate("nextOfKin");
-
-    if (!customer) {
-      // Enhanced debugging: Check what customer names exist in the database
-      const sampleCustomers = await Customer.find({})
-        .select("CUST_ID CUST_NM FIRST_NAME LAST_NAME")
-        .limit(5)
-        .lean();
-
-      console.log("📊 Sample customers in database:", sampleCustomers);
-
-      // Self-audit not-found with enhanced details
-      auditLogger.info("Audit Event", {
-        entity_type: "customer_query",
-        entity_id: searchTerm,
-        user_id: userId,
-        action: "get_customer_by_id",
-        old_value: null,
-        new_value: {
-          status: "not_found",
-          search_type: "name",
-          searched_term: searchTerm,
-          sample_customers: sampleCustomers,
-        },
-        ip_address: ipAddress,
-        event_type: "QUERY_NOT_FOUND",
-        outcome: "failure",
-      });
-
-      return res.status(404).json({
-        success: false,
-        message: `No customer found matching ID or name: "${searchTerm}"`,
-        search_type: "ID and Name",
-        sample_customers: sampleCustomers, // For debugging
-        troubleshooting: [
-          "Verify the ID format or try a partial name (e.g., 'John' or 'John Doe')",
-          "Use the dedicated search endpoint for advanced name queries: /customers/search?name=John",
-          "Check if the customer exists in the database",
-        ],
-      });
-    }
-
-    console.log(
-      `✅ Customer found by name: ${customer.FIRST_NAME} ${customer.LAST_NAME} (${customer.CUST_ID})`
-    );
-
-    // Self-audit success for name search
-    auditLogger.info("Audit Event", {
-      entity_type: "customer_query",
-      entity_id: searchTerm,
-      user_id: userId,
-      action: "get_customer_by_id",
-      old_value: null,
-      new_value: {
-        search_type: "name",
-        found_cust_id: customer.CUST_ID,
-        customer_name: `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
-        matched_on: customer.CUST_NM.includes(searchTerm) ? "full name" : customer.FIRST_NAME.includes(searchTerm) ? "first name" : "last name",
-      },
-      ip_address: ipAddress,
-      event_type: "QUERY_SUCCESS",
-      outcome: "success",
-    });
-
-    res.status(200).json({
-      success: true,
-      data: customer,
-      match_details: {
-        type: "Name",
-        searched_term: searchTerm,
-        matched_on: customer.CUST_NM.includes(searchTerm) ? "full name" : customer.FIRST_NAME.includes(searchTerm) ? "first name" : "last name",
-        customer_id: customer.CUST_ID,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Error fetching customer:", error);
-    auditLogger.error("Audit Event", {
-      entity_type: "customer_query",
-      entity_id: req.params.CUST_ID || null,
-      user_id: req.user_id || "system",
-      action: "get_customer_by_id",
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || "unknown",
-      event_type: "QUERY_ERROR",
-      outcome: "failure",
-      error: error.message,
-      stack: error.stack,
-    });
-    res.status(500).json({
-      success: false,
-      message: "Error fetching customer",
-      error: error.message,
-    });
-  }
-};
-
-// Example: CustomerController.js
-export const getPendingCustomers = async (req, res) => {
-  try {
-    const { page = 1, limit = 10 } = req.query;
-    const userId = req.user_id || "system"; // From middleware
-    const ipAddress = req.ip_address || "0.0.0.0";
-
-    const pendingCustomers = await Customer.find({ REC_ST: "Pending" })
-      .sort({ CREATE_DT: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .populate("nextOfKin"); // ✅ ADDED: Populate nextOfKin
-
-    const total = await Customer.countDocuments({ REC_ST: "Pending" });
-
-    // Self-audit the query (optional)
-    auditLogger.info("Audit Event", {
-      entity_type: "pending_customer_query",
-      entity_id: null,
-      user_id: userId,
-      action: "get_pending_customers",
-      old_value: null,
-      new_value: {
-        count: pendingCustomers.length,
-        pagination: { page, limit, total },
-      },
-      ip_address: ipAddress,
-      event_type: "QUERY_SUCCESS",
-      outcome: "success",
-    });
-
-    console.log("Found pending:", pendingCustomers.length);
-    res.status(200).json({
-      success: true,
-      data: pendingCustomers,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error("Error retrieving pending customers:", error);
-    // Audit failure (non-blocking)
-    auditLogger.error("Audit Event", {
-      entity_type: "pending_customer_query",
-      entity_id: null,
-      user_id: req.user_id || "system",
-      action: "get_pending_customers",
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || "unknown",
-      event_type: "QUERY_ERROR",
-      outcome: "failure",
-      error: error.message,
-    });
-    res.status(500).json({
-      success: false,
-      message: "Error retrieving pending customers",
-      error: error.message,
-    });
-  }
-};
-
-export const updateCustomer = async (req, res) => {
-  const { CUST_ID } = req.params;
-  const updateFields = req.body;
-  const userId = req.user?.username || req.body.USER_ID || "SYSTEM"; // From user or body
-  const ipAddress =
-    req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-
-  try {
-    const customer = await Customer.findOne({ CUST_ID });
-
-    if (!customer) {
-      // Self-audit not-found (optional)
-      auditLogger.info("Audit Event", {
-        entity_type: "customer_update",
-        entity_id: CUST_ID,
-        user_id: userId,
-        action: "update_customer",
-        old_value: null,
-        new_value: { status: "not_found" },
-        ip_address: ipAddress,
-        event_type: "UPDATE_NOT_FOUND",
-        outcome: "failure",
-      });
-      return res.status(404).json({ message: "Customer not found" });
-    }
-
-    const oldValue = JSON.stringify(customer);
-
-    // Validate Next of Kin if provided
-    if (updateFields.nextOfKin) {
-      const nokValidationError = validateNextOfKin(updateFields.nextOfKin);
-      if (nokValidationError) {
-        return res.status(400).json({ message: nokValidationError });
-      }
-    }
-
-    // Update only existing fields on the schema
-    Object.keys(updateFields).forEach((field) => {
-      if (field in customer.toObject()) {
-        customer[field] = updateFields[field];
-      }
-    });
-
-    await customer.save();
-
-    // Audit log via hybrid logger
-    auditLogger.info("Audit Event", {
-      entity_type: "CUSTOMER_UPDATE",
-      entity_id: customer._id,
-      user_id: userId,
-      action: `Customer ${customer.CUST_NM} updated`,
-      old_value: oldValue,
-      new_value: JSON.stringify(customer),
-      ip_address: ipAddress,
-      event_type: "CUSTOMER_UPDATE",
-      outcome: "success",
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Customer updated successfully",
-      updatedCustomer: customer,
-    });
-  } catch (error) {
-    console.error("Error updating customer:", error);
-    // Audit failure (non-blocking)
-    auditLogger.error("Audit Event", {
-      entity_type: "customer_update",
-      entity_id: CUST_ID,
-      user_id: userId,
-      action: "update_customer",
-      old_value: null,
-      new_value: null,
-      ip_address: ipAddress,
-      event_type: "UPDATE_ERROR",
-      outcome: "failure",
-      error: error.message,
-    });
-    res.status(500).json({
-      success: false,
-      message: "Failed to update customer",
-      error: error.message,
-    });
-  }
-};
 
 export const deactivateCustomer = async (req, res) => {
   const { CUST_ID } = req.params;
@@ -1561,138 +2787,196 @@ export const deactivateCustomer = async (req, res) => {
 
 // Add this search function to your CustomerController.js
 
-export const searchCustomers = async (req, res) => {
+// Helper function
+const performSearch = async (CustomerModel, req, res) => {
   try {
-    const {
-      search,
-      firstName,
-      lastName,
-      name,
-      page = 1,
-      limit = 10,
-      status,
-    } = req.query;
-
-    const userId = req.user_id || "system";
-    const ipAddress = req.ip_address || "0.0.0.0";
-
-    let query = {};
-
-    // Add status filter if provided
-    if (status) {
-      query.REC_ST = status;
-    }
-
+    const { name, accountNumber, phone, email, page = 1, limit = 20 } = req.query;
+    const offset = (page - 1) * limit;
+    
     // Build search conditions
-    let searchConditions = [];
-
-    // Option 1: General search term (searches first name, last name, and full name)
-    if (search) {
-      const searchRegex = new RegExp(search, "i");
-      searchConditions.push(
-        { FIRST_NAME: searchRegex },
-        { LAST_NAME: searchRegex },
-        { CUST_NM: searchRegex },
-        { MIDDLE_NAME: searchRegex }
-      );
-    }
-
-    // Option 2: Specific first name search
-    if (firstName) {
-      const firstNameRegex = new RegExp(firstName, "i");
-      searchConditions.push({ FIRST_NAME: firstNameRegex });
-    }
-
-    // Option 3: Specific last name search
-    if (lastName) {
-      const lastNameRegex = new RegExp(lastName, "i");
-      searchConditions.push({ LAST_NAME: lastNameRegex });
-    }
-
-    // Option 4: Specific full name search
+    const whereConditions = {};
+    
     if (name) {
-      const nameRegex = new RegExp(name, "i");
-      searchConditions.push({ CUST_NM: nameRegex });
+      whereConditions[Op.or] = [
+        { first_name: { [Op.like]: `%${name}%` } },
+        { last_name: { [Op.like]: `%${name}%` } },
+        { other_names: { [Op.like]: `%${name}%` } }
+      ];
     }
-
-    // If we have search conditions, add them to the query
-    if (searchConditions.length > 0) {
-      query.$or = searchConditions;
+    
+    if (accountNumber) {
+      whereConditions.account_number = { [Op.like]: `%${accountNumber}%` };
     }
-
-    // If no search parameters provided, return all customers (with optional status filter)
-    const customers = await Customer.find(query)
-      .sort({ CREATE_DT: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .populate("nextOfKin")
-      .select("-__v"); // Exclude version key
-
-    const total = await Customer.countDocuments(query);
-
-    // Self-audit the search query
-    auditLogger.info("Audit Event", {
-      entity_type: "customer_search",
-      entity_id: null,
-      user_id: userId,
-      action: "search_customers",
-      old_value: null,
-      new_value: {
-        search_term: search,
-        first_name: firstName,
-        last_name: lastName,
-        full_name: name,
-        status: status,
-        count: customers.length,
-        pagination: { page, limit, total },
-      },
-      ip_address: ipAddress,
-      event_type: "SEARCH_SUCCESS",
-      outcome: "success",
+    
+    if (phone) {
+      whereConditions.phone = { [Op.like]: `%${phone}%` };
+    }
+    
+    if (email) {
+      whereConditions.email = { [Op.like]: `%${email}%` };
+    }
+    
+    // Search customers
+    const { rows: customers, count } = await CustomerModel.findAndCountAll({
+      where: whereConditions,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['created_at', 'DESC']],
+      include: [
+        {
+          model: getCustomerType(),
+          as: 'customerType',
+          attributes: ['id', 'type_name']
+        },
+        {
+          model: getRelationshipOfficer(),
+          as: 'relationshipOfficer',
+          attributes: ['id', 'first_name', 'last_name', 'email']
+        }
+      ]
     });
-
-    res.status(200).json({
+    
+    // Audit success
+    try {
+      auditLogger.info("Audit Event", {
+        entity_type: "customer_search",
+        entity_id: null,
+        user_id: req.user_id || "system",
+        action: "search_customers",
+        old_value: null,
+        new_value: JSON.stringify({ 
+          searchParams: req.query,
+          resultCount: count 
+        }),
+        ip_address: req.ip || "unknown",
+        event_type: "SEARCH_SUCCESS",
+        outcome: "success",
+        error: null
+      });
+    } catch (auditError) {
+      console.error('Error logging audit success:', auditError);
+    }
+    
+    return res.status(200).json({
       success: true,
-      data: customers,
-      search_parameters: {
-        search_term: search,
-        first_name: firstName,
-        last_name: lastName,
-        full_name: name,
-        status: status,
-      },
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      message: "Customers retrieved successfully",
+      data: {
+        customers,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(count / limit)
+        }
+      }
     });
+    
   } catch (error) {
-    console.error("Error searching customers:", error);
-
-    // Audit failure
-    auditLogger.error("Audit Event", {
-      entity_type: "customer_search",
-      entity_id: null,
-      user_id: req.user_id || "system",
-      action: "search_customers",
-      old_value: null,
-      new_value: null,
-      ip_address: req.ip || "unknown",
-      event_type: "SEARCH_ERROR",
-      outcome: "failure",
-      error: error.message,
-    });
-
-    res.status(500).json({
-      success: false,
-      message: "Error searching customers",
-      error: error.message,
-    });
+    console.error('Error in performSearch:', error);
+    throw error;
   }
 };
 
+
+
+
+// Simple in-memory cache for models
+let modelCache = {
+  Customer: null,
+  CustomerType: null,
+  RelationshipOfficer: null
+};
+
+const loadModelsOnce = async () => {
+  if (modelCache.Customer) {
+    return modelCache;
+  }
+  
+  try {
+    console.log('🔄 Loading models for CustomerController...');
+    const modelsModule = await import('../models/index.js');
+    
+    if (modelsModule.initializeModels) {
+      await modelsModule.initializeModels();
+    }
+    
+    modelCache = {
+      Customer: modelsModule.getCustomer ? modelsModule.getCustomer() : null,
+      CustomerType: modelsModule.getCustomerType ? modelsModule.getCustomerType() : null,
+      RelationshipOfficer: modelsModule.getRelationshipOfficer ? modelsModule.getRelationshipOfficer() : null
+    };
+    
+    console.log('✅ Models loaded in CustomerController');
+    
+    // Log the actual attribute names from the model
+    if (modelCache.Customer) {
+      const attributes = Object.keys(modelCache.Customer.rawAttributes);
+      console.log('Customer model attributes:', attributes);
+    }
+    
+  } catch (error) {
+    console.error('❌ Failed to load models in CustomerController:', error);
+  }
+  
+  return modelCache;
+};
+
+
+
+// Add this to your CustomerController or create a new controller
+export const getCustomerSchema = async (req, res) => {
+  try {
+    const models = await loadModelsOnce();
+    
+    if (!models.Customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer model not loaded'
+      });
+    }
+    
+    // Get model attributes
+    const attributes = models.Customer.rawAttributes;
+    const attributeNames = Object.keys(attributes);
+    
+    // Get model options
+    const options = models.Customer.options;
+    
+    // Try to get table info from database
+    let tableInfo = null;
+    try {
+      const queryInterface = models.Customer.sequelize.getQueryInterface();
+      tableInfo = await queryInterface.describeTable(models.Customer.tableName);
+    } catch (error) {
+      console.warn('Could not get table info:', error.message);
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        modelName: models.Customer.name,
+        tableName: models.Customer.tableName,
+        attributes: attributeNames,
+        attributeDetails: attributes,
+        options: {
+          tableName: options.tableName,
+          timestamps: options.timestamps,
+          freezeTableName: options.freezeTableName
+        },
+        databaseTableInfo: tableInfo,
+        sampleQuery: 'SELECT * FROM ' + models.Customer.tableName + ' LIMIT 1'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Schema error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting schema',
+      error: error.message
+    });
+  }
+};
 // Advanced search with multiple criteria
 export const advancedSearchCustomers = async (req, res) => {
   try {

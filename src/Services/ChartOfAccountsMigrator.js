@@ -1,5 +1,5 @@
 // services/ChartOfAccountsMigrator.js
-import mongoose from 'mongoose';
+import { Op } from 'sequelize';
 import DynamicMigrationConfig, { VALIDATION_RULES } from '../../config/migrationConfig.js';
 import GLAccount from '../models/GLAccount.js';
 
@@ -29,7 +29,7 @@ class ChartOfAccountsMigrator {
 
     // Check required fields
     VALIDATION_RULES.requiredFields.forEach(field => {
-      if (!account[field] && account[field] !== 0) {
+      if (account[field] === undefined || account[field] === null) {
         errors.push(`Missing required field: ${field}`);
       }
     });
@@ -169,7 +169,9 @@ class ChartOfAccountsMigrator {
   }
 
   // Enhanced account creation with complete balance migration
-  async createNewAccount(legacyAccount) {
+  async createNewAccount(legacyAccount, transaction = null) {
+    const queryOptions = transaction ? { transaction } : {};
+    
     try {
       const organization = this.config.getOrganization(this.organizationCode);
       const branchName = this.config.getBranch(this.organizationCode, this.branchCode);
@@ -226,8 +228,8 @@ class ChartOfAccountsMigrator {
         CURRENT_BALANCE: hasBalance ? legacyBalance : 0,
         CURRENCY_CODE: 'NGN',
         
-        // Initial balance history entry if balance is migrated
-        balanceHistory: hasBalance ? [{
+        // Initial balance history entry if balance is migrated (stored as JSON)
+        balance_history: hasBalance ? JSON.stringify([{
           date: new Date(),
           ledgerBalance: legacyBalance,
           availableBalance: legacyBalance,
@@ -241,10 +243,10 @@ class ChartOfAccountsMigrator {
             legacySystem: 'Chart of Accounts',
             migrationType: 'FULL'
           }
-        }] : [],
+        }]) : null,
         
-        // Legacy Reference with complete balance information
-        legacyReference: {
+        // Legacy Reference with complete balance information (stored as JSON)
+        legacy_reference: JSON.stringify({
           legacyId: legacyAccount.id.toString(),
           legacyGLCode: legacyAccount.glcode,
           legacyName: legacyAccount.name,
@@ -257,13 +259,13 @@ class ChartOfAccountsMigrator {
           migrationVersion: '2.0',
           migrationBatchId: this.migrationBatchId,
           balanceMigrated: hasBalance && shouldMigrateBalance
-        },
+        }),
         
         // System Source
         systemSource: 'MIGRATED',
         
-        // Enhanced sync status for balance reconciliation
-        syncStatus: {
+        // Enhanced sync status for balance reconciliation (stored as JSON)
+        sync_status: JSON.stringify({
           lastSynced: new Date(),
           syncRequired: false,
           legacyBalance: hasBalance ? legacyBalance : 0,
@@ -274,10 +276,10 @@ class ChartOfAccountsMigrator {
           balanceReconciled: hasBalance,
           reconciliationDate: hasBalance ? new Date() : null,
           lastReconciliationId: hasBalance ? `INIT_RECON_${legacyAccount.id}` : null
-        },
+        }),
 
-        // Enhanced metadata with balance settings
-        metadata: {
+        // Enhanced metadata with balance settings (stored as JSON)
+        metadata: JSON.stringify({
           accountType: this.config.mapAccountType(legacyAccount.type, legacyAccount.name),
           productType: this.determineProductType(legacyAccount),
           branchSpecific: true,
@@ -297,15 +299,14 @@ class ChartOfAccountsMigrator {
             maximumBalance: this.config.config.balanceValidation.maxBalance,
             autoReconcile: true
           }
-        },
+        }),
         
         branchTimezone: 'Africa/Lagos'
       };
 
-      const newAccount = new GLAccount(newAccountData);
-      const savedAccount = await newAccount.save();
+      const newAccount = await GLAccount.create(newAccountData, queryOptions);
       
-      this.accountMapping.set(legacyAccount.id, savedAccount._id);
+      this.accountMapping.set(legacyAccount.id, newAccount.id);
       this.migrationStats.successful++;
       
       // Track balance migration statistics
@@ -322,7 +323,7 @@ class ChartOfAccountsMigrator {
       }
       
       console.log(`✓ Migrated: ${legacyAccount.name} (Balance: ${legacyBalance})`);
-      return savedAccount;
+      return newAccount;
 
     } catch (error) {
       this.migrationStats.failed++;
@@ -362,7 +363,8 @@ class ChartOfAccountsMigrator {
   }
 
   // Update parent relationships after all accounts are created
-  async updateParentRelationships(accounts) {
+  async updateParentRelationships(accounts, transaction = null) {
+    const queryOptions = transaction ? { transaction } : {};
     let updatedCount = 0;
 
     for (const legacyAccount of accounts) {
@@ -372,10 +374,17 @@ class ChartOfAccountsMigrator {
           
           if (parentId) {
             const accountId = this.accountMapping.get(legacyAccount.id);
-            await GLAccount.findByIdAndUpdate(accountId, {
+            
+            // Update using Sequelize
+            await GLAccount.update({
               parentCode: legacyAccount.gl_group,
-              PARENT_ID: parentId
+              PARENT_ID: parentId,
+              updatedAt: new Date()
+            }, {
+              where: { id: accountId },
+              ...queryOptions
             });
+            
             updatedCount++;
           } else {
             console.warn(`Parent not found for account ${legacyAccount.id} (${legacyAccount.name}) - parent GL group: ${legacyAccount.gl_group}`);
@@ -390,7 +399,9 @@ class ChartOfAccountsMigrator {
   }
 
   // New method for bulk balance migration/update
-  async migrateBalancesOnly(legacyBalances) {
+  async migrateBalancesOnly(legacyBalances, transaction = null) {
+    const queryOptions = transaction ? { transaction } : {};
+    
     console.log('Starting balance-only migration...');
     
     let migrated = 0;
@@ -400,24 +411,41 @@ class ChartOfAccountsMigrator {
     for (const legacyBalance of legacyBalances) {
       try {
         const account = await GLAccount.findOne({
-          'legacyReference.legacyId': legacyBalance.id.toString()
+          where: {
+            legacy_reference: {
+              [Op.like]: `%"legacyId":"${legacyBalance.id}"%`
+            }
+          },
+          ...queryOptions
         });
         
         if (account) {
-          const success = await account.migrateBalance(legacyBalance.balance, {
-            transactionId: `BAL_MIG_${legacyBalance.id}_${Date.now()}`,
-            description: 'Balance update during migration process',
-            createdBy: 'system_migration',
-            reference: `Balance update for legacy ID: ${legacyBalance.id}`
+          // Parse existing legacy reference
+          const legacyRef = JSON.parse(account.legacy_reference || '{}');
+          
+          // Update account with new balance
+          await GLAccount.update({
+            LEDGER_BALANCE: legacyBalance.balance,
+            AVAILABLE_BALANCE: legacyBalance.balance,
+            CURRENT_BALANCE: legacyBalance.balance,
+            legacy_reference: JSON.stringify({
+              ...legacyRef,
+              legacyBalance: legacyBalance.balance,
+              balanceUpdatedAt: new Date()
+            }),
+            metadata: JSON.stringify({
+              ...JSON.parse(account.metadata || '{}'),
+              lastBalanceUpdate: new Date(),
+              updateSource: 'BALANCE_MIGRATION'
+            }),
+            updatedAt: new Date()
+          }, {
+            where: { id: account.id },
+            ...queryOptions
           });
           
-          if (success) {
-            migrated++;
-            console.log(`✓ Balance updated: ${account.GL_ACCT_NO} -> ${legacyBalance.balance}`);
-          } else {
-            errors++;
-            console.error(`✗ Balance update failed: ${account.GL_ACCT_NO}`);
-          }
+          migrated++;
+          console.log(`✓ Balance updated: ${account.GL_ACCT_NO} -> ${legacyBalance.balance}`);
         } else {
           notFound++;
           console.warn(`Account not found for legacy ID: ${legacyBalance.id}`);
@@ -434,94 +462,115 @@ class ChartOfAccountsMigrator {
 
   // Enhanced main migration method with comprehensive balance handling
   async migrate(legacyAccounts) {
-    console.log(`🚀 Starting migration for organization ${this.organizationCode}, branch ${this.branchCode}`);
-    console.log(`📊 Processing ${legacyAccounts.length} accounts with balances...`);
-
-    this.migrationStats.total = legacyAccounts.length;
-
-    // Validate accounts and balances
-    const validationResults = this.validateAccountsWithBalances(legacyAccounts);
+    const transaction = await sequelize.transaction();
     
-    if (validationResults.invalid.length > 0) {
-      console.warn(`❌ Found ${validationResults.invalid.length} invalid accounts:`);
-      validationResults.invalid.forEach(({ account, errors }) => {
-        console.warn(`   ${account.id} (${account.name}):`, errors.join(', '));
-      });
+    try {
+      console.log(`🚀 Starting migration for organization ${this.organizationCode}, branch ${this.branchCode}`);
+      console.log(`📊 Processing ${legacyAccounts.length} accounts with balances...`);
+
+      this.migrationStats.total = legacyAccounts.length;
+
+      // Validate accounts and balances
+      const validationResults = this.validateAccountsWithBalances(legacyAccounts);
       
-      if (this.config.config.behavior.validateBeforeMigrate) {
-        throw new Error(`Validation failed for ${validationResults.invalid.length} accounts. Migration aborted.`);
-      } else {
-        console.warn('⚠️  Continuing migration despite validation errors...');
-      }
-    }
-
-    // Build hierarchy for processing order
-    const hierarchy = this.buildAccountHierarchy(legacyAccounts);
-
-    // Process accounts in order: root groups -> subgroups -> accounts
-    const processingOrder = [
-      ...hierarchy.root,
-      ...Array.from(hierarchy.groups.values()).flat(),
-      ...Array.from(hierarchy.accounts.values()).flat()
-    ];
-
-    console.log('🔨 Creating accounts with balances...');
-
-    // Create accounts with balances
-    for (const account of processingOrder) {
-      try {
-        // Check if account already exists
-        if (this.config.config.behavior.skipExisting) {
-          const existingAccount = await GLAccount.findOne({
-            'legacyReference.legacyId': account.id.toString()
-          });
-          
-          if (existingAccount) {
-            console.log(`⏭️  Skipping existing account: ${account.name} (${account.id})`);
-            this.migrationStats.skipped++;
-            this.accountMapping.set(account.id, existingAccount._id);
-            continue;
-          }
-        }
-
-        await this.createNewAccount(account);
+      if (validationResults.invalid.length > 0) {
+        console.warn(`❌ Found ${validationResults.invalid.length} invalid accounts:`);
+        validationResults.invalid.forEach(({ account, errors }) => {
+          console.warn(`   ${account.id} (${account.name}):`, errors.join(', '));
+        });
         
-      } catch (error) {
-        console.error(`💥 Failed to migrate account ${account.id} (${account.name}):`, error.message);
+        if (this.config.config.behavior.validateBeforeMigrate) {
+          await transaction.rollback();
+          throw new Error(`Validation failed for ${validationResults.invalid.length} accounts. Migration aborted.`);
+        } else {
+          console.warn('⚠️  Continuing migration despite validation errors...');
+        }
       }
+
+      // Build hierarchy for processing order
+      const hierarchy = this.buildAccountHierarchy(legacyAccounts);
+
+      // Process accounts in order: root groups -> subgroups -> accounts
+      const processingOrder = [
+        ...hierarchy.root,
+        ...Array.from(hierarchy.groups.values()).flat(),
+        ...Array.from(hierarchy.accounts.values()).flat()
+      ];
+
+      console.log('🔨 Creating accounts with balances...');
+
+      // Create accounts with balances
+      for (const account of processingOrder) {
+        try {
+          // Check if account already exists
+          if (this.config.config.behavior.skipExisting) {
+            const existingAccount = await GLAccount.findOne({
+              where: {
+                legacy_reference: {
+                  [Op.like]: `%"legacyId":"${account.id}"%`
+                }
+              },
+              transaction
+            });
+            
+            if (existingAccount) {
+              console.log(`⏭️  Skipping existing account: ${account.name} (${account.id})`);
+              this.migrationStats.skipped++;
+              this.accountMapping.set(account.id, existingAccount.id);
+              continue;
+            }
+          }
+
+          await this.createNewAccount(account, transaction);
+          
+        } catch (error) {
+          console.error(`💥 Failed to migrate account ${account.id} (${account.name}):`, error.message);
+        }
+      }
+
+      // Update parent relationships
+      console.log('🔗 Updating parent relationships...');
+      const updatedRelationships = await this.updateParentRelationships(legacyAccounts, transaction);
+      console.log(`✅ Updated ${updatedRelationships} parent relationships`);
+
+      // Commit transaction
+      await transaction.commit();
+
+      // Validate balance migration
+      console.log('📋 Validating balance migration...');
+      const balanceValidation = await this.validateBalanceMigration();
+
+      // Generate migration report
+      await this.generateMigrationReport(balanceValidation);
+
+      console.log('🎉 Migration completed!');
+      console.log('📈 Final Statistics:', this.migrationStats);
+
+      return {
+        success: this.migrationStats.failed === 0,
+        statistics: this.migrationStats,
+        balanceValidation,
+        accountMapping: this.accountMapping,
+        batchId: this.migrationBatchId
+      };
+
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Migration failed:', error);
+      throw error;
     }
-
-    // Update parent relationships
-    console.log('🔗 Updating parent relationships...');
-    const updatedRelationships = await this.updateParentRelationships(legacyAccounts);
-    console.log(`✅ Updated ${updatedRelationships} parent relationships`);
-
-    // Validate balance migration
-    console.log('📋 Validating balance migration...');
-    const balanceValidation = await this.validateBalanceMigration();
-
-    // Generate migration report
-    await this.generateMigrationReport(balanceValidation);
-
-    console.log('🎉 Migration completed!');
-    console.log('📈 Final Statistics:', this.migrationStats);
-
-    return {
-      success: this.migrationStats.failed === 0,
-      statistics: this.migrationStats,
-      balanceValidation,
-      accountMapping: this.accountMapping,
-      batchId: this.migrationBatchId
-    };
   }
 
   // Comprehensive balance migration validation
   async validateBalanceMigration() {
     console.log('🔍 Validating balance migration...');
     
-    const GLAccount = mongoose.model('GLAccount');
-    const migratedAccounts = await GLAccount.find({
-      'legacyReference.migrationBatchId': this.migrationBatchId
+    const migratedAccounts = await GLAccount.findAll({
+      where: {
+        legacy_reference: {
+          [Op.like]: `%"migrationBatchId":"${this.migrationBatchId}"%`
+        }
+      }
     });
     
     let totalLegacyBalance = 0;
@@ -531,22 +580,24 @@ class ChartOfAccountsMigrator {
     let perfectlyMatched = 0;
     
     for (const account of migratedAccounts) {
-      totalLegacyBalance += account.legacyReference.legacyBalance;
-      totalNewBalance += account.LEDGER_BALANCE;
-      totalOpeningBalance += account.OPENING_BALANCE;
+      const legacyRef = JSON.parse(account.legacy_reference || '{}');
       
-      const difference = account.LEDGER_BALANCE - account.legacyReference.legacyBalance;
+      totalLegacyBalance += parseFloat(legacyRef.legacyBalance || 0);
+      totalNewBalance += parseFloat(account.LEDGER_BALANCE || 0);
+      totalOpeningBalance += parseFloat(account.OPENING_BALANCE || 0);
+      
+      const difference = parseFloat(account.LEDGER_BALANCE || 0) - parseFloat(legacyRef.legacyBalance || 0);
       
       if (Math.abs(difference) > 0.01) { // Tolerance for floating point
         discrepancies.push({
           accountNo: account.GL_ACCT_NO,
           accountName: account.ACCT_DESC,
-          legacyBalance: account.legacyReference.legacyBalance,
-          newBalance: account.LEDGER_BALANCE,
-          openingBalance: account.OPENING_BALANCE,
+          legacyBalance: parseFloat(legacyRef.legacyBalance || 0),
+          newBalance: parseFloat(account.LEDGER_BALANCE || 0),
+          openingBalance: parseFloat(account.OPENING_BALANCE || 0),
           difference: difference,
-          percentageDiff: account.legacyReference.legacyBalance !== 0 ? 
-            (difference / account.legacyReference.legacyBalance * 100) : 0
+          percentageDiff: parseFloat(legacyRef.legacyBalance || 0) !== 0 ? 
+            (difference / parseFloat(legacyRef.legacyBalance || 0) * 100) : 0
         });
       } else {
         perfectlyMatched++;
@@ -591,8 +642,7 @@ class ChartOfAccountsMigrator {
 
   // Generate comprehensive migration report
   async generateMigrationReport(balanceValidation) {
-    const GLAccount = mongoose.model('GLAccount');
-    
+    // Get balance migration report
     const balanceReport = await GLAccount.getBalanceMigrationReport(this.organizationCode);
     const orgSummary = await GLAccount.getOrganizationBalanceSummary(this.organizationCode);
     
@@ -619,50 +669,78 @@ class ChartOfAccountsMigrator {
     console.log(`   Discrepancies: ${balanceValidation.discrepanciesCount} accounts`);
     
     console.log('\n🏦 BALANCE MIGRATION STATUS:');
-    balanceReport.forEach(report => {
-      const status = report.balanceMigrated ? 
-        (report.balanceReconciled ? '✅ Migrated & Reconciled' : '⚠️ Migrated Needs Reconciling') : 
-        '❌ Not Migrated';
-      console.log(`   ${status}: ${report.count} accounts, Net Diff: ${report.netDifference?.toLocaleString() || 0}`);
-    });
+    if (balanceReport && Array.isArray(balanceReport)) {
+      balanceReport.forEach(report => {
+        const status = report.balanceMigrated ? 
+          (report.balanceReconciled ? '✅ Migrated & Reconciled' : '⚠️ Migrated Needs Reconciling') : 
+          '❌ Not Migrated';
+        console.log(`   ${status}: ${report.count} accounts, Net Diff: ${report.netDifference?.toLocaleString() || 0}`);
+      });
+    }
     
     console.log('\n🌍 ORGANIZATION SUMMARY:');
-    orgSummary.forEach(branch => {
-      console.log(`   ${branch.branchName}: ${branch.totalBalance.toLocaleString()} (${branch.accountCount} accounts)`);
-      console.log(`     Balance Difference: ${branch.balanceDifference.toLocaleString()}`);
-    });
+    if (orgSummary && Array.isArray(orgSummary)) {
+      orgSummary.forEach(branch => {
+        console.log(`   ${branch.branchName}: ${branch.totalBalance.toLocaleString()} (${branch.accountCount} accounts)`);
+        console.log(`     Balance Difference: ${branch.balanceDifference.toLocaleString()}`);
+      });
+    }
     
     console.log('\n================================\n');
   }
 
   // Rollback migration with balance tracking
   async rollbackMigration(batchId = null) {
-    const query = batchId ? { 'legacyReference.migrationBatchId': batchId } : { systemSource: 'MIGRATED' };
+    const transaction = await sequelize.transaction();
     
-    // Get accounts to be deleted for reporting
-    const accountsToDelete = await GLAccount.find(query);
-    let totalBalance = 0;
-    
-    accountsToDelete.forEach(account => {
-      totalBalance += account.LEDGER_BALANCE;
-    });
-    
-    const result = await GLAccount.deleteMany(query);
-    
-    console.log(`🔄 Rollback completed:`);
-    console.log(`   Deleted accounts: ${result.deletedCount}`);
-    console.log(`   Total balance removed: ${totalBalance.toLocaleString()}`);
-    console.log(`   Batch: ${batchId || 'ALL MIGRATED'}`);
-    
-    return {
-      deletedCount: result.deletedCount,
-      totalBalanceRemoved: totalBalance,
-      batchId
-    };
+    try {
+      const query = batchId ? {
+        legacy_reference: {
+          [Op.like]: `%"migrationBatchId":"${batchId}"%`
+        }
+      } : { systemSource: 'MIGRATED' };
+      
+      // Get accounts to be deleted for reporting
+      const accountsToDelete = await GLAccount.findAll({
+        where: query,
+        transaction
+      });
+      
+      let totalBalance = 0;
+      
+      accountsToDelete.forEach(account => {
+        totalBalance += parseFloat(account.LEDGER_BALANCE || 0);
+      });
+      
+      const deletedCount = await GLAccount.destroy({
+        where: query,
+        transaction
+      });
+      
+      await transaction.commit();
+      
+      console.log(`🔄 Rollback completed:`);
+      console.log(`   Deleted accounts: ${deletedCount}`);
+      console.log(`   Total balance removed: ${totalBalance.toLocaleString()}`);
+      console.log(`   Batch: ${batchId || 'ALL MIGRATED'}`);
+      
+      return {
+        deletedCount,
+        totalBalanceRemoved: totalBalance,
+        batchId
+      };
+      
+    } catch (error) {
+      await transaction.rollback();
+      console.error('Rollback failed:', error);
+      throw error;
+    }
   }
 
   // Reconcile all migrated accounts with current legacy balances
-  async reconcileAllBalances(currentLegacyBalances) {
+  async reconcileAllBalances(currentLegacyBalances, transaction = null) {
+    const queryOptions = transaction ? { transaction } : {};
+    
     console.log('🔄 Starting balance reconciliation...');
     
     let reconciled = 0;
@@ -672,14 +750,37 @@ class ChartOfAccountsMigrator {
     for (const legacyBalance of currentLegacyBalances) {
       try {
         const account = await GLAccount.findOne({
-          'legacyReference.legacyId': legacyBalance.id.toString()
+          where: {
+            legacy_reference: {
+              [Op.like]: `%"legacyId":"${legacyBalance.id}"%`
+            }
+          },
+          ...queryOptions
         });
         
         if (account) {
-          const difference = await account.reconcileBalance(legacyBalance.balance, {
-            reconciliationId: `RECON_${Date.now()}`,
-            description: 'Scheduled balance reconciliation',
-            createdBy: 'system_reconciliation'
+          const legacyRef = JSON.parse(account.legacy_reference || '{}');
+          const difference = parseFloat(account.LEDGER_BALANCE || 0) - parseFloat(legacyRef.legacyBalance || 0);
+          
+          // Update sync status
+          const syncStatus = JSON.parse(account.sync_status || '{}');
+          const updatedSyncStatus = {
+            ...syncStatus,
+            lastSynced: new Date(),
+            legacyBalance: parseFloat(legacyBalance.balance || 0),
+            currentBalance: parseFloat(account.LEDGER_BALANCE || 0),
+            balanceDifference: difference,
+            balanceReconciled: Math.abs(difference) <= 0.01,
+            reconciliationDate: new Date(),
+            lastReconciliationId: `RECON_${Date.now()}`
+          };
+          
+          await GLAccount.update({
+            sync_status: JSON.stringify(updatedSyncStatus),
+            updatedAt: new Date()
+          }, {
+            where: { id: account.id },
+            ...queryOptions
           });
           
           if (Math.abs(difference) > 0.01) {
@@ -700,6 +801,160 @@ class ChartOfAccountsMigrator {
     
     console.log(`✅ Reconciliation completed: ${reconciled} reconciled, ${discrepanciesFound} discrepancies, ${errors} errors`);
     return { reconciled, discrepanciesFound, errors };
+  }
+
+  // Get migration statistics
+  async getMigrationStatistics(batchId = null) {
+    const whereClause = batchId ? {
+      legacy_reference: {
+        [Op.like]: `%"migrationBatchId":"${batchId}"%`
+      }
+    } : { systemSource: 'MIGRATED' };
+    
+    const totalAccounts = await GLAccount.count({ where: whereClause });
+    const totalBalance = await GLAccount.sum('LEDGER_BALANCE', { where: whereClause });
+    
+    // Get accounts by category
+    const accountsByCategory = await GLAccount.findAll({
+      where: whereClause,
+      attributes: [
+        'GL_ACCT_CAT',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+        [sequelize.fn('SUM', sequelize.col('LEDGER_BALANCE')), 'totalBalance']
+      ],
+      group: ['GL_ACCT_CAT']
+    });
+    
+    // Get accounts with balance discrepancies
+    const accountsWithDiscrepancies = await GLAccount.findAll({
+      where: {
+        ...whereClause,
+        sync_status: {
+          [Op.like]: '%"balanceDifference"%'
+        }
+      },
+      attributes: ['GL_ACCT_NO', 'ACCT_DESC', 'LEDGER_BALANCE', 'sync_status', 'legacy_reference']
+    });
+    
+    return {
+      totalAccounts,
+      totalBalance: totalBalance || 0,
+      accountsByCategory: accountsByCategory.map(item => ({
+        category: item.GL_ACCT_CAT,
+        count: item.get('count'),
+        totalBalance: item.get('totalBalance')
+      })),
+      accountsWithDiscrepancies: accountsWithDiscrepancies.map(account => {
+        const syncStatus = JSON.parse(account.sync_status || '{}');
+        const legacyRef = JSON.parse(account.legacy_reference || '{}');
+        
+        return {
+          accountNo: account.GL_ACCT_NO,
+          accountName: account.ACCT_DESC,
+          currentBalance: account.LEDGER_BALANCE,
+          legacyBalance: legacyRef.legacyBalance || 0,
+          difference: syncStatus.balanceDifference || 0,
+          reconciled: syncStatus.balanceReconciled || false
+        };
+      })
+    };
+  }
+
+  // Export migration data for reporting
+  async exportMigrationData(batchId = null, format = 'json') {
+    const whereClause = batchId ? {
+      legacy_reference: {
+        [Op.like]: `%"migrationBatchId":"${batchId}"%`
+      }
+    } : { systemSource: 'MIGRATED' };
+    
+    const accounts = await GLAccount.findAll({
+      where: whereClause,
+      attributes: [
+        'id',
+        'GL_ACCT_NO',
+        'GL_ACCT_ID',
+        'ACCT_DESC',
+        'GL_ACCT_CAT',
+        'LEDGER_BALANCE',
+        'AVAILABLE_BALANCE',
+        'OPENING_BALANCE',
+        'CURRENT_BALANCE',
+        'REC_ST',
+        'organizationName',
+        'organizationCode',
+        'branchName',
+        'branchCode',
+        'legacy_reference',
+        'sync_status',
+        'metadata',
+        'createdAt',
+        'updatedAt'
+      ],
+      order: [['GL_ACCT_CAT', 'ASC'], ['GL_ACCT_NO', 'ASC']]
+    });
+    
+    const exportData = accounts.map(account => {
+      const legacyRef = JSON.parse(account.legacy_reference || '{}');
+      const syncStatus = JSON.parse(account.sync_status || '{}');
+      const metadata = JSON.parse(account.metadata || '{}');
+      
+      return {
+        id: account.id,
+        GL_ACCT_NO: account.GL_ACCT_NO,
+        GL_ACCT_ID: account.GL_ACCT_ID,
+        ACCT_DESC: account.ACCT_DESC,
+        GL_ACCT_CAT: account.GL_ACCT_CAT,
+        LEDGER_BALANCE: account.LEDGER_BALANCE,
+        AVAILABLE_BALANCE: account.AVAILABLE_BALANCE,
+        OPENING_BALANCE: account.OPENING_BALANCE,
+        CURRENT_BALANCE: account.CURRENT_BALANCE,
+        REC_ST: account.REC_ST,
+        organizationName: account.organizationName,
+        organizationCode: account.organizationCode,
+        branchName: account.branchName,
+        branchCode: account.branchCode,
+        legacyId: legacyRef.legacyId,
+        legacyGLCode: legacyRef.legacyGLCode,
+        legacyName: legacyRef.legacyName,
+        legacyBalance: legacyRef.legacyBalance,
+        migrationBatchId: legacyRef.migrationBatchId,
+        balanceMigrated: legacyRef.balanceMigrated,
+        balanceReconciled: syncStatus.balanceReconciled,
+        balanceDifference: syncStatus.balanceDifference,
+        accountType: metadata.accountType,
+        productType: metadata.productType,
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt
+      };
+    });
+    
+    if (format === 'csv') {
+      // Convert to CSV format
+      const csvRows = [];
+      
+      // Add header
+      if (exportData.length > 0) {
+        const headers = Object.keys(exportData[0]);
+        csvRows.push(headers.join(','));
+        
+        // Add data rows
+        exportData.forEach(item => {
+          const row = headers.map(header => {
+            const value = item[header];
+            // Escape quotes and wrap in quotes if contains comma
+            const escaped = String(value || '').replace(/"/g, '""');
+            return escaped.includes(',') ? `"${escaped}"` : escaped;
+          });
+          csvRows.push(row.join(','));
+        });
+      }
+      
+      return csvRows.join('\n');
+    }
+    
+    // Default to JSON
+    return exportData;
   }
 }
 

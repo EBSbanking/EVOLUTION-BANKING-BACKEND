@@ -58,5 +58,6 @@ const errorHandler = (err, req, res, next) => {
 
   res.status(statusCode).json(errorResponse);
 };
+export { errorHandler };
 
 export default errorHandler;

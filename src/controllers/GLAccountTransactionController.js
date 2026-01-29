@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+
 import { logger } from '../utils/logger.js';
 import { addAuditTrail } from '../controllers/AudiTrailController.js'; // Assuming this path based on previous code
 import GLAccountTransaction from '../models/GLAccountTransaction.js'; // Import the model (adjust path as needed)

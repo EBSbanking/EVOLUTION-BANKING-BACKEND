@@ -1,5 +1,4 @@
 // src/controllers/GroupController.js
-import mongoose from 'mongoose';
 import Group from '../models/Group.js';
 import GroupLoan from '../models/GroupLoan.js';
 import LoanAccount from '../models/LoanAccount.js';

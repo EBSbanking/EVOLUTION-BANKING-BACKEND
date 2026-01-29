@@ -1,7 +1,6 @@
 // userRoutes.js
 import express from 'express';
 import asyncHandler from 'express-async-handler';
-import mongoose from 'mongoose';
 import {
   registerUser,
   getClientIpController,
@@ -11,7 +10,7 @@ import {
   getUserByEmployerNumber,
   getAllUsers,
   getUserConfig,
-  resetPassword,
+ simpleResetPassword,
   getUserPermissions,
   getUserProfile,
   validatePermission,
@@ -31,10 +30,15 @@ import {
   clearUserCaches,
   getUserSessionInfo,
   getBUSummary,
-  getUsersByBU_ID
+  getUsersByBU_ID,
+  enableUser,
+  getUserTableInfo,
+  getUsersByRoleId
+
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js'; // ✅ UPDATED: Use unified middleware
+import { dbHealthCheck } from '../middlewares/dbHealthCheck.js'; // ADD THIS IMPORT
 import User from '../models/User.js';
 import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, syncPermissions, getRoleWithPermissions } from '../constants/roleMapping.js';
@@ -142,8 +146,14 @@ router.get('/:bu_id/users', verifyToken, getUsersByBU_ID);
 
 // ✅ Get Business Unit summary and statistics
 router.get('/:bu_id/summary', verifyToken, getBUSummary);
- 
 
+router.put('/enable/:identifier', enableUser);
+router.get('/:bu_id/users', getUsersByBU_ID);
+router.get('/table-info', getUserTableInfo);
+
+router.get('/users/by-role-id/:roleId', getUsersByRoleId);
+
+ 
 
 // 🔐 Session Management Routes
 router.post('/user/reset-session', verifyToken, resetUser);
@@ -173,12 +183,8 @@ router.get(
   verifyAdministratorPermissions
 );
 
-// 🔐 Password management - REMOVED PERMISSION REQUIREMENT
-router.post(
-  '/reset-password',
-  verifyToken,
-  resetPassword
-);
+// 🔐 Password management - FIXED ROUTE
+router.post('/reset-password', verifyToken, dbHealthCheck, simpleResetPassword);
 
 // 👤 User management (admin permissions required)
 router.put(
@@ -514,6 +520,112 @@ router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) =>
     });
   }
 }));
+
+// ADMIN: Get all users with their login hours (for the management table)
+router.get(
+  '/admin/users/login-hours',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // or your admin permission
+  asyncHandler(async (req, res) => {
+    try {
+      // Select only the fields you need for the table
+      const users = await User.findAll({
+        attributes: [
+          'id',
+          'user_name',
+          'username',
+          'first_name',
+          'last_name',
+          'email',
+          'earliest_login_time',
+          'latest_login_time',
+          'status',
+          'BU_ROLE_ID',
+          'main_business_unit'
+        ],
+        order: [['user_name', 'ASC']]
+      });
+
+      res.json({
+        success: true,
+        data: users.map(user => user.get({ plain: true })) // convert Sequelize instance to plain object
+      });
+    } catch (error) {
+      logger.error('Error fetching users login hours', {
+        error: error.message,
+        stack: error.stack,
+        adminUser: req.user?.user_name
+      });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch users'
+      });
+    }
+  })
+);
+
+// ADMIN: Update a specific user's login hours
+router.patch(
+  '/admin/users/:userId/login-hours',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  asyncHandler(async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { earliest_login_time, latest_login_time } = req.body;
+
+      // Optional: Validate time format
+      const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+      if (earliest_login_time && !timeRegex.test(earliest_login_time)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Earliest login time must be in HH:MM format (24-hour)'
+        });
+      }
+      if (latest_login_time && !timeRegex.test(latest_login_time)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Latest login time must be in HH:MM format (24-hour)'
+        });
+      }
+
+      const user = await User.findByPk(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      await user.update({
+        earliest_login_time: earliest_login_time || '00:00:00',
+        latest_login_time: latest_login_time || '23:59:59'
+      });
+
+      res.json({
+        success: true,
+        message: 'Login hours updated successfully',
+        data: {
+          id: user.id,
+          user_name: user.user_name,
+          earliest_login_time: user.earliest_login_time,
+          latest_login_time: user.latest_login_time
+        }
+      });
+    } catch (error) {
+      logger.error('Error updating user login hours', {
+        error: error.message,
+        stack: error.stack,
+        userId: req.params.userId,
+        adminUser: req.user?.user_name
+      });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update login hours'
+      });
+    }
+  })
+);
 
 // Admin: Update any user's login hours
 router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), asyncHandler(async (req, res) => {
@@ -853,285 +965,153 @@ router.get(
   })
 );
 
-// 🔐 Account balances route
-router.get(
-  '/accounts/balances',
-  verifyToken,
-  checkPermission(PERMISSIONS.ACCOUNT.VIEW_BALANCE), // ✅ UPDATED: Use unified middleware
-  asyncHandler(async (req, res) => {
-    try {
-      const { userId, user_name, main_business_unit } = req.user;
-      logger.info('Fetching account balances', { userId, user_name });
 
-      const accounts = await CustomerAccount.find({
-        businessUnit: main_business_unit || 'Wethral',
-        status: 'active',
-      }).lean();
-
-      if (!accounts || accounts.length === 0) {
-        logger.info('No accounts found', { userId, businessUnit: main_business_unit });
-        return res.status(200).json({
-          success: true,
-          message: 'No accounts found',
-          data: [],
-        });
-      }
-
-      const balances = accounts.map(account => ({
-        accountId: account._id,
-        accountNumber: account.accountNumber,
-        customerId: account.customerId,
-        balance: account.balance || 0,
-        currency: account.currency || 'NGN',
-        lastUpdated: account.updatedAt || account.createdAt,
-      }));
-
-      res.status(200).json({
-        success: true,
-        message: 'Account balances retrieved successfully',
-        data: balances,
-      });
-    } catch (error) {
-      logger.error('Error in accounts/balances endpoint', {
-        error: error.message,
-        userId: req.user?.userId,
-        stack: error.stack,
-      });
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch account balances',
-        error: error.message,
-      });
-    }
-  })
-);
-
-// 🔐 Protected route: Get authenticated user details - FIXED VERSION with Legacy Compatibility
+// 🔐 Protected route: Get authenticated user details - UPDATED FOR SEQUELIZE
 router.get(
   '/me',
   verifyToken,
   asyncHandler(async (req, res) => {
     try {
-      // Validate req.user and userId
-      if (!req.user || !req.user.userId || !mongoose.isValidObjectId(req.user.userId)) {
-        logger.warn('Invalid or missing userId in /me endpoint', {
+      console.log('🔍 /me endpoint - User from token:', req.user);
+      
+      // ✅ FIXED: Remove mongoose check for Sequelize/MySQL
+      if (!req.user || !req.user.userId) {
+        console.log('❌ Missing userId in token:', {
+          hasUser: !!req.user,
+          hasUserId: !!req.user?.userId,
           userId: req.user?.userId,
-          reqUser: req.user ? Object.keys(req.user) : null,
+          userKeys: req.user ? Object.keys(req.user) : null
         });
-        return res.status(401).json({ success: false, message: 'Invalid or missing user ID in token' });
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Invalid or missing user ID in token'
+        });
       }
 
-      // Fetch user from database
-      const user = await User.findById(req.user.userId).lean();
+      console.log('🔍 Searching for user with ID:', req.user.userId);
+      
+      // ✅ FIXED: Use Sequelize findByPk instead of mongoose findById
+      const user = await User.findByPk(req.user.userId);
       if (!user) {
-        logger.warn('User not found in /me endpoint', { userId: req.user.userId });
-        return res.status(404).json({ success: false, message: 'User not found' });
+        console.log('❌ User not found with ID:', req.user.userId);
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found'
+        });
       }
 
-      // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
-      const mappedUser = {
-        ...user,
-        user_name: user.user_name || user.username,
-        first_name: user.first_name || user.fname,
-        last_name: user.last_name || user.lname,
-        BU_ROLE_ID: user.BU_ROLE_ID || user.role,
-        primary_business_role: user.primary_business_role || user.utype,
-        status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated'),
-        main_business_unit: user.main_business_unit || user.branch?.toString() || '',
-        is_supervisor: user.is_supervisor || (user.rofficer === 'Yes'),
-        BU_ID: user.BU_ID || user.branch,
-        internal_employee_enabled: user.internal_employee_enabled || (user.utype === 'Staff')
-      };
-
-      console.log('🔍 LEGACY MAPPING DEBUG (/me):', {
-        original_username: user.username,
-        mapped_user_name: mappedUser.user_name,
-        original_role: user.role,
-        mapped_BU_ROLE_ID: mappedUser.BU_ROLE_ID,
-        original_is_active: user.is_active,
-        mapped_status: mappedUser.status,
-        original_branch: user.branch,
-        mapped_BU_ID: mappedUser.BU_ID
+      const userData = user.get({ plain: true });
+      console.log('✅ User found:', {
+        id: userData.id,
+        user_name: userData.user_name,
+        email: userData.email,
+        BU_ROLE_ID: userData.BU_ROLE_ID,
+        primary_business_role: userData.primary_business_role,
+        status: userData.status
       });
 
-      // Map role names to BU_ROLE_ID using ROLE_MAPPING
-      const roleToIdMap = Object.fromEntries(
-        Object.values(ROLE_MAPPING).map(role => [role.ROLE_NM, role.id.toString()])
-      );
-      let BU_ROLE_ID = mappedUser.BU_ROLE_ID || roleToIdMap[user.role] || req.user.roleId || '29';
+      // Get permissions
+      let permissions = {};
+      let roleName = userData.primary_business_role || 'Unknown Role';
+      let flattenedPermissions = [];
 
-      // Special handling for admin role (1) - grant all permissions grouped by category
-      let permissions = user.permissions || {};
-      let roleName = mappedUser.primary_business_role || 'Unknown Role';
-      if (BU_ROLE_ID === '1') {
+      // Check if user is Administrator
+      if (parseInt(userData.BU_ROLE_ID) === 1) {
+        console.log('👑 Administrator detected');
+        
+        // Generate all permissions for administrator
         permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
           const permissionGroup = PERMISSIONS[key];
           if (typeof permissionGroup === 'object') {
-            acc[`${key}_ACCESS_LEVEL`] = safeGetPermissions(permissionGroup);
+            const groupPermissions = Object.values(permissionGroup);
+            acc[`${key}_ACCESS_LEVEL`] = groupPermissions;
+            flattenedPermissions = flattenedPermissions.concat(groupPermissions);
           }
           return acc;
         }, {});
+        
         roleName = 'Administrator';
-      } else if (Object.keys(permissions).length === 1 && BU_ROLE_ID !== '0') {
-        const permissionsDoc = await Permissions.findOne({ BU_ROLE_ID }).lean();
+      } else {
+        // Non-admin logic
+        const permissionsDoc = await Permissions.findOne({ 
+          where: { BU_ROLE_ID: userData.BU_ROLE_ID }
+        });
+
         if (permissionsDoc) {
           permissions = permissionsDoc.permissions;
           roleName = permissionsDoc.ROLE_NAME;
+          flattenedPermissions = Object.values(permissions).flat();
         } else {
-          try {
-            const roleDetails = getRoleWithPermissions(BU_ROLE_ID);
-            if (roleDetails) {
-              permissions = roleDetails.permissions || {};
-              roleName = roleDetails.ROLE_NM || roleName;
-            } else {
-              logger.warn('Role not found in ROLE_MAPPING, applying Teller fallback', { BU_ROLE_ID });
-              permissions = {
-                DASHBOARD_ACCESS_LEVEL: [
-                  PERMISSIONS.DASHBOARD.VIEW,
-                  PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
-                  PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
-                  PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
-                ],
-                ACCOUNT_ACCESS_LEVEL: [
-                  PERMISSIONS.ACCOUNT.DEPOSIT_101,
-                  PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
-                  PERMISSIONS.ACCOUNT.VIEW_BALANCE,
-                  PERMISSIONS.ACCOUNT.VIEW_STATEMENT,
-                ],
-                TRANSACTION_ACCESS_LEVEL: [
-                  PERMISSIONS.TRANSACTION.DEPOSIT,
-                  PERMISSIONS.TRANSACTION.WITHDRAWAL,
-                  PERMISSIONS.TRANSACTION.TRANSFER,
-                  PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
-                  PERMISSIONS.TRANSACTION.VIEW_HISTORY,
-                ],
-                CUSTOMER_ACCESS_LEVEL: [
-                  PERMISSIONS.CUSTOMER.VIEW,
-                  PERMISSIONS.CUSTOMER.UPDATE,
-                  PERMISSIONS.CUSTOMER.PROFILE,
-                ],
-                DRAWER_ACCESS_LEVEL: [
-                  PERMISSIONS.DRAWER.VIEW,
-                  PERMISSIONS.DRAWER.MANAGE,
-                  PERMISSIONS.DRAWER.RECONCILE,
-                ],
-                REPORT_ACCESS_LEVEL: [
-                  PERMISSIONS.REPORT.VIEW,
-                  PERMISSIONS.REPORT.TELLER_SUMMARY,
-                ],
-              };
-              roleName = 'Teller';
-            }
-          } catch (roleError) {
-            logger.warn('Error in getRoleWithPermissions, applying Teller fallback', {
-              BU_ROLE_ID,
-              error: roleError.message,
-            });
+          const roleDetails = getRoleWithPermissions(userData.BU_ROLE_ID);
+          if (roleDetails) {
+            permissions = roleDetails.permissions;
+            roleName = roleDetails.ROLE_NM;
+            flattenedPermissions = Object.values(permissions).flat();
+          } else {
+            // Fallback to basic permissions
             permissions = {
-              DASHBOARD_ACCESS_LEVEL: [
-                PERMISSIONS.DASHBOARD.VIEW,
-                PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
-                PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
-                PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
-              ],
-              ACCOUNT_ACCESS_LEVEL: [
-                PERMISSIONS.ACCOUNT.DEPOSIT_101,
-                PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
-                PERMISSIONS.ACCOUNT.VIEW_BALANCE,
-                PERMISSIONS.ACCOUNT.VIEW_STATEMENT,
-              ],
-              TRANSACTION_ACCESS_LEVEL: [
-                PERMISSIONS.TRANSACTION.DEPOSIT,
-                PERMISSIONS.TRANSACTION.WITHDRAWAL,
-                PERMISSIONS.TRANSACTION.TRANSFER,
-                PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
-                PERMISSIONS.TRANSACTION.VIEW_HISTORY,
-              ],
-              CUSTOMER_ACCESS_LEVEL: [
-                PERMISSIONS.CUSTOMER.VIEW,
-                PERMISSIONS.CUSTOMER.UPDATE,
-                PERMISSIONS.CUSTOMER.PROFILE,
-              ],
-              DRAWER_ACCESS_LEVEL: [
-                PERMISSIONS.DRAWER.VIEW,
-                PERMISSIONS.DRAWER.MANAGE,
-                PERMISSIONS.DRAWER.RECONCILE,
-              ],
-              REPORT_ACCESS_LEVEL: [
-                PERMISSIONS.REPORT.VIEW,
-                PERMISSIONS.REPORT.TELLER_SUMMARY,
-              ],
+              DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
+              CUSTOMER_ACCESS_LEVEL: [PERMISSIONS.CUSTOMER.VIEW]
             };
-            roleName = 'Teller';
+            roleName = userData.primary_business_role || 'User';
+            flattenedPermissions = Object.values(permissions).flat();
           }
         }
       }
 
-      logger.info('User permissions fetched in /me', {
-        user_name: mappedUser.user_name,
-        BU_ROLE_ID,
+      // Get accessible business units
+      const accessibleBusinessUnits = userData.accessibleBusinessUnits || 
+                                     [userData.main_business_unit || 'Wethral'];
+
+      console.log('✅ User permissions resolved:', {
         roleName,
-        permissions: JSON.stringify(permissions),
+        permissionsCount: flattenedPermissions.length,
+        isAdmin: parseInt(userData.BU_ROLE_ID) === 1
       });
-
-      const accessibleBusinessUnits = user.accessibleBusinessUnits || req.user.accessibleBusinessUnits || ['Wethral'];
-
-      // Safely parse token timestamps
-      let tokenIssuedAt = null;
-      let tokenExpiresAt = null;
-
-      try {
-        tokenIssuedAt = req.user.iat ? new Date(req.user.iat * 1000).toISOString() : null;
-      } catch (e) {
-        logger.warn('Invalid iat in token', { iat: req.user.iat });
-      }
-
-      try {
-        tokenExpiresAt = req.user.exp ? new Date(req.user.exp * 1000).toISOString() : null;
-      } catch (e) {
-        logger.warn('Invalid exp in token', { exp: req.user.exp });
-      }
 
       res.status(200).json({
         success: true,
         message: 'Authenticated user details',
         user: {
-          userId: user._id,
-          user_name: mappedUser.user_name,
-          email: user.email || req.user.email || '',
+          userId: userData.id,
+          user_name: userData.user_name,
+          email: userData.email,
           role: roleName,
-          BU_ROLE_ID,
-          primary_business_role: mappedUser.primary_business_role || roleName,
-          businessUnit: mappedUser.main_business_unit || req.user.main_business_unit || 'Wethral',
-          permissions: Object.values(permissions).flat(),
-          isAdmin: user.isAdmin || req.user.isAdmin || BU_ROLE_ID === '1',
+          BU_ROLE_ID: userData.BU_ROLE_ID,
+          primary_business_role: userData.primary_business_role,
+          businessUnit: userData.main_business_unit || 'Wethral',
+          permissions: flattenedPermissions,
+          isAdmin: parseInt(userData.BU_ROLE_ID) === 1,
+          isSupervisor: userData.is_supervisor || false,
           accessibleBusinessUnits,
-          // Legacy fields for compatibility
-          username: mappedUser.username || mappedUser.user_name,
-          legacy_role: mappedUser.role,
-          legacy_status: mappedUser.is_active,
-          legacy_utype: mappedUser.utype,
-          legacy_branch: mappedUser.branch
+          status: userData.status,
+          tokenIssuedAt: req.user.iat ? new Date(req.user.iat * 1000).toISOString() : null,
+          tokenExpiresAt: req.user.exp ? new Date(req.user.exp * 1000).toISOString() : null
         },
         sessionEndpoints: {
           resetSession: '/user/reset-session',
           sessionInfo: '/user/session-info',
         },
+        debug: {
+          userIdType: typeof req.user.userId,
+          tokenContains: Object.keys(req.user)
+        }
       });
     } catch (error) {
-      logger.error('Error in /me endpoint', {
+      console.error('💥 Error in /me endpoint:', {
         error: error.message,
-        userId: req.user?.userId,
         stack: error.stack,
+        userId: req.user?.userId,
         reqUser: req.user ? Object.keys(req.user) : null,
       });
+      
       res.status(500).json({
         success: false,
         message: 'Server error',
-        error: error.message,
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+        timestamp: new Date().toISOString()
       });
     }
   })
 );
-
 export default router;

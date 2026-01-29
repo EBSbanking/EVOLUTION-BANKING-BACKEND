@@ -1,10 +1,7 @@
-import mongoose from 'mongoose';
-import BusinessUnit from '../models/BusinessUnit.js';
-import Permissions from '../models/Permissions.js';
-import UserRole from '../models/UserRole.js'; // ✅ Added UserRole import if needed for sync
-import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
+import sequelize from '../../config/db.js'; // Sequelize instance
+import { BusinessUnit, Permissions, UserRole, CustomerAccount } from '../models/index.js'; // Import your Sequelize models
 
 // ======================
 // HELPER FUNCTIONS
@@ -1042,11 +1039,18 @@ export const ROLE_MAPPING = Object.fromEntries(
   ])
 );
 
-// Synchronize ROLE_MAPPING with Permissions model
+// Helper functions
+export const getAllRoleIds = () => Object.keys(ROLE_MAPPING).map(id => parseInt(id));
+export const getAllRoleNames = () => Object.values(ROLE_MAPPING).map(role => role.ROLE_NM);
+export const getRoleById = (id) => ROLE_MAPPING[id];
+export const isValidRoleId = (id) => !!ROLE_MAPPING[id];
+export const isValidRoleName = (name) => 
+  Object.values(ROLE_MAPPING).some(role => role.ROLE_NM === name.toUpperCase());
+
+// Synchronize ROLE_MAPPING with Permissions model (Sequelize version)
 export async function syncPermissions() {
   try {
     for (const [roleId, roleData] of Object.entries(ROLE_MAPPING)) {
-      const existingPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
       const permissionsData = {
         BU_ROLE_ID: parseInt(roleId),
         ROLE_NAME: roleData.ROLE_NM,
@@ -1055,16 +1059,21 @@ export async function syncPermissions() {
         ...roleData.permissions,
       };
 
+      // Check if permission exists using Sequelize
+      const existingPermissions = await Permissions.findOne({
+        where: { BU_ROLE_ID: roleId }
+      });
+
       if (existingPermissions) {
-        await Permissions.updateOne(
-          { BU_ROLE_ID: roleId },
-          { $set: permissionsData },
-          { runValidators: true }
-        );
+        // Update existing record
+        await Permissions.update(permissionsData, {
+          where: { BU_ROLE_ID: roleId }
+        });
         logger.info(`Updated permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
           permissions: JSON.stringify(permissionsData),
         });
       } else {
+        // Create new record
         await Permissions.create(permissionsData);
         logger.info(`Created permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
           permissions: JSON.stringify(permissionsData),
@@ -1081,18 +1090,20 @@ export async function syncPermissions() {
   }
 }
 
-// Populate Business Unit Mapping
+// Populate Business Unit Mapping (Sequelize version)
 export async function populateBusinessUnitMapping() {
   try {
-    const businessUnits = await BusinessUnit.find().lean();
-    if (!businessUnits.length) {
+    const businessUnits = await BusinessUnit.findAll();
+    if (!businessUnits || businessUnits.length === 0) {
       logger.warn('No business units found in the database');
       return {};
     }
+    
     const BUSINESS_UNIT_MAPPING = {};
     businessUnits.forEach((bu) => {
       BUSINESS_UNIT_MAPPING[bu.BUSINESS_UNIT] = bu.BU_ID;
     });
+    
     logger.info('Business unit mapping populated successfully', {
       mapping: BUSINESS_UNIT_MAPPING,
     });
@@ -1195,9 +1206,9 @@ export async function verifyAdministratorPermissions() {
 // Get all permissions for a role grouped by category
 export async function getRolePermissionsGrouped(roleId) {
   try {
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     if (dbPermissions) {
-      return Object.entries(dbPermissions).reduce((acc, [key, perms]) => {
+      return Object.entries(dbPermissions.dataValues).reduce((acc, [key, perms]) => {
         if (key.endsWith('_ACCESS_LEVEL')) {
           const group = key.replace('_ACCESS_LEVEL', '');
           acc[group] = Array.isArray(perms) ? perms : [];
@@ -1754,9 +1765,8 @@ export async function roleHasPermission(roleId, permission) {
       return true;
     }
 
-    // First, check database
-    const Permissions = (await import('./models/Permissions.js')).default;
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    // First, check database using Sequelize
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     
     if (dbPermissions) {
       console.log('📋 Found DB permissions for role:', roleId);
@@ -1783,7 +1793,7 @@ export async function roleHasPermission(roleId, permission) {
       
       // Method 2: Check all permissions
       const allPermissions = [];
-      Object.entries(dbPermissions).forEach(([key, value]) => {
+      Object.entries(dbPermissions.dataValues).forEach(([key, value]) => {
         if (Array.isArray(value)) {
           console.log(`📋 ${key}:`, value);
           allPermissions.push(...value.filter(p => typeof p === 'string'));
@@ -1944,7 +1954,7 @@ export async function syncPermissionsWithValidation() {
 export async function quickPermissionCheck() {
   try {
     console.log('🔍 Running quick permission check...');
-    const count = await Permissions.countDocuments();
+    const count = await Permissions.count();
     console.log(`📊 Found ${count} permission records in DB`);
     
     if (count === 0) {

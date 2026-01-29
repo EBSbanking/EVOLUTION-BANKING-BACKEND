@@ -1,10 +1,11 @@
-// services/customerBatchService.js
+// services/customerBatchService.js - UPDATED VERSION WITH AUTO-COLUMN ADDITION
 import xlsx from 'xlsx';
 import Customer from '../models/Customer.js';
-import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
+// FIX: Changed from named import { generateCustomerNumber } to default import
+import generateCustomerNumber from '../utils/generateCustomerNumber.js';
 
 class CustomerBatchService {
-  async processExcelBatch(fileBuffer) {
+  async processExcelBatch(fileBuffer, transaction) {
     // Check if buffer is valid
     if (!fileBuffer || fileBuffer.length === 0) {
       return {
@@ -17,6 +18,9 @@ class CustomerBatchService {
     }
 
     try {
+      // 🔥 Ensure customer table has all required columns BEFORE processing
+      await this.ensureCustomerTableColumns(transaction);
+
       // Read Excel file
       const workbook = xlsx.read(fileBuffer, { 
         type: 'buffer',
@@ -60,7 +64,7 @@ class CustomerBatchService {
       }
 
       // Create customers in batch
-      const result = await this.createCustomersBatchSimple(validCustomers);
+      const result = await this.createCustomersBatch(validCustomers, transaction);
       
       return {
         success: true,
@@ -84,6 +88,83 @@ class CustomerBatchService {
     }
   }
 
+  // 🔥 NEW FUNCTION: Ensure all required columns exist in customers table
+  async ensureCustomerTableColumns(transaction) {
+    try {
+      console.log('🔍 Checking customers table structure before batch upload...');
+      
+      if (!Customer.sequelize) {
+        console.error('❌ Sequelize instance not available');
+        return false;
+      }
+      
+      const sequelize = Customer.sequelize;
+      
+      // List of columns that should exist based on your model
+      const columnsToCheck = [
+        { name: 'EVENT_ID', type: 'VARCHAR(50)', nullable: true },
+        { name: 'APPROVED_BY', type: 'VARCHAR(100)', nullable: true },
+        { name: 'APPROVED_DT', type: 'DATETIME', nullable: true },
+        { name: 'SUSPENDED_BY', type: 'VARCHAR(100)', nullable: true },
+        { name: 'SUSPENDED_DT', type: 'DATETIME', nullable: true },
+        { name: 'SUSPENSION_REASON', type: 'TEXT', nullable: true },
+        { name: 'CLOSED_BY', type: 'VARCHAR(100)', nullable: true },
+        { name: 'CLOSED_DT', type: 'DATETIME', nullable: true },
+        { name: 'CLOSURE_REASON', type: 'TEXT', nullable: true },
+        { name: 'REJECTED_BY', type: 'VARCHAR(100)', nullable: true },
+        { name: 'REJECTED_DT', type: 'DATETIME', nullable: true },
+        { name: 'REJECTION_REASON', type: 'TEXT', nullable: true },
+        { name: 'customer_type_id', type: 'INTEGER', nullable: true },
+        { name: 'relationship_officer_id', type: 'INTEGER', nullable: true },
+        { name: 'createdAt', type: 'DATETIME', nullable: false, defaultValue: 'CURRENT_TIMESTAMP' },
+        { name: 'updatedAt', type: 'DATETIME', nullable: false, defaultValue: 'CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP' }
+      ];
+      
+      for (const column of columnsToCheck) {
+        try {
+          const [check] = await sequelize.query(
+            `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = 'customers' 
+             AND COLUMN_NAME = ?`,
+            { 
+              replacements: [column.name],
+              transaction 
+            }
+          );
+          
+          if (check[0].count === 0) {
+            console.log(`➕ Adding ${column.name} column to customers table...`);
+            
+            let alterQuery = `ALTER TABLE customers ADD COLUMN ${column.name} ${column.type}`;
+            
+            if (column.nullable === false) {
+              alterQuery += ' NOT NULL';
+            } else {
+              alterQuery += ' NULL';
+            }
+            
+            if (column.defaultValue) {
+              alterQuery += ` DEFAULT ${column.defaultValue}`;
+            }
+            
+            await sequelize.query(alterQuery, { transaction });
+            console.log(`✅ ${column.name} column added successfully`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error checking/adding ${column.name} column:`, error.message);
+          // Continue with other columns
+        }
+      }
+      
+      console.log('✅ Customers table structure verified for batch upload');
+      return true;
+    } catch (error) {
+      console.error('❌ Error ensuring customer table columns:', error.message);
+      return false;
+    }
+  }
+
   async validateAndTransformData(jsonData) {
     const validCustomers = [];
     const errors = [];
@@ -103,7 +184,7 @@ class CustomerBatchService {
           custId = row.CUST_ID.toString();
           custNo = row.CUST_NO.toString();
         } else {
-          // Generate new IDs - you might need to pass BU_ID
+          // Generate new IDs
           const generated = await generateCustomerNumber();
           custId = generated.CUST_ID;
           custNo = generated.CUST_NO;
@@ -111,11 +192,14 @@ class CustomerBatchService {
 
         // Check for duplicates in database
         const existingCustomer = await Customer.findOne({
-          $or: [
-            { CUST_ID: custId },
-            { CUST_NO: custNo }
-          ]
-        }).select('CUST_ID CUST_NO').lean();
+          where: {
+            $or: [
+              { CUST_ID: custId },
+              { CUST_NO: custNo }
+            ]
+          },
+          attributes: ['CUST_ID', 'CUST_NO']
+        });
 
         if (existingCustomer) {
           errors.push(`Row ${rowNumber}: Customer with ID ${custId} or Number ${custNo} already exists`);
@@ -135,6 +219,7 @@ class CustomerBatchService {
         }
 
         // Transform data to match your customer schema EXACTLY
+        const now = new Date();
         const customerData = {
           // Required unique fields
           CUST_ID: custId,
@@ -174,7 +259,7 @@ class CustomerBatchService {
           
           // Account information
           OPENING_RSN_ID: row.OPENING_RSN_ID || '',
-          OPENED_DT: this.parseDate(row.OPENED_DT) || new Date(),
+          OPENED_DT: this.parseDate(row.OPENED_DT) || now,
           CUST_CAT: row.CUST_CAT || 'Individual',
           RISK_CLASS: row.RISK_CLASS || 'Low',
           
@@ -184,6 +269,7 @@ class CustomerBatchService {
           STMNT_FREQ_VALUE: Number(row.STMNT_FREQ_VALUE) || 1,
           CREATED_BY: row.CREATED_BY || 'System',
           USER_ID: row.USER_ID || '',
+          CREATE_DT: now,
           INDUSTRY_ID: row.INDUSTRY_ID || '',
           INDUSTRY_CD: row.INDUSTRY_CD || '',
           TAX_STATUS: row.TAX_STATUS || 'Active',
@@ -197,13 +283,15 @@ class CustomerBatchService {
           KYC_LEVEL: row.KYC_LEVEL || 'Level1',
           SMS: row.SMS || '',
           REC_ST: this.validateRecStatus(row.REC_ST) || 'Pending',
-          EVENT_ID: row.EVENT_ID || '',
-          IS_PEP: this.parseBoolean(row.IS_PEP),
+          status: this.validateRecStatus(row.REC_ST) || 'Pending',
+          EVENT_ID: row.EVENT_ID || null,
+          IS_PEP: this.parseBoolean(row.IS_PEP) || false,
           SANCTION_SCORE: Number(row.SANCTION_SCORE) || 0,
           DOCUMENT_VERIFICATION_STATUS: row.DOCUMENT_VERIFICATION_STATUS || 'Pending',
           
-          // Next of kin
-          nextOfKin: this.parseNextOfKin(row)
+          // Timestamps
+          createdAt: now,
+          updatedAt: now
         };
 
         // Validate NIN and BVN format if provided
@@ -262,27 +350,7 @@ class CustomerBatchService {
     return validStatuses.includes(status) ? status : 'Pending';
   }
 
-  parseNextOfKin(row) {
-    const nextOfKin = [];
-    
-    for (let i = 1; i <= 3; i++) {
-      const kinName = row[`NEXTOF_KIN_NM_${i}`];
-      if (kinName && this.sanitizeString(kinName)) {
-        nextOfKin.push({
-          NEXTOF_KIN_NM: this.sanitizeString(kinName),
-          RELATIONSHIP: row[`RELATIONSHIP_${i}`] || 'Relative',
-          PHONE_NO: row[`KIN_PHONE_NO_${i}`] ? String(row[`KIN_PHONE_NO_${i}`]).trim() : '',
-          EMAIL: (row[`KIN_EMAIL_${i}`] || '').toLowerCase().trim(),
-          ADDRESS: this.sanitizeString(row[`KIN_ADDRESS_${i}`] || ''),
-          IS_PRIMARY: i === 1 && nextOfKin.length === 0
-        });
-      }
-    }
-
-    return nextOfKin;
-  }
-
-  async createCustomersBatchSimple(customers) {
+  async createCustomersBatch(customers, transaction) {
     let createdCount = 0;
     let duplicateCount = 0;
     let failedCount = 0;
@@ -290,15 +358,18 @@ class CustomerBatchService {
 
     console.log(`🔄 Starting to create ${customers.length} customers...`);
 
-    const batchSize = 5; // Smaller batch for debugging
+    const batchSize = 10;
     
     for (let i = 0; i < customers.length; i += batchSize) {
       const batch = customers.slice(i, i + batchSize);
       console.log(`📦 Processing batch ${Math.floor(i/batchSize) + 1} with ${batch.length} customers`);
       
       try {
-        const results = await Customer.insertMany(batch, {
-          ordered: false
+        // Use Sequelize bulkCreate with transaction
+        const results = await Customer.bulkCreate(batch, {
+          transaction,
+          validate: true,
+          individualHooks: false
         });
         
         createdCount += results.length;
@@ -312,22 +383,18 @@ class CustomerBatchService {
       } catch (error) {
         console.error(`❌ Batch ${Math.floor(i/batchSize) + 1} failed:`, error.message);
         
-        if (error.writeErrors) {
-          const successfulInserts = error.result?.insertedCount || 0;
-          const duplicates = error.writeErrors.filter(err => err.code === 11000).length;
-          const otherErrors = error.writeErrors.filter(err => err.code !== 11000);
-          
-          createdCount += successfulInserts;
+        // Handle Sequelize errors
+        if (error.name === 'SequelizeUniqueConstraintError') {
+          const duplicates = Array.isArray(error.errors) ? error.errors.length : 1;
           duplicateCount += duplicates;
-          failedCount += otherErrors.length;
-
-          otherErrors.forEach(err => {
-            const errorMsg = `Customer ${batch[err.index]?.CUST_ID}: ${err.errmsg}`;
-            errors.push(errorMsg);
-            console.log(`   ❌ ${errorMsg}`);
-          });
-
-          console.log(`   📊 Batch ${Math.floor(i/batchSize) + 1}: ${successfulInserts} created, ${duplicates} duplicates, ${otherErrors.length} errors`);
+          failedCount += (batch.length - duplicates);
+          
+          console.log(`   📊 Batch ${Math.floor(i/batchSize) + 1}: ${duplicates} duplicates`);
+        } else if (error.name === 'SequelizeValidationError') {
+          failedCount += batch.length;
+          const errorMsg = `Batch ${Math.floor(i/batchSize) + 1}: Validation error - ${error.message}`;
+          errors.push(errorMsg);
+          console.log(`   ❌ ${errorMsg}`);
         } else {
           failedCount += batch.length;
           const errorMsg = `Batch ${Math.floor(i/batchSize) + 1}: ${error.message}`;

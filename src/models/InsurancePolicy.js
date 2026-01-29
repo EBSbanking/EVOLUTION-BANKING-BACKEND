@@ -1,223 +1,281 @@
-// models/InsurancePolicy.js
-import mongoose from 'mongoose';
+﻿// models/InsurancePolicy.js
+import { DataTypes, Model, Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const insurancePolicySchema = new mongoose.Schema({
+class InsurancePolicy extends Model {
+  // Virtual property (getter) for isActive
+  get isActive() {
+    const now = new Date();
+    return this.status === 'ACTIVE' && this.endDate > now;
+  }
+
+  // Instance method
+  isExpiringSoon() {
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+    return this.endDate <= thirtyDaysFromNow && this.status === 'ACTIVE';
+  }
+}
+
+InsurancePolicy.init({
   // Core Policy Information
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   policyNumber: {
-    type: String,
-    required: true,
+    type: DataTypes.STRING(50),
+    allowNull: false,
     unique: true
   },
   policyType: {
-    type: String,
-    required: true,
-    enum: ['LOAN_PROTECTION', 'LIFE', 'HEALTH', 'AUTO', 'PROPERTY', 'TRAVEL', 'BUSINESS'],
-    default: 'LOAN_PROTECTION'
+    type: DataTypes.ENUM('LOAN_PROTECTION', 'LIFE', 'HEALTH', 'AUTO', 'PROPERTY', 'TRAVEL', 'BUSINESS'),
+    allowNull: false,
+    defaultValue: 'LOAN_PROTECTION'
   },
   
   // Financial Details
   premiumAmount: {
-    type: Number,
-    required: true
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    validate: {
+      min: 0
+    }
   },
   insuredAmount: {
-    type: Number,
-    required: true
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    validate: {
+      min: 0
+    }
   },
   coverageAmount: {
-    type: Number,
-    required: true
+    type: DataTypes.DECIMAL(15, 2),
+    allowNull: false,
+    validate: {
+      min: 0
+    }
   },
   
   // Dates
   startDate: {
-    type: Date,
-    required: true
+    type: DataTypes.DATEONLY,
+    allowNull: false
   },
   endDate: {
-    type: Date,
-    required: true
+    type: DataTypes.DATEONLY,
+    allowNull: false
   },
   coverageDuration: {
-    type: Number, // in days
-    required: true
+    type: DataTypes.INTEGER, // in days
+    allowNull: false,
+    validate: {
+      min: 1
+    }
   },
   
   // Status
   status: {
-    type: String,
-    enum: ['ACTIVE', 'PENDING', 'EXPIRED', 'CANCELLED', 'CLAIMED'],
-    default: 'ACTIVE'
+    type: DataTypes.ENUM('ACTIVE', 'PENDING', 'EXPIRED', 'CANCELLED', 'CLAIMED'),
+    defaultValue: 'ACTIVE'
   },
   
-  // Relationships
-  loanAccount: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'LoanAccount',
-    required: true
+  // Relationships (Foreign Keys)
+  loanAccountId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'loan_accounts',
+      key: 'id'
+    }
   },
   customerId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Customer',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'customers',
+      key: 'id'
+    }
   },
   customerName: {
-    type: String,
-    required: true
+    type: DataTypes.STRING(200),
+    allowNull: false
   },
   
   // Insurance Provider
   provider: {
-    type: String,
-    required: true,
-    default: 'DEFAULT_INSURER'
+    type: DataTypes.STRING(100),
+    allowNull: false,
+    defaultValue: 'DEFAULT_INSURER'
   },
   providerCode: {
-    type: String
+    type: DataTypes.STRING(50)
   },
   
-  // Branch Information (aligned with your GL structure)
+  // Branch Information
   branchCode: {
-    type: String,
-    required: true
+    type: DataTypes.STRING(20),
+    allowNull: false
   },
   branchId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Branch',
-    required: true
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'branches',
+      key: 'id'
+    }
   },
   
   // Payment Information
   premiumPaid: {
-    type: Boolean,
-    default: false
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
   paymentDate: {
-    type: Date
+    type: DataTypes.DATE
   },
   paymentMethod: {
-    type: String,
-    enum: ['LOAN_DISBURSEMENT', 'CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'DIRECT_DEBIT'],
-    default: 'LOAN_DISBURSEMENT'
+    type: DataTypes.ENUM('LOAN_DISBURSEMENT', 'CASH', 'BANK_TRANSFER', 'MOBILE_MONEY', 'DIRECT_DEBIT'),
+    defaultValue: 'LOAN_DISBURSEMENT'
   },
   
   // GL Account Integration
   glAccountCode: {
-    type: String // Links to INSURANCE_FEE GL account
+    type: DataTypes.STRING(20) // Links to INSURANCE_FEE GL account
   },
   transactionReference: {
-    type: String // Reference to the ledger transaction
+    type: DataTypes.STRING(100) // Reference to the ledger transaction
   },
   
   // Coverage Details
   coverageType: {
-    type: String,
-    enum: ['FULL_LOAN_COVERAGE', 'PARTIAL_COVERAGE', 'LIFE_COVERAGE', 'ASSET_COVERAGE'],
-    default: 'FULL_LOAN_COVERAGE'
+    type: DataTypes.ENUM('FULL_LOAN_COVERAGE', 'PARTIAL_COVERAGE', 'LIFE_COVERAGE', 'ASSET_COVERAGE'),
+    defaultValue: 'FULL_LOAN_COVERAGE'
   },
-  beneficiaries: [{
-    name: String,
-    relationship: String,
-    allocation: Number, // percentage
-    idNumber: String
-  }],
   
-  // Claim Information
-  claimHistory: [{
-    claimDate: Date,
-    claimAmount: Number,
-    claimReason: String,
-    status: String,
-    settledAmount: Number,
-    settlementDate: Date
-  }],
+  // JSON field for beneficiaries (alternative to separate table)
+  beneficiaries: {
+    type: DataTypes.JSON,
+    defaultValue: []
+  },
+  
+  // JSON field for claim history (alternative to separate table)
+  claimHistory: {
+    type: DataTypes.JSON,
+    defaultValue: []
+  },
   
   // Audit Fields
   createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   
   // Metadata for integration with your GL system
   metadata: {
-    loanAmount: Number,
-    loanTerm: String,
-    termValue: Number,
-    productType: String,
-    insuranceFeeIncluded: {
-      type: Boolean,
-      default: false
-    },
-    glTransactionId: mongoose.Schema.Types.ObjectId
+    type: DataTypes.JSON,
+    defaultValue: {}
   }
+}, {
+  sequelize,
+  modelName: 'InsurancePolicy',
+  tableName: 'insurance_policies',
+  timestamps: true, // creates createdAt and updatedAt
+  hooks: {
+    beforeUpdate: (policy) => {
+      policy.updatedAt = new Date();
+    }
+  },
+  indexes: [
+    {
+      name: 'idx_policy_number',
+      fields: ['policyNumber']
+    },
+    {
+      name: 'idx_loan_account',
+      fields: ['loanAccountId']
+    },
+    {
+      name: 'idx_customer',
+      fields: ['customerId']
+    },
+    {
+      name: 'idx_branch',
+      fields: ['branchCode']
+    },
+    {
+      name: 'idx_status',
+      fields: ['status']
+    },
+    {
+      name: 'idx_end_date',
+      fields: ['endDate']
+    },
+    {
+      name: 'idx_branch_status',
+      fields: ['branchCode', 'status']
+    },
+    {
+      name: 'idx_customer_status',
+      fields: ['customerId', 'status']
+    },
+    {
+      name: 'idx_active_policies',
+      fields: ['status', 'endDate']
+    }
+  ]
 });
-
-// Indexes for better query performance
-insurancePolicySchema.index({ policyNumber: 1 });
-insurancePolicySchema.index({ loanAccount: 1 });
-insurancePolicySchema.index({ customerId: 1 });
-insurancePolicySchema.index({ branchCode: 1 });
-insurancePolicySchema.index({ status: 1 });
-insurancePolicySchema.index({ endDate: 1 });
-
-// Update the updatedAt field before saving
-insurancePolicySchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
-});
-
-// Virtual for checking if policy is active
-insurancePolicySchema.virtual('isActive').get(function() {
-  const now = new Date();
-  return this.status === 'ACTIVE' && this.endDate > now;
-});
-
-// Method to check if policy is expiring soon (within 30 days)
-insurancePolicySchema.methods.isExpiringSoon = function() {
-  const thirtyDaysFromNow = new Date();
-  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-  return this.endDate <= thirtyDaysFromNow && this.status === 'ACTIVE';
-};
 
 // Static method to find active policies by branch
-insurancePolicySchema.statics.findActiveByBranch = function(branchCode) {
-  return this.find({
-    branchCode: branchCode,
-    status: 'ACTIVE',
-    endDate: { $gt: new Date() }
+InsurancePolicy.findActiveByBranch = async function(branchCode) {
+  return await this.findAll({
+    where: {
+      branchCode,
+      status: 'ACTIVE',
+      endDate: { [Op.gt]: new Date() }
+    }
   });
 };
 
 // Static method to calculate total insured amount by branch
-insurancePolicySchema.statics.getTotalInsuredByBranch = function(branchCode) {
-  return this.aggregate([
-    {
-      $match: {
-        branchCode: branchCode,
-        status: 'ACTIVE',
-        endDate: { $gt: new Date() }
-      }
+InsurancePolicy.getTotalInsuredByBranch = async function(branchCode) {
+  const result = await this.findAll({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.col('insuredAmount')), 'totalInsuredAmount'],
+      [sequelize.fn('SUM', sequelize.col('premiumAmount')), 'totalPremium'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'policyCount']
+    ],
+    where: {
+      branchCode,
+      status: 'ACTIVE',
+      endDate: { [Op.gt]: new Date() }
     },
-    {
-      $group: {
-        _id: '$branchCode',
-        totalInsuredAmount: { $sum: '$insuredAmount' },
-        totalPremium: { $sum: '$premiumAmount' },
-        policyCount: { $sum: 1 }
-      }
-    }
-  ]);
+    group: ['branchCode'],
+    raw: true
+  });
+  
+  return result[0] || { totalInsuredAmount: 0, totalPremium: 0, policyCount: 0 };
 };
 
-const InsurancePolicy = mongoose.model('InsurancePolicy', insurancePolicySchema);
+// Static method to find expiring policies (within X days)
+InsurancePolicy.findExpiringPolicies = async function(days = 30) {
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + days);
+  
+  return await this.findAll({
+    where: {
+      status: 'ACTIVE',
+      endDate: {
+        [Op.between]: [new Date(), expiryDate]
+      }
+    },
+    order: [['endDate', 'ASC']]
+  });
+};
 
 export default InsurancePolicy;

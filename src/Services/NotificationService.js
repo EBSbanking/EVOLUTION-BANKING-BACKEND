@@ -55,6 +55,100 @@ class NotificationService {
       return { success: false, error: error.message };
     }
   }
+
+  /**
+   * Send a failure notification
+   * @param {Object} params
+   * @param {String} params.ROLE_ID - Target role
+   * @param {Number} params.WORK_ITEM_ID - Work item ID
+   * @param {String} params.failureReason - Reason for failure
+   * @param {String} params.transactionType - Type of transaction
+   * @param {Object} [params.metadata] - Additional metadata
+   */
+  static async sendFailureNotification(params) {
+    const { ROLE_ID, WORK_ITEM_ID, failureReason, transactionType, metadata } = params;
+    
+    const message = `Transaction Failure: ${transactionType || 'Direct Debit'} failed. Reason: ${failureReason}`;
+    
+    return await this.send({
+      ROLE_ID,
+      WORK_ITEM_ID,
+      message,
+      status: 'Failed',
+      notificationType: 'transaction_failure',
+      metadata: {
+        ...metadata,
+        failureReason,
+        transactionType,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+
+  /**
+   * Send an error notification
+   * @param {Object} params
+   * @param {String} params.ROLE_ID - Target role
+   * @param {Number} params.WORK_ITEM_ID - Work item ID
+   * @param {String} params.errorMessage - Error message
+   * @param {String} params.operation - Operation that failed
+   * @param {Object} [params.metadata] - Additional metadata
+   */
+  static async sendErrorNotification(params) {
+    const { ROLE_ID, WORK_ITEM_ID, errorMessage, operation, metadata } = params;
+    
+    const message = `System Error: ${operation || 'Operation'} encountered an error. Details: ${errorMessage}`;
+    
+    return await this.send({
+      ROLE_ID,
+      WORK_ITEM_ID,
+      message,
+      status: 'Error',
+      notificationType: 'system_error',
+      metadata: {
+        ...metadata,
+        errorMessage,
+        operation,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+
+  /**
+   * Send a success notification
+   * @param {Object} params
+   * @param {String} params.ROLE_ID - Target role
+   * @param {Number} params.WORK_ITEM_ID - Work item ID
+   * @param {String} params.successMessage - Success message
+   * @param {String} params.transactionType - Type of transaction
+   * @param {Object} [params.metadata] - Additional metadata
+   */
+  static async sendSuccessNotification(params) {
+    const { ROLE_ID, WORK_ITEM_ID, successMessage, transactionType, metadata } = params;
+    
+    const message = `Transaction Success: ${transactionType || 'Direct Debit'} completed successfully. ${successMessage}`;
+    
+    return await this.send({
+      ROLE_ID,
+      WORK_ITEM_ID,
+      message,
+      status: 'Success',
+      notificationType: 'transaction_success',
+      metadata: {
+        ...metadata,
+        successMessage,
+        transactionType,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
 }
 
+// Export both the class and individual functions for flexibility
 export default NotificationService;
+
+// Named exports for backward compatibility
+export const sendFailureNotification = NotificationService.sendFailureNotification.bind(NotificationService);
+export const sendErrorNotification = NotificationService.sendErrorNotification.bind(NotificationService);
+export const sendSuccessNotification = NotificationService.sendSuccessNotification.bind(NotificationService);
+export const sendNotification = NotificationService.send.bind(NotificationService);

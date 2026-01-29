@@ -1,7 +1,7 @@
 // controllers/bankController.js
+import { Op } from 'sequelize';
 import Bank from '../models/Banks.js';
 import logger from '../utils/logger.js';
-import mongoose from 'mongoose';
 
 // @desc    Get all banks
 // @route   GET /api/banks
@@ -17,34 +17,39 @@ export const getAllBanks = async (req, res) => {
       status
     } = req.query;
 
-    // Build filter
-    const filter = {};
-    if (status) filter.status = status.toUpperCase();
+    // Build where conditions
+    const where = {};
+    
+    if (status) {
+      where.status = status.toUpperCase();
+    }
+    
     if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-        { long_code: { $regex: search, $options: 'i' } }
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { code: { [Op.like]: `%${search}%` } },
+        { long_code: { [Op.like]: `%${search}%` } }
       ];
     }
 
-    // Pagination
+    // Parse pagination parameters
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const offset = (pageNum - 1) * limitNum;
 
-    // Sort
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    // Build order
+    const order = [[sortBy, sortOrder.toUpperCase()]];
 
-    const banks = await Bank.find(filter)
-      .sort(sort)
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    // Execute query with pagination
+    const { count, rows: banks } = await Bank.findAndCountAll({
+      where,
+      order,
+      limit: limitNum,
+      offset,
+      raw: true // Returns plain objects instead of instances
+    });
 
-    const total = await Bank.countDocuments(filter);
-    const totalPages = Math.ceil(total / limitNum);
+    const totalPages = Math.ceil(count / limitNum);
 
     res.status(200).json({
       success: true,
@@ -52,7 +57,7 @@ export const getAllBanks = async (req, res) => {
       pagination: {
         page: pageNum,
         limit: limitNum,
-        total,
+        total: count,
         totalPages,
         hasNext: pageNum < totalPages,
         hasPrev: pageNum > 1
@@ -76,12 +81,16 @@ export const getBank = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if ID is ObjectId or numeric ID
-    let bank;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      bank = await Bank.findById(id);
-    } else {
-      bank = await Bank.findOne({ id: parseInt(id) });
+    // Try to find by primary key (ID)
+    let bank = await Bank.findByPk(id);
+    
+    // If not found by primary key, try to find by numeric id field
+    if (!bank) {
+      // Check if id is a number (for numeric id field)
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        bank = await Bank.findOne({ where: { id: numericId } });
+      }
     }
 
     if (!bank) {
@@ -115,11 +124,13 @@ export const createBank = async (req, res) => {
 
     // Check if bank already exists
     const existingBank = await Bank.findOne({
-      $or: [
-        { code: code.toUpperCase() },
-        { long_code: long_code.toUpperCase() },
-        { name: { $regex: `^${name}$`, $options: 'i' } }
-      ]
+      where: {
+        [Op.or]: [
+          { code: code.toUpperCase() },
+          { long_code: long_code.toUpperCase() },
+          { name: { [Op.eq]: name.trim() } } // Case-sensitive exact match
+        ]
+      }
     });
 
     if (existingBank) {
@@ -130,7 +141,10 @@ export const createBank = async (req, res) => {
     }
 
     // Get next ID
-    const lastBank = await Bank.findOne().sort({ id: -1 });
+    const lastBank = await Bank.findOne({ 
+      order: [['id', 'DESC']] 
+    });
+    
     const nextId = lastBank ? lastBank.id + 1 : 1;
 
     const bank = await Bank.create({
@@ -139,10 +153,12 @@ export const createBank = async (req, res) => {
       code: code.toUpperCase().trim(),
       long_code: long_code.toUpperCase().trim(),
       country: country?.toUpperCase() || 'NG',
-      
+      status: 'ACTIVE', // Default status
+      created_at: new Date(),
+      updated_at: new Date()
     });
 
-    logger.info('Bank created successfully', { bankId: bank._id, code: bank.code });
+    logger.info('Bank created successfully', { bankId: bank.id, code: bank.code });
 
     res.status(201).json({
       success: true,
@@ -152,6 +168,22 @@ export const createBank = async (req, res) => {
 
   } catch (error) {
     logger.error('Create bank error:', { error: error.message });
+    
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.errors.map(err => err.message)
+      });
+    }
+    
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Bank with same code, long code or name already exists'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Server error while creating bank',
@@ -163,9 +195,6 @@ export const createBank = async (req, res) => {
 // @desc    Update bank
 // @route   PUT /api/banks/:id
 // @access  Private/Admin
-// @desc    Update bank
-// @route   PUT /api/banks/:id
-// @access  Private/Admin
 export const updateBank = async (req, res) => {
   try {
     const { id } = req.params;
@@ -173,14 +202,19 @@ export const updateBank = async (req, res) => {
 
     // Remove immutable fields
     delete updateData.id;
-    delete updateData._id;
-
-    // First, find the bank to get its _id (handle numeric or ObjectId)
+    
+    // First, find the bank
     let bank;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      bank = await Bank.findById(id);
-    } else {
-      bank = await Bank.findOne({ id: parseInt(id) });
+    
+    // Try by primary key first
+    bank = await Bank.findByPk(id);
+    
+    // If not found, try by numeric id field
+    if (!bank) {
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        bank = await Bank.findOne({ where: { id: numericId } });
+      }
     }
 
     if (!bank) {
@@ -190,20 +224,32 @@ export const updateBank = async (req, res) => {
       });
     }
 
-    const actualId = bank._id; // Use the actual _id for update
+    const actualId = bank.id; // Use the actual id for update
 
     // If updating code or long_code, check for duplicates (exclude current bank)
     if (updateData.code || updateData.long_code) {
-      const duplicateFilter = { _id: { $ne: actualId } };
+      const where = {
+        [Op.and]: [
+          { id: { [Op.ne]: actualId } }
+        ]
+      };
+      
+      const orConditions = [];
+      
       if (updateData.code) {
-        duplicateFilter.$or = [{ code: updateData.code.toUpperCase() }];
+        orConditions.push({ code: updateData.code.toUpperCase() });
       }
+      
       if (updateData.long_code) {
-        duplicateFilter.$or = duplicateFilter.$or || [];
-        duplicateFilter.$or.push({ long_code: updateData.long_code.toUpperCase() });
+        orConditions.push({ long_code: updateData.long_code.toUpperCase() });
+      }
+      
+      if (orConditions.length > 0) {
+        where[Op.and].push({ [Op.or]: orConditions });
       }
 
-      const existingBank = await Bank.findOne(duplicateFilter);
+      const existingBank = await Bank.findOne({ where });
+      
       if (existingBank) {
         return res.status(400).json({
           success: false,
@@ -218,15 +264,17 @@ export const updateBank = async (req, res) => {
     if (updateData.name) updateData.name = updateData.name.trim();
     if (updateData.country) updateData.country = updateData.country.toUpperCase();
 
-    updateData.last_updated = new Date();
+    updateData.updated_at = new Date();
 
-    const updatedBank = await Bank.findByIdAndUpdate(
-      actualId,
-      { $set: updateData },
-      { new: true, runValidators: true }
-    );
+    // Update the bank
+    await Bank.update(updateData, {
+      where: { id: actualId }
+    });
 
-    logger.info('Bank updated successfully', { bankId: updatedBank._id, code: updatedBank.code });
+    // Fetch updated bank
+    const updatedBank = await Bank.findByPk(actualId);
+
+    logger.info('Bank updated successfully', { bankId: updatedBank.id, code: updatedBank.code });
 
     res.status(200).json({
       success: true,
@@ -236,6 +284,22 @@ export const updateBank = async (req, res) => {
 
   } catch (error) {
     logger.error('Update bank error:', { error: error.message, id: req.params.id });
+    
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.errors.map(err => err.message)
+      });
+    }
+    
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Duplicate code or long code'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Server error while updating bank',
@@ -251,12 +315,18 @@ export const deleteBank = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // First, find the bank to get its _id (handle numeric or ObjectId)
+    // First, find the bank
     let bank;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      bank = await Bank.findById(id);
-    } else {
-      bank = await Bank.findOne({ id: parseInt(id) });
+    
+    // Try by primary key first
+    bank = await Bank.findByPk(id);
+    
+    // If not found, try by numeric id field
+    if (!bank) {
+      const numericId = parseInt(id);
+      if (!isNaN(numericId)) {
+        bank = await Bank.findOne({ where: { id: numericId } });
+      }
     }
 
     if (!bank) {
@@ -266,20 +336,31 @@ export const deleteBank = async (req, res) => {
       });
     }
 
-    const actualId = bank._id; // Use the actual _id for delete
+    const actualId = bank.id; // Use the actual id for delete
 
-    await Bank.findByIdAndDelete(actualId);
+    // Delete the bank
+    await Bank.destroy({
+      where: { id: actualId }
+    });
 
     logger.info('Bank deleted successfully', { bankId: actualId, code: bank.code });
 
     res.status(200).json({
       success: true,
       message: 'Bank deleted successfully',
-      data: { id: bank.id, name: bank.name }  // Use numeric id in response
+      data: { id: bank.id, name: bank.name }
     });
 
   } catch (error) {
     logger.error('Delete bank error:', { error: error.message, id: req.params.id });
+    
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete bank because it is referenced by other records'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Server error while deleting bank',
@@ -293,10 +374,12 @@ export const deleteBank = async (req, res) => {
 // @access  Public
 export const getActiveBanks = async (req, res) => {
   try {
-    const banks = await Bank.findActive()
-      .sort({ name: 1 })
-      .select('id name code long_code displayName')
-      .lean();
+    const banks = await Bank.findAll({
+      where: { status: 'ACTIVE' },
+      order: [['name', 'ASC']],
+      attributes: ['id', 'name', 'code', 'long_code', 'displayName'],
+      raw: true
+    });
 
     res.status(200).json({
       success: true,
@@ -320,18 +403,20 @@ export const searchBanks = async (req, res) => {
   try {
     const { query } = req.params;
 
-    const banks = await Bank.find({
-      $or: [
-        { name: { $regex: query, $options: 'i' } },
-        { code: { $regex: query, $options: 'i' } },
-        { long_code: { $regex: query, $options: 'i' } }
-      ],
-      status: 'ACTIVE'
-    })
-    .sort({ name: 1 })
-    .limit(20)
-    .select('id name code long_code displayName')
-    .lean();
+    const banks = await Bank.findAll({
+      where: {
+        [Op.or]: [
+          { name: { [Op.like]: `%${query}%` } },
+          { code: { [Op.like]: `%${query}%` } },
+          { long_code: { [Op.like]: `%${query}%` } }
+        ],
+        status: 'ACTIVE'
+      },
+      order: [['name', 'ASC']],
+      limit: 20,
+      attributes: ['id', 'name', 'code', 'long_code', 'displayName'],
+      raw: true
+    });
 
     res.status(200).json({
       success: true,
@@ -343,6 +428,42 @@ export const searchBanks = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while searching banks',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get bank by code
+// @route   GET /api/banks/code/:code
+// @access  Public
+export const getBankByCode = async (req, res) => {
+  try {
+    const { code } = req.params;
+
+    const bank = await Bank.findOne({
+      where: { 
+        code: code.toUpperCase(),
+        status: 'ACTIVE'
+      }
+    });
+
+    if (!bank) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bank not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: bank
+    });
+
+  } catch (error) {
+    logger.error('Get bank by code error:', { error: error.message, code: req.params.code });
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching bank by code',
       error: error.message
     });
   }

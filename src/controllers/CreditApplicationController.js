@@ -421,45 +421,118 @@ static async rejectCreditApplication(req, res) {
     }
   }
 
-  // Get a credit application by APPL_ID
-  static async getCreditApplicationByApplId(req, res) {
-    const { applId } = req.params;
-    try {
-      const application = await CreditApplication.findOne({ APPL_ID: applId });
-      if (!application) {
-        return res.status(404).json({ message: 'Credit application not found' });
-      }
-      res.status(200).json(application);
-    } catch (error) {
-      res.status(500).json({
-        message: 'Error retrieving credit application by APPL_ID',
-        error: error.message,
+ // Get a credit application by a_p_p_l__i_d (using Mongoose/MongoDB)
+static async getCreditApplicationByApplId(req, res) {
+  const { applId } = req.params;
+  
+  console.log('🔍 Searching for credit application with a_p_p_l__i_d:', applId);
+  
+  try {
+    // CORRECTION: Use Mongoose methods for MongoDB
+    const application = await CreditApplication.findOne({
+      a_p_p_l__i_d: applId
+    });
+    
+    if (!application) {
+      console.log('⚠️ No application found for a_p_p_l__i_d:', applId);
+      
+      // Get recent applications for debugging
+      const recentApps = await CreditApplication.find({})
+        .sort({ created_at: -1 })
+        .limit(5)
+        .select('a_p_p_l__i_d created_at');
+      
+      console.log('🔍 Recent applications in database:', recentApps);
+      
+      return res.status(404).json({ 
+        success: false,
+        message: 'Credit application not found',
+        suggestion: 'Check the application ID format (e.g., CRAPP/0098)',
+        recentApplications: recentApps
       });
     }
-  }
-
- 
-  // Get raw credit application document by MongoDB ID
-static async getCreditApplicationByIdRaw(req, res) {
-  const { id } = req.params;
-  try {
-    const application = await CreditApplication.findById(id);
-    if (!application) {
-      return res.status(404).json({ message: 'Application not found' });
-    }
-
+    
+    console.log('✅ Found application:', application.a_p_p_l__i_d);
+    
     res.status(200).json({
-      identifier: `${application.CUST_ID}-${application.ACCT_NO}`, // Example logic
-      application,
+      success: true,
+      message: 'Credit application found',
+      data: application
     });
+    
   } catch (error) {
+    console.error('❌ Error retrieving credit application:', error);
+    
     res.status(500).json({
-      message: 'Error generating identifier',
+      success: false,
+      message: 'Error retrieving credit application',
       error: error.message,
+      suggestion: error.message.includes('collection') 
+        ? 'Check if "credit_applications" collection exists in MongoDB' 
+        : 'Verify MongoDB connection'
     });
   }
 }
 
+// Get raw credit application document by MongoDB ID
+static async getCreditApplicationByIdRaw(req, res) {
+  const { id } = req.params;
+  
+  try {
+    const application = await CreditApplication.findById(id);
+    
+    if (!application) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Application not found' 
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      identifier: `${application.CUST_ID}-${application.ACCT_NO}`,
+      application
+    });
+    
+  } catch (error) {
+    console.error('❌ Error in getCreditApplicationByIdRaw:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving application',
+      error: error.message,
+      suggestion: 'Check if the ID is a valid MongoDB ObjectId'
+    });
+  }
+}
+
+// Alternative: Search with multiple conditions
+static async searchCreditApplications(req, res) {
+  const { applId, custId, status } = req.query;
+  
+  try {
+    const query = {};
+    
+    if (applId) query.a_p_p_l__i_d = applId;
+    if (custId) query.c_u_s_t__i_d = custId;
+    if (status) query.l_o_a_n__s_t_a_t_u_s = status;
+    
+    const applications = await CreditApplication.find(query);
+    
+    res.status(200).json({
+      success: true,
+      count: applications.length,
+      data: applications
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Search failed',
+      error: error.message
+    });
+  }
+}
 
   // Get a credit application by ACCT_NO
   static async getCreditApplicationByAcctNo(req, res) {

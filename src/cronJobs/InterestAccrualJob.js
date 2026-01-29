@@ -1,7 +1,5 @@
 import cron from 'node-cron';
-import mongoose from 'mongoose';
-import DepositAccountSummary from '../models/DepositAccountSummary.js';
-import DepositAccountInterest from '../models/DepositAccountInterest.js';
+import connection from '../../config/db.js'; // Your MySQL connection
 import logger from '../utils/logger.js';
 
 /**
@@ -12,6 +10,7 @@ class DepositInterestAccrual {
     this.interestRatesCache = new Map();
     this.cacheExpiry = 30 * 60 * 1000; // 30 minutes cache
     this.lastCacheUpdate = 0;
+    this.connection = connection;
   }
 
   /**
@@ -27,23 +26,26 @@ class DepositInterestAccrual {
       return this.interestRatesCache.get(cacheKey);
     }
 
+    const conn = await this.connection.getConnection();
+    
     try {
       // Fetch interest rate from database
-      const interestConfig = await DepositAccountInterest.findOne({
-        ACCOUNT_TYPE: accountType,
-        BALANCE_TIER: balanceTier,
-        STATUS: 'ACTIVE',
-        EFFECTIVE_DATE: { $lte: new Date() },
-        $or: [
-          { EXPIRY_DATE: { $gte: new Date() } },
-          { EXPIRY_DATE: null }
-        ]
-      }).sort({ EFFECTIVE_DATE: -1 }); // Get the latest effective rate
+      const [rows] = await conn.execute(`
+        SELECT ANNUAL_RATE 
+        FROM deposit_account_interest 
+        WHERE ACCOUNT_TYPE = ? 
+          AND BALANCE_TIER = ? 
+          AND STATUS = 'ACTIVE'
+          AND EFFECTIVE_DATE <= NOW()
+          AND (EXPIRY_DATE >= NOW() OR EXPIRY_DATE IS NULL)
+        ORDER BY EFFECTIVE_DATE DESC 
+        LIMIT 1
+      `, [accountType, balanceTier]);
 
       let annualRate = 0.05; // Default 5% if no rate found
 
-      if (interestConfig) {
-        annualRate = parseFloat(interestConfig.ANNUAL_RATE) || 0.05;
+      if (rows.length > 0) {
+        annualRate = parseFloat(rows[0].ANNUAL_RATE) || 0.05;
         logger.debug(`Found interest rate for ${accountType}/${balanceTier}: ${annualRate}%`);
       } else {
         logger.warn(`No interest rate found for ${accountType}/${balanceTier}, using default 5%`);
@@ -61,6 +63,8 @@ class DepositInterestAccrual {
       logger.error(`Error fetching interest rate for ${accountType}:`, error);
       // Return default rate on error
       return 0.05 / 100 / 365;
+    } finally {
+      conn.release();
     }
   }
 
@@ -97,15 +101,17 @@ class DepositInterestAccrual {
    * Update interest accrued for all deposit accounts with dynamic rates
    */
   async updateAllAccountsInterest() {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const conn = await this.connection.getConnection();
+    
     try {
+      await conn.beginTransaction();
       logger.info('Starting daily deposit interest accrual job with dynamic rates');
 
-      const depositAccounts = await DepositAccountSummary.find({
-        STATUS: 'ACTIVE'
-      }).session(session);
+      const [depositAccounts] = await conn.execute(`
+        SELECT * FROM deposit_account_summary 
+        WHERE STATUS = 'ACTIVE'
+        FOR UPDATE
+      `);
 
       let updatedCount = 0;
       let totalInterestAccrued = 0;
@@ -113,7 +119,7 @@ class DepositInterestAccrual {
 
       for (const account of depositAccounts) {
         try {
-          const result = await this.updateAccountInterest(account, session);
+          const result = await this.updateAccountInterest(account, conn);
           if (result) {
             updatedCount++;
             totalInterestAccrued += result.totalInterest;
@@ -128,7 +134,7 @@ class DepositInterestAccrual {
         }
       }
 
-      await session.commitTransaction();
+      await conn.commit();
       
       logger.info('Daily deposit interest accrual completed', {
         accountsProcessed: updatedCount,
@@ -146,67 +152,91 @@ class DepositInterestAccrual {
       };
 
     } catch (error) {
-      await session.abortTransaction();
+      await conn.rollback();
       logger.error('Daily deposit interest accrual job failed:', error);
       throw error;
     } finally {
-      session.endSession();
+      conn.release();
     }
   }
 
   /**
    * Update interest for a single account with dynamic rates
    */
-  async updateAccountInterest(account, session = null) {
-    const updateData = {};
-    let totalInterest = 0;
+  async updateAccountInterest(account, conn = null) {
+    let localConn = conn;
+    let shouldRelease = false;
+    
+    if (!localConn) {
+      localConn = await this.connection.getConnection();
+      shouldRelease = true;
+    }
 
-    // Calculate debit interest (DR_INT_ACCRUED) - for overdrafts/negative balances
-    if (account.LEDGER_BAL < 0) {
-      const daysOutstanding = this.calculateDaysOutstanding(account.last_debit_date);
-      const debitInterest = await this.calculateAccruedInterest(
-        account,
-        Math.abs(account.LEDGER_BAL), 
-        daysOutstanding
-      );
-      
-      if (debitInterest > 0) {
-        updateData.DR_INT_ACCRUED = (account.DR_INT_ACCRUED || 0) + debitInterest;
-        updateData.last_debit_date = new Date();
-        updateData.days_outstanding = daysOutstanding;
-        totalInterest += debitInterest;
+    try {
+      const updateData = {};
+      let totalInterest = 0;
+
+      // Calculate debit interest (DR_INT_ACCRUED) - for overdrafts/negative balances
+      if (account.LEDGER_BAL < 0) {
+        const daysOutstanding = this.calculateDaysOutstanding(account.last_debit_date);
+        const debitInterest = await this.calculateAccruedInterest(
+          account,
+          Math.abs(account.LEDGER_BAL), 
+          daysOutstanding
+        );
+        
+        if (debitInterest > 0) {
+          updateData.DR_INT_ACCRUED = (account.DR_INT_ACCRUED || 0) + debitInterest;
+          updateData.last_debit_date = new Date();
+          updateData.days_outstanding = daysOutstanding;
+          totalInterest += debitInterest;
+        }
+      }
+
+      // Calculate credit interest (CR_INT_ACCRUED) - for positive balances
+      if (account.CLEARED_BAL > 0) {
+        const creditInterest = await this.calculateAccruedInterest(account, account.CLEARED_BAL);
+        
+        if (creditInterest > 0) {
+          updateData.CR_INT_ACCRUED = (account.CR_INT_ACCRUED || 0) + creditInterest;
+          totalInterest += creditInterest;
+        }
+      }
+
+      // Update account if there's interest to accrue
+      if (Object.keys(updateData).length > 0) {
+        updateData.LAST_INTEREST_UPDATE = new Date();
+        
+        // Build SET clause for update
+        const setClauses = [];
+        const values = [];
+        
+        for (const [key, value] of Object.entries(updateData)) {
+          setClauses.push(`${key} = ?`);
+          values.push(value);
+        }
+        
+        values.push(account.id); // WHERE condition
+        
+        await localConn.execute(`
+          UPDATE deposit_account_summary 
+          SET ${setClauses.join(', ')}
+          WHERE id = ?
+        `, values);
+
+        return { 
+          account: account.ACCT_NO, 
+          totalInterest,
+          accountType: account.ACCOUNT_TYPE || 'SAVINGS'
+        };
+      }
+
+      return null;
+    } finally {
+      if (shouldRelease && localConn) {
+        localConn.release();
       }
     }
-
-    // Calculate credit interest (CR_INT_ACCRUED) - for positive balances
-    if (account.CLEARED_BAL > 0) {
-      const creditInterest = await this.calculateAccruedInterest(account, account.CLEARED_BAL);
-      
-      if (creditInterest > 0) {
-        updateData.CR_INT_ACCRUED = (account.CR_INT_ACCRUED || 0) + creditInterest;
-        totalInterest += creditInterest;
-      }
-    }
-
-    // Update account if there's interest to accrue
-    if (Object.keys(updateData).length > 0) {
-      updateData.LAST_INTEREST_UPDATE = new Date();
-      
-      const options = session ? { session } : {};
-      await DepositAccountSummary.findByIdAndUpdate(
-        account._id, 
-        { $set: updateData },
-        options
-      );
-
-      return { 
-        account: account.ACCT_NO, 
-        totalInterest,
-        accountType: account.ACCOUNT_TYPE || 'SAVINGS'
-      };
-    }
-
-    return null;
   }
 
   /**
@@ -227,15 +257,22 @@ class DepositInterestAccrual {
    * Update account summary after debit transaction with dynamic rates
    */
   async updateAfterDebitTransaction(ACCT_NO, debitAmount) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    const conn = await this.connection.getConnection();
+    
     try {
-      const account = await DepositAccountSummary.findOne({ ACCT_NO }).session(session);
+      await conn.beginTransaction();
 
-      if (!account) {
+      const [accounts] = await conn.execute(`
+        SELECT * FROM deposit_account_summary 
+        WHERE ACCT_NO = ?
+        FOR UPDATE
+      `, [ACCT_NO]);
+
+      if (accounts.length === 0) {
         throw new Error(`Account not found: ${ACCT_NO}`);
       }
+
+      const account = accounts[0];
 
       // Calculate days since last debit
       const daysOutstanding = this.calculateDaysOutstanding(account.last_debit_date);
@@ -252,21 +289,17 @@ class DepositInterestAccrual {
         await this.calculateAccruedInterest(account, account.CLEARED_BAL) : 0;
 
       // Update account
-      const updateData = {
-        DR_INT_ACCRUED: (account.DR_INT_ACCRUED || 0) + debitInterest,
-        CR_INT_ACCRUED: (account.CR_INT_ACCRUED || 0) + creditInterest,
-        last_debit_date: new Date(),
-        days_outstanding: daysOutstanding,
-        LAST_INTEREST_UPDATE: new Date()
-      };
+      await conn.execute(`
+        UPDATE deposit_account_summary 
+        SET DR_INT_ACCRUED = COALESCE(DR_INT_ACCRUED, 0) + ?,
+            CR_INT_ACCRUED = COALESCE(CR_INT_ACCRUED, 0) + ?,
+            last_debit_date = NOW(),
+            days_outstanding = ?,
+            LAST_INTEREST_UPDATE = NOW()
+        WHERE ACCT_NO = ?
+      `, [debitInterest, creditInterest, daysOutstanding, ACCT_NO]);
 
-      await DepositAccountSummary.findByIdAndUpdate(
-        account._id, 
-        { $set: updateData },
-        { session }
-      );
-
-      await session.commitTransaction();
+      await conn.commit();
 
       logger.info('Deposit account summary updated after debit', {
         account: ACCT_NO,
@@ -287,11 +320,11 @@ class DepositInterestAccrual {
       };
 
     } catch (error) {
-      await session.abortTransaction();
+      await conn.rollback();
       logger.error('Error updating deposit account after debit:', error);
       throw error;
     } finally {
-      session.endSession();
+      conn.release();
     }
   }
 

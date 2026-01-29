@@ -1,4 +1,5 @@
-import mongoose from 'mongoose';
+import { Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 import BusinessUnit from '../models/BusinessUnit.js';
 import Permissions from '../models/Permissions.js';
 import CustomerAccount from '../models/CustomerAccount.js';
@@ -585,7 +586,7 @@ export const ROLE_MAPPING = Object.fromEntries(
 export async function syncPermissions() {
   try {
     for (const [roleId, roleData] of Object.entries(ROLE_MAPPING)) {
-      const existingPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+      const existingPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
       const permissionsData = {
         BU_ROLE_ID: parseInt(roleId),
         ROLE_NAME: roleData.ROLE_NM,
@@ -595,10 +596,9 @@ export async function syncPermissions() {
       };
 
       if (existingPermissions) {
-        await Permissions.updateOne(
-          { BU_ROLE_ID: roleId },
-          { $set: permissionsData },
-          { runValidators: true }
+        await Permissions.update(
+          permissionsData,
+          { where: { BU_ROLE_ID: roleId } }
         );
         logger.info(`Updated permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
           permissions: JSON.stringify(permissionsData),
@@ -623,7 +623,7 @@ export async function syncPermissions() {
 // Populate Business Unit Mapping
 export async function populateBusinessUnitMapping() {
   try {
-    const businessUnits = await BusinessUnit.find().lean();
+    const businessUnits = await BusinessUnit.findAll();
     if (!businessUnits.length) {
       logger.warn('No business units found in the database');
       return {};
@@ -712,11 +712,11 @@ export async function roleHasPermission(roleId, permission) {
       return true;
     }
 
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     if (dbPermissions) {
       // Flatten all permission arrays from the document (excluding non-permission fields)
       const allPermissions = [];
-      Object.entries(dbPermissions).forEach(([key, value]) => {
+      Object.entries(dbPermissions.dataValues).forEach(([key, value]) => {
         if (Array.isArray(value)) {
           allPermissions.push(...value.filter(p => typeof p === 'string'));
         }
@@ -773,9 +773,9 @@ export async function verifyAdministratorPermissions() {
 // Get all permissions for a role grouped by category
 export async function getRolePermissionsGrouped(roleId) {
   try {
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     if (dbPermissions) {
-      return Object.entries(dbPermissions).reduce((acc, [key, perms]) => {
+      return Object.entries(dbPermissions.dataValues).reduce((acc, [key, perms]) => {
         if (key.endsWith('_ACCESS_LEVEL')) {
           const group = key.replace('_ACCESS_LEVEL', '');
           acc[group] = Array.isArray(perms) ? perms : [];

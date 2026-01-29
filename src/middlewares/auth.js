@@ -1,84 +1,143 @@
-// middleware/auth.js
+// src/middleware/auth.js - FINAL PRODUCTION-READY VERSION
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js'; // Adjust path if needed
+import User from '../models/User.js'; // Sequelize User model
 import dotenv from 'dotenv';
 import path from 'path';
 
-// Load environment variables
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-// Function to get JWT secret key
-export const getSecretKey = () => {
-  const secret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET;
+// Get JWT secret safely
+const getSecretKey = () => {
+  const secret = process.env.JWT_SECRET || process.env.JWT_SECRET_KEY;
   if (!secret) {
-    throw new Error('JWT_SECRET_KEY or JWT_SECRET is not defined in .env');
+    throw new Error('JWT_SECRET or JWT_SECRET_KEY not defined in .env file');
   }
   return secret;
 };
 
-const authenticate = async (req, res, next) => {
+// Main authentication middleware
+export const authenticate = async (req, res, next) => {
   try {
-    // 1. Get token from headers
-    const authHeader = req.headers['authorization'];
-    const token = authHeader?.split(' ')[1]; // Handle "Bearer <token>" format
-
-    if (!token) {
+    // Extract token from Authorization header (Bearer <token>)
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
         message: 'Authentication required',
-        resolution: 'Include valid JWT token in Authorization header',
+        details: 'Missing or invalid Authorization header. Use: Bearer <token>',
       });
     }
 
-    // 2. Verify token
+    const token = authHeader.split(' ')[1];
+
+    // Verify token
     const decoded = jwt.verify(token, getSecretKey());
 
-    // 3. Verify user still exists
-    const user = await User.findById(decoded.id).select('-password');
+    // Find user in database (exclude password)
+    const user = await User.findOne({
+      where: { id: decoded.id }, // Adjust if your user ID field is different (e.g., user_id)
+      attributes: { exclude: ['password'] },
+    });
+
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: 'User account not found',
-        resolution: 'Token might be for a deleted account',
+        message: 'User not found',
+        details: 'The account associated with this token no longer exists',
       });
     }
 
-    // 4. Attach user to request
+    // Optional: Check if user is active
+    if (user.status !== 'Active') {
+      return res.status(403).json({
+        success: false,
+        message: 'Account deactivated',
+        details: 'Your account has been deactivated. Contact administrator.',
+      });
+    }
+
+    // Attach user to request
     req.user = user;
     next();
   } catch (error) {
-    // Handle different error cases
     let status = 401;
-    let message = 'Authentication failed';
+    let message = 'Invalid token';
 
     if (error.name === 'TokenExpiredError') {
-      status = 403;
-      message = 'Session expired';
+      status = 401;
+      message = 'Token expired';
     } else if (error.name === 'JsonWebTokenError') {
-      status = 403;
-      message = 'Invalid token';
+      message = 'Malformed or invalid token';
+    } else if (error.name === 'NotBeforeError') {
+      message = 'Token not active yet';
     }
 
-    res.status(status).json({
+    return res.status(status).json({
       success: false,
       message,
-      error: error.message,
+      details: error.message,
     });
   }
 };
 
 // Role-based authorization middleware
-const authorize = (...roles) => {
+export const authorize = (...allowedRoles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    const userRole = req.user.role || req.user.primary_role || req.user.primary_business_role;
+
+    if (!userRole) {
       return res.status(403).json({
         success: false,
-        message: 'Unauthorized access',
-        resolution: `Requires ${roles.join(' or ')} privileges`,
+        message: 'Role not found on user',
+        details: 'User object missing role information',
       });
     }
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied',
+        details: `Requires one of the following roles: ${allowedRoles.join(', ')}. Current: ${userRole}`,
+      });
+    }
+
     next();
   };
 };
 
-export default { authenticate, authorize, getSecretKey };
+// Permission-based authorization (more flexible)
+export const authorizePermission = (permission) => {
+  return async (req, res, next) => {
+    try {
+      const hasPermission = await req.user.hasPermission?.(permission);
+
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: 'Insufficient permissions',
+          details: `Missing required permission: ${permission}`,
+        });
+      }
+
+      next();
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Permission check failed',
+        error: error.message,
+      });
+    }
+  };
+};
+
+// Admin-only shortcut
+export const adminOnly = authorize('Administrator', 'System Admin');
+
+// Export everything
+export default {
+  authenticate,
+  authorize,
+  authorizePermission,
+  adminOnly,
+  getSecretKey,
+};
