@@ -40,39 +40,56 @@ const SPECIAL_TX_TYPES = [
   'NOSTRO', 'VOSTRO'
 ];
 
-// Thrift Transactions
-const THRIFT_TX_TYPES = [
-  'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'BANK_PAYMENT'
-];
+// Thrift Transactions - MAPPED TO EXISTING ENUM VALUES
+const THRIFT_TX_TYPES = {
+  // Map thrift transaction types to existing ENUM values
+  OPENING: 'DEPOSIT',           // Thrift opening = DEPOSIT
+  COLLECTION: 'DEPOSIT',        // Regular collection = DEPOSIT  
+  WITHDRAWAL: 'WITHDRAWAL',     // Thrift withdrawal = WITHDRAWAL
+  BANK_PAYMENT: 'TRANSFER',     // Bank payment = TRANSFER
+  
+  // Constants for code readability
+  THRIFT_OPENING: 'DEPOSIT',
+  THRIFT_COLLECTION: 'DEPOSIT',
+  THRIFT_WITHDRAWAL: 'WITHDRAWAL'
+};
 
 // Processing Fee Transaction
 const PROCESSING_FEE_TYPES = [
   'PROCESSING_FEE'
 ];
 
-// General Transaction Types
-const GENERAL_TX_TYPES = ['DEPOSIT', 'WITHDRAWAL', 'FOREIGN_EXCHANGE', 'TRANSFER', 'DEBIT', 'CREDIT', 'FEE'];
-
-// Get all available transaction types
-const getAllTransactionTypes = () => [
-  ...new Set([
-    ...CORE_TX_TYPES,
-    ...LOAN_TX_TYPES,
-    ...INVESTMENT_TX_TYPES,
-    ...CARD_TX_TYPES,
-    ...DIGITAL_TX_TYPES,
-    ...SPECIAL_TX_TYPES,
-    ...THRIFT_TX_TYPES,
-    ...PROCESSING_FEE_TYPES,
-    ...GENERAL_TX_TYPES
-  ])
+// General Transaction Types - ACTUAL DATABASE ENUM VALUES
+const GENERAL_TX_TYPES = [
+  'DEPOSIT', 'WITHDRAWAL', 'TRANSFER', 'LOAN_DISBURSEMENT', 
+  'LOAN_REPAYMENT', 'FEE_CHARGE', 'INTEREST_CREDIT', 
+  'INTEREST_CHARGE', 'PENALTY_CHARGE', 'SALARY_PAYMENT', 
+  'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER', 
+  'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 
+  'CHEQUE_DEPOSIT', 'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 
+  'REVERSAL', 'ADJUSTMENT', 'REFUND'
 ];
+
+// Get all available transaction types (actual database ENUM values)
+const getAllTransactionTypes = () => [...GENERAL_TX_TYPES];
+
+// Get thrift-specific transaction type
+const getThriftTransactionType = (thriftType) => {
+  const thriftTypeMap = {
+    'THRIFT_OPENING': 'DEPOSIT',
+    'THRIFT_COLLECTION': 'DEPOSIT',
+    'THRIFT_WITHDRAWAL': 'WITHDRAWAL',
+    'BANK_PAYMENT': 'TRANSFER'
+  };
+  
+  return thriftTypeMap[thriftType] || 'DEPOSIT'; // Default to DEPOSIT
+};
 
 // Investment Account Transactions
 const INVESTMENT_ACCOUNT_TX_TYPES = [
   ...INVESTMENT_TX_TYPES,
-  ...CORE_TX_TYPES.filter(type =>
-    ['TRANSFER', 'DEBIT', 'CREDIT', 'FEE'].includes(type)
+  ...GENERAL_TX_TYPES.filter(type =>
+    ['TRANSFER', 'DEPOSIT', 'WITHDRAWAL'].includes(type)
   )
 ];
 
@@ -92,7 +109,8 @@ export {
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,
-  getAllTransactionTypes
+  getAllTransactionTypes,
+  getThriftTransactionType
 };
 
 // Export everything together for easy default import
@@ -108,7 +126,8 @@ const allTransactionTypes = {
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,
-  getAllTransactionTypes
+  getAllTransactionTypes,
+  getThriftTransactionType
 };
 
 export default allTransactionTypes;

@@ -1,306 +1,585 @@
-import Thrift from '../models/Thrift.js';
-import Customer from '../models/Customer.js';
-import Transaction from '../models/Transaction.js';
+// src/controllers/ThriftController.js
+import { Op } from 'sequelize';
 import logger from '../utils/logger.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
 import { generateAccountIdentifiersFromCounter } from '../utils/generateAccountNumber.js';
 
-class ThriftController {
-  // Create new thrift account with auto-generated customer
-  static async createThriftAccount(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+// Import model loader functions
+import { 
+  initModels, 
+  getCustomer, 
+  getThrift, 
+  getTransaction, 
+  getUser, 
+  getSequelize,
+  areModelsInitialized 
+} from '../utils/modelLoader.js';
 
+// Initialize models on first use
+let modelsInitialized = false;
+
+async function ensureModelsInitialized() {
+  if (!modelsInitialized) {
+    console.log('🔄 Ensuring models are initialized...');
+    
     try {
-      const {
-        FIRST_NAME,
-        LASTNAME,
-        FULL_NAME: providedFullName, // Optional from body
-        initialAmount,
-        COLLECTION_TYPE,
-        address,
-        phone,
-        RELATIONSHIP_MANAGER, // Updated to match request body key (String, e.g., "PCO04")
-        TRANSACTION_DATE, // Add transaction date
-        OPENED_DT // Add opened date
-      } = req.body;
-
-      // Validate required fields
-      if (!FIRST_NAME || !LASTNAME || !initialAmount || !COLLECTION_TYPE) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required fields: FIRST_NAME, LASTNAME, initialAmount, COLLECTION_TYPE'
-        });
+      // Initialize models
+      await initModels();
+      
+      // Verify we have the models
+      const Customer = getCustomer();
+      const Thrift = getThrift();
+      const Transaction = getTransaction();
+      
+      if (!Customer || !Thrift || !Transaction) {
+        throw new Error('One or more models not available after initialization');
       }
+      
+      modelsInitialized = true;
+      console.log('✅ Models ready for use');
+    } catch (error) {
+      console.error('❌ Failed to initialize models:', error);
+      throw error;
+    }
+  }
+}
 
-      // Compute FULL_NAME if not provided
-      const fullName = providedFullName || `${FIRST_NAME} ${LASTNAME}`.trim();
-      if (!fullName) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Full name cannot be empty'
-        });
-      }
-
-      // Validate initial amount
-      if (initialAmount <= 0) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Initial amount must be greater than 0'
-        });
-      }
-
-      // Set transaction date and opened date
-      const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
-      const openedDate = OPENED_DT ? new Date(OPENED_DT) : new Date();
-
-      // Generate customer numbers
-      let customerNumbers;
-      try {
-        customerNumbers = await generateCustomerNumber();
-        logger.info('Generated customer numbers:', customerNumbers);
-      } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-        logger.error('Error generating customer numbers:', error);
+class ThriftController {
+  // ─────────────────────────────────────────────
+  //  Create new thrift account + new customer
+  // ─────────────────────────────────────────────
+  static async createThriftAccount(req, res) {
+    try {
+      // Ensure models are initialized
+      await ensureModelsInitialized();
+      
+      // Get models
+      const Customer = getCustomer();
+      const Thrift = getThrift();
+      const Transaction = getTransaction();
+      const User = getUser();
+      const sequelize = getSequelize();
+      
+      // Validate models
+      if (!Customer || typeof Customer.findOne !== 'function') {
+        console.error('❌ Customer model not available');
         return res.status(500).json({
           success: false,
-          message: 'Failed to generate customer identifiers',
-          error: error.message
+          error: 'Database configuration error',
+          details: 'Customer model not available.'
         });
       }
-
-      const { CUST_ID, CUST_NO } = customerNumbers;
-
-      // Generate thrift account numbers using savings account pattern
-      let accountIdentifiers;
+      
+      let t;
+      
       try {
-        // Use "1" prefix for thrift accounts (similar to savings)
-        accountIdentifiers = await generateAccountIdentifiersFromCounter('1');
-        logger.info('Generated account identifiers:', accountIdentifiers);
-      } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-        logger.error('Error generating account identifiers:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to generate account identifiers',
-          error: error.message
-        });
-      }
-
-      const { ACCT_NO, ACCT_ID } = accountIdentifiers;
-
-      // Check if customer already exists (safety check)
-      const existingCustomer = await Customer.findOne({ CUST_ID }).session(session);
-      if (existingCustomer) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Customer already exists with generated ID'
-        });
-      }
-
-      // Create new customer with initial balance - map to schema fields
-      const customer = new Customer({
-        CUST_ID,
-        CUST_NO,
-        FIRST_NAME,
-        LAST_NAME: LASTNAME,
-        PHONE_NO: phone || '',
-        BU_ID: 1, // Default business unit ID for thrift accounts
-        HOME_ADDRESS: address || '123 Main Street, City, State',
-        accountBalance: initialAmount, // Custom field - add to schema if needed
-        accountType: 'SAVINGS', // Custom field - add to schema if needed
-        REC_ST: 'Active', // Map to schema status field
-        OPENED_DT: openedDate // Use provided OPENED_DT or current date
-      });
-
-      await customer.save({ session });
-
-      // Check if customer has sufficient balance for initial amount
-      if (customer.accountBalance < initialAmount) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Insufficient balance for initial thrift payment'
-        });
-      }
-
-      // Check if thrift account already exists
-      const existingAccount = await Thrift.findOne({
-        $or: [{ ACCT_NO }, { ACCT_ID }, { CUST_ID }]
-      }).session(session);
-
-      if (existingAccount) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Account with this ACCT_NO, ACCT_ID, or CUST_ID already exists'
-        });
-      }
-
-      // First payment goes to bank
-      const firstPayment = initialAmount;
-      const customerAvailableAmount = 0;
-
-      // Create thrift account
-      const thriftAccount = new Thrift({
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID,
-        FIRST_NAME,
-        LASTNAME,
-        FULL_NAME: fullName, // Set computed/provided FULL_NAME
-        RELATIONSHIP_MANAGER: RELATIONSHIP_MANAGER || null,
-        AMOUNT: customerAvailableAmount,
-        ADDRESS: { // Fixed: Parse string address into object structure
-          street: address || '',
-          city: '',
-          state: '',
-          zipCode: '',
-          country: 'Nigeria'
-        },
-        COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase(),
-        status: 'active',
-        openingDate: openedDate, // Use provided OPENED_DT or current date
-        initialAmount: firstPayment,
-        accountType: 'SAVINGS',
-        OPENED_DT: openedDate // Add OPENED_DT field
-      });
-
-      await thriftAccount.save({ session });
-
-      // Create transaction record for bank payment
-      const bankTransaction = new Transaction({
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID,
-        BU_ID: 1, // Default business unit ID for thrift
-        ACCT_NM: `${fullName} Thrift Account`,
-        AMOUNT: firstPayment,
-        TRANSACTION_TYPE: 'THRIFT_OPENING',
-        description: `Thrift account opening - First payment to bank`,
-        status: 'COMPLETED',
-        createdBy: 'SYSTEM', // Default creator for automated transactions
-        TRANSACTION_DATE: transactionDate, // Add transaction date
-        metadata: {
-          collectionType: COLLECTION_TYPE,
-          isFirstPayment: true,
-          amountToBank: firstPayment,
-          amountToCustomer: 0,
-          direction: 'DEBIT',
-          balanceAfter: customer.accountBalance - firstPayment,
-          reference: `THRIFT_OPEN_${ACCT_NO}_${Date.now()}`,
-          transactionDate: transactionDate, // Also store in metadata
-          openedDate: openedDate // Store opened date in metadata
+        t = await sequelize.transaction();
+        
+        const {
+          FIRST_NAME,
+          LASTNAME,
+          FULL_NAME,
+          initialAmount,
+          COLLECTION_TYPE,
+          address,
+          phone,
+          RELATIONSHIP_MANAGER,
+          TRANSACTION_DATE,
+          OPENED_DT,
+          city,
+          state,
+          zipCode
+        } = req.body;
+        
+        // ─── Validation ────────────────────────────────────────
+        if (!FIRST_NAME?.trim() || !LASTNAME?.trim()) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            error: 'FIRST_NAME and LASTNAME are required',
+          });
         }
-      });
-
-      await bankTransaction.save({ session });
-
-      // Update customer account balance (debit the first payment)
-      customer.accountBalance -= firstPayment;
-      await customer.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
-
-      logger.info(`Thrift account created successfully for customer ${CUST_ID}`, {
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID,
-        initialAmount,
-        COLLECTION_TYPE,
-        customerName: fullName,
-        RELATIONSHIP_MANAGER,
-        transactionDate,
-        openedDate
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Thrift account created successfully',
-        data: {
-          customer: {
-            CUST_ID,
-            CUST_NO,
-            FIRST_NAME,
-            LASTNAME,
-            FULL_NAME: fullName,
-            phone: customer.PHONE_NO,
-            accountBalance: customer.accountBalance,
-            accountType: customer.accountType || 'SAVINGS',
-            OPENED_DT: customer.OPENED_DT
-          },
-          thriftAccount: {
-            CUST_ID: thriftAccount.CUST_ID,
-            ACCT_NO: thriftAccount.ACCT_NO,
-            ACCT_ID: thriftAccount.ACCT_ID,
-            FIRST_NAME: thriftAccount.FIRST_NAME,
-            LASTNAME: thriftAccount.LASTNAME,
-            FULL_NAME: thriftAccount.FULL_NAME,
-            RELATIONSHIP_MANAGER: thriftAccount.RELATIONSHIP_MANAGER,
-            AMOUNT: thriftAccount.AMOUNT,
-            COLLECTION_TYPE: thriftAccount.COLLECTION_TYPE,
-            ADDRESS: thriftAccount.ADDRESS,
-            status: thriftAccount.status,
-            openingDate: thriftAccount.openingDate,
-            OPENED_DT: thriftAccount.OPENED_DT,
-            accountType: thriftAccount.accountType
-          },
-          transaction: {
-            firstPaymentToBank: firstPayment,
-            customerAvailableBalance: customerAvailableAmount,
-            customerCurrentBalance: customer.accountBalance,
-            TRANSACTION_DATE: transactionDate
+        
+        if (!initialAmount || Number(initialAmount) <= 0) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            error: 'initialAmount must be a positive number',
+          });
+        }
+        
+        const collectionType = COLLECTION_TYPE.toUpperCase().trim();
+        const validTypes = ['DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY'];
+        if (!validTypes.includes(collectionType)) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            error: `Invalid COLLECTION_TYPE. Allowed values: ${validTypes.join(', ')}`,
+          });
+        }
+        
+        const fullName = FULL_NAME?.trim() || `${FIRST_NAME.trim()} ${LASTNAME.trim()}`.trim();
+        const txDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
+        const openDate = OPENED_DT ? new Date(OPENED_DT) : new Date();
+        
+        // ─── Generate identifiers ───────────────────────────────
+        const { CUST_ID, CUST_NO } = await generateCustomerNumber();
+        const { ACCT_NO, ACCT_ID } = await generateAccountIdentifiersFromCounter('1');
+        
+        console.log(`📊 Generated identifiers: CUST_ID=${CUST_ID}, ACCT_NO=${ACCT_NO}`);
+        
+        // Generate transaction identifiers - CORRECT TYPES FOR YOUR MODEL
+        const timestamp = Date.now();
+        const randomNum = Math.floor(Math.random() * 10000);
+        
+        // Get the next transaction identifier (INTEGER)
+        const [lastTransaction] = await sequelize.query(
+          'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+          { type: sequelize.QueryTypes.SELECT, transaction: t }
+        );
+        
+        const nextTransactionId = (lastTransaction?.max_id || 0) + 1;
+        
+        // Generate identifiers with CORRECT TYPES:
+        const TRANSACTION_IDENTIFIER = nextTransactionId; // INTEGER
+        const EVENT_ID = nextTransactionId; // INTEGER (same as transaction identifier)
+        const TRAN_JOURNAL_ID = `JRN${timestamp}${randomNum}`; // STRING - maps to journal_id column
+        const REFERENCE = `THRIFT_${ACCT_NO}_${timestamp}`; // STRING
+        const TRANSACTION_ID = `TXN${nextTransactionId.toString().padStart(10, '0')}`; // STRING
+        
+        console.log('Generated transaction IDs:', {
+          TRANSACTION_IDENTIFIER,
+          EVENT_ID,
+          TRAN_JOURNAL_ID,
+          REFERENCE,
+          TRANSACTION_ID
+        });
+        
+        // ─── Check for conflicts ────────────────────────────────
+        const existingCustomer = await Customer.findOne({
+          where: { CUST_ID },
+          transaction: t,
+        });
+        
+        if (existingCustomer) {
+          await t.rollback();
+          return res.status(409).json({
+            success: false,
+            error: 'Generated CUST_ID already exists',
+          });
+        }
+        
+        const existingThrift = await Thrift.findOne({
+          where: { ACCT_NO },
+          transaction: t,
+        });
+        
+        if (existingThrift) {
+          await t.rollback();
+          return res.status(409).json({
+            success: false,
+            error: 'Generated ACCT_NO already exists',
+          });
+        }
+        
+        // ─── Prepare address object ─────────────────────────────
+        let addressObj = null;
+        if (address || city || state || zipCode) {
+          try {
+            addressObj = typeof address === 'string' ? JSON.parse(address) : address;
+            if (!addressObj || typeof addressObj !== 'object') {
+              addressObj = {};
+            }
+            // Add city, state, zipCode if provided
+            if (city) addressObj.city = city;
+            if (state) addressObj.state = state;
+            if (zipCode) addressObj.zipCode = zipCode;
+            if (!addressObj.country) addressObj.country = 'Nigeria';
+          } catch {
+            // If address is not JSON, create object from separate fields
+            addressObj = {
+              street: address || '',
+              city: city || '',
+              state: state || '',
+              zipCode: zipCode || '',
+              country: 'Nigeria'
+            };
           }
         }
-      });
-
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
+        
+        // ─── Create customer ────────────────────────────────────
+        console.log('Creating customer...');
+        const customer = await Customer.create({
+          CUST_ID,
+          CUST_NO,
+          FIRST_NAME,
+          LAST_NAME: LASTNAME,
+          CUST_NM: fullName,
+          PHONE_NO: phone || null,
+          HOME_ADDRESS: address || null,
+          REC_ST: 'Active',
+          OPENED_DT: openDate,
+          created_at: new Date(),
+          updated_at: new Date()
+        }, { transaction: t });
+        
+        if (!customer) {
+          await t.rollback();
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Failed to create customer' 
+          });
+        }
+        
+        console.log(`✅ Customer created: ${CUST_ID}`);
+        
+        // ─── Create thrift account ──────────────────────────────
+        console.log('Creating thrift account...');
+        const thrift = await Thrift.create({
+          CUST_ID,
+          ACCT_NO,
+          ACCT_ID,
+          FIRST_NAME,
+          LASTNAME,
+          FULL_NAME: fullName,
+          RELATIONSHIP_MANAGER: RELATIONSHIP_MANAGER || null,
+          AMOUNT: parseFloat(initialAmount),
+          ADDRESS: addressObj,
+          COLLECTION_TYPE: collectionType,
+          status: 'ACTIVE',
+          opening_date: openDate,
+          OPENED_DT: openDate,
+          TRANSACTION_DATE: txDate,
+          initial_amount: parseFloat(initialAmount),
+          account_type: 'THRIFT',
+          total_contributions: parseFloat(initialAmount),
+          total_withdrawals: 0,
+          notes: `Thrift account opened for ${fullName} with initial deposit of ${initialAmount}`,
+          created_at: new Date(),
+          updated_at: new Date()
+        }, { transaction: t });
+        
+        if (!thrift) {
+          await t.rollback();
+          return res.status(500).json({ 
+            success: false, 
+            error: 'Failed to create thrift account' 
+          });
+        }
+        
+        console.log(`✅ Thrift account created: ${ACCT_NO}`);
+        
+        // ─── Create opening transaction WITH CORRECT FIELD TYPES ─
+        console.log('Creating transaction record...');
+        
+        // Prepare transaction data with ALL required fields
+        const transactionData = {
+          // Required integer fields (mapped to INTEGER columns)
+          TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER, // INTEGER -> transaction_identifier
+          EVENT_ID: EVENT_ID, // INTEGER -> event_id
+          
+          // Required string fields
+          TRAN_JOURNAL_ID: TRAN_JOURNAL_ID, // STRING -> journal_id
+          REFERENCE: REFERENCE, // STRING -> reference
+          TRANSACTION_ID: TRANSACTION_ID, // STRING -> transaction_id
+          
+          // Other required fields
+          ACCT_NO: ACCT_NO,
+          ACCT_ID: ACCT_ID,
+          BU_ID: 1,
+          CUST_ID: CUST_ID,
+          ACCT_NM: `${fullName} Thrift Account`,
+          AMOUNT: parseFloat(initialAmount),
+          transactionDirection: 'DEBIT',
+          TRANSACTIONDATE: txDate,
+          TRANSACTION_TYPE: 'DEPOSIT',
+          description: `Thrift account opening – initial deposit for ${fullName}`,
+          status: 'COMPLETED',
+          createdBy: 'SYSTEM',
+          currency: 'NGN',
+          
+          metadata: {
+            direction: 'DEBIT',
+            amountToBank: parseFloat(initialAmount),
+            amountToCustomer: 0,
+            reference: REFERENCE,
+            customerName: fullName,
+            collectionType: collectionType,
+            relationshipManager: RELATIONSHIP_MANAGER,
+            transactionType: 'OPENING_DEPOSIT'
+          },
+          created_at: new Date(),
+          updated_at: new Date()
+        };
+        
+        console.log('Transaction data to create:', JSON.stringify(transactionData, null, 2));
+        
+        const transactionRecord = await Transaction.create(transactionData, { transaction: t });
+        
+        console.log(`✅ Transaction created: ${REFERENCE}`);
+        
+        // ─── Calculate next collection date ─────────────────────
+        let nextCollectionDate;
+        const today = new Date();
+        
+        switch (collectionType) {
+          case 'DAILY':
+            nextCollectionDate = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+            break;
+          case 'WEEKLY':
+            nextCollectionDate = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'MONTHLY':
+            nextCollectionDate = new Date(today.getFullYear(), today.getMonth() + 1, today.getDate());
+            break;
+          case 'QUARTERLY':
+            nextCollectionDate = new Date(today.getFullYear(), today.getMonth() + 3, today.getDate());
+            break;
+          default:
+            nextCollectionDate = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+        }
+        
+        // Update thrift account with next collection date
+        await Thrift.update(
+          { 
+            nextCollectionDate,
+            updated_at: new Date()
+          },
+          { 
+            where: { ACCT_NO },
+            transaction: t 
+          }
+        );
+        
+        // ─── Get final data for response ────────────────────────
+        
+        // Refresh customer data
+        const updatedCustomer = await Customer.findOne({
+          where: { CUST_ID },
+          transaction: t,
+          attributes: ['CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO', 'HOME_ADDRESS', 'REC_ST', 'OPENED_DT']
+        });
+        
+        // Refresh thrift account data
+        const updatedThrift = await Thrift.findOne({
+          where: { ACCT_NO },
+          transaction: t,
+          attributes: ['CUST_ID', 'ACCT_NO', 'ACCT_ID', 'FIRST_NAME', 'LASTNAME', 'FULL_NAME', 'RELATIONSHIP_MANAGER', 'AMOUNT', 'ADDRESS', 'COLLECTION_TYPE', 'status', 'OPENED_DT', 'TRANSACTION_DATE', 'initialAmount', 'accountType', 'totalContributions', 'totalWithdrawals', 'nextCollectionDate', 'notes', 'isActive']
+        });
+        
+        await t.commit();
+        console.log('✅ Transaction committed successfully');
+        
+        // ─── Helper function for safe date conversion ────────────
+        const safeToISOString = (dateValue) => {
+          if (!dateValue) return null;
+          try {
+            // If it's already a Date object
+            if (dateValue instanceof Date && !isNaN(dateValue)) {
+              return dateValue.toISOString();
+            }
+            // If it's a string or other value, try to convert it
+            const date = new Date(dateValue);
+            if (!isNaN(date.getTime())) {
+              return date.toISOString();
+            }
+            return null;
+          } catch (error) {
+            console.error('Error converting date:', error, 'Value:', dateValue);
+            return null;
+          }
+        };
+        
+        // ─── Log success ────────────────────────────────────────
+        logger.info('Thrift account created successfully', {
+          CUST_ID,
+          ACCT_NO,
+          ACCT_ID,
+          customerName: fullName,
+          initialAmount,
+          collectionType,
+          relationshipManager: RELATIONSHIP_MANAGER,
+          transactionDate: txDate,
+          nextCollectionDate,
+          transactionId: TRANSACTION_IDENTIFIER,
+          reference: REFERENCE
+        });
+        
+        // ─── Return success response ────────────────────────────
+        return res.status(201).json({
+          success: true,
+          message: 'Thrift account created successfully',
+          data: {
+            customer: {
+              CUST_ID: updatedCustomer.CUST_ID,
+              CUST_NO: updatedCustomer.CUST_NO,
+              firstName: updatedCustomer.FIRST_NAME,
+              lastName: updatedCustomer.LAST_NAME,
+              fullName: updatedCustomer.CUST_NM || `${updatedCustomer.FIRST_NAME} ${updatedCustomer.LAST_NAME}`,
+              phone: updatedCustomer.PHONE_NO || null,
+              address: updatedCustomer.HOME_ADDRESS || null,
+              status: updatedCustomer.REC_ST,
+              openedDate: safeToISOString(updatedCustomer.OPENED_DT)
+            },
+            thriftAccount: {
+              CUST_ID: updatedThrift.CUST_ID,
+              ACCT_NO: updatedThrift.ACCT_NO,
+              ACCT_ID: updatedThrift.ACCT_ID,
+              firstName: updatedThrift.FIRST_NAME,
+              lastName: updatedThrift.LASTNAME,
+              fullName: updatedThrift.FULL_NAME,
+              relationshipManager: updatedThrift.RELATIONSHIP_MANAGER || null,
+              amount: parseFloat(updatedThrift.AMOUNT || 0),
+              address: updatedThrift.ADDRESS,
+              collectionType: updatedThrift.COLLECTION_TYPE,
+              status: updatedThrift.status,
+              openingDate: safeToISOString(updatedThrift.OPENED_DT),
+              transactionDate: safeToISOString(updatedThrift.TRANSACTION_DATE),
+              initialAmount: parseFloat(updatedThrift.initialAmount || 0),
+              accountType: updatedThrift.accountType,
+              totalContributions: parseFloat(updatedThrift.totalContributions || 0),
+              totalWithdrawals: parseFloat(updatedThrift.totalWithdrawals || 0),
+              nextCollectionDate: safeToISOString(updatedThrift.nextCollectionDate),
+              isActive: updatedThrift.isActive,
+              notes: updatedThrift.notes
+            },
+            transaction: {
+              id: transactionRecord.id,
+              transactionIdentifier: transactionRecord.TRANSACTION_IDENTIFIER,
+              transactionId: transactionRecord.TRANSACTION_ID,
+              eventId: transactionRecord.EVENT_ID,
+              journalId: transactionRecord.TRAN_JOURNAL_ID,
+              reference: transactionRecord.REFERENCE,
+              amount: parseFloat(transactionRecord.AMOUNT || 0),
+              type: transactionRecord.TRANSACTION_TYPE,
+              status: transactionRecord.status,
+              date: safeToISOString(transactionRecord.TRANSACTIONDATE),
+              description: transactionRecord.description,
+              direction: transactionRecord.transactionDirection
+            },
+            summary: {
+              initialDeposit: parseFloat(initialAmount),
+              thriftAccountBalance: parseFloat(updatedThrift.AMOUNT || 0),
+              netTransfer: parseFloat(initialAmount),
+              nextCollectionDate: safeToISOString(nextCollectionDate),
+              collectionFrequency: collectionType,
+              transactionIdentifier: TRANSACTION_IDENTIFIER,
+              reference: REFERENCE
+            }
+          }
+        });
+        
+      } catch (err) {
+        if (t) {
+          try {
+            await t.rollback();
+            console.log('🔄 Transaction rolled back');
+          } catch (rollbackErr) {
+            console.error('Rollback failed:', rollbackErr.message);
+          }
+        }
+        
+        // Log detailed error
+        logger.error('createThriftAccount failed', { 
+          error: err.message, 
+          stack: err.stack,
+          body: req.body,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Check for specific errors
+        let errorMessage = 'Failed to create thrift account';
+        if (err.name === 'SequelizeUniqueConstraintError') {
+          errorMessage = 'Account number already exists';
+        } else if (err.name === 'SequelizeValidationError') {
+          errorMessage = 'Validation error: ' + err.errors.map(e => e.message).join(', ');
+        } else if (err.message.includes('foreign key constraint')) {
+          errorMessage = 'Invalid customer reference';
+        } else if (err.message.includes('ACCT_NO')) {
+          errorMessage = 'Database column issue. Please sync database schema.';
+        } else if (err.message.includes('toISOString')) {
+          errorMessage = 'Date conversion error';
+        }
+        
+        return res.status(500).json({ 
+          success: false, 
+          error: errorMessage,
+          details: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+      }
       
-      logger.error('Error creating thrift account:', error);
-      res.status(500).json({
+    } catch (initError) {
+      console.error('❌ Model initialization error:', initError);
+      return res.status(500).json({
         success: false,
-        message: 'Internal server error',
-        error: error.message
+        error: 'Database model initialization error',
+        details: initError.message
       });
     }
   }
 
- // Create thrift account for existing customer
-  static async createThriftAccountForExistingCustomer(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
 
+  // ─────────────────────────────────────────────
+  // Helper function to generate transaction identifiers with CORRECT TYPES
+  // ─────────────────────────────────────────────
+  static async generateTransactionIdentifiers(prefix = 'THRIFT', transaction) {
     try {
+      // Get the next transaction identifier
+      const [lastTransaction] = await sequelize.query(
+        'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+        { type: sequelize.QueryTypes.SELECT, transaction }
+      );
+      
+      const nextTransactionId = (lastTransaction?.max_id || 0) + 1;
+      const timestamp = Date.now();
+      const randomNum = Math.floor(Math.random() * 10000);
+      
+      return {
+        TRANSACTION_IDENTIFIER: nextTransactionId, // INTEGER
+        EVENT_ID: nextTransactionId, // INTEGER
+        TRAN_JOURNAL_ID: `JRN${timestamp}${randomNum}`, // STRING
+        REFERENCE: `${prefix}_${timestamp}_${randomNum}`, // STRING
+        TRANSACTION_ID: `TXN${nextTransactionId.toString().padStart(10, '0')}` // STRING
+      };
+    } catch (error) {
+      console.error('Error generating transaction IDs:', error);
+      // Fallback
+      const fallbackId = Math.floor(Math.random() * 1000000);
+      const timestamp = Date.now();
+      
+      return {
+        TRANSACTION_IDENTIFIER: fallbackId,
+        EVENT_ID: fallbackId,
+        TRAN_JOURNAL_ID: `JRN${timestamp}`,
+        REFERENCE: `${prefix}_${timestamp}`,
+        TRANSACTION_ID: `TXN${fallbackId}`
+      };
+    }
+  }
+
+  // Update other methods to use the async generator
+  static async createThriftAccountForExistingCustomer(req, res) {
+    let t;
+    
+    try {
+      console.log('🔄 Creating thrift account for existing customer...');
+      
+      t = await sequelize.transaction();
+      
       const {
         CUST_ID,
-        FULL_NAME: providedFullName, // Optional from body
+        FULL_NAME: providedFullName,
         initialAmount,
         COLLECTION_TYPE,
         address,
-        RELATIONSHIP_MANAGER, // Updated to match request body key (String, e.g., "PCO04")
-        TRANSACTION_DATE, // Add transaction date
-        OPENED_DT // Add opened date
+        RELATIONSHIP_MANAGER,
+        TRANSACTION_DATE,
+        OPENED_DT
       } = req.body;
 
       // Validate required fields
       if (!CUST_ID || !initialAmount || !COLLECTION_TYPE) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Missing required fields: CUST_ID, initialAmount, COLLECTION_TYPE'
@@ -308,9 +587,8 @@ class ThriftController {
       }
 
       // Validate initial amount
-      if (initialAmount <= 0) {
-        await session.abortTransaction();
-        session.endSession();
+      if (Number(initialAmount) <= 0) {
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Initial amount must be greater than 0'
@@ -321,12 +599,14 @@ class ThriftController {
       const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
       const openedDate = OPENED_DT ? new Date(OPENED_DT) : new Date();
 
-      // Validate relationship manager if provided (assuming User model has a 'code' field)
+      // Validate relationship manager
       if (RELATIONSHIP_MANAGER) {
-        const managerExists = await mongoose.model('User').exists({ code: RELATIONSHIP_MANAGER }).session(session);
+        const managerExists = await User.findOne({
+          where: { code: RELATIONSHIP_MANAGER },
+          transaction: t
+        });
         if (!managerExists) {
-          await session.abortTransaction();
-          session.endSession();
+          await t.rollback();
           return res.status(400).json({
             success: false,
             message: 'Invalid relationship manager code'
@@ -335,10 +615,13 @@ class ThriftController {
       }
 
       // Validate customer exists
-      const customer = await Customer.findOne({ CUST_ID }).session(session);
+      const customer = await Customer.findOne({
+        where: { CUST_ID },
+        transaction: t
+      });
+
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(404).json({
           success: false,
           message: 'Customer not found'
@@ -348,175 +631,223 @@ class ThriftController {
       // Compute FULL_NAME if not provided
       const fullName = providedFullName || `${customer.FIRST_NAME} ${customer.LAST_NAME}`.trim();
       if (!fullName) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Full name cannot be empty'
         });
       }
 
-      // Generate thrift account numbers using savings account pattern
-      let accountIdentifiers;
-      try {
-        accountIdentifiers = await generateAccountIdentifiersFromCounter('1');
-        logger.info('Generated account identifiers for existing customer:', accountIdentifiers);
-      } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-        logger.error('Error generating account identifiers:', error);
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to generate account identifiers',
-          error: error.message
-        });
-      }
+      // Generate thrift account numbers
+      const { ACCT_NO, ACCT_ID } = await generateAccountIdentifiersFromCounter('1');
+      
+      console.log(`📊 Generated account identifiers: ACCT_NO=${ACCT_NO}, ACCT_ID=${ACCT_ID}`);
 
-      const { ACCT_NO, ACCT_ID } = accountIdentifiers;
+      // Generate transaction identifiers WITH CORRECT TYPES
+      const { 
+        TRANSACTION_IDENTIFIER, 
+        EVENT_ID, 
+        TRAN_JOURNAL_ID, 
+        REFERENCE,
+        TRANSACTION_ID 
+      } = await ThriftController.generateTransactionIdentifiers('THRIFT_EXIST', t);
 
-      // Check if thrift account already exists for this customer
-      const existingAccount = await Thrift.findOne({ CUST_ID, COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase() }).session(session);
+      // Check if thrift account already exists
+      const existingAccount = await Thrift.findOne({
+        where: {
+          CUST_ID,
+          COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase()
+        },
+        transaction: t
+      });
+
       if (existingAccount) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: `Thrift account with ${COLLECTION_TYPE} collection type already exists for this customer`
         });
       }
 
-      // Check if customer has sufficient balance for initial amount
-      if (customer.accountBalance < initialAmount) {
-        await session.abortTransaction();
-        session.endSession();
+      // Check if customer has sufficient balance
+      if (customer.accountBalance < Number(initialAmount)) {
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Insufficient balance for initial thrift payment'
         });
       }
 
-      // First payment goes to bank
-      const firstPayment = initialAmount;
-      const customerAvailableAmount = 0;
-
       // Create thrift account
-      const thriftAccount = new Thrift({
+      const thriftAccount = await Thrift.create({
         CUST_ID,
         ACCT_NO,
         ACCT_ID,
         FIRST_NAME: customer.FIRST_NAME,
         LASTNAME: customer.LAST_NAME,
-        FULL_NAME: fullName, // Set computed/provided FULL_NAME
+        FULL_NAME: fullName,
         RELATIONSHIP_MANAGER: RELATIONSHIP_MANAGER || null,
-        AMOUNT: customerAvailableAmount,
-        ADDRESS: { // Fixed: Parse string address into object structure
+        AMOUNT: Number(initialAmount),
+        ADDRESS: address || customer.HOME_ADDRESS ? {
           street: address || customer.HOME_ADDRESS || '',
           city: '',
           state: '',
           zipCode: '',
           country: 'Nigeria'
-        },
+        } : null,
         COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase(),
-        status: 'active',
+        status: 'ACTIVE',
         openingDate: openedDate,
-        initialAmount: firstPayment,
-        accountType: 'SAVINGS',
-        OPENED_DT: openedDate // Add OPENED_DT field
-      });
+        OPENED_DT: openedDate,
+        TRANSACTION_DATE: transactionDate,
+        initialAmount: Number(initialAmount),
+        accountType: 'THRIFT',
+        totalContributions: Number(initialAmount),
+        notes: `Thrift account opened for existing customer ${fullName} with initial deposit of ${initialAmount}`,
+        created_at: new Date(),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      await thriftAccount.save({ session });
-
-      // Create transaction record for bank payment
-      const bankTransaction = new Transaction({
-        CUST_ID,
+      // Create transaction record WITH CORRECT TYPES
+      const transactionRecord = await Transaction.create({
+        // Required fields with correct types
+        TRANSACTION_IDENTIFIER, // INTEGER
+        EVENT_ID, // INTEGER
+        TRAN_JOURNAL_ID, // STRING
+        REFERENCE, // STRING
+        TRANSACTION_ID, // STRING
+        
+        // Other required fields
         ACCT_NO,
         ACCT_ID,
-        BU_ID: 1, // Default business unit ID for thrift
+        BU_ID: 1,
+        CUST_ID,
         ACCT_NM: `${fullName} Thrift Account`,
-        AMOUNT: firstPayment,
+        AMOUNT: Number(initialAmount),
+        transactionDirection: 'DEBIT',
+        TRANSACTIONDATE: transactionDate,
         TRANSACTION_TYPE: 'THRIFT_OPENING',
-        description: `Thrift account opening - First payment to bank`,
+        description: 'Thrift account opening - First payment to bank',
         status: 'COMPLETED',
-        createdBy: 'SYSTEM', // Default creator for automated transactions
-        TRANSACTION_DATE: transactionDate, // Add transaction date
+        createdBy: 'SYSTEM',
+        currency: 'NGN',
         metadata: {
           collectionType: COLLECTION_TYPE,
           isFirstPayment: true,
-          amountToBank: firstPayment,
+          amountToBank: Number(initialAmount),
           amountToCustomer: 0,
           direction: 'DEBIT',
-          balanceAfter: customer.accountBalance - firstPayment,
-          reference: `THRIFT_OPEN_${ACCT_NO}_${Date.now()}`,
-          transactionDate: transactionDate, // Also store in metadata
-          openedDate: openedDate // Store opened date in metadata
-        }
-      });
+          balanceAfter: customer.accountBalance - Number(initialAmount),
+          reference: REFERENCE,
+          transactionDate: transactionDate,
+          openedDate: openedDate
+        },
+        created_at: new Date(),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      await bankTransaction.save({ session });
+      // Update customer balance
+      await customer.update({
+        accountBalance: customer.accountBalance - Number(initialAmount),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      // Update customer account balance (debit the first payment)
-      customer.accountBalance -= firstPayment;
-      await customer.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
+      await t.commit();
 
       logger.info(`Thrift account created for existing customer ${CUST_ID}`, {
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID,
-        initialAmount,
-        COLLECTION_TYPE,
-        customerName: fullName,
-        RELATIONSHIP_MANAGER,
-        transactionDate,
-        openedDate
+        CUST_ID, ACCT_NO, ACCT_ID, initialAmount, COLLECTION_TYPE,
+        customerName: fullName, RELATIONSHIP_MANAGER, transactionDate, openedDate,
+        transactionId: TRANSACTION_IDENTIFIER, reference: REFERENCE
       });
 
-      res.status(201).json({
-        success: true,
-        message: 'Thrift account created successfully',
-        data: {
-          customer: {
-            CUST_ID: customer.CUST_ID,
-            CUST_NO: customer.CUST_NO,
-            FIRST_NAME: customer.FIRST_NAME,
-            LASTNAME: customer.LAST_NAME,
-            FULL_NAME: fullName,
-            phone: customer.PHONE_NO,
-            accountBalance: customer.accountBalance,
-            accountType: customer.accountType || 'SAVINGS',
-            OPENED_DT: customer.OPENED_DT
-          },
-          thriftAccount: {
-            CUST_ID: thriftAccount.CUST_ID,
-            ACCT_NO: thriftAccount.ACCT_NO,
-            ACCT_ID: thriftAccount.ACCT_ID,
-            FIRST_NAME: thriftAccount.FIRST_NAME,
-            LASTNAME: thriftAccount.LASTNAME,
-            FULL_NAME: thriftAccount.FULL_NAME,
-            RELATIONSHIP_MANAGER: thriftAccount.RELATIONSHIP_MANAGER,
-            AMOUNT: thriftAccount.AMOUNT,
-            COLLECTION_TYPE: thriftAccount.COLLECTION_TYPE,
-            ADDRESS: thriftAccount.ADDRESS,
-            status: thriftAccount.status,
-            openingDate: thriftAccount.openingDate,
-            OPENED_DT: thriftAccount.OPENED_DT,
-            accountType: thriftAccount.accountType
-          },
-          transaction: {
-            firstPaymentToBank: firstPayment,
-            customerAvailableBalance: customerAvailableAmount,
-            customerCurrentBalance: customer.accountBalance,
-            TRANSACTION_DATE: transactionDate
-          }
-        }
-      });
+    // ─── Return success response ────────────────────────────
+return res.status(201).json({
+  success: true,
+  message: 'Thrift account created successfully',
+  data: {
+    customer: {
+      CUST_ID: updatedCustomer.CUST_ID,
+      CUST_NO: updatedCustomer.CUST_NO,
+      firstName: updatedCustomer.FIRST_NAME,
+      lastName: updatedCustomer.LAST_NAME,
+      fullName: updatedCustomer.CUST_NM || `${updatedCustomer.FIRST_NAME} ${updatedCustomer.LAST_NAME}`,
+      phone: updatedCustomer.PHONE_NO || null,
+      address: updatedCustomer.HOME_ADDRESS || null,
+      status: updatedCustomer.REC_ST,
+      openedDate: updatedCustomer.OPENED_DT ? 
+        (typeof updatedCustomer.OPENED_DT.toISOString === 'function' 
+          ? updatedCustomer.OPENED_DT.toISOString() 
+          : new Date(updatedCustomer.OPENED_DT).toISOString()) 
+        : null
+    },
+    thriftAccount: {
+      CUST_ID: updatedThrift.CUST_ID,
+      ACCT_NO: updatedThrift.ACCT_NO,
+      ACCT_ID: updatedThrift.ACCT_ID,
+      firstName: updatedThrift.FIRST_NAME,
+      lastName: updatedThrift.LASTNAME,
+      fullName: updatedThrift.FULL_NAME,
+      relationshipManager: updatedThrift.RELATIONSHIP_MANAGER || null,
+      amount: parseFloat(updatedThrift.AMOUNT || 0),
+      address: updatedThrift.ADDRESS,
+      collectionType: updatedThrift.COLLECTION_TYPE,
+      status: updatedThrift.status,
+      openingDate: updatedThrift.OPENED_DT ? 
+        (typeof updatedThrift.OPENED_DT.toISOString === 'function' 
+          ? updatedThrift.OPENED_DT.toISOString() 
+          : new Date(updatedThrift.OPENED_DT).toISOString()) 
+        : null,
+      transactionDate: updatedThrift.TRANSACTION_DATE ? 
+        (typeof updatedThrift.TRANSACTION_DATE.toISOString === 'function' 
+          ? updatedThrift.TRANSACTION_DATE.toISOString() 
+          : new Date(updatedThrift.TRANSACTION_DATE).toISOString()) 
+        : null,
+      initialAmount: parseFloat(updatedThrift.initialAmount || 0),
+      accountType: updatedThrift.accountType,
+      totalContributions: parseFloat(updatedThrift.totalContributions || 0),
+      totalWithdrawals: parseFloat(updatedThrift.totalWithdrawals || 0),
+      nextCollectionDate: updatedThrift.nextCollectionDate ? 
+        (typeof updatedThrift.nextCollectionDate.toISOString === 'function' 
+          ? updatedThrift.nextCollectionDate.toISOString() 
+          : new Date(updatedThrift.nextCollectionDate).toISOString()) 
+        : null,
+      isActive: updatedThrift.isActive,
+      notes: updatedThrift.notes
+    },
+    transaction: {
+      id: transactionRecord.id,
+      transactionIdentifier: transactionRecord.TRANSACTION_IDENTIFIER,
+      transactionId: transactionRecord.TRANSACTION_ID,
+      eventId: transactionRecord.EVENT_ID,
+      journalId: transactionRecord.TRAN_JOURNAL_ID,
+      reference: transactionRecord.REFERENCE,
+      amount: parseFloat(transactionRecord.AMOUNT || 0),
+      type: transactionRecord.TRANSACTION_TYPE,
+      status: transactionRecord.status,
+      date: transactionRecord.TRANSACTIONDATE ? 
+        (typeof transactionRecord.TRANSACTIONDATE.toISOString === 'function' 
+          ? transactionRecord.TRANSACTIONDATE.toISOString() 
+          : new Date(transactionRecord.TRANSACTIONDATE).toISOString()) 
+        : null,
+      description: transactionRecord.description,
+      direction: transactionRecord.transactionDirection
+    },
+    summary: {
+      initialDeposit: parseFloat(initialAmount),
+      thriftAccountBalance: parseFloat(updatedThrift.AMOUNT || 0),
+      netTransfer: parseFloat(initialAmount),
+      nextCollectionDate: nextCollectionDate.toISOString(),
+      collectionFrequency: collectionType,
+      transactionIdentifier: TRANSACTION_IDENTIFIER,
+      reference: REFERENCE
+    }
+  }
+});
 
     } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      
+      if (t && !t.finished) {
+        await t.rollback();
+      }
       logger.error('Error creating thrift account for existing customer:', error);
       res.status(500).json({
         success: false,
@@ -526,58 +857,318 @@ class ThriftController {
     }
   }
 
- // Process daily thrift collection
-  static async processDailyCollection(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
 
+  // Create thrift account for existing customer
+  static async createThriftAccountForExistingCustomer(req, res) {
     try {
+      // Ensure models are initialized
+      await ensureModelsInitialized();
+      
+      let t;
+      
+      try {
+        t = await sequelize.transaction();
+        
+        const {
+          CUST_ID,
+          FULL_NAME: providedFullName,
+          initialAmount,
+          COLLECTION_TYPE,
+          address,
+          RELATIONSHIP_MANAGER,
+          TRANSACTION_DATE,
+          OPENED_DT
+        } = req.body;
+
+        // Validate required fields
+        if (!CUST_ID || !initialAmount || !COLLECTION_TYPE) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Missing required fields: CUST_ID, initialAmount, COLLECTION_TYPE'
+          });
+        }
+
+        // Validate initial amount
+        if (Number(initialAmount) <= 0) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Initial amount must be greater than 0'
+          });
+        }
+
+        // Set transaction date and opened date
+        const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
+        const openedDate = OPENED_DT ? new Date(OPENED_DT) : new Date();
+
+        // Validate relationship manager
+        if (RELATIONSHIP_MANAGER) {
+          const managerExists = await User.findOne({
+            where: { code: RELATIONSHIP_MANAGER },
+            transaction: t
+          });
+          if (!managerExists) {
+            await t.rollback();
+            return res.status(400).json({
+              success: false,
+              message: 'Invalid relationship manager code'
+            });
+          }
+        }
+
+        // Validate customer exists
+        const customer = await Customer.findOne({
+          where: { CUST_ID },
+          transaction: t
+        });
+
+        if (!customer) {
+          await t.rollback();
+          return res.status(404).json({
+            success: false,
+            message: 'Customer not found'
+          });
+        }
+
+        // Compute FULL_NAME if not provided
+        const fullName = providedFullName || `${customer.FIRST_NAME} ${customer.LAST_NAME}`.trim();
+        if (!fullName) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Full name cannot be empty'
+          });
+        }
+
+        // Generate thrift account numbers
+        const { ACCT_NO, ACCT_ID } = await generateAccountIdentifiersFromCounter('1');
+        
+        console.log(`📊 Generated account identifiers: ACCT_NO=${ACCT_NO}, ACCT_ID=${ACCT_ID}`);
+
+        // Check if thrift account already exists
+        const existingAccount = await Thrift.findOne({
+          where: {
+            CUST_ID,
+            COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase()
+          },
+          transaction: t
+        });
+
+        if (existingAccount) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `Thrift account with ${COLLECTION_TYPE} collection type already exists for this customer`
+          });
+        }
+
+        // Check if customer has sufficient balance
+        if (customer.accountBalance < Number(initialAmount)) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Insufficient balance for initial thrift payment'
+          });
+        }
+
+        // Create thrift account
+        const thriftAccount = await Thrift.create({
+          CUST_ID,
+          ACCT_NO,
+          ACCT_ID,
+          FIRST_NAME: customer.FIRST_NAME,
+          LASTNAME: customer.LAST_NAME,
+          FULL_NAME: fullName,
+          RELATIONSHIP_MANAGER: RELATIONSHIP_MANAGER || null,
+          AMOUNT: Number(initialAmount),
+          ADDRESS: address || customer.HOME_ADDRESS ? {
+            street: address || customer.HOME_ADDRESS || '',
+            city: '',
+            state: '',
+            zipCode: '',
+            country: 'Nigeria'
+          } : null,
+          COLLECTION_TYPE: COLLECTION_TYPE.toUpperCase(),
+          status: 'ACTIVE',
+          openingDate: openedDate,
+          OPENED_DT: openedDate,
+          TRANSACTION_DATE: transactionDate,
+          initialAmount: Number(initialAmount),
+          accountType: 'THRIFT',
+          totalContributions: Number(initialAmount),
+          notes: `Thrift account opened for existing customer ${fullName} with initial deposit of ${initialAmount}`,
+          created_at: new Date(),
+          updated_at: new Date()
+        }, { transaction: t });
+
+        // Create transaction record
+        const transactionRecord = await Transaction.create({
+          CUST_ID,
+          ACCT_NO,
+          ACCT_ID,
+          BU_ID: 1,
+          ACCT_NM: `${fullName} Thrift Account`,
+          AMOUNT: Number(initialAmount),
+          TRANSACTION_TYPE: 'THRIFT_OPENING',
+          description: 'Thrift account opening - First payment to bank',
+          status: 'COMPLETED',
+          createdBy: 'SYSTEM',
+          TRANSACTION_DATE: transactionDate,
+          metadata: {
+            collectionType: COLLECTION_TYPE,
+            isFirstPayment: true,
+            amountToBank: Number(initialAmount),
+            amountToCustomer: 0,
+            direction: 'DEBIT',
+            balanceAfter: customer.accountBalance - Number(initialAmount),
+            reference: `THRIFT_OPEN_${ACCT_NO}_${Date.now()}`,
+            transactionDate: transactionDate,
+            openedDate: openedDate
+          },
+          created_at: new Date(),
+          updated_at: new Date()
+        }, { transaction: t });
+
+        // Update customer balance
+        await customer.update({
+          accountBalance: customer.accountBalance - Number(initialAmount),
+          updated_at: new Date()
+        }, { transaction: t });
+
+        await t.commit();
+
+        logger.info(`Thrift account created for existing customer ${CUST_ID}`, {
+          CUST_ID, ACCT_NO, ACCT_ID, initialAmount, COLLECTION_TYPE,
+          customerName: fullName, RELATIONSHIP_MANAGER, transactionDate, openedDate
+        });
+
+        res.status(201).json({
+          success: true,
+          message: 'Thrift account created successfully for existing customer',
+          data: {
+            customer: {
+              CUST_ID: customer.CUST_ID,
+              CUST_NO: customer.CUST_NO,
+              FIRST_NAME: customer.FIRST_NAME,
+              LASTNAME: customer.LAST_NAME,
+              FULL_NAME: fullName,
+              phone: customer.PHONE_NO,
+              accountBalance: customer.accountBalance - Number(initialAmount),
+              accountType: customer.accountType,
+              OPENED_DT: customer.OPENED_DT
+            },
+            thriftAccount: {
+              CUST_ID: thriftAccount.CUST_ID,
+              ACCT_NO: thriftAccount.ACCT_NO,
+              ACCT_ID: thriftAccount.ACCT_ID,
+              FIRST_NAME: thriftAccount.FIRST_NAME,
+              LASTNAME: thriftAccount.LASTNAME,
+              FULL_NAME: thriftAccount.FULL_NAME,
+              RELATIONSHIP_MANAGER: thriftAccount.RELATIONSHIP_MANAGER,
+              AMOUNT: thriftAccount.AMOUNT,
+              COLLECTION_TYPE: thriftAccount.COLLECTION_TYPE,
+              ADDRESS: thriftAccount.ADDRESS,
+              status: thriftAccount.status,
+              openingDate: thriftAccount.openingDate,
+              OPENED_DT: thriftAccount.OPENED_DT,
+              accountType: thriftAccount.accountType,
+              TRANSACTION_DATE: thriftAccount.TRANSACTION_DATE
+            },
+            transaction: {
+              id: transactionRecord.id,
+              amount: Number(initialAmount),
+              customerAvailableBalance: thriftAccount.AMOUNT,
+              customerCurrentBalance: customer.accountBalance - Number(initialAmount),
+              TRANSACTION_DATE: transactionDate
+            }
+          }
+        });
+
+      } catch (error) {
+        if (t && !t.finished) {
+          await t.rollback();
+        }
+        logger.error('Error creating thrift account for existing customer:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Internal server error',
+          error: error.message
+        });
+      }
+
+    } catch (initError) {
+      console.error('Model initialization error:', initError);
+      return res.status(500).json({
+        success: false,
+        error: 'Database initialization error',
+        details: initError.message
+      });
+    }
+  }
+
+
+
+// Process daily thrift collection
+static async processDailyCollection(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    // Get models
+    const Customer = getCustomer();
+    const Thrift = getThrift();
+    const Transaction = getTransaction();
+    const sequelize = getSequelize();
+    
+    let t;
+    
+    try {
+      t = await sequelize.transaction();
+      
       const { 
         CUST_ID, 
         ACCT_NO, 
         amount, 
         FULL_NAME: providedFullName,
-        TRANSACTION_DATE // Add transaction date
+        TRANSACTION_DATE
       } = req.body;
 
       if (!CUST_ID || !ACCT_NO || !amount) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'CUST_ID, ACCT_NO, and amount are required'
         });
       }
 
-      if (amount <= 0) {
-        await session.abortTransaction();
-        session.endSession();
+      if (Number(amount) <= 0) {
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Amount must be greater than 0'
         });
       }
 
-      // Set transaction date
       const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
 
       // Find thrift account
-      const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO })
-        .session(session);
+      const thriftAccount = await Thrift.findOne({
+        where: { CUST_ID, ACCT_NO },
+        transaction: t
+      });
+
       if (!thriftAccount) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(404).json({
           success: false,
           message: 'Thrift account not found'
         });
       }
 
-      // Compute FULL_NAME if provided, else use from DB
+      // Compute FULL_NAME
       const fullName = providedFullName || thriftAccount.FULL_NAME;
       if (!fullName) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Full name is required for transaction'
@@ -585,23 +1176,16 @@ class ThriftController {
       }
 
       // Find customer
-      const customer = await Customer.findOne({ CUST_ID }).session(session);
+      const customer = await Customer.findOne({
+        where: { CUST_ID },
+        transaction: t
+      });
+
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(404).json({
           success: false,
           message: 'Customer not found'
-        });
-      }
-
-      // Check if customer has sufficient balance
-      if (customer.accountBalance < amount) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(400).json({
-          success: false,
-          message: 'Insufficient balance'
         });
       }
 
@@ -611,36 +1195,68 @@ class ThriftController {
       const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
 
       let amountToBank = 0;
-      let amountToCustomer = amount;
+      let amountToCustomer = Number(amount);
 
       // If it's the last day of month, entire amount goes to bank
       if (currentDay === lastDayOfMonth) {
-        amountToBank = amount;
+        amountToBank = Number(amount);
         amountToCustomer = 0;
       }
 
       // Update thrift account
-      thriftAccount.AMOUNT += amountToCustomer;
-      thriftAccount.lastCollectionDate = today;
-      await thriftAccount.save({ session });
+      await thriftAccount.update({
+        AMOUNT: parseFloat(thriftAccount.AMOUNT) + amountToCustomer,
+        lastCollectionDate: today,
+        totalContributions: parseFloat(thriftAccount.totalContributions) + Number(amount),
+        TRANSACTION_DATE: today,
+        updated_at: new Date()
+      }, { transaction: t });
 
-      // Update customer balance
-      customer.accountBalance -= amount;
-      await customer.save({ session });
+      // ─── Generate transaction identifiers (SIMILAR TO createThriftAccount) ───
+      const timestamp = Date.now();
+      const randomNum = Math.floor(Math.random() * 10000);
+      
+      // Get the next transaction identifier (INTEGER)
+      const [lastTransaction] = await sequelize.query(
+        'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+        { type: sequelize.QueryTypes.SELECT, transaction: t }
+      );
+      
+      const nextTransactionId = (lastTransaction?.max_id || 0) + 1;
+      
+      // Generate identifiers with CORRECT TYPES:
+      const TRANSACTION_IDENTIFIER = nextTransactionId; // INTEGER
+      const EVENT_ID = nextTransactionId; // INTEGER (same as transaction identifier)
+      const TRAN_JOURNAL_ID = `JRN${timestamp}${randomNum}`; // STRING - maps to journal_id column
+      const REFERENCE = `THRIFT_COLLECT_${ACCT_NO}_${timestamp}`; // STRING
+      const TRANSACTION_ID = `TXN${nextTransactionId.toString().padStart(10, '0')}`; // STRING
 
-      // Create transaction record
-      const transaction = new Transaction({
+      // Create transaction record with ALL required fields
+      await Transaction.create({
+        // Required integer fields
+        TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER,
+        EVENT_ID: EVENT_ID,
+        
+        // Required string fields
+        TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
+        REFERENCE: REFERENCE,
+        TRANSACTION_ID: TRANSACTION_ID,
+        
+        // Other required fields
         CUST_ID,
         ACCT_NO,
         ACCT_ID: thriftAccount.ACCT_ID,
-        BU_ID: 1, // Default business unit ID
+        BU_ID: 1,
         ACCT_NM: `${fullName} Thrift Account`,
-        AMOUNT: amount,
-        TRANSACTION_TYPE: 'THRIFT_COLLECTION',
+        AMOUNT: Number(amount),
+        transactionDirection: 'DEBIT',
+        TRANSACTIONDATE: transactionDate,
+        TRANSACTION_TYPE: 'DEPOSIT',
         description: `Thrift collection - ${amountToBank > 0 ? 'Last payment to bank' : 'Regular collection'}`,
         status: 'COMPLETED',
         createdBy: 'SYSTEM',
-        TRANSACTION_DATE: transactionDate, // Add transaction date
+        currency: 'NGN',
+        
         metadata: {
           amountToBank,
           amountToCustomer,
@@ -648,47 +1264,49 @@ class ThriftController {
           collectionType: 'DAILY',
           collectionDate: today,
           direction: 'DEBIT',
-          balanceAfter: customer.accountBalance,
-          reference: `THRIFT_COLLECT_${ACCT_NO}_${Date.now()}`,
-          transactionDate: transactionDate // Also store in metadata
-        }
-      });
+          reference: REFERENCE,
+          transactionDate: transactionDate
+        },
+        created_at: new Date(),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      await transaction.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
+      await t.commit();
 
       logger.info(`Daily collection processed for customer ${CUST_ID}`, {
-        CUST_ID,
-        ACCT_NO,
-        amount,
-        amountToBank,
+        CUST_ID, 
+        ACCT_NO, 
+        amount, 
+        amountToBank, 
         amountToCustomer,
-        fullName,
-        relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-        transactionDate
+        fullName, 
+        relationshipManager: thriftAccount.RELATIONSHIP_MANAGER, 
+        transactionDate,
+        transactionId: TRANSACTION_IDENTIFIER,
+        reference: REFERENCE
       });
 
       res.status(200).json({
         success: true,
         message: amountToBank > 0 ? 'Last payment processed successfully - Amount sent to bank' : 'Daily collection processed successfully',
         data: {
-          amountCollected: amount,
+          amountCollected: Number(amount),
           amountToBank,
           amountToCustomer,
-          customerAvailableBalance: thriftAccount.AMOUNT,
-          customerAccountBalance: customer.accountBalance,
+          customerAvailableBalance: parseFloat(thriftAccount.AMOUNT),
           isLastPayment: amountToBank > 0,
           relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-          TRANSACTION_DATE: transactionDate
+          TRANSACTION_DATE: transactionDate,
+          transactionIdentifier: TRANSACTION_IDENTIFIER,
+          reference: REFERENCE,
+          transactionId: TRANSACTION_ID
         }
       });
 
     } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      
+      if (t && !t.finished) {
+        await t.rollback();
+      }
       logger.error('Error processing daily collection:', error);
       res.status(500).json({
         success: false,
@@ -696,563 +1314,150 @@ class ThriftController {
         error: error.message
       });
     }
-  }
 
- // Process weekly collection
-static async processWeeklyCollection(req, res) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { 
-      CUST_ID, 
-      ACCT_NO, 
-      amount, 
-      FULL_NAME: providedFullName,
-      TRANSACTION_DATE // Add transaction date
-    } = req.body;
-
-    if (!CUST_ID || !ACCT_NO || !amount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'CUST_ID, ACCT_NO, and amount are required'
-      });
-    }
-
-    if (amount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Amount must be greater than 0'
-      });
-    }
-
-    // Set transaction date
-    const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
-
-    const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO })
-      .session(session);
-    if (!thriftAccount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Thrift account not found'
-      });
-    }
-
-    // Compute FULL_NAME if provided, else use from DB
-    const fullName = providedFullName || thriftAccount.FULL_NAME;
-    if (!fullName) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Full name is required for transaction'
-      });
-    }
-
-    const customer = await Customer.findOne({ CUST_ID }).session(session);
-    if (!customer) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Customer not found'
-      });
-    }
-
-    if (customer.accountBalance < amount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient balance'
-      });
-    }
-
-    // For weekly, check if it's the last week of month
-    const today = transactionDate;
-    const isLastWeekOfMonth = ThriftController.isLastWeekOfMonth(today);
-
-    let amountToBank = 0;
-    let amountToCustomer = amount;
-
-    if (isLastWeekOfMonth) {
-      amountToBank = amount;
-      amountToCustomer = 0;
-    }
-
-    // Update accounts
-    thriftAccount.AMOUNT += amountToCustomer;
-    thriftAccount.lastCollectionDate = today;
-    await thriftAccount.save({ session });
-
-    customer.accountBalance -= amount;
-    await customer.save({ session });
-
-    const transaction = new Transaction({
-      CUST_ID,
-      ACCT_NO,
-      ACCT_ID: thriftAccount.ACCT_ID,
-      BU_ID: 1,
-      ACCT_NM: `${fullName} Thrift Account`,
-      AMOUNT: amount,
-      TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-      description: `Thrift collection - ${amountToBank > 0 ? 'Last weekly payment to bank' : 'Weekly collection'}`,
-      status: 'COMPLETED',
-      createdBy: 'SYSTEM',
-      TRANSACTION_DATE: transactionDate, // Add transaction date
-      metadata: {
-        amountToBank,
-        amountToCustomer,
-        isLastPayment: amountToBank > 0,
-        collectionType: 'WEEKLY',
-        collectionDate: today,
-        direction: 'DEBIT',
-        balanceAfter: customer.accountBalance,
-        reference: `THRIFT_WEEKLY_${ACCT_NO}_${Date.now()}`,
-        transactionDate: transactionDate // Also store in metadata
-      }
-    });
-
-    await transaction.save({ session });
-
-    await session.commitTransaction();
-    session.endSession();
-
-    logger.info(`Weekly collection processed for customer ${CUST_ID}`, {
-      CUST_ID,
-      ACCT_NO,
-      amount,
-      amountToBank,
-      amountToCustomer,
-      fullName,
-      relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-      transactionDate
-    });
-
-    res.status(200).json({
-  success: true,
-  message: amountToBank > 0 ? 'Last weekly payment processed successfully' : 'Weekly collection processed successfully',
-  data: {
-    amountCollected: amount,
-    amountToBank,
-    amountToCustomer,
-    customerAvailableBalance: thriftAccount.AMOUNT,
-    customerAccountBalance: customer.accountBalance || 0, // Fallback to 0 if still null
-    relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-    TRANSACTION_DATE: transactionDate
-  }
-});
-
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    logger.error('Error processing weekly collection:', error);
-    res.status(500).json({
+  } catch (initError) {
+    console.error('Model initialization error:', initError);
+    return res.status(500).json({
       success: false,
-      message: 'Internal server error',
-      error: error.message
-      });
-    }
-  }
-
- // Process monthly collection
-static async processMonthlyCollection(req, res) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { 
-      CUST_ID, 
-      ACCT_NO, 
-      amount, 
-      FULL_NAME: providedFullName,
-      TRANSACTION_DATE // Add transaction date
-    } = req.body;
-
-    if (!CUST_ID || !ACCT_NO || !amount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'CUST_ID, ACCT_NO, and amount are required'
-      });
-    }
-
-    if (amount <= 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Amount must be greater than 0'
-      });
-    }
-
-    // Set transaction date
-    const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
-
-    // Find thrift account
-    const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO })
-      .session(session);
-    if (!thriftAccount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Thrift account not found'
-      });
-    }
-
-    // Compute FULL_NAME if provided, else use from DB
-    const fullName = providedFullName || thriftAccount.FULL_NAME;
-    if (!fullName) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Full name is required for transaction'
-      });
-    }
-
-    // Validate collection type
-    if (thriftAccount.COLLECTION_TYPE !== 'MONTHLY') {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'This account is not configured for monthly collections'
-      });
-    }
-
-    // Find customer
-    const customer = await Customer.findOne({ CUST_ID }).session(session);
-    if (!customer) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Customer not found'
-      });
-    }
-
-    // Check if customer has sufficient balance
-    if (customer.accountBalance < amount) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient balance'
-      });
-    }
-
-    // Get current date info for monthly specific logic
-    const today = transactionDate;
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
-    
-    // Check if this is the first monthly payment
-    const isFirstPayment = await ThriftController.isFirstMonthlyPayment(thriftAccount.ACCT_NO);
-    
-    // Check if this is the last payment of the quarter
-    const isQuarterEnd = ThriftController.isQuarterEnd(today);
-    
-    // Check if this is the last payment of the year
-    const isYearEnd = ThriftController.isYearEnd(today);
-
-    let amountToBank = 0;
-    let amountToCustomer = amount;
-    let description = 'Monthly thrift collection';
-
-    // Business rules for monthly collections
-    if (isFirstPayment) {
-      amountToBank = amount;
-      amountToCustomer = 0;
-      description = 'First monthly payment to bank';
-    } else if (isYearEnd) {
-      amountToBank = amount;
-      amountToCustomer = 0;
-      description = 'Annual payment to bank';
-    } else if (isQuarterEnd) {
-      amountToBank = amount;
-      amountToCustomer = 0;
-      description = 'Quarterly payment to bank';
-    }
-
-    // Check if customer has already made payment for this month
-    const existingPayment = await Transaction.findOne({
-      CUST_ID,
-      ACCT_NO,
-      TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-      'metadata.collectionType': 'MONTHLY',
-      'metadata.paymentMonth': currentMonth,
-      'metadata.paymentYear': currentYear,
-      status: 'COMPLETED'
-    }).session(session);
-
-    if (existingPayment && !isFirstPayment) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Monthly payment already processed for this month'
-      });
-    }
-
-    // Update thrift account
-    thriftAccount.AMOUNT += amountToCustomer;
-    thriftAccount.lastCollectionDate = today;
-    await thriftAccount.save({ session });
-
-    // Update customer balance
-    customer.accountBalance -= amount;
-    await customer.save({ session });
-
-    // Create transaction record
-    const transaction = new Transaction({
-      CUST_ID,
-      ACCT_NO,
-      ACCT_ID: thriftAccount.ACCT_ID,
-      BU_ID: 1,
-      ACCT_NM: `${fullName} Thrift Account`,
-      AMOUNT: amount,
-      TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-      description: description,
-      status: 'COMPLETED',
-      createdBy: 'SYSTEM',
-      TRANSACTION_DATE: transactionDate, // Add transaction date
-      metadata: {
-        amountToBank,
-        amountToCustomer,
-        isFirstPayment,
-        isQuarterEnd,
-        isYearEnd,
-        collectionType: 'MONTHLY',
-        paymentMonth: currentMonth,
-        paymentYear: currentYear,
-        quarter: ThriftController.getQuarter(today),
-        collectionDate: today,
-        direction: 'DEBIT',
-        balanceAfter: customer.accountBalance,
-        reference: `THRIFT_MONTHLY_${ACCT_NO}_${Date.now()}`,
-        transactionDate: transactionDate // Also store in metadata
-      }
-    });
-
-    await transaction.save({ session });
-
-    // If this is a bank payment, create a separate bank transaction record
-    if (amountToBank > 0) {
-      const bankTransaction = new Transaction({
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID: thriftAccount.ACCT_ID,
-        BU_ID: 1,
-        ACCT_NM: `${fullName} Thrift Account`,
-        AMOUNT: amountToBank,
-        TRANSACTION_TYPE: 'BANK_PAYMENT',
-        description: `${description} - Bank transfer`,
-        status: 'COMPLETED',
-        createdBy: 'SYSTEM',
-        TRANSACTION_DATE: transactionDate, // Add transaction date
-        metadata: {
-          paymentType: ThriftController.getBankPaymentType(isFirstPayment, isQuarterEnd, isYearEnd),
-          thriftAccountNo: ACCT_NO,
-          direction: 'DEBIT',
-          balanceAfter: customer.accountBalance,
-          reference: `BANK_PAYMENT_${ACCT_NO}_${Date.now()}`,
-          transactionDate: transactionDate // Also store in metadata
-        }
-      });
-      await bankTransaction.save({ session });
-    }
-
-    await session.commitTransaction();
-    session.endSession();
-
-    // Prepare response message based on payment type
-    let message = 'Monthly collection processed successfully';
-    if (isFirstPayment) {
-      message = 'First monthly payment processed successfully - Amount sent to bank';
-    } else if (isYearEnd) {
-      message = 'Annual payment processed successfully - Amount sent to bank';
-    } else if (isQuarterEnd) {
-      message = 'Quarterly payment processed successfully - Amount sent to bank';
-    }
-
-    logger.info(`Monthly collection processed for customer ${CUST_ID}`, {
-      CUST_ID,
-      ACCT_NO,
-      amount,
-      amountToBank,
-      amountToCustomer,
-      fullName,
-      isFirstPayment,
-      isQuarterEnd,
-      isYearEnd,
-      relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-      transactionDate
-    });
-
-    res.status(200).json({
-      success: true,
-      message: message,
-      data: {
-        amountCollected: amount,
-        amountToBank,
-        amountToCustomer,
-        customerAvailableBalance: thriftAccount.AMOUNT,
-         customerAccountBalance: customer.accountBalance || 0, // Fallback to 0 if still null
-        paymentType: ThriftController.getBankPaymentType(isFirstPayment, isQuarterEnd, isYearEnd),
-        nextPaymentDate: ThriftController.getNextMonthlyPaymentDate(today),
-        isFirstPayment,
-        isQuarterEnd,
-        isYearEnd,
-        relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-        TRANSACTION_DATE: transactionDate
-      }
-    });
-
-  } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-    
-    logger.error('Error processing monthly collection:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
+      error: 'Database initialization error',
+      details: initError.message
     });
   }
 }
 
 
- // Process withdrawal from thrift account
+  // Process withdrawal from thrift account
   static async processWithdrawal(req, res) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+    let t;
+    
     try {
+      console.log('🔄 Processing withdrawal...');
+      
+      t = await sequelize.transaction();
+      
       const { 
         CUST_ID, 
         ACCT_NO, 
         amount, 
         FULL_NAME: providedFullName,
-        TRANSACTION_DATE // Add transaction date
+        TRANSACTION_DATE
       } = req.body;
 
       if (!CUST_ID || !ACCT_NO || !amount) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'CUST_ID, ACCT_NO, and amount are required'
         });
       }
 
-      if (amount <= 0) {
-        await session.abortTransaction();
-        session.endSession();
+      if (Number(amount) <= 0) {
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Amount must be greater than 0'
         });
       }
 
-      // Set transaction date
       const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
 
-      const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO })
-        .session(session);
+      // Find thrift account
+      const thriftAccount = await Thrift.findOne({
+        where: { CUST_ID, ACCT_NO },
+        transaction: t
+      });
+
       if (!thriftAccount) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(404).json({
           success: false,
           message: 'Thrift account not found'
         });
       }
 
-      // Compute FULL_NAME if provided, else use from DB
+      // Compute FULL_NAME
       const fullName = providedFullName || thriftAccount.FULL_NAME;
       if (!fullName) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Full name is required for transaction'
         });
       }
 
-      const customer = await Customer.findOne({ CUST_ID }).session(session);
+      // Find customer
+      const customer = await Customer.findOne({
+        where: { CUST_ID },
+        transaction: t
+      });
+
       if (!customer) {
-        await session.abortTransaction();
-        session.endSession();
+        await t.rollback();
         return res.status(404).json({
           success: false,
           message: 'Customer not found'
         });
       }
 
-      if (thriftAccount.AMOUNT < amount) {
-        await session.abortTransaction();
-        session.endSession();
+      // Check if thrift account has sufficient balance
+      if (thriftAccount.AMOUNT < Number(amount)) {
+        await t.rollback();
         return res.status(400).json({
           success: false,
           message: 'Insufficient thrift balance for withdrawal'
         });
       }
 
-      thriftAccount.AMOUNT -= amount;
-      await thriftAccount.save({ session });
+      // Update thrift account
+      await thriftAccount.update({
+        AMOUNT: thriftAccount.AMOUNT - Number(amount),
+        totalWithdrawals: thriftAccount.totalWithdrawals + Number(amount),
+        TRANSACTION_DATE: transactionDate,
+        updated_at: new Date()
+      }, { transaction: t });
 
-      customer.accountBalance += amount;
-      await customer.save({ session });
+      // Update customer balance
+      await customer.update({
+        accountBalance: customer.accountBalance + Number(amount),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      const transaction = new Transaction({
+      // Create transaction record
+      await Transaction.create({
         CUST_ID,
         ACCT_NO,
         ACCT_ID: thriftAccount.ACCT_ID,
         BU_ID: 1,
         ACCT_NM: `${fullName} Thrift Account`,
-        AMOUNT: amount,
+        AMOUNT: Number(amount),
         TRANSACTION_TYPE: 'THRIFT_WITHDRAWAL',
         description: 'Withdrawal from thrift account',
         status: 'COMPLETED',
         createdBy: 'SYSTEM',
-        TRANSACTION_DATE: transactionDate, // Add transaction date
+        TRANSACTION_DATE: transactionDate,
         metadata: {
           direction: 'CREDIT',
-          balanceAfter: customer.accountBalance,
+          balanceAfter: customer.accountBalance + Number(amount),
           reference: `THRIFT_WITHDRAW_${ACCT_NO}_${Date.now()}`,
-          transactionDate: transactionDate // Also store in metadata
-        }
-      });
+          transactionDate: transactionDate
+        },
+        created_at: new Date(),
+        updated_at: new Date()
+      }, { transaction: t });
 
-      await transaction.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
+      await t.commit();
 
       logger.info(`Withdrawal processed for customer ${CUST_ID}`, {
-        CUST_ID,
-        ACCT_NO,
-        amount,
+        CUST_ID, ACCT_NO, amount,
         remainingBalance: thriftAccount.AMOUNT,
-        fullName,
-        relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
-        transactionDate
+        fullName, relationshipManager: thriftAccount.RELATIONSHIP_MANAGER, transactionDate
       });
 
       res.status(200).json({
         success: true,
         message: 'Withdrawal processed successfully',
         data: {
-          amountWithdrawn: amount,
+          amountWithdrawn: Number(amount),
           remainingThriftBalance: thriftAccount.AMOUNT,
           customerAccountBalance: customer.accountBalance,
           relationshipManager: thriftAccount.RELATIONSHIP_MANAGER,
@@ -1261,8 +1466,9 @@ static async processMonthlyCollection(req, res) {
       });
 
     } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
+      if (t && !t.finished) {
+        await t.rollback();
+      }
       logger.error('Error processing withdrawal:', error);
       res.status(500).json({
         success: false,
@@ -1275,9 +1481,14 @@ static async processMonthlyCollection(req, res) {
   // Get thrift account summary
   static async getAccountSummary(req, res) {
     try {
+      console.log('🔄 Getting account summary...');
+      
       const { CUST_ID, ACCT_NO } = req.params;
 
-      const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO });
+      const thriftAccount = await Thrift.findOne({
+        where: { CUST_ID, ACCT_NO }
+      });
+
       if (!thriftAccount) {
         return res.status(404).json({
           success: false,
@@ -1285,7 +1496,10 @@ static async processMonthlyCollection(req, res) {
         });
       }
 
-      const customer = await Customer.findOne({ CUST_ID });
+      const customer = await Customer.findOne({
+        where: { CUST_ID }
+      });
+
       if (!customer) {
         return res.status(404).json({
           success: false,
@@ -1311,7 +1525,10 @@ static async processMonthlyCollection(req, res) {
           status: thriftAccount.status,
           openingDate: thriftAccount.openingDate,
           lastCollectionDate: thriftAccount.lastCollectionDate,
-          accountType: thriftAccount.accountType
+          accountType: thriftAccount.accountType,
+          totalContributions: thriftAccount.totalContributions,
+          totalWithdrawals: thriftAccount.totalWithdrawals,
+          nextCollectionDate: thriftAccount.nextCollectionDate
         },
         customerInfo: {
           CUST_ID: customer.CUST_ID,
@@ -1325,7 +1542,14 @@ static async processMonthlyCollection(req, res) {
         },
         nextBankPaymentDate: lastDayOfMonth,
         availableForWithdrawal: thriftAccount.AMOUNT,
-        totalContributions: thriftAccount.AMOUNT
+        totalContributions: thriftAccount.totalContributions,
+        netContribution: thriftAccount.totalContributions - thriftAccount.totalWithdrawals,
+        collectionStats: {
+          daily: thriftAccount.COLLECTION_TYPE === 'DAILY',
+          weekly: thriftAccount.COLLECTION_TYPE === 'WEEKLY',
+          monthly: thriftAccount.COLLECTION_TYPE === 'MONTHLY',
+          quarterly: thriftAccount.COLLECTION_TYPE === 'QUARTERLY'
+        }
       };
 
       res.status(200).json({
@@ -1346,9 +1570,14 @@ static async processMonthlyCollection(req, res) {
   // Get all thrift accounts for a customer
   static async getCustomerThriftAccounts(req, res) {
     try {
+      console.log('🔄 Getting customer thrift accounts...');
+      
       const { CUST_ID } = req.params;
 
-      const customer = await Customer.findOne({ CUST_ID });
+      const customer = await Customer.findOne({
+        where: { CUST_ID }
+      });
+
       if (!customer) {
         return res.status(404).json({
           success: false,
@@ -1356,7 +1585,10 @@ static async processMonthlyCollection(req, res) {
         });
       }
 
-      const thriftAccounts = await Thrift.find({ CUST_ID });
+      const thriftAccounts = await Thrift.findAll({
+        where: { CUST_ID },
+        order: [['OPENED_DT', 'DESC']]
+      });
 
       res.status(200).json({
         success: true,
@@ -1383,8 +1615,17 @@ static async processMonthlyCollection(req, res) {
             status: account.status,
             openingDate: account.openingDate,
             lastCollectionDate: account.lastCollectionDate,
-            accountType: account.accountType
-          }))
+            accountType: account.accountType,
+            TRANSACTION_DATE: account.TRANSACTION_DATE,
+            nextCollectionDate: account.nextCollectionDate,
+            totalContributions: account.totalContributions,
+            totalWithdrawals: account.totalWithdrawals
+          })),
+          summary: {
+            totalAccounts: thriftAccounts.length,
+            totalBalance: thriftAccounts.reduce((sum, acc) => sum + parseFloat(acc.AMOUNT || 0), 0),
+            activeAccounts: thriftAccounts.filter(acc => acc.status === 'ACTIVE').length
+          }
         }
       });
 
@@ -1401,19 +1642,21 @@ static async processMonthlyCollection(req, res) {
   // Get all thrift accounts (Admin)
   static async getAllThriftAccounts(req, res) {
     try {
+      console.log('🔄 Getting all thrift accounts...');
+      
       const { page = 1, limit = 10, status, relationshipManagerId } = req.query;
-      const skip = (page - 1) * limit;
+      const offset = (page - 1) * limit;
 
-      let query = {};
-      if (status) query.status = status;
-      if (relationshipManagerId) query.RELATIONSHIP_MANAGER = relationshipManagerId;
+      const where = {};
+      if (status) where.status = status;
+      if (relationshipManagerId) where.RELATIONSHIP_MANAGER = relationshipManagerId;
 
-      const thriftAccounts = await Thrift.find(query)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ createdAt: -1 });
-
-      const total = await Thrift.countDocuments(query);
+      const { count, rows: thriftAccounts } = await Thrift.findAndCountAll({
+        where,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        order: [['created_at', 'DESC']]
+      });
 
       res.status(200).json({
         success: true,
@@ -1432,13 +1675,23 @@ static async processMonthlyCollection(req, res) {
             status: account.status,
             openingDate: account.openingDate,
             lastCollectionDate: account.lastCollectionDate,
-            accountType: account.accountType
+            accountType: account.accountType,
+            TRANSACTION_DATE: account.TRANSACTION_DATE,
+            nextCollectionDate: account.nextCollectionDate,
+            totalContributions: account.totalContributions,
+            totalWithdrawals: account.totalWithdrawals,
+            created_at: account.created_at
           })),
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total,
-            pages: Math.ceil(total / limit)
+            total: count,
+            pages: Math.ceil(count / limit)
+          },
+          summary: {
+            totalAccounts: count,
+            totalBalance: thriftAccounts.reduce((sum, acc) => sum + parseFloat(acc.AMOUNT || 0), 0),
+            activeAccounts: thriftAccounts.filter(acc => acc.status === 'ACTIVE').length
           }
         }
       });
@@ -1453,112 +1706,14 @@ static async processMonthlyCollection(req, res) {
     }
   }
 
-  // Get monthly collection summary
-  static async getMonthlyCollectionSummary(req, res) {
-    try {
-      const { CUST_ID, ACCT_NO, year, month } = req.params;
-
-      const thriftAccount = await Thrift.findOne({ CUST_ID, ACCT_NO });
-      if (!thriftAccount) {
-        return res.status(404).json({
-          success: false,
-          message: 'Thrift account not found'
-        });
-      }
-
-      // Get all monthly transactions for the specified period
-      const query = {
-        CUST_ID,
-        ACCT_NO,
-        TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-        'metadata.collectionType': 'MONTHLY',
-        status: 'COMPLETED'
-      };
-
-      if (year) {
-        query['metadata.paymentYear'] = parseInt(year);
-      }
-      if (month) {
-        query['metadata.paymentMonth'] = parseInt(month);
-      }
-
-      const monthlyTransactions = await Transaction.find(query)
-        .sort({ createdAt: 1 });
-
-      // Calculate statistics
-      const totalContributions = monthlyTransactions.reduce((sum, transaction) => 
-        sum + transaction.AMOUNT, 0);
-      
-      const bankPayments = monthlyTransactions.filter(t => 
-        t.metadata.amountToBank > 0);
-      
-      const totalBankPayments = bankPayments.reduce((sum, transaction) => 
-        sum + transaction.metadata.amountToBank, 0);
-
-      const customerPayments = monthlyTransactions.filter(t => 
-        t.metadata.amountToCustomer > 0);
-      
-      const totalCustomerPayments = customerPayments.reduce((sum, transaction) => 
-        sum + transaction.metadata.amountToCustomer, 0);
-
-      const summary = {
-        accountInfo: {
-          CUST_ID: thriftAccount.CUST_ID,
-          ACCT_NO: thriftAccount.ACCT_NO,
-          ACCT_ID: thriftAccount.ACCT_ID,
-          FULL_NAME: thriftAccount.FULL_NAME,
-          RELATIONSHIP_MANAGER: thriftAccount.RELATIONSHIP_MANAGER,
-          COLLECTION_TYPE: thriftAccount.COLLECTION_TYPE,
-          currentBalance: thriftAccount.AMOUNT,
-          accountType: thriftAccount.accountType
-        },
-        collectionSummary: {
-          totalContributions,
-          totalBankPayments,
-          totalCustomerPayments,
-          numberOfPayments: monthlyTransactions.length,
-          numberOfBankPayments: bankPayments.length,
-          bankPaymentTypes: bankPayments.map(payment => ({
-            date: payment.createdAt,
-            type: payment.metadata.paymentType,
-            amount: payment.metadata.amountToBank
-          })),
-          paymentHistory: monthlyTransactions.map(transaction => ({
-            date: transaction.createdAt,
-            amount: transaction.AMOUNT,
-            amountToBank: transaction.metadata.amountToBank,
-            amountToCustomer: transaction.metadata.amountToCustomer,
-            type: transaction.metadata.paymentType || 'REGULAR_PAYMENT'
-          }))
-        },
-        nextScheduledPayment: {
-          date: this.getNextMonthlyPaymentDate(new Date()),
-          expectedAmount: thriftAccount.COLLECTION_TYPE === 'MONTHLY' ? 
-            await this.calculateExpectedMonthlyAmount(thriftAccount.ACCT_NO) : 0
-        }
-      };
-
-      res.status(200).json({
-        success: true,
-        data: summary
-      });
-
-    } catch (error) {
-      logger.error('Error getting monthly collection summary:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error',
-        error: error.message
-      });
-    }
-  }
-
   // Get transaction history for a thrift account
   static async getTransactionHistory(req, res) {
     try {
+      console.log('🔄 Getting transaction history...');
+      
       const { CUST_ID, ACCT_NO } = req.params;
       const { page = 1, limit = 10, fromDate, toDate, type } = req.query;
-      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const offset = (page - 1) * limit;
 
       if (!CUST_ID && !ACCT_NO) {
         return res.status(400).json({
@@ -1567,38 +1722,39 @@ static async processMonthlyCollection(req, res) {
         });
       }
 
-      let query = { };
-      if (CUST_ID) query.CUST_ID = CUST_ID;
-      if (ACCT_NO) query.ACCT_NO = ACCT_NO;
+      const where = {};
+      if (CUST_ID) where.CUST_ID = CUST_ID;
+      if (ACCT_NO) where.ACCT_NO = ACCT_NO;
+      if (type) where.TRANSACTION_TYPE = type;
 
-      // Filter by transaction type if provided
-      if (type) {
-        query.TRANSACTION_TYPE = type;
-      }
-
-      // Filter by date range if provided
       if (fromDate) {
-        query.createdAt = { $gte: new Date(fromDate) };
+        where.TRANSACTION_DATE = { [Op.gte]: new Date(fromDate) };
       }
       if (toDate) {
-        if (!query.createdAt) query.createdAt = {};
-        query.createdAt.$lte = new Date(toDate);
+        where.TRANSACTION_DATE = where.TRANSACTION_DATE || {};
+        where.TRANSACTION_DATE[Op.lte] = new Date(toDate);
       }
 
-      const transactions = await Transaction.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .select('-__v'); // Exclude version key
+      const { count, rows: transactions } = await Transaction.findAndCountAll({
+        where,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        order: [['TRANSACTION_DATE', 'DESC']]
+      });
 
-      const total = await Transaction.countDocuments(query);
-
-      // Enrich transactions with account details if needed
       const enrichedTransactions = transactions.map(txn => ({
-        ...txn.toObject(),
-        // Add any additional computed fields if needed, e.g., formatted date
-        formattedDate: txn.createdAt.toLocaleDateString(),
-        formattedAmount: parseFloat(txn.AMOUNT).toLocaleString()
+        id: txn.id,
+        CUST_ID: txn.CUST_ID,
+        ACCT_NO: txn.ACCT_NO,
+        ACCT_ID: txn.ACCT_ID,
+        TRANSACTION_TYPE: txn.TRANSACTION_TYPE,
+        AMOUNT: parseFloat(txn.AMOUNT || 0),
+        description: txn.description,
+        status: txn.status,
+        TRANSACTION_DATE: txn.TRANSACTION_DATE,
+        formattedDate: new Date(txn.TRANSACTION_DATE).toLocaleDateString(),
+        formattedAmount: parseFloat(txn.AMOUNT || 0).toLocaleString(),
+        metadata: txn.metadata
       }));
 
       res.status(200).json({
@@ -1608,13 +1764,17 @@ static async processMonthlyCollection(req, res) {
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total,
-            pages: Math.ceil(total / parseInt(limit))
+            total: count,
+            pages: Math.ceil(count / limit)
           },
           filters: {
             fromDate,
             toDate,
             type
+          },
+          summary: {
+            totalTransactions: count,
+            totalAmount: transactions.reduce((sum, txn) => sum + parseFloat(txn.AMOUNT || 0), 0)
           }
         }
       });
@@ -1629,44 +1789,434 @@ static async processMonthlyCollection(req, res) {
     }
   }
 
-  // Helper method to check if it's the last week of month
+  // ─────────────────────────────────────────────
+//  Search customers by name
+// ─────────────────────────────────────────────
+static async searchCustomersByName(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const Customer = getCustomer();
+    const Thrift = getThrift();
+    
+    const { searchTerm, page = 1, limit = 20 } = req.query;
+    
+    if (!searchTerm || searchTerm.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Search term is required'
+      });
+    }
+    
+    const searchQuery = searchTerm.trim();
+    const offset = (page - 1) * limit;
+    
+    // Search in multiple fields: FIRST_NAME, LAST_NAME, CUST_NM (full name)
+    const where = {
+      [Op.or]: [
+        { FIRST_NAME: { [Op.like]: `%${searchQuery}%` } },
+        { LAST_NAME: { [Op.like]: `%${searchQuery}%` } },
+        { CUST_NM: { [Op.like]: `%${searchQuery}%` } }
+      ]
+    };
+    
+    const { count, rows: customers } = await Customer.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['FIRST_NAME', 'ASC'], ['LAST_NAME', 'ASC']],
+      attributes: [
+        'CUST_ID', 
+        'CUST_NO', 
+        'FIRST_NAME', 
+        'LAST_NAME', 
+        'CUST_NM', 
+        'PHONE_NO', 
+        'HOME_ADDRESS',
+        'REC_ST',
+        'OPENED_DT',
+        'created_at',
+        'updated_at'
+      ]
+    });
+    
+    // Get thrift accounts for each customer
+    const customersWithThriftAccounts = await Promise.all(
+      customers.map(async (customer) => {
+        const thriftAccounts = await Thrift.findAll({
+          where: { CUST_ID: customer.CUST_ID },
+          attributes: [
+            'ACCT_NO',
+            'ACCT_ID',
+            'AMOUNT',
+            'COLLECTION_TYPE',
+            'status',
+            'OPENED_DT',
+            'TRANSACTION_DATE',
+            'nextCollectionDate',
+            'totalContributions',
+            'totalWithdrawals'
+          ],
+          order: [['OPENED_DT', 'DESC']]
+        });
+        
+        return {
+          customer: {
+            CUST_ID: customer.CUST_ID,
+            CUST_NO: customer.CUST_NO,
+            firstName: customer.FIRST_NAME,
+            lastName: customer.LAST_NAME,
+            fullName: customer.CUST_NM || `${customer.FIRST_NAME} ${customer.LAST_NAME}`,
+            phone: customer.PHONE_NO || null,
+            address: customer.HOME_ADDRESS || null,
+            status: customer.REC_ST,
+            openedDate: customer.OPENED_DT ? 
+              (typeof customer.OPENED_DT.toISOString === 'function' 
+                ? customer.OPENED_DT.toISOString() 
+                : new Date(customer.OPENED_DT).toISOString()) 
+              : null,
+            createdAt: customer.created_at,
+            updatedAt: customer.updated_at
+          },
+          thriftAccounts: thriftAccounts.map(account => ({
+            accountNumber: account.ACCT_NO,
+            accountId: account.ACCT_ID,
+            balance: parseFloat(account.AMOUNT || 0),
+            collectionType: account.COLLECTION_TYPE,
+            status: account.status,
+            openedDate: account.OPENED_DT ? 
+              (typeof account.OPENED_DT.toISOString === 'function' 
+                ? account.OPENED_DT.toISOString() 
+                : new Date(account.OPENED_DT).toISOString()) 
+              : null,
+            lastTransactionDate: account.TRANSACTION_DATE ? 
+              (typeof account.TRANSACTION_DATE.toISOString === 'function' 
+                ? account.TRANSACTION_DATE.toISOString() 
+                : new Date(account.TRANSACTION_DATE).toISOString()) 
+              : null,
+            nextCollectionDate: account.nextCollectionDate ? 
+              (typeof account.nextCollectionDate.toISOString === 'function' 
+                ? account.nextCollectionDate.toISOString() 
+                : new Date(account.nextCollectionDate).toISOString()) 
+              : null,
+            totalContributions: parseFloat(account.totalContributions || 0),
+            totalWithdrawals: parseFloat(account.totalWithdrawals || 0)
+          })),
+          summary: {
+            totalThriftAccounts: thriftAccounts.length,
+            totalThriftBalance: thriftAccounts.reduce((sum, acc) => sum + parseFloat(acc.AMOUNT || 0), 0),
+            activeThriftAccounts: thriftAccounts.filter(acc => acc.status === 'ACTIVE').length
+          }
+        };
+      })
+    );
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Search completed successfully',
+      data: {
+        customers: customersWithThriftAccounts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          pages: Math.ceil(count / limit),
+          hasMore: (offset + customers.length) < count
+        },
+        search: {
+          term: searchQuery,
+          totalResults: count,
+          resultsInPage: customers.length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error searching customers:', error);
+    logger.error('searchCustomersByName failed', { 
+      error: error.message, 
+      stack: error.stack,
+      query: req.query,
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Error searching customers',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Search thrift accounts by customer name
+// ─────────────────────────────────────────────
+static async searchThriftAccountsByName(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const Customer = getCustomer();
+    const Thrift = getThrift();
+    
+    const { searchTerm, page = 1, limit = 20 } = req.query;
+    
+    if (!searchTerm || searchTerm.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Search term is required'
+      });
+    }
+    
+    const searchQuery = searchTerm.trim();
+    const offset = (page - 1) * limit;
+    
+    // First, find customers matching the search term
+    const customers = await Customer.findAll({
+      where: {
+        [Op.or]: [
+          { FIRST_NAME: { [Op.like]: `%${searchQuery}%` } },
+          { LAST_NAME: { [Op.like]: `%${searchQuery}%` } },
+          { CUST_NM: { [Op.like]: `%${searchQuery}%` } }
+        ]
+      },
+      attributes: ['CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM']
+    });
+    
+    if (customers.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No customers found matching the search term',
+        data: {
+          thriftAccounts: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            pages: 0,
+            hasMore: false
+          },
+          search: {
+            term: searchQuery,
+            totalResults: 0,
+            resultsInPage: 0
+          }
+        }
+      });
+    }
+    
+    // Get CUST_IDs from found customers
+    const customerIds = customers.map(c => c.CUST_ID);
+    
+    // Find thrift accounts for these customers
+    const { count, rows: thriftAccounts } = await Thrift.findAndCountAll({
+      where: {
+        CUST_ID: { [Op.in]: customerIds }
+      },
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['CUST_ID', 'ASC'], ['OPENED_DT', 'DESC']],
+      include: [{
+        model: Customer,
+        as: 'customer',
+        attributes: ['CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO']
+      }]
+    });
+    
+    const formattedAccounts = thriftAccounts.map(account => ({
+      CUST_ID: account.CUST_ID,
+      ACCT_NO: account.ACCT_NO,
+      ACCT_ID: account.ACCT_ID,
+      customer: {
+        CUST_ID: account.customer?.CUST_ID,
+        CUST_NO: account.customer?.CUST_NO,
+        firstName: account.customer?.FIRST_NAME,
+        lastName: account.customer?.LAST_NAME,
+        fullName: account.customer?.CUST_NM || `${account.customer?.FIRST_NAME} ${account.customer?.LAST_NAME}`,
+        phone: account.customer?.PHONE_NO || null
+      },
+      accountDetails: {
+        firstName: account.FIRST_NAME,
+        lastName: account.LASTNAME,
+        fullName: account.FULL_NAME,
+        relationshipManager: account.RELATIONSHIP_MANAGER || null,
+        amount: parseFloat(account.AMOUNT || 0),
+        collectionType: account.COLLECTION_TYPE,
+        status: account.status,
+        openingDate: account.OPENED_DT ? 
+          (typeof account.OPENED_DT.toISOString === 'function' 
+            ? account.OPENED_DT.toISOString() 
+            : new Date(account.OPENED_DT).toISOString()) 
+          : null,
+        transactionDate: account.TRANSACTION_DATE ? 
+          (typeof account.TRANSACTION_DATE.toISOString === 'function' 
+            ? account.TRANSACTION_DATE.toISOString() 
+            : new Date(account.TRANSACTION_DATE).toISOString()) 
+          : null,
+        nextCollectionDate: account.nextCollectionDate ? 
+          (typeof account.nextCollectionDate.toISOString === 'function' 
+            ? account.nextCollectionDate.toISOString() 
+            : new Date(account.nextCollectionDate).toISOString()) 
+          : null,
+        address: account.ADDRESS,
+        initialAmount: parseFloat(account.initialAmount || 0),
+        accountType: account.accountType,
+        totalContributions: parseFloat(account.totalContributions || 0),
+        totalWithdrawals: parseFloat(account.totalWithdrawals || 0),
+        notes: account.notes,
+        isActive: account.isActive
+      }
+    }));
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Search completed successfully',
+      data: {
+        thriftAccounts: formattedAccounts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          pages: Math.ceil(count / limit),
+          hasMore: (offset + thriftAccounts.length) < count
+        },
+        search: {
+          term: searchQuery,
+          totalResults: count,
+          resultsInPage: thriftAccounts.length,
+          matchedCustomers: customers.length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error searching thrift accounts:', error);
+    logger.error('searchThriftAccountsByName failed', { 
+      error: error.message, 
+      stack: error.stack,
+      query: req.query,
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Error searching thrift accounts',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Quick search for thrift collection
+// ─────────────────────────────────────────────
+static async quickSearchForCollection(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const Customer = getCustomer();
+    const Thrift = getThrift();
+    
+    const { searchTerm } = req.query;
+    
+    if (!searchTerm || searchTerm.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Search term is required'
+      });
+    }
+    
+    const searchQuery = searchTerm.trim();
+    
+    // Search for active thrift accounts with customer info
+    const thriftAccounts = await Thrift.findAll({
+      where: {
+        status: 'ACTIVE',
+        [Op.or]: [
+          { ACCT_NO: { [Op.like]: `%${searchQuery}%` } },
+          { FIRST_NAME: { [Op.like]: `%${searchQuery}%` } },
+          { LASTNAME: { [Op.like]: `%${searchQuery}%` } },
+          { FULL_NAME: { [Op.like]: `%${searchQuery}%` } }
+        ]
+      },
+      include: [{
+        model: Customer,
+        as: 'customer',
+        attributes: ['CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO']
+      }],
+      limit: 10,
+      order: [['FULL_NAME', 'ASC']]
+    });
+    
+    const formattedResults = thriftAccounts.map(account => ({
+      CUST_ID: account.CUST_ID,
+      ACCT_NO: account.ACCT_NO,
+      ACCT_ID: account.ACCT_ID,
+      customerName: account.FULL_NAME,
+      firstName: account.FIRST_NAME,
+      lastName: account.LASTNAME,
+      phone: account.customer?.PHONE_NO || null,
+      currentBalance: parseFloat(account.AMOUNT || 0),
+      collectionType: account.COLLECTION_TYPE,
+      nextCollectionDate: account.nextCollectionDate ? 
+        (typeof account.nextCollectionDate.toISOString === 'function' 
+          ? account.nextCollectionDate.toISOString() 
+          : new Date(account.nextCollectionDate).toISOString()) 
+        : null,
+      relationshipManager: account.RELATIONSHIP_MANAGER || null
+    }));
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Quick search completed',
+      data: {
+        results: formattedResults,
+        count: formattedResults.length,
+        searchTerm: searchQuery
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error in quick search:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error performing quick search',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+}
+
+  // Helper methods (keep these as is)
   static isLastWeekOfMonth(date) {
     const nextWeek = new Date(date);
     nextWeek.setDate(nextWeek.getDate() + 7);
     return nextWeek.getMonth() !== date.getMonth();
   }
 
-  // Helper method to check if it's the first monthly payment
   static async isFirstMonthlyPayment(ACCT_NO) {
-    const existingPayments = await Transaction.countDocuments({
-      ACCT_NO,
-      TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-      'metadata.collectionType': 'MONTHLY',
-      status: 'COMPLETED'
+    const count = await Transaction.count({
+      where: {
+        ACCT_NO,
+        TRANSACTION_TYPE: 'THRIFT_COLLECTION',
+        metadata: { collectionType: 'MONTHLY' }
+      }
     });
-    return existingPayments === 0;
+    return count === 0;
   }
 
-  // Helper method to check if it's quarter end
   static isQuarterEnd(date) {
     const month = date.getMonth();
-    const quarterEndMonths = [2, 5, 8, 11]; // March, June, September, December
+    const quarterEndMonths = [2, 5, 8, 11];
     return quarterEndMonths.includes(month);
   }
 
-  // Helper method to check if it's year end
   static isYearEnd(date) {
-    const month = date.getMonth();
-    return month === 11; // December
+    return date.getMonth() === 11;
   }
 
-  // Helper method to get quarter
   static getQuarter(date) {
     const month = date.getMonth();
     return Math.floor(month / 3) + 1;
   }
 
-  // Helper method to get bank payment type
   static getBankPaymentType(isFirstPayment, isQuarterEnd, isYearEnd) {
     if (isFirstPayment) return 'FIRST_PAYMENT';
     if (isYearEnd) return 'ANNUAL_PAYMENT';
@@ -1674,7 +2224,6 @@ static async processMonthlyCollection(req, res) {
     return 'REGULAR_PAYMENT';
   }
 
-  // Helper method to calculate next monthly payment date
   static getNextMonthlyPaymentDate(currentDate) {
     const nextPayment = new Date(currentDate);
     nextPayment.setMonth(nextPayment.getMonth() + 1);
@@ -1682,127 +2231,9 @@ static async processMonthlyCollection(req, res) {
     return nextPayment;
   }
 
-  // Calculate expected monthly amount
   static async calculateExpectedMonthlyAmount(ACCT_NO) {
-    // This could be based on account settings, previous payments, or fixed amount
-    // For now, returning a default value
-    return 5000;
-  }
-
- // Auto-process monthly collections (for cron job) - Updated with transaction dates
-  static async processAutoMonthlyCollections() {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      const today = new Date();
-      
-      // Only run on the first day of the month for monthly collections
-      if (today.getDate() !== 1) {
-        logger.info('Not the first day of month. Skipping auto monthly collections.');
-        return;
-      }
-
-      logger.info('Processing auto monthly thrift collections...');
-
-      // Get all active monthly thrift accounts
-      const monthlyAccounts = await Thrift.find({ 
-        COLLECTION_TYPE: 'MONTHLY',
-        status: 'active'
-      })
-        .session(session);
-
-      let processedCount = 0;
-      let failedCount = 0;
-
-      for (const account of monthlyAccounts) {
-        try {
-          const customer = await Customer.findOne({ CUST_ID: account.CUST_ID }).session(session);
-          
-          if (customer) {
-            const monthlyAmount = await this.calculateExpectedMonthlyAmount(account.ACCT_NO);
-            
-            if (customer.accountBalance >= monthlyAmount) {
-              // Process the monthly collection
-              const isFirstPayment = await this.isFirstMonthlyPayment(account.ACCT_NO);
-              const isQuarterEnd = this.isQuarterEnd(today);
-              const isYearEnd = this.isYearEnd(today);
-
-              let amountToBank = 0;
-              let amountToCustomer = monthlyAmount;
-
-              if (isFirstPayment || isYearEnd || isQuarterEnd) {
-                amountToBank = monthlyAmount;
-                amountToCustomer = 0;
-              }
-
-              // Update accounts
-              account.AMOUNT += amountToCustomer;
-              account.lastCollectionDate = today;
-              await account.save({ session });
-
-              customer.accountBalance -= monthlyAmount;
-              await customer.save({ session });
-
-              // Create transaction record
-              const transaction = new Transaction({
-                CUST_ID: account.CUST_ID,
-                ACCT_NO: account.ACCT_NO,
-                ACCT_ID: account.ACCT_ID,
-                BU_ID: 1,
-                ACCT_NM: `${account.FULL_NAME} Thrift Account`,
-                AMOUNT: monthlyAmount,
-                TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-                description: `Auto monthly collection - ${amountToBank > 0 ? 'Bank payment' : 'Regular collection'}`,
-                status: 'COMPLETED',
-                createdBy: 'SYSTEM',
-                TRANSACTION_DATE: today, // Add transaction date
-                metadata: {
-                  amountToBank,
-                  amountToCustomer,
-                  isFirstPayment,
-                  isQuarterEnd,
-                  isYearEnd,
-                  collectionType: 'MONTHLY',
-                  paymentMonth: today.getMonth(),
-                  paymentYear: today.getFullYear(),
-                  quarter: this.getQuarter(today),
-                  isAutoProcessed: true,
-                  direction: 'DEBIT',
-                  balanceAfter: customer.accountBalance,
-                  reference: `AUTO_MONTHLY_${account.ACCT_NO}_${Date.now()}`,
-                  transactionDate: today // Also store in metadata
-                }
-              });
-
-              await transaction.save({ session });
-              processedCount++;
-              logger.info(`Auto-processed monthly collection for account: ${account.ACCT_NO}`, {
-                relationshipManager: account.RELATIONSHIP_MANAGER,
-                transactionDate: today
-              });
-            } else {
-              logger.warn(`Insufficient balance for auto monthly collection: ${account.ACCT_NO}`);
-              failedCount++;
-            }
-          }
-        } catch (accountError) {
-          logger.error(`Error processing account ${account.ACCT_NO}:`, accountError);
-          failedCount++;
-        }
-      }
-
-      await session.commitTransaction();
-      session.endSession();
-      logger.info(`Auto monthly collections completed. Processed: ${processedCount}, Failed: ${failedCount}`);
-
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      logger.error('Error processing auto monthly collections:', error);
-    }
+    return 5000; // Default value
   }
 }
-
 
 export default ThriftController;

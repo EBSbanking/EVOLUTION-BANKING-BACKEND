@@ -106,7 +106,7 @@ router.get('/:id/balance', getDrawerBalance);
 router.get('/user/:userId', getDrawerByUserId);
 
 // Get drawer closeout report (placeholder)
-router.get('/:id/closeout-report', getDrawerCloseoutReport);
+router.get('/report/:id', getDrawerCloseoutReport);
 
 // Get drawer opening report (placeholder)
 router.get('/:id/opening-report', getDrawerOpeningReport);

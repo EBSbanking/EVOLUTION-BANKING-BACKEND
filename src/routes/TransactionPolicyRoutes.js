@@ -1,35 +1,32 @@
+// routes/transactionPolicyRoutes.js
 import express from 'express';
 import {
   setTransactionPolicy,
   updatePolicy,
   validateTransaction,
-  getTransactionPolicies
-} from '../controllers/TransactionPolicyController.js';
+  getTransactionPolicies,
+  getPolicyById,
+  deactivatePolicy,
+  getPolicyStats,
+  initializePolicyTables
+} from '../controllers/transactionPolicyController.js';
 
 const router = express.Router();
 
-/**
- * @route   POST /api/policy/set
- * @desc    Create or update policy for a role (Supervisor or Manager only)
- */
-router.post('/policy/set', setTransactionPolicy);
+// Initialize tables (development only)
+router.post('/initialize-tables', initializePolicyTables);
 
-/**
- * @route   PUT /api/policy/:id
- * @desc    Update an existing policy by POLICY_ID
- */
-router.put('/policy/:id', updatePolicy);
-
-/**
- * @route   POST /api/policy/validate
- * @desc    Validate a transaction against the set policy
- */
-router.post('/policy/validate', validateTransaction);
-
-/**
- * @route   GET /api/policies?role=TELLER
- * @desc    Get all policies or filter by role
- */
+// CRUD operations
+router.post('/policies', setTransactionPolicy);
 router.get('/policies', getTransactionPolicies);
+router.get('/policies/:id', getPolicyById);
+router.put('/policies/:id', updatePolicy);
+router.delete('/policies/:id', deactivatePolicy); // Actually deactivates, not deletes
+
+// Validation
+router.post('/validate', validateTransaction);
+
+// Statistics
+router.get('/stats', getPolicyStats);
 
 export default router;

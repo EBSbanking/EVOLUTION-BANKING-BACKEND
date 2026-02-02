@@ -1132,68 +1132,85 @@ export const updateDrawerCurrency = async (req, res, db) => {
   }
 };
 
-// Get Drawer Closeout Report
 export const getDrawerCloseoutReport = async (req, res) => {
+  console.log('🎯 getDrawerCloseoutReport EXECUTING!');
+  
   try {
     const { id } = req.params;
-    const drawer = await Drawer.findById(id);
-
-    if (!drawer) {
-      return res.status(404).json({ message: 'Drawer not found' });
+    
+    // OPTION 1: Use sequelize from request (if middleware provides it)
+    let sequelize = req.sequelize;
+    let Drawer;
+    
+    if (sequelize) {
+      console.log('📦 Using sequelize from request');
+      Drawer = sequelize.models.Drawer;
+    } else {
+      // OPTION 2: Import directly (fallback)
+      console.log('📦 Importing sequelize directly');
+      const dbModule = await import('../../config/db.js');
+      sequelize = dbModule.default || dbModule;
+      Drawer = sequelize.models.Drawer;
     }
-
-    if (drawer.WF_STATUS !== 'CLOSED') {
-      return res.status(400).json({ 
-        message: 'Drawer is not closed. Closeout report is only available for closed drawers.' 
+    
+    if (!Drawer) {
+      console.error('❌ Drawer model not found');
+      return res.status(500).json({
+        success: false,
+        message: 'Database configuration error'
       });
     }
-
-    const sessionStartBalance = parseFloat(drawer.SESSION_START_BALANCE?.toString() || '0');
-    const sessionEndBalance = parseFloat(drawer.SESSION_END_BALANCE?.toString() || '0');
-    const expectedBalance = parseFloat(drawer.CURRENT_BALANCE.toString());
-    const overage = parseFloat(drawer.OVERAGE_AMT.toString());
-    const shortage = parseFloat(drawer.SHORTAGE_AMT.toString());
-
-    const closeoutReport = {
+    
+    console.log('🔍 Looking for drawer:', id);
+    
+    // Try DRAWER_NO first
+    let drawer = await Drawer.findOne({ where: { DRAWER_NO: id } });
+    
+    // If not found, try DRAWER_ID if numeric
+    if (!drawer && /^\d+$/.test(id)) {
+      console.log('🔄 Trying DRAWER_ID lookup');
+      drawer = await Drawer.findOne({ where: { DRAWER_ID: parseInt(id) } });
+    }
+    
+    if (!drawer) {
+      console.log('❌ Drawer not found');
+      return res.status(404).json({ 
+        success: false,
+        message: `Drawer ${id} not found`
+      });
+    }
+    
+    console.log('✅ Found drawer:', drawer.DRAWER_NO);
+    
+    // Check if drawer is CLOSED
+    if (drawer.WF_STATUS !== 'CLOSED') {
+      return res.status(400).json({
+        success: false,
+        message: `Drawer status is ${drawer.WF_STATUS}. Must be CLOSED for closeout report.`
+      });
+    }
+    
+    // Generate report
+    const report = {
+      success: true,
       drawerInfo: {
         drawerNo: drawer.DRAWER_NO,
         drawerName: drawer.DRAWER_NM,
+        status: drawer.WF_STATUS,
         userId: drawer.USER_ID,
-        businessUnit: drawer.BU_ID,
-        sessionStart: drawer.LAST_DRAWER_OPEN_DT,
-        sessionEnd: drawer.LAST_DRAWER_CLOSE_DT,
-        sessionDuration: calculateSessionDuration(drawer.LAST_DRAWER_OPEN_DT, drawer.LAST_DRAWER_CLOSE_DT)
+        businessUnit: drawer.BU_ID
       },
-      financialSummary: {
-        openingBalance: sessionStartBalance,
-        closingBalance: sessionEndBalance,
-        expectedBalance: expectedBalance,
-        overage: overage,
-        shortage: shortage,
-        difference: sessionEndBalance - expectedBalance
-      },
-      verification: {
-        verifiedBy: drawer.CLOSING_VERIFIED_BY,
-        notes: drawer.CLOSING_NOTES,
-        closingCurrency: drawer.CLOSING_CURRENCY
-      },
-      limits: {
-        minBalance: parseFloat(drawer.MIN_BAL.toString()),
-        maxBalance: parseFloat(drawer.MAX_BAL.toString()),
-        insuredAmount: parseFloat(drawer.TOTAL_INSURED_AMT.toString()),
-        limitExceeded: drawer.DRAWER_CASH_LIMIT_FG === 'Y'
-      }
+      timestamp: new Date().toISOString()
     };
-
-    res.status(200).json({
-      success: true,
-      closeoutReport
-    });
+    
+    res.json(report);
+    
   } catch (error) {
-    console.error('Error generating closeout report:', error);
-    res.status(500).json({ 
-      message: 'Error generating closeout report', 
-      error: error.message 
+    console.error('💥 ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
     });
   }
 };
@@ -1271,16 +1288,20 @@ const findDrawerByIdentifier = async (identifier, session = null) => {
   return null;
 };
 
-// Main transaction processing function
-// Main transaction processing function
+// Updated processDrawerTransaction - uses shared service
 export const processDrawerTransaction = async (req, res, db, session = null) => {
   let internalSession = session;
   let shouldEndSession = false;
   
   try {
+    // Import sequelize and drawer service
+    const dbModule = await import('../../config/db.js');
+    const sequelize = dbModule.default || dbModule;
+    const drawerService = new (await import('../Services/drawerService.js')).DrawerService(sequelize);
+    
     // If no session provided, create one
     if (!internalSession) {
-      internalSession = await db.startTransaction();
+      internalSession = await sequelize.transaction();
       shouldEndSession = true;
     }
 
@@ -1303,8 +1324,8 @@ export const processDrawerTransaction = async (req, res, db, session = null) => 
       };
     }
 
-    // Use the helper function to find drawer by multiple identifiers
-    const drawer = await findDrawerByIdentifier(drawerId, db, internalSession);
+    // ✅ Use shared drawer service
+    const drawer = await drawerService.findDrawerByIdentifier(drawerId, internalSession);
     if (!drawer) {
       if (shouldEndSession) await internalSession.rollback();
       return { 
@@ -1313,166 +1334,71 @@ export const processDrawerTransaction = async (req, res, db, session = null) => 
       };
     }
 
-    // CRITICAL: Check if drawer is OPEN before processing transaction
-    if (drawer.WF_STATUS !== 'OPEN') {
+    // ✅ Use shared validation
+    const validation = await drawerService.validateDrawerForTransaction(
+      drawer, 
+      amount, 
+      transactionType
+    );
+
+    if (!validation.valid) {
       if (shouldEndSession) await internalSession.rollback();
       return { 
         success: false,
-        message: 'Drawer is not open. Please open the drawer before processing transactions.',
-        currentStatus: drawer.WF_STATUS,
-        lastOpened: drawer.LAST_DRAWER_OPEN_DT,
-        lastClosed: drawer.LAST_DRAWER_CLOSE_DT
+        ...validation 
       };
     }
 
-    // Check if drawer is active
-    if (drawer.REC_ST !== 'A') {
-      if (shouldEndSession) await internalSession.rollback();
-      return { 
-        success: false,
-        message: 'Drawer is not active' 
-      };
-    }
-
-    let updatedBalance;
-    let transactionEffect;
-    let transactionDescription = '';
-
-    // Standard Banking Rules
-    const normalizedType = transactionType.toUpperCase();
-    
-    switch (normalizedType) {
-      case 'DEPOSIT': 
-      case 'OPENING_DEPOSIT':
-        // Customer DEPOSITS cash: CREDIT customer account, CREDIT drawer (cash IN)
-        updatedBalance = parseFloat(drawer.CURRENT_BALANCE) + amount;
-        transactionEffect = 'CREDIT';
-        transactionDescription = normalizedType === 'OPENING_DEPOSIT' 
-          ? 'Opening cash deposit' 
-          : `Cash deposit from account ${customerAccount}`;
-        break;
-
-      case 'WITHDRAWAL': 
-        // Customer WITHDRAWS cash: DEBIT customer account, DEBIT drawer (cash OUT)
-        if (parseFloat(drawer.CURRENT_BALANCE) < amount) {
-          if (shouldEndSession) await internalSession.rollback();
-          return { 
-            success: false,
-            message: `Insufficient drawer balance. Available: ₦${parseFloat(drawer.CURRENT_BALANCE)}, Required: ₦${amount}` 
-          };
-        }
-        updatedBalance = parseFloat(drawer.CURRENT_BALANCE) - amount;
-        transactionEffect = 'DEBIT';
-        transactionDescription = `Cash withdrawal to account ${customerAccount}`;
-        break;
-
-      case 'CASH_RECEIPT': 
-        updatedBalance = parseFloat(drawer.CURRENT_BALANCE) + amount;
-        transactionEffect = 'CREDIT';
-        transactionDescription = description || 'Cash receipt';
-        break;
-
-      case 'CASH_DISBURSEMENT': 
-        if (parseFloat(drawer.CURRENT_BALANCE) < amount) {
-          if (shouldEndSession) await internalSession.rollback();
-          return { 
-            success: false,
-            message: `Insufficient drawer balance for disbursement. Available: ₦${parseFloat(drawer.CURRENT_BALANCE)}, Required: ₦${amount}` 
-          };
-        }
-        updatedBalance = parseFloat(drawer.CURRENT_BALANCE) - amount;
-        transactionEffect = 'DEBIT';
-        transactionDescription = description || 'Cash disbursement';
-        break;
-
-      default:
-        if (shouldEndSession) await internalSession.rollback();
-        return { 
-          success: false,
-          message: 'Invalid transaction type' 
-        };
-    }
-
-    // Check and update drawer limits
-    let limitFlag = 'N';
-    let drawerLimitExceedTm = drawer.DRAWER_LIMIT_EXCEED_TM;
-    
-    if (updatedBalance > drawer.MAX_BAL) {
-      limitFlag = 'Y';
-      drawerLimitExceedTm += 1;
-    } else if (updatedBalance < drawer.MIN_BAL) {
-      limitFlag = 'Y';
-    }
-
-    // Update drawer balance and flags
-    const previousBalance = parseFloat(drawer.CURRENT_BALANCE);
-    
-    await db.execute(
-      `UPDATE drawers 
-       SET CURRENT_BALANCE = ?, 
-           DRAWER_CASH_LIMIT_FG = ?,
-           DRAWER_LIMIT_EXCEED_TM = ?,
-           VERSION_NO = VERSION_NO + 1,
-           updated_at = NOW()
-       WHERE id = ?`,
-      [
-        updatedBalance.toFixed(2),
-        limitFlag,
-        drawerLimitExceedTm,
-        drawer.id
-      ],
-      { session: internalSession }
+    // ✅ Use shared balance update
+    await drawerService.updateDrawerBalance(
+      drawer.id, 
+      validation.newBalance, 
+      internalSession
     );
-
-    // ✅ ADDED: Verify the update immediately after save
-    const verifiedDrawer = await db.queryOne(
-      'SELECT * FROM drawers WHERE id = ?',
-      [drawer.id],
-      { session: internalSession }
-    );
-    console.log(`🔍 Drawer ${drawer.DRAWER_NO} balance after ${normalizedType}: ₦${parseFloat(verifiedDrawer.CURRENT_BALANCE)}`);
 
     // Create transaction record
     const transactionRecord = {
       referenceNo: referenceNo || `TXN${Date.now()}`,
       drawerId: drawer.id,
       drawerNo: drawer.DRAWER_NO,
-      transactionType: normalizedType,
+      transactionType: transactionType.toUpperCase(),
       amount,
       customerAccount,
-      description: transactionDescription,
-      effect: transactionEffect,
-      previousBalance,
-      newBalance: updatedBalance,
+      description: description || `Drawer transaction: ${transactionType}`,
+      effect: ['WITHDRAWAL', 'DEBIT', 'CASH_DISBURSEMENT'].includes(transactionType.toUpperCase()) ? 'DEBIT' : 'CREDIT',
+      previousBalance: validation.currentBalance,
+      newBalance: validation.newBalance,
       timestamp: new Date(),
       userId: userId || 'system',
       status: 'COMPLETED',
       drawerStatus: 'OPEN'
     };
 
-    // Create transaction record in database
-    await db.execute(
+    // Save to transactions table
+    await sequelize.query(
       `INSERT INTO transactions (
         reference_no, drawer_id, drawer_no, transaction_type, amount,
         customer_account, description, effect, previous_balance,
         new_balance, user_id, status, drawer_status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        transactionRecord.referenceNo,
-        transactionRecord.drawerId,
-        transactionRecord.drawerNo,
-        transactionRecord.transactionType,
-        transactionRecord.amount,
-        transactionRecord.customerAccount,
-        transactionRecord.description,
-        transactionRecord.effect,
-        transactionRecord.previousBalance,
-        transactionRecord.newBalance,
-        transactionRecord.userId,
-        transactionRecord.status,
-        transactionRecord.drawerStatus
-      ],
-      { session: internalSession }
+      {
+        replacements: [
+          transactionRecord.referenceNo,
+          transactionRecord.drawerId,
+          transactionRecord.drawerNo,
+          transactionRecord.transactionType,
+          transactionRecord.amount,
+          transactionRecord.customerAccount,
+          transactionRecord.description,
+          transactionRecord.effect,
+          transactionRecord.previousBalance,
+          transactionRecord.newBalance,
+          transactionRecord.userId,
+          transactionRecord.status,
+          transactionRecord.drawerStatus
+        ],
+        transaction: internalSession
+      }
     );
 
     if (shouldEndSession) {
@@ -1481,17 +1407,16 @@ export const processDrawerTransaction = async (req, res, db, session = null) => 
 
     return {
       success: true,
-      message: 'Transaction processed successfully',
+      message: 'Drawer transaction processed successfully',
       transaction: transactionRecord,
       drawer: {
         id: drawer.id,
         drawerNo: drawer.DRAWER_NO,
-        previousBalance,
-        newBalance: updatedBalance,
-        transactionEffect,
-        limitExceeded: limitFlag === 'Y',
-        status: drawer.WF_STATUS,
-        CURRENT_BALANCE: updatedBalance
+        previousBalance: validation.currentBalance,
+        newBalance: validation.newBalance,
+        transactionEffect: transactionRecord.effect,
+        limitExceeded: validation.limitExceeded,
+        status: drawer.WF_STATUS
       }
     };
 
@@ -1499,16 +1424,12 @@ export const processDrawerTransaction = async (req, res, db, session = null) => 
     if (shouldEndSession && internalSession) {
       await internalSession.rollback();
     }
-    console.error('Transaction processing error:', error);
+    console.error('Drawer transaction error:', error);
     return { 
       success: false,
-      message: 'Error processing transaction', 
+      message: 'Error processing drawer transaction', 
       error: error.message 
     };
-  } finally {
-    if (shouldEndSession && internalSession) {
-      internalSession.release();
-    }
   }
 };
 

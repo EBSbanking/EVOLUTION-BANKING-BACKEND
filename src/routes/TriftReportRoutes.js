@@ -1,11 +1,19 @@
-// In your routes file (e.g., routes/thrift.js)
+// routes/thrift.js
 import express from 'express';
 import ThriftReportController from '../controllers/ThriftReportController.js';
 
 const router = express.Router();
 
-// Thrift Reports Routes
+// Thrift Report Status & Metadata
+router.get('/reports/status', ThriftReportController.getThriftReportStatus);
+
+// Thrift Accounts Data (for display in UI)
 router.get('/reports/accounts', ThriftReportController.getThriftAccountsForReport);
-router.get('/reports/accounts/download', ThriftReportController.generateThriftAccountsReport);
+
+// Summary Statistics
+router.get('/reports/summary', ThriftReportController.getThriftSummaryStatistics);
+
+// Report Generation & Download
+router.get('/reports/generate', ThriftReportController.generateThriftAccountsReport);
 
 export default router;

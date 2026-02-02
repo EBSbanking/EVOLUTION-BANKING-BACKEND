@@ -7,6 +7,8 @@ import { initializeDrawerModel } from '../models/Drawer.js'; // Import initializ
 import logger from '../utils/logger.js';
 import sequelize from '../../config/db.js';
 import { DataTypes } from 'sequelize';
+import {TransactionPolicy, TransactionPolicyRange, TransactionPolicyRole}  from '../models/TransactionPolicy.js';
+
 
 // Initialize Drawer model - UPDATED with better error handling
 let Drawer;
@@ -227,17 +229,23 @@ const checkPolicy = async (userRole, amount, transactionType, transaction) => {
   };
 };
 
+
 // ==================== FIXED MAIN TRANSACTION FUNCTION ====================
 // ==================== UPDATED: DRAWER LOGIC FIXED ====================
-const postTransaction = async (req, res) => {
+// Updated postTransaction function - COMPLETE VERSION with TransactionPolicy integration
+export const postTransaction = async (req, res) => {
   console.log('📤 Transaction request received:', req.body);
   
-  // Check database connection state
+  // Import sequelize and models
+  const dbModule = await import('../../config/db.js');
+  const sequelize = dbModule.default || dbModule;
+  const { Op } = sequelize;
+  
+  // Check database connection
   try {
     await sequelize.authenticate();
     console.log('✅ Database connection verified');
   } catch (error) {
-    logger.error('Database not connected', { error: error.message });
     return res.status(503).json({
       success: false,
       message: 'Database is not connected. Please try again later.',
@@ -258,6 +266,32 @@ const postTransaction = async (req, res) => {
     DRAWER_ID,
   } = req.body;
 
+  // Helper functions (from your existing code)
+  const isCashTransaction = (description) => {
+    if (!description) return false;
+    const cashKeywords = ['cash', 'CASH', 'currency', 'physical', 'drawer', 'teller', 'deposit', 'withdrawal'];
+    return cashKeywords.some(keyword => description.toLowerCase().includes(keyword.toLowerCase()));
+  };
+
+  const calculateTotalFromCurrency = (currencyCount) => {
+    return (currencyCount.OneThousandNaira * 1000) +
+           (currencyCount.FiveHundredNaira * 500) +
+           (currencyCount.TwoHundredNaira * 200) +
+           (currencyCount.OneHundredNaira * 100) +
+           (currencyCount.FiftyNaira * 50) +
+           (currencyCount.TwentyNaira * 20) +
+           (currencyCount.TenNaira * 10) +
+           (currencyCount.FiveNaira * 5);
+  };
+
+  const generateTransactionRef = () => {
+    return `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  };
+
+  const generateEventId = () => {
+    return Math.floor(Date.now() / 1000);
+  };
+
   let sanitizedCurrencyCount = {
     OneThousandNaira: 0,
     FiveHundredNaira: 0,
@@ -273,7 +307,7 @@ const postTransaction = async (req, res) => {
   const transaction = await sequelize.transaction();
   
   try {
-    // Input validation - ALL transactions require basic fields
+    // Input validation
     if (!TRANSACTION_TYPE || !AMOUNT || !DESCRIPTION || !BUSINESS_UNIT) {
       await transaction.rollback();
       return res.status(400).json({
@@ -282,144 +316,19 @@ const postTransaction = async (req, res) => {
       });
     }
 
-    // Handle Opening Cash Deposit - requires DRAWER_ID, no ACCT_NO needed
     const isOpeningCashDeposit = TRANSACTION_TYPE.toUpperCase() === 'OPENING_CASH_DEPOSIT';
-    if (isOpeningCashDeposit) {
-      if (!DRAWER_ID) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'DRAWER_ID is REQUIRED for OPENING_CASH_DEPOSIT.',
-        });
-      }
-    } else {
-      // Standard validation for regular transactions
-      if (!ACCT_NO) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'ACCT_NO is required for standard transactions.',
-        });
-      }
-      
-      // Validate account number format
-      if (!/^\d{10}$/.test(ACCT_NO)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'ACCT_NO must be a 10-digit number.' 
-        });
-      }
-    }
-
-    // Determine if it's a cash transaction
-    const cashTransaction = isOpeningCashDeposit || isCashTransaction(DESCRIPTION);
-    
-    // ENFORCEMENT: For cash transactions, DRAWER_ID is MANDATORY
-    let drawer = null;
-    let drawerPreviousBalance = 0;
-    
-    // ==================== UPDATED DRAWER LOGIC ====================
-    if (cashTransaction) {
-      if (!DRAWER_ID) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'DRAWER_ID is REQUIRED for cash transactions. Please specify which drawer to use.',
-        });
-      }
-
-      // Try using Sequelize model first if initialized
-      if (Drawer) {
-        try {
-          drawer = await Drawer.findOne({
-            where: { 
-              [Op.or]: [
-                { DRAWER_ID: parseInt(DRAWER_ID) || 0 },
-                { DRAWER_NO: DRAWER_ID.toString() },
-                { id: parseInt(DRAWER_ID) || 0 }
-              ],
-              REC_ST: 'A' // Only active drawers
-            },
-            transaction
-          });
-        } catch (modelError) {
-          console.log('⚠️ Model-based drawer search failed:', modelError.message);
-          drawer = null;
-        }
-      }
-      
-      // Fallback to raw query if model failed or not initialized
-      if (!drawer) {
-        try {
-          const [drawers] = await sequelize.query(
-            `SELECT * FROM drawers WHERE 
-             (DRAWER_ID = ? OR DRAWER_NO = ? OR id = ?) 
-             AND REC_ST = 'A' LIMIT 1`,
-            {
-              replacements: [
-                parseInt(DRAWER_ID) || 0,
-                DRAWER_ID.toString(),
-                parseInt(DRAWER_ID) || 0
-              ],
-              type: sequelize.QueryTypes.SELECT,
-              transaction
-            }
-          );
-          
-          if (drawers && drawers.length > 0) {
-            drawer = drawers[0];
-            // Add update method for compatibility
-            drawer.update = async function(data, options) {
-              await sequelize.query(
-                `UPDATE drawers SET 
-                 CURRENT_BALANCE = ?, 
-                 VERSION_NO = COALESCE(VERSION_NO, 0) + 1,
-                 updated_at = NOW()
-                 WHERE id = ?`,
-                {
-                  replacements: [data.CURRENT_BALANCE, this.id],
-                  transaction: options?.transaction
-                }
-              );
-            };
-          }
-        } catch (queryError) {
-          console.error('❌ Raw query drawer search failed:', queryError.message);
-        }
-      }
-      
-      if (!drawer) {
-        await transaction.rollback();
-        return res.status(404).json({ 
-          success: false,
-          message: `Active drawer not found for ID: "${DRAWER_ID}".` 
-        });
-      }
-
-      console.log(`✅ Found drawer: ${drawer.DRAWER_NO || drawer.DRAWER_NM} (Status: ${drawer.WF_STATUS})`);
-
-      // Check if drawer is open
-      if (drawer.WF_STATUS !== 'OPEN') {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          success: false,
-          message: 'Drawer is not OPEN for transactions.',
-          currentStatus: drawer.WF_STATUS
-        });
-      }
-
-      drawerPreviousBalance = parseFloat(drawer.CURRENT_BALANCE?.toString() || '0');
-      console.log(`🔍 Drawer balance: ₦${drawerPreviousBalance.toFixed(2)}`);
-    }
-
     const amount = parseFloat(AMOUNT);
+    
+    // Validate amount
     if (isNaN(amount) || amount <= 0) {
       await transaction.rollback();
-      return res.status(400).json({ success: false, message: 'AMOUNT must be a positive number.' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'AMOUNT must be a positive number.' 
+      });
     }
 
-    // Valid transaction types
+    // Validate transaction type
     const validTransactionTypes = ['DR', 'CR', 'OPENING_CASH_DEPOSIT'];
     const normalizedTransactionType = TRANSACTION_TYPE.toUpperCase();
     if (!validTransactionTypes.includes(normalizedTransactionType)) {
@@ -430,80 +339,204 @@ const postTransaction = async (req, res) => {
       });
     }
 
-    const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
-    if (isNaN(transactionDate.getTime())) {
+    // Validate account for non-opening deposits
+    if (!isOpeningCashDeposit && !ACCT_NO) {
       await transaction.rollback();
-      return res.status(400).json({ success: false, message: 'Invalid TRANSACTION_DATE format.' });
-    }
-
-    // Currency Count Validation
-    const currencyCount = CURRENCY_COUNT || {
-      OneThousandNaira: 0,
-      FiveHundredNaira: 0,
-      TwoHundredNaira: 0,
-      OneHundredNaira: 0,
-      FiftyNaira: 0,
-      TwentyNaira: 0,
-      TenNaira: 0,
-      FiveNaira: 0,
-      TOTAL_CURRENCY_COUNT: 0,
-    };
-
-    const expectedKeys = [
-      'OneThousandNaira', 'FiveHundredNaira', 'TwoHundredNaira',
-      'OneHundredNaira', 'FiftyNaira', 'TwentyNaira', 'TenNaira',
-      'FiveNaira', 'TOTAL_CURRENCY_COUNT',
-    ];
-    const isValid = expectedKeys.every(
-      (key) => key in currencyCount && !isNaN(parseInt(currencyCount[key])) && parseInt(currencyCount[key]) >= 0
-    );
-    if (!isValid) {
-      await transaction.rollback();
-      return res.status(400).json({ success: false, message: 'Invalid CURRENCY_COUNT format.' });
-    }
-
-    sanitizedCurrencyCount = {
-      OneThousandNaira: parseInt(currencyCount.OneThousandNaira) || 0,
-      FiveHundredNaira: parseInt(currencyCount.FiveHundredNaira) || 0,
-      TwoHundredNaira: parseInt(currencyCount.TwoHundredNaira) || 0,
-      OneHundredNaira: parseInt(currencyCount.OneHundredNaira) || 0,
-      FiftyNaira: parseInt(currencyCount.FiftyNaira) || 0,
-      TwentyNaira: parseInt(currencyCount.TwentyNaira) || 0,
-      TenNaira: parseInt(currencyCount.TenNaira) || 0,
-      FiveNaira: parseInt(currencyCount.FiveNaira) || 0,
-      TOTAL_CURRENCY_COUNT: parseInt(currencyCount.TOTAL_CURRENCY_COUNT) || 0,
-    };
-
-    // For cash transactions, validate currency count matches amount
-    if (cashTransaction) {
-      const calculatedAmount = calculateTotalFromCurrency(currencyCount);
-      if (calculatedAmount !== amount) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `Currency count total (${calculatedAmount}) does not match transaction amount (${amount}).`,
-          calculatedAmount,
-          transactionAmount: amount
-        });
-      }
-    }
-
-    // Reference No
-    let referenceNo = REFERENCE_NO || generateTransactionRef();
-    const existingTransaction = await AuditTrail.findOne({ 
-      where: { reference_no: referenceNo },
-      transaction 
-    });
-    
-    if (existingTransaction) {
-      await transaction.rollback();
-      return res.status(400).json({ 
-        success: false, 
-        message: `Transaction with REFERENCE_NO ${referenceNo} already exists.` 
+      return res.status(400).json({
+        success: false,
+        message: 'ACCT_NO is required for standard transactions.',
       });
     }
 
-    // Fetch Account
+    // ========== CRITICAL FIX: FORCE CASH TRANSACTION DETECTION ==========
+    let cashTransaction = false;
+    let isCashDeposit = false;
+    let isCashWithdrawal = false;
+    
+    // RULE 1: If CURRENCY_COUNT is provided, it MUST be a cash transaction
+    if (CURRENCY_COUNT && Object.values(CURRENCY_COUNT).some(val => val > 0)) {
+      cashTransaction = true;
+      console.log('💰 FORCING cash transaction because CURRENCY_COUNT provided');
+      
+      if (!DRAWER_ID) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'DRAWER_ID is REQUIRED when CURRENCY_COUNT is provided (cash transaction).',
+        });
+      }
+    }
+    
+    // RULE 2: If DRAWER_ID provided, it's a cash transaction
+    else if (DRAWER_ID) {
+      cashTransaction = true;
+      console.log('💰 FORCING cash transaction because DRAWER_ID provided');
+    }
+    
+    // RULE 3: Opening deposits are always cash
+    if (isOpeningCashDeposit) {
+      cashTransaction = true;
+      isCashDeposit = true;
+      console.log('💰 Transaction identified as OPENING CASH DEPOSIT');
+      
+      if (!DRAWER_ID) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'DRAWER_ID is REQUIRED for opening cash deposits.',
+        });
+      }
+    }
+    
+    // RULE 4: Determine cash deposit vs withdrawal
+    if (cashTransaction) {
+      if (normalizedTransactionType === 'CR') {
+        isCashDeposit = true;
+        console.log('💰 Transaction identified as CASH DEPOSIT');
+      } else if (normalizedTransactionType === 'DR') {
+        isCashWithdrawal = true;
+        console.log('💸 Transaction identified as CASH WITHDRAWAL');
+      }
+    }
+
+    // ========== ENHANCED DRAWER LOOKUP WITH STRICT VALIDATION ==========
+    let drawer = null;
+    let drawerPreviousBalance = 0;
+    let drawerNewBalance = 0;
+    let drawerTransactionEffect = '';
+    
+    if (cashTransaction) {
+      if (!DRAWER_ID) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'DRAWER_ID is REQUIRED for cash transactions.',
+        });
+      }
+
+      console.log(`🔍 Searching for drawer with ID: "${DRAWER_ID}"`);
+      
+      // Try to find drawer using multiple patterns
+      const { Drawer } = sequelize.models;
+      
+      // Try multiple search patterns
+      const searchPatterns = [
+        { DRAWER_NO: DRAWER_ID.toString() },              // Exact match
+        { DRAWER_NO: DRAWER_ID.toString().padStart(4, '0') }, // Pad to 4 digits
+        { DRAWER_NO: DRAWER_ID.toString().padStart(3, '0') }, // Pad to 3 digits
+        { DRAWER_ID: parseInt(DRAWER_ID) || 0 },          // Numeric DRAWER_ID
+        { id: parseInt(DRAWER_ID) || 0 }                  // Primary key
+      ];
+      
+      // Try each pattern
+      for (const pattern of searchPatterns) {
+        drawer = await Drawer.findOne({
+          where: {
+            ...pattern,
+            REC_ST: 'A' // Only active drawers
+          },
+          transaction
+        });
+        
+        if (drawer) {
+          console.log(`✅ Drawer found using pattern:`, pattern);
+          break;
+        }
+      }
+      
+      if (!drawer) {
+        // Get list of available drawers for helpful error
+        const allDrawers = await Drawer.findAll({
+          attributes: ['DRAWER_NO', 'DRAWER_ID', 'WF_STATUS', 'DRAWER_NM', 'CURRENT_BALANCE'],
+          where: { REC_ST: 'A' },
+          limit: 10,
+          transaction
+        });
+        
+        await transaction.rollback();
+        return res.status(404).json({ 
+          success: false,
+          message: `Active drawer not found for ID: "${DRAWER_ID}".`,
+          availableDrawers: allDrawers.map(d => ({
+            DRAWER_NO: d.DRAWER_NO,
+            DRAWER_ID: d.DRAWER_ID,
+            name: d.DRAWER_NM,
+            status: d.WF_STATUS,
+            balance: `₦${parseFloat(d.CURRENT_BALANCE || 0).toFixed(2)}`
+          })),
+          attemptedSearches: searchPatterns.map(p => JSON.stringify(p)),
+          hint: `Your drawer in database has DRAWER_NO: "1001". Try using DRAWER_ID: "1001" instead of "${DRAWER_ID}"`
+        });
+      }
+      
+      // ========== STRICT DRAWER STATUS VALIDATION ==========
+      console.log(`🔍 Drawer found: ${drawer.DRAWER_NO} (${drawer.DRAWER_NM}) - Status: ${drawer.WF_STATUS}`);
+      
+      // CRITICAL: Reject if drawer is CLOSED
+      if (drawer.WF_STATUS !== 'OPEN') {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          success: false,
+          message: `Drawer ${drawer.DRAWER_NO} (${drawer.DRAWER_NM}) is ${drawer.WF_STATUS}. Cannot process cash transactions.`,
+          drawerNumber: drawer.DRAWER_NO,
+          drawerName: drawer.DRAWER_NM,
+          currentStatus: drawer.WF_STATUS,
+          lastClosed: drawer.LAST_DRAWER_CLOSE_DT,
+          lastOpened: drawer.LAST_DRAWER_OPEN_DT,
+          currentBalance: `₦${parseFloat(drawer.CURRENT_BALANCE || 0).toFixed(2)}`,
+          actionRequired: 'Open the drawer first using the drawer management system before processing cash transactions.'
+        });
+      }
+
+      // Validate drawer for transaction
+      drawerPreviousBalance = parseFloat(drawer.CURRENT_BALANCE?.toString() || '0');
+      
+      // Check sufficient balance for withdrawals
+      if (isCashWithdrawal && drawerPreviousBalance < amount) {
+        await transaction.rollback();
+        return res.status(400).json({ 
+          success: false,
+          message: `Insufficient drawer balance for cash withdrawal. Available: ₦${drawerPreviousBalance.toFixed(2)}, Required: ₦${amount.toFixed(2)}`,
+          drawerNumber: drawer.DRAWER_NO,
+          drawerName: drawer.DRAWER_NM,
+          currentBalance: `₦${drawerPreviousBalance.toFixed(2)}`,
+          requiredAmount: `₦${amount.toFixed(2)}`,
+          shortfall: `₦${(amount - drawerPreviousBalance).toFixed(2)}`,
+          actionRequired: 'Fund the drawer first or reduce withdrawal amount.'
+        });
+      }
+
+      // Calculate new balance
+      if (isOpeningCashDeposit || isCashDeposit) {
+        drawerNewBalance = drawerPreviousBalance + amount;
+      } else if (isCashWithdrawal) {
+        drawerNewBalance = drawerPreviousBalance - amount;
+      }
+      
+      // Set transaction effect
+      if (isOpeningCashDeposit) {
+        drawerTransactionEffect = 'OPENING_DEPOSIT';
+        console.log(`📈 Opening deposit: ₦${amount.toFixed(2)} added to drawer`);
+      } else if (isCashDeposit) {
+        drawerTransactionEffect = 'CASH_DEPOSIT';
+        console.log(`📈 Cash deposit: ₦${amount.toFixed(2)} added to drawer`);
+      } else if (isCashWithdrawal) {
+        drawerTransactionEffect = 'CASH_WITHDRAWAL';
+        console.log(`📉 Cash withdrawal: ₦${amount.toFixed(2)} deducted from drawer`);
+      }
+
+      // Check drawer limits
+      const minBalance = parseFloat(drawer.MIN_BAL) || 0;
+      const maxBalance = parseFloat(drawer.MAX_BAL) || 999999999;
+      
+      if (drawerNewBalance > maxBalance || drawerNewBalance < minBalance) {
+        console.log(`⚠️ Drawer limit exceeded! New balance: ₦${drawerNewBalance.toFixed(2)} (Min: ₦${minBalance}, Max: ₦${maxBalance})`);
+      }
+
+      console.log(`✅ Drawer validated: ${drawer.DRAWER_NO} - Balance: ₦${drawerPreviousBalance.toFixed(2)} → ₦${drawerNewBalance.toFixed(2)}`);
+    }
+
+    // ========== ACCOUNT HANDLING ==========
     let accountInfo = null;
     let ledgerBal = 0;
     let availableBal = 0;
@@ -512,23 +545,43 @@ const postTransaction = async (req, res) => {
     let authorizedRoles = [];
     let status = 'SUCCESS';
 
-    if (!isOpeningCashDeposit) {
-      accountInfo = await findAccountByNumber(ACCT_NO, transaction);
-      if (!accountInfo) {
+    if (!isOpeningCashDeposit && ACCT_NO) {
+      // Validate account number format
+      if (!/^\d{10}$/.test(ACCT_NO)) {
         await transaction.rollback();
-        return res.status(404).json({ 
+        return res.status(400).json({ 
           success: false, 
-          message: `Account ${ACCT_NO} not found. Please create the account first.` 
+          message: 'ACCT_NO must be a 10-digit number.' 
         });
       }
 
-      console.log(`✅ Account found: ${accountInfo.accountNumber} - ${accountInfo.accountName}`);
+      // Find account by number - FIXED: Handle array result properly
+      const accountResults = await sequelize.query(
+        `SELECT * FROM customer_accounts WHERE account_number = ? LIMIT 1`,
+        {
+          replacements: [ACCT_NO],
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        }
+      );
+      
+      // Check if we got results
+      if (!accountResults || accountResults.length === 0) {
+        await transaction.rollback();
+        return res.status(404).json({ 
+          success: false, 
+          message: `Account ${ACCT_NO} not found.` 
+        });
+      }
 
-      // FIX: Update account name if ACCT_NM is provided and different
-      if (ACCT_NM && ACCT_NM.trim() !== '' && ACCT_NM !== accountInfo.accountName) {
-        console.log(`📝 Updating account name from "${accountInfo.accountName}" to "${ACCT_NM}"`);
+      // Get the first (and should be only) result
+      accountInfo = accountResults[0];
+      console.log(`✅ Account found: ${accountInfo.account_number} - ${accountInfo.account_name}`);
+
+      // Update account name if provided
+      if (ACCT_NM && ACCT_NM.trim() !== '' && ACCT_NM !== accountInfo.account_name) {
+        console.log(`📝 Updating account name from "${accountInfo.account_name}" to "${ACCT_NM}"`);
         
-        // Update the account name in database immediately
         try {
           await sequelize.query(
             `UPDATE customer_accounts 
@@ -540,12 +593,10 @@ const postTransaction = async (req, res) => {
             }
           );
           
-          // Update the local accountInfo object for response
-          accountInfo.accountName = ACCT_NM;
+          accountInfo.account_name = ACCT_NM;
           console.log(`✅ Account name updated in database`);
         } catch (nameError) {
           console.error('❌ Error updating account name:', nameError.message);
-          // Don't fail the transaction just because name update failed
         }
       }
 
@@ -559,29 +610,73 @@ const postTransaction = async (req, res) => {
         });
       }
 
-      // Restrict DR on FD/LOAN
+      // Restrict DR on FD/LOAN accounts
       const isDebit = normalizedTransactionType === 'DR';
       const restrictedTypes = ['FIXED_DEPOSIT', 'LOAN', 'fixed_deposit', 'loan'];
-      if (isDebit && restrictedTypes.includes(accountInfo.accountType)) {
+      if (isDebit && restrictedTypes.includes(accountInfo.account_type)) {
         await transaction.rollback();
         return res.status(400).json({ 
           success: false, 
-          message: `Debit not allowed for ${accountInfo.accountType} accounts.` 
+          message: `Debit not allowed for ${accountInfo.account_type} accounts.` 
         });
       }
 
-      // Apply Transaction Policy
-      const policyType = isDebit ? 'Withdrawal' : 'Deposit';
+      // ========== TRANSACTION POLICY CHECK ==========
       const userRole = (req.user?.role || req.headers['x-user-role'] || 'DEFAULT').toUpperCase();
-      const policyResult = await checkPolicy(userRole, amount, policyType, transaction);
-      requiresApproval = policyResult.requiresApproval;
-      authorizedRoles = policyResult.authorizedRoles;
-      status = requiresApproval ? 'PENDING' : 'SUCCESS';
+      const policyType = isDebit ? 'Withdrawal' : 'Deposit';
+      
+      // Import TransactionPolicy model
+      const { TransactionPolicy } = sequelize.models;
+      
+      if (!TransactionPolicy) {
+        console.error('❌ TransactionPolicy model not found in sequelize.models');
+        await transaction.rollback();
+        return res.status(500).json({
+          success: false,
+          message: 'Transaction policy system not configured properly.'
+        });
+      }
+      
+      try {
+        const policyCheck = await TransactionPolicy.checkRequiresApproval(
+          policyType,
+          userRole,
+          amount,
+          BUSINESS_UNIT || null,
+          null // branch_code
+        );
+        
+        console.log('🔍 Transaction Policy Check Result:', {
+          policyType,
+          userRole,
+          amount,
+          businessUnit: BUSINESS_UNIT,
+          requiresApproval: policyCheck.requiresApproval,
+          authorizedRoles: policyCheck.authorizedRoles
+        });
+        
+        requiresApproval = policyCheck.requiresApproval;
+        authorizedRoles = policyCheck.authorizedRoles || [];
+        status = requiresApproval ? 'PENDING' : 'SUCCESS';
+        
+        if (policyCheck.policy) {
+          console.log(`✅ Policy applied: ${policyCheck.policy.POLICY_ID} (${policyType} for ${userRole})`);
+        } else {
+          console.log(`ℹ️ No specific policy found for ${policyType} by ${userRole}, using defaults`);
+        }
+        
+      } catch (policyError) {
+        console.error('❌ Transaction policy check error:', policyError);
+        requiresApproval = false;
+        authorizedRoles = [];
+        status = 'SUCCESS';
+        console.log('⚠️ Using default transaction approval (no policy check)');
+      }
 
-      // Get current balances for account transactions
-      ledgerBal = accountInfo.ledgerBalance;
-      availableBal = accountInfo.availableBalance;
-      clearedBal = accountInfo.clearedBalance;
+      // Get current balances
+      ledgerBal = parseFloat(accountInfo.ledger_balance) || 0;
+      availableBal = parseFloat(accountInfo.available_balance) || 0;
+      clearedBal = parseFloat(accountInfo.cleared_balance) || 0;
 
       console.log(`💰 Current balances for ${ACCT_NO}:`, {
         ledger: ledgerBal.toFixed(2),
@@ -615,109 +710,118 @@ const postTransaction = async (req, res) => {
         console.log(`💰 CREDIT: Adding ₦${amount.toFixed(2)} to all balances`);
       }
 
-      console.log(`💰 Updated balances for ${ACCT_NO}:`, {
-        ledger: ledgerBal.toFixed(2),
-        available: availableBal.toFixed(2),
-        cleared: clearedBal.toFixed(2)
-      });
+      // Update account balances in database
+      await sequelize.query(
+        `UPDATE customer_accounts 
+         SET ledger_balance = ?, 
+             available_balance = ?, 
+             cleared_balance = ?,
+             updated_at = NOW()
+         WHERE account_number = ?`,
+        {
+          replacements: [
+            ledgerBal.toFixed(2),
+            availableBal.toFixed(2),
+            clearedBal.toFixed(2),
+            ACCT_NO
+          ],
+          transaction
+        }
+      );
 
-      // Validate the new balances
-      if (ledgerBal < 0 || availableBal < 0 || clearedBal < 0) {
+      console.log(`✅ Account ${ACCT_NO} balances updated`);
+    }
+
+    // ========== CURRENCY COUNT VALIDATION ==========
+    const currencyCount = CURRENCY_COUNT || {
+      OneThousandNaira: 0,
+      FiveHundredNaira: 0,
+      TwoHundredNaira: 0,
+      OneHundredNaira: 0,
+      FiftyNaira: 0,
+      TwentyNaira: 0,
+      TenNaira: 0,
+      FiveNaira: 0,
+      TOTAL_CURRENCY_COUNT: 0,
+    };
+
+    const expectedKeys = [
+      'OneThousandNaira', 'FiveHundredNaira', 'TwoHundredNaira',
+      'OneHundredNaira', 'FiftyNaira', 'TwentyNaira', 'TenNaira',
+      'FiveNaira', 'TOTAL_CURRENCY_COUNT',
+    ];
+    
+    const isValid = expectedKeys.every(
+      (key) => key in currencyCount && !isNaN(parseInt(currencyCount[key])) && parseInt(currencyCount[key]) >= 0
+    );
+    
+    if (!isValid) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Invalid CURRENCY_COUNT format.' });
+    }
+
+    sanitizedCurrencyCount = {
+      OneThousandNaira: parseInt(currencyCount.OneThousandNaira) || 0,
+      FiveHundredNaira: parseInt(currencyCount.FiveHundredNaira) || 0,
+      TwoHundredNaira: parseInt(currencyCount.TwoHundredNaira) || 0,
+      OneHundredNaira: parseInt(currencyCount.OneHundredNaira) || 0,
+      FiftyNaira: parseInt(currencyCount.FiftyNaira) || 0,
+      TwentyNaira: parseInt(currencyCount.TwentyNaira) || 0,
+      TenNaira: parseInt(currencyCount.TenNaira) || 0,
+      FiveNaira: parseInt(currencyCount.FiveNaira) || 0,
+      TOTAL_CURRENCY_COUNT: parseInt(currencyCount.TOTAL_CURRENCY_COUNT) || 0,
+    };
+
+    // For cash transactions, validate currency count matches amount
+    if (cashTransaction) {
+      const calculatedAmount = calculateTotalFromCurrency(currencyCount);
+      if (calculatedAmount !== amount) {
         await transaction.rollback();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid balance after transaction. Balances cannot be negative.',
-          balances: { 
-            ledger: ledgerBal.toFixed(2), 
-            available: availableBal.toFixed(2), 
-            cleared: clearedBal.toFixed(2) 
-          }
+        return res.status(400).json({
+          success: false,
+          message: `Currency count total (${calculatedAmount}) does not match transaction amount (${amount}).`,
+          calculatedAmount,
+          transactionAmount: amount
         });
       }
-
-      // FIXED: Update account balances AND account name if ACCT_NM is provided
-      await updateAccountBalances(accountInfo, {
-        ledgerBalance: ledgerBal,
-        availableBalance: availableBal,
-        clearedBalance: clearedBal
-      }, transaction, ACCT_NM); // Pass ACCT_NM to update the name
-
-    } else {
-      // For opening deposit, no policy check, always approved
-      status = 'SUCCESS';
-      requiresApproval = false;
     }
 
-    // ==================== UPDATED: Process drawer transaction ====================
-    let drawerNewBalance = drawerPreviousBalance;
-    let drawerTransactionEffect = '';
-    
+    // ========== UPDATE DRAWER BALANCE ==========
     if (cashTransaction && drawer) {
-      console.log(`💰 Processing CASH transaction - Type: ${normalizedTransactionType}, Amount: ₦${amount.toFixed(2)}`);
+      // Update drawer balance in database
+      await sequelize.query(
+        `UPDATE drawers SET 
+         CURRENT_BALANCE = ?, 
+         VERSION_NO = COALESCE(VERSION_NO, 0) + 1,
+         updated_at = NOW()
+         WHERE id = ?`,
+        {
+          replacements: [drawerNewBalance.toFixed(2), drawer.id],
+          transaction
+        }
+      );
 
-      const amountChange = isOpeningCashDeposit ? amount : 
-                          (normalizedTransactionType === 'DR' ? -amount : amount);
-      
-      drawerNewBalance = drawerPreviousBalance + amountChange;
-      drawerTransactionEffect = isOpeningCashDeposit ? 'OPENING_DEPOSIT' : 
-                               (normalizedTransactionType === 'DR' ? 'DEBIT' : 'CREDIT');
-      
-      // Use model update or raw query
-      if (drawer.update) {
-        // Use the custom update method added to raw query result
-        await drawer.update({
-          CURRENT_BALANCE: drawerNewBalance
-        }, { transaction });
-      } else if (Drawer) {
-        // Use Sequelize model's update method
-        await Drawer.update(
-          { 
-            CURRENT_BALANCE: drawerNewBalance,
-            VERSION_NO: (drawer.VERSION_NO || 0) + 1,
-            updatedAt: new Date()
-          },
-          {
-            where: { id: drawer.id },
-            transaction
-          }
-        );
-      } else {
-        // Fallback raw query
-        await sequelize.query(
-          `UPDATE drawers SET 
-           CURRENT_BALANCE = ?, 
-           VERSION_NO = COALESCE(VERSION_NO, 0) + 1,
-           updated_at = NOW()
-           WHERE id = ?`,
-          {
-            replacements: [drawerNewBalance, drawer.id],
-            transaction
-          }
-        );
-      }
-      
-      console.log(`✅ Drawer updated: ${drawer.DRAWER_NO || drawer.DRAWER_NM} = ₦${drawerNewBalance.toFixed(2)}`);
+      console.log(`💰 Drawer ${drawer.DRAWER_NO} updated: ₦${drawerPreviousBalance.toFixed(2)} → ₦${drawerNewBalance.toFixed(2)}`);
     }
 
-    // Enhanced Audit Trail with Drawer Information
+    // ========== CREATE AUDIT TRAIL ==========
+    const transactionDate = TRANSACTION_DATE ? new Date(TRANSACTION_DATE) : new Date();
     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    
-    // FIXED: Use the new event_id generator
+    const referenceNo = REFERENCE_NO || generateTransactionRef();
     const eventId = generateEventId();
-    
+
     const auditData = {
-      event_id: eventId, // FIXED: Use proper event_id
+      event_id: eventId,
       user_id: userId,
       event_type: isOpeningCashDeposit ? 'OPENING_CASH_DEPOSIT' : `TRANSACTION_${normalizedTransactionType}`,
       action: isOpeningCashDeposit ? 'Opening Cash Deposit' : `${normalizedTransactionType === 'DR' ? 'Debit' : 'Credit'} Transaction`,
       old_value: JSON.stringify({
         ...(accountInfo && {
-          LEDGER_BAL: accountInfo.ledgerBalance,
-          AVAILABLE_BALANCE: accountInfo.availableBalance,
-          CLEARED_BAL: accountInfo.clearedBalance,
-          ACCOUNT_MODEL: accountInfo.model,
-          ACCOUNT_NAME: accountInfo.accountName
+          LEDGER_BAL: accountInfo.ledger_balance,
+          AVAILABLE_BALANCE: accountInfo.available_balance,
+          CLEARED_BAL: accountInfo.cleared_balance,
+          ACCOUNT_NAME: accountInfo.account_name
         }),
         ...(cashTransaction && drawer && { 
           DRAWER_BALANCE: drawerPreviousBalance,
@@ -726,21 +830,20 @@ const postTransaction = async (req, res) => {
       }),
       new_value: JSON.stringify({ 
         ...(accountInfo && {
-          LEDGER_BAL: ledgerBal, 
-          AVAILABLE_BALANCE: availableBal, 
-          CLEARED_BAL: clearedBal,
-          ACCOUNT_MODEL: accountInfo.model,
-          ACCOUNT_NAME: accountInfo.accountName // Include updated name
+          LEDGER_BAL: ledgerBal.toFixed(2), 
+          AVAILABLE_BALANCE: availableBal.toFixed(2), 
+          CLEARED_BAL: clearedBal.toFixed(2),
+          ACCOUNT_NAME: accountInfo.account_name
         }),
         ...(cashTransaction && drawer && { 
-          DRAWER_BALANCE: drawerNewBalance,
+          DRAWER_BALANCE: drawerNewBalance.toFixed(2),
           DRAWER_NO: drawer.DRAWER_NO || drawer.DRAWER_NM
         })
       }),
       ip_address: ipAddress,
       timestamp: transactionDate,
       entity_type: isOpeningCashDeposit ? 'Drawer' : 'CustomerAccount',
-      entity_id: isOpeningCashDeposit ? drawer.id : (accountInfo ? accountInfo.accountId : null),
+      entity_id: isOpeningCashDeposit ? drawer.id : (accountInfo ? accountInfo.id : null),
       status,
       description: DESCRIPTION,
       reference_no: referenceNo,
@@ -748,8 +851,7 @@ const postTransaction = async (req, res) => {
       additional_info: JSON.stringify({
         amount: amount.toFixed(2),
         pending: requiresApproval,
-        account_name: accountInfo ? accountInfo.accountName : null,
-        account_model: accountInfo ? accountInfo.model : null,
+        account_name: accountInfo ? accountInfo.account_name : null,
         transaction_date: transactionDate,
         business_unit: BUSINESS_UNIT,
         depositor_name: DEPOSITOR_NAME,
@@ -757,6 +859,8 @@ const postTransaction = async (req, res) => {
         authorized_roles: authorizedRoles,
         transaction_mode: cashTransaction ? 'CASH' : 'TRANSFER',
         transaction_type: normalizedTransactionType,
+        policy_applied: authorizedRoles.length > 0 ? 'YES' : 'NO',
+        approval_required: requiresApproval,
         balance_changes: accountInfo ? {
           ledger_balance_change: (normalizedTransactionType === 'DR' ? -amount : amount).toFixed(2),
           available_balance_change: (normalizedTransactionType === 'DR' ? -amount : amount).toFixed(2),
@@ -771,32 +875,20 @@ const postTransaction = async (req, res) => {
           new_drawer_balance: drawerNewBalance,
           drawer_user_id: drawer.USER_ID || drawer.CURRENT_ASSIGNEE_ID,
           drawer_status: drawer.WF_STATUS,
-          cash_movement: isOpeningCashDeposit ? 'INCOMING_OPENING' : (normalizedTransactionType === 'DR' ? 'OUTGOING' : 'INCOMING')
+          cash_movement: isCashDeposit ? 'INCOMING' : (isCashWithdrawal ? 'OUTGOING' : 'OPENING')
         })
       }),
     };
 
-    // Try to create audit trail with proper error handling
-    try {
-      await AuditTrail.create(auditData, { transaction });
-      console.log('✅ Audit trail created');
-    } catch (auditError) {
-      console.error('❌ Error creating audit trail:', auditError.message);
-      
-      // Check if it's an event_id issue
-      if (auditError.message.includes('event_id') || auditError.message.includes('Out of range')) {
-        // Try with a smaller event_id
-        auditData.event_id = Math.floor(Date.now() / 10000); // Even smaller
-        await AuditTrail.create(auditData, { transaction });
-        console.log('✅ Audit trail created with adjusted event_id');
-      } else {
-        throw auditError;
-      }
-    }
+    // Create audit trail record
+    const { AuditTrail } = sequelize.models;
+    await AuditTrail.create(auditData, { transaction });
+    console.log('✅ Audit trail created');
 
+    // ========== COMMIT TRANSACTION ==========
     await transaction.commit();
     
-    // Response with account and drawer information
+    // ========== RESPONSE ==========
     const response = {
       success: true,
       message: isOpeningCashDeposit 
@@ -811,15 +903,15 @@ const postTransaction = async (req, res) => {
       authorized_roles: authorizedRoles,
       transaction_mode: cashTransaction ? 'CASH' : 'TRANSFER',
       transaction_type: normalizedTransactionType,
+      policy_applied: authorizedRoles.length > 0
     };
 
     // Add account info for standard transactions
     if (!isOpeningCashDeposit && accountInfo) {
       response.account = {
-        ACCT_NO: accountInfo.accountNumber,
-        ACCT_NM: accountInfo.accountName, // Now uses the updated name
-        ACCOUNT_MODEL: accountInfo.model,
-        ACCOUNT_TYPE: accountInfo.accountType,
+        ACCT_NO: accountInfo.account_number,
+        ACCT_NM: accountInfo.account_name,
+        ACCOUNT_TYPE: accountInfo.account_type,
         new_balances: {
           ledger_balance: ledgerBal.toFixed(2),
           available_balance: availableBal.toFixed(2),
@@ -842,69 +934,37 @@ const postTransaction = async (req, res) => {
         previous_balance: drawerPreviousBalance.toFixed(2),
         new_balance: drawerNewBalance.toFixed(2),
         effect: drawerTransactionEffect,
-        cash_movement: isOpeningCashDeposit ? 'INCOMING_OPENING' : (normalizedTransactionType === 'DR' ? 'OUTGOING' : 'INCOMING'),
+        cash_movement: isCashDeposit ? 'INCOMING' : (isCashWithdrawal ? 'OUTGOING' : 'OPENING'),
         user_id: drawer.USER_ID || drawer.CURRENT_ASSIGNEE_ID,
-        status: drawer.WF_STATUS
+        status: drawer.WF_STATUS,
+        limit_exceeded: drawerNewBalance > parseFloat(drawer.MAX_BAL) || drawerNewBalance < parseFloat(drawer.MIN_BAL)
       };
     }
 
-    // Log successful transaction
-    logger.info('Transaction processed successfully', {
-      referenceNo,
-      accountNo: ACCT_NO || null,
-      accountName: ACCT_NM || accountInfo?.accountName || null, // Added account name
-      accountModel: accountInfo?.model,
-      amount: amount.toFixed(2),
-      transactionType: normalizedTransactionType,
-      cashTransaction,
-      drawerId: drawer?.id,
-      drawerEffect: drawerTransactionEffect,
-      drawerPreviousBalance: drawerPreviousBalance.toFixed(2),
-      drawerNewBalance: drawerNewBalance.toFixed(2),
-      userId,
-      isOpeningCashDeposit
-    });
-
-    console.log(`🎉 Transaction COMPLETED: ${normalizedTransactionType} ₦${amount.toFixed(2)} - Account: ${ACCT_NO || 'N/A'} - Account Name: ${accountInfo?.accountName || 'N/A'} - Drawer: ${drawer?.DRAWER_NO || drawer?.DRAWER_NM || 'N/A'} = ₦${drawerNewBalance.toFixed(2)} ${isOpeningCashDeposit ? '(Opening Deposit)' : ''}`);
+    console.log(`🎉 Transaction COMPLETED with drawer sync`);
+    console.log(`💰 Final drawer balance: ${drawer ? drawer.DRAWER_NO + ' = ₦' + drawerNewBalance.toFixed(2) : 'N/A'}`);
 
     return res.status(200).json(response);
 
   } catch (error) {
     await transaction.rollback();
     
-    logger.error('Error posting transaction:', {
-      error: error.message,
-      stack: error.stack,
-      body: {
-        ACCT_NO,
-        ACCT_NM,
-        TRANSACTION_TYPE,
-        AMOUNT,
-        DESCRIPTION,
-        TRANSACTION_DATE,
-        BUSINESS_UNIT,
-        DEPOSITOR_NAME,
-        CURRENCY_COUNT: sanitizedCurrencyCount,
-        DRAWER_ID,
-      },
-      timestamp: new Date(),
-    });
+    console.error('💥 Transaction error:', error);
+    console.error('💥 Stack trace:', error.stack);
 
     if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({
         success: false,
-        message: 'Duplicate key error.',
+        message: 'Duplicate transaction reference.',
         error: error.errors.map(e => e.message),
       });
     }
     
-    // More specific error for event_id issue
     if (error.message.includes('event_id') || error.message.includes('Out of range')) {
       return res.status(500).json({
         success: false,
-        message: 'Database column size issue. Please check the event_id column type.',
+        message: 'Database configuration error.',
         error: error.message,
-        suggestion: 'Change event_id column to BIGINT or use smaller values'
       });
     }
     

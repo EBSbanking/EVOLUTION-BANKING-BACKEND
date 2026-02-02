@@ -13,6 +13,7 @@ import SavingsProduct from './src/models/SavingsProduct.js';
 import { LoanInterestRate } from './src/models/LoanInterestRate.js';
 import LoanAccount from './src/models/LoanAccount.js';
 
+
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -149,6 +150,8 @@ const createMissingTables = async () => {
   
   return createdTables.length > 0;
 };
+
+
 
 // ============================================
 // LOAD SPECIFIC MODELS TO AVOID COLUMN ERRORS
