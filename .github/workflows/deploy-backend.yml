@@ -1,0 +1,32 @@
+name: Deploy Backend to Server
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'  # Only triggers when backend files change
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Add SSH key and deploy backend
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          APP_DIR: '/opt/EvolutionBankingBackend/MYSQL-EVOLUTION-BANKING-BACKEND'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "
+            cd $APP_DIR &&
+            git pull origin main &&
+            npm install &&
+            pm2 restart evolution-backend &&
+            echo 'Backend deployment successful'
+          "
