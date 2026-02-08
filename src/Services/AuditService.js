@@ -37,45 +37,51 @@ class AuditService {
     }
   }
 
-  // Generic audit trail function
-  static async logAuditTrail({
-    entityId,
-    entityType = 'general',
-    action,
-    changedFields = [],
-    previousValues = null,
-    performedBy,
-    notes = '',
-    ipAddress = '',
-    userInfo = {}
-  }) {
-    try {
-      console.log('📝 Logging generic audit:', { entityId, entityType, action, performedBy });
-      
-      const auditLog = await GuarantorAudit.create({
-        guarantorId: entityId,
-        action,
-        changedFields,
-        previousValues,
-        performedBy,
-        notes,
-        ipAddress,
-        relationshipOfficer: userInfo,
-        metadata: {
-          entityType,
-          entityId,
-          timestamp: new Date().toISOString()
-        }
-      });
-      
-      console.log(`✅ Audit logged: ${action} on ${entityType} ${entityId} by ${performedBy}`);
-      return auditLog;
-    } catch (error) {
-      console.error('❌ Failed to log audit trail:', error);
-      throw error;
-    }
-  }
 
+// In services/AuditService.js - update the logAuditTrail function
+static async logAuditTrail({
+  entityId,
+  entityType = 'general',
+  action,
+  changedFields = [],
+  previousValues = null,
+  performedBy, // This is the problematic parameter
+  notes = '',
+  ipAddress = '',
+  userInfo = {}
+}) {
+  try {
+    console.log('📝 Logging generic audit:', { entityId, entityType, action, performedBy });
+    
+    // FIX: Provide a default value if performedBy is undefined
+    const performedByValue = performedBy || 
+                            userInfo?.id || 
+                            userInfo?.username || 
+                            'system';
+    
+    const auditLog = await GuarantorAudit.create({
+      guarantorId: entityId,
+      action,
+      changedFields,
+      previousValues,
+      performedBy: performedByValue, // Use the default value
+      notes,
+      ipAddress,
+      relationshipOfficer: userInfo,
+      metadata: {
+        entityType,
+        entityId,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+    console.log(`✅ Audit logged: ${action} on ${entityType} ${entityId} by ${performedByValue}`);
+    return auditLog;
+  } catch (error) {
+    console.error('❌ Failed to log audit trail:', error);
+    throw error;
+  }
+}
   static async getGuarantorAuditHistory(guarantorId, options = {}) {
     const {
       page = 1,

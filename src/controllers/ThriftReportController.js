@@ -5,12 +5,16 @@ import {
   areModelsInitialized 
 } from '../utils/modelLoader.js';
 import logger from '../utils/logger.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Note: You need to implement or adjust your PDF/Excel generators to work with Sequelize data
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Import PDF generator
 import { 
-  generateThriftAccountsReport, 
-  generateThriftAccountsExcelReport, 
-  cleanupReportFiles 
+  generateThriftAccountsReport 
 } from '../utils/pdfGenerator.js';
 
 // Initialize models on first use
@@ -81,6 +85,15 @@ class ThriftReportController {
         };
       }
 
+      // Also filter by account number or customer ID if provided
+      if (filters.ACCT_NO) {
+        where.ACCT_NO = { [Op.like]: `%${filters.ACCT_NO}%` };
+      }
+      
+      if (filters.CUST_ID) {
+        where.CUST_ID = { [Op.like]: `%${filters.CUST_ID}%` };
+      }
+
       // Fetch thrift accounts with selected fields
       const thriftAccounts = await Thrift.findAll({
         where,
@@ -106,7 +119,8 @@ class ThriftReportController {
           'total_withdrawals', 
           'is_active'
         ],
-        order: [['created_at', 'DESC']]
+        order: [['created_at', 'DESC']],
+        raw: true // Get plain objects instead of Sequelize instances
       });
 
       if (!thriftAccounts || thriftAccounts.length === 0) {
@@ -123,7 +137,14 @@ class ThriftReportController {
       });
 
       if (format.toLowerCase() === 'excel') {
-        // Generate Excel report
+        // Generate Excel report - Note: You need to implement this function
+        return res.status(501).json({
+          success: false,
+          message: 'Excel report generation is not implemented yet',
+          suggestion: 'Use PDF format instead'
+        });
+        
+        /* If you have Excel generation implemented:
         const excelPath = generateThriftAccountsExcelReport(thriftAccounts, filters);
         
         res.download(excelPath, `thrift_accounts_report_${new Date().toISOString().split('T')[0]}.xlsx`, (err) => {
@@ -133,9 +154,36 @@ class ThriftReportController {
           // Cleanup file after download
           setTimeout(() => cleanupReportFiles(excelPath), 5000);
         });
+        */
       } else {
         // Generate PDF report (default)
-        await generateThriftAccountsReport(thriftAccounts, filters, res);
+        // Transform data to match PDF generator expectations
+        const transformedAccounts = thriftAccounts.map(account => ({
+          // Map Sequelize field names to PDF generator expected names
+          id: account.id,
+          CUST_ID: account.CUST_ID || '',
+          ACCT_NO: account.ACCT_NO || '',
+          ACCT_ID: account.ACCT_ID || '',
+          FIRST_NAME: account.FIRST_NAME || '',
+          LASTNAME: account.LASTNAME || '',
+          FULL_NAME: account.FULL_NAME || `${account.FIRST_NAME || ''} ${account.LASTNAME || ''}`.trim(),
+          RELATIONSHIP_MANAGER: account.RELATIONSHIP_MANAGER || '',
+          AMOUNT: parseFloat(account.AMOUNT || 0),
+          COLLECTION_TYPE: account.COLLECTION_TYPE || '',
+          OPENED_DT: account.OPENED_DT,
+          status: account.status || 'active',
+          opening_date: account.opening_date,
+          created_at: account.created_at,
+          createdAt: account.created_at, // For PDF generator
+          updated_at: account.updated_at,
+          last_collection_date: account.last_collection_date,
+          account_type: account.account_type,
+          total_contributions: parseFloat(account.total_contributions || 0),
+          total_withdrawals: parseFloat(account.total_withdrawals || 0),
+          is_active: account.is_active
+        }));
+
+        await generateThriftAccountsReport(transformedAccounts, filters, res);
       }
 
     } catch (error) {
@@ -148,7 +196,7 @@ class ThriftReportController {
       res.status(500).json({
         success: false,
         message: 'Failed to generate thrift accounts report',
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
   }
@@ -189,12 +237,13 @@ class ThriftReportController {
       }
       
       if (filters.search) {
+        const searchTerm = `%${filters.search}%`;
         where[Op.or] = [
-          { CUST_ID: { [Op.like]: `%${filters.search}%` } },
-          { ACCT_NO: { [Op.like]: `%${filters.search}%` } },
-          { FULL_NAME: { [Op.like]: `%${filters.search}%` } },
-          { FIRST_NAME: { [Op.like]: `%${filters.search}%` } },
-          { LASTNAME: { [Op.like]: `%${filters.search}%` } }
+          { CUST_ID: { [Op.like]: searchTerm } },
+          { ACCT_NO: { [Op.like]: searchTerm } },
+          { FULL_NAME: { [Op.like]: searchTerm } },
+          { FIRST_NAME: { [Op.like]: searchTerm } },
+          { LASTNAME: { [Op.like]: searchTerm } }
         ];
       }
 
@@ -225,20 +274,33 @@ class ThriftReportController {
         ],
         order: [['created_at', 'DESC']],
         offset: parseInt(offset),
-        limit: parseInt(limit)
+        limit: parseInt(limit),
+        raw: true
       });
 
       // Calculate summary statistics
       const totalAmount = thriftAccounts.reduce((sum, account) => sum + parseFloat(account.AMOUNT || 0), 0);
-      const activeAccounts = thriftAccounts.filter(acc => acc.status === 'ACTIVE').length;
+      const totalContributions = thriftAccounts.reduce((sum, account) => sum + parseFloat(account.total_contributions || 0), 0);
+      const totalWithdrawals = thriftAccounts.reduce((sum, account) => sum + parseFloat(account.total_withdrawals || 0), 0);
+      
+      const activeAccounts = thriftAccounts.filter(acc => 
+        acc.status === 'ACTIVE' || acc.status === 'active' || acc.is_active === true
+      ).length;
       
       const collectionTypeStats = thriftAccounts.reduce((acc, account) => {
         const type = account.COLLECTION_TYPE || 'UNKNOWN';
         if (!acc[type]) {
-          acc[type] = { count: 0, totalAmount: 0 };
+          acc[type] = { 
+            count: 0, 
+            totalAmount: 0,
+            totalContributions: 0,
+            totalWithdrawals: 0
+          };
         }
         acc[type].count++;
         acc[type].totalAmount += parseFloat(account.AMOUNT || 0);
+        acc[type].totalContributions += parseFloat(account.total_contributions || 0);
+        acc[type].totalWithdrawals += parseFloat(account.total_withdrawals || 0);
         return acc;
       }, {});
 
@@ -252,7 +314,7 @@ class ThriftReportController {
             ACCT_ID: account.ACCT_ID,
             FIRST_NAME: account.FIRST_NAME,
             LASTNAME: account.LASTNAME,
-            FULL_NAME: account.FULL_NAME,
+            FULL_NAME: account.FULL_NAME || `${account.FIRST_NAME || ''} ${account.LASTNAME || ''}`.trim(),
             RELATIONSHIP_MANAGER: account.RELATIONSHIP_MANAGER,
             AMOUNT: parseFloat(account.AMOUNT || 0),
             COLLECTION_TYPE: account.COLLECTION_TYPE,
@@ -276,6 +338,9 @@ class ThriftReportController {
           summary: {
             totalAccounts: count,
             totalAmount,
+            totalContributions,
+            totalWithdrawals,
+            netContributions: totalContributions - totalWithdrawals,
             activeAccounts,
             inactiveAccounts: count - activeAccounts,
             collectionTypeStats
@@ -292,7 +357,7 @@ class ThriftReportController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch thrift accounts',
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
   }
@@ -318,12 +383,28 @@ class ThriftReportController {
 
       // Get active accounts count
       const activeAccounts = await Thrift.count({
-        where: { status: 'ACTIVE' }
+        where: { 
+          [Op.or]: [
+            { status: 'ACTIVE' },
+            { status: 'active' },
+            { is_active: true }
+          ]
+        }
       });
 
-      // Get total amount - using raw query for SUM since Sequelize cast is complex
-      const totalAmountResult = await Thrift.sequelize.query(
-        'SELECT SUM(AMOUNT) as totalAmount FROM THRIFT_ACCOUNTS',
+      // Get total amounts using raw queries for better performance
+      const [amountResult] = await Thrift.sequelize.query(
+        'SELECT COALESCE(SUM(AMOUNT), 0) as totalAmount FROM THRIFT_ACCOUNTS',
+        { type: Thrift.sequelize.QueryTypes.SELECT }
+      );
+
+      const [contributionsResult] = await Thrift.sequelize.query(
+        'SELECT COALESCE(SUM(total_contributions), 0) as totalContributions FROM THRIFT_ACCOUNTS',
+        { type: Thrift.sequelize.QueryTypes.SELECT }
+      );
+
+      const [withdrawalsResult] = await Thrift.sequelize.query(
+        'SELECT COALESCE(SUM(total_withdrawals), 0) as totalWithdrawals FROM THRIFT_ACCOUNTS',
         { type: Thrift.sequelize.QueryTypes.SELECT }
       );
 
@@ -332,9 +413,12 @@ class ThriftReportController {
         attributes: [
           'COLLECTION_TYPE',
           [Thrift.sequelize.fn('COUNT', Thrift.sequelize.col('id')), 'count'],
-          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('AMOUNT')), 'totalAmount']
+          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('AMOUNT')), 'totalAmount'],
+          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('total_contributions')), 'totalContributions'],
+          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('total_withdrawals')), 'totalWithdrawals']
         ],
-        group: ['COLLECTION_TYPE']
+        group: ['COLLECTION_TYPE'],
+        raw: true
       });
 
       // Get recent accounts (last 7 days)
@@ -356,12 +440,17 @@ class ThriftReportController {
             totalAccounts,
             activeAccounts,
             inactiveAccounts: totalAccounts - activeAccounts,
-            totalAmount: parseFloat(totalAmountResult[0]?.totalAmount || 0),
+            totalAmount: parseFloat(amountResult?.totalAmount || 0),
+            totalContributions: parseFloat(contributionsResult?.totalContributions || 0),
+            totalWithdrawals: parseFloat(withdrawalsResult?.totalWithdrawals || 0),
+            netContributions: parseFloat(contributionsResult?.totalContributions || 0) - parseFloat(withdrawalsResult?.totalWithdrawals || 0),
             recentAccounts,
             collectionStats: collectionStats.map(stat => ({
-              type: stat.COLLECTION_TYPE,
-              count: parseInt(stat.dataValues.count || 0),
-              totalAmount: parseFloat(stat.dataValues.totalAmount || 0)
+              type: stat.COLLECTION_TYPE || 'UNKNOWN',
+              count: parseInt(stat.count || 0),
+              totalAmount: parseFloat(stat.totalAmount || 0),
+              totalContributions: parseFloat(stat.totalContributions || 0),
+              totalWithdrawals: parseFloat(stat.totalWithdrawals || 0)
             }))
           }
         }
@@ -376,7 +465,117 @@ class ThriftReportController {
       res.status(500).json({
         success: false,
         message: 'Failed to fetch thrift summary statistics',
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Export Thrift Accounts to CSV
+   */
+  static async exportThriftAccountsToCSV(req, res) {
+    try {
+      await ensureModelsInitialized();
+      
+      const { ...filters } = req.query;
+      const Thrift = getThrift();
+      
+      if (!Thrift) {
+        return res.status(500).json({
+          success: false,
+          message: 'Thrift model not available'
+        });
+      }
+
+      // Build query conditions
+      const where = {};
+      
+      if (filters.COLLECTION_TYPE) {
+        where.COLLECTION_TYPE = filters.COLLECTION_TYPE.toUpperCase();
+      }
+      
+      if (filters.status) {
+        where.status = filters.status;
+      }
+      
+      if (filters.RELATIONSHIP_MANAGER) {
+        where.RELATIONSHIP_MANAGER = { [Op.like]: `%${filters.RELATIONSHIP_MANAGER}%` };
+      }
+
+      // Fetch all matching accounts
+      const thriftAccounts = await Thrift.findAll({
+        where,
+        attributes: [
+          'CUST_ID', 
+          'ACCT_NO', 
+          'FULL_NAME', 
+          'RELATIONSHIP_MANAGER', 
+          'AMOUNT', 
+          'COLLECTION_TYPE', 
+          'OPENED_DT', 
+          'status', 
+          'total_contributions', 
+          'total_withdrawals'
+        ],
+        order: [['created_at', 'DESC']],
+        raw: true
+      });
+
+      if (!thriftAccounts || thriftAccounts.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No thrift accounts found matching the criteria'
+        });
+      }
+
+      // Create CSV content
+      const headers = [
+        'Customer ID',
+        'Account Number', 
+        'Full Name',
+        'Relationship Manager',
+        'Current Balance (₦)',
+        'Total Contributions (₦)',
+        'Total Withdrawals (₦)',
+        'Collection Type',
+        'Opened Date',
+        'Status'
+      ];
+
+      let csvContent = headers.join(',') + '\n';
+
+      thriftAccounts.forEach(account => {
+        const row = [
+          `"${account.CUST_ID || ''}"`,
+          `"${account.ACCT_NO || ''}"`,
+          `"${account.FULL_NAME || ''}"`,
+          `"${account.RELATIONSHIP_MANAGER || ''}"`,
+          parseFloat(account.AMOUNT || 0).toFixed(2),
+          parseFloat(account.total_contributions || 0).toFixed(2),
+          parseFloat(account.total_withdrawals || 0).toFixed(2),
+          `"${account.COLLECTION_TYPE || ''}"`,
+          `"${account.OPENED_DT ? new Date(account.OPENED_DT).toLocaleDateString() : ''}"`,
+          `"${account.status || ''}"`
+        ];
+        csvContent += row.join(',') + '\n';
+      });
+
+      // Set headers for CSV download
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=thrift_accounts_${new Date().toISOString().split('T')[0]}.csv`);
+      
+      res.send(csvContent);
+
+    } catch (error) {
+      logger.error('Error exporting thrift accounts to CSV', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      
+      res.status(500).json({
+        success: false,
+        message: 'Failed to export thrift accounts to CSV',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
   }
@@ -400,7 +599,15 @@ class ThriftReportController {
 
       // Get basic counts
       const totalAccounts = await Thrift.count();
-      const activeAccounts = await Thrift.count({ where: { status: 'ACTIVE' } });
+      const activeAccounts = await Thrift.count({ 
+        where: { 
+          [Op.or]: [
+            { status: 'ACTIVE' },
+            { status: 'active' },
+            { is_active: true }
+          ]
+        }
+      });
 
       res.json({
         success: true,
@@ -409,7 +616,8 @@ class ThriftReportController {
           modelAvailable: true,
           totalAccounts,
           activeAccounts,
-          modelsInitialized: true
+          modelsInitialized: true,
+          timestamp: new Date().toISOString()
         }
       });
 
@@ -418,7 +626,8 @@ class ThriftReportController {
         success: false,
         message: 'Thrift reports initialization error',
         error: error.message,
-        modelsInitialized: false
+        modelsInitialized: false,
+        timestamp: new Date().toISOString()
       });
     }
   }

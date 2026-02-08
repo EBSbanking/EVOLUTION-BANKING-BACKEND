@@ -652,6 +652,7 @@ export const getRepaymentSchedule = async (req, res) => {
 
     console.log('🔍 Searching for loan repayment schedule for account:', ACCT_NO);
     
+    // Updated query to include all fields from your table
     const query = `
       SELECT 
         id,
@@ -676,6 +677,12 @@ export const getRepaymentSchedule = async (req, res) => {
         guarantor_id,
         guaranteed_amount,
         installments_json,
+        schedule,
+        interest_rate_type,
+        interest_type,
+        calculation_method,
+        is_term_based_rate,
+        is_schedule_complete,
         created_at,
         updated_at
       FROM repayment_schedules 
@@ -707,8 +714,145 @@ export const getRepaymentSchedule = async (req, res) => {
 
     const repaymentSchedule = results[0];
     
-    // ... rest of your existing getRepaymentSchedule function ...
+    // Process installments - try schedule field first, then installments_json
+    let installments = [];
+    let installmentSource = 'none';
     
+    if (repaymentSchedule.schedule) {
+      try {
+        installments = typeof repaymentSchedule.schedule === 'string' 
+          ? JSON.parse(repaymentSchedule.schedule)
+          : repaymentSchedule.schedule;
+        installmentSource = 'schedule';
+        console.log(`📊 Using installments from 'schedule' field: ${installments.length} installments`);
+      } catch (parseError) {
+        console.error('Error parsing schedule JSON:', parseError);
+      }
+    }
+    
+    // Fallback to installments_json if schedule is empty
+    if (installments.length === 0 && repaymentSchedule.installments_json) {
+      try {
+        installments = typeof repaymentSchedule.installments_json === 'string' 
+          ? JSON.parse(repaymentSchedule.installments_json)
+          : repaymentSchedule.installments_json;
+        installmentSource = 'installments_json';
+        console.log(`📊 Using installments from 'installments_json' field: ${installments.length} installments`);
+      } catch (parseError) {
+        console.error('Error parsing installments_json:', parseError);
+        installments = [];
+      }
+    }
+
+    // Calculate totals from installments
+    const now = new Date();
+    const paidInstallments = installments.filter(i => i.status === 'PAID' || (i.paidDate && i.paidDate !== null));
+    const pendingInstallments = installments.filter(i => !i.status || i.status !== 'PAID');
+    const overdueInstallments = installments.filter(i => {
+      if (i.status === 'PAID' || (i.paidDate && i.paidDate !== null)) return false;
+      if (!i.dueDate) return false;
+      try {
+        const dueDate = new Date(i.dueDate);
+        return dueDate < now;
+      } catch {
+        return false;
+      }
+    });
+
+    const totalPaid = paidInstallments.reduce((sum, i) => {
+      return sum + (parseFloat(i.totalPayment) || parseFloat(i.amountPaid) || 0);
+    }, 0);
+
+    const totalOutstanding = pendingInstallments.reduce((sum, i) => {
+      return sum + (parseFloat(i.totalPayment) || parseFloat(i.dueAmount) || 0);
+    }, 0);
+
+    // Build the response data
+    const responseData = {
+      success: true,
+      message: 'Repayment schedule retrieved successfully',
+      code: 'SCHEDULE_RETRIEVED',
+      data: {
+        loanAccountInfo: {
+          accountNumber: repaymentSchedule.account_number || ACCT_NO,
+          customerId: repaymentSchedule.customer_id,
+          startDate: repaymentSchedule.start_date,
+          maturityDate: repaymentSchedule.maturity_date,
+          principalAmount: repaymentSchedule.principal_amount,
+          interestRate: repaymentSchedule.interest_rate,
+          term: repaymentSchedule.term,
+          termType: repaymentSchedule.term_type,
+          paymentFrequency: repaymentSchedule.payment_frequency,
+          emiAmount: repaymentSchedule.emi_amount,
+          totalInterest: repaymentSchedule.total_interest,
+          totalRepayment: repaymentSchedule.total_repayment,
+          status: repaymentSchedule.status,
+          upfrontInterest: repaymentSchedule.upfront_interest,
+          guarantorId: repaymentSchedule.guarantor_id,
+          guaranteedAmount: repaymentSchedule.guaranteed_amount,
+          interestRateType: repaymentSchedule.interest_rate_type,
+          interestType: repaymentSchedule.interest_type,
+          calculationMethod: repaymentSchedule.calculation_method,
+          isTermBasedRate: repaymentSchedule.is_term_based_rate,
+          isScheduleComplete: repaymentSchedule.is_schedule_complete,
+          createdBy: repaymentSchedule.created_by,
+          createdAt: repaymentSchedule.created_at,
+          updatedAt: repaymentSchedule.updated_at
+        },
+        hasSchedule: true,
+        schedule: {
+          id: repaymentSchedule.id,
+          loanAccountId: repaymentSchedule.loan_account_id,
+          transactionId: repaymentSchedule.transaction_id,
+          eventId: repaymentSchedule.event_id,
+          installmentSource: installmentSource,
+          installments: installments,
+          totalInstallments: installments.length,
+          summary: {
+            totalPrincipal: parseFloat(repaymentSchedule.principal_amount) || 0,
+            totalInterest: parseFloat(repaymentSchedule.total_interest) || 0,
+            totalAmount: parseFloat(repaymentSchedule.total_repayment) || 0,
+            totalPaid: totalPaid,
+            totalOutstanding: totalOutstanding,
+            paidInstallments: paidInstallments.length,
+            pendingInstallments: pendingInstallments.length,
+            overdueInstallments: overdueInstallments.length,
+            nextDueDate: pendingInstallments.length > 0 
+              ? pendingInstallments[0].dueDate 
+              : null,
+            lastPaidDate: paidInstallments.length > 0 
+              ? paidInstallments[paidInstallments.length - 1].paidDate 
+              : null
+          }
+        }
+      }
+    };
+
+    // Add detailed installment breakdown if requested
+    if (includeDetails === 'true' && installments.length > 0) {
+      responseData.data.schedule.detailedInstallments = installments.map((installment, index) => {
+        const isPaid = installment.status === 'PAID' || (installment.paidDate && installment.paidDate !== null);
+        const dueDate = new Date(installment.dueDate);
+        const isOverdue = !isPaid && dueDate < now;
+        
+        return {
+          installmentNumber: installment.installmentNo || index + 1,
+          dueDate: installment.dueDate,
+          principalAmount: parseFloat(installment.principal) || parseFloat(installment.principalAmount) || 0,
+          interestAmount: parseFloat(installment.interest) || parseFloat(installment.interestAmount) || 0,
+          totalAmount: parseFloat(installment.totalPayment) || 
+                      (parseFloat(installment.principal) || 0) + (parseFloat(installment.interest) || 0),
+          remainingBalance: parseFloat(installment.remainingBalance) || 0,
+          amountPaid: isPaid ? (parseFloat(installment.totalPayment) || 0) : 0,
+          paidDate: installment.paidDate || null,
+          status: isPaid ? 'PAID' : (isOverdue ? 'OVERDUE' : 'PENDING'),
+          lateFee: installment.lateFee || 0,
+          remarks: installment.remarks || ''
+        };
+      });
+    }
+
+    console.log(`✅ Repayment schedule retrieved: ${installments.length} installments found`);
     return res.status(200).json(responseData);
 
   } catch (error) {
@@ -1453,33 +1597,65 @@ export const getPaymentHistory = async (req, res) => {
       });
     }
 
-    const whereConditions = {
-      ACCT_NO: String(ACCT_NO),
-      status: 'COMPLETED'
-    };
+    // Build WHERE conditions
+    const whereConditions = [`loan_account_number = ?`, `status = ?`];
+    const queryParams = [String(ACCT_NO), 'COMPLETED'];
 
-    if (startDate || endDate) {
-      whereConditions.date = {};
-      if (startDate) whereConditions.date[Op.gte] = new Date(startDate);
-      if (endDate) whereConditions.date[Op.lte] = new Date(endDate);
+    if (startDate) {
+      whereConditions.push(`repayment_date >= ?`);
+      queryParams.push(new Date(startDate));
     }
 
-    const payments = await LoanRepayment.findAll({
-      where: whereConditions,
-      order: [['date', 'DESC']],
-      limit: parseInt(limit)
+    if (endDate) {
+      whereConditions.push(`repayment_date <= ?`);
+      queryParams.push(new Date(endDate));
+    }
+
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}` 
+      : '';
+
+    // Get payments
+    const paymentsQuery = `
+      SELECT 
+        id,
+        loan_account_number as ACCT_NO,
+        customer_id,
+        customer_name,
+        principal_amount,
+        interest_amount,
+        penalty_amount,
+        total_amount as amount,
+        installment_number,
+        repayment_date as date,
+        transaction_reference as reference,
+        status,
+        created_at
+      FROM loan_repayments 
+      ${whereClause}
+      ORDER BY repayment_date DESC 
+      LIMIT ?
+    `;
+    
+    const allParams = [...queryParams, parseInt(limit)];
+    const [payments] = await sequelize.query(paymentsQuery, {
+      replacements: allParams
     });
 
-    const totalPayments = await LoanRepayment.sum('amount', {
-      where: { ACCT_NO: String(ACCT_NO), status: 'COMPLETED' }
-    });
+    // Get totals
+    const totalsQuery = `
+      SELECT 
+        COUNT(*) as count,
+        COALESCE(SUM(total_amount), 0) as totalAmount,
+        COALESCE(SUM(principal_amount), 0) as totalPrincipal,
+        COALESCE(SUM(interest_amount), 0) as totalInterest,
+        COALESCE(SUM(penalty_amount), 0) as totalPenalty
+      FROM loan_repayments 
+      ${whereClause}
+    `;
 
-    const totalPrincipal = await LoanRepayment.sum('principalPaid', {
-      where: { ACCT_NO: String(ACCT_NO), status: 'COMPLETED' }
-    });
-
-    const totalInterest = await LoanRepayment.sum('interestPaid', {
-      where: { ACCT_NO: String(ACCT_NO), status: 'COMPLETED' }
+    const [totals] = await sequelize.query(totalsQuery, {
+      replacements: queryParams
     });
 
     return res.status(200).json({
@@ -1487,21 +1663,25 @@ export const getPaymentHistory = async (req, res) => {
       message: 'Payment history retrieved successfully',
       data: {
         loanAccountNo: ACCT_NO,
-        totalPayments: payments.length,
-        totalAmountPaid: toDecimal(totalPayments || 0),
-        totalPrincipalPaid: toDecimal(totalPrincipal || 0),
-        totalInterestPaid: toDecimal(totalInterest || 0),
+        totalPayments: parseInt(totals[0]?.count || 0),
+        totalAmountPaid: toDecimal(totals[0]?.totalAmount || 0),
+        totalPrincipalPaid: toDecimal(totals[0]?.totalPrincipal || 0),
+        totalInterestPaid: toDecimal(totals[0]?.totalInterest || 0),
+        totalPenaltyPaid: toDecimal(totals[0]?.totalPenalty || 0),
         payments: payments.map(payment => ({
           id: payment.id,
+          loanAccountNo: payment.ACCT_NO,
+          customerId: payment.customer_id,
+          customerName: payment.customer_name,
           date: payment.date,
+          installmentNumber: payment.installment_number,
           amount: toDecimal(payment.amount),
-          principalPaid: toDecimal(payment.principalPaid || 0),
-          interestPaid: toDecimal(payment.interestPaid || 0),
-          paymentMethod: payment.paymentMethod,
+          principalPaid: toDecimal(payment.principal_amount),
+          interestPaid: toDecimal(payment.interest_amount),
+          penaltyPaid: toDecimal(payment.penalty_amount),
           reference: payment.reference,
-          description: payment.description,
-          customerAccountNo: payment.customerAccountNo,
-          details: payment.details
+          status: payment.status,
+          createdAt: payment.created_at
         }))
       }
     });

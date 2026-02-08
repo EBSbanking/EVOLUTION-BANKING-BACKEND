@@ -1,4 +1,4 @@
-// LoanFee.js - COMPLETE UPDATED VERSION
+// LoanFee.js - COMPLETE UPDATED VERSION WITH AUTO-TABLE CREATION
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
@@ -231,6 +231,81 @@ const LoanFee = sequelize.define('LoanFee', {
   ]
 });
 
+// Auto-table creation function
+LoanFee.ensureTableExists = async function() {
+  try {
+    // First, try to sync the model (this will create the table if it doesn't exist)
+    await sequelize.sync({ force: false, alter: false });
+    console.log('✅ LoanFee table checked/created via Sequelize sync');
+    
+    // Alternative: Direct SQL creation if Sequelize sync doesn't work
+    try {
+      // Check if table exists
+      const [tables] = await sequelize.query(
+        "SHOW TABLES LIKE 'loan_fees'",
+        { type: sequelize.QueryTypes.SELECT }
+      );
+      
+      if (tables.length === 0) {
+        console.log('⚠️ LoanFee table not found, creating via SQL...');
+        await sequelize.query(`
+          CREATE TABLE loan_fees (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            PROD_ID INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            type VARCHAR(50) NOT NULL,
+            is_percentage BOOLEAN DEFAULT FALSE,
+            value DECIMAL(20, 4) NOT NULL,
+            min_amount DECIMAL(20, 2) DEFAULT 0,
+            max_amount DECIMAL(20, 2) DEFAULT 0,
+            gl_account_code VARCHAR(20) NOT NULL,
+            taxable BOOLEAN DEFAULT FALSE,
+            tax_rate DECIMAL(5, 2) DEFAULT 0,
+            applies_to_disbursement BOOLEAN DEFAULT TRUE,
+            applies_to_repayment BOOLEAN DEFAULT FALSE,
+            active BOOLEAN DEFAULT TRUE,
+            created_by VARCHAR(255) NOT NULL,
+            workflow_metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            
+            INDEX idx_loan_fee_prod_id (PROD_ID),
+            INDEX idx_loan_fee_active (active),
+            INDEX idx_loan_fee_type (type),
+            INDEX idx_loan_fee_gl_account (gl_account_code),
+            INDEX idx_loan_fee_created_at (created_at),
+            INDEX idx_loan_fee_prod_type_active (PROD_ID, type, active)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ LoanFee table created via SQL');
+      } else {
+        console.log('✅ LoanFee table already exists');
+      }
+    } catch (sqlError) {
+      console.warn('⚠️ SQL table creation attempt failed:', sqlError.message);
+      console.log('⚠️ Relying on Sequelize sync instead');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to ensure LoanFee table exists:', error.message);
+    return false;
+  }
+};
+
+// Initialize table on module load (optional)
+// You can call this during server startup instead
+LoanFee.initializeTable = async function() {
+  console.log('🔄 Initializing LoanFee table...');
+  const success = await this.ensureTableExists();
+  if (success) {
+    console.log('✅ LoanFee table initialization complete');
+  } else {
+    console.error('❌ LoanFee table initialization failed');
+  }
+  return success;
+};
+
 // Define associations
 LoanFee.associate = (models) => {
   if (models.Product) {
@@ -398,5 +473,60 @@ LoanFee.beforeValidate((loanFee) => {
     loanFee.isPercentage = loanFee.isPercentage.toLowerCase() === 'true';
   }
 });
+
+// Static method to create a fee with auto-table creation
+LoanFee.createWithAutoTable = async function(data) {
+  try {
+    // Ensure table exists first
+    await this.ensureTableExists();
+    
+    // Create the fee
+    const fee = await this.create(data);
+    console.log('✅ Fee created with ID:', fee.id);
+    return fee;
+  } catch (error) {
+    console.error('❌ Error creating fee:', error.message);
+    
+    // If table doesn't exist, create it and retry
+    if (error.message.includes('Table') && error.message.includes('doesn\'t exist')) {
+      console.log('🔄 Table not found, attempting to create it...');
+      
+      // Try direct SQL creation
+      try {
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS loan_fees (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            PROD_ID INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            type VARCHAR(50) NOT NULL,
+            is_percentage BOOLEAN DEFAULT FALSE,
+            value DECIMAL(20, 4) NOT NULL,
+            min_amount DECIMAL(20, 2) DEFAULT 0,
+            max_amount DECIMAL(20, 2) DEFAULT 0,
+            gl_account_code VARCHAR(20) NOT NULL,
+            taxable BOOLEAN DEFAULT FALSE,
+            tax_rate DECIMAL(5, 2) DEFAULT 0,
+            applies_to_disbursement BOOLEAN DEFAULT TRUE,
+            applies_to_repayment BOOLEAN DEFAULT FALSE,
+            active BOOLEAN DEFAULT TRUE,
+            created_by VARCHAR(255) NOT NULL,
+            workflow_metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        
+        console.log('✅ Table created, retrying fee creation...');
+        const fee = await this.create(data);
+        return fee;
+      } catch (retryError) {
+        console.error('❌ Failed to create fee after table creation:', retryError.message);
+        throw retryError;
+      }
+    }
+    
+    throw error;
+  }
+};
 
 export default LoanFee;

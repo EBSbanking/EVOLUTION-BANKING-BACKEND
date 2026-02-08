@@ -780,6 +780,140 @@ router.post('/collections/bulk-daily',  async (req, res) => {
   }
 });
 
+// ... (existing routes above)
+
+// ============================================
+// WITHDRAWAL APPROVAL WORKFLOW ROUTES
+// ============================================
+
+/**
+ * @swagger
+ * /api/thrift/withdrawals:
+ *   post:
+ *     summary: Submit withdrawal request (requires approval)
+ *     tags: [Thrift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - CUST_ID
+ *               - ACCT_NO
+ *               - amount
+ *             properties:
+ *               CUST_ID:
+ *                 type: string
+ *               ACCT_NO:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               FULL_NAME:
+ *                 type: string
+ *               TRANSACTION_DATE:
+ *                 type: string
+ *                 format: date-time
+ *               notes:
+ *                 type: string
+ *                 description: Optional notes for approval
+ *     responses:
+ *       200:
+ *         description: Withdrawal request submitted successfully (pending approval)
+ */
+router.post('/withdrawals', ThriftController.processWithdrawal);
+
+/**
+ * @swagger
+ * /api/thrift/withdrawals/approve:
+ *   post:
+ *     summary: Approve or reject a withdrawal request
+ *     tags: [Thrift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - transactionId
+ *             properties:
+ *               transactionId:
+ *                 type: integer
+ *               approve:
+ *                 type: boolean
+ *                 default: true
+ *               approvalNotes:
+ *                 type: string
+ *               rejectionReason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Withdrawal approved/rejected successfully
+ */
+router.post('/withdrawals/approve', ThriftController.approveWithdrawal);
+
+/**
+ * @swagger
+ * /api/thrift/withdrawals/pending:
+ *   get:
+ *     summary: Get pending withdrawal requests
+ *     tags: [Thrift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Items per page
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [PENDING_APPROVAL, ALL]
+ *           default: PENDING_APPROVAL
+ *         description: Filter by status
+ *     responses:
+ *       200:
+ *         description: List of pending withdrawal requests
+ */
+router.get('/withdrawals/pending', ThriftController.getPendingWithdrawals);
+
+/**
+ * @swagger
+ * /api/thrift/withdrawals/details/:transactionId:
+ *   get:
+ *     summary: Get withdrawal approval details
+ *     tags: [Thrift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: transactionId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Transaction ID
+ *     responses:
+ *       200:
+ *         description: Withdrawal approval details
+ */
+router.get('/withdrawals/details/:transactionId', ThriftController.getWithdrawalApprovalDetails);
+
+// ... (rest of your routes file)
+
 // ============================================
 // EXPORT ROUTER
 // ============================================

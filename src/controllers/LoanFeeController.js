@@ -8,111 +8,172 @@ class LoanFeeController {
    * @method createFee
    * @description Create a new loan fee with workflow tracking
    */
-  static async createFee(req, res) {
-    const pool = getPool();
-    const connection = await pool.getConnection();
+static async createFee(req, res) {
+  const pool = getPool();
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // First, ensure the LoanFee table exists
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS LoanFee (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        PROD_ID INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        isPercentage BOOLEAN DEFAULT FALSE,
+        value DECIMAL(15, 5) NOT NULL,
+        minAmount DECIMAL(15, 2) DEFAULT 0,
+        maxAmount DECIMAL(15, 2) DEFAULT 0,
+        glAccountCode VARCHAR(50),
+        taxable BOOLEAN DEFAULT FALSE,
+        taxRate DECIMAL(5, 2) DEFAULT 0,
+        appliesToDisbursement BOOLEAN DEFAULT FALSE,
+        appliesToRepayment BOOLEAN DEFAULT FALSE,
+        createdBy VARCHAR(50) DEFAULT 'system',
+        workItemId VARCHAR(100),
+        processId VARCHAR(100),
+        active BOOLEAN DEFAULT TRUE,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        
+        INDEX idx_prod_id (PROD_ID),
+        INDEX idx_type (type),
+        INDEX idx_active (active),
+        INDEX idx_created_at (createdAt)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
     
-    try {
-      await connection.beginTransaction();
+    console.log('✅ LoanFee table checked/created');
 
-      const { 
-        PROD_ID, 
-        name, 
-        type, 
-        isPercentage, 
-        value, 
-        minAmount, 
-        maxAmount, 
-        glAccountCode, 
-        taxable, 
-        taxRate, 
-        appliesToDisbursement, 
-        appliesToRepayment,
-        createdBy = req.user?.id || 'system'
-      } = req.body;
-      
-      const { workItemId, processId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
+    const { 
+      PROD_ID, 
+      name, 
+      type, 
+      isPercentage, 
+      value, 
+      minAmount, 
+      maxAmount, 
+      glAccountCode, 
+      taxable, 
+      taxRate, 
+      appliesToDisbursement, 
+      appliesToRepayment,
+      createdBy = req.user?.id || 'system'
+    } = req.body;
+    
+    const { workItemId, processId } = req.workflowIdentifiers || generateWorkflowIdentifiers();
 
-      // Validate required fields
-      if (!PROD_ID || !name || !type || value === undefined) {
-        throw new Error('PROD_ID, name, type, and value are required');
-      }
-
-      // Validate user ID
-      let createdById = createdBy;
-      if (createdById === 'system') {
-        createdById = 'system';
-      } else if (!createdById || createdById.length < 1) {
-        throw new Error('Invalid createdBy value');
-      }
-
-      // Insert new fee
-      const [result] = await connection.query(`
-        INSERT INTO LoanFee (
-          PROD_ID, name, type, isPercentage, value, minAmount, maxAmount,
-          glAccountCode, taxable, taxRate, appliesToDisbursement, appliesToRepayment,
-          createdBy, workItemId, processId, createdAt, active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)
-      `, [
-        PROD_ID, 
-        name, 
-        type, 
-        isPercentage || false, 
-        parseFloat(value),
-        isPercentage ? (minAmount || 0) : 0,
-        isPercentage ? (maxAmount || 0) : 0,
-        glAccountCode || null,
-        taxable || false,
-        taxable ? (taxRate || 0) : 0,
-        appliesToDisbursement || false,
-        appliesToRepayment || false,
-        createdById,
-        workItemId,
-        processId
-      ]);
-
-      const feeId = result.insertId;
-
-      // Get the created fee
-      const [feeRows] = await connection.query(
-        'SELECT * FROM LoanFee WHERE id = ?',
-        [feeId]
-      );
-      const newFee = feeRows[0];
-
-      // Log audit trail
-      await logAuditTrail({
-        eventId: workItemId,
-        processId,
-        userId: createdById,
-        action: 'FEE_CREATED',
-        entityType: 'LOAN_FEE',
-        entityId: feeId,
-        description: `Created fee ${name} for product ${PROD_ID}`,
-        oldValue: {},
-        newValue: newFee,
-        connection // Pass connection for transaction consistency
-      });
-
-      await connection.commit();
-
-      res.status(201).json({
-        success: true,
-        message: 'Loan fee created successfully',
-        data: newFee,
-        workflowId: workItemId
-      });
-    } catch (error) {
-      await connection.rollback();
-      res.status(400).json({
-        success: false,
-        message: 'Failed to create loan fee',
-        error: error.message
-      });
-    } finally {
-      connection.release();
+    // Validate required fields
+    if (!PROD_ID || !name || !type || value === undefined) {
+      throw new Error('PROD_ID, name, type, and value are required');
     }
+
+    // Validate user ID
+    let createdById = createdBy;
+    if (createdById === 'system') {
+      createdById = 'system';
+    } else if (!createdById || createdById.length < 1) {
+      throw new Error('Invalid createdBy value');
+    }
+
+    // Insert new fee
+    const [result] = await connection.query(`
+      INSERT INTO LoanFee (
+        PROD_ID, name, type, isPercentage, value, minAmount, maxAmount,
+        glAccountCode, taxable, taxRate, appliesToDisbursement, appliesToRepayment,
+        createdBy, workItemId, processId, createdAt, active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)
+    `, [
+      PROD_ID, 
+      name, 
+      type, 
+      isPercentage || false, 
+      parseFloat(value),
+      isPercentage ? (minAmount || 0) : 0,
+      isPercentage ? (maxAmount || 0) : 0,
+      glAccountCode || null,
+      taxable || false,
+      taxable ? (taxRate || 0) : 0,
+      appliesToDisbursement || false,
+      appliesToRepayment || false,
+      createdById,
+      workItemId,
+      processId
+    ]);
+
+    const feeId = result.insertId;
+
+    // Get the created fee
+    const [feeRows] = await connection.query(
+      'SELECT * FROM LoanFee WHERE id = ?',
+      [feeId]
+    );
+    const newFee = feeRows[0];
+
+    // Try to log audit trail, but don't fail if it doesn't work
+    try {
+      // IMPORTANT: Use the correct function signature for your AuditService
+      // Import it at the top of your controller file:
+      // import { logAuditTrail } from '../services/AuditService.js';
+      
+   // In LoanFeeController.js, update the logAuditTrail call:
+await logAuditTrail({
+  entityId: feeId,
+  entityType: 'LOAN_FEE',
+  action: 'CREATE', // Use 'CREATE' instead of 'FEE_CREATED'
+  performedBy: createdById,
+  ipAddress: req.ip || '127.0.0.1',
+  userInfo: { id: createdById, username: createdById },
+  changedFields: ['ALL'],
+  previousValues: null,
+  newValue: newFee,
+  notes: `Loan fee "${name}" created for product ${PROD_ID}`, // Put details here
+});
+    } catch (auditError) {
+      console.warn('⚠️ Could not log audit trail:', auditError.message);
+      // Don't throw - continue with the transaction
+      // Optionally, log to a simpler audit system
+      try {
+        // Fallback: Log to a simpler audit table
+        await connection.query(`
+          INSERT INTO system_events (event_type, entity_type, entity_id, user_id, action, details, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          'LOAN_FEE_CREATED',
+          'LOAN_FEE',
+          feeId,
+          createdById,
+          'FEE_CREATED',
+          JSON.stringify({ name, type, PROD_ID })
+        ]);
+        console.log('✅ Fallback audit logged');
+      } catch (fallbackError) {
+        console.warn('⚠️ Could not log fallback audit:', fallbackError.message);
+      }
+    }
+
+    await connection.commit();
+
+    res.status(201).json({
+      success: true,
+      message: 'Loan fee created successfully',
+      data: newFee,
+      workflowId: workItemId
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error creating loan fee:', error);
+    res.status(400).json({
+      success: false,
+      message: 'Failed to create loan fee',
+      error: error.message
+    });
+  } finally {
+    connection.release();
   }
+}
 
   /**
    * @method getFeesByProduct

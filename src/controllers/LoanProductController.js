@@ -161,12 +161,14 @@ const validateProductType = (productType) => {
 
 export const LoanProductController = {
   // CREATE LOAN PRODUCT - FLEXIBLE INTEREST RATE HANDLING
-  createProduct: asyncHandler(async (req, res) => {
+ createProduct: asyncHandler(async (req, res) => {
+    console.log('🚀 Starting product creation process...');
+    
     // Check if models are loaded
     if (!LoanProduct || !LoanInterestRate || !ProductTypeMapping || !AuditTrail || !Branch) {
       return res.status(500).json({
         success: false,
-        message: 'Database models not loaded. Please check model imports.',
+        message: 'Database models not loaded.',
         error: {
           LoanProduct: !!LoanProduct,
           LoanInterestRate: !!LoanInterestRate,
@@ -177,25 +179,67 @@ export const LoanProductController = {
       });
     }
 
-    const transaction = await sequelize.transaction();
-    
-    try {
-      const {
+    // CRITICAL FIX: Pre-transaction duplicate checks
+    const {
         name,
         productCode,
         BU_ID = [],
         PROD_ID,
-        PRODUCT_TYPE = 'PERSONAL_LOAN',
+        PRODUCT_TYPE = 'BUSINESS_LOAN',
         description = '',
+        PRODUCT_SHORT_NAME,
+        createdBy = req.user?.id || 'SYSTEM',
+        defaultGLAccounts = {},
+        minAmount,
+        maxAmount,
+        productCategory = 'BUSINESS_LOAN',
+        account_prefix = 'BL'
+    } = req.body;
+
+    console.log('🔍 Performing pre-transaction duplicate checks...');
+    
+    // Check loan_products table - USE MODEL FIELD NAMES
+    const existingLoanProduct = await LoanProduct.findOne({
+        where: {
+            [Op.or]: [
+                { PROD_ID: PROD_ID || Number(productCode) }, // Model field: PROD_ID
+                { productCode: productCode }, // Model field: productCode
+                { PRODUCT_SHORT_NAME: PRODUCT_SHORT_NAME?.toUpperCase() } // Model field: PRODUCT_SHORT_NAME
+            ]
+        }
+    });
+
+    if (existingLoanProduct) {
+        return res.status(400).json({
+            success: false,
+            message: `Product already exists in loan_products with: ${existingLoanProduct.productCode}`
+        });
+    }
+
+    // Check product_type_mapping table
+    const existingMapping = await ProductTypeMapping.findOne({
+        where: { p_r_o_d__i_d: PROD_ID || Number(productCode) } // Fixed: use p_r_o_d__i_d
+    });
+
+    if (existingMapping) {
+        console.warn(`⚠️ Found orphaned record in product_type_mapping with PROD_ID: ${PROD_ID}`);
+        return res.status(400).json({
+            success: false,
+            message: `PROD_ID ${PROD_ID} already exists in product_type_mapping table. Clean up first.`
+        });
+    }
+
+    // Now start the transaction
+    const transaction = await sequelize.transaction();
+    console.log('✅ Transaction started');
+    
+    try {
+      const {
         CRNCY_ID = 'NGN',
         PAYMENT_FREQUENCY = 'MONTHLY',
         TERM_CD = 'M',
-        
-        // Option 1: Reference existing interest rate
         LOAN_INTEREST_RATE_ID,
         LOAN_PROUD_INT_ID,
-        
-        // Option 2: Create new interest rate
         interestRateConfig = {},
         interestRate,
         MIN_RATE_PER_MONTH,
@@ -205,8 +249,6 @@ export const LoanProductController = {
         RATE_TY = 'FIXED',
         INT_TY = 'SIMPLE',
         CALCULATION_METHOD = 'FLAT',
-        
-        // Flexible Term Fields
         minTerm,
         maxTerm,
         MIN_LOAN_TERM_VALUE,
@@ -214,24 +256,12 @@ export const LoanProductController = {
         LOAN_TERM_TYPE = 'MONTHS',
         MIN_LOAN_TERM_MONTHS,
         MAX_LOAN_TERM_MONTHS,
-        
-        // Product Configuration
-        defaultGLAccounts = {},
         branchGLAccounts = [],
-        minAmount,
-        maxAmount,
-        
-        // Fee Structure
         feeStructure = [],
         processingFeeRate = 0,
         processingFeeGLCode,
         lateFeePerDay = 0,
         maxLateFee = 0,
-        
-        // Product Type Specific
-        PRODUCT_SHORT_NAME,
-        
-        // Additional fields (backward compatibility)
         MIN_DURATION_MONTHS,
         MIN_DURATION_DAYS,
         MIN_DURATION_WEEKS,
@@ -239,9 +269,6 @@ export const LoanProductController = {
         AMORTIZED,
         REPAYMENT_FREQUENCY,
         TIME,
-        
-        // Additional Fields
-        createdBy = req.user?.id || 'SYSTEM',
         allowedCurrencies = ['NGN'],
         isActive = true,
         STATUS = 'ACTIVE',
@@ -253,31 +280,12 @@ export const LoanProductController = {
         throw new Error('name, productCode, and PRODUCT_TYPE are required');
       }
       
-      // Validate product type
-      validateProductType(PRODUCT_TYPE);
-      
       if (!defaultGLAccounts || !defaultGLAccounts.loanGLAccount) {
-        throw new Error('Default loan GL account is required');
+        throw new Error('Default loan GL account is required in defaultGLAccounts.loanGLAccount');
       }
       
       if (!minAmount || !maxAmount) {
         throw new Error('minAmount and maxAmount are required');
-      }
-      
-      // Check for duplicate PROD_ID or PRODUCT_SHORT_NAME
-      const existingProduct = await LoanProduct.findOne({
-        where: {
-          [Op.or]: [
-            { PROD_ID: PROD_ID || Number(productCode) },
-            { PRODUCT_SHORT_NAME: PRODUCT_SHORT_NAME?.toUpperCase() },
-            { productCode }
-          ]
-        },
-        transaction
-      });
-      
-      if (existingProduct) {
-        throw new Error('Product with this PROD_ID, PRODUCT_SHORT_NAME, or productCode already exists');
       }
       
       // STEP 1: HANDLE INTEREST RATE
@@ -285,7 +293,6 @@ export const LoanProductController = {
       let loanInterestRateId;
       let loanProudIntId;
       
-      // CASE A: LOAN_INTEREST_RATE_ID is provided (use existing)
       if (LOAN_INTEREST_RATE_ID) {
         interestRateRecord = await LoanInterestRate.findByPk(LOAN_INTEREST_RATE_ID, { transaction });
         if (!interestRateRecord) {
@@ -293,19 +300,15 @@ export const LoanProductController = {
         }
         loanInterestRateId = LOAN_INTEREST_RATE_ID;
         loanProudIntId = LOAN_PROUD_INT_ID || interestRateRecord.LOAN_PROUD_INT_ID;
-      }
-      // CASE B: Interest rate parameters provided (create new)
-      else if (MIN_RATE_PER_MONTH || DEFAULT_RATE_PER_MONTH || interestRateConfig) {
+      } else if (MIN_RATE_PER_MONTH || DEFAULT_RATE_PER_MONTH || interestRateConfig) {
         const interestRateName = interestRateConfig?.name || `${name} Interest Rate`;
         const interestRateCode = interestRateConfig?.code || `RATE_${productCode}`;
         
-        // Use provided values or defaults
         const minRatePerMonth = MIN_RATE_PER_MONTH || interestRateConfig?.MIN_RATE_PER_MONTH || 
                                (interestRate ? interestRate / 12 : 6.20);
         const maxRatePerMonth = MAX_RATE_PER_MONTH || interestRateConfig?.MAX_RATE_PER_MONTH || minRatePerMonth;
         const defaultRatePerMonth = DEFAULT_RATE_PER_MONTH || interestRateConfig?.DEFAULT_RATE_PER_MONTH || minRatePerMonth;
         
-        // Create new LoanInterestRate
         interestRateRecord = await LoanInterestRate.create({
           name: interestRateName,
           code: interestRateCode,
@@ -313,28 +316,19 @@ export const LoanProductController = {
           RATE_TYPE: RATE_TY || interestRateConfig?.RATE_TYPE || 'FIXED',
           INTEREST_TYPE: INT_TY || interestRateConfig?.INTEREST_TYPE || 'SIMPLE',
           CALCULATION_METHOD: CALCULATION_METHOD || interestRateConfig?.CALCULATION_METHOD || 'FLAT',
-          
-          // Monthly rates
           MIN_RATE_PER_MONTH: minRatePerMonth,
           MAX_RATE_PER_MONTH: maxRatePerMonth,
           DEFAULT_RATE_PER_MONTH: defaultRatePerMonth,
-          
-          // Annual rates (calculated from monthly)
           MIN_RATE_PER_YEAR: minRatePerMonth * 12,
           MAX_RATE_PER_YEAR: maxRatePerMonth * 12,
           DEFAULT_RATE_PER_YEAR: defaultRatePerMonth * 12,
-          
           TOTAL_INTEREST_RATE: TOTAL_INTEREST_RATE || interestRateConfig?.TOTAL_INTEREST_RATE || (defaultRatePerMonth * 12),
-          
-          // Metadata
           metadata: {
             createdWithProduct: true,
             productCode: productCode,
             productName: name,
             ...interestRateConfig?.metadata
           },
-          
-          // Status
           STATUS: 'ACTIVE',
           isActive: true,
           createdBy: createdBy,
@@ -343,35 +337,26 @@ export const LoanProductController = {
         
         loanInterestRateId = interestRateRecord.id;
         loanProudIntId = interestRateRecord.LOAN_PROUD_INT_ID;
-      }
-      // CASE C: No interest rate provided (error)
-      else {
-        throw new Error('Either LOAN_INTEREST_RATE_ID or interest rate parameters (MIN_RATE_PER_MONTH, DEFAULT_RATE_PER_MONTH) are required');
+      } else {
+        throw new Error('Either LOAN_INTEREST_RATE_ID or interest rate parameters are required');
       }
       
       // STEP 2: PROCESS TERM FIELDS
       let minTermValue, maxTermValue, termType;
       
-      // Priority 1: Use explicit term fields
       if (MIN_LOAN_TERM_VALUE && MAX_LOAN_TERM_VALUE && LOAN_TERM_TYPE) {
         minTermValue = parseInt(MIN_LOAN_TERM_VALUE);
         maxTermValue = parseInt(MAX_LOAN_TERM_VALUE);
         termType = LOAN_TERM_TYPE.toUpperCase();
-      }
-      // Priority 2: Use old term fields
-      else if (minTerm && maxTerm) {
+      } else if (minTerm && maxTerm) {
         minTermValue = parseInt(minTerm);
         maxTermValue = parseInt(maxTerm);
         termType = LOAN_TERM_TYPE || 'MONTHS';
-      }
-      // Priority 3: Use month-specific fields
-      else if (MIN_LOAN_TERM_MONTHS && MAX_LOAN_TERM_MONTHS) {
+      } else if (MIN_LOAN_TERM_MONTHS && MAX_LOAN_TERM_MONTHS) {
         minTermValue = parseInt(MIN_LOAN_TERM_MONTHS);
         maxTermValue = parseInt(MAX_LOAN_TERM_MONTHS);
         termType = 'MONTHS';
-      }
-      // Priority 4: Use interest rate term values
-      else {
+      } else {
         minTermValue = interestRateRecord.MIN_TERM_VALUE || 1;
         maxTermValue = interestRateRecord.MAX_TERM_VALUE || 60;
         termType = interestRateRecord.TERM_TYPE || 'MONTHS';
@@ -383,7 +368,6 @@ export const LoanProductController = {
         throw new Error(`Invalid LOAN_TERM_TYPE. Must be one of: ${validTermTypes.join(', ')}`);
       }
       
-      // Validate min < max term
       if (minTermValue >= maxTermValue) {
         throw new Error('MIN_LOAN_TERM_VALUE must be less than MAX_LOAN_TERM_VALUE');
       }
@@ -414,11 +398,6 @@ export const LoanProductController = {
         isGlobal = true;
         accessibleBranches = ['*'];
         validatedBranchCodes = ['*', ...allBranchCodes];
-        
-        const otherCodes = branchCodes.filter(code => code !== '*');
-        if (otherCodes.length > 0) {
-          console.warn(`Additional branch codes ignored when wildcard (*) is present: ${otherCodes.join(', ')}`);
-        }
       } else {
         const validPattern = /^\d{3}$/;
         const invalidFormatCodes = branchCodes.filter(code => !validPattern.test(code));
@@ -445,84 +424,70 @@ export const LoanProductController = {
         });
       }
       
-      // Prepare GL accounts - keep original format for LoanProduct
+      // Prepare GL accounts
       const formattedDefaultGLAccounts = {
-        loanGLAccount: keepOriginalGLFormat(defaultGLAccounts.loanGLAccount),
-        interestGLAccountNo: keepOriginalGLFormat(defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount),
-        interestPayableGLAccountNo: keepOriginalGLFormat(defaultGLAccounts.interestPayableGLAccountNo || defaultGLAccounts.loanGLAccount),
-        withholdingTaxGLAccountNo: keepOriginalGLFormat(defaultGLAccounts.withholdingTaxGLAccountNo || defaultGLAccounts.loanGLAccount),
-        suspenseGLAccountNo: keepOriginalGLFormat(defaultGLAccounts.suspenseGLAccountNo || defaultGLAccounts.loanGLAccount),
-        principalGLAccountNo: keepOriginalGLFormat(defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount),
-        processingFeeGLCode: keepOriginalGLFormat(defaultGLAccounts.processingFeeGLCode || defaultGLAccounts.loanGLAccount),
+        loanGLAccount: defaultGLAccounts.loanGLAccount,
+        interestGLAccountNo: defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount,
+        interestPayableGLAccountNo: defaultGLAccounts.interestPayableGLAccountNo || defaultGLAccounts.loanGLAccount,
+        withholdingTaxGLAccountNo: defaultGLAccounts.withholdingTaxGLAccountNo || defaultGLAccounts.loanGLAccount,
+        suspenseGLAccountNo: defaultGLAccounts.suspenseGLAccountNo || defaultGLAccounts.loanGLAccount,
+        principalGLAccountNo: defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount,
+        processingFeeGLCode: defaultGLAccounts.processingFeeGLCode || defaultGLAccounts.loanGLAccount,
         ...defaultGLAccounts
       };
       
-      // Format GL accounts for ProductTypeMapping validation (temporary solution)
-      const productTypeMappingGLAccounts = {
-        loanGLAccount: formatGLAccountForValidation(defaultGLAccounts.loanGLAccount),
-        principalGLAccountNo: formatGLAccountForValidation(defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount),
-        interestGLAccountNo: formatGLAccountForValidation(defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount),
-        ...defaultGLAccounts
-      };
+      // STEP 4: CREATE LOAN PRODUCT - USE MODEL FIELD NAMES
+      console.log(`📝 Creating loan product with PROD_ID: ${PROD_ID || Number(productCode)}`);
       
-      // STEP 4: CREATE LOAN PRODUCT
       const loanProduct = await LoanProduct.create({
+        // ✅ USE MODEL FIELD NAMES (from your LoanProduct.js)
         // Product Identification
         name,
-        productCode,
-        PROD_CD: productCode,
-        PROD_ID: PROD_ID || Number(productCode),
-        PRODUCT_SHORT_NAME: PRODUCT_SHORT_NAME?.toUpperCase(),
-        PRODUCT_TYPE: PRODUCT_TYPE.toUpperCase(),
+        productCode, // Model field: productCode
+        PROD_ID: PROD_ID || Number(productCode), // Model field: PROD_ID
+        PRODUCT_SHORT_NAME: PRODUCT_SHORT_NAME?.toUpperCase(), // Model field: PRODUCT_SHORT_NAME
+        PRODUCT_TYPE: PRODUCT_TYPE.toUpperCase(), // Model field: PRODUCT_TYPE
         description,
         CRNCY_ID,
         
         // Loan Interest Rate Reference
-        LOAN_INTEREST_RATE_ID: loanInterestRateId,
-        LOAN_PROUD_INT_ID: loanProudIntId,
+        LOAN_INTEREST_RATE_ID: loanInterestRateId, // Model field: LOAN_INTEREST_RATE_ID
+        LOAN_PROUD_INT_ID: loanProudIntId, // Model field: LOAN_PROUD_INT_ID
         
         // Flexible Term Fields
-        MIN_LOAN_TERM_VALUE: minTermValue,
-        MAX_LOAN_TERM_VALUE: maxTermValue,
-        LOAN_TERM_TYPE: termType,
+        MIN_LOAN_TERM_VALUE: minTermValue, // Model field: MIN_LOAN_TERM_VALUE
+        MAX_LOAN_TERM_VALUE: maxTermValue, // Model field: MAX_LOAN_TERM_VALUE
+        LOAN_TERM_TYPE: termType, // Model field: LOAN_TERM_TYPE
         
         // Business Unit Configuration
-        BU_ID: validatedBranchCodes,
-        isGlobalProduct: isGlobal,
+        BU_ID: hasWildcard ? '*' : validatedBranchCodes.join(','), // Model field: BU_ID (as comma-separated string)
+        isGlobalProduct: isGlobal, // Model field: isGlobalProduct
         visibility: isGlobal ? 'GLOBAL' : 'SELECTED_BUS',
         
         // Loan Terms
-        minTerm: minTermValue,
-        maxTerm: maxTermValue,
-        minAmount: toDecimal(minAmount, 'minAmount'),
-        maxAmount: toDecimal(maxAmount, 'maxAmount'),
-        TERM_CD,
-        PAYMENT_FREQUENCY: PAYMENT_FREQUENCY || REPAYMENT_FREQUENCY,
+        minAmount: parseFloat(minAmount), // Model field: minAmount
+        maxAmount: parseFloat(maxAmount), // Model field: maxAmount
+        TERM_CD, // Model field: TERM_CD (MUST BE PROVIDED)
+        PAYMENT_FREQUENCY: PAYMENT_FREQUENCY || REPAYMENT_FREQUENCY, // Model field: PAYMENT_FREQUENCY
+        REPAYMENT_TYPE: PAYMENT_FREQUENCY || REPAYMENT_FREQUENCY, // Model field: REPAYMENT_TYPE
         
-        // Backward compatibility fields
-        MIN_LOAN_TERM_MONTHS: convertTermToMonths(minTermValue, termType),
-        MAX_LOAN_TERM_MONTHS: convertTermToMonths(maxTermValue, termType),
-        MIN_DURATION_DAYS: termType === 'DAYS' ? minTermValue : (MIN_DURATION_DAYS || 1),
-        MIN_DURATION_WEEKS: termType === 'WEEKS' ? minTermValue : (MIN_DURATION_WEEKS || 0),
-        MIN_DURATION_MONTHS: termType === 'MONTHS' ? minTermValue : (MIN_DURATION_MONTHS || 1),
+        // Product Category
+        productCategory: productCategory || PRODUCT_TYPE,
         
-        TIME: Number(TIME) || 12,
-        RATE_TY: RATE_TY || interestRateRecord.RATE_TYPE || 'FIXED',
-        INT_TY: INT_TY || interestRateRecord.INTEREST_TYPE || 'SIMPLE',
-        CAPITALIZE_INT_FG: CAPITALIZE_INT_FG !== undefined ? CAPITALIZE_INT_FG : false,
-        AMORTIZED: AMORTIZED !== undefined ? AMORTIZED : true,
+        // Backward compatibility
+        allowedCurrencies: ['NGN'],
         
-        // GL Accounts Configuration (in original format)
+        // GL Accounts
         defaultGLAccounts: formattedDefaultGLAccounts,
         
-        // Branch-specific GL Accounts
+        // Branch GL Accounts
         branchGLAccounts: (branchGLAccounts || []).map(branch => ({
           branchCode: branch.branchCode,
           branchName: branch.branchName,
-          loanGLAccount: keepOriginalGLFormat(branch.loanGLAccount || defaultGLAccounts.loanGLAccount),
-          interestGLAccountNo: keepOriginalGLFormat(branch.interestGLAccountNo || defaultGLAccounts.loanGLAccount),
-          interestPayableGLAccountNo: keepOriginalGLFormat(branch.interestPayableGLAccountNo || defaultGLAccounts.loanGLAccount),
-          principalGLAccountNo: keepOriginalGLFormat(branch.principalGLAccountNo || defaultGLAccounts.loanGLAccount),
+          loanGLAccount: branch.loanGLAccount || defaultGLAccounts.loanGLAccount,
+          interestGLAccountNo: branch.interestGLAccountNo || defaultGLAccounts.loanGLAccount,
+          interestPayableGLAccountNo: branch.interestPayableGLAccountNo || defaultGLAccounts.loanGLAccount,
+          principalGLAccountNo: branch.principalGLAccountNo || defaultGLAccounts.loanGLAccount,
           ...branch
         })),
         
@@ -530,23 +495,22 @@ export const LoanProductController = {
         feeStructure: (feeStructure || []).map(fee => ({
           feeType: fee.feeType || 'PROCESSING',
           name: fee.name,
-          amount: toDecimal(fee.amount, 'fee amount'),
+          amount: parseFloat(fee.amount || 0),
           isPercentage: fee.isPercentage || false,
-          glAccountCode: keepOriginalGLFormat(fee.glAccountCode || defaultGLAccounts.loanGLAccount),
+          glAccountCode: fee.glAccountCode || defaultGLAccounts.loanGLAccount,
           appliesTo: fee.appliesTo || 'DISBURSEMENT',
           isActive: fee.isActive !== undefined ? fee.isActive : true,
           ...fee
         })),
         
-        processingFeeRate: toDecimal(processingFeeRate, 'processingFeeRate'),
-        processingFeeGLCode: keepOriginalGLFormat(processingFeeGLCode || defaultGLAccounts.loanGLAccount),
-        lateFeePerDay: toDecimal(lateFeePerDay, 'lateFeePerDay'),
-        maxLateFee: toDecimal(maxLateFee, 'maxLateFee'),
+        processingFeeRate: parseFloat(processingFeeRate || 0),
+        processingFeeGLCode: processingFeeGLCode || defaultGLAccounts.loanGLAccount,
+        lateFeePerDay: parseFloat(lateFeePerDay || 0),
+        maxLateFee: parseFloat(maxLateFee || 0),
         
         // Additional Fields
         createdBy,
         USER_ID,
-        allowedCurrencies,
         isActive,
         STATUS,
         
@@ -557,74 +521,146 @@ export const LoanProductController = {
           termConfiguration: {
             termType,
             minValue: minTermValue,
-            maxValue: maxTermValue,
-            termConversionApplied: true
+            maxValue: maxTermValue
           },
           interestRateConfiguration: {
             masterInterestRateId: loanInterestRateId,
             loanProudIntId: loanProudIntId,
             rateSource: LOAN_INTEREST_RATE_ID ? 'Existing LoanInterestRate' : 'Auto-created with product',
-            syncWithMaster: true,
             createdWithProduct: !LOAN_INTEREST_RATE_ID
-          },
-          createdFromPostman: true
+          }
         }
-      }, { transaction });
+      }, { 
+        transaction
+      });
 
-  // In your LoanProductController.js, update the ProductTypeMapping creation section:
+      console.log(`✅ LoanProduct created successfully with ID: ${loanProduct.id}`);
 
-// STEP 5: CREATE PRODUCT TYPE MAPPING
-const productTypeMappingData = {
-  PROD_ID: loanProduct.PROD_ID,
-  productType: PRODUCT_TYPE.toUpperCase(), // Changed from PRODUCT_TYPE to productType
-  productName: name,
-  accountPrefix: '10',
-  BU_ID: validatedBranchCodes,
-  isGlobalProduct: isGlobal,
-  visibility: isGlobal ? 'GLOBAL' : 'SELECTED_BUS',
-  PRODUCT_SHORT_NAME: PRODUCT_SHORT_NAME?.toUpperCase(),
-  productCode: productCode,
-  description: description,
-  LOAN_INTEREST_RATE_ID: loanInterestRateId,
-  LOAN_PROUD_INT_ID: loanProudIntId,
-  glAccounts: {
-    loanGLAccount: defaultGLAccounts.loanGLAccount,
-    principalGLAccountNo: defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount,
-    interestGLAccountNo: defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount,
-    ...defaultGLAccounts
-  },
-  productTerms: {
-    minTerm: minTermValue,
-    maxTerm: maxTermValue,
-    minAmount: parseFloat(minAmount),
-    maxAmount: parseFloat(maxAmount),
-    LOAN_TERM_TYPE: termType
-  },
-  metadata: {
-    isWildcard: hasWildcard,
-    totalBranches: allActiveBranches.length,
-    createdFrom: 'LoanProductController.createProduct',
-    interestRateSource: LOAN_INTEREST_RATE_ID ? 'Existing LoanInterestRate' : 'Auto-created with product',
-    glAccountFormat: 'without-hyphens'
-  },
-  STATUS: 'ACTIVE',
-  isActive: true,
-  createdBy,
-  USER_ID,
-  createdAt: new Date(),
-  updatedAt: new Date()
-};
+      // STEP 5: CREATE PRODUCT TYPE MAPPING - CORRECTED VERSION
+      console.log(`📝 Creating product_type_mapping for PROD_ID: ${loanProduct.PROD_ID}`);
 
-await ProductTypeMapping.create(productTypeMappingData, { transaction });
+      // Use exact field names that match your model/table
+      const productTypeMappingData = {
+          p_r_o_d__i_d: loanProduct.PROD_ID, // Note: double underscores
+          product_type: (PRODUCT_TYPE || 'BUSINESS_LOAN').toUpperCase().trim(),
+          product_name: name,
+          p_r_o_d__d_e_s_c: description || '',
+          p_r_o_d__c_d: productCode,
+          account_prefix: (account_prefix || 'BL').trim(),
+          gl_accounts: JSON.stringify({
+              loanGLAccount: defaultGLAccounts.loanGLAccount,
+              principalGLAccountNo: defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount,
+              interestGLAccountNo: defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount,
+              ...defaultGLAccounts
+          }),
+          l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d: loanInterestRateId,
+          l_o_a_n__p_r_o_u_d__i_n_t__i_d: loanProudIntId,
+          p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e: (PRODUCT_SHORT_NAME || productCode).toUpperCase(),
+          product_code: productCode,
+          created_at: new Date(),
+          updated_at: new Date()
+      };
+
+      // LOG FINAL DATA
+      console.log('📦 Final ProductTypeMapping data:', JSON.stringify(productTypeMappingData, null, 2));
+
+      // Validate critical fields
+      const validationErrors = [];
+
+      // Check product_type
+      if (!productTypeMappingData.product_type) {
+          validationErrors.push('product_type is required');
+      } else if (!/^[A-Z_]+$/.test(productTypeMappingData.product_type)) {
+          validationErrors.push('product_type must be uppercase with underscores (e.g., BUSINESS_LOAN)');
+      }
+
+      // Check account_prefix
+      if (!productTypeMappingData.account_prefix) {
+          validationErrors.push('account_prefix is required');
+      } else if (productTypeMappingData.account_prefix.length < 2) {
+          validationErrors.push('account_prefix must be at least 2 characters');
+      }
+
+      // Check p_r_o_d__i_d
+      if (!productTypeMappingData.p_r_o_d__i_d) {
+          validationErrors.push('PROD_ID is required');
+      }
+
+      if (validationErrors.length > 0) {
+          throw new Error(`ProductTypeMapping validation failed: ${validationErrors.join(', ')}`);
+      }
+
+      // Try to create using the model
+      let productMapping;
+      try {
+          productMapping = await ProductTypeMapping.create(productTypeMappingData, { 
+              transaction 
+          });
+          console.log('✅ ProductTypeMapping created successfully with ID:', productMapping.id);
+      } catch (modelError) {
+          console.error('❌ Model creation failed:', modelError.message);
+          
+          // If model fails, try direct SQL as fallback
+          console.log('🔄 Trying direct SQL insertion...');
+          
+          // Prepare SQL values - handle potential NULL values
+          const replacements = [
+              productTypeMappingData.p_r_o_d__i_d,
+              productTypeMappingData.product_type,
+              productTypeMappingData.product_name,
+              productTypeMappingData.p_r_o_d__d_e_s_c || '',
+              productTypeMappingData.p_r_o_d__c_d || productCode,
+              productTypeMappingData.account_prefix,
+              productTypeMappingData.gl_accounts,
+              productTypeMappingData.l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d,
+              productTypeMappingData.l_o_a_n__p_r_o_u_d__i_n_t__i_d,
+              productTypeMappingData.p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e || productCode,
+              productTypeMappingData.product_code || productCode,
+              productTypeMappingData.created_at,
+              productTypeMappingData.updated_at
+          ];
+          
+          await sequelize.query(
+              `INSERT INTO product_type_mapping (
+                  p_r_o_d__i_d, product_type, product_name, p_r_o_d__d_e_s_c, 
+                  p_r_o_d__c_d, account_prefix, gl_accounts, 
+                  l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d, l_o_a_n__p_r_o_u_d__i_n_t__i_d,
+                  p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e, product_code, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              {
+                  replacements: replacements,
+                  transaction
+              }
+          );
+          
+          // Verify the record was created
+          const [results] = await sequelize.query(
+              `SELECT id FROM product_type_mapping WHERE p_r_o_d__i_d = ?`,
+              {
+                  replacements: [productTypeMappingData.p_r_o_d__i_d],
+                  transaction,
+                  type: sequelize.QueryTypes.SELECT
+              }
+          );
+          
+          if (results && results.id) {
+              console.log('✅ ProductTypeMapping created via direct SQL with ID:', results.id);
+              productMapping = { id: results.id };
+          } else {
+              throw new Error('Failed to verify ProductTypeMapping creation');
+          }
+      }
 
       // STEP 6: AUDIT TRAIL
+      console.log('📝 Creating audit trail entry');
+      
       const auditTrailData = {
         event_id: generateEventId(),
         user_id: createdBy,
         event_type: 'CREATE',
         action: 'CREATE_LOAN_PRODUCT',
         old_value: null,
-        new_value: {
+        new_value: JSON.stringify({
           productCode,
           name,
           PRODUCT_TYPE: PRODUCT_TYPE.toUpperCase(),
@@ -648,22 +684,26 @@ await ProductTypeMapping.create(productTypeMappingData, { transaction });
             loanProudIntId: interestRateRecord.LOAN_PROUD_INT_ID
           },
           interestRateSource: LOAN_INTEREST_RATE_ID ? 'Existing' : 'Auto-created',
-          branchGLAccountsCount: loanProduct.branchGLAccounts?.length || 0,
           totalBranches: allActiveBranches.length,
-          hasWildcard
-        },
+          hasWildcard,
+          productMappingId: productMapping.id
+        }),
         ip_address: getClientIp(req),
         entity_id: loanProduct.id,
         entity_type: 'LoanProduct',
         status: 'SUCCESS',
-        description: `Created loan product: ${name} (${productCode}) with ${LOAN_INTEREST_RATE_ID ? 'existing' : 'auto-created'} interest rate`,
+        description: `Created loan product: ${name} (${productCode})`,
         timestamp: new Date()
       };
       
       await AuditTrail.create(auditTrailData, { transaction });
 
+      // STEP 7: COMMIT TRANSACTION
+      console.log('💾 Committing transaction...');
       await transaction.commit();
+      console.log('🎉 Transaction COMMITTED successfully!');
 
+      // STEP 8: SEND RESPONSE
       res.status(201).json({
         success: true,
         message: `Loan product created successfully for ${isGlobal ? 'all branches' : `${accessibleBranches.length} branches`}`,
@@ -701,174 +741,35 @@ await ProductTypeMapping.create(productTypeMappingData, { transaction });
             totalBranches: allActiveBranches.length,
             hasWildcard
           },
-          fees: {
-            processingFeeRate: parseFloat(processingFeeRate),
-            lateFeePerDay: parseFloat(lateFeePerDay),
-            feeStructureCount: feeStructure.length
+          productMapping: {
+            id: productMapping.id,
+            product_type: productTypeMappingData.product_type,
+            account_prefix: productTypeMappingData.account_prefix
           },
           createdBy,
           createdAt: new Date().toISOString()
         }
       });
+      
+      console.log('📤 Response sent to client');
+
     } catch (error) {
-      await transaction.rollback();
       console.error('❌ Product creation failed:', error.message);
-      logger.error('Product creation failed:', error);
+      console.error('Error stack:', error.stack);
+      
+      if (transaction && !transaction.finished) {
+        await transaction.rollback();
+        console.log('↩️ Transaction ROLLED BACK due to error');
+      }
+      
       res.status(400).json({
         success: false,
         message: error.message || 'Failed to create loan product',
-        error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      });
-    }
-  }),
-
-  // TEST ENDPOINT TO CHECK MODEL LOADING
-  testModels: asyncHandler(async (req, res) => {
-    try {
-      res.json({
-        success: true,
-        message: 'Model loading test',
-        data: {
-          modelsLoaded: {
-            LoanProduct: !!LoanProduct,
-            LoanInterestRate: !!LoanInterestRate,
-            ProductTypeMapping: !!ProductTypeMapping,
-            AuditTrail: !!AuditTrail,
-            Branch: !!Branch,
-            sequelize: !!sequelize
-          },
-          modelCounts: {
-            LoanProduct: await LoanProduct?.count() || 'N/A',
-            LoanInterestRate: await LoanInterestRate?.count() || 'N/A',
-            ProductTypeMapping: await ProductTypeMapping?.count() || 'N/A',
-            Branch: await Branch?.count() || 'N/A'
-          }
+        errorDetails: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+        debug: {
+          receivedProductType: PRODUCT_TYPE,
+          receivedAccountPrefix: account_prefix
         }
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Model test failed',
-        error: error.message,
-        models: {
-          LoanProduct: !!LoanProduct,
-          LoanInterestRate: !!LoanInterestRate,
-          ProductTypeMapping: !!ProductTypeMapping,
-          AuditTrail: !!AuditTrail,
-          Branch: !!Branch
-        }
-      });
-    }
-  }),
-
-
-  // TEST ENDPOINT TO CHECK MODEL LOADING
-  testModels: asyncHandler(async (req, res) => {
-    try {
-      res.json({
-        success: true,
-        message: 'Model loading test',
-        data: {
-          modelsLoaded: {
-            LoanProduct: !!LoanProduct,
-            LoanInterestRate: !!LoanInterestRate,
-            ProductTypeMapping: !!ProductTypeMapping,
-            AuditTrail: !!AuditTrail,
-            Branch: !!Branch,
-            sequelize: !!sequelize
-          },
-          modelCounts: {
-            LoanProduct: await LoanProduct?.count() || 'N/A',
-            LoanInterestRate: await LoanInterestRate?.count() || 'N/A',
-            ProductTypeMapping: await ProductTypeMapping?.count() || 'N/A',
-            Branch: await Branch?.count() || 'N/A'
-          }
-        }
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Model test failed',
-        error: error.message,
-        models: {
-          LoanProduct: !!LoanProduct,
-          LoanInterestRate: !!LoanInterestRate,
-          ProductTypeMapping: !!ProductTypeMapping,
-          AuditTrail: !!AuditTrail,
-          Branch: !!Branch
-        }
-      });
-    }
-  }),
-
-  // Simple test endpoint to check if associations work
-  testAssociations: asyncHandler(async (req, res) => {
-    try {
-      console.log('🧪 Testing LoanProduct ↔ LoanInterestRate associations...');
-      
-      // Try to set up associations manually if needed
-      if (LoanProduct && LoanInterestRate && !LoanProduct.associations?.LoanInterestRate) {
-        console.log('🔄 Setting up associations manually...');
-        
-        LoanProduct.belongsTo(LoanInterestRate, {
-          foreignKey: 'LOAN_INTEREST_RATE_ID',
-          as: 'LoanInterestRate'
-        });
-        
-        LoanInterestRate.hasMany(LoanProduct, {
-          foreignKey: 'LOAN_INTEREST_RATE_ID',
-          as: 'LoanProducts'
-        });
-        
-        console.log('✅ Manual associations set');
-      }
-      
-      // Test if we can query with associations
-      const interestRates = await LoanInterestRate.findAll({
-        limit: 5,
-        include: [{
-          model: LoanProduct,
-          as: 'LoanProducts',
-          required: false
-        }]
-      }).catch(err => {
-        console.log('⚠️ Query with associations failed, trying without...');
-        return LoanInterestRate.findAll({ limit: 5 });
-      });
-      
-      const products = await LoanProduct.findAll({
-        limit: 5,
-        include: [{
-          model: LoanInterestRate,
-          as: 'LoanInterestRate',
-          required: false
-        }]
-      }).catch(err => {
-        console.log('⚠️ Query with associations failed, trying without...');
-        return LoanProduct.findAll({ limit: 5 });
-      });
-      
-      res.json({
-        success: true,
-        message: 'Association test completed',
-        data: {
-          interestRatesCount: interestRates.length,
-          productsCount: products.length,
-          hasLoanProduct: !!LoanProduct,
-          hasLoanInterestRate: !!LoanInterestRate,
-          associations: {
-            LoanProduct: LoanProduct?.associations ? Object.keys(LoanProduct.associations) : 'No associations',
-            LoanInterestRate: LoanInterestRate?.associations ? Object.keys(LoanInterestRate.associations) : 'No associations'
-          }
-        }
-      });
-      
-    } catch (error) {
-      console.error('❌ Association test failed:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Association test failed',
-        error: error.message
       });
     }
   }),
@@ -1445,7 +1346,7 @@ await ProductTypeMapping.create(productTypeMappingData, { transaction });
   }),
 
   // GET PRODUCT WITH INTEREST RATE DETAILS
-  getProduct: asyncHandler(async (req, res) => {
+getProduct: asyncHandler(async (req, res) => {
     const { id, shortName } = req.params;
     let product;
     
@@ -1460,30 +1361,31 @@ await ProductTypeMapping.create(productTypeMappingData, { transaction });
         return { type: '_id', value: id };
       }
      
-      return { type: 'productCode', value: id };
+      return { type: 'product_code', value: id }; // Changed from 'productCode'
     };
     
     if (shortName) {
-      // Find by PRODUCT_SHORT_NAME
+      // Find by PRODUCT_SHORT_NAME (use correct field name)
       product = await LoanProduct.findOne({
         where: {
-          PRODUCT_SHORT_NAME: shortName.toUpperCase(),
-          STATUS: 'ACTIVE'
+          p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e: shortName.toUpperCase(), // Changed field name
+          s_t_a_t_u_s: 'ACTIVE' // Changed from STATUS
         }
       });
     } else {
       // Parse the ID to determine what type it is
       const parsedId = parseProductId(id);
       let whereClause;
+      
       switch (parsedId.type) {
         case 'PROD_ID':
-          whereClause = { PROD_ID: parsedId.value, STATUS: 'ACTIVE' };
+          whereClause = { p_r_o_d__i_d: parsedId.value, s_t_a_t_u_s: 'ACTIVE' }; // Changed field names
           break;
         case '_id':
-          whereClause = { id: parsedId.value, STATUS: 'ACTIVE' };
+          whereClause = { id: parsedId.value, s_t_a_t_u_s: 'ACTIVE' }; // Changed from STATUS
           break;
-        case 'productCode':
-          whereClause = { productCode: parsedId.value, STATUS: 'ACTIVE' };
+        case 'product_code':
+          whereClause = { product_code: parsedId.value, s_t_a_t_u_s: 'ACTIVE' }; // Changed field names
           break;
       }
      
@@ -1499,13 +1401,13 @@ await ProductTypeMapping.create(productTypeMappingData, { transaction });
       });
     }
     
-    // Get interest rate details
-    const interestRate = product.LOAN_INTEREST_RATE_ID ? 
-      await LoanInterestRate.findByPk(product.LOAN_INTEREST_RATE_ID) : null;
+    // Get interest rate details - use correct field name
+    const interestRate = product.l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d ? 
+      await LoanInterestRate.findByPk(product.l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d) : null;
     
     // Get branch details
     const branchDetails = [];
-    for (const branchCode of product.BU_ID) {
+    for (const branchCode of product.b_u__i_d) { // Changed from BU_ID
       if (branchCode === '*') {
         branchDetails.push({
           branchCode: '*',

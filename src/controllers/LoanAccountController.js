@@ -45,6 +45,7 @@ import { processLoanDisbursementTransactions, processDisbursement, getGLAccounts
 import LoanPortfolio from '../models/LoanPortfolio.js';
 import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 import LoanEvent from '../models/LoanEvent.js';
+import { createOrUpdateAccount } from '../Services/accountService.js';
 
 // Import sequelize instance and QueryTypes
 import sequelize from '../../config/db.js';
@@ -3072,43 +3073,241 @@ async applyForLoan(req, res) {
     console.log(`Calculated EMI: ₦${emiResult.emi.toFixed(2)}`);
     console.log(`✅ ALL CALCULATIONS COMPLETED SUCCESSFULLY`);
 
+    // ==================== GENERATE LOAN CONTRACT ====================
+console.log('\n=== GENERATING LOAN CONTRACT ===');
+
+try {
+  // Prepare data for contract generation
+  const contractData = {
+    loan_contract_no: `CONTRACT-${Date.now()}-${loanAccountNumber}`,
+    customer_id: req.body.CUST_ID,
+    borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+    borrower_address: addressData?.street 
+      ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
+      : 'Address Not Provided',
+    loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+    loan_amount: numericValues.DISBURSEMENT_LIMIT.toString(),
+    loan_term: numericValues.TERM_VALUE,
+    t_e_r_m__c_d: req.body.TERM_CD || 'M',
+    interest_rate: effectiveInterestRate,
+    interest_rate_id: loanInterestRate?.id || 101, // Default interest rate ID
+    guarantor_name: guarantor?.fullName || '',
+    bank_name: process.env.BANK_NAME || 'Our Bank',
+    bank_short: process.env.BANK_SHORT_NAME || 'BANK',
+    status: 'PENDING',
+    
+    // Generate contract text using your existing function
+    contract_text: generateContractText(
+      {
+        AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+        INTEREST_RATE: effectiveInterestRate,
+        TERM_VALUE: numericValues.TERM_VALUE,
+        TERM_CD: req.body.TERM_CD || 'M',
+        loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+        borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+        borrower_address: addressData?.street 
+          ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
+          : 'Address Not Provided',
+        DISBURSEMENT_DATE: startDate,
+        NUMBER_OF_INSTALLMENTS: numericValues.TERM_VALUE,
+        FIRST_PAYMENT_DATE: startDate,
+        LAST_PAYMENT_DATE: maturityDate
+      },
+      customer,
+      loanProduct,
+      effectiveInterestRate
+    ),
+    
+    u_s_e_r__i_d: req.body.CREATED_BY || req.body.USER_ID || 'SYSTEM',
+    application_id: creditApplication.id,
+    loan_account_no: loanAccountNumber,
+    funding_account_no: req.body.REPAY_SRC_ACCT_NO || '',
+    workflow_id: WORK_ITEM_ID || Date.now(),
+    
+    // Fees information
+    fees: JSON.stringify({
+      processing_fee: {
+        rate: loanProduct?.processingFeeRate || 0,
+        amount: (numericValues.DISBURSEMENT_LIMIT * (loanProduct?.processingFeeRate || 0) / 100).toFixed(2)
+      },
+      upfront_interest: {
+        rate: upfrontInterest,
+        amount: (numericValues.DISBURSEMENT_LIMIT * (upfrontInterest || 0) / 100).toFixed(2)
+      }
+    }),
+    
+    // Signature requirements
+    signature_requirements: JSON.stringify({
+      required_signatures: [
+        {
+          party: 'BORROWER',
+          required: true,
+          field_name: 'borrower_signature'
+        },
+        {
+          party: 'GUARANTOR',
+          required: true,
+          field_name: 'guarantor_signature'
+        },
+        {
+          party: 'LENDER',
+          required: true,
+          field_name: 'lender_authorized_signature'
+        }
+      ]
+    }),
+    
+    // Metadata
+    metadata: JSON.stringify({
+      product_id: numericValues.PROD_ID,
+      product_type: productValidation.productType,
+      interest_rate_details: interestRateDetails,
+      calculation_method: calculationMethod,
+      emi_details: emiResult,
+      guarantor_details: {
+        id: guarantor.id,
+        name: guarantor.fullName,
+        relationship: guarantor.relationshipToBorrower
+      }
+    }),
+    
+    disbursement_date: startDate,
+    maturity_date: maturityDate,
+    created_at: new Date(),
+    updated_at: new Date()
+  };
+
+  console.log('Generated contract data:', {
+    loan_contract_no: contractData.loan_contract_no,
+    loan_account_no: contractData.loan_account_no,
+    status: contractData.status
+  });
+
+  // Check if loan_contract_forms table exists and create it if needed
+  try {
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS loan_contract_forms (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+        customer_id VARCHAR(255) NOT NULL,
+        borrower_name VARCHAR(255) NOT NULL,
+        co_signatory_name VARCHAR(255) DEFAULT '',
+        borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+        loan_purpose VARCHAR(255) NOT NULL,
+        loan_amount VARCHAR(255) NOT NULL,
+        loan_term INT NOT NULL,
+        t_e_r_m__c_d ENUM('M','Y') NOT NULL DEFAULT 'M',
+        interest_rate DECIMAL(7,4) NOT NULL,
+        interest_rate_id INT NOT NULL DEFAULT 101,
+        guarantor_name VARCHAR(255) DEFAULT '',
+        bank_name VARCHAR(255) NOT NULL,
+        bank_short VARCHAR(255) NOT NULL,
+        status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') NOT NULL DEFAULT 'PENDING',
+        contract_text TEXT NOT NULL,
+        u_s_e_r__i_d VARCHAR(255) NOT NULL,
+        application_id VARCHAR(255) NOT NULL,
+        loan_account_no VARCHAR(255) NOT NULL,
+        funding_account_no VARCHAR(255),
+        workflow_id BIGINT,
+        fees LONGTEXT NOT NULL,
+        signature_requirements LONGTEXT NOT NULL,
+        metadata LONGTEXT NOT NULL,
+        disbursement_date DATETIME,
+        maturity_date DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_status (status),
+        INDEX idx_loan_account_no (loan_account_no),
+        INDEX idx_application_id (application_id),
+        INDEX idx_created_at (created_at),
+        UNIQUE KEY uk_workflow_id (workflow_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `, { transaction });
+    
+    console.log('✅ loan_contract_forms table created or already exists');
+  } catch (tableError) {
+    console.warn('⚠️ Could not create loan_contract_forms table:', tableError.message);
+  }
+
+  // Insert contract into database
+  const columns = Object.keys(contractData);
+  const placeholders = columns.map(() => '?').join(', ');
+  const values = columns.map(col => contractData[col]);
+  
+  const insertContractQuery = `
+    INSERT INTO loan_contract_forms (
+      ${columns.join(', ')}
+    ) VALUES (
+      ${placeholders}
+  )`;
+  
+  const [contractResult] = await sequelize.query(insertContractQuery, {
+    replacements: values,
+    transaction
+  });
+  
+  console.log('✅ Loan contract generated with ID:', contractResult.insertId);
+  
+  // Update loan account with contract reference
+  await sequelize.query(
+    `UPDATE loan_accounts SET 
+      has_repayment_schedule = TRUE,
+      repayment_schedule_id = ?,
+      updated_at = ?
+     WHERE id = ?`,
+    {
+      replacements: [repaymentScheduleId, new Date(), loanAccountId],
+      transaction
+    }
+  );
+
+} catch (contractError) {
+  console.error('❌ Error generating loan contract:', contractError.message);
+  console.error('Contract error details:', contractError);
+  // Don't fail the entire loan application if contract generation fails
+  console.warn('⚠️ Continuing without loan contract generation');
+}
+
     // ==================== COMMIT TRANSACTION AND RETURN SUCCESS ====================
     await transaction.commit();
     console.log('✅ Transaction committed successfully');
 
-    return res.status(201).json({
-      success: true,
-      message: 'Loan application submitted successfully - pending approval',
-      status: 'PENDING',
-      data: {
-        loanAccountId: loanAccount.id,
-        loanAccountNumber: loanAccountNumber,
-        creditApplicationId: creditApplication.id,
-        repaymentScheduleId: repaymentSchedule.id,
-        loanDisbursementId: loanDisbursement.id,
-        APPL_ID: req.body.APPL_ID,
-        status: 'PENDING',
-        productDetails: {
-          PROD_ID: numericValues.PROD_ID,
-          productType: productValidation.productType
-        },
-        loanDetails: {
-          principal: principalAmount,
-          interestRate: interestRateNumber + '%',
-          term: numericValues.TERM_VALUE + ' months',
-          emi: emiResult.emi,
-          totalInterest: emiResult.totalInterest,
-          totalRepayable: emiResult.totalRepayable
-        },
-        nextSteps: 'Loan requires manual approval before disbursement',
-        approvalEndpoint: 'POST /api/loans/approve-and-disburse',
-        approvalBodyExample: {
-          ACCT_NO: loanAccountNumber,
-          approvedBy: "[USER_ID]",
-          approvalComments: "Optional approval comments"
-        }
-      }
-    });
+ return res.status(201).json({
+  success: true,
+  message: 'Loan application submitted successfully - pending approval',
+  status: 'PENDING',
+  data: {
+    loanAccountId: loanAccount.id,
+    loanAccountNumber: loanAccountNumber,
+    creditApplicationId: creditApplication.id,
+    repaymentScheduleId: repaymentSchedule.id,
+    loanDisbursementId: loanDisbursement.id,
+    contractGenerated: true, // Add this
+    contractStatus: 'PENDING', // Add this
+    APPL_ID: req.body.APPL_ID,
+    status: 'PENDING',
+    productDetails: {
+      PROD_ID: numericValues.PROD_ID,
+      productType: productValidation.productType
+    },
+    loanDetails: {
+      principal: principalAmount,
+      interestRate: interestRateNumber + '%',
+      term: numericValues.TERM_VALUE + ' months',
+      emi: emiResult.emi,
+      totalInterest: emiResult.totalInterest,
+      totalRepayable: emiResult.totalRepayable
+    },
+    nextSteps: 'Loan requires manual approval before disbursement',
+    approvalEndpoint: 'POST /api/loans/approve-and-disburse',
+    approvalBodyExample: {
+      ACCT_NO: loanAccountNumber,
+      approvedBy: "[USER_ID]",
+      approvalComments: "Optional approval comments"
+    }
+  }
+});
 
   } catch (error) {
     // Rollback transaction on error
@@ -4097,6 +4296,10 @@ async executeDisbursement(req, res) {
     }
   },
 
+// Import the service at the top of your file (outside the function)
+// Make sure the path is correct
+
+
 async approveAndDisburseLoan(req, res) {
     console.log("=== DEBUG: Starting approveAndDisburseLoan ===");
     console.log("Request body:", JSON.stringify(req.body, null, 2));
@@ -4258,123 +4461,123 @@ async approveAndDisburseLoan(req, res) {
         console.log("DEBUG: Numeric Customer ID =", numericCustomerId);
         console.log("DEBUG: Customer Name =", customerName);
 
-  // ==================== 4. CHECK CURRENT STATUS ====================
-if (currentStatus === 'ACTIVE') {
-    console.log(`DEBUG: Loan ${ACCT_NO} is already ACTIVE`);
-    
-    // Note: currentDisbursedAmount is negative, so we compare absolute values
-    if (Math.abs(currentDisbursedAmount) >= approvedAmount) {
-        if (transaction && !transaction.finished) {
-            await transaction.rollback();
-        }
-        return res.status(400).json({
-            success: false,
-            message: "Loan has already been fully disbursed",
-            code: "FULLY_DISBURSED",
-            data: {
-                ACCT_NO,
-                approvedAmount,
-                alreadyDisbursed: Math.abs(currentDisbursedAmount)
+        // ==================== 4. CHECK CURRENT STATUS ====================
+        if (currentStatus === 'ACTIVE') {
+            console.log(`DEBUG: Loan ${ACCT_NO} is already ACTIVE`);
+            
+            // Note: currentDisbursedAmount is negative, so we compare absolute values
+            if (Math.abs(currentDisbursedAmount) >= approvedAmount) {
+                if (transaction && !transaction.finished) {
+                    await transaction.rollback();
+                }
+                return res.status(400).json({
+                    success: false,
+                    message: "Loan has already been fully disbursed",
+                    code: "FULLY_DISBURSED",
+                    data: {
+                        ACCT_NO,
+                        approvedAmount,
+                        alreadyDisbursed: Math.abs(currentDisbursedAmount)
+                    }
+                });
             }
-        });
-    }
-    
-    const remainingAmount = approvedAmount - Math.abs(currentDisbursedAmount);
-    console.log(`DEBUG: Remaining amount to disburse: ${remainingAmount}`);
-    
-    // For ACTIVE loans, we're doing ADDITIONAL disbursement
-    // Since amounts are negative, we subtract (make more negative)
-    await sequelize.query(
-        `UPDATE loan_accounts 
-         SET d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = d_i_s_b_u_r_s_e_d__a_m_o_u_n_t - ?,
-             o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l - ?,
-             updated_at = ?
-         WHERE a_c_c_t__n_o = ?`,
-        {
-            replacements: [
-                remainingAmount,  // Subtract from negative (makes more negative)
-                remainingAmount,  // Subtract from negative (makes more negative)
-                now,
-                ACCT_NO
-            ],
-            transaction
+            
+            const remainingAmount = approvedAmount - Math.abs(currentDisbursedAmount);
+            console.log(`DEBUG: Remaining amount to disburse: ${remainingAmount}`);
+            
+            // For ACTIVE loans, we're doing ADDITIONAL disbursement
+            // Since amounts are negative, we subtract (make more negative)
+            await sequelize.query(
+                `UPDATE loan_accounts 
+                 SET d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = d_i_s_b_u_r_s_e_d__a_m_o_u_n_t - ?,
+                     o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l - ?,
+                     updated_at = ?
+                 WHERE a_c_c_t__n_o = ?`,
+                {
+                    replacements: [
+                        remainingAmount,  // Subtract from negative (makes more negative)
+                        remainingAmount,  // Subtract from negative (makes more negative)
+                        now,
+                        ACCT_NO
+                    ],
+                    transaction
+                }
+            );
+            
+            console.log(`DEBUG: Updated loan account for additional disbursement`);
+            console.log(`DEBUG: Previous disbursed: ${currentDisbursedAmount}`);
+            console.log(`DEBUG: New disbursed: ${currentDisbursedAmount - remainingAmount}`);
+            
+        } else if (currentStatus === 'PENDING') {
+            console.log(`DEBUG: Processing new disbursement for PENDING loan ${ACCT_NO}`);
+            
+            // For PENDING loans, set all amounts to NEGATIVE (initial disbursement)
+            const disbursementAmountForUpdate = -approvedAmount;  // Negative value
+            
+            // Update all three fields consistently with negative values
+            await sequelize.query(
+                `UPDATE loan_accounts 
+                 SET l_o_a_n__s_t_a_t_u_s = 'ACTIVE',
+                     a_m_o_u_n_t = ?,
+                     d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = ?,
+                     a_p_p_r_o_v_a_l__d_a_t_e = ?,
+                     d_i_s_b_u_r_s_e_m_e_n_t__d_a_t_e = ?,
+                     o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = ?,
+                     s_e_r_v_i_c_i_n_g__s_t_a_t_u_s = 'SERVICED',
+                     updated_at = ?
+                 WHERE a_c_c_t__n_o = ?`,
+                {
+                    replacements: [
+                        disbursementAmountForUpdate,  // Negative amount (e.g., -50000)
+                        disbursementAmountForUpdate,  // Negative disbursed amount
+                        now,
+                        now,
+                        disbursementAmountForUpdate,  // Negative outstanding principal
+                        now,
+                        ACCT_NO
+                    ],
+                    transaction
+                }
+            );
+            
+            console.log(`DEBUG: Updated loan account with negative values:`);
+            console.log(`DEBUG:   Amount: ${disbursementAmountForUpdate}`);
+            console.log(`DEBUG:   Disbursed: ${disbursementAmountForUpdate}`);
+            console.log(`DEBUG:   Outstanding: ${disbursementAmountForUpdate}`);
+            
+        } else {
+            if (transaction && !transaction.finished) {
+                await transaction.rollback();
+            }
+            return res.status(400).json({
+                success: false,
+                message: `Cannot disburse loan with status: ${currentStatus}`,
+                code: "INVALID_STATUS",
+                data: {
+                    ACCT_NO,
+                    currentStatus,
+                    allowedStatuses: ['PENDING', 'ACTIVE']
+                }
+            });
         }
-    );
-    
-    console.log(`DEBUG: Updated loan account for additional disbursement`);
-    console.log(`DEBUG: Previous disbursed: ${currentDisbursedAmount}`);
-    console.log(`DEBUG: New disbursed: ${currentDisbursedAmount - remainingAmount}`);
-    
-} else if (currentStatus === 'PENDING') {
-    console.log(`DEBUG: Processing new disbursement for PENDING loan ${ACCT_NO}`);
-    
-    // For PENDING loans, set all amounts to NEGATIVE (initial disbursement)
-    const disbursementAmountForUpdate = -approvedAmount;  // Negative value
-    
-    // Update all three fields consistently with negative values
-    await sequelize.query(
-        `UPDATE loan_accounts 
-         SET l_o_a_n__s_t_a_t_u_s = 'ACTIVE',
-             a_m_o_u_n_t = ?,
-             d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = ?,
-             a_p_p_r_o_v_a_l__d_a_t_e = ?,
-             d_i_s_b_u_r_s_e_m_e_n_t__d_a_t_e = ?,
-             o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = ?,
-             s_e_r_v_i_c_i_n_g__s_t_a_t_u_s = 'SERVICED',
-             updated_at = ?
-         WHERE a_c_c_t__n_o = ?`,
-        {
-            replacements: [
-                disbursementAmountForUpdate,  // Negative amount (e.g., -50000)
-                disbursementAmountForUpdate,  // Negative disbursed amount
-                now,
-                now,
-                disbursementAmountForUpdate,  // Negative outstanding principal
-                now,
-                ACCT_NO
-            ],
-            transaction
+
+        // ==================== 5. CALCULATE DISBURSEMENT AMOUNT ====================
+        // disbursementAmount should always be POSITIVE for calculations
+        let disbursementAmount;
+
+        if (currentStatus === 'ACTIVE') {
+            // For additional disbursement on ACTIVE loan
+            disbursementAmount = approvedAmount - Math.abs(currentDisbursedAmount);
+        } else if (currentStatus === 'PENDING') {
+            // For initial disbursement
+            disbursementAmount = approvedAmount;
+        } else {
+            disbursementAmount = 0;
         }
-    );
-    
-    console.log(`DEBUG: Updated loan account with negative values:`);
-    console.log(`DEBUG:   Amount: ${disbursementAmountForUpdate}`);
-    console.log(`DEBUG:   Disbursed: ${disbursementAmountForUpdate}`);
-    console.log(`DEBUG:   Outstanding: ${disbursementAmountForUpdate}`);
-    
-} else {
-    if (transaction && !transaction.finished) {
-        await transaction.rollback();
-    }
-    return res.status(400).json({
-        success: false,
-        message: `Cannot disburse loan with status: ${currentStatus}`,
-        code: "INVALID_STATUS",
-        data: {
-            ACCT_NO,
-            currentStatus,
-            allowedStatuses: ['PENDING', 'ACTIVE']
-        }
-    });
-}
 
-// ==================== 5. CALCULATE DISBURSEMENT AMOUNT ====================
-// disbursementAmount should always be POSITIVE for calculations
-let disbursementAmount;
-
-if (currentStatus === 'ACTIVE') {
-    // For additional disbursement on ACTIVE loan
-    disbursementAmount = approvedAmount - Math.abs(currentDisbursedAmount);
-} else if (currentStatus === 'PENDING') {
-    // For initial disbursement
-    disbursementAmount = approvedAmount;
-} else {
-    disbursementAmount = 0;
-}
-
-console.log("DEBUG: Disbursement Amount (positive for calculations) = ₦" + disbursementAmount.toLocaleString());
-console.log("DEBUG: Note: Loan account stores amounts as NEGATIVE values");
-console.log("DEBUG:       This represents the bank's receivable asset");
+        console.log("DEBUG: Disbursement Amount (positive for calculations) = ₦" + disbursementAmount.toLocaleString());
+        console.log("DEBUG: Note: Loan account stores amounts as NEGATIVE values");
+        console.log("DEBUG:       This represents the bank's receivable asset");
 
         // ==================== 6. GET CUSTOMER ACCOUNT DETAILS ====================
         let customerAccountNumber = null;
@@ -4600,67 +4803,84 @@ console.log("DEBUG:       This represents the bank's receivable asset");
                 const customerUpdateResult = await sequelize.query(updateCustomerAccountQuery, { transaction });
                 console.log("DEBUG: ✓ customer_accounts table updated successfully");
                 
-                // 2. UPDATE ACCOUNTS TABLE (if exists)
-                if (accountsTableRecord) {
-                    console.log("\nDEBUG: Step 2: Updating accounts table...");
-                    const updateAccountsQuery = `
-                        UPDATE accounts 
-                        SET ledger_balance = ${newLedgerBalance},
-                            available_balance = ${newAvailableBalance},
-                            cleared_balance = ${newClearedBalance},
-                            last_activity_date = '${sqlDate}',
-                            updated_at = '${sqlDate}'
-                        WHERE account_number = '${customerAccountNumber}' 
-                           OR acct_no = '${customerAccountNumber}'
-                    `;
-                    
-                    console.log("DEBUG: Executing query...");
-                    await sequelize.query(updateAccountsQuery, { transaction });
-                    console.log("DEBUG: ✓ accounts table updated successfully");
-                    
-                } else {
-                    console.log("\nDEBUG: Step 2: Account not found in accounts table, attempting to create...");
-                    
-                    // Try to create account in accounts table
-                    try {
-                        const createAccountsQuery = `
-                            INSERT INTO accounts (
-                                customer_id, account_number, acct_no, acct_nm,
-                                account_type, product_type, product,
-                                ledger_balance, available_balance, cleared_balance,
-                                rec_st, currency, online_enabled,
-                                dr_allowed, cr_allowed, last_activity_date,
-                                created_at, updated_at
-                            ) VALUES (
-                                ${numericCustomerId || 'NULL'},
-                                '${customerAccountNumber}',
-                                '${customerAccountNumber}',
-                                '${customerAccountsTableRecord.account_name || customerName || 'Loan Customer'}',
-                                '${customerAccountsTableRecord.account_type || 'SAVINGS'}',
-                                'SAVINGS',
-                                'Savings Account',
-                                ${newLedgerBalance},
-                                ${newAvailableBalance},
-                                ${newClearedBalance},
-                                'ACTIVE',
-                                'NGN',
-                                1,
-                                1,
-                                1,
-                                '${sqlDate}',
-                                '${sqlDate}',
-                                '${sqlDate}'
-                            )
-                        `;
+                // 2. UPDATE ACCOUNTS TABLE USING ACCOUNT SERVICE
+                console.log("\nDEBUG: Step 2: Updating accounts table using AccountService...");
+                
+                try {
+                    // Prepare account data for AccountService
+                    const accountData = {
+                        customer_id: numericCustomerId || customerAccountsTableRecord.customer_id || 0,
+                        account_number: customerAccountNumber,
+                        acct_no: customerAccountNumber,
+                        acct_nm: customerAccountsTableRecord.account_name || customerName || 'Loan Customer',
+                        account_type: customerAccountsTableRecord.account_type || 'SAVINGS',
+                        product_type: 'SAVINGS',
+                        product: 'Savings Account',
+                        branch: 1, // REQUIRED! Use appropriate branch ID
+                        ledger_balance: newLedgerBalance,
+                        available_balance: newAvailableBalance,
+                        cleared_balance: newClearedBalance,
+                        rec_st: 'ACTIVE',
+                        currency: customerAccountsTableRecord.currency_code || 'NGN',
+                        online_enabled: 1,
+                        dr_allowed: 1,
+                        cr_allowed: 1,
+                        last_activity_date: sqlDate,
+                        created_by: approvedBy || 'LOAN_SYSTEM',
+                        product_desc: 'Account for loan disbursement',
                         
-                        console.log("DEBUG: Creating account in accounts table...");
-                        const createResult = await sequelize.query(createAccountsQuery, { transaction });
-                        console.log("DEBUG: ✓ Created account in accounts table, ID:", createResult[0]?.insertId);
+                        // Optional fields that might be needed
+                        customer_code: customerId, // Use the original customer ID string
+                        opening_amount: 0, // Default opening amount
+                        interest_rate: 0, // No interest for savings account
+                        accrued_interest: 0,
+                        overdraft_limit: 0,
+                        substatus: 'Active',
+                        sms_alert: 'No',
+                        email_alert: 'No',
+                        is_overdraft_allowed: 0,
+                        auto_approve: 0,
+                        disbursement_method: 'Cash',
+                        creation_date: sqlDate.substring(0, 10) // Just the date part
+                    };
+                    
+                    console.log("DEBUG: Calling AccountService.createOrUpdateAccount...");
+                    const result = await createOrUpdateAccount(accountData, transaction);
+                    
+                    if (result.success) {
+                        console.log("DEBUG: ✓ AccountService operation successful:", result.message);
+                        console.log("DEBUG: Action performed:", result.action);
+                        console.log("DEBUG: Account ID:", result.account?.id || result.account?.insertId || 'Unknown');
                         
-                    } catch (createError) {
-                        console.warn("DEBUG: Could not create account in accounts table:", createError.message);
-                        console.warn("DEBUG: This is okay - we already updated customer_accounts");
+                        // Store the account record for later use if needed
+                        const updatedAccount = result.account;
+                        if (updatedAccount && !accountsTableRecord) {
+                            accountsTableRecord = updatedAccount;
+                        }
+                    } else {
+                        console.warn("DEBUG: ⚠️ AccountService returned success: false");
+                        console.warn("DEBUG: Message:", result.message);
+                        
+                        // Fallback to manual creation/update
+                        await fallbackToManualAccountUpdate(customerAccountNumber, accountData, transaction, sqlDate);
                     }
+                    
+                } catch (serviceError) {
+                    console.error("DEBUG: ❌ AccountService failed:", serviceError.message);
+                    console.error("DEBUG: Service error stack:", serviceError.stack);
+                    
+                    // Fallback to manual creation/update
+                    console.log("DEBUG: 🔄 Falling back to manual account update...");
+                    await fallbackToManualAccountUpdate(customerAccountNumber, {
+                        customer_id: numericCustomerId || customerAccountsTableRecord.customer_id || 0,
+                        account_number: customerAccountNumber,
+                        acct_nm: customerAccountsTableRecord.account_name || customerName || 'Loan Customer',
+                        account_type: customerAccountsTableRecord.account_type || 'SAVINGS',
+                        newLedgerBalance,
+                        newAvailableBalance,
+                        newClearedBalance,
+                        currency: customerAccountsTableRecord.currency_code || 'NGN'
+                    }, transaction, sqlDate);
                 }
                 
                 // 3. CREATE TRANSACTION RECORD
@@ -4761,6 +4981,83 @@ console.log("DEBUG:       This represents the bank's receivable asset");
                 }
             } catch (diagError) {
                 console.error("DEBUG: Diagnostic query failed:", diagError.message);
+            }
+        }
+
+        // ==================== HELPER FUNCTION FOR FALLBACK ====================
+        async function fallbackToManualAccountUpdate(accountNumber, accountData, transaction, sqlDate) {
+            try {
+                console.log("DEBUG: Executing manual account update fallback...");
+                
+                // Check if account exists in accounts table
+                const accountsCheckQuery = `
+                    SELECT id FROM accounts 
+                    WHERE account_number = '${accountNumber}' 
+                       OR acct_no = '${accountNumber}'
+                    LIMIT 1
+                `;
+                
+                const [existingAccount] = await sequelize.query(accountsCheckQuery, {
+                    transaction,
+                    type: sequelize.QueryTypes.SELECT
+                });
+                
+                if (existingAccount && existingAccount.id) {
+                    // Update existing account
+                    const updateAccountsQuery = `
+                        UPDATE accounts 
+                        SET ledger_balance = ${accountData.ledger_balance || accountData.newLedgerBalance || 0},
+                            available_balance = ${accountData.available_balance || accountData.newAvailableBalance || 0},
+                            cleared_balance = ${accountData.cleared_balance || accountData.newClearedBalance || 0},
+                            last_activity_date = '${sqlDate}',
+                            updated_at = '${sqlDate}'
+                        WHERE account_number = '${accountNumber}' 
+                           OR acct_no = '${accountNumber}'
+                    `;
+                    
+                    await sequelize.query(updateAccountsQuery, { transaction });
+                    console.log("DEBUG: ✓ accounts table updated via manual fallback");
+                } else {
+                    // Create new account
+                    const createAccountsQuery = `
+                        INSERT INTO accounts (
+                            customer_id, account_number, acct_no, acct_nm,
+                            account_type, product_type, product,
+                            ledger_balance, available_balance, cleared_balance,
+                            rec_st, currency, online_enabled,
+                            dr_allowed, cr_allowed, last_activity_date,
+                            created_at, updated_at, branch
+                        ) VALUES (
+                            ${accountData.customer_id || 'NULL'},
+                            '${accountNumber}',
+                            '${accountNumber}',
+                            '${accountData.acct_nm || 'Loan Customer'}',
+                            '${accountData.account_type || 'SAVINGS'}',
+                            'SAVINGS',
+                            'Savings Account',
+                            ${accountData.ledger_balance || accountData.newLedgerBalance || 0},
+                            ${accountData.available_balance || accountData.newAvailableBalance || 0},
+                            ${accountData.cleared_balance || accountData.newClearedBalance || 0},
+                            'ACTIVE',
+                            '${accountData.currency || 'NGN'}',
+                            1,
+                            1,
+                            1,
+                            '${sqlDate}',
+                            '${sqlDate}',
+                            '${sqlDate}',
+                            1  -- BRANCH ID (required!)
+                        )
+                    `;
+                    
+                    console.log("DEBUG: Creating account in accounts table via manual fallback...");
+                    const createResult = await sequelize.query(createAccountsQuery, { transaction });
+                    console.log("DEBUG: ✓ Created account in accounts table via manual fallback, ID:", createResult[0]?.insertId);
+                }
+                
+            } catch (fallbackError) {
+                console.error("DEBUG: ❌ Manual fallback also failed:", fallbackError.message);
+                console.error("DEBUG: This is a serious issue - accounts table may not be updated");
             }
         }
 
@@ -4953,990 +5250,990 @@ console.log("DEBUG:       This represents the bank's receivable asset");
             console.log("DEBUG: credit_applications table does not exist, skipping update");
         }
 
-       // ==================== 10. POST TO GENERAL LEDGER ====================
-try {
-    const transactionId = `LOAN-DISB-${ACCT_NO}-${Date.now()}`;
-    const journalId = `JRNL-LOAN-${Date.now()}`;
-    
-    console.log("DEBUG: =========================================");
-    console.log("DEBUG: GENERAL LEDGER POSTING");
-    console.log("DEBUG: =========================================");
-    console.log(`DEBUG: Transaction ID: ${transactionId}`);
-    console.log(`DEBUG: Journal ID: ${journalId}`);
-    console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
-    console.log(`DEBUG: Gross Disbursement Amount: ₦${disbursementAmount.toLocaleString()}`);
-    
-    // Check if ledgers table exists
-    const ledgersTableCheck = await sequelize.query(
-        `SELECT TABLE_NAME 
-         FROM INFORMATION_SCHEMA.TABLES 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = 'ledgers'`,
-        { transaction, type: sequelize.QueryTypes.SELECT }
-    );
-    
-    if (ledgersTableCheck.length > 0) {
-        console.log("DEBUG: ✓ ledgers table exists");
-        
-        // Get current date in SQL format
-        const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
-        
-       // ==================== 10.1. GET LOAN PRODUCT CONFIGURATION ====================
-console.log("\nDEBUG: Step 1: Getting loan product configuration...");
-
-let productConfig = null;
-let principalGLAccount = null;
-let interestGLAccount = null;
-let processingFeeGLAccount = null;
-let processingFeeRate = 0;
-let processingFeeAmount = 0;
-
-try {
-    // Try to get the loan product ID from loan_accounts
-    console.log("DEBUG: Attempting to get product ID from loan account:", ACCT_NO);
-    
-    const loanAccountQuery = `
-        SELECT l_o_a_n__p_r_o_d_u_c_t__i_d 
-        FROM loan_accounts 
-        WHERE a_c_c_t__n_o = ? 
-        LIMIT 1
-    `;
-    
-    const [loanAccountResult] = await sequelize.query(loanAccountQuery, {
-        replacements: [ACCT_NO],
-        transaction,
-        type: sequelize.QueryTypes.SELECT
-    });
-    
-    let productId = null;
-    let usingDefaultProduct = false;
-    
-    if (loanAccountResult && loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d) {
-        productId = loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d;
-        console.log("DEBUG: Found product ID in loan account:", productId);
-    } else {
-        console.warn("DEBUG: ⚠️ No product ID found in loan account, using default product");
-        usingDefaultProduct = true;
-        
-        // Get the default/active loan product (first active product)
-        const defaultProductQuery = `
-            SELECT p_r_o_d__i_d 
-            FROM loan_products 
-            WHERE is_active = 1 
-            AND s_t_a_t_u_s = 'ACTIVE'
-            LIMIT 1
-        `;
-        
-        const [defaultProductResult] = await sequelize.query(defaultProductQuery, {
-            transaction,
-            type: sequelize.QueryTypes.SELECT
-        });
-        
-        if (defaultProductResult && defaultProductResult.p_r_o_d__i_d) {
-            productId = defaultProductResult.p_r_o_d__i_d;
-            console.warn("DEBUG: ⚠️ Using default product ID:", productId);
-        } else {
-            // If no active product, use the first product in the table
-            const firstProductQuery = `
-                SELECT p_r_o_d__i_d 
-                FROM loan_products 
-                LIMIT 1
-            `;
-            
-            const [firstProductResult] = await sequelize.query(firstProductQuery, {
-                transaction,
-                type: sequelize.QueryTypes.SELECT
-            });
-            
-            if (firstProductResult && firstProductResult.p_r_o_d__i_d) {
-                productId = firstProductResult.p_r_o_d__i_d;
-                console.warn("DEBUG: ⚠️ Using first available product ID:", productId);
-            } else {
-                console.error("DEBUG: ❌ No loan products found in the database");
-                throw new Error("No loan products configured in the system. Please create a loan product first.");
-            }
-        }
-    }
-    
-    // Now get the loan product using the product ID
-    const productQuery = `
-        SELECT lp.*, 
-               JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
-               JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
-               JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
-               JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
-               lp.processing_fee_g_l_code,
-               lp.processing_fee_rate
-        FROM loan_products lp
-        WHERE lp.p_r_o_d__i_d = ?
-        LIMIT 1
-    `;
-    
-    const [productResult] = await sequelize.query(productQuery, {
-        replacements: [productId],
-        transaction,
-        type: sequelize.QueryTypes.SELECT
-    });
-    
-    if (productResult) {
-        productConfig = productResult;
-        
-        if (usingDefaultProduct) {
-            console.warn("DEBUG: ⚠️ Using default/first available loan product:");
-            console.warn(`DEBUG:   Product ID: ${productResult.p_r_o_d__i_d}`);
-            console.warn(`DEBUG:   Product Name: ${productResult.name}`);
-            console.warn("DEBUG:   NOTE: Consider updating the loan account with a proper product ID");
-            
-            // Update the loan account with the product ID for future reference
-            try {
-                await sequelize.query(
-                    `UPDATE loan_accounts 
-                     SET l_o_a_n__p_r_o_d_u_c_t__i_d = ? 
-                     WHERE a_c_c_t__n_o = ?`,
-                    {
-                        replacements: [productId, ACCT_NO],
-                        transaction
-                    }
-                );
-                console.log("DEBUG: ✓ Updated loan account with product ID:", productId);
-            } catch (updateError) {
-                console.warn("DEBUG: Could not update loan account with product ID:", updateError.message);
-            }
-        } else {
-            console.log("DEBUG: ✓ Found loan product configuration");
-            console.log("DEBUG: Product ID:", productResult.p_r_o_d__i_d);
-            console.log("DEBUG: Product Name:", productResult.name);
-        }
-        
-        // Extract GL accounts from default_g_l_accounts JSON
-        if (productResult.default_g_l_accounts) {
-            try {
-                const glAccounts = JSON.parse(productResult.default_g_l_accounts);
-                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
-                interestGLAccount = glAccounts.interestGLAccountNo;
-                processingFeeGLAccount = glAccounts.processingFeeGLCode;
-                
-                console.log("DEBUG: Extracted GL accounts from default_g_l_accounts:");
-                console.log("DEBUG:   Principal GL Account:", principalGLAccount);
-                console.log("DEBUG:   Interest GL Account:", interestGLAccount);
-                console.log("DEBUG:   Processing Fee GL Account:", processingFeeGLAccount);
-                
-                // Validate that required GL accounts are present
-                if (!principalGLAccount) {
-                    throw new Error("Principal GL account not found in loan product configuration");
-                }
-                if (!interestGLAccount) {
-                    console.warn("DEBUG: Warning: Interest GL account not found in loan product configuration");
-                }
-                if (!processingFeeGLAccount) {
-                    console.warn("DEBUG: Warning: Processing Fee GL account not found in default_g_l_accounts");
-                }
-                
-            } catch (e) {
-                console.error("DEBUG: ❌ Could not parse GL accounts JSON:", e.message);
-                throw new Error(`Invalid GL accounts configuration in loan product: ${e.message}`);
-            }
-        } else {
-            console.error("DEBUG: ❌ No default_g_l_accounts found in loan product");
-            throw new Error("Loan product does not have GL accounts configured");
-        }
-        
-        // Get processing fee details
-        processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
-        
-        // Calculate processing fee amount
-        if (processingFeeRate > 0) {
-            processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
-            console.log("DEBUG: Processing Fee Rate:", processingFeeRate + '%');
-            console.log("DEBUG: Processing Fee Amount: ₦" + processingFeeAmount.toLocaleString());
-        }
-        
-        // If processingFeeGLAccount not found in default_g_l_accounts, use processing_fee_g_l_code
-        if (!processingFeeGLAccount && productResult.processing_fee_g_l_code) {
-            processingFeeGLAccount = productResult.processing_fee_g_l_code;
-            console.log("DEBUG: Using processing_fee_g_l_code for fee:", processingFeeGLAccount);
-        }
-        
-        // Also check fee_structure for processing fee GL account
-        if (productResult.fee_structure && !processingFeeGLAccount) {
-            try {
-                const feeStructure = JSON.parse(productResult.fee_structure);
-                const processingFee = feeStructure.find(fee => 
-                    fee.feeType === 'PROCESSING' || fee.name === 'Processing Fee'
-                );
-                if (processingFee && processingFee.glAccountCode) {
-                    processingFeeGLAccount = processingFee.glAccountCode;
-                    console.log("DEBUG: Found Processing Fee GL account in fee_structure:", processingFeeGLAccount);
-                }
-            } catch (e) {
-                console.warn("DEBUG: Could not parse fee_structure:", e.message);
-            }
-        }
-        
-        console.log("DEBUG: ✓ GL accounts configured successfully:");
-        console.log("DEBUG:   Principal: ", principalGLAccount);
-        console.log("DEBUG:   Interest:  ", interestGLAccount || "Not configured");
-        console.log("DEBUG:   Fee:       ", processingFeeGLAccount || "Not configured");
-        
-    } else {
-        console.error("DEBUG: ❌ No loan product found for product ID:", productId);
-        throw new Error(`Loan product with ID ${productId} not found in loan_products table`);
-    }
-} catch (productError) {
-    console.error("DEBUG: ❌ ERROR getting loan product configuration:", productError.message);
-    console.error("DEBUG: This is a critical error - loan cannot be disbursed without GL accounts");
-    
-    // Rollback the transaction since we can't proceed without GL accounts
-    if (transaction && !transaction.finished) {
-        await transaction.rollback();
-    }
-    
-    return res.status(500).json({
-        success: false,
-        message: "Loan disbursement failed: Missing GL account configuration",
-        error: productError.message,
-        code: "MISSING_GL_CONFIGURATION",
-        debug: {
-            loanAccount: ACCT_NO,
-            error: productError.message,
-            requiredInfo: "Loan product must have GL accounts configured in default_g_l_accounts",
-            suggestion: "1. Check if loan_products table has any products\n2. Check if default_g_l_accounts JSON is valid\n3. Ensure at least one product is active"
-        }
-    });
-}
-        
-        // ==================== 10.2. CALCULATE INTEREST COMPONENT ====================
-        console.log("\nDEBUG: Step 2: Calculating interest component...");
-        
-        let interestAmount = 0;
-        const interestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
-        const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
-        
-        if (interestRate > 0 && termValue > 0) {
-            // Calculate interest for the full loan term
-            interestAmount = (disbursementAmount * interestRate * termValue) / (12 * 100); // Monthly calculation
-            console.log("DEBUG: Interest Rate:", interestRate + "%");
-            console.log("DEBUG: Term Value:", termValue + " months");
-            console.log("DEBUG: Calculated Interest: ₦" + interestAmount.toLocaleString());
-        } else {
-            console.log("DEBUG: No interest rate or term specified, skipping interest component");
-        }
-        
-      // ==================== 10.3. VERIFY GL ACCOUNTS EXIST IN gl_accounts TABLE ====================
-console.log("\nDEBUG: Step 3: Verifying GL accounts in gl_accounts table...");
-
-// Function to check if GL account exists and get its details
-const getGLAccountDetails = async (glAccountNo) => {
-    try {
-        const accountCheck = await sequelize.query(
-            `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t,
-                    l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e,
-                    c_u_r_r_e_n_t__b_a_l_a_n_c_e, b_a_l__c_d,
-                    c_r__a_l_l_o_w_e_d, d_r__a_l_l_o_w_e_d, r_e_c__s_t,
-                    c_u_r_r_e_n_c_y__c_o_d_e, c_o_n_t_r_o_l__a_c_c_t__f_g,
-                    s_u_s_p_e_n_s_e__a_c_c_t__f_g, p_o_s_t__a_l_l_o_w
-             FROM gl_accounts 
-             WHERE g_l__a_c_c_t__n_o = ? 
-             LIMIT 1`,
-            {
-                replacements: [glAccountNo],
-                transaction,
-                type: sequelize.QueryTypes.SELECT
-            }
-        );
-        
-        if (accountCheck && accountCheck.length > 0) {
-            const account = accountCheck[0];
-            
-            // Check if account is active
-            if (account.r_e_c__s_t !== 'Active') {
-                console.warn(`DEBUG: GL account ${glAccountNo} is not active (status: ${account.r_e_c__s_t})`);
-                return null;
-            }
-            
-            console.log(`DEBUG: ✓ Found GL account: ${account.g_l__a_c_c_t__n_o} - ${account.a_c_c_t__d_e_s_c}`);
-            console.log(`DEBUG:   Account Category: ${account.g_l__a_c_c_t__c_a_t}`);
-            console.log(`DEBUG:   Balance Code: ${account.b_a_l__c_d}`);
-            console.log(`DEBUG:   Current Balance: ₦${parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0).toLocaleString()}`);
-            console.log(`DEBUG:   DR Allowed: ${account.d_r__a_l_l_o_w_e_d}, CR Allowed: ${account.c_r__a_l_l_o_w_e_d}`);
-            console.log(`DEBUG:   Post Allowed: ${account.p_o_s_t__a_l_l_o_w}`);
-            console.log(`DEBUG:   Control Account: ${account.c_o_n_t_r_o_l__a_c_c_t__f_g}, Suspense: ${account.s_u_s_p_e_n_s_e__a_c_c_t__f_g}`);
-            
-            return {
-                accountNo: account.g_l__a_c_c_t__n_o,
-                accountName: account.a_c_c_t__d_e_s_c,
-                accountCategory: account.g_l__a_c_c_t__c_a_t,
-                balanceCode: account.b_a_l__c_d,
-                currentBalance: parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
-                ledgerBalance: parseFloat(account.l_e_d_g_e_r__b_a_l_a_n_c_e || 0),
-                availableBalance: parseFloat(account.a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e || 0),
-                openingBalance: parseFloat(account.o_p_e_n_i_n_g__b_a_l_a_n_c_e || 0),
-                drAllowed: account.d_r__a_l_l_o_w_e_d,
-                crAllowed: account.c_r__a_l_l_o_w_e_d,
-                postAllowed: account.p_o_s_t__a_l_l_o_w,
-                isControlAccount: account.c_o_n_t_r_o_l__a_c_c_t__f_g,
-                isSuspenseAccount: account.s_u_s_p_e_n_s_e__a_c_c_t__f_g,
-                currency: account.c_u_r_r_e_n_c_y__c_o_d_e || 'NGN',
-                status: account.r_e_c__s_t
-            };
-        } else {
-            console.log(`DEBUG: ✗ GL account ${glAccountNo} not found`);
-            return null;
-        }
-    } catch (error) {
-        console.error(`DEBUG: Error checking GL account ${glAccountNo}:`, error.message);
-        return null;
-    }
-};
-
-// Get details for all required GL accounts from loan product configuration
-console.log("DEBUG: Fetching GL accounts from loan product configuration...");
-const principalGL = await getGLAccountDetails(principalGLAccount);
-const interestGL = interestGLAccount ? await getGLAccountDetails(interestGLAccount) : null;
-const processingFeeGL = processingFeeGLAccount ? await getGLAccountDetails(processingFeeGLAccount) : null;
-
-// ==================== PLACE THE CUSTOMER GL ACCOUNT LOGIC HERE ====================
-// Get Customer GL Account (from customer_accounts or use appropriate GL)
-let customerGL = null;
-
-// First try: Check if customer has a GL account with their account number
-if (customerAccountNumber) {
-    customerGL = await getGLAccountDetails(customerAccountNumber);
-    if (customerGL) {
-        console.log(`DEBUG: Found customer GL account using account number: ${customerAccountNumber}`);
-    }
-}
-
-// Second try: Look for customer deposit/savings GL accounts (LIABILITY type)
-if (!customerGL) {
-    console.log("DEBUG: Searching for customer deposit GL accounts...");
-    
-    const customerDepositAccounts = await sequelize.query(
-        `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t
-         FROM gl_accounts 
-         WHERE (a_c_c_t__d_e_s_c LIKE '%Customer%' 
-                OR a_c_c_t__d_e_s_c LIKE '%Deposit%'
-                OR a_c_c_t__d_e_s_c LIKE '%Savings%'
-                OR a_c_c_t__d_e_s_c LIKE '%Current Account%')
-           AND g_l__a_c_c_t__c_a_t = 'LIABILITY'
-           AND r_e_c__s_t = 'Active'
-           AND c_r__a_l_l_o_w_e_d = 1
-         LIMIT 1`,
-        { transaction, type: sequelize.QueryTypes.SELECT }
-    );
-    
-    if (customerDepositAccounts && customerDepositAccounts.length > 0) {
-        customerGL = await getGLAccountDetails(customerDepositAccounts[0].g_l__a_c_c_t__n_o);
-        console.log(`DEBUG: Using customer deposit GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
-    }
-}
-
-// Third try: Look for suspense accounts
-if (!customerGL) {
-    console.log("DEBUG: Searching for suspense GL accounts...");
-    
-    const suspenseAccounts = await sequelize.query(
-        `SELECT g_l__a_c_c_t__n_o 
-         FROM gl_accounts 
-         WHERE (a_c_c_t__d_e_s_c LIKE '%Suspense%' 
-                OR g_l__a_c_c_t__c_a_t = 'SUSPENSE'
-                OR s_u_s_p_e_n_s_e__a_c_c_t__f_g = 1)
-           AND r_e_c__s_t = 'Active'
-           AND c_r__a_l_l_o_w_e_d = 1
-         LIMIT 1`,
-        { transaction, type: sequelize.QueryTypes.SELECT }
-    );
-    
-    if (suspenseAccounts && suspenseAccounts.length > 0) {
-        customerGL = await getGLAccountDetails(suspenseAccounts[0].g_l__a_c_c_t__n_o);
-        console.log(`DEBUG: Using suspense GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
-    }
-}
-
-// Fourth try: If still no customer GL, use the principal GL account as last resort
-if (!customerGL && principalGL) {
-    console.warn("DEBUG: No suitable customer GL account found, using principal GL account as suspense");
-    customerGL = principalGL;
-    console.warn(`DEBUG: WARNING: Using principal GL account (${principalGL.accountNo}) as customer account. This may cause accounting issues.`);
-}
-
-// If we still don't have a customer GL account, throw an error
-if (!customerGL) {
-    console.error("DEBUG: ❌ Could not find any suitable GL account for customer");
-    throw new Error(`No suitable GL account found for customer. Tried: 
-    - Customer account number: ${customerAccountNumber || 'Not available'}
-    - Customer deposit accounts
-    - Suspense accounts
-    - Principal GL account`);
-}
-
-// Validate that principal GL account is found and active
-if (!principalGL) {
-    console.error("DEBUG: ❌ Principal GL account not found or not active:", principalGLAccount);
-    throw new Error(`Principal GL account ${principalGLAccount} not found or not active. Please verify:
-    1. The GL account exists in gl_accounts table
-    2. The GL account is marked as 'Active' (r_e_c__s_t = 'Active')
-    3. The GL account allows posting (p_o_s_t__a_l_l_o_w = 1)`);
-}
-
-// Validate that customer GL allows credit transactions
-if (customerGL.crAllowed !== 1) {
-    console.warn(`DEBUG: ⚠️ Warning: Credit not allowed for customer GL account ${customerGL.accountNo}`);
-    console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
-}
-
-// Validate that principal GL allows debit transactions
-if (principalGL.drAllowed !== 1) {
-    console.warn(`DEBUG: ⚠️ Warning: Debit not allowed for principal GL account ${principalGL.accountNo}`);
-    console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
-}
-
-// Validate that accounts allow posting
-if (principalGL.postAllowed !== 1) {
-    console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for principal GL account ${principalGL.accountNo}`);
-}
-
-if (customerGL.postAllowed !== 1) {
-    console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for customer GL account ${customerGL.accountNo}`);
-}
-
-// Log GL account validation summary
-console.log("\nDEBUG: =========================================");
-console.log("DEBUG: GL ACCOUNT VALIDATION SUMMARY");
-console.log("DEBUG: =========================================");
-console.log(`DEBUG: Principal GL Account:`);
-console.log(`  Account No: ${principalGL.accountNo}`);
-console.log(`  Account Name: ${principalGL.accountName}`);
-console.log(`  Category: ${principalGL.accountCategory}`);
-console.log(`  Balance: ₦${principalGL.currentBalance.toLocaleString()}`);
-console.log(`  DR Allowed: ${principalGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${principalGL.crAllowed ? 'Yes' : 'No'}`);
-
-console.log(`\nDEBUG: Customer GL Account:`);
-console.log(`  Account No: ${customerGL.accountNo}`);
-console.log(`  Account Name: ${customerGL.accountName}`);
-console.log(`  Category: ${customerGL.accountCategory}`);
-console.log(`  Balance: ₦${customerGL.currentBalance.toLocaleString()}`);
-console.log(`  DR Allowed: ${customerGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${customerGL.crAllowed ? 'Yes' : 'No'}`);
-
-if (interestGL) {
-    console.log(`\nDEBUG: Interest GL Account:`);
-    console.log(`  Account No: ${interestGL.accountNo}`);
-    console.log(`  Account Name: ${interestGL.accountName}`);
-    console.log(`  Category: ${interestGL.accountCategory}`);
-    console.log(`  Balance: ₦${interestGL.currentBalance.toLocaleString()}`);
-}
-
-if (processingFeeGL) {
-    console.log(`\nDEBUG: Processing Fee GL Account:`);
-    console.log(`  Account No: ${processingFeeGL.accountNo}`);
-    console.log(`  Account Name: ${processingFeeGL.accountName}`);
-    console.log(`  Category: ${processingFeeGL.accountCategory}`);
-    console.log(`  Balance: ₦${processingFeeGL.currentBalance.toLocaleString()}`);
-}
-
-console.log("DEBUG: =========================================");
-console.log("DEBUG: ✓ All GL accounts validated successfully");
-// ==================== END OF CUSTOMER GL ACCOUNT LOGIC ====================
-
-
-        // ==================== 10.4. CREATE GL TRANSACTIONS ====================
-        console.log("\nDEBUG: Step 4: Creating GL transactions...");
-        
-        // Generate unique TransactionId (BigInt)
-        const baseTransactionId = BigInt(Date.now());
-        
-        // 1. PRINCIPAL TRANSACTION: DR Principal GL, CR Customer GL (FULL AMOUNT)
-        if (principalGL && customerGL) {
-            const principalTransactionId = `${transactionId}-PRINCIPAL`;
-            const glTransactionId1 = baseTransactionId;
-            
-            await sequelize.query(
-                `INSERT INTO gl_account_transactions (
-                    JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
-                    AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
-                    TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
-                    createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                {
-                    replacements: [
-                        journalId,
-                        principalTransactionId,
-                        principalGL.accountNo,  // DEBIT: Principal Asset increases
-                        customerGL.accountNo,   // CREDIT: Customer Liability increases (FULL AMOUNT)
-                        disbursementAmount,     // FULL DISBURSEMENT AMOUNT
-                        `Loan principal disbursement of ₦${disbursementAmount.toLocaleString()} for ${ACCT_NO} to ${customerName || 'customer'}`,
-                        approvedBy,
-                        approvedBy,
-                        'LOAN_DISBURSEMENT_PRINCIPAL',
-                        'NGN',
-                        'POSTED',
-                        glTransactionId1,
-                        sqlDate,
-                        sqlDate
-                    ],
-                    transaction
-                }
-            );
-            
-            console.log("DEBUG: ✓ Principal Transaction:");
-            console.log(`  DEBIT:  ${principalGL.accountNo} (Principal Asset) +₦${disbursementAmount.toLocaleString()}`);
-            console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${disbursementAmount.toLocaleString()}`);
-            console.log(`  Note: Full disbursement amount credited to customer`);
-        }
-        
-        // 2. INTEREST TRANSACTION (if applicable): DR Interest GL, CR Customer GL
-        if (interestGL && interestAmount > 0 && customerGL) {
-            const interestTransactionId = `${transactionId}-INTEREST`;
-            const glTransactionId2 = baseTransactionId + 1n;
-            
-            await sequelize.query(
-                `INSERT INTO gl_account_transactions (
-                    JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
-                    AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
-                    TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
-                    createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                {
-                    replacements: [
-                        journalId,
-                        interestTransactionId,
-                        interestGL.accountNo,   // DEBIT: Interest Asset increases
-                        customerGL.accountNo,   // CREDIT: Customer Liability increases further
-                        interestAmount,
-                        `Loan interest accrual of ₦${interestAmount.toLocaleString()} for ${ACCT_NO}. Rate: ${interestRate}%, Term: ${termValue} months`,
-                        approvedBy,
-                        approvedBy,
-                        'LOAN_DISBURSEMENT_INTEREST',
-                        'NGN',
-                        'POSTED',
-                        glTransactionId2,
-                        sqlDate,
-                        sqlDate
-                    ],
-                    transaction
-                }
-            );
-            
-            console.log("DEBUG: ✓ Interest Transaction:");
-            console.log(`  DEBIT:  ${interestGL.accountNo} (Interest Asset) +₦${interestAmount.toLocaleString()}`);
-            console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${interestAmount.toLocaleString()}`);
-        }
-        
-        // 3. PROCESSING FEE TRANSACTION (if applicable): DR Customer GL, CR Processing Fee GL
-        if (processingFeeGL && processingFeeAmount > 0 && customerGL) {
-            const feeTransactionId = `${transactionId}-PROCESSING-FEE`;
-            const glTransactionId3 = baseTransactionId + 2n;
-            
-            await sequelize.query(
-                `INSERT INTO gl_account_transactions (
-                    JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
-                    AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
-                    TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
-                    createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                {
-                    replacements: [
-                        journalId,
-                        feeTransactionId,
-                        customerGL.accountNo,      // DEBIT: Customer Liability decreases (fee deducted)
-                        processingFeeGL.accountNo, // CREDIT: Processing Fee Revenue increases
-                        processingFeeAmount,
-                        `Processing fee of ₦${processingFeeAmount.toLocaleString()} for loan ${ACCT_NO}. Rate: ${processingFeeRate}${productConfig?.fee_structure ? '%' : ''}`,
-                        approvedBy,
-                        approvedBy,
-                        'PROCESSING_FEE',
-                        'NGN',
-                        'POSTED',
-                        glTransactionId3,
-                        sqlDate,
-                        sqlDate
-                    ],
-                    transaction
-                }
-            );
-            
-            console.log("DEBUG: ✓ Processing Fee Transaction:");
-            console.log(`  DEBIT:  ${customerGL.accountNo} (Customer Liability) -₦${processingFeeAmount.toLocaleString()}`);
-            console.log(`  CREDIT: ${processingFeeGL.accountNo} (Processing Fee Revenue) +₦${processingFeeAmount.toLocaleString()}`);
-            console.log(`  Note: Processing fee debited from customer account separately`);
-        }
-        
-     // ==================== 10.5. CORRECT GL ACCOUNT BALANCES UPDATE ====================
-console.log("\nDEBUG: Step 5: Updating GL account balances with CORRECT accounting...");
-
-// First, let's log all account details
-console.log("\nDEBUG: ACCOUNT DETAILS:");
-console.log(`1. Customer GL: ${customerGL.accountNo} (${customerGL.accountCategory})`);
-console.log(`2. Principal/Portfolio GL: ${principalGL.accountNo} (${principalGL.accountCategory})`);
-console.log(`3. Interest GL: ${interestGL.accountNo} (${interestGL.accountCategory})`);
-console.log(`4. Processing Fee GL: ${processingFeeGL.accountNo} (${processingFeeGL.accountCategory})`);
-
-// Function to update GL accounts with proper accounting
-const updateGLAccountBalance = async (accountNo, amount, isDebit, description) => {
-    try {
-        const accountDetails = await getGLAccountDetails(accountNo);
-        const accountCategory = accountDetails.accountCategory;
-        const currentBalance = accountDetails.currentBalance;
-        
-        console.log(`\nDEBUG: Updating ${accountNo} (${accountCategory})`);
-        console.log(`  Transaction: ${isDebit ? 'DEBIT' : 'CREDIT'} ₦${amount.toLocaleString()}`);
-        console.log(`  Description: ${description}`);
-        console.log(`  Current Balance: ₦${currentBalance.toLocaleString()}`);
-        
-        // Determine change amount based on account type
-        let changeAmount = 0;
-        
-        if (accountCategory === 'ASSET') {
-            // Asset: Debit increases, Credit decreases
-            changeAmount = isDebit ? amount : -amount;
-            console.log(`  Action: ${isDebit ? 'DEBIT increases' : 'CREDIT decreases'} asset`);
-        } else if (accountCategory === 'REVENUE' || accountCategory === 'LIABILITY') {
-            // Revenue/Liability: Credit increases, Debit decreases
-            changeAmount = isDebit ? -amount : amount;
-            console.log(`  Action: ${isDebit ? 'DEBIT decreases' : 'CREDIT increases'} ${accountCategory.toLowerCase()}`);
-        }
-        
-        console.log(`  Change: ${changeAmount >= 0 ? '+' : ''}₦${changeAmount.toLocaleString()}`);
-        
-        // Calculate new balance
-        const newBalance = currentBalance + changeAmount;
-        console.log(`  New Balance: ₦${newBalance.toLocaleString()}`);
-        
-        // Update gl_accounts table
-        const glUpdateQuery = `
-            UPDATE gl_accounts 
-            SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
-                c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
-                a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
-                updated_at = ?
-            WHERE g_l__a_c_c_t__n_o = ?
-        `;
-        
-        await sequelize.query(glUpdateQuery, {
-            replacements: [newBalance, newBalance, newBalance, sqlDate, accountNo],
-            transaction
-        });
-        
-        // Update ledgers table
-        const ledgerUpdateQuery = `
-            UPDATE ledgers 
-            SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
-                c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
-                a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
-                r_o_w__t_s = ?,
-                updated_at = ?
-            WHERE g_l__a_c_c_t__n_o = ?
-        `;
-        
-        await sequelize.query(ledgerUpdateQuery, {
-            replacements: [newBalance, newBalance, newBalance, sqlDate, sqlDate, accountNo],
-            transaction
-        });
-        
-        console.log(`  ✓ Both tables updated`);
-        
-        // Update audit trail
+        // ==================== 10. POST TO GENERAL LEDGER ====================
         try {
-            const auditQuery = `
-                UPDATE gl_accounts 
-                SET balance_history = JSON_ARRAY_APPEND(
-                    COALESCE(balance_history, '[]'), 
-                    '$', 
-                    JSON_OBJECT(
-                        'date', ?,
-                        'previous_balance', ?,
-                        'change', ?,
-                        'new_balance', ?,
-                        'transaction_type', ?,
-                        'loan_account', ?,
-                        'description', ?
-                    )
-                ),
-                transactions = JSON_ARRAY_APPEND(
-                    COALESCE(transactions, '[]'),
-                    '$',
-                    JSON_OBJECT(
-                        'date', ?,
-                        'amount', ?,
-                        'type', ?,
-                        'loan_account', ?,
-                        'description', ?,
-                        'new_balance', ?
-                    )
-                )
-                WHERE g_l__a_c_c_t__n_o = ?
-            `;
+            const transactionId = `LOAN-DISB-${ACCT_NO}-${Date.now()}`;
+            const journalId = `JRNL-LOAN-${Date.now()}`;
             
-            const transactionType = isDebit ? 'DEBIT' : 'CREDIT';
+            console.log("DEBUG: =========================================");
+            console.log("DEBUG: GENERAL LEDGER POSTING");
+            console.log("DEBUG: =========================================");
+            console.log(`DEBUG: Transaction ID: ${transactionId}`);
+            console.log(`DEBUG: Journal ID: ${journalId}`);
+            console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
+            console.log(`DEBUG: Gross Disbursement Amount: ₦${disbursementAmount.toLocaleString()}`);
             
-            await sequelize.query(auditQuery, {
-                replacements: [
-                    sqlDate, 
-                    currentBalance, 
-                    changeAmount, 
-                    newBalance,
-                    transactionType,
-                    ACCT_NO,
-                    description,
-                    sqlDate, 
-                    amount, 
-                    transactionType, 
-                    ACCT_NO, 
-                    description,
-                    newBalance,
-                    accountNo
-                ],
-                transaction
-            });
+            // Check if ledgers table exists
+            const ledgersTableCheck = await sequelize.query(
+                `SELECT TABLE_NAME 
+                 FROM INFORMATION_SCHEMA.TABLES 
+                 WHERE TABLE_SCHEMA = DATABASE() 
+                 AND TABLE_NAME = 'ledgers'`,
+                { transaction, type: sequelize.QueryTypes.SELECT }
+            );
             
-            console.log(`  ✓ Audit trail updated`);
-        } catch (auditError) {
-            console.warn(`  ! Audit trail error: ${auditError.message}`);
-        }
-        
-        return newBalance;
-        
-    } catch (error) {
-        console.error(`  ✗ Error updating ${accountNo}: ${error.message}`);
-        throw error;
-    }
-};
-
-// Now apply the CORRECT accounting entries:
-console.log("\nDEBUG: =========================================");
-console.log("DEBUG: APPLYING CORRECT ACCOUNTING ENTRIES");
-console.log("DEBUG: =========================================");
-
-// 1. PRINCIPAL DISBURSEMENT (₦500,000)
-console.log("\nDEBUG: 1. PRINCIPAL DISBURSEMENT:");
-// CREDIT Customer GL (Asset: money goes out to customer)
-// This REDUCES customer's balance
-await updateGLAccountBalance(
-    customerGL.accountNo,
-    disbursementAmount,
-    false, // CREDIT (decreases asset)
-    `Principal disbursement to customer - Loan ${ACCT_NO}`
-);
-
-// DEBIT Loan Portfolio GL (Asset: loan receivable increases)
-// This INCREASES loan portfolio
-await updateGLAccountBalance(
-    principalGL.accountNo,
-    disbursementAmount,
-    true, // DEBIT (increases asset)
-    `Loan portfolio increase - Loan ${ACCT_NO}`
-);
-
-// 2. INTEREST ACCRUAL (₦186,000)
-console.log("\nDEBUG: 2. INTEREST ACCRUAL:");
-// DEBIT Customer GL (Asset: interest owed increases loan amount)
-// This INCREASES customer's loan balance
-await updateGLAccountBalance(
-    customerGL.accountNo,
-    interestAmount,
-    true, // DEBIT (increases asset - customer owes more)
-    `Interest accrual added to loan - Loan ${ACCT_NO}`
-);
-
-// CREDIT Interest Income GL (Revenue: interest income earned)
-// This INCREASES interest income
-await updateGLAccountBalance(
-    interestGL.accountNo,
-    interestAmount,
-    false, // CREDIT (increases revenue)
-    `Interest income earned - Loan ${ACCT_NO}`
-);
-
-// 3. PROCESSING FEE (₦15,000) - DEDUCTED FROM CUSTOMER ACCOUNT
-console.log("\nDEBUG: 3. PROCESSING FEE (Deducted from customer account):");
-// Since processing fee is paid FROM customer account (not added to loan):
-// CREDIT Customer GL (Asset: fee deducted from customer balance)
-// This REDUCES customer's account balance
-await updateGLAccountBalance(
-    customerGL.accountNo,
-    processingFeeAmount,
-    false, // CREDIT (decreases asset)
-    `Processing fee deducted from account - Loan ${ACCT_NO}`
-);
-
-// DEBIT Processing Fee GL (Revenue: fee income earned)
-// OR if Processing Fee GL is REVENUE: CREDIT increases it
-await updateGLAccountBalance(
-    processingFeeGL.accountNo,
-    processingFeeAmount,
-    false, // CREDIT (increases revenue)
-    `Processing fee income - Loan ${ACCT_NO}`
-);
-
-// SUMMARY
-console.log("\nDEBUG: =========================================");
-console.log("DEBUG: TRANSACTION SUMMARY");
-console.log("DEBUG: =========================================");
-
-console.log(`\nLoan ${ACCT_NO}:`);
-console.log(`Principal Disbursed: ₦${disbursementAmount.toLocaleString()}`);
-console.log(`Interest Accrued: ₦${interestAmount.toLocaleString()}`);
-console.log(`Processing Fee Deducted: ₦${processingFeeAmount.toLocaleString()}`);
-
-console.log(`\nCustomer's Position:`);
-console.log(`- Received: ₦${disbursementAmount.toLocaleString()} (principal)`);
-console.log(`- Owes: ₦${(disbursementAmount + interestAmount).toLocaleString()} (principal + interest)`);
-console.log(`- Paid: ₦${processingFeeAmount.toLocaleString()} (processing fee)`);
-
-// Get final balances
-const getFinalBalance = async (accountNo) => {
-    const query = `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`;
-    const [result] = await sequelize.query(query, {
-        replacements: [accountNo],
-        type: sequelize.QueryTypes.SELECT
-    });
-    return result?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
-};
-
-const finalBalances = {
-    customer: await getFinalBalance(customerGL.accountNo),
-    principal: await getFinalBalance(principalGL.accountNo),
-    interest: await getFinalBalance(interestGL.accountNo),
-    processingFee: await getFinalBalance(processingFeeGL.accountNo)
-};
-
-console.log("\nDEBUG: FINAL BALANCES:");
-console.log(`Customer GL: ₦${finalBalances.customer.toLocaleString()}`);
-console.log(`Principal/Portfolio GL: ₦${finalBalances.principal.toLocaleString()}`);
-console.log(`Interest GL: ₦${finalBalances.interest.toLocaleString()}`);
-console.log(`Processing Fee GL: ₦${finalBalances.processingFee.toLocaleString()}`);
-
-// Calculate expected values based on account types
-console.log("\nDEBUG: EXPECTED VALUES:");
-
-// Customer GL (ASSET account):
-// - CREDIT ₦500,000 (disbursement) = -500,000
-// - DEBIT ₦186,000 (interest) = +186,000  
-// - CREDIT ₦15,000 (processing fee) = -15,000
-// Expected: -500,000 + 186,000 - 15,000 = -329,000
-const customerExpected = -disbursementAmount + interestAmount - processingFeeAmount;
-console.log(`Customer GL should be: ₦${customerExpected.toLocaleString()} (Negative balance = customer owes bank)`);
-
-// Principal GL (ASSET account):
-// - DEBIT ₦500,000 = +500,000
-const principalExpected = disbursementAmount;
-console.log(`Principal GL should be: ₦${principalExpected.toLocaleString()} (Loan portfolio asset)`);
-
-// Interest GL (REVENUE account):
-// - CREDIT ₦186,000 = +186,000
-const interestExpected = interestAmount;
-console.log(`Interest GL should be: ₦${interestExpected.toLocaleString()} (Interest income)`);
-
-// Processing Fee GL (REVENUE account):
-// - CREDIT ₦15,000 = +15,000
-const feeExpected = processingFeeAmount;
-console.log(`Processing Fee GL should be: ₦${feeExpected.toLocaleString()} (Fee income)`);
-
-// Verify
-console.log("\nDEBUG: VERIFICATION:");
-console.log(`Customer GL: ${Math.abs(finalBalances.customer - customerExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${customerExpected.toLocaleString()}, Actual: ₦${finalBalances.customer.toLocaleString()})`);
-console.log(`Principal GL: ${Math.abs(finalBalances.principal - principalExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${principalExpected.toLocaleString()}, Actual: ₦${finalBalances.principal.toLocaleString()})`);
-console.log(`Interest GL: ${Math.abs(finalBalances.interest - interestExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${interestExpected.toLocaleString()}, Actual: ₦${finalBalances.interest.toLocaleString()})`);
-console.log(`Processing Fee GL: ${Math.abs(finalBalances.processingFee - feeExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${feeExpected.toLocaleString()}, Actual: ₦${finalBalances.processingFee.toLocaleString()})`);
-
-console.log("\nDEBUG: =========================================");
-console.log("DEBUG: ✓ ACCOUNTING COMPLETE");
-console.log("DEBUG: =========================================");
-        
-        // ==================== 10.6. UPDATE CUSTOMER ACCOUNT WITH PROCESSING FEE ====================
-        console.log("\nDEBUG: Step 6: Updating customer account with processing fee...");
-        
-        if (customerAccountNumber && customerAccountsTableRecord && processingFeeAmount > 0) {
-            try {
-                // Calculate customer's final balance after all transactions
-                const customerFinalCredit = disbursementAmount; // Full disbursement credited
-                const customerFinalDebit = processingFeeAmount; // Processing fee debited
-                const customerNetChange = customerFinalCredit - customerFinalDebit;
+            if (ledgersTableCheck.length > 0) {
+                console.log("DEBUG: ✓ ledgers table exists");
                 
-                console.log("DEBUG: Customer Account Reconciliation:");
-                console.log(`DEBUG:   Credit (Loan Disbursement): +₦${customerFinalCredit.toLocaleString()}`);
-                console.log(`DEBUG:   Debit (Processing Fee): -₦${customerFinalDebit.toLocaleString()}`);
-                console.log(`DEBUG:   Net Change: +₦${customerNetChange.toLocaleString()}`);
+                // Get current date in SQL format
+                const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
                 
-                // Get current balances
-                const currentLedgerBalance = parseFloat(customerAccountsTableRecord.ledger_balance || 0);
-                const currentAvailableBalance = parseFloat(customerAccountsTableRecord.available_balance || 0);
-                const currentClearedBalance = parseFloat(customerAccountsTableRecord.cleared_balance || 0);
-                const currentBalance = parseFloat(customerAccountsTableRecord.current_balance || 0);
+                // ==================== 10.1. GET LOAN PRODUCT CONFIGURATION ====================
+                console.log("\nDEBUG: Step 1: Getting loan product configuration...");
+
+                let productConfig = null;
+                let principalGLAccount = null;
+                let interestGLAccount = null;
+                let processingFeeGLAccount = null;
+                let processingFeeRate = 0;
+                let processingFeeAmount = 0;
+
+                try {
+                    // Try to get the loan product ID from loan_accounts
+                    console.log("DEBUG: Attempting to get product ID from loan account:", ACCT_NO);
+                    
+                    const loanAccountQuery = `
+                        SELECT l_o_a_n__p_r_o_d_u_c_t__i_d 
+                        FROM loan_accounts 
+                        WHERE a_c_c_t__n_o = ? 
+                        LIMIT 1
+                    `;
+                    
+                    const [loanAccountResult] = await sequelize.query(loanAccountQuery, {
+                        replacements: [ACCT_NO],
+                        transaction,
+                        type: sequelize.QueryTypes.SELECT
+                    });
+                    
+                    let productId = null;
+                    let usingDefaultProduct = false;
+                    
+                    if (loanAccountResult && loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d) {
+                        productId = loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d;
+                        console.log("DEBUG: Found product ID in loan account:", productId);
+                    } else {
+                        console.warn("DEBUG: ⚠️ No product ID found in loan account, using default product");
+                        usingDefaultProduct = true;
+                        
+                        // Get the default/active loan product (first active product)
+                        const defaultProductQuery = `
+                            SELECT p_r_o_d__i_d 
+                            FROM loan_products 
+                            WHERE is_active = 1 
+                            AND s_t_a_t_u_s = 'ACTIVE'
+                            LIMIT 1
+                        `;
+                        
+                        const [defaultProductResult] = await sequelize.query(defaultProductQuery, {
+                            transaction,
+                            type: sequelize.QueryTypes.SELECT
+                        });
+                        
+                        if (defaultProductResult && defaultProductResult.p_r_o_d__i_d) {
+                            productId = defaultProductResult.p_r_o_d__i_d;
+                            console.warn("DEBUG: ⚠️ Using default product ID:", productId);
+                        } else {
+                            // If no active product, use the first product in the table
+                            const firstProductQuery = `
+                                SELECT p_r_o_d__i_d 
+                                FROM loan_products 
+                                LIMIT 1
+                            `;
+                            
+                            const [firstProductResult] = await sequelize.query(firstProductQuery, {
+                                transaction,
+                                type: sequelize.QueryTypes.SELECT
+                            });
+                            
+                            if (firstProductResult && firstProductResult.p_r_o_d__i_d) {
+                                productId = firstProductResult.p_r_o_d__i_d;
+                                console.warn("DEBUG: ⚠️ Using first available product ID:", productId);
+                            } else {
+                                console.error("DEBUG: ❌ No loan products found in the database");
+                                throw new Error("No loan products configured in the system. Please create a loan product first.");
+                            }
+                        }
+                    }
+                    
+                    // Now get the loan product using the product ID
+                    const productQuery = `
+                        SELECT lp.*, 
+                               JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
+                               JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
+                               JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
+                               JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
+                               lp.processing_fee_g_l_code,
+                               lp.processing_fee_rate
+                        FROM loan_products lp
+                        WHERE lp.p_r_o_d__i_d = ?
+                        LIMIT 1
+                    `;
+                    
+                    const [productResult] = await sequelize.query(productQuery, {
+                        replacements: [productId],
+                        transaction,
+                        type: sequelize.QueryTypes.SELECT
+                    });
+                    
+                    if (productResult) {
+                        productConfig = productResult;
+                        
+                        if (usingDefaultProduct) {
+                            console.warn("DEBUG: ⚠️ Using default/first available loan product:");
+                            console.warn(`DEBUG:   Product ID: ${productResult.p_r_o_d__i_d}`);
+                            console.warn(`DEBUG:   Product Name: ${productResult.name}`);
+                            console.warn("DEBUG:   NOTE: Consider updating the loan account with a proper product ID");
+                            
+                            // Update the loan account with the product ID for future reference
+                            try {
+                                await sequelize.query(
+                                    `UPDATE loan_accounts 
+                                     SET l_o_a_n__p_r_o_d_u_c_t__i_d = ? 
+                                     WHERE a_c_c_t__n_o = ?`,
+                                    {
+                                        replacements: [productId, ACCT_NO],
+                                        transaction
+                                    }
+                                );
+                                console.log("DEBUG: ✓ Updated loan account with product ID:", productId);
+                            } catch (updateError) {
+                                console.warn("DEBUG: Could not update loan account with product ID:", updateError.message);
+                            }
+                        } else {
+                            console.log("DEBUG: ✓ Found loan product configuration");
+                            console.log("DEBUG: Product ID:", productResult.p_r_o_d__i_d);
+                            console.log("DEBUG: Product Name:", productResult.name);
+                        }
+                        
+                        // Extract GL accounts from default_g_l_accounts JSON
+                        if (productResult.default_g_l_accounts) {
+                            try {
+                                const glAccounts = JSON.parse(productResult.default_g_l_accounts);
+                                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+                                interestGLAccount = glAccounts.interestGLAccountNo;
+                                processingFeeGLAccount = glAccounts.processingFeeGLCode;
+                                
+                                console.log("DEBUG: Extracted GL accounts from default_g_l_accounts:");
+                                console.log("DEBUG:   Principal GL Account:", principalGLAccount);
+                                console.log("DEBUG:   Interest GL Account:", interestGLAccount);
+                                console.log("DEBUG:   Processing Fee GL Account:", processingFeeGLAccount);
+                                
+                                // Validate that required GL accounts are present
+                                if (!principalGLAccount) {
+                                    throw new Error("Principal GL account not found in loan product configuration");
+                                }
+                                if (!interestGLAccount) {
+                                    console.warn("DEBUG: Warning: Interest GL account not found in loan product configuration");
+                                }
+                                if (!processingFeeGLAccount) {
+                                    console.warn("DEBUG: Warning: Processing Fee GL account not found in default_g_l_accounts");
+                                }
+                                
+                            } catch (e) {
+                                console.error("DEBUG: ❌ Could not parse GL accounts JSON:", e.message);
+                                throw new Error(`Invalid GL accounts configuration in loan product: ${e.message}`);
+                            }
+                        } else {
+                            console.error("DEBUG: ❌ No default_g_l_accounts found in loan product");
+                            throw new Error("Loan product does not have GL accounts configured");
+                        }
+                        
+                        // Get processing fee details
+                        processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
+                        
+                        // Calculate processing fee amount
+                        if (processingFeeRate > 0) {
+                            processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+                            console.log("DEBUG: Processing Fee Rate:", processingFeeRate + '%');
+                            console.log("DEBUG: Processing Fee Amount: ₦" + processingFeeAmount.toLocaleString());
+                        }
+                        
+                        // If processingFeeGLAccount not found in default_g_l_accounts, use processing_fee_g_l_code
+                        if (!processingFeeGLAccount && productResult.processing_fee_g_l_code) {
+                            processingFeeGLAccount = productResult.processing_fee_g_l_code;
+                            console.log("DEBUG: Using processing_fee_g_l_code for fee:", processingFeeGLAccount);
+                        }
+                        
+                        // Also check fee_structure for processing fee GL account
+                        if (productResult.fee_structure && !processingFeeGLAccount) {
+                            try {
+                                const feeStructure = JSON.parse(productResult.fee_structure);
+                                const processingFee = feeStructure.find(fee => 
+                                    fee.feeType === 'PROCESSING' || fee.name === 'Processing Fee'
+                                );
+                                if (processingFee && processingFee.glAccountCode) {
+                                    processingFeeGLAccount = processingFee.glAccountCode;
+                                    console.log("DEBUG: Found Processing Fee GL account in fee_structure:", processingFeeGLAccount);
+                                }
+                            } catch (e) {
+                                console.warn("DEBUG: Could not parse fee_structure:", e.message);
+                            }
+                        }
+                        
+                        console.log("DEBUG: ✓ GL accounts configured successfully:");
+                        console.log("DEBUG:   Principal: ", principalGLAccount);
+                        console.log("DEBUG:   Interest:  ", interestGLAccount || "Not configured");
+                        console.log("DEBUG:   Fee:       ", processingFeeGLAccount || "Not configured");
+                        
+                    } else {
+                        console.error("DEBUG: ❌ No loan product found for product ID:", productId);
+                        throw new Error(`Loan product with ID ${productId} not found in loan_products table`);
+                    }
+                } catch (productError) {
+                    console.error("DEBUG: ❌ ERROR getting loan product configuration:", productError.message);
+                    console.error("DEBUG: This is a critical error - loan cannot be disbursed without GL accounts");
+                    
+                    // Rollback the transaction since we can't proceed without GL accounts
+                    if (transaction && !transaction.finished) {
+                        await transaction.rollback();
+                    }
+                    
+                    return res.status(500).json({
+                        success: false,
+                        message: "Loan disbursement failed: Missing GL account configuration",
+                        error: productError.message,
+                        code: "MISSING_GL_CONFIGURATION",
+                        debug: {
+                            loanAccount: ACCT_NO,
+                            error: productError.message,
+                            requiredInfo: "Loan product must have GL accounts configured in default_g_l_accounts",
+                            suggestion: "1. Check if loan_products table has any products\n2. Check if default_g_l_accounts JSON is valid\n3. Ensure at least one product is active"
+                        }
+                    });
+                }
                 
-                // Calculate new balances (full disbursement minus processing fee)
-                const newLedgerBalance = currentLedgerBalance + customerNetChange;
-                const newAvailableBalance = currentAvailableBalance + customerNetChange;
-                const newClearedBalance = currentClearedBalance + customerNetChange;
-                const newCurrentBalance = currentBalance + customerNetChange;
+                // ==================== 10.2. CALCULATE INTEREST COMPONENT ====================
+                console.log("\nDEBUG: Step 2: Calculating interest component...");
                 
-                console.log("DEBUG: Updating customer_accounts table...");
+                let interestAmount = 0;
+                const interestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+                const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
                 
-                // Update customer_accounts table
-                await sequelize.query(
-                    `UPDATE customer_accounts 
-                     SET ledger_balance = ${newLedgerBalance},
-                         available_balance = ${newAvailableBalance},
-                         cleared_balance = ${newClearedBalance},
-                         current_balance = ${newCurrentBalance},
-                         last_transaction_date = '${sqlDate}',
-                         updated_at = '${sqlDate}'
-                     WHERE account_number = '${customerAccountNumber}'`,
-                    { transaction }
+                if (interestRate > 0 && termValue > 0) {
+                    // Calculate interest for the full loan term
+                    interestAmount = (disbursementAmount * interestRate * termValue) / (12 * 100); // Monthly calculation
+                    console.log("DEBUG: Interest Rate:", interestRate + "%");
+                    console.log("DEBUG: Term Value:", termValue + " months");
+                    console.log("DEBUG: Calculated Interest: ₦" + interestAmount.toLocaleString());
+                } else {
+                    console.log("DEBUG: No interest rate or term specified, skipping interest component");
+                }
+                
+                // ==================== 10.3. VERIFY GL ACCOUNTS EXIST IN gl_accounts TABLE ====================
+                console.log("\nDEBUG: Step 3: Verifying GL accounts in gl_accounts table...");
+
+                // Function to check if GL account exists and get its details
+                const getGLAccountDetails = async (glAccountNo) => {
+                    try {
+                        const accountCheck = await sequelize.query(
+                            `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t,
+                                    l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e,
+                                    c_u_r_r_e_n_t__b_a_l_a_n_c_e, b_a_l__c_d,
+                                    c_r__a_l_l_o_w_e_d, d_r__a_l_l_o_w_e_d, r_e_c__s_t,
+                                    c_u_r_r_e_n_c_y__c_o_d_e, c_o_n_t_r_o_l__a_c_c_t__f_g,
+                                    s_u_s_p_e_n_s_e__a_c_c_t__f_g, p_o_s_t__a_l_l_o_w
+                             FROM gl_accounts 
+                             WHERE g_l__a_c_c_t__n_o = ? 
+                             LIMIT 1`,
+                            {
+                                replacements: [glAccountNo],
+                                transaction,
+                                type: sequelize.QueryTypes.SELECT
+                            }
+                        );
+                        
+                        if (accountCheck && accountCheck.length > 0) {
+                            const account = accountCheck[0];
+                            
+                            // Check if account is active
+                            if (account.r_e_c__s_t !== 'Active') {
+                                console.warn(`DEBUG: GL account ${glAccountNo} is not active (status: ${account.r_e_c__s_t})`);
+                                return null;
+                            }
+                            
+                            console.log(`DEBUG: ✓ Found GL account: ${account.g_l__a_c_c_t__n_o} - ${account.a_c_c_t__d_e_s_c}`);
+                            console.log(`DEBUG:   Account Category: ${account.g_l__a_c_c_t__c_a_t}`);
+                            console.log(`DEBUG:   Balance Code: ${account.b_a_l__c_d}`);
+                            console.log(`DEBUG:   Current Balance: ₦${parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0).toLocaleString()}`);
+                            console.log(`DEBUG:   DR Allowed: ${account.d_r__a_l_l_o_w_e_d}, CR Allowed: ${account.c_r__a_l_l_o_w_e_d}`);
+                            console.log(`DEBUG:   Post Allowed: ${account.p_o_s_t__a_l_l_o_w}`);
+                            console.log(`DEBUG:   Control Account: ${account.c_o_n_t_r_o_l__a_c_c_t__f_g}, Suspense: ${account.s_u_s_p_e_n_s_e__a_c_c_t__f_g}`);
+                            
+                            return {
+                                accountNo: account.g_l__a_c_c_t__n_o,
+                                accountName: account.a_c_c_t__d_e_s_c,
+                                accountCategory: account.g_l__a_c_c_t__c_a_t,
+                                balanceCode: account.b_a_l__c_d,
+                                currentBalance: parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
+                                ledgerBalance: parseFloat(account.l_e_d_g_e_r__b_a_l_a_n_c_e || 0),
+                                availableBalance: parseFloat(account.a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e || 0),
+                                openingBalance: parseFloat(account.o_p_e_n_i_n_g__b_a_l_a_n_c_e || 0),
+                                drAllowed: account.d_r__a_l_l_o_w_e_d,
+                                crAllowed: account.c_r__a_l_l_o_w_e_d,
+                                postAllowed: account.p_o_s_t__a_l_l_o_w,
+                                isControlAccount: account.c_o_n_t_r_o_l__a_c_c_t__f_g,
+                                isSuspenseAccount: account.s_u_s_p_e_n_s_e__a_c_c_t__f_g,
+                                currency: account.c_u_r_r_e_n_c_y__c_o_d_e || 'NGN',
+                                status: account.r_e_c__s_t
+                            };
+                        } else {
+                            console.log(`DEBUG: ✗ GL account ${glAccountNo} not found`);
+                            return null;
+                        }
+                    } catch (error) {
+                        console.error(`DEBUG: Error checking GL account ${glAccountNo}:`, error.message);
+                        return null;
+                    }
+                };
+
+                // Get details for all required GL accounts from loan product configuration
+                console.log("DEBUG: Fetching GL accounts from loan product configuration...");
+                const principalGL = await getGLAccountDetails(principalGLAccount);
+                const interestGL = interestGLAccount ? await getGLAccountDetails(interestGLAccount) : null;
+                const processingFeeGL = processingFeeGLAccount ? await getGLAccountDetails(processingFeeGLAccount) : null;
+
+                // ==================== PLACE THE CUSTOMER GL ACCOUNT LOGIC HERE ====================
+                // Get Customer GL Account (from customer_accounts or use appropriate GL)
+                let customerGL = null;
+
+                // First try: Check if customer has a GL account with their account number
+                if (customerAccountNumber) {
+                    customerGL = await getGLAccountDetails(customerAccountNumber);
+                    if (customerGL) {
+                        console.log(`DEBUG: Found customer GL account using account number: ${customerAccountNumber}`);
+                    }
+                }
+
+                // Second try: Look for customer deposit/savings GL accounts (LIABILITY type)
+                if (!customerGL) {
+                    console.log("DEBUG: Searching for customer deposit GL accounts...");
+                    
+                    const customerDepositAccounts = await sequelize.query(
+                        `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t
+                         FROM gl_accounts 
+                         WHERE (a_c_c_t__d_e_s_c LIKE '%Customer%' 
+                                OR a_c_c_t__d_e_s_c LIKE '%Deposit%'
+                                OR a_c_c_t__d_e_s_c LIKE '%Savings%'
+                                OR a_c_c_t__d_e_s_c LIKE '%Current Account%')
+                           AND g_l__a_c_c_t__c_a_t = 'LIABILITY'
+                           AND r_e_c__s_t = 'Active'
+                           AND c_r__a_l_l_o_w_e_d = 1
+                         LIMIT 1`,
+                        { transaction, type: sequelize.QueryTypes.SELECT }
+                    );
+                    
+                    if (customerDepositAccounts && customerDepositAccounts.length > 0) {
+                        customerGL = await getGLAccountDetails(customerDepositAccounts[0].g_l__a_c_c_t__n_o);
+                        console.log(`DEBUG: Using customer deposit GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
+                    }
+                }
+
+                // Third try: Look for suspense accounts
+                if (!customerGL) {
+                    console.log("DEBUG: Searching for suspense GL accounts...");
+                    
+                    const suspenseAccounts = await sequelize.query(
+                        `SELECT g_l__a_c_c_t__n_o 
+                         FROM gl_accounts 
+                         WHERE (a_c_c_t__d_e_s_c LIKE '%Suspense%' 
+                                OR g_l__a_c_c_t__c_a_t = 'SUSPENSE'
+                                OR s_u_s_p_e_n_s_e__a_c_c_t__f_g = 1)
+                           AND r_e_c__s_t = 'Active'
+                           AND c_r__a_l_l_o_w_e_d = 1
+                         LIMIT 1`,
+                        { transaction, type: sequelize.QueryTypes.SELECT }
+                    );
+                    
+                    if (suspenseAccounts && suspenseAccounts.length > 0) {
+                        customerGL = await getGLAccountDetails(suspenseAccounts[0].g_l__a_c_c_t__n_o);
+                        console.log(`DEBUG: Using suspense GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
+                    }
+                }
+
+                // Fourth try: If still no customer GL, use the principal GL account as last resort
+                if (!customerGL && principalGL) {
+                    console.warn("DEBUG: No suitable customer GL account found, using principal GL account as suspense");
+                    customerGL = principalGL;
+                    console.warn(`DEBUG: WARNING: Using principal GL account (${principalGL.accountNo}) as customer account. This may cause accounting issues.`);
+                }
+
+                // If we still don't have a customer GL account, throw an error
+                if (!customerGL) {
+                    console.error("DEBUG: ❌ Could not find any suitable GL account for customer");
+                    throw new Error(`No suitable GL account found for customer. Tried: 
+                    - Customer account number: ${customerAccountNumber || 'Not available'}
+                    - Customer deposit accounts
+                    - Suspense accounts
+                    - Principal GL account`);
+                }
+
+                // Validate that principal GL account is found and active
+                if (!principalGL) {
+                    console.error("DEBUG: ❌ Principal GL account not found or not active:", principalGLAccount);
+                    throw new Error(`Principal GL account ${principalGLAccount} not found or not active. Please verify:
+                    1. The GL account exists in gl_accounts table
+                    2. The GL account is marked as 'Active' (r_e_c__s_t = 'Active')
+                    3. The GL account allows posting (p_o_s_t__a_l_l_o_w = 1)`);
+                }
+
+                // Validate that customer GL allows credit transactions
+                if (customerGL.crAllowed !== 1) {
+                    console.warn(`DEBUG: ⚠️ Warning: Credit not allowed for customer GL account ${customerGL.accountNo}`);
+                    console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
+                }
+
+                // Validate that principal GL allows debit transactions
+                if (principalGL.drAllowed !== 1) {
+                    console.warn(`DEBUG: ⚠️ Warning: Debit not allowed for principal GL account ${principalGL.accountNo}`);
+                    console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
+                }
+
+                // Validate that accounts allow posting
+                if (principalGL.postAllowed !== 1) {
+                    console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for principal GL account ${principalGL.accountNo}`);
+                }
+
+                if (customerGL.postAllowed !== 1) {
+                    console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for customer GL account ${customerGL.accountNo}`);
+                }
+
+                // Log GL account validation summary
+                console.log("\nDEBUG: =========================================");
+                console.log("DEBUG: GL ACCOUNT VALIDATION SUMMARY");
+                console.log("DEBUG: =========================================");
+                console.log(`DEBUG: Principal GL Account:`);
+                console.log(`  Account No: ${principalGL.accountNo}`);
+                console.log(`  Account Name: ${principalGL.accountName}`);
+                console.log(`  Category: ${principalGL.accountCategory}`);
+                console.log(`  Balance: ₦${principalGL.currentBalance.toLocaleString()}`);
+                console.log(`  DR Allowed: ${principalGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${principalGL.crAllowed ? 'Yes' : 'No'}`);
+
+                console.log(`\nDEBUG: Customer GL Account:`);
+                console.log(`  Account No: ${customerGL.accountNo}`);
+                console.log(`  Account Name: ${customerGL.accountName}`);
+                console.log(`  Category: ${customerGL.accountCategory}`);
+                console.log(`  Balance: ₦${customerGL.currentBalance.toLocaleString()}`);
+                console.log(`  DR Allowed: ${customerGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${customerGL.crAllowed ? 'Yes' : 'No'}`);
+
+                if (interestGL) {
+                    console.log(`\nDEBUG: Interest GL Account:`);
+                    console.log(`  Account No: ${interestGL.accountNo}`);
+                    console.log(`  Account Name: ${interestGL.accountName}`);
+                    console.log(`  Category: ${interestGL.accountCategory}`);
+                    console.log(`  Balance: ₦${interestGL.currentBalance.toLocaleString()}`);
+                }
+
+                if (processingFeeGL) {
+                    console.log(`\nDEBUG: Processing Fee GL Account:`);
+                    console.log(`  Account No: ${processingFeeGL.accountNo}`);
+                    console.log(`  Account Name: ${processingFeeGL.accountName}`);
+                    console.log(`  Category: ${processingFeeGL.accountCategory}`);
+                    console.log(`  Balance: ₦${processingFeeGL.currentBalance.toLocaleString()}`);
+                }
+
+                console.log("DEBUG: =========================================");
+                console.log("DEBUG: ✓ All GL accounts validated successfully");
+                // ==================== END OF CUSTOMER GL ACCOUNT LOGIC ====================
+
+                // ==================== 10.4. CREATE GL TRANSACTIONS ====================
+                console.log("\nDEBUG: Step 4: Creating GL transactions...");
+                
+                // Generate unique TransactionId (BigInt)
+                const baseTransactionId = BigInt(Date.now());
+                
+                // 1. PRINCIPAL TRANSACTION: DR Principal GL, CR Customer GL (FULL AMOUNT)
+                if (principalGL && customerGL) {
+                    const principalTransactionId = `${transactionId}-PRINCIPAL`;
+                    const glTransactionId1 = baseTransactionId;
+                    
+                    await sequelize.query(
+                        `INSERT INTO gl_account_transactions (
+                            JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+                            AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+                            TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+                            createdAt, updatedAt
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        {
+                            replacements: [
+                                journalId,
+                                principalTransactionId,
+                                principalGL.accountNo,  // DEBIT: Principal Asset increases
+                                customerGL.accountNo,   // CREDIT: Customer Liability increases (FULL AMOUNT)
+                                disbursementAmount,     // FULL DISBURSEMENT AMOUNT
+                                `Loan principal disbursement of ₦${disbursementAmount.toLocaleString()} for ${ACCT_NO} to ${customerName || 'customer'}`,
+                                approvedBy,
+                                approvedBy,
+                                'LOAN_DISBURSEMENT_PRINCIPAL',
+                                'NGN',
+                                'POSTED',
+                                glTransactionId1,
+                                sqlDate,
+                                sqlDate
+                            ],
+                            transaction
+                        }
+                    );
+                    
+                    console.log("DEBUG: ✓ Principal Transaction:");
+                    console.log(`  DEBIT:  ${principalGL.accountNo} (Principal Asset) +₦${disbursementAmount.toLocaleString()}`);
+                    console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${disbursementAmount.toLocaleString()}`);
+                    console.log(`  Note: Full disbursement amount credited to customer`);
+                }
+                
+                // 2. INTEREST TRANSACTION (if applicable): DR Interest GL, CR Customer GL
+                if (interestGL && interestAmount > 0 && customerGL) {
+                    const interestTransactionId = `${transactionId}-INTEREST`;
+                    const glTransactionId2 = baseTransactionId + 1n;
+                    
+                    await sequelize.query(
+                        `INSERT INTO gl_account_transactions (
+                            JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+                            AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+                            TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+                            createdAt, updatedAt
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        {
+                            replacements: [
+                                journalId,
+                                interestTransactionId,
+                                interestGL.accountNo,   // DEBIT: Interest Asset increases
+                                customerGL.accountNo,   // CREDIT: Customer Liability increases further
+                                interestAmount,
+                                `Loan interest accrual of ₦${interestAmount.toLocaleString()} for ${ACCT_NO}. Rate: ${interestRate}%, Term: ${termValue} months`,
+                                approvedBy,
+                                approvedBy,
+                                'LOAN_DISBURSEMENT_INTEREST',
+                                'NGN',
+                                'POSTED',
+                                glTransactionId2,
+                                sqlDate,
+                                sqlDate
+                            ],
+                            transaction
+                        }
+                    );
+                    
+                    console.log("DEBUG: ✓ Interest Transaction:");
+                    console.log(`  DEBIT:  ${interestGL.accountNo} (Interest Asset) +₦${interestAmount.toLocaleString()}`);
+                    console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${interestAmount.toLocaleString()}`);
+                }
+                
+                // 3. PROCESSING FEE TRANSACTION (if applicable): DR Customer GL, CR Processing Fee GL
+                if (processingFeeGL && processingFeeAmount > 0 && customerGL) {
+                    const feeTransactionId = `${transactionId}-PROCESSING-FEE`;
+                    const glTransactionId3 = baseTransactionId + 2n;
+                    
+                    await sequelize.query(
+                        `INSERT INTO gl_account_transactions (
+                            JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+                            AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+                            TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+                            createdAt, updatedAt
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        {
+                            replacements: [
+                                journalId,
+                                feeTransactionId,
+                                customerGL.accountNo,      // DEBIT: Customer Liability decreases (fee deducted)
+                                processingFeeGL.accountNo, // CREDIT: Processing Fee Revenue increases
+                                processingFeeAmount,
+                                `Processing fee of ₦${processingFeeAmount.toLocaleString()} for loan ${ACCT_NO}. Rate: ${processingFeeRate}${productConfig?.fee_structure ? '%' : ''}`,
+                                approvedBy,
+                                approvedBy,
+                                'PROCESSING_FEE',
+                                'NGN',
+                                'POSTED',
+                                glTransactionId3,
+                                sqlDate,
+                                sqlDate
+                            ],
+                            transaction
+                        }
+                    );
+                    
+                    console.log("DEBUG: ✓ Processing Fee Transaction:");
+                    console.log(`  DEBIT:  ${customerGL.accountNo} (Customer Liability) -₦${processingFeeAmount.toLocaleString()}`);
+                    console.log(`  CREDIT: ${processingFeeGL.accountNo} (Processing Fee Revenue) +₦${processingFeeAmount.toLocaleString()}`);
+                    console.log(`  Note: Processing fee debited from customer account separately`);
+                }
+                
+                // ==================== 10.5. CORRECT GL ACCOUNT BALANCES UPDATE ====================
+                console.log("\nDEBUG: Step 5: Updating GL account balances with CORRECT accounting...");
+
+                // First, let's log all account details
+                console.log("\nDEBUG: ACCOUNT DETAILS:");
+                console.log(`1. Customer GL: ${customerGL.accountNo} (${customerGL.accountCategory})`);
+                console.log(`2. Principal/Portfolio GL: ${principalGL.accountNo} (${principalGL.accountCategory})`);
+                console.log(`3. Interest GL: ${interestGL.accountNo} (${interestGL.accountCategory})`);
+                console.log(`4. Processing Fee GL: ${processingFeeGL.accountNo} (${processingFeeGL.accountCategory})`);
+
+                // Function to update GL accounts with proper accounting
+                const updateGLAccountBalance = async (accountNo, amount, isDebit, description) => {
+                    try {
+                        const accountDetails = await getGLAccountDetails(accountNo);
+                        const accountCategory = accountDetails.accountCategory;
+                        const currentBalance = accountDetails.currentBalance;
+                        
+                        console.log(`\nDEBUG: Updating ${accountNo} (${accountCategory})`);
+                        console.log(`  Transaction: ${isDebit ? 'DEBIT' : 'CREDIT'} ₦${amount.toLocaleString()}`);
+                        console.log(`  Description: ${description}`);
+                        console.log(`  Current Balance: ₦${currentBalance.toLocaleString()}`);
+                        
+                        // Determine change amount based on account type
+                        let changeAmount = 0;
+                        
+                        if (accountCategory === 'ASSET') {
+                            // Asset: Debit increases, Credit decreases
+                            changeAmount = isDebit ? amount : -amount;
+                            console.log(`  Action: ${isDebit ? 'DEBIT increases' : 'CREDIT decreases'} asset`);
+                        } else if (accountCategory === 'REVENUE' || accountCategory === 'LIABILITY') {
+                            // Revenue/Liability: Credit increases, Debit decreases
+                            changeAmount = isDebit ? -amount : amount;
+                            console.log(`  Action: ${isDebit ? 'DEBIT decreases' : 'CREDIT increases'} ${accountCategory.toLowerCase()}`);
+                        }
+                        
+                        console.log(`  Change: ${changeAmount >= 0 ? '+' : ''}₦${changeAmount.toLocaleString()}`);
+                        
+                        // Calculate new balance
+                        const newBalance = currentBalance + changeAmount;
+                        console.log(`  New Balance: ₦${newBalance.toLocaleString()}`);
+                        
+                        // Update gl_accounts table
+                        const glUpdateQuery = `
+                            UPDATE gl_accounts 
+                            SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
+                                c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
+                                a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
+                                updated_at = ?
+                            WHERE g_l__a_c_c_t__n_o = ?
+                        `;
+                        
+                        await sequelize.query(glUpdateQuery, {
+                            replacements: [newBalance, newBalance, newBalance, sqlDate, accountNo],
+                            transaction
+                        });
+                        
+                        // Update ledgers table
+                        const ledgerUpdateQuery = `
+                            UPDATE ledgers 
+                            SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
+                                c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
+                                a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
+                                r_o_w__t_s = ?,
+                                updated_at = ?
+                            WHERE g_l__a_c_c_t__n_o = ?
+                        `;
+                        
+                        await sequelize.query(ledgerUpdateQuery, {
+                            replacements: [newBalance, newBalance, newBalance, sqlDate, sqlDate, accountNo],
+                            transaction
+                        });
+                        
+                        console.log(`  ✓ Both tables updated`);
+                        
+                        // Update audit trail
+                        try {
+                            const auditQuery = `
+                                UPDATE gl_accounts 
+                                SET balance_history = JSON_ARRAY_APPEND(
+                                    COALESCE(balance_history, '[]'), 
+                                    '$', 
+                                    JSON_OBJECT(
+                                        'date', ?,
+                                        'previous_balance', ?,
+                                        'change', ?,
+                                        'new_balance', ?,
+                                        'transaction_type', ?,
+                                        'loan_account', ?,
+                                        'description', ?
+                                    )
+                                ),
+                                transactions = JSON_ARRAY_APPEND(
+                                    COALESCE(transactions, '[]'),
+                                    '$',
+                                    JSON_OBJECT(
+                                        'date', ?,
+                                        'amount', ?,
+                                        'type', ?,
+                                        'loan_account', ?,
+                                        'description', ?,
+                                        'new_balance', ?
+                                    )
+                                )
+                                WHERE g_l__a_c_c_t__n_o = ?
+                            `;
+                            
+                            const transactionType = isDebit ? 'DEBIT' : 'CREDIT';
+                            
+                            await sequelize.query(auditQuery, {
+                                replacements: [
+                                    sqlDate, 
+                                    currentBalance, 
+                                    changeAmount, 
+                                    newBalance,
+                                    transactionType,
+                                    ACCT_NO,
+                                    description,
+                                    sqlDate, 
+                                    amount, 
+                                    transactionType, 
+                                    ACCT_NO, 
+                                    description,
+                                    newBalance,
+                                    accountNo
+                                ],
+                                transaction
+                            });
+                            
+                            console.log(`  ✓ Audit trail updated`);
+                        } catch (auditError) {
+                            console.warn(`  ! Audit trail error: ${auditError.message}`);
+                        }
+                        
+                        return newBalance;
+                        
+                    } catch (error) {
+                        console.error(`  ✗ Error updating ${accountNo}: ${error.message}`);
+                        throw error;
+                    }
+                };
+
+                // Now apply the CORRECT accounting entries:
+                console.log("\nDEBUG: =========================================");
+                console.log("DEBUG: APPLYING CORRECT ACCOUNTING ENTRIES");
+                console.log("DEBUG: =========================================");
+
+                // 1. PRINCIPAL DISBURSEMENT (₦500,000)
+                console.log("\nDEBUG: 1. PRINCIPAL DISBURSEMENT:");
+                // CREDIT Customer GL (Asset: money goes out to customer)
+                // This REDUCES customer's balance
+                await updateGLAccountBalance(
+                    customerGL.accountNo,
+                    disbursementAmount,
+                    false, // CREDIT (decreases asset)
+                    `Principal disbursement to customer - Loan ${ACCT_NO}`
                 );
+
+                // DEBIT Loan Portfolio GL (Asset: loan receivable increases)
+                // This INCREASES loan portfolio
+                await updateGLAccountBalance(
+                    principalGL.accountNo,
+                    disbursementAmount,
+                    true, // DEBIT (increases asset)
+                    `Loan portfolio increase - Loan ${ACCT_NO}`
+                );
+
+                // 2. INTEREST ACCRUAL (₦186,000)
+                console.log("\nDEBUG: 2. INTEREST ACCRUAL:");
+                // DEBIT Customer GL (Asset: interest owed increases loan amount)
+                // This INCREASES customer's loan balance
+                await updateGLAccountBalance(
+                    customerGL.accountNo,
+                    interestAmount,
+                    true, // DEBIT (increases asset - customer owes more)
+                    `Interest accrual added to loan - Loan ${ACCT_NO}`
+                );
+
+                // CREDIT Interest Income GL (Revenue: interest income earned)
+                // This INCREASES interest income
+                await updateGLAccountBalance(
+                    interestGL.accountNo,
+                    interestAmount,
+                    false, // CREDIT (increases revenue)
+                    `Interest income earned - Loan ${ACCT_NO}`
+                );
+
+                // 3. PROCESSING FEE (₦15,000) - DEDUCTED FROM CUSTOMER ACCOUNT
+                console.log("\nDEBUG: 3. PROCESSING FEE (Deducted from customer account):");
+                // Since processing fee is paid FROM customer account (not added to loan):
+                // CREDIT Customer GL (Asset: fee deducted from customer balance)
+                // This REDUCES customer's account balance
+                await updateGLAccountBalance(
+                    customerGL.accountNo,
+                    processingFeeAmount,
+                    false, // CREDIT (decreases asset)
+                    `Processing fee deducted from account - Loan ${ACCT_NO}`
+                );
+
+                // DEBIT Processing Fee GL (Revenue: fee income earned)
+                // OR if Processing Fee GL is REVENUE: CREDIT increases it
+                await updateGLAccountBalance(
+                    processingFeeGL.accountNo,
+                    processingFeeAmount,
+                    false, // CREDIT (increases revenue)
+                    `Processing fee income - Loan ${ACCT_NO}`
+                );
+
+                // SUMMARY
+                console.log("\nDEBUG: =========================================");
+                console.log("DEBUG: TRANSACTION SUMMARY");
+                console.log("DEBUG: =========================================");
+
+                console.log(`\nLoan ${ACCT_NO}:`);
+                console.log(`Principal Disbursed: ₦${disbursementAmount.toLocaleString()}`);
+                console.log(`Interest Accrued: ₦${interestAmount.toLocaleString()}`);
+                console.log(`Processing Fee Deducted: ₦${processingFeeAmount.toLocaleString()}`);
+
+                console.log(`\nCustomer's Position:`);
+                console.log(`- Received: ₦${disbursementAmount.toLocaleString()} (principal)`);
+                console.log(`- Owes: ₦${(disbursementAmount + interestAmount).toLocaleString()} (principal + interest)`);
+                console.log(`- Paid: ₦${processingFeeAmount.toLocaleString()} (processing fee)`);
+
+                // Get final balances
+                const getFinalBalance = async (accountNo) => {
+                    const query = `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`;
+                    const [result] = await sequelize.query(query, {
+                        replacements: [accountNo],
+                        type: sequelize.QueryTypes.SELECT
+                    });
+                    return result?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
+                };
+
+                const finalBalances = {
+                    customer: await getFinalBalance(customerGL.accountNo),
+                    principal: await getFinalBalance(principalGL.accountNo),
+                    interest: await getFinalBalance(interestGL.accountNo),
+                    processingFee: await getFinalBalance(processingFeeGL.accountNo)
+                };
+
+                console.log("\nDEBUG: FINAL BALANCES:");
+                console.log(`Customer GL: ₦${finalBalances.customer.toLocaleString()}`);
+                console.log(`Principal/Portfolio GL: ₦${finalBalances.principal.toLocaleString()}`);
+                console.log(`Interest GL: ₦${finalBalances.interest.toLocaleString()}`);
+                console.log(`Processing Fee GL: ₦${finalBalances.processingFee.toLocaleString()}`);
+
+                // Calculate expected values based on account types
+                console.log("\nDEBUG: EXPECTED VALUES:");
+
+                // Customer GL (ASSET account):
+                // - CREDIT ₦500,000 (disbursement) = -500,000
+                // - DEBIT ₦186,000 (interest) = +186,000  
+                // - CREDIT ₦15,000 (processing fee) = -15,000
+                // Expected: -500,000 + 186,000 - 15,000 = -329,000
+                const customerExpected = -disbursementAmount + interestAmount - processingFeeAmount;
+                console.log(`Customer GL should be: ₦${customerExpected.toLocaleString()} (Negative balance = customer owes bank)`);
+
+                // Principal GL (ASSET account):
+                // - DEBIT ₦500,000 = +500,000
+                const principalExpected = disbursementAmount;
+                console.log(`Principal GL should be: ₦${principalExpected.toLocaleString()} (Loan portfolio asset)`);
+
+                // Interest GL (REVENUE account):
+                // - CREDIT ₦186,000 = +186,000
+                const interestExpected = interestAmount;
+                console.log(`Interest GL should be: ₦${interestExpected.toLocaleString()} (Interest income)`);
+
+                // Processing Fee GL (REVENUE account):
+                // - CREDIT ₦15,000 = +15,000
+                const feeExpected = processingFeeAmount;
+                console.log(`Processing Fee GL should be: ₦${feeExpected.toLocaleString()} (Fee income)`);
+
+                // Verify
+                console.log("\nDEBUG: VERIFICATION:");
+                console.log(`Customer GL: ${Math.abs(finalBalances.customer - customerExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${customerExpected.toLocaleString()}, Actual: ₦${finalBalances.customer.toLocaleString()})`);
+                console.log(`Principal GL: ${Math.abs(finalBalances.principal - principalExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${principalExpected.toLocaleString()}, Actual: ₦${finalBalances.principal.toLocaleString()})`);
+                console.log(`Interest GL: ${Math.abs(finalBalances.interest - interestExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${interestExpected.toLocaleString()}, Actual: ₦${finalBalances.interest.toLocaleString()})`);
+                console.log(`Processing Fee GL: ${Math.abs(finalBalances.processingFee - feeExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${feeExpected.toLocaleString()}, Actual: ₦${finalBalances.processingFee.toLocaleString()})`);
+
+                console.log("\nDEBUG: =========================================");
+                console.log("DEBUG: ✓ ACCOUNTING COMPLETE");
+                console.log("DEBUG: =========================================");
                 
-                console.log("DEBUG: ✓ Customer account updated:");
-                console.log(`DEBUG:   Previous Balance: ₦${currentBalance.toLocaleString()}`);
-                console.log(`DEBUG:   Net Credit: +₦${customerNetChange.toLocaleString()}`);
-                console.log(`DEBUG:   New Balance: ₦${newCurrentBalance.toLocaleString()}`);
+                // ==================== 10.6. UPDATE CUSTOMER ACCOUNT WITH PROCESSING FEE ====================
+                console.log("\nDEBUG: Step 6: Updating customer account with processing fee...");
                 
-            } catch (custError) {
-                console.error("DEBUG: Error updating customer account with processing fee:", custError.message);
+                if (customerAccountNumber && customerAccountsTableRecord && processingFeeAmount > 0) {
+                    try {
+                        // Calculate customer's final balance after all transactions
+                        const customerFinalCredit = disbursementAmount; // Full disbursement credited
+                        const customerFinalDebit = processingFeeAmount; // Processing fee debited
+                        const customerNetChange = customerFinalCredit - customerFinalDebit;
+                        
+                        console.log("DEBUG: Customer Account Reconciliation:");
+                        console.log(`DEBUG:   Credit (Loan Disbursement): +₦${customerFinalCredit.toLocaleString()}`);
+                        console.log(`DEBUG:   Debit (Processing Fee): -₦${customerFinalDebit.toLocaleString()}`);
+                        console.log(`DEBUG:   Net Change: +₦${customerNetChange.toLocaleString()}`);
+                        
+                        // Get current balances
+                        const currentLedgerBalance = parseFloat(customerAccountsTableRecord.ledger_balance || 0);
+                        const currentAvailableBalance = parseFloat(customerAccountsTableRecord.available_balance || 0);
+                        const currentClearedBalance = parseFloat(customerAccountsTableRecord.cleared_balance || 0);
+                        const currentBalance = parseFloat(customerAccountsTableRecord.current_balance || 0);
+                        
+                        // Calculate new balances (full disbursement minus processing fee)
+                        const newLedgerBalance = currentLedgerBalance + customerNetChange;
+                        const newAvailableBalance = currentAvailableBalance + customerNetChange;
+                        const newClearedBalance = currentClearedBalance + customerNetChange;
+                        const newCurrentBalance = currentBalance + customerNetChange;
+                        
+                        console.log("DEBUG: Updating customer_accounts table...");
+                        
+                        // Update customer_accounts table
+                        await sequelize.query(
+                            `UPDATE customer_accounts 
+                             SET ledger_balance = ${newLedgerBalance},
+                                 available_balance = ${newAvailableBalance},
+                                 cleared_balance = ${newClearedBalance},
+                                 current_balance = ${newCurrentBalance},
+                                 last_transaction_date = '${sqlDate}',
+                                 updated_at = '${sqlDate}'
+                             WHERE account_number = '${customerAccountNumber}'`,
+                            { transaction }
+                        );
+                        
+                        console.log("DEBUG: ✓ Customer account updated:");
+                        console.log(`DEBUG:   Previous Balance: ₦${currentBalance.toLocaleString()}`);
+                        console.log(`DEBUG:   Net Credit: +₦${customerNetChange.toLocaleString()}`);
+                        console.log(`DEBUG:   New Balance: ₦${newCurrentBalance.toLocaleString()}`);
+                        
+                    } catch (custError) {
+                        console.error("DEBUG: Error updating customer account with processing fee:", custError.message);
+                    }
+                }
+                
+                // ==================== 10.7. SUMMARY ====================
+                console.log("\nDEBUG: =========================================");
+                console.log("DEBUG: LEDGER POSTING SUMMARY");
+                console.log("DEBUG: =========================================");
+                console.log(`DEBUG: Journal ID: ${journalId}`);
+                console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
+                console.log(`DEBUG: Customer: ${customerName || 'N/A'}`);
+                console.log(`DEBUG: Customer Account: ${customerAccountNumber || 'N/A'}`);
+                console.log("\nDEBUG: TRANSACTION BREAKDOWN:");
+                console.log(`DEBUG: 1. Principal Disbursement: ₦${disbursementAmount.toLocaleString()}`);
+                if (interestAmount > 0) {
+                    console.log(`DEBUG: 2. Interest Accrual: ₦${interestAmount.toLocaleString()}`);
+                }
+                if (processingFeeAmount > 0) {
+                    console.log(`DEBUG: 3. Processing Fee: ₦${processingFeeAmount.toLocaleString()}`);
+                }
+                
+                console.log("\nDEBUG: CUSTOMER IMPACT:");
+                console.log(`DEBUG:   Total Credit (Loan): +₦${disbursementAmount.toLocaleString()}`);
+                if (processingFeeAmount > 0) {
+                    console.log(`DEBUG:   Processing Fee Debit: -₦${processingFeeAmount.toLocaleString()}`);
+                    console.log(`DEBUG:   Net to Customer: ₦${(disbursementAmount - processingFeeAmount).toLocaleString()}`);
+                } else {
+                    console.log(`DEBUG:   Net to Customer: ₦${disbursementAmount.toLocaleString()}`);
+                }
+                
+                console.log("\nDEBUG: GL ACCOUNTS USED:");
+                console.log(`DEBUG:   Principal GL: ${principalGL?.accountNo || 'N/A'}`);
+                console.log(`DEBUG:   Interest GL: ${interestGL?.accountNo || 'N/A'}`);
+                console.log(`DEBUG:   Processing Fee GL: ${processingFeeGL?.accountNo || 'N/A'}`);
+                console.log(`DEBUG:   Customer GL: ${customerGL?.accountNo || 'N/A'}`);
+                console.log("DEBUG: =========================================");
+                
+            } else {
+                console.log("DEBUG: ledgers table does not exist, skipping ledger posting");
             }
+            
+        } catch (glError) {
+            console.error("DEBUG: GL posting failed:", glError.message);
+            console.error("DEBUG: Error stack:", glError.stack);
+            // Don't rollback for GL errors - they're not critical for the loan disbursement
         }
-        
-        // ==================== 10.7. SUMMARY ====================
-        console.log("\nDEBUG: =========================================");
-        console.log("DEBUG: LEDGER POSTING SUMMARY");
-        console.log("DEBUG: =========================================");
-        console.log(`DEBUG: Journal ID: ${journalId}`);
-        console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
-        console.log(`DEBUG: Customer: ${customerName || 'N/A'}`);
-        console.log(`DEBUG: Customer Account: ${customerAccountNumber || 'N/A'}`);
-        console.log("\nDEBUG: TRANSACTION BREAKDOWN:");
-        console.log(`DEBUG: 1. Principal Disbursement: ₦${disbursementAmount.toLocaleString()}`);
-        if (interestAmount > 0) {
-            console.log(`DEBUG: 2. Interest Accrual: ₦${interestAmount.toLocaleString()}`);
-        }
-        if (processingFeeAmount > 0) {
-            console.log(`DEBUG: 3. Processing Fee: ₦${processingFeeAmount.toLocaleString()}`);
-        }
-        
-        console.log("\nDEBUG: CUSTOMER IMPACT:");
-        console.log(`DEBUG:   Total Credit (Loan): +₦${disbursementAmount.toLocaleString()}`);
-        if (processingFeeAmount > 0) {
-            console.log(`DEBUG:   Processing Fee Debit: -₦${processingFeeAmount.toLocaleString()}`);
-            console.log(`DEBUG:   Net to Customer: ₦${(disbursementAmount - processingFeeAmount).toLocaleString()}`);
-        } else {
-            console.log(`DEBUG:   Net to Customer: ₦${disbursementAmount.toLocaleString()}`);
-        }
-        
-        console.log("\nDEBUG: GL ACCOUNTS USED:");
-        console.log(`DEBUG:   Principal GL: ${principalGL?.accountNo || 'N/A'}`);
-        console.log(`DEBUG:   Interest GL: ${interestGL?.accountNo || 'N/A'}`);
-        console.log(`DEBUG:   Processing Fee GL: ${processingFeeGL?.accountNo || 'N/A'}`);
-        console.log(`DEBUG:   Customer GL: ${customerGL?.accountNo || 'N/A'}`);
-        console.log("DEBUG: =========================================");
-        
-    } else {
-        console.log("DEBUG: ledgers table does not exist, skipping ledger posting");
-    }
-    
-} catch (glError) {
-    console.error("DEBUG: GL posting failed:", glError.message);
-    console.error("DEBUG: Error stack:", glError.stack);
-    // Don't rollback for GL errors - they're not critical for the loan disbursement
-}
+
         // ==================== 11. CREATE AUDIT LOG ====================
         try {
             const auditTables = await sequelize.query(
@@ -6001,6 +6298,532 @@ console.log("DEBUG: =========================================");
         } catch (auditError) {
             console.error("DEBUG: Could not create audit log:", auditError.message);
         }
+      // ==================== HELPER FUNCTION: generateContractText ====================
+function generateContractText(loanDetails, customerDetails, productDetails, effectiveInterestRate) {
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+    });
+    
+    const maturityDate = loanDetails.LAST_PAYMENT_DATE.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+    
+    const firstPaymentDate = loanDetails.FIRST_PAYMENT_DATE.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+    
+    // Calculate monthly payment
+    const principal = loanDetails.AMOUNT;
+    const annualRate = effectiveInterestRate / 100;
+    const monthlyRate = annualRate / 12;
+    const numberOfPayments = loanDetails.NUMBER_OF_INSTALLMENTS;
+    
+    let monthlyPayment = 0;
+    if (monthlyRate > 0) {
+        monthlyPayment = (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
+                        (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+    } else {
+        monthlyPayment = principal / numberOfPayments;
+    }
+    
+    // Build the contract text
+    const contractText = `
+LOAN AGREEMENT AND CONTRACT
+
+THIS LOAN AGREEMENT is made and entered into on this ${formattedDate}
+
+BETWEEN:
+
+${process.env.BANK_NAME || "OUR BANK PLC"}
+(hereinafter referred to as "the Lender")
+
+AND:
+
+${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
+Address: ${customerDetails.HOME_ADDRESS || "Address Not Provided"}
+(hereinafter referred to as "the Borrower")
+
+WHEREAS:
+1. The Borrower has applied for a loan from the Lender.
+2. The Lender has agreed to grant the loan to the Borrower subject to the terms and conditions herein.
+
+NOW, THEREFORE, in consideration of the mutual covenants and promises herein contained, the parties agree as follows:
+
+ARTICLE 1: LOAN DETAILS
+1.1 Loan Amount: ₦${loanDetails.AMOUNT.toLocaleString()}
+1.2 Disbursement Date: ${loanDetails.DISBURSEMENT_DATE.toLocaleDateString()}
+1.3 Interest Rate: ${effectiveInterestRate}% per annum
+1.4 Loan Term: ${loanDetails.TERM_VALUE} ${loanDetails.TERM_CD === 'M' ? 'Months' : 'Years'}
+1.5 Maturity Date: ${maturityDate}
+1.6 Purpose of Loan: ${loanDetails.loan_purpose || "General Business Purpose"}
+
+ARTICLE 2: REPAYMENT TERMS
+2.1 Number of Installments: ${loanDetails.NUMBER_OF_INSTALLMENTS}
+2.2 Monthly Installment: ₦${monthlyPayment.toFixed(2).toLocaleString()}
+2.3 First Payment Date: ${firstPaymentDate}
+2.4 Payment Method: Direct debit from the Borrower's account with the Lender
+2.5 Account for Repayment: ${customerDetails.ACCT_NM || "Borrower's Account"}
+
+ARTICLE 3: INTEREST AND CHARGES
+3.1 Interest shall accrue on the outstanding principal balance from the disbursement date.
+3.2 Interest is calculated on a monthly reducing balance basis.
+3.3 Late payment penalty: 5% of the overdue amount per month.
+3.4 Early repayment is allowed without penalty after 3 months.
+
+ARTICLE 4: DEFAULT AND REMEDIES
+4.1 The Borrower shall be in default if:
+    a) Any installment is not paid within 7 days of its due date;
+    b) The Borrower becomes insolvent or bankrupt;
+    c) Any representation or warranty made by the Borrower is false.
+4.2 Upon default, the Lender may:
+    a) Declare the entire outstanding amount immediately due and payable;
+    b) Charge default interest at 15% per annum;
+    c) Exercise any other rights available under applicable law.
+
+ARTICLE 5: REPRESENTATIONS AND WARRANTIES
+The Borrower represents and warrants that:
+5.1 All information provided is true and accurate.
+5.2 The Borrower has the capacity to enter into this agreement.
+5.3 The loan proceeds will be used solely for the purpose stated in Article 1.6.
+
+ARTICLE 6: GOVERNING LAW
+This agreement shall be governed by and construed in accordance with the laws of Nigeria.
+
+ARTICLE 7: SIGNATURES
+IN WITNESS WHEREOF, the parties have executed this agreement on the date first above written.
+
+_________________________
+For and on behalf of
+${process.env.BANK_NAME || "OUR BANK PLC"}
+
+Name: ___________________
+Title: __________________
+Date: ___________________
+
+_________________________
+The Borrower
+
+Name: ${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
+Signature: ___________________
+Date: ___________________
+
+WITNESS:
+_________________________
+Name: ___________________
+Address: ________________
+Date: ___________________
+
+This document constitutes the entire agreement between the parties.
+    `;
+    
+    return contractText;
+}
+
+// ==================== X. CREATE LOAN CONTRACT FORM ====================
+console.log("\nDEBUG: Creating loan contract form...");
+
+try {
+    // Check if loan_contract_forms table exists
+    const contractsTableCheck = await sequelize.query(
+        `SELECT TABLE_NAME 
+         FROM INFORMATION_SCHEMA.TABLES 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'loan_contract_forms'`,
+        { transaction, type: sequelize.QueryTypes.SELECT }
+    );
+    
+    if (contractsTableCheck.length === 0) {
+        console.log("DEBUG: loan_contract_forms table does not exist, creating it...");
+        
+        await sequelize.query(`
+            CREATE TABLE IF NOT EXISTS loan_contract_forms (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+                customer_id VARCHAR(255) NOT NULL,
+                borrower_name VARCHAR(255) NOT NULL,
+                co_signatory_name VARCHAR(255) DEFAULT '',
+                borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+                loan_purpose VARCHAR(255) NOT NULL,
+                loan_amount VARCHAR(255) NOT NULL,
+                loan_term INT(11) NOT NULL,
+                t_e_r_m__c_d ENUM('M','Y') DEFAULT 'M',
+                interest_rate DECIMAL(7,4) NOT NULL,
+                interest_rate_id INT(11) DEFAULT 101,
+                guarantor_name VARCHAR(255) DEFAULT '',
+                bank_name VARCHAR(255) NOT NULL,
+                bank_short VARCHAR(255) NOT NULL,
+                status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') DEFAULT 'PENDING',
+                contract_text TEXT NOT NULL,
+                u_s_e_r__i_d VARCHAR(255) NOT NULL,
+                application_id VARCHAR(255) NOT NULL,
+                loan_account_no VARCHAR(255) NOT NULL,
+                funding_account_no VARCHAR(255) NOT NULL,
+                workflow_id BIGINT(20) UNIQUE,
+                fees LONGTEXT NOT NULL,
+                signature_requirements LONGTEXT NOT NULL,
+                metadata LONGTEXT NOT NULL,
+                disbursement_date DATETIME,
+                maturity_date DATETIME,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+            { transaction }
+        );
+        
+        console.log("DEBUG: ✓ loan_contract_forms table created");
+    }
+    
+    // Generate contract number
+    const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
+    
+    // Calculate maturity date based on term
+    const termCode = loanAccount.t_e_r_m__c_d || 'M';
+    const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
+    const maturityDate = new Date(now);
+    
+    if (termCode === 'M') {
+        maturityDate.setMonth(maturityDate.getMonth() + termValue);
+    } else if (termCode === 'Y') {
+        maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
+    }
+    
+    // Get loan product details for contract - WITH FALLBACK LOGIC
+    let loanProductDetails = {};
+    let effectiveInterestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+    let processingFeeAmount = 0;
+    let processingFeeRate = 0;
+    let principalGLAccount = null;
+    let interestGLAccount = null;
+    let processingFeeGLAccount = null;
+
+    // Check if productConfig exists, if not, try to get it again
+    if (!productConfig) {
+        console.log("DEBUG: productConfig not found in scope, attempting to retrieve loan product...");
+        try {
+            // Get the product ID from loan account (updated during GL posting)
+            const productId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 1001;
+            
+            const productQuery = `
+                SELECT lp.*, 
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
+                       lp.processing_fee_g_l_code,
+                       lp.processing_fee_rate,
+                       lp.effective_interest_rate,
+                       lp.interest_rate,
+                       lp.fee_structure,
+                       lp.rate_information
+                FROM loan_products lp
+                WHERE lp.p_r_o_d__i_d = ?
+                LIMIT 1
+            `;
+            
+            const [productResult] = await sequelize.query(productQuery, {
+                replacements: [productId],
+                transaction,
+                type: sequelize.QueryTypes.SELECT
+            });
+            
+            if (productResult) {
+                productConfig = productResult;
+                console.log("DEBUG: Retrieved productConfig successfully for contract");
+                
+                // Extract GL accounts for reference in contract metadata
+                if (productResult.default_g_l_accounts) {
+                    try {
+                        const glAccounts = JSON.parse(productResult.default_g_l_accounts);
+                        principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+                        interestGLAccount = glAccounts.interestGLAccountNo;
+                        processingFeeGLAccount = glAccounts.processingFeeGLCode;
+                    } catch (e) {
+                        console.warn("DEBUG: Could not parse GL accounts JSON for contract");
+                    }
+                }
+                
+                // Get processing fee details
+                processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
+                processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+            } else {
+                console.warn("DEBUG: Could not retrieve productConfig from database");
+            }
+        } catch (error) {
+            console.warn("DEBUG: Error retrieving productConfig for contract:", error.message);
+        }
+    } else {
+        console.log("DEBUG: Using existing productConfig for contract");
+        
+        // Extract GL accounts from existing productConfig
+        if (productConfig.default_g_l_accounts) {
+            try {
+                const glAccounts = JSON.parse(productConfig.default_g_l_accounts);
+                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+                interestGLAccount = glAccounts.interestGLAccountNo;
+                processingFeeGLAccount = glAccounts.processingFeeGLCode;
+            } catch (e) {
+                console.warn("DEBUG: Could not parse GL accounts JSON from existing productConfig");
+            }
+        }
+        
+        // Get processing fee details
+        processingFeeRate = parseFloat(productConfig.processing_fee_rate || 0);
+        processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+    }
+    
+    // Set loan product details
+    if (productConfig) {
+        loanProductDetails = {
+            interestRate: parseFloat(productConfig.interest_rate) || effectiveInterestRate,
+            feeStructure: productConfig.fee_structure ? JSON.parse(productConfig.fee_structure) : [],
+            processingFeeRate: processingFeeRate,
+            rateInformation: productConfig.rate_information ? JSON.parse(productConfig.rate_information) : {}
+        };
+        
+        // Try to get effective interest rate from loan product
+        if (productConfig.effective_interest_rate) {
+            try {
+                effectiveInterestRate = parseFloat(productConfig.effective_interest_rate);
+            } catch (e) {
+                console.warn("DEBUG: Could not parse effective interest rate, using loan account rate");
+            }
+        }
+    } else {
+        console.warn("DEBUG: No productConfig available, using loan account values");
+        loanProductDetails = {
+            interestRate: effectiveInterestRate,
+            feeStructure: [],
+            processingFeeRate: 0,
+            rateInformation: {}
+        };
+    }
+    
+    // Prepare loan details for contract
+    const firstPaymentDate = new Date(now); // Create a new date object
+    firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
+    
+    const loanDetails = {
+        AMOUNT: disbursementAmount,
+        INTEREST_RATE: effectiveInterestRate,
+        TERM_VALUE: termValue,
+        TERM_CD: termCode,
+        DISBURSEMENT_DATE: new Date(now), // Create a copy of now
+        FIRST_PAYMENT_DATE: firstPaymentDate,
+        LAST_PAYMENT_DATE: maturityDate,
+        NUMBER_OF_INSTALLMENTS: termValue,
+        borrower_name: customerName || loanAccount.a_c_c_t__n_m || 'Customer',
+        borrower_address: loanAccount.borrower_address || customerAccountDetails?.address || 'Address Not Provided',
+        loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
+    };
+    
+    // Prepare customer details
+    const customerDetails = {
+        ACCT_NM: customerName,
+        CUST_NM: customerName,
+        HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+    };
+    
+    // Generate contract text using your function
+    const contractText = generateContractText(loanDetails, customerDetails, loanProductDetails, effectiveInterestRate);
+    
+    console.log("DEBUG: Contract text generated successfully");
+    
+    // Prepare fees data
+    let feesData = [];
+    if (productConfig?.fee_structure) {
+        try {
+            feesData = JSON.parse(productConfig.fee_structure);
+        } catch (e) {
+            console.warn("DEBUG: Could not parse fee structure");
+            feesData = [];
+        }
+    }
+    
+    // Prepare signature requirements
+    const signatureRequirements = {
+        requiredSignatures: [
+            {
+                role: "Borrower",
+                name: customerName,
+                required: true
+            },
+            {
+                role: "Lender Representative",
+                name: approvedBy,
+                required: true
+            }
+        ],
+        coSignatories: [],
+        witnessRequired: false
+    };
+    
+    // Add guarantor if exists
+    if (loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e) {
+        signatureRequirements.requiredSignatures.push({
+            role: "Guarantor",
+            name: loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e,
+            required: true
+        });
+        signatureRequirements.coSignatories.push(loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e);
+    }
+    
+    // Prepare metadata
+    const metadata = {
+        generatedBy: approvedBy,
+        generationDate: now.toISOString(),
+        loanProductId: productConfig?.p_r_o_d__i_d || loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 'Unknown',
+        loanAccountNumber: ACCT_NO,
+        customerAccountNumber: customerAccountNumber,
+        disbursementAmount: disbursementAmount,
+        interestAmount: (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100), // Calculate interest
+        processingFeeAmount: processingFeeAmount,
+        processingFeeRate: processingFeeRate,
+        effectiveInterestRate: effectiveInterestRate,
+        termDetails: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
+        glAccounts: {
+            principalGL: principalGLAccount,
+            interestGL: interestGLAccount,
+            processingFeeGL: processingFeeGLAccount
+        },
+        customerDetails: {
+            customerId: customerId,
+            customerName: customerName,
+            accountNumber: customerAccountNumber
+        },
+        financialSummary: {
+            totalLoanAmount: disbursementAmount,
+            totalPayable: disbursementAmount + (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100),
+            monthlyPayment: calculateMonthlyPayment(disbursementAmount, effectiveInterestRate, termValue, termCode)
+        }
+    };
+    
+    // Helper function to calculate monthly payment
+    function calculateMonthlyPayment(principal, annualRate, termValue, termCode) {
+        const annualRateDecimal = annualRate / 100;
+        let monthlyRate, numberOfPayments;
+        
+        if (termCode === 'M') {
+            monthlyRate = annualRateDecimal / 12;
+            numberOfPayments = termValue;
+        } else {
+            // For years, convert to months
+            monthlyRate = annualRateDecimal / 12;
+            numberOfPayments = termValue * 12;
+        }
+        
+        if (monthlyRate > 0) {
+            return (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
+                   (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+        } else {
+            return principal / numberOfPayments;
+        }
+    }
+    
+    // Insert contract into loan_contract_forms table
+    const contractResult = await sequelize.query(
+        `INSERT INTO loan_contract_forms (
+            loan_contract_no,
+            customer_id,
+            borrower_name,
+            co_signatory_name,
+            borrower_address,
+            loan_purpose,
+            loan_amount,
+            loan_term,
+            t_e_r_m__c_d,
+            interest_rate,
+            interest_rate_id,
+            guarantor_name,
+            bank_name,
+            bank_short,
+            status,
+            contract_text,
+            u_s_e_r__i_d,
+            application_id,
+            loan_account_no,
+            funding_account_no,
+            workflow_id,
+            fees,
+            signature_requirements,
+            metadata,
+            disbursement_date,
+            maturity_date,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        {
+            replacements: [
+                contractNumber,
+                customerId,
+                customerName,
+                loanAccount.co_signatory_name || '',
+                loanAccount.borrower_address || 'Address Not Provided',
+                loanAccount.loan_purpose || 'General Business Purpose',
+                disbursementAmount.toString(),
+                termValue,
+                termCode,
+                effectiveInterestRate,
+                101, // Default interest rate ID
+                loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
+                process.env.BANK_NAME || 'Our Bank',
+                process.env.BANK_SHORT_NAME || 'BANK',
+                'DISBURSED',
+                contractText,
+                approvedBy,
+                ACCT_NO, // Using loan account as application ID
+                ACCT_NO,
+                customerAccountNumber || 'N/A',
+                null, // workflow_id
+                JSON.stringify(feesData),
+                JSON.stringify(signatureRequirements),
+                JSON.stringify(metadata),
+                now,
+                maturityDate,
+                now,
+                now
+            ],
+            transaction
+        }
+    );
+    
+    const contractId = contractResult[0].insertId;
+    console.log(`DEBUG: ✓ Created loan contract form ID: ${contractId}, Contract No: ${contractNumber}`);
+    
+    // Also update loan_accounts with contract reference
+    await sequelize.query(
+        `UPDATE loan_accounts 
+         SET l_o_a_n__c_o_n_t_r_a_c_t__n_o = ?,
+             contract_status = 'SIGNED'
+         WHERE a_c_c_t__n_o = ?`,
+        {
+            replacements: [contractNumber, ACCT_NO],
+            transaction
+        }
+    );
+    
+    console.log("DEBUG: ✓ Loan contract form created and linked to loan account");
+    
+    // Store contract reference for response (INSIDE the try block)
+    const contractRecord = {
+        id: contractId,
+        contractNumber: contractNumber,
+        status: 'DISBURSED',
+        generatedDate: now,
+        maturityDate: maturityDate
+    };
+    
+} catch (contractError) {
+    console.error("DEBUG: ✗ Error creating loan contract form:", contractError.message);
+    console.error("DEBUG: Contract error stack:", contractError.stack);
+    // Don't rollback for contract errors - it's not critical for disbursement
+}
 
         // ==================== 12. UPDATE LOAN PORTFOLIO ====================
         try {
@@ -6105,19 +6928,19 @@ console.log("DEBUG: =========================================");
                     });
                     
                     const updatePortfolioQuery = `
-                        UPDATE loan_portfolio 
-                        SET t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + ${disbursementAmount},
-                            t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + ${disbursementAmount},
-                            t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
-                            o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
-                            n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
-                            a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
-                            d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
-                            a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = ${newAverageLoanSize},
-                            u_p_d_a_t_e_d__d_a_t_e = '${now.toISOString().slice(0, 19).replace('T', ' ')}',
-                            u_p_d_a_t_e_d__b_y = '${approvedBy}'
-                        WHERE id = ${portfolioId}
-                    `;
+    UPDATE loan_portfolio 
+    SET t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + ${disbursementAmount},
+        t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + ${disbursementAmount},
+        t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+        n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
+        a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
+        d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
+        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = ${newAverageLoanSize},
+        u_p_d_a_t_e_d__d_a_t_e = '${now.toISOString().slice(0, 19).replace('T', ' ')}',
+        u_p_d_a_t_e_d__b_y = '${approvedBy}'
+    WHERE id = ${portfolioId}
+`;
                     
                     console.log("DEBUG: Executing update query:", updatePortfolioQuery);
                     
@@ -6134,52 +6957,52 @@ console.log("DEBUG: =========================================");
                     const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
                     
                     const insertPortfolioQuery = `
-                        INSERT INTO loan_portfolio (
-                            b_r_a_n_c_h__i_d,
-                            p_r_o_d__i_d,
-                            p_r_o_d_u_c_t__c_o_d_e,
-                            p_r_o_d_u_c_t__n_a_m_e,
-                            p_r_o_d_u_c_t__t_y_p_e,
-                            m_o_n_t_h,
-                            y_e_a_r,
-                            c_u_r_r_e_n_c_y,
-                            t_o_t_a_l__d_i_s_b_u_r_s_e_d,
-                            t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
-                            t_o_t_a_l__p_r_i_n_c_i_p_a_l,
-                            o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
-                            n_u_m_b_e_r__o_f__l_o_a_n_s,
-                            a_c_t_i_v_e__l_o_a_n_s,
-                            d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,
-                            a_v_e_r_a_g_e__l_o_a_n__s_i_z_e,
-                            s_t_a_t_u_s,
-                            c_r_e_a_t_e_d__b_y,
-                            u_p_d_a_t_e_d__b_y,
-                            c_r_e_a_t_e_d__d_a_t_e,
-                            u_p_d_a_t_e_d__d_a_t_e
-                        ) VALUES (
-                            '${branchId}',
-                            ${loanProductId},
-                            '${productCode}',
-                            '${productName}',
-                            '${productType}',
-                            ${currentMonth},
-                            ${currentYear},
-                            'NGN',
-                            ${disbursementAmount},
-                            ${disbursementAmount},
-                            ${disbursementAmount},
-                            ${disbursementAmount},
-                            1,
-                            1,
-                            1,
-                            ${averageLoanSize},
-                            'ACTIVE',
-                            '${approvedBy}',
-                            '${approvedBy}',
-                            '${sqlDate}',
-                            '${sqlDate}'
-                        )
-                    `;
+    INSERT INTO loan_portfolio (
+        b_r_a_n_c_h__i_d,
+        p_r_o_d__i_d,
+        p_r_o_d_u_c_t__c_o_d_e,
+        p_r_o_d_u_c_t__n_a_m_e,
+        p_r_o_d_u_c_t__t_y_p_e,
+        m_o_n_t_h,
+        y_e_a_r,
+        c_u_r_r_e_n_c_y,
+        t_o_t_a_l__d_i_s_b_u_r_s_e_d,
+        t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
+        t_o_t_a_l__p_r_i_n_c_i_p_a_l,
+        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
+        n_u_m_b_e_r__o_f__l_o_a_n_s,
+        a_c_t_i_v_e__l_o_a_n_s,
+        d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,  // FIXED!
+        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e,
+        s_t_a_t_u_s,
+        c_r_e_a_t_e_d__b_y,
+        u_p_d_a_t_e_d__b_y,
+        c_r_e_a_t_e_d__d_a_t_e,
+        u_p_d_a_t_e_d__d_a_t_e
+    ) VALUES (
+        '${branchId}',
+        ${loanProductId},
+        '${productCode}',
+        '${productName}',
+        '${productType}',
+        ${currentMonth},
+        ${currentYear},
+        'NGN',
+        ${disbursementAmount},
+        ${disbursementAmount},
+        ${disbursementAmount},
+        ${disbursementAmount},
+        1,
+        1,
+        1,  // Fixed value position
+        ${averageLoanSize},
+        'ACTIVE',
+        '${approvedBy}',
+        '${approvedBy}',
+        '${sqlDate}',
+        '${sqlDate}'
+    )
+`;
                     
                     console.log("DEBUG: Executing insert query:", insertPortfolioQuery);
                     
@@ -8368,7 +9191,1041 @@ async recordManualRepayment(req, res) {
 },
 
 
+// GET LOAN ACCOUNT STATUS PENDING
 
+// GET /api/loans/pending
+// In your LoanAccountController.js - fix the getPendingLoans function
+async getPendingLoans  (req, res) {
+  try {
+    console.log('🔍 Fetching pending loans...');
+    
+    // Optional query parameters
+    const { 
+      page = 1, 
+      limit = 50, 
+      sortBy = 'created_at', 
+      sortOrder = 'DESC',
+      search = '',
+      fromDate,
+      toDate
+    } = req.query;
+    
+    const offset = (page - 1) * limit;
+    
+    // Build base query
+    let baseQuery = `
+      SELECT 
+        id,
+        a_c_c_t__n_o as account_number,
+        a_c_c_t__n_m as account_name,
+        c_u_s_t__i_d as customer_id,
+        l_o_a_n__p_r_o_d_u_c_t__i_d as product_id,
+        a_m_o_u_n_t as amount,
+        i_n_t_e_r_e_s_t__r_a_t_e as interest_rate,
+        l_o_a_n__s_t_a_t_u_s as status,
+        s_e_r_v_i_c_i_n_g__s_t_a_t_u_s as servicing_status,
+        a_p_p_l_i_c_a_t_i_o_n__d_a_t_e as application_date,
+        m_a_t_u_r_i_t_y__d_t as maturity_date,
+        t_e_r_m__c_d as term_code,
+        t_e_r_m__v_a_l_u_e as term_value,
+        has_repayment_schedule,
+        repayment_schedule_id,
+        d_i_s_b_u_r_s_e_d__a_m_o_u_n_t as disbursed_amount,
+        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l as outstanding_principal,
+        a_c_c_r_u_e_d__i_n_t_e_r_e_s_t as accrued_interest,
+        created_at,
+        updated_at
+      FROM loan_accounts 
+      WHERE l_o_a_n__s_t_a_t_u_s = 'PENDING'
+    `;
+    
+    // Add search filters if provided
+    const replacements = [];
+    
+    if (search) {
+      baseQuery += ` AND (
+        a_c_c_t__n_o LIKE ? OR 
+        a_c_c_t__n_m LIKE ? OR 
+        c_u_s_t__i_d LIKE ?
+      )`;
+      const searchTerm = `%${search}%`;
+      replacements.push(searchTerm, searchTerm, searchTerm);
+    }
+    
+    if (fromDate) {
+      baseQuery += ` AND DATE(created_at) >= ?`;
+      replacements.push(fromDate);
+    }
+    
+    if (toDate) {
+      baseQuery += ` AND DATE(created_at) <= ?`;
+      replacements.push(toDate);
+    }
+    
+    // Add sorting
+    const validSortColumns = [
+      'created_at', 'updated_at', 'application_date', 'maturity_date', 
+      'amount', 'account_number', 'customer_id'
+    ];
+    const sortColumn = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
+    const order = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    
+    baseQuery += ` ORDER BY ${sortColumn} ${order}`;
+    
+    // FIX: Get total count separately - don't modify the query
+    const countQuery = `
+      SELECT COUNT(*) as total FROM loan_accounts 
+      WHERE l_o_a_n__s_t_a_t_u_s = 'PENDING'
+    `;
+    
+    console.log('🔢 Executing count query:', countQuery);
+    const countResult = await sequelize.query(countQuery, {
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    const total = countResult[0]?.total || 0;
+    console.log(`📊 Total pending loans from count query: ${total}`);
+    
+    // Add pagination to main query
+    baseQuery += ` LIMIT ? OFFSET ?`;
+    replacements.push(parseInt(limit), parseInt(offset));
+    
+    console.log('📋 Executing main query:', baseQuery);
+    console.log('🔧 Replacements:', replacements);
+    
+    // Execute main query
+    const pendingLoans = await sequelize.query(baseQuery, {
+      replacements,
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    console.log(`✅ Found ${pendingLoans.length} pending loans in data query (total from count: ${total})`);
+    
+    // Format the response
+    const formattedLoans = pendingLoans.map(loan => {
+      // Calculate days since application
+      const daysSinceApplication = loan.application_date 
+        ? Math.floor((new Date() - new Date(loan.application_date)) / (1000 * 60 * 60 * 24))
+        : 0;
+      
+      // Calculate maturity status
+      let maturityStatus = 'ON_TRACK';
+      if (loan.maturity_date) {
+        const daysToMaturity = Math.floor((new Date(loan.maturity_date) - new Date()) / (1000 * 60 * 60 * 24));
+        if (daysToMaturity < 0) {
+          maturityStatus = 'OVERDUE';
+        } else if (daysToMaturity < 30) {
+          maturityStatus = 'NEAR_MATURITY';
+        }
+      }
+      
+      return {
+        id: loan.id,
+        account_number: loan.account_number,
+        account_name: loan.account_name,
+        customer_id: loan.customer_id,
+        product_id: loan.product_id,
+        amount: parseFloat(loan.amount || 0),
+        formatted_amount: `₦${parseFloat(loan.amount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        interest_rate: parseFloat(loan.interest_rate || 0),
+        formatted_interest_rate: `${parseFloat(loan.interest_rate || 0).toFixed(2)}%`,
+        status: loan.status,
+        servicing_status: loan.servicing_status,
+        application_date: loan.application_date,
+        formatted_application_date: loan.application_date 
+          ? new Date(loan.application_date).toLocaleDateString('en-NG')
+          : 'N/A',
+        maturity_date: loan.maturity_date,
+        formatted_maturity_date: loan.maturity_date 
+          ? new Date(loan.maturity_date).toLocaleDateString('en-NG')
+          : 'N/A',
+        term: `${loan.term_value} ${loan.term_code}`,
+        term_code: loan.term_code,
+        term_value: loan.term_value,
+        has_repayment_schedule: Boolean(loan.has_repayment_schedule),
+        repayment_schedule_id: loan.repayment_schedule_id,
+        disbursed_amount: parseFloat(loan.disbursed_amount || 0),
+        outstanding_principal: parseFloat(loan.outstanding_principal || 0),
+        accrued_interest: parseFloat(loan.accrued_interest || 0),
+        created_at: loan.created_at,
+        updated_at: loan.updated_at,
+        // Additional calculated fields
+        days_since_application: daysSinceApplication,
+        maturity_status: maturityStatus,
+        approval_status: 'PENDING'
+      };
+    });
+    
+    // Calculate summary stats
+    const totalAmount = pendingLoans.reduce((sum, loan) => sum + parseFloat(loan.amount || 0), 0);
+    const averageAmount = pendingLoans.length > 0 ? totalAmount / pendingLoans.length : 0;
+    
+    // Get oldest and newest application dates
+    const applicationDates = pendingLoans
+      .map(l => new Date(l.application_date || l.created_at).getTime())
+      .filter(t => !isNaN(t));
+    
+    const oldestApplication = applicationDates.length > 0 ? Math.min(...applicationDates) : null;
+    const newestApplication = applicationDates.length > 0 ? Math.max(...applicationDates) : null;
+    
+    return res.status(200).json({
+      success: true,
+      message: `${formattedLoans.length} pending loan(s) found`,
+      data: {
+        loans: formattedLoans,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: total, // Use the count from the separate query
+          pages: Math.ceil(total / limit)
+        },
+        summary: {
+          total_pending: total,
+          total_amount: totalAmount,
+          average_amount: averageAmount,
+          oldest_application: oldestApplication,
+          newest_application: newestApplication,
+          // Additional useful stats
+          unique_customers: [...new Set(pendingLoans.map(l => l.customer_id))].length,
+          unique_products: [...new Set(pendingLoans.map(l => l.product_id))].length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching pending loans:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch pending loans',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+},
+
+
+// In your LoanAccountController.js
+
+// ==================== GENERATE LOAN CONTRACT API ====================
+async generateLoanContract(req, res) {
+    console.log("=== DEBUG: Starting generateLoanContract ===");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    
+    let transaction;
+    
+    try {
+        const { 
+            ACCT_NO, 
+            generatedBy,
+            download = false, // Optional: if true, returns contract as downloadable file
+            saveToDatabase = true // Optional: save to database
+        } = req.body;
+
+        console.log("DEBUG: ACCT_NO =", ACCT_NO);
+        console.log("DEBUG: generatedBy =", generatedBy);
+
+        // Validate required fields
+        if (!ACCT_NO || !generatedBy) {
+            return res.status(400).json({
+                success: false,
+                message: "ACCT_NO and generatedBy are required",
+                code: "MISSING_FIELDS"
+            });
+        }
+
+        // Start transaction (read-only is fine)
+        transaction = await sequelize.transaction({ readOnly: true });
+        console.log("DEBUG: Transaction started");
+
+        // ==================== 1. FIND LOAN ACCOUNT ====================
+        console.log(`DEBUG: Looking for loan account: ${ACCT_NO}`);
+        
+        const loanAccounts = await sequelize.query(
+            `SELECT * FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
+            {
+                replacements: [ACCT_NO],
+                transaction,
+                type: sequelize.QueryTypes.SELECT
+            }
+        );
+
+        console.log("DEBUG: Query result type:", typeof loanAccounts);
+        console.log("DEBUG: Is array?", Array.isArray(loanAccounts));
+        console.log("DEBUG: Query result length:", loanAccounts ? loanAccounts.length : 0);
+
+        if (!loanAccounts || !Array.isArray(loanAccounts) || loanAccounts.length === 0) {
+            await transaction.rollback();
+            return res.status(404).json({
+                success: false,
+                message: `Loan account ${ACCT_NO} not found`,
+                code: "LOAN_NOT_FOUND",
+                debug: {
+                    searchedAccount: ACCT_NO,
+                    resultType: typeof loanAccounts,
+                    resultLength: loanAccounts ? loanAccounts.length : 'null'
+                }
+            });
+        }
+
+        const loanAccount = loanAccounts[0];
+        
+        if (!loanAccount) {
+            await transaction.rollback();
+            return res.status(500).json({
+                success: false,
+                message: "Loan account object is null",
+                code: "INVALID_ACCOUNT_DATA",
+                debug: {
+                    loanAccountsLength: loanAccounts.length,
+                    firstElement: loanAccounts[0]
+                }
+            });
+        }
+
+        console.log("DEBUG: Found loan account:", JSON.stringify(loanAccount, null, 2));
+        console.log("DEBUG: Loan account keys:", Object.keys(loanAccount).join(', '));
+
+        // ==================== 2. GET CUSTOMER INFORMATION ====================
+        // Find the correct customer ID column
+        const customerIdColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('cust') || key.toLowerCase().includes('customer')
+        );
+        console.log("DEBUG: Possible customer ID columns:", customerIdColumns);
+        
+        const customerIdKey = customerIdColumns[0] || 'c_u_s_t__i_d';
+        const customerId = loanAccount[customerIdKey];
+        console.log(`DEBUG: Customer ID from loan (using column '${customerIdKey}'):`, customerId);
+        
+        // Find customer name column
+        const customerNameColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('name') || key.toLowerCase().includes('nm')
+        );
+        console.log("DEBUG: Possible customer name columns:", customerNameColumns);
+        
+        const customerNameKey = customerNameColumns[0] || 'a_c_c_t__n_m';
+        const customerName = loanAccount[customerNameKey] || '';
+        
+        const numericCustomerId = customerId ? parseInt(customerId.toString().replace(/^0+/, ''), 10) : null;
+        
+        console.log("DEBUG: Customer Name =", customerName);
+        console.log("DEBUG: Numeric Customer ID =", numericCustomerId);
+
+        // Get customer details
+        let customerDetails = {};
+
+        if (numericCustomerId) {
+            try {
+                const customerResults = await sequelize.query(
+                    `SELECT * FROM customers WHERE id = ? LIMIT 1`,
+                    {
+                        replacements: [numericCustomerId],
+                        transaction,
+                        type: sequelize.QueryTypes.SELECT
+                    }
+                );
+
+                if (customerResults && customerResults.length > 0) {
+                    const customerResult = customerResults[0];
+                    customerDetails = {
+                        ACCT_NM: customerResult.full_name || customerResult.name || customerName,
+                        CUST_NM: customerResult.full_name || customerResult.name || customerName,
+                        HOME_ADDRESS: customerResult.address || loanAccount.borrower_address || 'Address Not Provided',
+                        EMAIL: customerResult.email || '',
+                        PHONE: customerResult.phone_number || customerResult.phone || '',
+                        BVN: customerResult.bvn || ''
+                    };
+                    console.log("DEBUG: Found customer details from customers table");
+                } else {
+                    console.log("DEBUG: No customer found in customers table with ID:", numericCustomerId);
+                    customerDetails = {
+                        ACCT_NM: customerName,
+                        CUST_NM: customerName,
+                        HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+                    };
+                }
+            } catch (error) {
+                console.warn("DEBUG: Could not get customer details:", error.message);
+                customerDetails = {
+                    ACCT_NM: customerName,
+                    CUST_NM: customerName,
+                    HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+                };
+            }
+        } else {
+            console.warn("DEBUG: No numeric customer ID available");
+            customerDetails = {
+                ACCT_NM: customerName,
+                CUST_NM: customerName,
+                HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+            };
+        }
+
+        // ==================== 3. GET LOAN PRODUCT DETAILS ====================
+        // Find product ID column
+        const productIdColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('prod') || key.toLowerCase().includes('product')
+        );
+        console.log("DEBUG: Possible product ID columns:", productIdColumns);
+        
+        const productIdKey = productIdColumns[0] || 'l_o_a_n__p_r_o_d_u_c_t__i_d';
+        const productId = loanAccount[productIdKey] || 1001;
+        console.log(`DEBUG: Product ID (using column '${productIdKey}'):`, productId);
+        
+        let productConfig = null;
+        
+        // Find interest rate column
+        const interestRateColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('interest') || key.toLowerCase().includes('rate')
+        );
+        console.log("DEBUG: Possible interest rate columns:", interestRateColumns);
+        
+        const interestRateKey = interestRateColumns[0] || 'i_n_t_e_r_e_s_t__r_a_t_e';
+        let effectiveInterestRate = parseFloat(loanAccount[interestRateKey] || 0);
+        console.log(`DEBUG: Interest rate (using column '${interestRateKey}'):`, effectiveInterestRate);
+        
+        // Find term code column
+        const termCodeColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('term') && key.toLowerCase().includes('cd')
+        );
+        const termCodeKey = termCodeColumns[0] || 't_e_r_m__c_d';
+        const termCode = loanAccount[termCodeKey] || 'M';
+        
+        // Find term value column
+        const termValueColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('term') && key.toLowerCase().includes('value')
+        );
+        const termValueKey = termValueColumns[0] || 't_e_r_m__v_a_l_u_e';
+        const termValue = parseFloat(loanAccount[termValueKey] || 0);
+        
+        // Find loan amount column
+        const amountColumns = Object.keys(loanAccount).filter(key => 
+            key.toLowerCase().includes('amount')
+        );
+        const amountKey = amountColumns[0] || 'a_m_o_u_n_t';
+        const loanAmount = parseFloat(loanAccount[amountKey] || 0);
+        
+        let processingFeeRate = 0;
+
+        try {
+            const productResults = await sequelize.query(
+                `SELECT lp.*, 
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
+                       JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
+                       lp.processing_fee_g_l_code,
+                       lp.processing_fee_rate,
+                       lp.effective_interest_rate,
+                       lp.interest_rate,
+                       lp.fee_structure,
+                       lp.rate_information
+                FROM loan_products lp
+                WHERE lp.p_r_o_d__i_d = ?
+                LIMIT 1`,
+                {
+                    replacements: [productId],
+                    transaction,
+                    type: sequelize.QueryTypes.SELECT
+                }
+            );
+            
+            if (productResults && productResults.length > 0) {
+                productConfig = productResults[0];
+                console.log("DEBUG: Retrieved productConfig successfully");
+                
+                // Get processing fee rate
+                processingFeeRate = parseFloat(productConfig.processing_fee_rate || 0);
+                
+                // Try to get effective interest rate from loan product
+                if (productConfig.effective_interest_rate) {
+                    try {
+                        effectiveInterestRate = parseFloat(productConfig.effective_interest_rate);
+                        console.log("DEBUG: Using effective interest rate from product:", effectiveInterestRate);
+                    } catch (e) {
+                        console.warn("DEBUG: Could not parse effective interest rate, using loan account rate");
+                    }
+                }
+            } else {
+                console.warn("DEBUG: No product found with ID:", productId);
+            }
+        } catch (error) {
+            console.warn("DEBUG: Error retrieving product config:", error.message);
+        }
+
+        // ==================== 4. PREPARE LOAN DETAILS ====================
+        const now = new Date();
+        const disbursementAmount = Math.abs(loanAmount); // Convert negative to positive
+        
+        // Calculate dates
+        const maturityDate = new Date(now);
+        if (termCode === 'M') {
+            maturityDate.setMonth(maturityDate.getMonth() + termValue);
+        } else if (termCode === 'Y') {
+            maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
+        }
+        
+        const firstPaymentDate = new Date(now);
+        firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
+
+        const loanDetails = {
+            AMOUNT: disbursementAmount,
+            INTEREST_RATE: effectiveInterestRate,
+            TERM_VALUE: termValue,
+            TERM_CD: termCode,
+            DISBURSEMENT_DATE: new Date(now),
+            FIRST_PAYMENT_DATE: firstPaymentDate,
+            LAST_PAYMENT_DATE: maturityDate,
+            NUMBER_OF_INSTALLMENTS: termValue,
+            borrower_name: customerName,
+            borrower_address: loanAccount.borrower_address || customerDetails.HOME_ADDRESS || 'Address Not Provided',
+            loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
+        };
+
+        // ==================== 5. PREPARE LOAN PRODUCT DETAILS ====================
+        let loanProductDetails = {};
+        if (productConfig) {
+            loanProductDetails = {
+                interestRate: parseFloat(productConfig.interest_rate) || effectiveInterestRate,
+                feeStructure: productConfig.fee_structure ? JSON.parse(productConfig.fee_structure) : [],
+                processingFeeRate: processingFeeRate,
+                rateInformation: productConfig.rate_information ? JSON.parse(productConfig.rate_information) : {}
+            };
+        }
+
+        // ==================== 6. GENERATE CONTRACT TEXT ====================
+        const contractText = generateContractText(loanDetails, customerDetails, loanProductDetails, effectiveInterestRate);
+        
+        console.log("DEBUG: Contract text generated successfully");
+
+        // ==================== 7. CALCULATE FINANCIAL DETAILS ====================
+        // Calculate monthly payment
+        const calculateMonthlyPayment = (principal, annualRate, termValue, termCode) => {
+            const annualRateDecimal = annualRate / 100;
+            let monthlyRate, numberOfPayments;
+            
+            if (termCode === 'M') {
+                monthlyRate = annualRateDecimal / 12;
+                numberOfPayments = termValue;
+            } else {
+                // For years, convert to months
+                monthlyRate = annualRateDecimal / 12;
+                numberOfPayments = termValue * 12;
+            }
+            
+            if (monthlyRate > 0) {
+                return (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
+                       (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+            } else {
+                return principal / numberOfPayments;
+            }
+        };
+
+        const monthlyPayment = calculateMonthlyPayment(disbursementAmount, effectiveInterestRate, termValue, termCode);
+        const totalInterest = (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100);
+        const totalPayable = disbursementAmount + totalInterest;
+        const processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+
+        // ==================== 8. PREPARE RESPONSE ====================
+        const responseData = {
+            success: true,
+            message: "Loan contract generated successfully",
+            data: {
+                contract: {
+                    loanAccount: ACCT_NO,
+                    contractGeneratedDate: now,
+                    borrowerDetails: customerDetails,
+                    loanDetails: loanDetails,
+                    financialSummary: {
+                        loanAmount: `₦${disbursementAmount.toLocaleString()}`,
+                        interestRate: `${effectiveInterestRate}%`,
+                        loanTerm: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
+                        monthlyPayment: `₦${monthlyPayment.toFixed(2).toLocaleString()}`,
+                        totalInterest: `₦${totalInterest.toFixed(2).toLocaleString()}`,
+                        totalPayable: `₦${totalPayable.toFixed(2).toLocaleString()}`,
+                        processingFee: `₦${processingFeeAmount.toFixed(2).toLocaleString()} (${processingFeeRate}%)`,
+                        firstPaymentDate: firstPaymentDate.toLocaleDateString(),
+                        maturityDate: maturityDate.toLocaleDateString()
+                    },
+                    productDetails: {
+                        productId: productId,
+                        productName: productConfig?.name || 'Unknown',
+                        processingFeeRate: `${processingFeeRate}%`
+                    }
+                },
+                contractText: contractText,
+                metadata: {
+                    generatedBy: generatedBy,
+                    generationDate: now.toISOString(),
+                    loanStatus: loanAccount.l_o_a_n__s_t_a_t_u_s || 'UNKNOWN',
+                    customerId: customerId,
+                    numericCustomerId: numericCustomerId
+                }
+            }
+        };
+
+        // ==================== 9. OPTIONAL: SAVE TO DATABASE ====================
+        if (saveToDatabase !== false) { // Default: save to database
+            try {
+                // Check if contract already exists
+                const existingContracts = await sequelize.query(
+                    `SELECT * FROM loan_contract_forms WHERE loan_account_no = ? LIMIT 1`,
+                    {
+                        replacements: [ACCT_NO],
+                        transaction,
+                        type: sequelize.QueryTypes.SELECT
+                    }
+                );
+
+                const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
+                
+                if (existingContracts && existingContracts.length > 0) {
+                    const existingContract = existingContracts[0];
+                    // Update existing contract
+                    await sequelize.query(
+                        `UPDATE loan_contract_forms 
+                         SET contract_text = ?,
+                             status = 'GENERATED',
+                             updated_at = ?,
+                             u_s_e_r__i_d = ?
+                         WHERE loan_account_no = ?`,
+                        {
+                            replacements: [contractText, now, generatedBy, ACCT_NO],
+                            transaction
+                        }
+                    );
+                    console.log("DEBUG: Updated existing contract in database");
+                    responseData.data.contract.databaseRecord = {
+                        id: existingContract.id,
+                        contractNumber: existingContract.loan_contract_no || contractNumber,
+                        status: 'UPDATED'
+                    };
+                } else {
+                    // Create new contract
+                    // First check if table exists
+                    const tableCheck = await sequelize.query(
+                        `SHOW TABLES LIKE 'loan_contract_forms'`,
+                        { transaction, type: sequelize.QueryTypes.SELECT }
+                    );
+
+                    if (tableCheck.length === 0) {
+                        // Create table if it doesn't exist
+                        await sequelize.query(`
+                            CREATE TABLE IF NOT EXISTS loan_contract_forms (
+                                id INT PRIMARY KEY AUTO_INCREMENT,
+                                loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+                                customer_id VARCHAR(255) NOT NULL,
+                                borrower_name VARCHAR(255) NOT NULL,
+                                co_signatory_name VARCHAR(255) DEFAULT '',
+                                borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+                                loan_purpose VARCHAR(255) NOT NULL,
+                                loan_amount VARCHAR(255) NOT NULL,
+                                loan_term INT(11) NOT NULL,
+                                t_e_r_m__c_d ENUM('M','Y') DEFAULT 'M',
+                                interest_rate DECIMAL(7,4) NOT NULL,
+                                interest_rate_id INT(11) DEFAULT 101,
+                                guarantor_name VARCHAR(255) DEFAULT '',
+                                bank_name VARCHAR(255) NOT NULL,
+                                bank_short VARCHAR(255) NOT NULL,
+                                status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED','GENERATED') DEFAULT 'GENERATED',
+                                contract_text TEXT NOT NULL,
+                                u_s_e_r__i_d VARCHAR(255) NOT NULL,
+                                application_id VARCHAR(255) NOT NULL,
+                                loan_account_no VARCHAR(255) NOT NULL,
+                                funding_account_no VARCHAR(255) NOT NULL,
+                                workflow_id BIGINT(20) UNIQUE,
+                                fees LONGTEXT NOT NULL,
+                                signature_requirements LONGTEXT NOT NULL,
+                                metadata LONGTEXT NOT NULL,
+                                disbursement_date DATETIME,
+                                maturity_date DATETIME,
+                                created_at DATETIME NOT NULL,
+                                updated_at DATETIME NOT NULL
+                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+                            { transaction }
+                        );
+                    }
+
+                    // Insert new contract
+                    const contractResult = await sequelize.query(
+                        `INSERT INTO loan_contract_forms (
+                            loan_contract_no,
+                            customer_id,
+                            borrower_name,
+                            co_signatory_name,
+                            borrower_address,
+                            loan_purpose,
+                            loan_amount,
+                            loan_term,
+                            t_e_r_m__c_d,
+                            interest_rate,
+                            interest_rate_id,
+                            guarantor_name,
+                            bank_name,
+                            bank_short,
+                            status,
+                            contract_text,
+                            u_s_e_r__i_d,
+                            application_id,
+                            loan_account_no,
+                            funding_account_no,
+                            workflow_id,
+                            fees,
+                            signature_requirements,
+                            metadata,
+                            disbursement_date,
+                            maturity_date,
+                            created_at,
+                            updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        {
+                            replacements: [
+                                contractNumber,
+                                customerId || 'UNKNOWN',
+                                customerName,
+                                loanAccount.co_signatory_name || '',
+                                loanAccount.borrower_address || 'Address Not Provided',
+                                loanAccount.loan_purpose || 'General Business Purpose',
+                                disbursementAmount.toString(),
+                                termValue,
+                                termCode,
+                                effectiveInterestRate,
+                                101,
+                                loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
+                                process.env.BANK_NAME || 'Our Bank',
+                                process.env.BANK_SHORT_NAME || 'BANK',
+                                'GENERATED',
+                                contractText,
+                                generatedBy,
+                                ACCT_NO,
+                                ACCT_NO,
+                                'N/A',
+                                null,
+                                JSON.stringify([]),
+                                JSON.stringify({}),
+                                JSON.stringify({
+                                    generatedBy: generatedBy,
+                                    generationDate: now.toISOString()
+                                }),
+                                now,
+                                maturityDate,
+                                now,
+                                now
+                            ],
+                            transaction
+                        }
+                    );
+
+                    const contractId = contractResult[0].insertId;
+                    console.log(`DEBUG: Created new contract in database ID: ${contractId}`);
+                    
+                    responseData.data.contract.databaseRecord = {
+                        id: contractId,
+                        contractNumber: contractNumber,
+                        status: 'CREATED'
+                    };
+                }
+            } catch (dbError) {
+                console.warn("DEBUG: Could not save contract to database:", dbError.message);
+                // Don't fail the request if database save fails
+                responseData.data.contract.databaseRecord = {
+                    error: dbError.message,
+                    status: 'NOT_SAVED'
+                };
+            }
+        }
+
+        // ==================== 10. COMMIT AND RESPOND ====================
+        await transaction.commit();
+        console.log("DEBUG: Transaction committed successfully");
+
+        // Option 1: Return as JSON (default)
+        if (!download) {
+            return res.status(200).json(responseData);
+        }
+        
+        // Option 2: Return as downloadable text file
+        const fileName = `Loan-Contract-${ACCT_NO}-${Date.now()}.txt`;
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        return res.send(contractText);
+
+    } catch (error) {
+        console.error("DEBUG: Error in generateLoanContract:", error);
+        console.error("DEBUG: Error stack:", error.stack);
+        
+        try {
+            if (transaction && !transaction.finished) {
+                await transaction.rollback();
+                console.log("DEBUG: Transaction rolled back successfully");
+            }
+        } catch (rollbackError) {
+            console.error("DEBUG: Rollback failed:", rollbackError.message);
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to generate loan contract",
+            error: error.message,
+            code: "CONTRACT_GENERATION_ERROR",
+            debug: process.env.NODE_ENV === 'development' ? {
+                errorName: error.name,
+                errorMessage: error.message,
+                errorStack: error.stack
+            } : undefined
+        });
+    }
+},
+
+/**
+ * Get simple list of pending loans (without pagination)
+ */
+async getPendingLoansSimple  (req, res) {
+  try {
+    const pendingLoans = await sequelize.query(`
+      SELECT 
+        id,
+        a_c_c_t__n_o as account_number,
+        a_c_c_t__n_m as account_name,
+        c_u_s_t__i_d as customer_id,
+        a_m_o_u_n_t as amount,
+        i_n_t_e_r_e_s_t__r_a_t_e as interest_rate,
+        l_o_a_n__s_t_a_t_u_s as status,
+        a_p_p_l_i_c_a_t_i_o_n__d_a_t_e as application_date,
+        created_at
+      FROM loan_accounts 
+      WHERE l_o_a_n__s_t_a_t_u_s = 'PENDING'
+      ORDER BY created_at DESC
+    `, { type: sequelize.QueryTypes.SELECT });
+    
+    res.status(200).json({
+      success: true,
+      count: pendingLoans.length,
+      data: pendingLoans
+    });
+  } catch (error) {
+    console.error('Error in getPendingLoansSimple:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch pending loans',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+},
+
+/**
+ * Get summary statistics of pending loans
+ */
+async getPendingLoansSummary (req, res) {
+  try {
+    const summary = await sequelize.query(`
+      SELECT 
+        COUNT(*) as total_count,
+        SUM(a_m_o_u_n_t) as total_amount,
+        AVG(a_m_o_u_n_t) as average_amount,
+        MIN(a_p_p_l_i_c_a_t_i_o_n__d_a_t_e) as oldest_application,
+        MAX(a_p_p_l_i_c_a_t_i_o_n__d_a_t_e) as newest_application,
+        COUNT(DISTINCT c_u_s_t__i_d) as unique_customers,
+        COUNT(DISTINCT l_o_a_n__p_r_o_d_u_c_t__i_d) as unique_products
+      FROM loan_accounts 
+      WHERE l_o_a_n__s_t_a_t_u_s = 'PENDING'
+    `, { type: sequelize.QueryTypes.SELECT });
+    
+    const termBreakdown = await sequelize.query(`
+      SELECT 
+        t_e_r_m__c_d as term_code,
+        COUNT(*) as count,
+        SUM(a_m_o_u_n_t) as total_amount
+      FROM loan_accounts 
+      WHERE l_o_a_n__s_t_a_t_u_s = 'PENDING'
+      GROUP BY t_e_r_m__c_d
+    `, { type: sequelize.QueryTypes.SELECT });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: summary[0],
+        term_breakdown: termBreakdown,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error in getPendingLoansSummary:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch pending loans summary' 
+    });
+  }
+},
+
+/**
+ * Get details of a specific pending loan by account number
+ */
+async getPendingLoanByAccount (req, res) {
+  try {
+    const { accountNumber } = req.params;
+    
+    const loan = await sequelize.query(`
+      SELECT 
+        la.id,
+        la.a_c_c_t__n_o as account_number,
+        la.a_c_c_t__n_m as account_name,
+        la.c_u_s_t__i_d as customer_id,
+        la.l_o_a_n__p_r_o_d_u_c_t__i_d as product_id,
+        la.a_m_o_u_n_t as amount,
+        la.i_n_t_e_r_e_s_t__r_a_t_e as interest_rate,
+        la.l_o_a_n__s_t_a_t_u_s as status,
+        la.s_e_r_v_i_c_i_n_g__s_t_a_t_u_s as servicing_status,
+        la.a_p_p_l_i_c_a_t_i_o_n__d_a_t_e as application_date,
+        la.m_a_t_u_r_i_t_y__d_t as maturity_date,
+        la.t_e_r_m__c_d as term_code,
+        la.t_e_r_m__v_a_l_u_e as term_value,
+        la.has_repayment_schedule,
+        la.repayment_schedule_id,
+        la.d_i_s_b_u_r_s_e_d__a_m_o_u_n_t as disbursed_amount,
+        la.o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l as outstanding_principal,
+        la.a_c_c_r_u_e_d__i_n_t_e_r_e_s_t as accrued_interest,
+        la.created_at,
+        la.updated_at,
+        ca.CUST_NM as customer_name,
+        ca.EMAIL_ADDRESS as customer_email,
+        ca.PHONE_NO as customer_phone,
+        lp.PRODUCT_NAME as product_name,
+        lp.PRODUCT_TYPE as product_type
+      FROM loan_accounts la
+      LEFT JOIN customers ca ON la.c_u_s_t__i_d = ca.CUST_ID
+      LEFT JOIN loan_products lp ON la.l_o_a_n__p_r_o_d_u_c_t__i_d = lp.PROD_ID
+      WHERE la.a_c_c_t__n_o = ? 
+        AND la.l_o_a_n__s_t_a_t_u_s = 'PENDING'
+    `, {
+      replacements: [accountNumber],
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    if (loan.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pending loan not found or loan is not in PENDING status'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: loan[0]
+    });
+  } catch (error) {
+    console.error('Error in getPendingLoanByAccount:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch pending loan details' 
+    });
+  }
+},
+
+/**
+ * Get pending loans for a specific customer
+ */
+async getPendingLoansByCustomer  (req, res)  {
+  try {
+    const { customerId } = req.params;
+    
+    const loans = await sequelize.query(`
+      SELECT 
+        id,
+        a_c_c_t__n_o as account_number,
+        a_c_c_t__n_m as account_name,
+        a_m_o_u_n_t as amount,
+        i_n_t_e_r_e_s_t__r_a_t_e as interest_rate,
+        l_o_a_n__s_t_a_t_u_s as status,
+        a_p_p_l_i_c_a_t_i_o_n__d_a_t_e as application_date,
+        m_a_t_u_r_i_t_y__d_t as maturity_date,
+        t_e_r_m__c_d as term_code,
+        t_e_r_m__v_a_l_u_e as term_value,
+        created_at
+      FROM loan_accounts 
+      WHERE c_u_s_t__i_d = ? 
+        AND l_o_a_n__s_t_a_t_u_s = 'PENDING'
+      ORDER BY created_at DESC
+    `, {
+      replacements: [customerId],
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: loans.length,
+      customer_id: customerId,
+      data: loans
+    });
+  } catch (error) {
+    console.error('Error in getPendingLoansByCustomer:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch customer pending loans' 
+    });
+  }
+},
+
+/**
+ * Bulk actions on pending loans
+ */
+async bulkActionPendingLoans  (req, res) {
+  try {
+    const { action, loanIds, reason, userId, userRole } = req.body;
+    
+    if (!action || !loanIds || !Array.isArray(loanIds) || loanIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action, loanIds array, userId, and userRole are required'
+      });
+    }
+    
+    const validActions = ['APPROVE', 'REJECT'];
+    if (!validActions.includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action must be either APPROVE or REJECT'
+      });
+    }
+    
+    // Update all specified loans
+    const updateQuery = `
+      UPDATE loan_accounts 
+      SET l_o_a_n__s_t_a_t_u_s = ?,
+          updated_at = NOW()
+      WHERE id IN (?)
+        AND l_o_a_n__s_t_a_t_u_s = 'PENDING'
+    `;
+    
+    const [affectedRows] = await sequelize.query(updateQuery, {
+      replacements: [action === 'APPROVE' ? 'APPROVED' : 'REJECTED', loanIds]
+    });
+    
+    // Log the bulk action
+    await sequelize.query(`
+      INSERT INTO loan_audit_logs (
+        action, loan_ids, reason, performed_by, performed_by_role, created_at
+      ) VALUES (?, ?, ?, ?, ?, NOW())
+    `, {
+      replacements: [action, JSON.stringify(loanIds), reason || '', userId, userRole]
+    });
+    
+    res.status(200).json({
+      success: true,
+      message: `${affectedRows} loan(s) ${action.toLowerCase()}ed successfully`,
+      data: {
+        action,
+        affected_count: affectedRows,
+        loan_ids: loanIds,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error in bulkActionPendingLoans:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to process bulk action' 
+    });
+  }
+},
 
   // =========================
   // LOAN INFORMATION METHODS

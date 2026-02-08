@@ -1,9 +1,125 @@
 // models/ChartofAccount.js
-import { DataTypes, Model } from 'sequelize';
+import { DataTypes, Model, QueryTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class ChartofAccount extends Model {
-  // ... (keep all your static and instance methods)
+  // Add the initializeTable method here
+  static async initializeTable() {
+    try {
+      console.log('🔄 Checking ChartofAccount table...');
+      
+      // Check if table exists
+      const [results] = await sequelize.query(`
+        SELECT COUNT(*) as tableExists 
+        FROM information_schema.tables 
+        WHERE table_schema = DATABASE() 
+        AND table_name = 'chart_of_accounts'
+      `, { type: QueryTypes.SELECT });
+      
+      if (results.tableExists === 0) {
+        console.log('📊 Creating ChartofAccount table...');
+        
+        // Create table with all columns
+        await sequelize.query(`
+          CREATE TABLE chart_of_accounts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(225) NOT NULL,
+            glcode VARCHAR(225) UNIQUE,
+            type VARCHAR(225) NOT NULL,
+            account_usage VARCHAR(225) NOT NULL,
+            gl_group VARCHAR(225),
+            balance DECIMAL(20,2) DEFAULT 0.00 NOT NULL,
+            unreconciled_balance DECIMAL(20,2) DEFAULT 0.00 NOT NULL,
+            manual_entries VARCHAR(3) NOT NULL,
+            description VARCHAR(225) NOT NULL,
+            status VARCHAR(225) DEFAULT 'ACTIVE' NOT NULL,
+            organization_code INT NOT NULL,
+            branch_code VARCHAR(50) NOT NULL,
+            gl_account_id INT,
+            gl_account_no VARCHAR(50),
+            mapped_at DATETIME,
+            mapping_status VARCHAR(20) DEFAULT 'PENDING',
+            last_sync_date DATETIME,
+            sync_error TEXT,
+            original_id BIGINT,
+            source_system VARCHAR(100),
+            migration_batch VARCHAR(100),
+            migrated_at DATETIME,
+            category VARCHAR(100),
+            sub_category VARCHAR(100),
+            is_control_account BOOLEAN DEFAULT FALSE,
+            is_suspense_account BOOLEAN DEFAULT FALSE,
+            allow_negative_balance BOOLEAN DEFAULT FALSE,
+            posting_rules JSON,
+            tax_implications VARCHAR(100),
+            regulatory_requirements JSON,
+            reporting_category VARCHAR(100),
+            version INT DEFAULT 1,
+            created_by VARCHAR(100) DEFAULT 'system' NOT NULL,
+            updated_by VARCHAR(100),
+            is_deleted BOOLEAN DEFAULT FALSE,
+            deleted_at DATETIME,
+            deleted_by VARCHAR(100),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+            
+            -- Add indexes
+            INDEX idx_org_branch (organization_code, branch_code),
+            UNIQUE INDEX idx_glcode_org (glcode, organization_code),
+            INDEX idx_type_usage (type, account_usage),
+            INDEX idx_glgroup_status (gl_group, status),
+            INDEX idx_gl_account_id (gl_account_id),
+            INDEX idx_mapping_status (mapping_status),
+            INDEX idx_original_id (original_id),
+            INDEX idx_source_system (source_system),
+            INDEX idx_status_deleted (status, is_deleted)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        
+        console.log('✅ ChartofAccount table created');
+      } else {
+        console.log('✅ ChartofAccount table already exists');
+        
+        // Optional: Check and add missing columns
+        try {
+          await sequelize.query(`
+            ALTER TABLE chart_of_accounts 
+            ADD COLUMN IF NOT EXISTS gl_account_id INT AFTER branch_code,
+            ADD COLUMN IF NOT EXISTS gl_account_no VARCHAR(50) AFTER gl_account_id,
+            ADD COLUMN IF NOT EXISTS mapped_at DATETIME AFTER gl_account_no,
+            ADD COLUMN IF NOT EXISTS mapping_status VARCHAR(20) DEFAULT 'PENDING' AFTER mapped_at,
+            ADD COLUMN IF NOT EXISTS last_sync_date DATETIME AFTER mapping_status,
+            ADD COLUMN IF NOT EXISTS sync_error TEXT AFTER last_sync_date,
+            ADD COLUMN IF NOT EXISTS original_id BIGINT AFTER sync_error,
+            ADD COLUMN IF NOT EXISTS source_system VARCHAR(100) AFTER original_id,
+            ADD COLUMN IF NOT EXISTS migration_batch VARCHAR(100) AFTER source_system,
+            ADD COLUMN IF NOT EXISTS migrated_at DATETIME AFTER migration_batch,
+            ADD COLUMN IF NOT EXISTS category VARCHAR(100) AFTER migrated_at,
+            ADD COLUMN IF NOT EXISTS sub_category VARCHAR(100) AFTER category,
+            ADD COLUMN IF NOT EXISTS is_control_account BOOLEAN DEFAULT FALSE AFTER sub_category,
+            ADD COLUMN IF NOT EXISTS is_suspense_account BOOLEAN DEFAULT FALSE AFTER is_control_account,
+            ADD COLUMN IF NOT EXISTS allow_negative_balance BOOLEAN DEFAULT FALSE AFTER is_suspense_account,
+            ADD COLUMN IF NOT EXISTS posting_rules JSON AFTER allow_negative_balance,
+            ADD COLUMN IF NOT EXISTS tax_implications VARCHAR(100) AFTER posting_rules,
+            ADD COLUMN IF NOT EXISTS regulatory_requirements JSON AFTER tax_implications,
+            ADD COLUMN IF NOT EXISTS reporting_category VARCHAR(100) AFTER regulatory_requirements,
+            ADD COLUMN IF NOT EXISTS version INT DEFAULT 1 AFTER reporting_category,
+            ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE AFTER updated_by,
+            ADD COLUMN IF NOT EXISTS deleted_at DATETIME AFTER is_deleted,
+            ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(100) AFTER deleted_at
+          `);
+          console.log('✅ ChartofAccount table columns verified');
+        } catch (alterError) {
+          console.warn('⚠️ Could not alter ChartofAccount table (may already have all columns):', alterError.message);
+        }
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to initialize ChartofAccount table:', error);
+      throw error;
+    }
+  }
 }
 
 ChartofAccount.init({
@@ -294,10 +410,9 @@ ChartofAccount.init({
       }
     }
   },
-  // FIXED: Indexes now use the actual database column names
   indexes: [
     { 
-      fields: ['organization_code', 'branch_code'],  // Use actual column names
+      fields: ['organization_code', 'branch_code'],
       name: 'idx_org_branch' 
     },
     { 

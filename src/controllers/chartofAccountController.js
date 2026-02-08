@@ -1,32 +1,39 @@
+// src/controllers/chartofAccountController.js
+
+import { Op } from 'sequelize';
 import ChartofAccount from '../models/ChartofAccount.js';
 import GLAccount from '../models/GLAccount.js';
 
+console.log('✅ Chart of Accounts controller loaded with Sequelize');
+
+// Controller methods
 export const chartofAccountController = {
-  
-  // CREATE
+  // CREATE - Create new account
   async createAccount(req, res) {
     try {
       const {
         name, glcode, type, account_usage, gl_group, balance,
         unreconciled_balance, manual_entries, description, status,
-        organizationCode, branchCode, metadata
+        organization_code, branch_code, metadata
       } = req.body;
 
       // Validate required fields
-      if (!name || !type || !account_usage || !organizationCode || !branchCode) {
+      if (!name || !type || !account_usage || !organization_code || !branch_code) {
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields: name, type, account_usage, organizationCode, branchCode'
+          message: 'Missing required fields: name, type, account_usage, organization_code, branch_code'
         });
       }
 
-      // Check for duplicate GL code in same organization/branch
+      // Check for duplicate GL code
       if (glcode) {
         const existingAccount = await ChartofAccount.findOne({
-          organizationCode,
-          branchCode,
-          glcode,
-          isDeleted: false
+          where: {
+            organization_code,
+            branch_code,
+            glcode,
+            is_deleted: false
+          }
         });
         
         if (existingAccount) {
@@ -37,33 +44,32 @@ export const chartofAccountController = {
         }
       }
 
-      const newAccount = new ChartofAccount({
+      // Create new account using Sequelize
+      const newAccount = await ChartofAccount.create({
         name,
-        glcode,
+        glcode: glcode || null,
         type,
         account_usage,
         gl_group: gl_group || null,
         balance: balance || 0,
         unreconciled_balance: unreconciled_balance || 0,
         manual_entries: manual_entries || 'NO',
-        description,
+        description: description || '',
         status: status || 'ACTIVE',
-        organizationCode,
-        branchCode,
+        organization_code,
+        branch_code,
         metadata: metadata || {},
-        createdBy: req.user?.id || 'system'
+        created_by: req.user?.id || 'system'
       });
-
-      await newAccount.save();
 
       res.status(201).json({
         success: true,
         message: 'Chart of account created successfully',
-        data: newAccount.getAccountInfo()
+        data: newAccount
       });
 
     } catch (error) {
-      console.error('Create chart account error:', error);
+      console.error('Create account error:', error);
       res.status(500).json({
         success: false,
         message: 'Failed to create chart of account',
@@ -72,12 +78,12 @@ export const chartofAccountController = {
     }
   },
 
-  // READ - Get all accounts with filtering
+  // READ - Get all accounts (FIXED with Sequelize)
   async getAccounts(req, res) {
     try {
       const {
-        organizationCode,
-        branchCode,
+        organization_code,
+        branch_code,
         type,
         account_usage,
         gl_group,
@@ -87,47 +93,59 @@ export const chartofAccountController = {
         search
       } = req.query;
 
-      // Build filter
-      const filter = { isDeleted: false };
+      // Build where clause for Sequelize
+      const where = {
+        is_deleted: false
+      };
       
-      if (organizationCode) filter.organizationCode = parseInt(organizationCode);
-      if (branchCode) filter.branchCode = branchCode;
-      if (type) filter.type = type;
-      if (account_usage) filter.account_usage = account_usage;
-      if (gl_group) filter.gl_group = gl_group;
-      if (status) filter.status = status.toUpperCase();
+      if (organization_code) {
+        where.organization_code = parseInt(organization_code);
+      }
+      if (branch_code) {
+        where.branch_code = branch_code;
+      }
+      if (type) {
+        where.type = type;
+      }
+      if (account_usage) {
+        where.account_usage = account_usage;
+      }
+      if (gl_group) {
+        where.gl_group = gl_group;
+      }
+      if (status) {
+        where.status = status.toUpperCase();
+      }
 
-      // Text search
+      // Text search with Sequelize Op.or
       if (search) {
-        filter.$or = [
-          { name: { $regex: search, $options: 'i' } },
-          { glcode: { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } }
+        where[Op.or] = [
+          { name: { [Op.like]: `%${search}%` } },
+          { glcode: { [Op.like]: `%${search}%` } },
+          { description: { [Op.like]: `%${search}%` } }
         ];
       }
 
-      const options = {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        sort: { name: 1 }
-      };
+      // Calculate pagination
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+      const limitValue = parseInt(limit);
 
-      // Using mongoose pagination or regular find for simplicity
-      const accounts = await ChartofAccount.find(filter)
-        .limit(options.limit * 1)
-        .skip((options.page - 1) * options.limit)
-        .sort(options.sort);
-
-      const total = await ChartofAccount.countDocuments(filter);
+      // Get accounts with Sequelize
+      const { count, rows: accounts } = await ChartofAccount.findAndCountAll({
+        where,
+        limit: limitValue,
+        offset: offset,
+        order: [['name', 'ASC']]
+      });
 
       res.json({
         success: true,
         data: accounts,
         pagination: {
-          current: options.page,
-          totalPages: Math.ceil(total / options.limit),
-          totalItems: total,
-          itemsPerPage: options.limit
+          current: parseInt(page),
+          totalPages: Math.ceil(count / limitValue),
+          totalItems: count,
+          itemsPerPage: limitValue
         }
       });
 
@@ -141,14 +159,16 @@ export const chartofAccountController = {
     }
   },
 
-  // READ - Get single account
+  // READ - Get single account by ID
   async getAccount(req, res) {
     try {
       const { id } = req.params;
 
       const account = await ChartofAccount.findOne({
-        _id: id,
-        isDeleted: false
+        where: {
+          id: id,
+          is_deleted: false
+        }
       });
 
       if (!account) {
@@ -160,7 +180,7 @@ export const chartofAccountController = {
 
       res.json({
         success: true,
-        data: account.getAccountInfo()
+        data: account
       });
 
     } catch (error) {
@@ -173,15 +193,18 @@ export const chartofAccountController = {
     }
   },
 
-  // UPDATE
+  // UPDATE - Update account
   async updateAccount(req, res) {
     try {
       const { id } = req.params;
       const updates = req.body;
 
+      // Find the account
       const account = await ChartofAccount.findOne({
-        _id: id,
-        isDeleted: false
+        where: {
+          id: id,
+          is_deleted: false
+        }
       });
 
       if (!account) {
@@ -207,11 +230,13 @@ export const chartofAccountController = {
       // Handle GL code uniqueness check
       if (updateData.glcode && updateData.glcode !== account.glcode) {
         const existingAccount = await ChartofAccount.findOne({
-          organizationCode: account.organizationCode,
-          branchCode: account.branchCode,
-          glcode: updateData.glcode,
-          isDeleted: false,
-          _id: { $ne: id }
+          where: {
+            organization_code: account.organization_code,
+            branch_code: account.branch_code,
+            glcode: updateData.glcode,
+            is_deleted: false,
+            id: { [Op.ne]: id }
+          }
         });
         
         if (existingAccount) {
@@ -222,15 +247,16 @@ export const chartofAccountController = {
         }
       }
 
-      Object.assign(account, updateData);
-      account.updatedBy = req.user?.id || 'system';
-      
-      await account.save();
+      // Update the account
+      await account.update({
+        ...updateData,
+        updated_by: req.user?.id || 'system'
+      });
 
       res.json({
         success: true,
         message: 'Account updated successfully',
-        data: account.getAccountInfo()
+        data: account
       });
 
     } catch (error) {
@@ -249,8 +275,10 @@ export const chartofAccountController = {
       const { id } = req.params;
 
       const account = await ChartofAccount.findOne({
-        _id: id,
-        isDeleted: false
+        where: {
+          id: id,
+          is_deleted: false
+        }
       });
 
       if (!account) {
@@ -268,7 +296,12 @@ export const chartofAccountController = {
         });
       }
 
-      await account.softDelete(req.user?.id || 'system');
+      // Soft delete
+      await account.update({
+        is_deleted: true,
+        deleted_at: new Date(),
+        deleted_by: req.user?.id || 'system'
+      });
 
       res.json({
         success: true,
@@ -292,8 +325,10 @@ export const chartofAccountController = {
       const { balance, transactionData = {} } = req.body;
 
       const account = await ChartofAccount.findOne({
-        _id: id,
-        isDeleted: false
+        where: {
+          id: id,
+          is_deleted: false
+        }
       });
 
       if (!account) {
@@ -303,12 +338,20 @@ export const chartofAccountController = {
         });
       }
 
-      const result = await account.updateBalance(balance, transactionData);
+      // Update balance
+      await account.update({
+        balance: balance,
+        updated_by: req.user?.id || 'system'
+      });
 
       res.json({
         success: true,
         message: 'Balance updated successfully',
-        data: result
+        data: {
+          old_balance: account.balance,
+          new_balance: balance,
+          difference: balance - account.balance
+        }
       });
 
     } catch (error) {
@@ -325,11 +368,13 @@ export const chartofAccountController = {
   async mapToGLAccount(req, res) {
     try {
       const { id } = req.params;
-      const { glAccountId, glAccountNo } = req.body;
+      const { gl_account_id, gl_account_no } = req.body;
 
       const account = await ChartofAccount.findOne({
-        _id: id,
-        isDeleted: false
+        where: {
+          id: id,
+          is_deleted: false
+        }
       });
 
       if (!account) {
@@ -339,8 +384,8 @@ export const chartofAccountController = {
         });
       }
 
-      // Verify GL account exists
-      const glAccount = await GLAccount.findById(glAccountId);
+      // Verify GL account exists using Sequelize
+      const glAccount = await GLAccount.findByPk(gl_account_id);
       if (!glAccount) {
         return res.status(404).json({
           success: false,
@@ -348,12 +393,18 @@ export const chartofAccountController = {
         });
       }
 
-      await account.mapToGLAccount(glAccountId, glAccountNo);
+      // Update mapping
+      await account.update({
+        gl_account_id: gl_account_id,
+        gl_account_no: gl_account_no,
+        mapping_status: 'MAPPED',
+        mapped_at: new Date()
+      });
 
       res.json({
         success: true,
         message: 'Successfully mapped to GL account',
-        data: account.getAccountInfo()
+        data: account
       });
 
     } catch (error) {
@@ -366,22 +417,62 @@ export const chartofAccountController = {
     }
   },
 
-  // REPORTS & ANALYTICS
+  // REPORTS & ANALYTICS - Get balance summary
   async getBalanceSummary(req, res) {
     try {
-      const { organizationCode, branchCode } = req.query;
+      const { organization_code, branch_code } = req.query;
 
-      if (!organizationCode) {
+      if (!organization_code) {
         return res.status(400).json({
           success: false,
           message: 'Organization code is required'
         });
       }
 
-      const summary = await ChartofAccount.getBalanceSummary(
-        parseInt(organizationCode), 
-        branchCode
-      );
+      const where = {
+        organization_code: parseInt(organization_code),
+        is_deleted: false
+      };
+
+      if (branch_code) {
+        where.branch_code = branch_code;
+      }
+
+      // Get all accounts with Sequelize
+      const accounts = await ChartofAccount.findAll({
+        where,
+        attributes: ['id', 'name', 'type', 'balance']
+      });
+
+      // Calculate summary manually
+      const summary = {
+        total_accounts: accounts.length,
+        total_balance: 0,
+        by_type: {}
+      };
+
+      accounts.forEach(account => {
+        const type = account.type;
+        const balance = parseFloat(account.balance || 0);
+        
+        summary.total_balance += balance;
+        
+        if (!summary.by_type[type]) {
+          summary.by_type[type] = {
+            count: 0,
+            balance: 0
+          };
+        }
+        
+        summary.by_type[type].count += 1;
+        summary.by_type[type].balance += balance;
+      });
+
+      // Format balances
+      summary.total_balance = parseFloat(summary.total_balance.toFixed(2));
+      Object.keys(summary.by_type).forEach(type => {
+        summary.by_type[type].balance = parseFloat(summary.by_type[type].balance.toFixed(2));
+      });
 
       res.json({
         success: true,
@@ -398,18 +489,47 @@ export const chartofAccountController = {
     }
   },
 
+  // REPORTS & ANALYTICS - Get mapping statistics
   async getMappingStatistics(req, res) {
     try {
-      const { organizationCode } = req.query;
+      const { organization_code } = req.query;
 
-      if (!organizationCode) {
+      if (!organization_code) {
         return res.status(400).json({
           success: false,
           message: 'Organization code is required'
         });
       }
 
-      const stats = await ChartofAccount.getMappingStatistics(parseInt(organizationCode));
+      const where = {
+        organization_code: parseInt(organization_code),
+        is_deleted: false
+      };
+
+      // Get counts using Sequelize
+      const [total, mapped, unmapped] = await Promise.all([
+        ChartofAccount.count({ where }),
+        ChartofAccount.count({
+          where: {
+            ...where,
+            gl_account_id: { [Op.ne]: null }
+          }
+        }),
+        ChartofAccount.count({
+          where: {
+            ...where,
+            gl_account_id: null
+          }
+        })
+      ]);
+
+      const stats = {
+        total,
+        mapped,
+        unmapped,
+        mapped_percentage: total > 0 ? ((mapped / total) * 100).toFixed(2) : 0,
+        unmapped_percentage: total > 0 ? ((unmapped / total) * 100).toFixed(2) : 0
+      };
 
       res.json({
         success: true,
@@ -445,12 +565,11 @@ export const chartofAccountController = {
 
       for (const accountData of accounts) {
         try {
-          const account = new ChartofAccount({
+          const account = await ChartofAccount.create({
             ...accountData,
-            createdBy: req.user?.id || 'system_bulk'
+            created_by: req.user?.id || 'system_bulk'
           });
-          await account.save();
-          results.successful.push(account.getAccountInfo());
+          results.successful.push(account);
         } catch (error) {
           results.failed.push({
             data: accountData,
@@ -473,5 +592,16 @@ export const chartofAccountController = {
         error: error.message
       });
     }
+  },
+
+  // SIMPLE TEST METHOD
+  test(req, res) {
+    res.json({
+      success: true,
+      message: 'Chart of Accounts controller is working!',
+      timestamp: new Date().toISOString(),
+      method: 'Sequelize ORM',
+      status: '✅ Operational'
+    });
   }
 };

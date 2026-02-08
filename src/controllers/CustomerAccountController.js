@@ -7,6 +7,8 @@ import logger from '../utils/logger.js';
 import SavingsProduct from '../models/SavingsProduct.js';
 import GLAccount from '../models/GLAccount.js';
 import Counter from '../models/Counter.js';
+import NotificationService, { sendApprovalNotification } from '../Services/NotificationService.js';
+import Approval from '../models/Approval.js';
 
 
 
@@ -307,64 +309,19 @@ export const healthCheck = async (req, res) => {
 // MAIN CREATE ACCOUNT FUNCTION - UPDATED FOR SIMPLIFIED SCHEMA
 // MAIN CREATE ACCOUNT FUNCTION - UPDATED FOR SIMPLIFIED SCHEMA WITH COLUMN CREATION
 export const createCustomerAccount = async (req, res) => {
-  console.log('🚀 Starting createCustomerAccount...');
+  console.log('🚀 Starting createCustomerAccount with accounts table sync...');
   console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
 
   await checkModels();
-
-  // ==================== FIRST: ENSURE DATABASE COLUMNS EXIST ====================
-  try {
-    console.log('🔧 Checking/creating required database columns...');
-    
-    // Check current table structure
-    const [currentColumns] = await sequelize.query(
-      "DESCRIBE customer_accounts"
-    );
-    
-    console.log('📊 Current columns in customer_accounts:', currentColumns.map(col => col.Field));
-    
-    // Check if ledger_balance exists
-    const hasLedgerBalance = currentColumns.some(col => col.Field === 'ledger_balance');
-    const hasClearedBalance = currentColumns.some(col => col.Field === 'cleared_balance');
-    
-    // Add missing columns
-    if (!hasLedgerBalance) {
-      console.log('➕ Adding ledger_balance column...');
-      await sequelize.query(`
-        ALTER TABLE customer_accounts 
-        ADD COLUMN ledger_balance DECIMAL(20,2) DEFAULT 0.00 AFTER available_balance
-      `);
-      console.log('✅ Added ledger_balance column');
-    }
-    
-    if (!hasClearedBalance) {
-      console.log('➕ Adding cleared_balance column...');
-      await sequelize.query(`
-        ALTER TABLE customer_accounts 
-        ADD COLUMN cleared_balance DECIMAL(20,2) DEFAULT 0.00 AFTER ledger_balance
-      `);
-      console.log('✅ Added cleared_balance column');
-    }
-    
-    // Verify the new structure
-    const [updatedColumns] = await sequelize.query(
-      "DESCRIBE customer_accounts"
-    );
-    console.log('✅ Final table structure verified');
-    
-  } catch (columnError) {
-    console.error('❌ Error checking/creating database columns:', columnError.message);
-    // Continue anyway - the account creation might still work
-  }
 
   const transaction = await sequelize.transaction();
 
   try {
     const customerAccounts = Array.isArray(req.body) ? req.body : [req.body];
     const createdAccounts = [];
+    const createdCoreAccounts = [];
     const now = new Date();
     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
-    const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
 
     for (const accountData of customerAccounts) {
       const {
@@ -378,6 +335,8 @@ export const createCustomerAccount = async (req, res) => {
         currency = 'NGN',
         opening_amount = 0,
         product = '',
+        branch = 1,
+        product_type = 'SAVINGS',
       } = accountData;
 
       console.log(`📝 Processing account for customer: ${CUST_ID}`);
@@ -469,18 +428,6 @@ export const createCustomerAccount = async (req, res) => {
         });
       }
 
-      // ✅ Validate REC_ST
-      const VALID_REC_ST = ['ACTIVE', 'DORMANT', 'SUSPENDED', 'CLOSED', 'INACTIVE', 'PENDING'];
-      const normalizedRecSt = REC_ST.toUpperCase();
-      if (!VALID_REC_ST.includes(normalizedRecSt)) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `Invalid REC_ST. Must be one of ${VALID_REC_ST.join(', ')}`,
-          account: 'new account',
-        });
-      }
-
       // ✅ Generate account number
       let finalAccountNumber;
       try {
@@ -501,24 +448,29 @@ export const createCustomerAccount = async (req, res) => {
         });
       }
 
-      // ✅ Check for duplicate account number
-      const existingAccount = await CustomerAccount.findOne({
+      // ✅ Check for duplicate account number in BOTH tables
+      const existingCustomerAccount = await CustomerAccount.findOne({
         where: { account_number: finalAccountNumber },
         transaction
       });
 
-      if (existingAccount) {
+      const existingCoreAccount = await Account.findOne({
+        where: { account_number: finalAccountNumber },
+        transaction
+      });
+
+      if (existingCustomerAccount || existingCoreAccount) {
         await transaction.rollback();
         return res.status(409).json({
           success: false,
           message: 'Account already exists',
-          reason: `The account number ${finalAccountNumber} already exists.`,
+          reason: `The account number ${finalAccountNumber} already exists in ${existingCustomerAccount ? 'customer_accounts' : 'accounts'} table.`,
           account: finalAccountNumber,
         });
       }
 
-      // ✅ Prepare data for new account (SIMPLIFIED VERSION)
-      const newAccountData = {
+      // ✅ Prepare data for customer_accounts table
+      const newCustomerAccountData = {
         // Core fields
         customer_id: parseInt(CUST_ID) || 0,
         customer_code: customerDetails?.CUST_NO || customerDetails?.cust_no || '',
@@ -530,19 +482,20 @@ export const createCustomerAccount = async (req, res) => {
         PRODUCT_DESC: PRODUCT_DESC || `${normalizedAccountType} Account: ${ACCT_NM}`,
         
         // Status
-        REC_ST: normalizedRecSt,
+        REC_ST: REC_ST.toUpperCase(),
         ACCOUNT_TYPE: normalizedAccountType,
-        substatus: normalizedRecSt === 'PENDING' ? 'Pending' : 'Active',
+        substatus: REC_ST === 'PENDING' ? 'Pending' : 'Active',
         
         // Branch and currency
-        branch: parseInt(BU_ID) || 1,
+        branch: parseInt(BU_ID) || branch,
         currency: currency,
         
-        // Financial information - ALL THREE BALANCES INCLUDED
+        // Financial information
         opening_amount: parseFloat(opening_amount) || 0.0,
         cleared_balance: parseFloat(opening_amount) || 0.0,
         ledger_balance: parseFloat(opening_amount) || 0.0,
-        available_balance: parseFloat(opening_amount) || 0.0,  // Note: using available_balance, not AVAILABLE_BALANCE
+        available_balance: parseFloat(opening_amount) || 0.0,
+        current_balance: parseFloat(opening_amount) || 0.0,
         
         // Interest fields
         INTEREST_RATE: 0.0,
@@ -561,10 +514,9 @@ export const createCustomerAccount = async (req, res) => {
         // User tracking
         created_by: userId,
         
-        // Dates (will be auto-set by model defaults)
+        // Dates
         lastActivityDate: now,
-        created_at: now,
-        updated_at: now,
+        last_transaction_date: now,
         
         // Other fields
         primary_relationship_manager: 1,
@@ -584,30 +536,75 @@ export const createCustomerAccount = async (req, res) => {
         })
       };
 
-      console.log('📝 Creating account with data:', {
-        account_number: newAccountData.account_number,
-        customer_id: newAccountData.customer_id,
+      // ✅ Prepare data for accounts table
+      const newCoreAccountData = {
+        customer_id: parseInt(CUST_ID) || 0,
+        account_number: finalAccountNumber,
+        acct_no: finalAccountNumber, // Same as account_number
+        acct_nm: ACCT_NM,
+        account_type: normalizedAccountType,
+        product_type: product_type || normalizedAccountType,
+        product: product || `${normalizedAccountType} Account`,
+        branch: parseInt(BU_ID) || branch,
+        ledger_balance: parseFloat(opening_amount) || 0.00,
+        available_balance: parseFloat(opening_amount) || 0.00,
+        cleared_balance: parseFloat(opening_amount) || 0.00,
+        rec_st: REC_ST.toUpperCase(),
+        currency: currency,
+        online_enabled: true,
+        dr_allowed: true,
+        cr_allowed: true,
+        last_activity_date: now,
+        created_by: userId,
+        created_at: now,
+        updated_at: now
+      };
+
+      console.log('📝 Creating accounts with data:', {
+        account_number: finalAccountNumber,
+        customer_id: newCustomerAccountData.customer_id,
         balances: {
-          opening_amount: newAccountData.opening_amount,
-          ledger_balance: newAccountData.ledger_balance,
-          available_balance: newAccountData.available_balance,
-          cleared_balance: newAccountData.cleared_balance
+          opening_amount: parseFloat(opening_amount) || 0.0,
+          ledger_balance: parseFloat(opening_amount) || 0.0,
+          available_balance: parseFloat(opening_amount) || 0.0,
+          cleared_balance: parseFloat(opening_amount) || 0.0
         }
       });
 
-      // ✅ Create new account
-      const newCustomerAccount = await CustomerAccount.create(newAccountData, { transaction });
-
+      // ✅ STEP 1: Create customer account record
+      const newCustomerAccount = await CustomerAccount.create(newCustomerAccountData, { transaction });
       createdAccounts.push(newCustomerAccount);
 
-      // ✅ Update existing records with matching balances
+      // ✅ STEP 2: Create core account record
+      let newCoreAccount;
       try {
-        // Ensure all balances are consistent for the new account
+        newCoreAccount = await Account.create(newCoreAccountData, { transaction });
+        createdCoreAccounts.push(newCoreAccount);
+        console.log(`✅ Created core account record: ID ${newCoreAccount.id}`);
+      } catch (coreAccountError) {
+        console.error('❌ Failed to create core account record:', coreAccountError.message);
+        
+        // Rollback the entire transaction if core account creation fails
+        await transaction.rollback();
+        
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create core account record',
+          error: coreAccountError.message,
+          account: finalAccountNumber,
+          note: 'Both customer_accounts and accounts tables must be updated together.'
+        });
+      }
+
+      // ✅ STEP 3: Update customer account with core account ID reference
+      try {
         await CustomerAccount.update(
           {
-            ledger_balance: newAccountData.ledger_balance,
-            available_balance: newAccountData.available_balance,
-            cleared_balance: newAccountData.cleared_balance
+            core_account_id: newCoreAccount.id,
+            ledger_balance: newCoreAccount.ledger_balance,
+            available_balance: newCoreAccount.available_balance,
+            cleared_balance: newCoreAccount.cleared_balance,
+            updated_at: now
           },
           {
             where: { id: newCustomerAccount.id },
@@ -615,18 +612,18 @@ export const createCustomerAccount = async (req, res) => {
           }
         );
       } catch (updateError) {
-        console.warn('⚠️ Could not update balances after creation:', updateError.message);
-        // Continue anyway - the account was created
+        console.warn('⚠️ Could not update customer account with core reference:', updateError.message);
       }
 
-      // ✅ Audit trail
+      // ✅ STEP 4: Create audit trail for both
       try {
         if (AuditTrail && typeof AuditTrail.create === 'function') {
+          // Audit for customer account creation
           await AuditTrail.create({
             event_id: Date.now(),
             user_id: userId,
             event_type: 'CUSTOMER_ACCOUNT_CREATE',
-            action: 'Create Account',
+            action: 'Create Customer Account',
             old_value: null,
             new_value: {
               id: newCustomerAccount.id,
@@ -641,23 +638,42 @@ export const createCustomerAccount = async (req, res) => {
               status: newCustomerAccount.REC_ST,
               created_at: newCustomerAccount.created_at
             },
-            ip_address: ipAddress,
-            timestamp: now,
             entity_type: 'CustomerAccount',
             entity_id: newCustomerAccount.id,
             status: 'SUCCESS',
             account_no: newCustomerAccount.account_number,
-            description: `Created ${normalizedAccountType} account for customer ${CUST_ID}`,
+            description: `Created ${normalizedAccountType} customer account for customer ${CUST_ID}`,
           }, { transaction });
-        } else {
-          console.warn('⚠️ AuditTrail model not available, skipping audit trail');
+
+          // Audit for core account creation
+          await AuditTrail.create({
+            event_id: Date.now() + 1,
+            user_id: userId,
+            event_type: 'CORE_ACCOUNT_CREATE',
+            action: 'Create Core Account',
+            old_value: null,
+            new_value: {
+              id: newCoreAccount.id,
+              account_number: newCoreAccount.account_number,
+              customer_id: newCoreAccount.customer_id,
+              account_type: newCoreAccount.account_type,
+              balances: {
+                ledger_balance: newCoreAccount.ledger_balance,
+                available_balance: newCoreAccount.available_balance,
+                cleared_balance: newCoreAccount.cleared_balance
+              },
+              status: newCoreAccount.rec_st,
+              created_at: newCoreAccount.created_at
+            },
+            entity_type: 'Account',
+            entity_id: newCoreAccount.id,
+            status: 'SUCCESS',
+            account_no: newCoreAccount.account_number,
+            description: `Created ${normalizedAccountType} core account for customer ${CUST_ID}`,
+          }, { transaction });
         }
       } catch (auditError) {
-        logger.error('Failed to create audit trail for account creation', {
-          error: auditError.message,
-          account: newCustomerAccount.account_number,
-          timestamp: now,
-        });
+        console.warn('⚠️ Audit trail creation failed:', auditError.message);
       }
     }
 
@@ -665,9 +681,9 @@ export const createCustomerAccount = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Customer accounts created successfully',
+      message: 'Customer accounts created successfully and synchronized with core accounts',
       count: createdAccounts.length,
-      accounts: createdAccounts.map(acc => ({
+      customer_accounts: createdAccounts.map(acc => ({
         id: acc.id,
         customer_id: acc.customer_id,
         account_number: acc.account_number,
@@ -680,25 +696,41 @@ export const createCustomerAccount = async (req, res) => {
           opening_amount: acc.opening_amount,
           ledger_balance: acc.ledger_balance || acc.opening_amount,
           available_balance: acc.available_balance || acc.opening_amount,
-          cleared_balance: acc.cleared_balance || acc.opening_amount
+          cleared_balance: acc.cleared_balance || acc.opening_amount,
+          current_balance: acc.current_balance || acc.opening_amount
+        },
+        core_account_id: acc.core_account_id,
+        created_at: acc.created_at
+      })),
+      core_accounts: createdCoreAccounts.map(acc => ({
+        id: acc.id,
+        customer_id: acc.customer_id,
+        account_number: acc.account_number,
+        account_name: acc.acct_nm,
+        account_type: acc.account_type,
+        product_type: acc.product_type,
+        product: acc.product,
+        status: acc.rec_st,
+        branch: acc.branch,
+        balances: {
+          ledger: acc.ledger_balance,
+          available: acc.available_balance,
+          cleared: acc.cleared_balance
         },
         created_at: acc.created_at
       })),
-      note: 'All account numbers were auto-generated. Database columns verified/created.'
-    });
-  } catch (error) {
-    await transaction.rollback();
-    logger.error('Error creating customer accounts:', {
-      error: error.message,
-      stack: error.stack,
-      body: req.body,
-      timestamp: new Date(),
+      note: 'Accounts synchronized between customer_accounts and accounts tables.'
     });
 
+  } catch (error) {
+    await transaction.rollback();
+    console.error('❌ Error in account creation:', error);
+
+    // Handle specific errors
     if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({
         success: false,
-        message: 'Duplicate key error',
+        message: 'Duplicate account number',
         error: error.errors.map(e => e.message),
       });
     }
@@ -715,47 +747,9 @@ export const createCustomerAccount = async (req, res) => {
       });
     }
 
-    // Check if error is about missing columns
-    if (error.message.includes('Unknown column') || error.message.includes('column') || error.message.includes('field')) {
-      console.error('❌ Database column error detected:', error.message);
-      
-      // Try to run column creation directly
-      try {
-        console.log('🔄 Attempting to create missing columns...');
-        await sequelize.query(`
-          ALTER TABLE customer_accounts 
-          ADD COLUMN IF NOT EXISTS ledger_balance DECIMAL(20,2) DEFAULT 0.00
-        `);
-        
-        await sequelize.query(`
-          ALTER TABLE customer_accounts 
-          ADD COLUMN IF NOT EXISTS cleared_balance DECIMAL(20,2) DEFAULT 0.00
-        `);
-        
-        console.log('✅ Missing columns created. Please retry the request.');
-        
-        return res.status(500).json({
-          success: false,
-          message: 'Database structure was updated. Please retry the account creation.',
-          error: 'Missing columns were created. Retry required.',
-          note: 'The ledger_balance and cleared_balance columns have been added to the database.'
-        });
-      } catch (columnCreationError) {
-        return res.status(500).json({
-          success: false,
-          message: 'Database column error. Please run these SQL commands manually:',
-          sql_commands: [
-            "ALTER TABLE customer_accounts ADD COLUMN ledger_balance DECIMAL(20,2) DEFAULT 0.00 AFTER available_balance;",
-            "ALTER TABLE customer_accounts ADD COLUMN cleared_balance DECIMAL(20,2) DEFAULT 0.00 AFTER ledger_balance;"
-          ],
-          error: error.message
-        });
-      }
-    }
-
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while creating the customer accounts',
+      message: 'An error occurred while creating accounts',
       error: error.message,
     });
   }
@@ -1370,36 +1364,107 @@ export const getCustomerAccountByCUST_ID = async (req, res) => {
 
 // Update a customer account by account number
 export const updateCustomerAccount = async (req, res) => {
-  const { accountNumber } = req.params;
-  const updateData = req.body;
+  // Get raw account number from URL
+  const rawAccountNumber = req.params.accountNumber;
+  
+  console.log('🔍 DEBUG - Update request details:', {
+    fullUrl: req.originalUrl,
+    method: req.method,
+    rawParams: req.params,
+    rawAccountNumber: rawAccountNumber,
+    rawAccountNumberType: typeof rawAccountNumber,
+    rawAccountNumberLength: rawAccountNumber?.length,
+    rawAccountNumberValue: `"${rawAccountNumber}"`,
+    headers: req.headers,
+    body: req.body
+  });
+
   const transaction = await sequelize.transaction();
+  const updateData = req.body;
 
   try {
-    // Validate account number
-    if (!/^\d{10}$/.test(accountNumber)) {
+    // First, check if accountNumber is even present
+    if (!rawAccountNumber) {
       await transaction.rollback();
       return res.status(400).json({ 
         success: false, 
-        message: 'Account number must be a 10-digit number.' 
+        message: 'Account number is required',
+        debug: { received: rawAccountNumber }
       });
     }
 
+    // Convert to string and trim
+    const accountNum = String(rawAccountNumber).trim();
+    
+    console.log('🔍 DEBUG - After string conversion:', {
+      accountNum: accountNum,
+      accountNumLength: accountNum.length,
+      accountNumCharCodes: Array.from(accountNum).map(char => char.charCodeAt(0))
+    });
+
+    // Check if it's exactly 10 digits
+    if (!/^\d{10}$/.test(accountNum)) {
+      await transaction.rollback();
+      
+      // Check what's actually in the string
+      const nonDigitChars = accountNum.replace(/\d/g, '');
+      
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Account number must be a 10-digit number.',
+        details: {
+          received: accountNum,
+          expected: '10-digit number',
+          actualLength: accountNum.length,
+          isAllDigits: /^\d+$/.test(accountNum),
+          nonDigitCharacters: nonDigitChars || 'none',
+          characterAnalysis: Array.from(accountNum).map((char, index) => ({
+            position: index + 1,
+            character: char,
+            charCode: char.charCodeAt(0),
+            isDigit: /\d/.test(char)
+          }))
+        }
+      });
+    }
+
+    console.log('✅ Account number validated:', accountNum);
+
     // Find existing account
     const existingAccount = await CustomerAccount.findOne({
-      where: { account_number: accountNumber },
+      where: { account_number: accountNum },
       transaction
     });
     
     if (!existingAccount) {
       await transaction.rollback();
+      console.log('❌ Account not found in database:', accountNum);
+      
+      // Check if it exists with different formatting
+      const similarAccounts = await CustomerAccount.findAll({
+        where: {
+          account_number: {
+            [Op.like]: `%${accountNum}%`
+          }
+        },
+        limit: 5,
+        attributes: ['account_number', 'id']
+      });
+      
       return res.status(404).json({ 
         success: false, 
-        message: 'Customer account not found' 
+        message: 'Customer account not found',
+        accountNumber: accountNum,
+        similarAccounts: similarAccounts.map(acc => acc.account_number)
       });
     }
 
+    console.log('✅ Account found:', existingAccount.account_number);
+
+    // ============== ADD THIS MISSING PART ==============
     // Prepare update data (only allow certain fields)
     const allowedUpdates = [
+      'account_name', // Added this since you're trying to update account_name
       'REC_ST',
       'substatus',
       'online_enabled',
@@ -1420,6 +1485,17 @@ export const updateCustomerAccount = async (req, res) => {
       }
     }
 
+    console.log('📋 Update payload prepared:', updatePayload);
+
+    // Check if we have anything to update
+    if (Object.keys(updatePayload).length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update'
+      });
+    }
+
     // Special handling for REC_ST
     if (updatePayload.REC_ST) {
       updatePayload.REC_ST = updatePayload.REC_ST.toUpperCase();
@@ -1434,20 +1510,28 @@ export const updateCustomerAccount = async (req, res) => {
     }
 
     // Update timestamps
-    updatePayload.lastActivityDate = new Date();
     updatePayload.updatedAt = new Date();
+    if (existingAccount.lastActivityDate) {
+      updatePayload.lastActivityDate = new Date();
+    }
+
+    console.log('🔄 Updating account with payload:', updatePayload);
 
     // Update account
-    await CustomerAccount.update(updatePayload, {
-      where: { account_number: accountNumber },
+    const [affectedRows] = await CustomerAccount.update(updatePayload, {
+      where: { account_number: accountNum },
       transaction
     });
+
+    console.log(`✅ Updated ${affectedRows} row(s)`);
 
     // Get updated account
     const updatedAccount = await CustomerAccount.findOne({
-      where: { account_number: accountNumber },
+      where: { account_number: accountNum },
       transaction
     });
+
+    console.log('✅ Account updated successfully');
 
     // Audit trail
     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
@@ -1455,30 +1539,40 @@ export const updateCustomerAccount = async (req, res) => {
     const now = new Date();
     
     if (AuditTrail && typeof AuditTrail.create === 'function') {
-      await AuditTrail.create({
-        event_id: Date.now(),
-        user_id: userId,
-        event_type: 'CUSTOMER_ACCOUNT_UPDATE',
-        action: 'Update Account',
-        old_value: existingAccount.toJSON(),
-        new_value: updatedAccount.toJSON(),
-        ip_address: ipAddress,
-        timestamp: now,
-        entity_type: 'CustomerAccount',
-        entity_id: updatedAccount.id,
-        status: 'SUCCESS',
-        account_no: accountNumber,
-        description: 'Updated customer account details',
-      }, { transaction });
+      try {
+        await AuditTrail.create({
+          event_id: Date.now(),
+          user_id: userId,
+          event_type: 'CUSTOMER_ACCOUNT_UPDATE',
+          action: 'Update Account',
+          old_value: JSON.stringify(existingAccount.toJSON()),
+          new_value: JSON.stringify(updatedAccount.toJSON()),
+          ip_address: ipAddress,
+          timestamp: now,
+          entity_type: 'CustomerAccount',
+          entity_id: updatedAccount.id,
+          status: 'SUCCESS',
+          account_no: accountNum,
+          description: 'Updated customer account details',
+        }, { transaction });
+        console.log('✅ Audit trail created');
+      } catch (auditError) {
+        console.error('⚠️ Failed to create audit trail:', auditError.message);
+        // Don't fail the whole request if audit fails
+      }
     }
 
+    // COMMIT THE TRANSACTION
     await transaction.commit();
+    console.log('✅ Transaction committed successfully');
+    
     return res.status(200).json({
       success: true,
       message: 'Customer account updated successfully',
       account: {
         id: updatedAccount.id,
         account_number: updatedAccount.account_number,
+        account_name: updatedAccount.account_name, // Added this
         status: updatedAccount.REC_ST,
         substatus: updatedAccount.substatus,
         online_enabled: updatedAccount.online_enabled,
@@ -1487,21 +1581,25 @@ export const updateCustomerAccount = async (req, res) => {
         updated_at: updatedAccount.updatedAt
       }
     });
+    // ============== END OF MISSING PART ==============
 
   } catch (error) {
-    await transaction.rollback();
-    logger.error('Error updating customer account:', {
-      error: error.message,
-      stack: error.stack,
-      body: req.body,
-      params: req.params,
-      timestamp: new Date(),
-    });
-
+    // Make sure to rollback if there's an error
+    try {
+      await transaction.rollback();
+      console.log('✅ Transaction rolled back due to error');
+    } catch (rollbackError) {
+      console.error('⚠️ Failed to rollback transaction:', rollbackError.message);
+    }
+    
+    console.error('❌ Error updating account:', error.message);
+    console.error('❌ Error stack:', error.stack);
+    
     return res.status(500).json({
       success: false,
       message: 'An error occurred while updating the customer account',
       error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
@@ -1612,17 +1710,264 @@ export const deleteCustomerAccount = async (req, res) => {
 };
 // Add this function to the CustomerAccountController.js after the deleteCustomerAccount function
 
-// Activate a customer account by account number
-export const activateCustomerAccount = async (req, res) => {
+// // Activate a customer account by account number
+// export const activateCustomerAccount = async (req, res) => {
+//   const { accountNumber } = req.params;
+//   const { activationReason, notes } = req.body;
+
+//   const transaction = await sequelize.transaction();
+
+//   try {
+//     console.log('🔍 Activation request received:', {
+//       accountNumber,
+//       activationReason,
+//       notes
+//     });
+
+//     // Validate account number
+//     if (!/^\d{10}$/.test(accountNumber)) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Account number must be a 10-digit number.',
+//       });
+//     }
+
+//     // Validate activation reason
+//     if (!activationReason || activationReason.trim() === '') {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Activation reason is required.',
+//       });
+//     }
+
+//     // Find the account with all fields
+//     const account = await CustomerAccount.findOne({
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     if (!account) {
+//       await transaction.rollback();
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Customer account not found.',
+//         account_number: accountNumber
+//       });
+//     }
+
+//     // Get account as plain object for easier inspection
+//     const accountData = account.toJSON ? account.toJSON() : account;
+    
+//     console.log('📊 Account data:', accountData);
+
+//     // Try to find the status field - check all possible field names
+//     const statusFieldNames = ['REC_ST', 'status', 'account_status', 'acc_status', 'state', 'account_state', 'STATUS'];
+//     let currentStatus = null;
+//     let statusFieldName = null;
+
+//     for (const field of statusFieldNames) {
+//       if (accountData[field] !== undefined && accountData[field] !== null) {
+//         currentStatus = String(accountData[field]).toUpperCase();
+//         statusFieldName = field;
+//         break;
+//       }
+//     }
+
+//     console.log('📋 Status detection:', {
+//       foundField: statusFieldName,
+//       currentStatus: currentStatus,
+//       allFields: Object.keys(accountData)
+//     });
+
+//     if (!currentStatus) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Could not determine account status. Available fields: ' + Object.keys(accountData).join(', '),
+//         available_fields: Object.keys(accountData),
+//         account_sample: {
+//           account_number: accountData.account_number,
+//           account_name: accountData.account_name,
+//           account_type: accountData.account_type
+//         }
+//       });
+//     }
+
+//     // Check if account is already active
+//     if (currentStatus === 'ACTIVE') {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Account is already active',
+//         account: {
+//           account_number: accountData.account_number,
+//           account_name: accountData.account_name || accountData.PRODUCT_DESC,
+//           current_status: currentStatus,
+//           account_type: accountData.account_type || accountData.ACCOUNT_TYPE,
+//           status_field: statusFieldName
+//         }
+//       });
+//     }
+
+//     // Validate that account can be activated
+//     const validPreviousStates = ['DORMANT', 'INACTIVE', 'SUSPENDED', 'PENDING', 'CLOSED'];
+//     if (!validPreviousStates.includes(currentStatus)) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: `Cannot activate account with status: "${currentStatus}". Only ${validPreviousStates.join(', ')} accounts can be activated.`,
+//         currentStatus: currentStatus,
+//         status_field: statusFieldName,
+//         validStates: validPreviousStates
+//       });
+//     }
+
+//     // Store old values for audit trail
+//     const oldValue = JSON.parse(JSON.stringify(accountData));
+
+//     // Prepare update data
+//     const updateData = {
+//       updatedAt: new Date(),
+//       lastActivityDate: new Date()
+//     };
+
+//     // Set the status field to ACTIVE
+//     if (statusFieldName) {
+//       updateData[statusFieldName] = 'ACTIVE';
+//     }
+
+//     // Also update substatus if field exists
+//     if (accountData.substatus !== undefined) {
+//       updateData.substatus = 'Active';
+//     }
+
+//     console.log('🔄 Update data:', updateData);
+
+//     // Activate the account
+//     const [affectedRows] = await CustomerAccount.update(updateData, {
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     console.log(`✅ Updated ${affectedRows} row(s)`);
+
+//     // Get updated account
+//     const updatedAccount = await CustomerAccount.findOne({
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     const updatedAccountData = updatedAccount.toJSON ? updatedAccount.toJSON() : updatedAccount;
+
+//     // Record audit trail
+//     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
+//     const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+//     const now = new Date();
+
+//     if (AuditTrail && typeof AuditTrail.create === 'function') {
+//       try {
+//         await AuditTrail.create({
+//           event_id: Date.now(),
+//           user_id: userId,
+//           event_type: 'ACCOUNT_ACTIVATION',
+//           action: 'Activate Account',
+//           old_value: JSON.stringify(oldValue),
+//           new_value: JSON.stringify(updatedAccountData),
+//           ip_address: ipAddress,
+//           timestamp: now,
+//           entity_type: 'CustomerAccount',
+//           entity_id: updatedAccountData.id,
+//           status: 'SUCCESS',
+//           account_no: accountNumber,
+//           description: `Account activated from ${currentStatus} to ACTIVE`,
+//           additional_info: {
+//             previous_status: currentStatus,
+//             new_status: 'ACTIVE',
+//             activation_reason: activationReason,
+//             notes: notes || '',
+//             activated_by: userId,
+//             activation_date: now,
+//             status_field_used: statusFieldName,
+//             updated_fields: Object.keys(updateData)
+//           }
+//         }, { transaction });
+//         console.log('✅ Audit trail created');
+//       } catch (auditError) {
+//         console.error('⚠️ Failed to create audit trail:', auditError.message);
+//       }
+//     }
+
+//     await transaction.commit();
+//     console.log('✅ Transaction committed');
+
+//     // Log the activation
+//     logger.info('Account activated successfully', {
+//       account_number: accountNumber,
+//       previousStatus: currentStatus,
+//       newStatus: 'ACTIVE',
+//       statusField: statusFieldName,
+//       activatedBy: userId,
+//       activationReason,
+//       timestamp: now
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       message: 'Account activated successfully',
+//       account: {
+//         account_number: accountData.account_number,
+//         account_name: accountData.account_name || accountData.PRODUCT_DESC,
+//         account_type: accountData.account_type || accountData.ACCOUNT_TYPE,
+//         previous_status: currentStatus,
+//         new_status: 'ACTIVE',
+//         status_field: statusFieldName,
+//         activation_date: now,
+//         activated_by: userId
+//       },
+//       activation_details: {
+//         reason: activationReason,
+//         notes: notes || '',
+//         timestamp: now
+//       },
+//       debug: process.env.NODE_ENV === 'development' ? {
+//         old_status: currentStatus,
+//         status_field: statusFieldName,
+//         updated_fields: Object.keys(updateData)
+//       } : undefined
+//     });
+
+//   } catch (error) {
+//     await transaction.rollback();
+
+//     console.error('❌ Error activating customer account:', error);
+    
+//     return res.status(500).json({
+//       success: false,
+//       message: 'An error occurred while activating the customer account',
+//       error: error.message,
+//       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+//     });
+//   }
+// };
+export const requestAccountActivation = async (req, res) => {
   const { accountNumber } = req.params;
   const { activationReason, notes } = req.body;
-
-  const transaction = await sequelize.transaction();
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
 
   try {
+    console.log('🔍 Activation request received:', {
+      accountNumber,
+      activationReason,
+      notes,
+      userId,
+      userRole
+    });
+
     // Validate account number
     if (!/^\d{10}$/.test(accountNumber)) {
-      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Account number must be a 10-digit number.',
@@ -1631,12 +1976,1312 @@ export const activateCustomerAccount = async (req, res) => {
 
     // Validate activation reason
     if (!activationReason || activationReason.trim() === '') {
-      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Activation reason is required.',
       });
     }
+
+    // Find the account by accountNumber
+    const account = await CustomerAccount.findOne({
+      where: { account_number: accountNumber }
+    });
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer account not found.',
+        account_number: accountNumber
+      });
+    }
+
+    // Check current status
+    const accountData = account.toJSON ? account.toJSON() : account;
+    const statusFieldNames = ['REC_ST', 'status', 'account_status', 'acc_status', 'state', 'account_state', 'STATUS'];
+    let currentStatus = null;
+
+    for (const field of statusFieldNames) {
+      if (accountData[field] !== undefined && accountData[field] !== null) {
+        currentStatus = String(accountData[field]).toUpperCase();
+        break;
+      }
+    }
+
+    // Check if account is already active
+    if (currentStatus === 'ACTIVE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Account is already active',
+        account: {
+          account_number: accountData.account_number,
+          current_status: currentStatus
+        }
+      });
+    }
+
+    // Validate that account can be activated
+    const validPreviousStates = ['DORMANT', 'INACTIVE', 'SUSPENDED', 'PENDING', 'CLOSED'];
+    if (!validPreviousStates.includes(currentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot activate account with status: "${currentStatus}". Only ${validPreviousStates.join(', ')} accounts can be activated.`,
+        currentStatus: currentStatus
+      });
+    }
+
+    // Generate unique request ID
+    const requestId = `ACT-${accountNumber}-${Date.now()}`;
+    
+    // Calculate expiry date (24 hours from now)
+    const expiryDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // Find approver (MANAGER)
+    const approver = await User.findOne({
+      where: { 
+        role: 'MANAGER',
+        is_active: true
+      }
+    });
+
+    if (!approver) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active manager found to approve this request.'
+      });
+    }
+
+    // Create approval request with single approval
+    const approvalRequest = await Approval.create({
+      request_id: requestId,
+      entity_type: 'CustomerAccount',
+      entity_id: accountNumber, // Using accountNumber as entity_id
+      action_type: 'ACTIVATE_ACCOUNT',
+      current_status: currentStatus,
+      requested_status: 'ACTIVE',
+      request_data: {
+        account_number: accountNumber,
+        account_name: accountData.account_name || accountData.PRODUCT_DESC,
+        account_type: accountData.account_type || accountData.ACCOUNT_TYPE,
+        activation_reason: activationReason,
+        notes: notes || '',
+        original_status: currentStatus
+      },
+      request_notes: notes,
+      initiator_id: userId,
+      initiator_role: userRole,
+      approver_id: approver.id, // Single approver
+      approver_role: approver.role,
+      approval_status: 'PENDING',
+      overall_status: 'PENDING_APPROVAL',
+      expiry_date: expiryDate,
+      executed: false
+    });
+
+    // Send notification to approver
+    try {
+      await sendApprovalNotification({
+        type: 'APPROVAL_REQUEST',
+        userId: approver.id,
+        requestId: requestId,
+        action: 'Account Activation',
+        accountNumber: accountNumber,
+        accountName: accountData.account_name || 'Unknown',
+        currentStatus: currentStatus,
+        requestedStatus: 'ACTIVE',
+        reason: activationReason,
+        urgency: 'MEDIUM',
+        expiryDate: expiryDate,
+        initiatorName: req.user?.name || 'System User'
+      });
+    } catch (notificationError) {
+      console.error('Failed to send notification:', notificationError);
+      // Continue even if notification fails
+    }
+
+    // Record audit trail
+    await AuditTrail.create({
+      event_id: Date.now(),
+      user_id: userId,
+      event_type: 'ACTIVATION_REQUEST_CREATED',
+      action: 'Request Account Activation',
+      old_value: JSON.stringify(accountData),
+      new_value: JSON.stringify(approvalRequest.toJSON()),
+      ip_address: req.ip || req.headers['x-forwarded-for'] || 'unknown',
+      timestamp: new Date(),
+      entity_type: 'Approval',
+      entity_id: approvalRequest.id,
+      status: 'PENDING',
+      account_no: accountNumber,
+      description: `Activation request created for account ${accountNumber}`,
+      additional_info: {
+        request_id: requestId,
+        current_status: currentStatus,
+        requested_status: 'ACTIVE',
+        activation_reason: activationReason,
+        notes: notes || '',
+        expiry_date: expiryDate,
+        approver_id: approver.id,
+        approver_name: approver.name || 'Manager'
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Activation request submitted for approval',
+      approval_request: {
+        request_id: requestId,
+        status: 'PENDING_APPROVAL',
+        current_status: currentStatus,
+        requested_status: 'ACTIVE',
+        approvers_required: 1,
+        approvals_received: 0,
+        expiry_date: expiryDate,
+        estimated_completion_time: 'Within 24 hours'
+      },
+      details: {
+        account_number: accountNumber,
+        account_name: accountData.account_name || accountData.PRODUCT_DESC,
+        activation_reason: activationReason,
+        notes: notes || '',
+        submitted_by: userId,
+        submitted_at: new Date(),
+        approver: {
+          id: approver.id,
+          role: approver.role,
+          name: approver.name || 'Manager'
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating activation request:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while creating activation request',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+export const approveActivationRequest = async (req, res) => {
+  const { accountNumber } = req.params;
+  const { approvalStatus, notes, userId, userRole } = req.body;
+  const userName = req.body.userName || req.user?.name || 'Unknown';
+
+  let transaction;
+  
+  try {
+    console.log('🔍 Approval request received:', {
+      accountNumber,
+      approvalStatus,
+      notes,
+      userId,
+      userRole,
+      userName
+    });
+
+    // Validate account number
+    if (!accountNumber || !/^\d{10}$/.test(accountNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid 10-digit account number is required'
+      });
+    }
+
+    // Validate approval status
+    if (!['APPROVED', 'REJECTED'].includes(approvalStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Approval status must be either "APPROVED" or "REJECTED"'
+      });
+    }
+
+    // Validate user info
+    if (!userId || !userRole) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID and role are required'
+      });
+    }
+
+    // Start transaction
+    transaction = await sequelize.transaction();
+
+    // Find PENDING_APPROVAL activation request for this account
+    console.log('🔍 Looking for activation request for account:', accountNumber);
+    
+    let approvalRequest;
+    try {
+      approvalRequest = await Approval.findOne({
+        where: { 
+          entity_id: accountNumber,
+          entity_type: 'CustomerAccount',
+          action_type: 'ACTIVATE_ACCOUNT',
+          overall_status: 'PENDING_APPROVAL'
+        }
+        // Removed order clause since createdAt column doesn't exist
+      });
+    } catch (dbError) {
+      console.error('❌ Database error finding approval request:', dbError);
+      throw new Error(`Database error: ${dbError.message}`);
+    }
+
+    if (!approvalRequest) {
+      if (transaction) await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'No pending activation request found for this account',
+        account_number: accountNumber,
+        suggestion: 'Make sure an activation request was created first'
+      });
+    }
+
+    console.log('✅ Found approval request:', {
+      request_id: approvalRequest.request_id,
+      entity_id: approvalRequest.entity_id,
+      overall_status: approvalRequest.overall_status,
+      approver_id: approvalRequest.approver_id,
+      approver_role: approvalRequest.approver_role,
+      current_status: approvalRequest.current_status,
+      requested_status: approvalRequest.requested_status
+    });
+
+    // Check if request is expired
+    if (new Date() > approvalRequest.expiry_date) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Approval request has expired',
+        expiry_date: approvalRequest.expiry_date,
+        request_id: approvalRequest.request_id
+      });
+    }
+
+    // Check if already executed
+    if (approvalRequest.executed) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Request has already been executed',
+        execution_date: approvalRequest.execution_date,
+        request_id: approvalRequest.request_id
+      });
+    }
+
+    // Check if user is authorized to approve
+    if (userRole !== approvalRequest.approver_role) {
+      await transaction.rollback();
+      return res.status(403).json({
+        success: false,
+        message: `Only ${approvalRequest.approver_role} can approve this request. Your role: ${userRole}`,
+        required_role: approvalRequest.approver_role,
+        your_role: userRole,
+        request_id: approvalRequest.request_id
+      });
+    }
+
+    const now = new Date();
+
+    // Update approval request
+    try {
+      await Approval.update({
+        approver_id: userId,
+        approval_status: approvalStatus,
+        approval_notes: notes || '',
+        approval_date: now,
+        overall_status: approvalStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED',
+        ...(approvalStatus === 'APPROVED' && {
+          executed: true,
+          executed_by: userId,
+          execution_date: now
+        })
+      }, {
+        where: { 
+          request_id: approvalRequest.request_id,
+          entity_id: accountNumber 
+        },
+        transaction
+      });
+      console.log('✅ Approval request updated successfully');
+    } catch (updateError) {
+      console.error('❌ Error updating approval request:', updateError);
+      throw updateError;
+    }
+
+    // If approved, execute the activation
+    if (approvalStatus === 'APPROVED') {
+      try {
+        await executeActivation(approvalRequest, userId, transaction);
+        console.log('✅ Account activation executed successfully');
+      } catch (executionError) {
+        console.error('❌ Error executing activation:', executionError);
+        throw executionError;
+      }
+    }
+
+    await transaction.commit();
+    console.log('✅ Transaction committed successfully');
+
+    // Get updated approval request for response
+    const updatedApproval = await Approval.findOne({
+      where: { request_id: approvalRequest.request_id }
+    });
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: `Activation request ${approvalStatus.toLowerCase()} successfully`,
+      account_number: accountNumber,
+      approval: {
+        request_id: approvalRequest.request_id,
+        status: approvalStatus,
+        approved_by: userId,
+        approved_by_name: userName,
+        approved_at: now,
+        notes: notes || '',
+        next_step: approvalStatus === 'APPROVED' ? 'Account activated' : 'Request closed'
+      }
+    };
+
+    // Add execution details if executed
+    if (approvalStatus === 'APPROVED' && updatedApproval?.executed) {
+      response.execution_details = {
+        executed_by: updatedApproval.executed_by,
+        execution_date: updatedApproval.execution_date,
+        status: 'COMPLETED'
+      };
+      
+      // Add account status update info
+      response.account_status_update = {
+        previous_status: approvalRequest.current_status,
+        new_status: 'ACTIVE',
+        updated_at: now
+      };
+    }
+
+    return res.status(200).json(response);
+
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+        console.log('✅ Transaction rolled back due to error');
+      } catch (rollbackError) {
+        console.error('❌ Error rolling back transaction:', rollbackError);
+      }
+    }
+    
+    console.error('❌ Error approving activation request:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while processing approval',
+      error: error.message,
+      account_number: accountNumber,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+// Helper function to execute activation
+async function executeActivation(approvalRequest, userId, transaction) {
+  const accountNumber = approvalRequest.entity_id;
+  
+  console.log(`🔍 Executing activation for account: ${accountNumber}`);
+
+  // Find the account
+  const account = await CustomerAccount.findOne({
+    where: { account_number: accountNumber },
+    transaction
+  });
+
+  if (!account) {
+    throw new Error(`Account ${accountNumber} not found`);
+  }
+
+  console.log(`✅ Found account: ${accountNumber}, current status: ${approvalRequest.current_status}`);
+
+  // Update account status to ACTIVE
+  const updateData = {
+    status: 'ACTIVE',
+    account_status: 'ACTIVE',
+    REC_ST: 'ACTIVE',
+    last_updated_by: userId,
+    last_updated_date: new Date(),
+    activation_date: new Date(),
+    activated_by: userId
+  };
+
+  await CustomerAccount.update(updateData, {
+    where: { account_number: accountNumber },
+    transaction
+  });
+
+  console.log(`✅ Account ${accountNumber} updated to ACTIVE`);
+
+  // Record audit trail for execution
+  await AuditTrail.create({
+    event_id: Date.now(),
+    user_id: userId,
+    event_type: 'ACCOUNT_ACTIVATED',
+    action: 'Account Activation Executed',
+    old_value: JSON.stringify({
+      account_number: accountNumber,
+      previous_status: approvalRequest.current_status,
+      request_id: approvalRequest.request_id
+    }),
+    new_value: JSON.stringify({
+      account_number: accountNumber,
+      new_status: 'ACTIVE',
+      activated_by: userId,
+      activation_date: new Date(),
+      request_id: approvalRequest.request_id
+    }),
+    ip_address: 'SYSTEM',
+    timestamp: new Date(),
+    entity_type: 'CustomerAccount',
+    entity_id: accountNumber,
+    status: 'COMPLETED',
+    account_no: accountNumber,
+    description: `Account ${accountNumber} activated from ${approvalRequest.current_status} to ACTIVE`,
+    additional_info: {
+      request_id: approvalRequest.request_id,
+      approved_by: userId,
+      execution_date: new Date(),
+      approval_notes: approvalRequest.approval_notes || '',
+      previous_status: approvalRequest.current_status
+    }
+  }, { transaction });
+
+  console.log(`✅ Audit trail recorded for account ${accountNumber}`);
+
+  return true;
+}
+
+// Check approval status
+export const checkApprovalStatus = async (req, res) => {
+  const { requestId } = req.params;
+
+  try {
+    const approvalRequest = await Approval.findOne({
+      where: { request_id: requestId }
+    });
+
+    if (!approvalRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Approval request not found'
+      });
+    }
+
+    const response = {
+      success: true,
+      request: {
+        request_id: approvalRequest.request_id,
+        entity_type: approvalRequest.entity_type,
+        entity_id: approvalRequest.entity_id,
+        action_type: approvalRequest.action_type,
+        current_status: approvalRequest.current_status,
+        requested_status: approvalRequest.requested_status,
+        overall_status: approvalRequest.overall_status,
+        initiator: {
+          id: approvalRequest.initiator_id,
+          role: approvalRequest.initiator_role
+        },
+        first_approval: {
+          approver_id: approvalRequest.first_approver_id,
+          approver_role: approvalRequest.first_approver_role,
+          status: approvalRequest.first_approval_status,
+          notes: approvalRequest.first_approval_notes,
+          date: approvalRequest.first_approval_date
+        },
+        second_approval: {
+          approver_id: approvalRequest.second_approver_id,
+          approver_role: approvalRequest.second_approver_role,
+          status: approvalRequest.second_approval_status,
+          notes: approvalRequest.second_approval_notes,
+          date: approvalRequest.second_approval_date
+        },
+        timeline: {
+          created_at: approvalRequest.createdAt,
+          expiry_date: approvalRequest.expiry_date,
+          executed: approvalRequest.executed,
+          execution_date: approvalRequest.execution_date,
+          executed_by: approvalRequest.executed_by
+        },
+        request_data: approvalRequest.request_data,
+        is_expired: new Date() > approvalRequest.expiry_date
+      }
+    };
+
+    return res.status(200).json(response);
+
+  } catch (error) {
+    console.error('Error checking approval status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error checking approval status',
+      error: error.message
+    });
+  }
+};
+
+// export const deactivateCustomerAccount = async (req, res) => {
+//   const { accountNumber } = req.params;
+//   const { deactivationReason, notes, deactivationType = 'DORMANT' } = req.body;
+
+//   const transaction = await sequelize.transaction();
+
+//   try {
+//     console.log('🔍 Deactivation request:', {
+//       accountNumber,
+//       deactivationType,
+//       deactivationReason,
+//       notes
+//     });
+
+//     // Validate account number
+//     if (!/^\d{10}$/.test(accountNumber)) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Account number must be a 10-digit number.',
+//       });
+//     }
+
+//     // Validate deactivation reason
+//     if (!deactivationReason || deactivationReason.trim() === '') {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Deactivation reason is required.',
+//       });
+//     }
+
+//     // Validate deactivation type
+//     const VALID_DEACTIVATION_TYPES = ['DORMANT', 'SUSPENDED', 'CLOSED', 'INACTIVE'];
+//     const normalizedDeactivationType = deactivationType.toUpperCase();
+    
+//     if (!VALID_DEACTIVATION_TYPES.includes(normalizedDeactivationType)) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: `Invalid deactivation type. Must be one of: ${VALID_DEACTIVATION_TYPES.join(', ')}`,
+//         valid_types: VALID_DEACTIVATION_TYPES
+//       });
+//     }
+
+//     // Find the account
+//     const account = await CustomerAccount.findOne({
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     if (!account) {
+//       await transaction.rollback();
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Customer account not found.',
+//         account_number: accountNumber
+//       });
+//     }
+
+//     // Check current status
+//     const currentStatus = account.REC_ST;
+//     console.log('📊 Current account status:', currentStatus);
+
+//     // Check if account is already in the target deactivation state
+//     if (currentStatus === normalizedDeactivationType) {
+//       await transaction.rollback();
+//       return res.status(400).json({
+//         success: false,
+//         message: `Account is already ${normalizedDeactivationType}`,
+//         account: {
+//           account_number: account.account_number,
+//           account_name: account.account_name || account.PRODUCT_DESC,
+//           current_status: currentStatus,
+//           account_type: account.account_type || account.ACCOUNT_TYPE
+//         }
+//       });
+//     }
+
+//     // Special validations based on deactivation type
+//     if (normalizedDeactivationType === 'CLOSED') {
+//       // Check if account has zero balance before closing
+//       if (account.ledger_balance !== 0 || account.available_balance !== 0) {
+//         await transaction.rollback();
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Account cannot be closed with non-zero balance',
+//           balances: {
+//             ledger_balance: account.ledger_balance,
+//             available_balance: account.available_balance,
+//             cleared_balance: account.cleared_balance
+//           }
+//         });
+//       }
+
+//       // Check if account has any pending transactions
+//       const pendingTransactions = await AuditTrail.count({
+//         where: {
+//           account_no: accountNumber,
+//           status: 'PENDING',
+//           timestamp: {
+//             [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
+//           }
+//         },
+//         transaction
+//       });
+
+//       if (pendingTransactions > 0) {
+//         await transaction.rollback();
+//         return res.status(400).json({
+//           success: false,
+//           message: `Account has ${pendingTransactions} pending transaction(s) and cannot be closed`,
+//           pending_transactions: pendingTransactions
+//         });
+//       }
+//     }
+
+//     // Store old values for audit trail
+//     const oldValue = account.toJSON();
+
+//     // Determine substatus based on deactivation type
+//     let substatus = 'Active';
+//     switch (normalizedDeactivationType) {
+//       case 'DORMANT':
+//         substatus = 'Dormant';
+//         break;
+//       case 'SUSPENDED':
+//         substatus = 'Suspended';
+//         break;
+//       case 'CLOSED':
+//         substatus = 'Closed';
+//         break;
+//       case 'INACTIVE':
+//         substatus = 'Inactive';
+//         break;
+//     }
+
+//     // Deactivate the account
+//     const updateData = {
+//       REC_ST: normalizedDeactivationType,
+//       substatus: substatus,
+//       updatedAt: new Date()
+//     };
+
+//     // For dormant accounts, record the dormancy date
+//     if (normalizedDeactivationType === 'DORMANT') {
+//       updateData.dormancy_date = new Date();
+//     }
+
+//     // For closed accounts, record closure details
+//     if (normalizedDeactivationType === 'CLOSED') {
+//       updateData.closed_date = new Date();
+//       updateData.closed_by = req.user?.id || req.headers['x-user-id'] || 'system';
+//       // Disable transactions for closed accounts
+//       updateData.DR_ALLOWED = false;
+//       updateData.CR_ALLOWED = false;
+//       updateData.is_online_enabled = false;
+//     }
+
+//     console.log('🔄 Updating account with:', updateData);
+
+//     await CustomerAccount.update(updateData, {
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     // Get updated account
+//     const updatedAccount = await CustomerAccount.findOne({
+//       where: { account_number: accountNumber },
+//       transaction
+//     });
+
+//     // Record audit trail
+//     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
+//     const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+//     const now = new Date();
+
+//     if (AuditTrail && typeof AuditTrail.create === 'function') {
+//       await AuditTrail.create({
+//         event_id: Date.now(),
+//         user_id: userId,
+//         event_type: 'ACCOUNT_DEACTIVATION',
+//         action: `Deactivate Account (${normalizedDeactivationType})`,
+//         old_value: oldValue,
+//         new_value: updatedAccount.toJSON(),
+//         ip_address: ipAddress,
+//         timestamp: now,
+//         entity_type: 'CustomerAccount',
+//         entity_id: updatedAccount.id,
+//         status: 'SUCCESS',
+//         account_no: accountNumber,
+//         description: `Account deactivated from ${currentStatus} to ${normalizedDeactivationType}`,
+//         additional_info: {
+//           previous_status: currentStatus,
+//           new_status: normalizedDeactivationType,
+//           deactivation_reason: deactivationReason,
+//           deactivation_type: normalizedDeactivationType,
+//           notes: notes || '',
+//           deactivated_by: userId,
+//           deactivation_date: now,
+//           balances_at_deactivation: {
+//             ledger_balance: account.ledger_balance,
+//             available_balance: account.available_balance,
+//             cleared_balance: account.cleared_balance
+//           }
+//         }
+//       }, { transaction });
+//     }
+
+//     await transaction.commit();
+
+//     // Log the deactivation
+//     logger.info('Account deactivated successfully', {
+//       account_number: accountNumber,
+//       previousStatus: currentStatus,
+//       newStatus: normalizedDeactivationType,
+//       deactivatedBy: userId,
+//       deactivationReason,
+//       deactivationType: normalizedDeactivationType,
+//       timestamp: now
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       message: `Account ${normalizedDeactivationType.toLowerCase()} successfully`,
+//       account: {
+//         account_number: account.account_number,
+//         account_name: account.account_name || account.PRODUCT_DESC,
+//         account_type: account.account_type || account.ACCOUNT_TYPE,
+//         previous_status: currentStatus,
+//         new_status: normalizedDeactivationType,
+//         deactivation_date: now,
+//         deactivated_by: userId,
+//         balances: {
+//           ledger_balance: account.ledger_balance,
+//           available_balance: account.available_balance,
+//           cleared_balance: account.cleared_balance
+//         }
+//       },
+//       deactivation_details: {
+//         type: normalizedDeactivationType,
+//         reason: deactivationReason,
+//         notes: notes || '',
+//         timestamp: now,
+//         restrictions: normalizedDeactivationType === 'CLOSED' ? {
+//           debit_transactions_allowed: false,
+//           credit_transactions_allowed: false,
+//           online_access_allowed: false
+//         } : normalizedDeactivationType === 'SUSPENDED' ? {
+//           debit_transactions_allowed: false,
+//           credit_transactions_allowed: false
+//         } : {
+//           debit_transactions_allowed: account.DR_ALLOWED,
+//           credit_transactions_allowed: account.CR_ALLOWED
+//         }
+//       }
+//     });
+
+//   } catch (error) {
+//     await transaction.rollback();
+
+//     console.error('❌ Error deactivating account:', error);
+//     logger.error('Error deactivating customer account:', {
+//       error: error.message,
+//       stack: error.stack,
+//       params: req.params,
+//       body: req.body,
+//       timestamp: new Date(),
+//     });
+
+//     return res.status(500).json({
+//       success: false,
+//       message: 'An error occurred while deactivating the customer account',
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+
+
+
+// Bulk Account Activation
+
+export const requestAccountDeactivation = async (req, res) => {
+  const { accountNumber } = req.params;
+  const { 
+    deactivationReason, 
+    notes, 
+    deactivationType = 'DORMANT',
+    userId = 'system',
+    userRole = 'SYSTEM_ADMIN'
+  } = req.body;
+
+  try {
+    console.log('🔍 Deactivation request received (no auth mode):', {
+      accountNumber,
+      deactivationType,
+      deactivationReason,
+      notes,
+      userId,
+      userRole
+    });
+
+    // Validate account number
+    if (!/^\d{10}$/.test(accountNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account number must be a 10-digit number.',
+      });
+    }
+
+    // Validate deactivation reason
+    if (!deactivationReason || deactivationReason.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Deactivation reason is required.',
+      });
+    }
+
+    // Validate deactivation type
+    const VALID_DEACTIVATION_TYPES = ['DORMANT', 'SUSPENDED', 'CLOSED', 'INACTIVE'];
+    const normalizedDeactivationType = deactivationType.toUpperCase();
+    
+    if (!VALID_DEACTIVATION_TYPES.includes(normalizedDeactivationType)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid deactivation type. Must be one of: ${VALID_DEACTIVATION_TYPES.join(', ')}`,
+        valid_types: VALID_DEACTIVATION_TYPES
+      });
+    }
+
+    // Find the account
+    const account = await CustomerAccount.findOne({
+      where: { account_number: accountNumber }
+    });
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer account not found.',
+        account_number: accountNumber
+      });
+    }
+
+    // DEBUG: Log all account fields to see what's available
+    const accountData = account.toJSON ? account.toJSON() : account;
+    console.log('📊 Account data keys:', Object.keys(accountData));
+    console.log('📊 Account REC_ST value:', accountData.REC_ST);
+    console.log('📊 Account status fields:', {
+      REC_ST: accountData.REC_ST,
+      status: accountData.status,
+      account_status: accountData.account_status,
+      substatus: accountData.substatus
+    });
+
+    // Get current status - check multiple possible fields
+    let currentStatus = accountData.REC_ST;
+    
+    // If REC_ST is null/undefined, check other status fields
+    if (!currentStatus) {
+      currentStatus = accountData.status || 
+                     accountData.account_status || 
+                     accountData.substatus || 
+                     'ACTIVE'; // Default if no status found
+      
+      console.log('⚠️ REC_ST was null/undefined, using:', currentStatus);
+    }
+
+    // Ensure currentStatus is a string
+    currentStatus = String(currentStatus).toUpperCase().trim();
+    
+    // If still empty, use a default
+    if (!currentStatus || currentStatus === 'NULL' || currentStatus === 'UNDEFINED') {
+      currentStatus = 'ACTIVE';
+      console.log('⚠️ Status was empty, defaulting to:', currentStatus);
+    }
+
+    console.log('✅ Final current status:', currentStatus);
+
+    // Check if account is already in target state
+    if (currentStatus === normalizedDeactivationType) {
+      return res.status(400).json({
+        success: false,
+        message: `Account is already ${normalizedDeactivationType}`,
+        account: {
+          account_number: account.account_number,
+          account_name: account.account_name || account.PRODUCT_DESC,
+          current_status: currentStatus,
+          all_status_fields: {
+            REC_ST: accountData.REC_ST,
+            status: accountData.status,
+            account_status: accountData.account_status,
+            substatus: accountData.substatus
+          }
+        }
+      });
+    }
+
+    // Generate unique request ID
+    const requestId = `DEACT-${accountNumber}-${Date.now()}`;
+    const expiryDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // Prepare request data
+    const requestData = {
+      account_number: accountNumber,
+      account_name: account.account_name || account.PRODUCT_DESC,
+      account_type: account.account_type || account.ACCOUNT_TYPE,
+      deactivation_type: normalizedDeactivationType,
+      deactivation_reason: deactivationReason,
+      notes: notes || '',
+      current_status: currentStatus,
+      requested_status: normalizedDeactivationType,
+      balances: {
+        ledger_balance: account.ledger_balance || 0,
+        available_balance: account.available_balance || 0,
+        cleared_balance: account.cleared_balance || 0
+      },
+      customer_info: {
+        customer_id: account.customer_id,
+        customer_name: account.customer_name
+      }
+    };
+
+    console.log('📝 Creating approval with:', {
+      current_status: currentStatus,
+      requested_status: normalizedDeactivationType
+    });
+
+    // Create approval request
+  // In your requestAccountDeactivation function, change this part:
+const approvalRequest = await Approval.create({
+  request_id: requestId,
+  entity_type: 'CustomerAccount',
+  entity_id: accountNumber,
+  action_type: 'DEACTIVATE_ACCOUNT',
+  current_status: currentStatus,
+  requested_status: normalizedDeactivationType,
+  request_data: requestData,
+  request_notes: notes,
+  initiator_id: userId,
+  initiator_role: userRole,
+  first_approver_id: null,
+  first_approver_role: 'MANAGER', // Single approver
+  first_approval_status: 'PENDING',
+  second_approver_id: null, // Remove second approver
+  second_approver_role: null, // Remove second approver
+  second_approval_status: null, // Remove second approval
+  overall_status: 'PENDING', // Changed from PENDING_FIRST to PENDING
+  expiry_date: expiryDate,
+  executed: false
+});
+
+    console.log('✅ Approval request created successfully:', approvalRequest.id);
+
+    // Record audit trail
+    try {
+      await AuditTrail.create({
+        event_id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        user_id: userId,
+        event_type: 'DEACTIVATION_REQUEST_CREATED',
+        action: `Request Account Deactivation (${normalizedDeactivationType})`,
+        old_value: JSON.stringify({
+          account_number: accountNumber,
+          status: currentStatus,
+          original_REC_ST: accountData.REC_ST
+        }),
+        new_value: JSON.stringify({
+          request_id: requestId,
+          deactivation_type: normalizedDeactivationType,
+          current_status: currentStatus,
+          requested_status: normalizedDeactivationType
+        }),
+        ip_address: req.ip || req.headers['x-forwarded-for'] || 'unknown',
+        timestamp: new Date(),
+        entity_type: 'Approval',
+        entity_id: approvalRequest.id,
+        status: 'SUCCESS',
+        account_no: accountNumber,
+        description: `Deactivation request created for account ${accountNumber}`,
+        additional_info: {
+          request_id: requestId,
+          deactivation_type: normalizedDeactivationType,
+          deactivation_reason: deactivationReason.substring(0, 200),
+          expiry_date: expiryDate.toISOString(),
+          status_resolution: {
+            original_REC_ST: accountData.REC_ST,
+            final_current_status: currentStatus,
+            used_default: accountData.REC_ST ? false : true
+          }
+        }
+      });
+    } catch (auditError) {
+      console.warn('⚠️ Audit trail creation failed:', auditError.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Deactivation request submitted for approval',
+      note: 'Operating in no-authentication mode',
+      approval_request: {
+        request_id: requestId,
+        status: 'PENDING_FIRST',
+        current_status: currentStatus,
+        requested_status: normalizedDeactivationType,
+        approvers_required: 2,
+        approvals_received: 0,
+        expiry_date: expiryDate.toISOString(),
+        estimated_completion_time: 'Within 24 hours',
+        approval_workflow: [
+          { level: 1, role: 'MANAGER', status: 'PENDING' },
+          { level: 2, role: 'HEAD_OF_DEPARTMENT', status: 'PENDING' }
+        ]
+      },
+      details: {
+        account_number: accountNumber,
+        account_name: account.account_name || account.PRODUCT_DESC,
+        deactivation_type: normalizedDeactivationType,
+        deactivation_reason: deactivationReason,
+        notes: notes || '',
+        submitted_by: userId,
+        submitted_by_role: userRole,
+        submitted_at: new Date().toISOString(),
+        next_approver_role: 'MANAGER',
+        status_info: {
+          original_REC_ST: accountData.REC_ST,
+          final_current_status: currentStatus,
+          used_default_status: accountData.REC_ST ? 'No' : 'Yes'
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating deactivation request:', error);
+    
+    // Better error response
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error creating approval request',
+        errors: error.errors.map(err => ({
+          field: err.path,
+          message: err.message,
+          value: err.value
+        })),
+        debug_info: {
+          accountNumber,
+          userId,
+          userRole
+        }
+      });
+    }
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while creating deactivation request',
+      error: error.message,
+      error_type: error.name
+    });
+  }
+};
+
+export const approveDeactivationRequest = async (req, res) => {
+  const { accountNumber } = req.params;
+  const { approvalStatus, notes } = req.body;
+  const userId = req.user?.id || req.body.userId;
+  const userRole = req.user?.role || req.body.userRole;
+  const userName = req.user?.name || req.body.userName || 'Unknown';
+
+  const transaction = await sequelize.transaction();
+
+  try {
+    console.log('🔍 SINGLE-LEVEL Deactivation approval request received:', {
+      accountNumber,
+      approvalStatus,
+      userId,
+      userRole
+    });
+
+    // Validate approval status
+    if (!['APPROVED', 'REJECTED'].includes(approvalStatus)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Approval status must be either "APPROVED" or "REJECTED"'
+      });
+    }
+
+    // Find the most recent pending deactivation request for this account
+    const approvalRequest = await Approval.findOne({
+      where: { 
+        entity_type: 'CustomerAccount',
+        entity_id: accountNumber,
+        action_type: 'DEACTIVATE_ACCOUNT',
+        overall_status: 'PENDING' // Single pending status
+      },
+      order: [['created_at', 'DESC']],
+      transaction
+    });
+
+    if (!approvalRequest) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'No pending deactivation request found for this account',
+        accountNumber,
+        suggestion: 'Make sure a deactivation request was created first'
+      });
+    }
+
+    // Check if request is expired
+    if (new Date() > approvalRequest.expiry_date) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Approval request has expired',
+        expiry_date: approvalRequest.expiry_date,
+        account_number: accountNumber
+      });
+    }
+
+    // Check if already executed
+    if (approvalRequest.executed) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Request has already been executed',
+        execution_date: approvalRequest.execution_date,
+        account_number: accountNumber
+      });
+    }
+
+    // Check if user has permission to approve (single approver role)
+    const APPROVER_ROLE = 'MANAGER'; // Single approver role
+    if (userRole !== APPROVER_ROLE) {
+      await transaction.rollback();
+      return res.status(403).json({
+        success: false,
+        message: `Only ${APPROVER_ROLE} can approve deactivation requests`,
+        user_role: userRole,
+        required_role: APPROVER_ROLE
+      });
+    }
+
+    const now = new Date();
+
+    // Update approval request - SINGLE APPROVAL
+    const updateData = {
+      first_approver_id: userId,
+      first_approver_role: userRole,
+      first_approval_status: approvalStatus,
+      first_approval_notes: notes || '',
+      first_approval_date: now,
+      overall_status: approvalStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED'
+    };
+
+    await Approval.update(updateData, {
+      where: { request_id: approvalRequest.request_id },
+      transaction
+    });
+
+    // If approved, execute the deactivation immediately
+    if (approvalStatus === 'APPROVED') {
+      await executeDeactivation(approvalRequest, userId, transaction);
+    }
+
+    await transaction.commit();
+
+    // Send notifications
+    try {
+      if (approvalStatus === 'APPROVED') {
+        // Notify initiator that request was approved
+        await sendApprovalNotification({
+          type: 'EXECUTION_COMPLETE',
+          userId: approvalRequest.initiator_id,
+          requestId: approvalRequest.request_id,
+          action: `Account Deactivation (${approvalRequest.requested_status})`,
+          accountNumber: accountNumber,
+          executedBy: userName
+        });
+      } else {
+        // Notify initiator about rejection
+        await sendApprovalNotification({
+          type: 'REQUEST_REJECTED',
+          userId: approvalRequest.initiator_id,
+          requestId: approvalRequest.request_id,
+          action: `Account Deactivation (${approvalRequest.requested_status})`,
+          accountNumber: accountNumber,
+          notes: notes || '',
+          approval_level: 'Single',
+          approvedBy: userName
+        });
+      }
+    } catch (notificationError) {
+      logger.error('Failed to send notification:', notificationError);
+      // Don't fail the main request if notification fails
+    }
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: approvalStatus === 'APPROVED' 
+        ? `Deactivation request approved and executed successfully`
+        : `Deactivation request rejected`,
+      account_number: accountNumber,
+      approval: {
+        request_id: approvalRequest.request_id,
+        status: approvalStatus,
+        approved_by: userId,
+        approved_by_name: userName,
+        approved_at: now,
+        notes: notes || '',
+        approver_role: userRole
+      }
+    };
+
+    // Add execution details if executed
+    if (approvalStatus === 'APPROVED') {
+      const finalApproval = await Approval.findOne({
+        where: { request_id: approvalRequest.request_id }
+      });
+      
+      if (finalApproval?.executed) {
+        response.execution_details = {
+          executed_by: finalApproval.executed_by,
+          execution_date: finalApproval.execution_date,
+          status: 'COMPLETED',
+          new_account_status: approvalRequest.requested_status
+        };
+      }
+    }
+
+    return res.status(200).json(response);
+
+  } catch (error) {
+    await transaction.rollback();
+    console.error('❌ Error approving deactivation request:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while processing deactivation approval',
+      error: error.message,
+      account_number: accountNumber,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+
+// Helper function to execute deactivation after approvals
+const executeDeactivation = async (approvalRequest, executedBy, transaction) => {
+  try {
+    const { entity_id: accountNumber, request_data, requested_status } = approvalRequest;
+    const { deactivation_reason, notes, deactivation_type } = request_data;
 
     // Find the account
     const account = await CustomerAccount.findOne({
@@ -1645,142 +3290,868 @@ export const activateCustomerAccount = async (req, res) => {
     });
 
     if (!account) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Customer account not found.',
-        account_number: accountNumber
-      });
-    }
-
-    // Check if account is already active
-    const currentStatus = account.REC_ST;
-    if (currentStatus === 'ACTIVE') {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Account is already active',
-        account: {
-          account_number: account.account_number,
-          account_name: account.PRODUCT_DESC,
-          current_status: currentStatus,
-          account_type: account.ACCOUNT_TYPE
-        }
-      });
-    }
-
-    // Validate that account can be activated
-    const validPreviousStates = ['DORMANT', 'INACTIVE', 'SUSPENDED', 'PENDING'];
-    if (!validPreviousStates.includes(currentStatus)) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: `Cannot activate account with status: ${currentStatus}. Only DORMANT, INACTIVE, SUSPENDED, or PENDING accounts can be activated.`,
-        currentStatus: currentStatus
-      });
+      throw new Error(`Account ${accountNumber} not found`);
     }
 
     // Store old values for audit trail
     const oldValue = account.toJSON();
 
-    // Activate the account
-    await CustomerAccount.update({
-      REC_ST: 'ACTIVE',
-      substatus: 'Active',
-      lastActivityDate: new Date(),
-      updatedAt: new Date()
-    }, {
+    // Prepare update data based on deactivation type
+    const updateData = {
+      REC_ST: requested_status,
+      updatedAt: new Date(),
+      deactivation_reason: deactivation_reason,
+      deactivation_notes: notes || '',
+      deactivated_by: executedBy,
+      deactivation_date: new Date()
+    };
+
+    // Set substatus based on deactivation type
+    switch (requested_status) {
+      case 'DORMANT':
+        updateData.substatus = 'Dormant';
+        updateData.dormancy_date = new Date();
+        break;
+      case 'SUSPENDED':
+        updateData.substatus = 'Suspended';
+        updateData.suspension_date = new Date();
+        updateData.DR_ALLOWED = false;
+        updateData.CR_ALLOWED = false;
+        break;
+      case 'CLOSED':
+        updateData.substatus = 'Closed';
+        updateData.closed_date = new Date();
+        updateData.closed_by = executedBy;
+        updateData.DR_ALLOWED = false;
+        updateData.CR_ALLOWED = false;
+        updateData.is_online_enabled = false;
+        updateData.is_active = false;
+        break;
+      case 'INACTIVE':
+        updateData.substatus = 'Inactive';
+        updateData.inactive_date = new Date();
+        break;
+    }
+
+    // Update account
+    await CustomerAccount.update(updateData, {
       where: { account_number: accountNumber },
       transaction
     });
 
-    // Get updated account
-    const updatedAccount = await CustomerAccount.findOne({
-      where: { account_number: accountNumber },
+    // Update approval request with execution details
+    await Approval.update({
+      executed: true,
+      execution_date: new Date(),
+      executed_by: executedBy
+    }, {
+      where: { request_id: approvalRequest.request_id },
+      transaction
+    });
+
+    // Record audit trail for execution
+    await AuditTrail.create({
+      event_id: Date.now(),
+      user_id: executedBy,
+      event_type: 'ACCOUNT_DEACTIVATION_EXECUTED',
+      action: `Execute Account Deactivation (${requested_status})`,
+      old_value: JSON.stringify(oldValue),
+      new_value: JSON.stringify({ ...oldValue, ...updateData }),
+      ip_address: 'system',
+      timestamp: new Date(),
+      entity_type: 'CustomerAccount',
+      entity_id: oldValue.id,
+      status: 'SUCCESS',
+      account_no: accountNumber,
+      description: `Account deactivated to ${requested_status} after two-level approval`,
+      additional_info: {
+        approval_request_id: approvalRequest.request_id,
+        previous_status: approvalRequest.current_status,
+        new_status: requested_status,
+        deactivation_type: deactivation_type,
+        deactivation_reason: deactivation_reason,
+        notes: notes || '',
+        executed_by: executedBy,
+        first_approver: approvalRequest.first_approver_id,
+        second_approver: approvalRequest.second_approver_id,
+        execution_date: new Date(),
+        restrictions_applied: requested_status === 'CLOSED' ? 'ALL' : 
+                            requested_status === 'SUSPENDED' ? 'DEBIT_CREDIT' : 'NONE'
+      }
+    }, { transaction });
+
+    logger.info('Account deactivation executed successfully', {
+      account_number: accountNumber,
+      previous_status: approvalRequest.current_status,
+      new_status: requested_status,
+      executed_by: executedBy,
+      approval_request_id: approvalRequest.request_id
+    });
+
+    return true;
+
+  } catch (error) {
+    console.error('❌ Error executing deactivation:', error);
+    throw error;
+  }
+};
+
+
+
+// // Reject deactivation request
+// // Enhanced deactivation request controller with better error handling and logging
+// export const requestAccountDeactivation = async (req, res) => {
+//   const { accountNumber } = req.params;
+//   const { deactivationReason, notes, deactivationType = 'DORMANT' } = req.body;
+//   const userId = req.user?.id;
+//   const userRole = req.user?.role;
+
+//   // Validate user authentication
+//   if (!userId || !userRole) {
+//     return res.status(401).json({
+//       success: false,
+//       message: 'Authentication required',
+//       code: 'AUTH_REQUIRED'
+//     });
+//   }
+
+//   try {
+//     logger.info('Deactivation request initiated', {
+//       accountNumber,
+//       deactivationType,
+//       userId,
+//       userRole,
+//       timestamp: new Date()
+//     });
+
+//     // Validate account number with better error messages
+//     if (!/^\d{10}$/.test(accountNumber)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Account number must be exactly 10 digits',
+//         code: 'INVALID_ACCOUNT_FORMAT',
+//         expected: '10 digits',
+//         received: accountNumber
+//       });
+//     }
+
+//     // Enhanced validation for deactivation reason
+//     if (!deactivationReason || deactivationReason.trim() === '') {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Deactivation reason is required',
+//         code: 'REASON_REQUIRED',
+//         field: 'deactivationReason'
+//       });
+//     }
+
+//     if (deactivationReason.length < 10) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Deactivation reason must be at least 10 characters',
+//         code: 'REASON_TOO_SHORT',
+//         minLength: 10,
+//         currentLength: deactivationReason.length
+//       });
+//     }
+
+//     // Validate deactivation type with descriptions
+//     const VALID_DEACTIVATION_TYPES = [
+//       { value: 'DORMANT', description: 'Account with no activity for extended period' },
+//       { value: 'SUSPENDED', description: 'Temporary suspension due to suspicious activity' },
+//       { value: 'CLOSED', description: 'Permanent closure of account' },
+//       { value: 'INACTIVE', description: 'Account with minimal or no activity' }
+//     ];
+    
+//     const normalizedDeactivationType = deactivationType.toUpperCase();
+//     const validType = VALID_DEACTIVATION_TYPES.find(t => t.value === normalizedDeactivationType);
+    
+//     if (!validType) {
+//       return res.status(400).json({
+//         success: false,
+//         message: `Invalid deactivation type. Valid types are: ${VALID_DEACTIVATION_TYPES.map(t => t.value).join(', ')}`,
+//         code: 'INVALID_DEACTIVATION_TYPE',
+//         validTypes: VALID_DEACTIVATION_TYPES,
+//         received: deactivationType
+//       });
+//     }
+
+//     // Find the account with transaction for consistency
+//     const account = await CustomerAccount.findOne({
+//       where: { account_number: accountNumber }
+//     });
+
+//     if (!account) {
+//       logger.warn('Account not found for deactivation', { accountNumber });
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Customer account not found',
+//         code: 'ACCOUNT_NOT_FOUND',
+//         account_number: accountNumber,
+//         suggestions: [
+//           'Verify the account number',
+//           'Check if account has been migrated',
+//           'Contact system administrator'
+//         ]
+//       });
+//     }
+
+//     // Check current status
+//     const currentStatus = account.REC_ST;
+//     logger.debug('Account status check', {
+//       accountNumber,
+//       currentStatus,
+//       requestedStatus: normalizedDeactivationType
+//     });
+
+//     // Enhanced check for already in target state
+//     if (currentStatus === normalizedDeactivationType) {
+//       return res.status(409).json({
+//         success: false,
+//         message: `Account is already in ${normalizedDeactivationType} state`,
+//         code: 'ALREADY_IN_STATE',
+//         account: {
+//           account_number: account.account_number,
+//           account_name: account.account_name || account.PRODUCT_DESC,
+//           current_status: currentStatus,
+//           status_since: account.updatedAt || account.createdAt
+//         },
+//         action: 'No action required'
+//       });
+//     }
+
+//     // Special validations for CLOSED with detailed checks
+//     if (normalizedDeactivationType === 'CLOSED') {
+//       const validationResults = await validateAccountForClosure(account, accountNumber);
+      
+//       if (!validationResults.valid) {
+//         return res.status(400).json({
+//           success: false,
+//           message: 'Account cannot be closed',
+//           code: 'CLOSURE_VALIDATION_FAILED',
+//           details: validationResults
+//         });
+//       }
+//     }
+
+//     // Generate unique request ID with better format
+//     const requestId = generateRequestId('DEACT', accountNumber);
+//     const expiryDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+//     // Enhanced request data with more details
+//     const requestData = {
+//       account_number: accountNumber,
+//       account_name: account.account_name || account.PRODUCT_DESC,
+//       account_type: account.account_type || account.ACCOUNT_TYPE,
+//       deactivation_type: normalizedDeactivationType,
+//       deactivation_reason: deactivationReason,
+//       notes: notes || '',
+//       current_status: currentStatus,
+//       requested_status: normalizedDeactivationType,
+//       balances: {
+//         ledger_balance: account.ledger_balance || 0,
+//         available_balance: account.available_balance || 0,
+//         cleared_balance: account.cleared_balance || 0,
+//         currency: account.currency || 'NGN'
+//       },
+//       customer_info: {
+//         customer_id: account.customer_id,
+//         customer_name: account.customer_name,
+//         customer_type: account.customer_type,
+//         email: account.email,
+//         phone: account.phone_number
+//       },
+//       account_details: {
+//         product_code: account.product_code,
+//         branch_code: account.branch_code,
+//         opening_date: account.opening_date,
+//         last_activity_date: account.lastActivityDate
+//       },
+//       initiator: {
+//         id: userId,
+//         role: userRole,
+//         timestamp: new Date()
+//       }
+//     };
+
+//     // Create approval request within transaction
+//     const transaction = await sequelize.transaction();
+    
+//     try {
+//       const approvalRequest = await Approval.create({
+//         request_id: requestId,
+//         entity_type: 'CustomerAccount',
+//         entity_id: accountNumber,
+//         action_type: 'DEACTIVATE_ACCOUNT',
+//         current_status: currentStatus,
+//         requested_status: normalizedDeactivationType,
+//         request_data: requestData,
+//         request_notes: notes,
+//         initiator_id: userId,
+//         initiator_role: userRole,
+//         initiator_details: {
+//           name: req.user?.name || 'Unknown',
+//           department: req.user?.department || 'Unknown'
+//         },
+//         first_approver_id: null,
+//         first_approver_role: 'MANAGER',
+//         first_approval_status: 'PENDING',
+//         second_approver_id: null,
+//         second_approver_role: 'HEAD_OF_DEPARTMENT',
+//         second_approval_status: 'PENDING',
+//         overall_status: 'PENDING_FIRST',
+//         expiry_date: expiryDate,
+//         executed: false,
+//         metadata: {
+//           ip_address: req.ip,
+//           user_agent: req.headers['user-agent'],
+//           validation_checks: normalizedDeactivationType === 'CLOSED' ? 'PASSED' : 'NOT_REQUIRED'
+//         }
+//       }, { transaction });
+
+//       // Send enhanced notification
+//       await sendNotification({
+//         type: 'APPROVAL_REQUEST',
+//         userId: userId,
+//         approverRole: 'MANAGER',
+//         requestId: requestId,
+//         action: `Account Deactivation (${normalizedDeactivationType})`,
+//         accountNumber: accountNumber,
+//         accountName: account.account_name || account.PRODUCT_DESC,
+//         currentStatus: currentStatus,
+//         requestedStatus: normalizedDeactivationType,
+//         reason: deactivationReason,
+//         urgency: getUrgencyLevel(normalizedDeactivationType),
+//         expiryDate: expiryDate,
+//         initiator: {
+//           id: userId,
+//           name: req.user?.name || 'Unknown'
+//         },
+//         accountDetails: {
+//           type: account.account_type,
+//           customer: account.customer_name,
+//           balance: account.ledger_balance || 0
+//         }
+//       });
+
+//       // Enhanced audit trail
+//       await AuditTrail.create({
+//         event_id: generateEventId(),
+//         user_id: userId,
+//         event_type: 'DEACTIVATION_REQUEST_CREATED',
+//         action: `Request Account Deactivation (${normalizedDeactivationType})`,
+//         old_value: JSON.stringify({
+//           account_number: accountNumber,
+//           status: currentStatus,
+//           status_field: 'REC_ST'
+//         }),
+//         new_value: JSON.stringify(approvalRequest.toJSON()),
+//         ip_address: req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress,
+//         user_agent: req.headers['user-agent'],
+//         timestamp: new Date(),
+//         entity_type: 'Approval',
+//         entity_id: approvalRequest.id,
+//         status: 'PENDING',
+//         account_no: accountNumber,
+//         description: `Deactivation request created for account ${accountNumber} from ${currentStatus} to ${normalizedDeactivationType}`,
+//         additional_info: {
+//           request_id: requestId,
+//           deactivation_type: normalizedDeactivationType,
+//           deactivation_reason: deactivationReason,
+//           notes: notes || '',
+//           expiry_date: expiryDate,
+//           approvers_required: 2,
+//           current_approval_level: 1,
+//           estimated_completion: 'Within 24 hours',
+//           validation: {
+//             balance_check: normalizedDeactivationType === 'CLOSED' ? 
+//               (parseFloat(account.ledger_balance) === 0 && parseFloat(account.available_balance) === 0 ? 'PASSED' : 'FAILED') : 
+//               'NOT_REQUIRED',
+//             pending_transactions: normalizedDeactivationType === 'CLOSED' ? 'CHECKED' : 'NOT_REQUIRED'
+//           }
+//         }
+//       }, { transaction });
+
+//       await transaction.commit();
+
+//       logger.info('Deactivation request created successfully', {
+//         requestId,
+//         accountNumber,
+//         currentStatus,
+//         requestedStatus: normalizedDeactivationType,
+//         userId,
+//         expiryDate
+//       });
+
+//       return res.status(200).json({
+//         success: true,
+//         message: 'Deactivation request submitted for approval',
+//         code: 'REQUEST_CREATED',
+//         timestamp: new Date().toISOString(),
+//         approval_request: {
+//           request_id: requestId,
+//           status: 'PENDING_FIRST',
+//           current_status: currentStatus,
+//           requested_status: normalizedDeactivationType,
+//           approvers_required: 2,
+//           approvals_received: 0,
+//           expiry_date: expiryDate,
+//           estimated_completion_time: 'Within 24 hours',
+//           approval_workflow: [
+//             { level: 1, role: 'MANAGER', status: 'PENDING', action: 'Review request' },
+//             { level: 2, role: 'HEAD_OF_DEPARTMENT', status: 'PENDING', action: 'Final approval' }
+//           ],
+//           links: {
+//             status: `/api/approvals/${requestId}/status`,
+//             details: `/api/approvals/deactivation/${requestId}/details`,
+//             cancel: `/api/approvals/deactivation/${requestId}/cancel`
+//           }
+//         },
+//         details: {
+//           account_number: accountNumber,
+//           account_name: account.account_name || account.PRODUCT_DESC,
+//           deactivation_type: normalizedDeactivationType,
+//           deactivation_reason: deactivationReason,
+//           notes: notes || '',
+//           submitted_by: {
+//             id: userId,
+//             role: userRole,
+//             name: req.user?.name || 'Unknown'
+//           },
+//           submitted_at: new Date(),
+//           next_approver_role: 'MANAGER',
+//           validation_summary: {
+//             balance_check: normalizedDeactivationType === 'CLOSED' ? 
+//               (parseFloat(account.ledger_balance) === 0 && parseFloat(account.available_balance) === 0 ? 'PASSED' : 'FAILED') : 
+//               'NOT_REQUIRED',
+//             pending_transactions: normalizedDeactivationType === 'CLOSED' ? 'CHECKED' : 'NOT_REQUIRED',
+//             account_exists: 'VERIFIED',
+//             status_transition: `${currentStatus} → ${normalizedDeactivationType}`
+//           }
+//         }
+//       });
+
+//     } catch (error) {
+//       await transaction.rollback();
+//       throw error;
+//     }
+
+//   } catch (error) {
+//     logger.error('Error creating deactivation request:', {
+//       error: error.message,
+//       stack: error.stack,
+//       accountNumber,
+//       userId,
+//       timestamp: new Date()
+//     });
+    
+//     return res.status(500).json({
+//       success: false,
+//       message: 'An error occurred while creating deactivation request',
+//       code: 'INTERNAL_SERVER_ERROR',
+//       error: process.env.NODE_ENV === 'development' ? error.message : 'Please contact support',
+//       reference_id: generateErrorReference(),
+//       timestamp: new Date().toISOString()
+//     });
+//   }
+// };
+
+// Helper functions for the enhanced controller
+
+const validateAccountForClosure = async (account, accountNumber) => {
+  const results = {
+    valid: true,
+    checks: [],
+    issues: []
+  };
+
+  // Check balance
+  const ledgerBalance = parseFloat(account.ledger_balance) || 0;
+  const availableBalance = parseFloat(account.available_balance) || 0;
+  
+  if (ledgerBalance !== 0 || availableBalance !== 0) {
+    results.valid = false;
+    results.issues.push({
+      code: 'NON_ZERO_BALANCE',
+      message: 'Account has non-zero balance',
+      details: {
+        ledger_balance: ledgerBalance,
+        available_balance: availableBalance
+      }
+    });
+  }
+  
+  results.checks.push({
+    check: 'balance_check',
+    status: (ledgerBalance === 0 && availableBalance === 0) ? 'PASSED' : 'FAILED',
+    details: { ledgerBalance, availableBalance }
+  });
+
+  // Check pending transactions
+  const pendingTransactions = await AuditTrail.count({
+    where: {
+      account_no: accountNumber,
+      status: 'PENDING',
+      timestamp: {
+        [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      }
+    }
+  });
+
+  if (pendingTransactions > 0) {
+    results.valid = false;
+    results.issues.push({
+      code: 'PENDING_TRANSACTIONS',
+      message: `Account has ${pendingTransactions} pending transaction(s)`,
+      details: { pending_transactions: pendingTransactions }
+    });
+  }
+  
+  results.checks.push({
+    check: 'pending_transactions',
+    status: pendingTransactions === 0 ? 'PASSED' : 'FAILED',
+    details: { pendingTransactions }
+  });
+
+  // Check if account has active standing orders
+  const activeStandingOrders = await StandingOrder.count({
+    where: {
+      account_number: accountNumber,
+      status: 'ACTIVE'
+    }
+  });
+
+  if (activeStandingOrders > 0) {
+    results.valid = false;
+    results.issues.push({
+      code: 'ACTIVE_STANDING_ORDERS',
+      message: `Account has ${activeStandingOrders} active standing order(s)`,
+      details: { active_standing_orders: activeStandingOrders }
+    });
+  }
+  
+  results.checks.push({
+    check: 'standing_orders',
+    status: activeStandingOrders === 0 ? 'PASSED' : 'FAILED',
+    details: { activeStandingOrders }
+  });
+
+  return results;
+};
+
+const generateRequestId = (prefix, accountNumber) => {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `${prefix}-${accountNumber}-${timestamp}-${random}`;
+};
+
+const generateEventId = () => {
+  return `EVT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+};
+
+const generateErrorReference = () => {
+  return `ERR-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+};
+
+const getUrgencyLevel = (deactivationType) => {
+  const urgencyMap = {
+    'CLOSED': 'HIGH',
+    'SUSPENDED': 'HIGH',
+    'DORMANT': 'MEDIUM',
+    'INACTIVE': 'LOW'
+  };
+  return urgencyMap[deactivationType] || 'MEDIUM';
+};
+
+// Cancel deactivation request (only by initiator)
+export const cancelDeactivationRequest = async (req, res) => {
+  const { requestId } = req.params;
+  const { cancellationReason } = req.body;
+  const userId = req.user?.id;
+
+  const transaction = await sequelize.transaction();
+
+  try {
+    // Find approval request
+    const approvalRequest = await Approval.findOne({
+      where: { request_id: requestId },
+      transaction
+    });
+
+    if (!approvalRequest) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Deactivation approval request not found'
+      });
+    }
+
+    // Check if initiator is cancelling
+    if (approvalRequest.initiator_id !== userId) {
+      await transaction.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Only the initiator can cancel this request'
+      });
+    }
+
+    // Check if already processed
+    if (approvalRequest.executed || 
+        approvalRequest.overall_status === 'APPROVED' || 
+        approvalRequest.overall_status === 'REJECTED') {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot cancel request in ${approvalRequest.overall_status} state`
+      });
+    }
+
+    const now = new Date();
+
+    // Update approval request
+    await Approval.update({
+      overall_status: 'CANCELLED',
+      cancellation_reason: cancellationReason,
+      cancelled_at: now,
+      cancelled_by: userId
+    }, {
+      where: { request_id: requestId },
       transaction
     });
 
     // Record audit trail
-    const userId = req.user?.id || req.headers['x-user-id'] || 'system';
-    const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    const now = new Date();
-
-    if (AuditTrail && typeof AuditTrail.create === 'function') {
-      await AuditTrail.create({
-        event_id: Date.now(),
-        user_id: userId,
-        event_type: 'ACCOUNT_ACTIVATION',
-        action: 'Activate Account',
-        old_value: oldValue,
-        new_value: updatedAccount.toJSON(),
-        ip_address: ipAddress,
-        timestamp: now,
-        entity_type: 'CustomerAccount',
-        entity_id: updatedAccount.id,
-        status: 'SUCCESS',
-        account_no: accountNumber,
-        description: `Account activated from ${currentStatus} to ACTIVE`,
-        additional_info: {
-          previous_status: currentStatus,
-          new_status: 'ACTIVE',
-          activation_reason: activationReason,
-          notes: notes || '',
-          activated_by: userId,
-          activation_date: now
-        }
-      }, { transaction });
-    }
+    await AuditTrail.create({
+      event_id: Date.now(),
+      user_id: userId,
+      event_type: 'DEACTIVATION_REQUEST_CANCELLED',
+      action: 'Cancel Deactivation Request',
+      old_value: JSON.stringify(approvalRequest.toJSON()),
+      new_value: JSON.stringify({...approvalRequest.toJSON(), overall_status: 'CANCELLED'}),
+      ip_address: req.ip || req.headers['x-forwarded-for'] || 'unknown',
+      timestamp: now,
+      entity_type: 'Approval',
+      entity_id: approvalRequest.id,
+      status: 'CANCELLED',
+      account_no: approvalRequest.entity_id,
+      description: `Deactivation request cancelled by initiator`,
+      additional_info: {
+        request_id: requestId,
+        cancelled_by: userId,
+        cancellation_reason: cancellationReason,
+        deactivation_type: approvalRequest.requested_status
+      }
+    }, { transaction });
 
     await transaction.commit();
 
-    // Log the activation
-    logger.info('Account activated successfully', {
-      account_number: accountNumber,
-      previousStatus: currentStatus,
-      activatedBy: userId,
-      activationReason,
-      timestamp: now
-    });
+    // Send notifications to approvers
+    if (approvalRequest.first_approver_id) {
+      await sendNotification({
+        type: 'REQUEST_CANCELLED',
+        userId: approvalRequest.first_approver_id,
+        requestId: requestId,
+        action: `Account Deactivation (${approvalRequest.requested_status})`,
+        accountNumber: approvalRequest.entity_id,
+        cancelled_by: userId,
+        cancelled_at: now,
+        cancellation_reason: cancellationReason
+      });
+    }
+
+    if (approvalRequest.second_approver_id) {
+      await sendNotification({
+        type: 'REQUEST_CANCELLED',
+        userId: approvalRequest.second_approver_id,
+        requestId: requestId,
+        action: `Account Deactivation (${approvalRequest.requested_status})`,
+        accountNumber: approvalRequest.entity_id,
+        cancelled_by: userId,
+        cancelled_at: now,
+        cancellation_reason: cancellationReason
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'Account activated successfully',
-      account: {
-        account_number: account.account_number,
-        account_name: account.PRODUCT_DESC,
-        account_type: account.ACCOUNT_TYPE,
-        previous_status: currentStatus,
-        new_status: 'ACTIVE',
-        activation_date: now,
-        activated_by: userId
-      },
-      activation_details: {
-        reason: activationReason,
-        notes: notes || '',
-        timestamp: now
+      message: 'Deactivation request cancelled successfully',
+      cancellation: {
+        request_id: requestId,
+        cancelled_by: userId,
+        cancelled_at: now,
+        cancellation_reason: cancellationReason,
+        previous_status: approvalRequest.overall_status
       }
     });
 
   } catch (error) {
     await transaction.rollback();
-
-    logger.error('Error activating customer account:', {
-      error: error.message,
-      stack: error.stack,
-      params: req.params,
-      body: req.body,
-      timestamp: new Date(),
-    });
-
+    console.error('❌ Error cancelling deactivation request:', error);
+    
     return res.status(500).json({
       success: false,
-      message: 'An error occurred while activating the customer account',
-      error: error.message,
+      message: 'An error occurred while cancelling deactivation request',
+      error: error.message
     });
   }
 };
 
-// Bulk Account Activation
+// Get pending deactivation requests for an approver
+// Get pending deactivation requests for an approver
+export const getPendingDeactivationRequests = async (req, res) => {
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
+  const { page = 1, limit = 10, status = 'PENDING' } = req.query;
+
+  try {
+    const offset = (page - 1) * limit;
+
+    // Build where clause based on user role
+    let whereClause = {
+      action_type: 'DEACTIVATE_ACCOUNT',
+      executed: false
+    };
+
+    // Add status filter
+    if (status === 'PENDING') {
+      whereClause.overall_status = ['PENDING_FIRST', 'PENDING_SECOND'];
+    } else if (status === 'FIRST_LEVEL') {
+      whereClause.overall_status = 'PENDING_FIRST';
+    } else if (status === 'SECOND_LEVEL') {
+      whereClause.overall_status = 'PENDING_SECOND';
+    } else if (status === 'APPROVED') {
+      whereClause.overall_status = 'APPROVED';
+    } else if (status === 'REJECTED') {
+      whereClause.overall_status = 'REJECTED';
+    }
+
+    // Add role-specific filters
+    if (userRole === 'MANAGER') {
+      whereClause.first_approver_role = userRole;
+      whereClause.first_approval_status = 'PENDING';
+    } else if (userRole === 'HEAD_OF_DEPARTMENT') {
+      whereClause.second_approver_role = userRole;
+      whereClause.first_approval_status = 'APPROVED';
+      whereClause.second_approval_status = 'PENDING';
+    }
+
+    // Count total
+    const total = await Approval.count({ where: whereClause });
+
+    // Get requests - FIX: Use 'created_at' instead of 'createdAt'
+    const requests = await Approval.findAll({
+      where: whereClause,
+      order: [['created_at', 'DESC']], // CHANGED: 'createdAt' → 'created_at'
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        requests: requests.map(req => req.toJSON()),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit)
+        },
+        summary: {
+          total_pending: total,
+          pending_first_level: await Approval.count({
+            where: { ...whereClause, overall_status: 'PENDING_FIRST' }
+          }),
+          pending_second_level: await Approval.count({
+            where: { ...whereClause, overall_status: 'PENDING_SECOND' }
+          })
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching pending deactivation requests:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while fetching pending requests',
+      error: error.message
+    });
+  }
+};
+
+// Get deactivation request details
+export const getDeactivationRequestDetails = async (req, res) => {
+  const { requestId } = req.params;
+
+  try {
+    const approvalRequest = await Approval.findOne({
+      where: { request_id: requestId, action_type: 'DEACTIVATE_ACCOUNT' },
+      include: [
+        {
+          model: CustomerAccount,
+          as: 'account',
+          foreignKey: 'entity_id',
+          targetKey: 'account_number'
+        }
+      ]
+    });
+
+    if (!approvalRequest) {
+      return res.status(404).json({
+        success: false,
+        message: 'Deactivation request not found'
+      });
+    }
+
+    // Get audit trail for this request
+    const auditTrails = await AuditTrail.findAll({
+      where: {
+        [Op.or]: [
+          { entity_id: approvalRequest.id },
+          { additional_info: { [Op.like]: `%${requestId}%` } }
+        ]
+      },
+      order: [['timestamp', 'DESC']],
+      limit: 10
+    });
+
+    // Get current account status
+    const currentAccount = await CustomerAccount.findOne({
+      where: { account_number: approvalRequest.entity_id }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        request: approvalRequest.toJSON(),
+        account: currentAccount ? currentAccount.toJSON() : null,
+        audit_trail: auditTrails.map(audit => audit.toJSON()),
+        status_summary: {
+          is_expired: new Date() > approvalRequest.expiry_date,
+          can_approve: approvalRequest.overall_status === 'PENDING_FIRST' || 
+                      approvalRequest.overall_status === 'PENDING_SECOND',
+          can_execute: approvalRequest.overall_status === 'APPROVED' && !approvalRequest.executed,
+          time_remaining: approvalRequest.expiry_date - new Date()
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching deactivation request details:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'An error occurred while fetching request details',
+      error: error.message
+    });
+  }
+};
+
+
+
+
+
+
+
 export const bulkActivateAccounts = async (req, res) => {
   const { accountNumbers, activationReason, notes } = req.body;
 
@@ -2458,7 +4829,7 @@ export default {
   updateCustomerAccount,
   getAccountByNumber,
   deleteCustomerAccount,
-  activateCustomerAccount,
+
   bulkActivateAccounts,
   getAccountActivationHistory,
   updateDormantAccounts,

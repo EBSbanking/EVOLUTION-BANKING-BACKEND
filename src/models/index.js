@@ -772,6 +772,12 @@ export const getDrawerUserRole = () => models.DrawerUserRole;
 export const getDrawerCurrencyDenomination = () => models.DrawerCurrencyDenomination;
 export const getDrawerCurrency = () => models.DrawerCurrency;
 
+// ✅ ADD THESE TWO MISSING GETTERS:
+export const getGLAccountTransaction = () => models.GLAccountTransaction;
+// ... continue with other getters ...
+
+
+
 
 // ✅ Export sequelize getter
 export const getSequelize = () => models.sequelize;
@@ -850,9 +856,13 @@ export const WF_BusinessRoleQueue = models.WorkflowBusinessRoleQueue;
 export const WF_SubProcessPolicy = models.WorkflowSubProcessPolicy;
 export const CustWorkflowRouting = models.CustomerWorkflowRouting;
 export const AccountApplication = models.AccountApplication;
+export const GLAccountTransaction = models.GLAccountTransaction;
+
+
 
 // ✅ Export sequelize as a named export
 export const sequelize = models.sequelize;
+
 
 console.log('📦 models/index.js module loaded');
 console.log('⚠️ Important: Models need to be initialized before use');

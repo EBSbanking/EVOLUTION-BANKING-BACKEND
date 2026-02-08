@@ -1,4 +1,4 @@
-// models/GuarantorAudit.js - FIXED VERSION
+// models/GuarantorAudit.js - MORE FLEXIBLE VERSION
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -16,20 +16,9 @@ GuarantorAudit.init({
     comment: 'Reference to the guarantor being audited'
   },
   action: {
-    type: DataTypes.ENUM(
-      'CREATE',
-      'UPDATE',
-      'DEACTIVATE',
-      'REACTIVATE',
-      'DELETE',
-      'APPROVED',
-      'REJECTED',
-      'REMOVAL_REQUESTED',
-      'REMOVAL_APPROVED',
-      'REMOVAL_REJECTED',
-      'REMOVAL_CANCELLED'
-    ),
-    allowNull: false
+    type: DataTypes.STRING(50), // Changed from ENUM to STRING
+    allowNull: false,
+    comment: 'Action performed (CREATE, UPDATE, DELETE, FEE_CREATED, etc.)'
   },
   changedFields: {
     type: DataTypes.JSON,

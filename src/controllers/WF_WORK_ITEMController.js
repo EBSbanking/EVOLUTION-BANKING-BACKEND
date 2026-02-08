@@ -457,70 +457,71 @@ const WFWorkItemController = {
     }
   },
 
-  // Get all work items
-  getAllWorkItems: asyncHandler(async (req, res) => {
-    try {
-      const workItems = await WFWorkItem.findAll({
-        where: {
-          REC_ST: { [Op.iLike]: 'pending' }
-        },
-        order: [['CREATE_DT', 'DESC']]
-      });
+ // Get all work items - FIXED VERSION
+getAllWorkItems: asyncHandler(async (req, res) => {
+  try {
+    // SIMPLEST FIX: Just use exact match without require()
+    const workItems = await WFWorkItem.findAll({
+      where: {
+        REC_ST: 'pending'  // Exact match, no Op.iLike needed
+      },
+      order: [['CREATE_DT', 'DESC']]
+    });
 
-      if (!workItems || workItems.length === 0) {
-        return res.status(200).json({
-          success: true,
-          message: 'No pending work items found',
-          data: []
-        });
-      }
-
-      const enrichedItems = await Promise.all(
-        workItems.map(async (item) => {
-          let details = null;
-
-          try {
-            const itemType = item.ITEM_TYPE;
-
-            if (itemType === 'Customer') {
-              details = await Customer.findOne({ 
-                where: { CUST_ID: item.CUST_ID } 
-              });
-            } else if (itemType === 'DepositTransaction' && item.ITEM_ID) {
-              details = await DepositTransaction.findByPk(item.ITEM_ID);
-            } else if (itemType === 'DepositAccountApplication') {
-              details = await DepositAccountApplication.findOne({ 
-                where: { CUST_ID: item.CUST_ID } 
-              });
-            }
-          } catch (err) {
-            console.warn(`⚠️ Failed to fetch details for item ${item.ITEM_ID}:`, err.message);
-          }
-
-          return {
-            ...item.toJSON(),
-            age: WFWorkItemController.calculateAge(
-              item.CREATE_DT || item.CREATED_AT
-            ),
-            details
-          };
-        })
-      );
-
+    if (!workItems || workItems.length === 0) {
       return res.status(200).json({
         success: true,
-        message: 'Pending work items fetched successfully.',
-        data: enrichedItems
-      });
-    } catch (error) {
-      console.error('❌ Error fetching work items:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Error fetching work items',
-        error: error.message
+        message: 'No pending work items found',
+        data: []
       });
     }
-  }),
+
+    const enrichedItems = await Promise.all(
+      workItems.map(async (item) => {
+        let details = null;
+
+        try {
+          const itemType = item.ITEM_TYPE;
+
+          if (itemType === 'Customer') {
+            details = await Customer.findOne({ 
+              where: { CUST_ID: item.CUST_ID } 
+            });
+          } else if (itemType === 'DepositTransaction' && item.ITEM_ID) {
+            details = await DepositTransaction.findByPk(item.ITEM_ID);
+          } else if (itemType === 'DepositAccountApplication') {
+            details = await DepositAccountApplication.findOne({ 
+              where: { CUST_ID: item.CUST_ID } 
+            });
+          }
+        } catch (err) {
+          console.warn(`⚠️ Failed to fetch details for item ${item.ITEM_ID}:`, err.message);
+        }
+
+        return {
+          ...item.toJSON(),
+          age: WFWorkItemController.calculateAge(
+            item.CREATE_DT || item.CREATED_AT
+          ),
+          details
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pending work items fetched successfully.',
+      data: enrichedItems
+    });
+  } catch (error) {
+    console.error('❌ Error fetching work items:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching work items',
+      error: error.message
+    });
+  }
+}),
 
   // Get work item history
   getWorkItemHistory: asyncHandler(async (req, res) => {

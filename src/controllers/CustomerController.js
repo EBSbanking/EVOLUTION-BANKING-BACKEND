@@ -504,7 +504,19 @@ export const getAllCustomers = async (req, res) => {
  */
 export const getCustomerById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { CUST_ID } = req.params;
+    
+    console.log('🔍 Request params:', req.params);
+    console.log('🔍 CUST_ID parameter:', CUST_ID);
+    
+    if (!CUST_ID && CUST_ID !== 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID is required'
+      });
+    }
+    
+    console.log(`🔍 Looking for customer with ID: "${CUST_ID}"`);
     
     // Initialize models first
     await initModels();
@@ -513,31 +525,125 @@ export const getCustomerById = async (req, res) => {
       throw new Error('Customer model not available');
     }
     
-    const customer = await Customer.findByPk(id);
+    // Get the actual column names from the model
+    console.log('🔍 Customer model attributes:', Object.keys(Customer.rawAttributes || {}));
+    
+    // Check what columns exist
+    const attributes = Customer.rawAttributes || {};
+    const columnNames = Object.keys(attributes);
+    console.log('🔍 Available columns:', columnNames);
+    
+    // Convert to string for consistent handling
+    const customerId = String(CUST_ID).trim();
+    
+    // Try to find customer by different ID fields
+    let customer = null;
+    let queryAttempts = [];
+    
+    // Check which ID columns exist in the model
+    const possibleIdColumns = ['customer_id', 'id', 'CUST_ID', 'customerId', 'cust_id'];
+    
+    for (const column of possibleIdColumns) {
+      if (columnNames.includes(column)) {
+        console.log(`🔍 Trying column "${column}" with value: "${customerId}"`);
+        
+        try {
+          customer = await Customer.findOne({
+            where: { [column]: customerId }
+          });
+          
+          if (customer) {
+            console.log(`✅ Found using column: ${column}`);
+            break;
+          }
+        } catch (columnError) {
+          console.log(`❌ Error with column ${column}:`, columnError.message);
+        }
+      } else {
+        console.log(`❌ Column "${column}" not found in model`);
+      }
+    }
+    
+    // If not found, try numeric ID on the primary key
+    if (!customer) {
+      const numericId = parseInt(customerId);
+      if (!isNaN(numericId)) {
+        console.log(`🔍 Trying numeric ID: ${numericId}`);
+        customer = await Customer.findByPk(numericId);
+      }
+    }
+    
+    // If still not found, try with different formats
+    if (!customer) {
+      // Try padded version
+      if (customerId.length < 10) {
+        const paddedId = customerId.padStart(10, '0');
+        console.log(`🔍 Trying padded ID: "${paddedId}"`);
+        
+        // Try all possible columns again with padded ID
+        for (const column of possibleIdColumns) {
+          if (columnNames.includes(column)) {
+            customer = await Customer.findOne({
+              where: { [column]: paddedId }
+            });
+            if (customer) break;
+          }
+        }
+      }
+    }
     
     if (!customer) {
+      console.log(`❌ Customer not found with ID: ${customerId}`);
+      
+      // Get sample data to show what exists
+      let sampleCustomers = [];
+      try {
+        sampleCustomers = await Customer.findAll({
+          limit: 10,
+          order: [['id', 'ASC']]
+        });
+      } catch (sampleError) {
+        console.log('Error getting sample data:', sampleError.message);
+      }
+      
+      // Get column info
+      const sampleData = sampleCustomers.map(c => {
+        const data = { id: c.id };
+        // Add other ID-like columns
+        if (c.customer_id !== undefined) data.customer_id = c.customer_id;
+        if (c.CUST_ID !== undefined) data.CUST_ID = c.CUST_ID;
+        if (c.cust_id !== undefined) data.cust_id = c.cust_id;
+        if (c.customerId !== undefined) data.customerId = c.customerId;
+        return data;
+      });
+      
       return res.status(404).json({
         success: false,
-        message: 'Customer not found'
+        message: `Customer not found with ID: ${customerId}`,
+        note: 'Check the sample data below for valid ID formats',
+        availableColumns: columnNames,
+        sampleData: sampleData
       });
     }
+    
+    console.log(`✅ Found customer:`, customer.toJSON());
     
     res.json({
       success: true,
       message: 'Customer retrieved successfully',
-      customer: customer
+      customer: customer.toJSON()
     });
     
   } catch (error) {
-    console.error('❌ Error getting customer:', error.message);
+    console.error('❌ Error getting customer:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to retrieve customer',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
-
 
 export const createCustomer = async (req, res) => {
   const startTime = Date.now();
@@ -563,6 +669,7 @@ export const createCustomer = async (req, res) => {
     
     let transaction = null;
     let transactionCompleted = false;
+    let userId = ''; // Declare userId at the function scope
 
     try {
       // Start transaction
@@ -736,10 +843,12 @@ export const createCustomer = async (req, res) => {
       
       // Auto-generate Customer ID & Number if not provided
       const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } = await generateCustomerNumber();
-      const finalCUST_ID = CUST_ID || generatedCUST_ID;
-      const finalCUST_NO = CUST_NO || generatedCUST_NO;
+      
+      // ALWAYS use the generated values, ignore any CUST_ID/CUST_NO from request body
+      const finalCUST_ID = generatedCUST_ID;
+      const finalCUST_NO = generatedCUST_NO;
 
-      const userId = USER_ID || CREATED_BY || "SYSTEM";
+      userId = USER_ID || CREATED_BY || "SYSTEM"; // Assign to the outer scope variable
       const fullName = CUST_NM || `${FIRST_NAME} ${MIDDLE_NAME} ${LAST_NAME}`.trim();
       const now = new Date();
 
@@ -793,10 +902,8 @@ export const createCustomer = async (req, res) => {
         SANCTION_SCORE,
         DOCUMENT_VERIFICATION_STATUS,
         REC_ST,
-        status: 'Pending',
-        // 🔥 Add timestamp columns
-        createdAt: now,
-        updatedAt: now
+        status: 'Pending'
+        // Note: createdAt and updatedAt will be handled by Sequelize or added in raw query
       };
 
       console.log('📄 Creating customer with data:');
@@ -864,59 +971,186 @@ export const createCustomer = async (req, res) => {
       
       let newCustomer;
       
-      // Create customer using raw query to ensure all columns are included
-      const [result] = await sequelize.query(
-        `INSERT INTO customers (
-          CUST_ID, CUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME, 
-          CUST_NM, HOME_ADDRESS, EMAIL_ADDRESS, BU_ID, MAIDEN_NM, CNTRY_OF_BIRTH_ID, CUST_CAT, 
-          CAMPAIGN_ID, GENDER_TY, COUNTRY_NM, STATE, NIN, BVN, LOCAL_GOV, OPENING_RSN_ID, 
-          RESIDENT_CNTRY_ID, RISK_CLASS, STMNT_FREQ_CD, STMNT_FREQ_VALUE, CREATED_BY, USER_ID, 
-          CREATE_DT, INDUSTRY_ID, INDUSTRY_CD, TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, 
-          EMP_ST, ORGANISATION_NM, REGISTRATION_ADDRESS, ALERT_DELIVERY_METHOD, KYC_LEVEL, PHONE_NO, 
-          SMS, IS_PEP, SANCTION_SCORE, DOCUMENT_VERIFICATION_STATUS, REC_ST, status, 
-          createdAt, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        {
-          replacements: [
-            finalCUST_ID, finalCUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME,
-            fullName, HOME_ADDRESS, EMAIL_ADDRESS ? EMAIL_ADDRESS.toLowerCase() : null, BU_ID,
-            MAIDEN_NM, CNTRY_OF_BIRTH_ID, CUST_CAT, CAMPAIGN_ID, GENDER_TY, COUNTRY_NM,
-            STATE, NIN, BVN, LOCAL_GOV, OPENING_RSN_ID, RESIDENT_CNTRY_ID, RISK_CLASS,
-            STMNT_FREQ_CD, STMNT_FREQ_VALUE, CREATED_BY, userId,
-            CREATE_DT ? new Date(CREATE_DT) : now, INDUSTRY_ID, INDUSTRY_CD,
-            TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, EMP_ST, ORGANISATION_NM,
-            REGISTRATION_ADDRESS, ALERT_DELIVERY_METHOD, KYC_LEVEL, PHONE_NO, SMS,
-            IS_PEP, SANCTION_SCORE, DOCUMENT_VERIFICATION_STATUS, REC_ST, 'Pending',
-            now, now
-          ],
-          transaction
-        }
-      );
+      // Option 1: Use Sequelize's create method (recommended)
+      try {
+        // Use Sequelize's create method - it handles column/value matching automatically
+        console.log('🔄 Using Sequelize create method...');
+        newCustomer = await Customer.create(customerData, { transaction });
+        console.log("✅ Customer created with ID:", newCustomer.id);
+      } catch (sequelizeError) {
+        console.warn('⚠️ Sequelize create failed, falling back to raw query:', sequelizeError.message);
+        
+        // Option 2: Fall back to raw query if Sequelize create fails
+        // Create the columnNames array with EXACTLY the columns in your database table
+        const columnNames = [
+          'CUST_ID', 'CUST_NO', 'TITLE_ID', 'FIRST_NAME', 'MIDDLE_NAME', 'LAST_NAME',
+          'CUST_NM', 'HOME_ADDRESS', 'EMAIL_ADDRESS', 'BU_ID', 'MAIDEN_NM', 'CNTRY_OF_BIRTH_ID', 'CUST_CAT',
+          'CAMPAIGN_ID', 'GENDER_TY', 'COUNTRY_NM', 'STATE', 'NIN', 'BVN', 'LOCAL_GOV', 'OPENING_RSN_ID',
+          'RESIDENT_CNTRY_ID', 'RISK_CLASS', 'STMNT_FREQ_CD', 'STMNT_FREQ_VALUE', 'CREATED_BY', 'USER_ID',
+          'CREATE_DT', 'INDUSTRY_ID', 'INDUSTRY_CD', 'TAX_STATUS', 'MARITAL_ST', 'TAX_GRP_ID', 'OPERATIONS_CRNCY_ID',
+          'EMP_ST', 'ORGANISATION_NM', 'REGISTRATION_ADDRESS', 'ALERT_DELIVERY_METHOD', 'KYC_LEVEL', 'PHONE_NO',
+          'SMS', 'IS_PEP', 'SANCTION_SCORE', 'DOCUMENT_VERIFICATION_STATUS', 'REC_ST', 'status',
+          'createdAt', 'updatedAt'
+        ];
 
-      // Get the created customer ID
-      const customerId = result.insertId;
-      newCustomer = { id: customerId, ...customerData };
-      console.log("✅ Customer created with ID:", newCustomer.id);
+        console.log(`🔢 Column count: ${columnNames.length}`);
+
+        // Create placeholders dynamically
+        const placeholders = columnNames.map(() => '?').join(', ');
+
+        // Create replacements array - MUST MATCH THE COLUMN NAMES IN ORDER!
+        const replacements = [
+          finalCUST_ID, finalCUST_NO, TITLE_ID, FIRST_NAME, MIDDLE_NAME, LAST_NAME,
+          fullName, HOME_ADDRESS, EMAIL_ADDRESS ? EMAIL_ADDRESS.toLowerCase() : null, BU_ID,
+          MAIDEN_NM, CNTRY_OF_BIRTH_ID, CUST_CAT, CAMPAIGN_ID, GENDER_TY, COUNTRY_NM,
+          STATE, NIN, BVN, LOCAL_GOV, OPENING_RSN_ID, RESIDENT_CNTRY_ID, RISK_CLASS,
+          STMNT_FREQ_CD, STMNT_FREQ_VALUE, CREATED_BY, userId,
+          CREATE_DT ? new Date(CREATE_DT) : now, INDUSTRY_ID, INDUSTRY_CD,
+          TAX_STATUS, MARITAL_ST, TAX_GRP_ID, OPERATIONS_CRNCY_ID, EMP_ST, ORGANISATION_NM,
+          REGISTRATION_ADDRESS, ALERT_DELIVERY_METHOD, KYC_LEVEL, PHONE_NO, SMS,
+          IS_PEP, SANCTION_SCORE, DOCUMENT_VERIFICATION_STATUS, REC_ST, 'Pending',
+          now, now  // createdAt and updatedAt
+        ];
+
+        console.log(`🔢 Replacement values count: ${replacements.length}`);
+
+        // Debug: Log each column with its value
+        console.log('🔍 Debug: Column-value mapping (first 10):');
+        for (let i = 0; i < Math.min(10, columnNames.length); i++) {
+          console.log(`${i + 1}. ${columnNames[i]} = ${replacements[i] !== undefined ? JSON.stringify(replacements[i]) : 'UNDEFINED'}`);
+        }
+
+        // Validate counts match
+        if (columnNames.length !== replacements.length) {
+          console.error(`❌ Mismatch! Columns: ${columnNames.length}, Values: ${replacements.length}`);
+          throw new Error(`Column count (${columnNames.length}) doesn't match value count (${replacements.length})`);
+        }
+
+        const [result] = await sequelize.query(
+          `INSERT INTO customers (${columnNames.join(', ')}) VALUES (${placeholders})`,
+          {
+            replacements,
+            transaction
+          }
+        );
+
+        // Get the created customer ID
+        const customerId = result.insertId;
+        
+        // Fetch the created customer to return complete data
+        newCustomer = await Customer.findOne({
+          where: { id: customerId },
+          transaction
+        });
+        
+        if (!newCustomer) {
+          // Create a mock customer object if we can't fetch it
+          newCustomer = { id: customerId, ...customerData, createdAt: now, updatedAt: now };
+        }
+        
+        console.log("✅ Customer created with ID:", newCustomer.id);
+      }
       
       // Create Next of Kin records if provided
       if (processedNextOfKin.length > 0) {
-        const NextOfKin = sequelize.models.NextOfKin;
+        console.log(`📝 Processing ${processedNextOfKin.length} Next of Kin records...`);
         
-        // Process next of kin data
-        const nextOfKinRecords = processedNextOfKin.map(kin => ({
-          NEXTOF_KIN_NM: kin.NEXTOF_KIN_NM || '',
-          RELATIONSHIP: kin.RELATIONSHIP || '',
-          PHONE_NO: kin.PHONE_NO || '',
-          EMAIL: kin.EMAIL || '',
-          ADDRESS: kin.ADDRESS || '',
-          IS_PRIMARY: kin.IS_PRIMARY || false,
-          customerId: customerId,
-          CREATED_DT: now
-        }));
-        
-        console.log(`📝 Creating ${nextOfKinRecords.length} Next of Kin records...`);
-        await NextOfKin.bulkCreate(nextOfKinRecords, { transaction });
-        console.log(`✅ Created ${nextOfKinRecords.length} Next of Kin records`);
+        try {
+          // First, ensure the next_of_kins table exists (not nextofkins)
+          const ensureNextOfKinTable = async (transaction) => {
+            try {
+              console.log('🔍 Checking next_of_kins table...');
+              
+              // Check if the table exists (with correct name: next_of_kins)
+              const [tableCheck] = await sequelize.query(
+                `SELECT TABLE_NAME
+                 FROM INFORMATION_SCHEMA.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE()
+                 AND TABLE_NAME = 'next_of_kins'`,
+                { transaction }
+              );
+              
+              if (tableCheck.length === 0) {
+                console.log('➕ Creating next_of_kins table...');
+                
+                // Create the table with correct structure
+                await sequelize.query(`
+                  CREATE TABLE IF NOT EXISTS next_of_kins (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    customerId INT NOT NULL,
+                    NEXTOF_KIN_NM VARCHAR(255) NOT NULL,
+                    RELATIONSHIP VARCHAR(50) NOT NULL,
+                    PHONE_NO VARCHAR(20) NOT NULL,
+                    EMAIL VARCHAR(255),
+                    ADDRESS TEXT NOT NULL,
+                    IS_PRIMARY TINYINT(1) DEFAULT 0,
+                    CREATED_DT DATETIME,
+                    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (customerId) REFERENCES customers(id) ON DELETE CASCADE ON UPDATE CASCADE
+                  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                `, { transaction });
+                
+                console.log('✅ next_of_kins table created successfully');
+              } else {
+                console.log('✅ next_of_kins table already exists');
+              }
+              
+              return true;
+            } catch (error) {
+              console.error('❌ Error checking/creating next_of_kins table:', error.message);
+              throw error;
+            }
+          };
+
+          await ensureNextOfKinTable(transaction);
+          
+          // Process each next of kin
+          for (const kin of processedNextOfKin) {
+            const nextOfKinData = {
+              customerId: newCustomer.id,
+              NEXTOF_KIN_NM: kin.NEXTOF_KIN_NM || '',
+              RELATIONSHIP: kin.RELATIONSHIP || '',
+              PHONE_NO: kin.PHONE_NO || '',
+              EMAIL: kin.EMAIL || null,
+              ADDRESS: kin.ADDRESS || '',
+              IS_PRIMARY: kin.IS_PRIMARY || false,
+              CREATED_DT: kin.CREATED_DT ? new Date(kin.CREATED_DT) : now,
+              createdAt: now,
+              updatedAt: now
+            };
+            
+            console.log(`  ➕ Creating Next of Kin: ${nextOfKinData.NEXTOF_KIN_NM}`);
+            
+            // Use raw SQL to insert into the correct table
+            await sequelize.query(
+              `INSERT INTO next_of_kins 
+               (customerId, NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY, CREATED_DT, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              {
+                replacements: [
+                  nextOfKinData.customerId,
+                  nextOfKinData.NEXTOF_KIN_NM,
+                  nextOfKinData.RELATIONSHIP,
+                  nextOfKinData.PHONE_NO,
+                  nextOfKinData.EMAIL,
+                  nextOfKinData.ADDRESS,
+                  nextOfKinData.IS_PRIMARY,
+                  nextOfKinData.CREATED_DT,
+                  nextOfKinData.createdAt,
+                  nextOfKinData.updatedAt
+                ],
+                transaction
+              }
+            );
+          }
+          
+          console.log(`✅ Created ${processedNextOfKin.length} Next of Kin records`);
+        } catch (kinError) {
+          console.error('❌ Error creating Next of Kin records:', kinError.message);
+          console.error('❌ Error details:', kinError);
+          throw new Error(`Failed to create Next of Kin records: ${kinError.message}`);
+        }
       }
       
       // AML & Sanction List Check for PEP
@@ -1108,16 +1342,20 @@ export const createCustomer = async (req, res) => {
         console.error("Parameters:", error.parameters);
       }
 
-      // Audit failure
+      // Audit failure - Ensure userId is defined
       try {
+        // Use the userId variable from earlier in the function
+        // If it's not defined, use 0 (system)
+        const auditUserId = userId ? (parseInt(userId) || 0) : 0;
+        
         await auditLogger.error("Audit Event", {
           entity_type: "CUSTOMER_CREATE",
           entity_id: null,
-          user_id: "system",
+          user_id: auditUserId,
           action: "create_customer",
           old_value: null,
           new_value: null,
-          ip_address: req.ip || "unknown",
+          ip_address: req.ip || req.connection.remoteAddress || "unknown",
           event_type: "CUSTOMER_ERROR",
           outcome: "failure",
           error: error.message
@@ -1131,7 +1369,7 @@ export const createCustomer = async (req, res) => {
         message: "Failed to create customer",
         error: error.message,
         timestamp: new Date().toISOString(),
-        suggestion: "Please run /api/customer/test-db-connection first to check database connection"
+        suggestion: "Please check if the next_of_kins table exists in your database"
       });
     }
   } catch (error) {
@@ -1146,6 +1384,7 @@ export const createCustomer = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Update customer
@@ -1321,7 +1560,7 @@ export const searchCustomers = async (req, res) => {
       message: 'Failed to search customers',
       error: error.message
     });
-  }
+}
 };
 
 /**

@@ -32,7 +32,7 @@ router.get('/gl-accounts/:glAcctNo', getGLAccountByAcctNo);
  * ===========================
  */
 router.post('/gl-accounts/transactions', createGLAccountTransaction);
-router.post('/gl-accounts/transactions/double-entry', createDoubleEntryTransaction);
+router.post('/transactions/double-entry', createDoubleEntryTransaction);
 router.get('/gl-accounts/transactions', getGLAccountTransactions);
 
 // Get pending transactions

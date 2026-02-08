@@ -12,6 +12,10 @@ import configurationService from './src/Services/ConfigurationService.js';
 import SavingsProduct from './src/models/SavingsProduct.js';
 import { LoanInterestRate } from './src/models/LoanInterestRate.js';
 import LoanAccount from './src/models/LoanAccount.js';
+import LoanFee from './src/models/LoanFee.js';
+import Approval from './src/models/Approval.js';
+
+
 
 
 // Fix __dirname for ES modules
@@ -27,6 +31,10 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const AUTO_SYNC_DB = process.env.AUTO_SYNC_DB === 'true';
 
 await configurationService.initialize();
+
+await LoanFee.initializeTable();
+
+    
 
 // ============================================
 // GET SEQUELIZE INSTANCE
@@ -152,6 +160,27 @@ const createMissingTables = async () => {
 };
 
 
+
+const initializeServer = async () => {
+  try {
+    console.log('🚀 Starting application initialization...');
+    
+    // ... existing initialization code ...
+    
+    // Auto-create Approval table
+    console.log('🔄 Auto-creating approval_requests table...');
+    await Approval.sync({ alter: true }); // This creates table if it doesn't exist
+    console.log('✅ approval_requests table ready');
+    
+    // ... rest of your server startup code ...
+    
+  } catch (error) {
+    console.error('Error during server initialization:', error);
+    process.exit(1);
+  }
+};
+
+initializeServer();
 
 // ============================================
 // LOAD SPECIFIC MODELS TO AVOID COLUMN ERRORS
@@ -968,6 +997,22 @@ const initCustomerApprovalSystem = async () => {
     return false;
   }
 };
+
+// Simple debug middleware - add this AFTER all route mounting
+app.use((req, res, next) => {
+  console.log(`\n=== Route Debug ===`);
+  console.log(`Request: ${req.method} ${req.originalUrl}`);
+  console.log(`Path: ${req.path}`);
+  console.log(`Base URL: ${req.baseUrl}`);
+  
+  // Check if this is the thrift banking route
+  if (req.originalUrl.includes('thrift-banking')) {
+    console.log('⚠️ This is a thrift-banking request');
+    console.log('Looking for:', req.originalUrl);
+  }
+  
+  next();
+});
 
 // ============================================
 // MAIN SERVER STARTUP
