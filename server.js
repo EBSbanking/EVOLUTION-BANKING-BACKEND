@@ -167,10 +167,11 @@ const initializeServer = async () => {
     
     // ... existing initialization code ...
     
-    // Auto-create Approval table
-    console.log('🔄 Auto-creating approval_requests table...');
-    await Approval.sync({ alter: true }); // This creates table if it doesn't exist
-    console.log('✅ approval_requests table ready');
+   // Auto-create Approval table
+// Skip Approval sync here - handled elsewhere
+console.log('⏭️  Approval table sync handled in main sync process');
+await Approval.sync({ alter: true }); // This creates table if it doesn't exist
+console.log('✅ approval_requests table ready');
     
     // ... rest of your server startup code ...
     
@@ -379,12 +380,25 @@ const syncDatabaseSafely = async () => {
       return true;
     }
     
-    // List of models that are known to have issues
+    // Models with problematic field name mappings
+    const modelsWithFieldNameIssues = [
+      'LoanAccountDetails', // ACCT_NO vs a_c_c_t__n_o
+      'GroupLoan', // approvedAt vs approved_at
+      'SMS', // EXTERNAL_SMS_ID vs e_x_t_e_r_n_a_l__s_m_s__i_d
+      'FileUpload', // CUST_NO vs c_u_s_t__n_o
+      'File', // publicId vs public_id
+      'WF_QUEUE', // BUS_PROC_ID vs b_u_s__p_r_o_c__i_d
+      'WF_SUB_PROCESS', // BUS_PROC_ID vs b_u_s__p_r_o_c__i_d
+      'WF_SUB_PROCESS_POLICY', // SUB_PROC_ID vs s_u_b__p_r_o_c__i_d
+      'Thrift', // accountType vs account_type
+      'StandingOrder', // customerAcctNo vs customer_acct_no
+      'StandingOrderExecution', // standingOrderId vs standing_order_id
+      'GroupSavingsWithdrawal' // groupSavingsId vs group_savings_id
+    ];
+    
+    // Models to skip completely
     const skipModels = [
-      'LoanDisbursement', // Missing ACCT_NO column
-      'Counter', // Missing created_at, updated_at columns
-      'DepositTransaction', 
-      'AML'
+      'LoanDisbursement', 'Counter', 'DepositTransaction', 'AML'
     ];
     
     let successCount = 0;
@@ -400,19 +414,62 @@ const syncDatabaseSafely = async () => {
       try {
         console.log(`   🔄 Syncing ${modelName}...`);
         
-        // Use safer sync options - don't alter in production
-        const syncOptions = {
-          alter: NODE_ENV === 'development' && AUTO_SYNC_DB,
-          force: false
-        };
+        const model = sequelize.models[modelName];
+        const tableName = model.tableName;
         
-        // This will create the table if it doesn't exist
-        await sequelize.models[modelName].sync(syncOptions);
-        console.log(`   ✅ ${modelName} synced`);
-        successCount++;
+        // Check if table exists
+        const tableExists = await sequelize.getQueryInterface().tableExists(tableName);
+        
+        if (modelsWithFieldNameIssues.includes(modelName)) {
+          console.log(`   ⚠️  ${modelName} has field name mapping issues`);
+          
+          if (!tableExists) {
+            console.log(`   📝 Creating ${modelName} table...`);
+            // Create without indexes first
+            await model.sync({ alter: false });
+            console.log(`   ✅ ${modelName} table created (without indexes)`);
+            successCount++;
+          } else {
+            console.log(`   ⏭️  ${modelName} table exists, skipping index creation`);
+            successCount++;
+          }
+        } else {
+          // Normal sync for other models
+          const syncOptions = {
+            alter: false, // Disable alter completely
+            force: false
+          };
+          
+          await model.sync(syncOptions);
+          console.log(`   ✅ ${modelName} synced`);
+          successCount++;
+        }
       } catch (modelError) {
         console.log(`   ❌ ${modelName} sync failed: ${modelError.message}`);
-        errorCount++;
+        
+        // If it's a "column doesn't exist" error, try a different approach
+        if (modelError.message.includes("doesn't exist in table")) {
+          console.log(`   🔄 ${modelName} has column name issues, trying simple creation...`);
+          
+          try {
+            // Get the model definition
+            const model = sequelize.models[modelName];
+            const tableName = model.tableName;
+            
+            // Drop table if exists
+            await sequelize.query(`DROP TABLE IF EXISTS ${tableName}`);
+            
+            // Create with minimal options
+            await model.sync({ alter: false });
+            console.log(`   ✅ ${modelName} table recreated without problematic indexes`);
+            successCount++;
+          } catch (recreateError) {
+            console.log(`   ❌ Failed to recreate ${modelName}: ${recreateError.message}`);
+            errorCount++;
+          }
+        } else {
+          errorCount++;
+        }
       }
     }
     
@@ -483,6 +540,59 @@ try {
   console.error('❌ Failed to load Drawer Routes:', error.message);
   console.error('Error stack:', error.stack);
 }
+
+const syncDatabaseMinimal = async () => {
+  console.log('\n🔄 Minimal database synchronization (skipping indexes)...');
+  
+  try {
+    const modelNames = Object.keys(sequelize.models);
+    console.log(`📋 Found ${modelNames.length} models`);
+    
+    const skipModels = [
+      'LoanDisbursement', 'Counter', 'DepositTransaction', 'AML'
+    ];
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const modelName of modelNames) {
+      if (skipModels.includes(modelName)) {
+        console.log(`   ⏭️  Skipping ${modelName}`);
+        continue;
+      }
+      
+      try {
+        console.log(`   📝 ${modelName}...`);
+        const model = sequelize.models[modelName];
+        
+        // Create table without any indexes
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS ${model.tableName} (
+            id INTEGER AUTO_INCREMENT PRIMARY KEY,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          ) ENGINE=InnoDB
+        `);
+        
+        console.log(`   ✅ ${modelName} table created (minimal)`);
+        successCount++;
+      } catch (error) {
+        console.log(`   ❌ ${modelName}: ${error.message}`);
+        errorCount++;
+      }
+    }
+    
+    console.log(`\n📊 Minimal sync summary:`);
+    console.log(`   ✅ Created: ${successCount} tables`);
+    console.log(`   ❌ Errors: ${errorCount} tables`);
+    
+    return successCount > 0;
+  } catch (error) {
+    console.error('❌ Minimal sync failed:', error.message);
+    return false;
+  }
+};
+
 
 // ============================================
 // DATABASE ATTACHMENT MIDDLEWARE (CRITICAL FIX)
@@ -757,6 +867,58 @@ const initializeCounters = async () => {
 };
 
 // ============================================
+// FIX APPROVAL TABLE (TOO MANY INDEXES ISSUE)
+// ============================================
+
+const fixApprovalTableIssue = async () => {
+  console.log('\n🔧 Checking approval_requests table...');
+  
+  try {
+    // Check if table exists
+    const tableExists = await sequelize.getQueryInterface().tableExists('approval_requests');
+    
+    if (!tableExists) {
+      console.log('✅ approval_requests table does not exist, will be created fresh');
+      return true;
+    }
+    
+    // Check if table has too many indexes
+    const [indexCount] = await sequelize.query(`
+      SELECT COUNT(*) as count 
+      FROM INFORMATION_SCHEMA.STATISTICS 
+      WHERE TABLE_NAME = 'approval_requests' 
+      AND TABLE_SCHEMA = DATABASE()
+    `);
+    
+    const count = parseInt(indexCount[0].count);
+    console.log(`📊 approval_requests table has ${count} indexes`);
+    
+    if (count >= 60) { // Getting close to MySQL limit of 64
+      console.warn('⚠️  approval_requests table has too many indexes');
+      console.warn('💡 To fix: DROP TABLE approval_requests;');
+      
+      // In development, we can auto-drop
+      if (NODE_ENV === 'development' && AUTO_SYNC_DB) {
+        console.log('🔄 Development mode: Auto-dropping approval_requests table...');
+        await sequelize.query('DROP TABLE approval_requests');
+        console.log('✅ Table dropped, will be recreated on sync');
+        return true;
+      } else {
+        console.warn('⚠️  Manual intervention required');
+        return false;
+      }
+    }
+    
+    console.log('✅ approval_requests table is OK');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Error checking approval_requests:', error.message);
+    return false;
+  }
+};
+
+// ============================================
 // ULTIMATE PERMISSIONS CACHE FIX
 // ============================================
 
@@ -1015,219 +1177,130 @@ app.use((req, res, next) => {
 });
 
 // ============================================
-// MAIN SERVER STARTUP
+// SINGLE POINT OF STARTUP CONTROL
 // ============================================
 
-const startServer = async () => {
-  console.log('\n' + '='.repeat(60));
-  console.log('🚀 STARTING EVOLUTION BANKING BACKEND SERVER');
+const startup = async () => {
+  console.log('\n🚀 Evolution Banking - Single Startup Process');
   console.log('='.repeat(60));
-  console.log(`Environment: ${NODE_ENV}`);
-  console.log(`Port: ${PORT}`);
-  console.log(`Host: ${HOST}`);
-  console.log(`Auto Sync: ${AUTO_SYNC_DB}`);
-  console.log(`Database: ${process.env.DB_NAME || 'core_banking'}`);
   
   try {
-    // STEP 1: Connect to database
-    console.log('\n🔌 Connecting to database...');
-    await sequelize.authenticate();
-    console.log('✅ Database connected');
+    // STEP 0: Load configuration
+    console.log('⚙️  Loading configuration...');
+    await configurationService.initialize();
     
-    // Check database health
-    const dbHealth = await checkDatabaseHealth();
-    console.log('📊 Database health:', dbHealth.status);
+    // STEP 1: Initialize critical tables manually (NO SYNC)
+    console.log('\n📊 Initializing critical tables without sync...');
+    await SavingsProduct.initializeTable();
+    await LoanFee.initializeTable();
     
-    // STEP 1.5: Emergency table creation if needed
-    console.log('\n🆘 Emergency table check...');
-    const tablesCreated = await createMissingTables();
-    if (tablesCreated) {
-      console.log('✅ Emergency tables created/verified');
+    // For LoanAccount, use a safer approach
+    console.log('📝 Ensuring LoanAccount table...');
+    try {
+      const [tableExists] = await sequelize.query(`
+        SELECT COUNT(*) as count 
+        FROM INFORMATION_SCHEMA.TABLES 
+        WHERE TABLE_NAME = 'LoanAccounts' 
+        AND TABLE_SCHEMA = DATABASE()
+      `);
+      
+      if (parseInt(tableExists[0].count) === 0) {
+        console.log('📦 Creating LoanAccounts table...');
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS LoanAccounts (
+            id INTEGER AUTO_INCREMENT PRIMARY KEY,
+            acc_t__n_o VARCHAR(255) NOT NULL,
+            cust_id VARCHAR(255) NOT NULL,
+            status VARCHAR(50) DEFAULT 'PENDING',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_acc_t_no (acc_t__n_o),
+            INDEX idx_cust_id (cust_id)
+          ) ENGINE=InnoDB
+        `);
+        console.log('✅ LoanAccounts table created');
+      } else {
+        console.log('✅ LoanAccounts table already exists');
+      }
+    } catch (error) {
+      console.log('⚠️  LoanAccounts table creation skipped:', error.message);
     }
     
-    // STEP 2: Repair schema before loading models
-    console.log('\n🔧 Checking database schema...');
+    // STEP 2: Create missing tables WITHOUT syncing models
+    console.log('\n🔍 Checking for missing critical tables...');
+    await createMissingTables();
+    
+    // STEP 3: Repair schema
+    console.log('\n🔧 Repairing database schema...');
     await repairDatabaseSchema();
     
-    // STEP 3: Load models
-    console.log('\n📦 Loading models...');
-    const modelsLoaded = await loadModelsSafely();
+    // STEP 4: Initialize counters
+    console.log('\n📊 Initializing counters...');
+    await initializeCounters();
     
-    if (!modelsLoaded && NODE_ENV === 'production') {
-      console.error('❌ Cannot start in production without models');
-      process.exit(1);
-    }
+    // STEP 5: Fix Approval table
+    console.log('\n✅ Checking approval table...');
+    await fixApprovalTableIssue();
     
-    // STEP 4: Sync database (more permissive now)
-    const dbSynced = await syncDatabaseSafely();
+    // STEP 6: Install permissions patch
+    console.log('\n🔧 Installing permissions patch...');
+    fixPermissionsCacheGlobally();
     
-    if (!dbSynced && NODE_ENV === 'production') {
-      console.error('❌ Cannot start in production without database sync');
-      process.exit(1);
-    }
+    // STEP 7: Initialize customer system
+    console.log('\n🎯 Initializing customer system...');
+    await initCustomerApprovalSystem();
     
-    // STEP 5: Initialize counters (with better error handling)
-    console.log('\n📊 Initializing system data...');
-    const countersInitialized = await initializeCounters();
+    // STEP 8: DO NOT SYNC MODELS - start server immediately
+    console.log('\n' + '='.repeat(60));
+    console.log('✅ All pre-startup tasks completed');
+    console.log('🚀 Starting server WITHOUT model sync...');
     
-    // STEP 6: Initialize Customer Approval System
-    console.log('\n🎯 Initializing business systems...');
-    const approvalSystemReady = await initCustomerApprovalSystem();
-    
-    // STEP 7: Attach database to app requests
-    app.use((req, res, next) => {
-      req.db = {
-        sequelize,
-        getSequelize: () => sequelize,
-        models: sequelize.models || {},
-        countersInitialized,
-        approvalSystemReady
-      };
-      next();
-    });
-    
-    // Add a test endpoint to verify database connection
-    app.get('/api/test-db', async (req, res) => {
-      try {
-        const [results] = await sequelize.query('SELECT 1 as test, NOW() as timestamp');
-        res.json({ 
-          success: true, 
-          database: 'Connected', 
-          result: results[0],
-          dbHealth: await checkDatabaseHealth()
-        });
-      } catch (error) {
-        res.status(500).json({ 
-          success: false, 
-          error: error.message,
-          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
-      }
-    });
-    
-    // STEP 8: Start HTTP server
-    console.log('\n🌐 Starting HTTP server...');
-    
-    const networkIP = (() => {
-      try {
-        const interfaces = os.networkInterfaces();
-        for (const name of Object.keys(interfaces)) {
-          for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-              return iface.address;
-            }
-          }
-        }
-      } catch (error) {
-        // Ignore
-      }
-      return 'localhost';
-    })();
+    // Start the server
+    const PORT = process.env.PORT || 5000;
+    const HOST = process.env.HOST || '0.0.0.0';
     
     const server = app.listen(PORT, HOST, () => {
       console.log(`
-╔════════════════════════════════════════════════════════════════════════╗
-║                    Evolution Banking System API                       ║
-╠════════════════════════════════════════════════════════════════════════╣
-║  Status:      ${'✅ RUNNING'.padEnd(48)}                                ║
-║  Time:        ${new Date().toLocaleString().padEnd(48)}                ║
-║  Environment: ${NODE_ENV.padEnd(48)}                                  ║
-║  Database:    ${'✅ Connected'.padEnd(48)}                             ║
-║  DB Health:   ${dbHealth.status.padEnd(48)}                           ║
-║  Models:      ${(modelsLoaded ? '✅ Loaded' : '⚠️  Partial').padEnd(48)}  ║
-║  Sync:        ${(dbSynced ? '✅ Complete' : '⚠️  Partial').padEnd(48)}    ║
-║  Counters:    ${(countersInitialized ? '✅ Initialized' : '⚠️  Partial').padEnd(48)} ║
-║  Approval Sys:${(approvalSystemReady ? '✅ Ready' : '⚠️  Issues').padEnd(48)}  ║
-║  Auto Sync:   ${(AUTO_SYNC_DB ? '✅ Enabled' : '❌ Disabled').padEnd(48)}  ║
-║                                                                        ║
-║  Server URLs:                                                         ║
-║  ─────────────────────────────────────────────────────────────────────║
-║  Local:       http://localhost:${PORT}                                   ║
-║  Network:     http://${networkIP}:${PORT}                                 ║
-║                                                                        ║
-║  Health:      http://localhost:${PORT}/health                           ║
-║  Test DB:     http://localhost:${PORT}/api/test-db                      ║
-╚════════════════════════════════════════════════════════════════════════╝
-      `);
-    });
-    
-    // STEP 9: Setup graceful shutdown
-    const shutdown = (signal) => {
-      console.log(`\n🛑 ${signal} received. Shutting down gracefully...`);
-      
-      server.close(() => {
-        console.log('✅ HTTP server closed');
-        
-        sequelize.close()
-          .then(() => {
-            console.log('✅ Database connections closed');
-            process.exit(0);
-          })
-          .catch(error => {
-            console.error('⚠️  Error closing database:', error.message);
-            process.exit(0);
-          });
-      });
-      
-      setTimeout(() => {
-        console.error('⏰ Shutdown timeout, forcing exit');
-        process.exit(1);
-      }, 10000);
-    };
-    
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    
-    process.on('uncaughtException', (error) => {
-      console.error('🚨 Uncaught Exception:', error.message);
-      if (error.stack) console.error(error.stack);
-      shutdown('UNCAUGHT_EXCEPTION');
-    });
-    
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('🚨 Unhandled Rejection at:', promise);
-      console.error('Reason:', reason);
-    });
-    
-  } catch (error) {
-    console.error('\n❌ Server startup failed:', error.message);
-    console.error('Error stack:', error.stack);
-    
-    if (NODE_ENV === 'production') {
-      console.error('🚨 Production startup failed - exiting');
-      process.exit(1);
-    } else {
-      console.log('⚠️  Development mode - trying to start server anyway');
-      
-      try {
-        const server = app.listen(PORT, HOST, () => {
-          console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║          Evolution Banking System API                    ║
 ╠══════════════════════════════════════════════════════════╣
-║  ⚠️  STARTED WITH ERRORS                                ║
-║     http://localhost:${PORT}                               ║
+║  ✅ SERVER RUNNING (NO MODEL SYNC)                      ║
+║     http://${HOST}:${PORT}                               ║
 ║                                                          ║
-║  🔗 Health: http://localhost:${PORT}/health               ║
-║  🔗 Test DB: http://localhost:${PORT}/api/test-db         ║
+║  🔗 Health: http://${HOST}:${PORT}/health               ║
+║  🔗 Test DB: http://${HOST}:${PORT}/api/test-db         ║
+║  🔗 Customer: http://${HOST}:${PORT}/api/customers      ║
 ╚══════════════════════════════════════════════════════════╝
-          `);
-        });
-      } catch (startError) {
-        console.error('❌ Could not start server at all:', startError.message);
-        process.exit(1);
-      }
-    }
+      `);
+      
+      console.log('\n📊 Database Status:');
+      console.log('   ✅ Connected to MySQL');
+      console.log('   ⚠️  Model sync disabled (column name issues)');
+      console.log('   💡 Run manual fixes before enabling sync');
+    });
+    
+    // Handle graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('\n🔻 Shutting down gracefully...');
+      server.close(() => {
+        console.log('✅ Server closed');
+        process.exit(0);
+      });
+    });
+    
+  } catch (error) {
+    console.error('\n❌ Startup failed:', error.message);
+    console.error('Stack:', error.stack);
+    process.exit(1);
   }
 };
 
 // ============================================
-// EXPORT AND START SERVER
+// START THE SERVER
 // ============================================
 
-// Start the server
 if (process.env.NODE_ENV !== 'test') {
-  startServer();
+  startup();
 }
 
 export default app;

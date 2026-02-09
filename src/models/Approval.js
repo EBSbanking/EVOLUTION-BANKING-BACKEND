@@ -83,9 +83,9 @@ Approval.init({
     type: DataTypes.DATE
   },
   overall_status: {
-  type: DataTypes.ENUM('PENDING', 'PENDING_FIRST', 'PENDING_SECOND', 'APPROVED', 'REJECTED', 'CANCELLED'),
-  defaultValue: 'PENDING' // Changed default to 'PENDING'
-},
+    type: DataTypes.ENUM('PENDING_FIRST', 'PENDING_SECOND', 'APPROVED', 'REJECTED', 'CANCELLED'),
+    defaultValue: 'PENDING_FIRST'
+  },
   expiry_date: {
     type: DataTypes.DATE,
     allowNull: false

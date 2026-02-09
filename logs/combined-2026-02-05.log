@@ -1,0 +1,399 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 00:30:06"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 00:30:27"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T09:30:39.007Z","timestamp":"2026-02-05 00:30:39"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 00:30:39"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 00:30:39"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 00:39:13"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 00:39:13","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 00:39:13","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 00:39:13"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:02:51"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:02:51","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:02:51","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:02:51"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:03:08.382Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:03:08","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:03:08.477Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:03:08","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:03:14"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:03:14","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:03:14","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:03:14"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:08:18"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:08:18","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:08:18"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:08:18","totalCount":1}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:08:28.530Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:08:28","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:08:28.536Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:08:28","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:08:34"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:08:34","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:08:35","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:08:35"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:19:27"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:19:27","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:19:28","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:19:28"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:20:53"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:20:53","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:20:53","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:20:53"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:22:55"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:22:55","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:22:55","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:22:55"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:23:45"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:23:45","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:23:45","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:23:45"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:24:32.398Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:24:32","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:24:32.442Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:24:32","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:28:10"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:28:10","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:28:10","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:28:11"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:28:11","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:28:11"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:28:11","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:28:11"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:30:01","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:30:01"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:30:01","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:30:01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:30:01"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:30:01","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:30:01","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:30:01"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 01:36:18"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 01:36:29"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T10:36:34.434Z","timestamp":"2026-02-05 01:36:34"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 01:36:34"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 01:36:34"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:37:55"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:37:55","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:37:55","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:37:55"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:38:14.417Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:38:14","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:38:14.471Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:38:14","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:38:16","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:38:16"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:38:16","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:38:16"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:38:16"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:38:16","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:38:16","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:38:16"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:39:20","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:39:21"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:39:21","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:39:21"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:07"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:07","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:07"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:07","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:07"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:07","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:07","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:07"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:54:19.277Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:54:19","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:54:19.385Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:54:19","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:28"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:28","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:54:28","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:54:28"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:54:43.151Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:54:43","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":5,"username":"PCO05"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T09:54:43.216Z","message":"Authenticated user logged out","timestamp":"2026-02-05 01:54:43","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":5,"username":"PCO05"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:55:00"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:55:00","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 01:55:00"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 01:55:00","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:01:20"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:01:20","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:01:20"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:01:20","totalCount":1}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:01:57.035Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:01:57","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:01:57.051Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:01:57","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:06","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:06"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:06","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:06"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:02:13.174Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:02:13","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":5,"username":"PCO05"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:02:13.275Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:02:13","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":5,"username":"PCO05"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:17"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:17","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:17","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:17"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:17"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:17","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:17"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:17","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:54"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:54","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:02:54"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:02:54","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:13"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:14","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:14","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:14"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:04:21.332Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:04:21","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:04:21.391Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:04:21","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:24"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:24","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:24","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:24"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:24"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:24","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:04:24"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:04:24","totalCount":1}
+{"error":"CustomerAccount.find is not a function","level":"error","message":"Error fetching customer accounts","stack":"TypeError: CustomerAccount.find is not a function\n    at exportCustomerAccounts (file:///F:/WORKON/CODE/PCO_BANKING/EVOLUTION%20BANKING%20BACKEND/src/controllers/AccountStatementController.js:254:45)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:149:13)\n    at Route.dispatch (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:119:3)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:284:15\n    at router.process_params (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:346:12)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:280:10)\n    at router.handle (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:175:3)\n    at router (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:47:12)","timestamp":"2026-02-05 02:12:15"}
+{"error":"CustomerAccount.find is not a function","level":"error","message":"Error fetching customer accounts","stack":"TypeError: CustomerAccount.find is not a function\n    at exportCustomerAccounts (file:///F:/WORKON/CODE/PCO_BANKING/EVOLUTION%20BANKING%20BACKEND/src/controllers/AccountStatementController.js:254:45)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:149:13)\n    at Route.dispatch (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:119:3)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:284:15\n    at router.process_params (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:346:12)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:280:10)\n    at router.handle (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:175:3)\n    at router (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:47:12)","timestamp":"2026-02-05 02:12:15"}
+{"error":"CustomerAccount.find is not a function","level":"error","message":"Error fetching customer accounts","stack":"TypeError: CustomerAccount.find is not a function\n    at exportCustomerAccounts (file:///F:/WORKON/CODE/PCO_BANKING/EVOLUTION%20BANKING%20BACKEND/src/controllers/AccountStatementController.js:254:45)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:149:13)\n    at Route.dispatch (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\route.js:119:3)\n    at Layer.handle [as handle_request] (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:284:15\n    at router.process_params (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:346:12)\n    at next (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:280:10)\n    at router.handle (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:175:3)\n    at router (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\express\\lib\\router\\index.js:47:12)","timestamp":"2026-02-05 02:13:00"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:14:22.381Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:14:22","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:14:22.390Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:14:22","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:14:29","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:14:29"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:14:29","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:14:29"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:27:31.770Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:27:31","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T10:27:31.837Z","message":"Authenticated user logged out","timestamp":"2026-02-05 02:27:31","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:27:34"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:27:34","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:27:34"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:27:34","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:27:34","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:27:34"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 02:27:34","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 02:27:34"}
+{"body":{"COLLECTION_TYPE":"daily","FIRST_NAME":"Mary","FULL_NAME":"Mary John","LASTNAME":"John","RELATIONSHIP_MANAGER":"Dima","address":"Relief Market ","country":"Nigeria","initialAmount":1000,"phone":"+2348067564356"},"error":"Validation error","level":"error","message":"createThriftAccount failed","stack":"Error\n    at Query.run (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async MySQLQueryInterface.insert (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async Thrift.save (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async Thrift.create (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async createThriftAccount (file:///F:/WORKON/CODE/PCO_BANKING/EVOLUTION%20BANKING%20BACKEND/src/controllers/ThriftController.js:238:24)","timestamp":"2026-02-05 02:34:27"}
+{"body":{"COLLECTION_TYPE":"daily","FIRST_NAME":"Mary","FULL_NAME":"Mary John","LASTNAME":"John","RELATIONSHIP_MANAGER":"Dima","address":"Relief Market ","country":"Nigeria","initialAmount":1000,"phone":"+2348067564356"},"error":"Validation error","level":"error","message":"createThriftAccount failed","stack":"Error\n    at Query.run (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\dialects\\mysql\\query.js:52:25)\n    at F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\sequelize.js:315:28\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async MySQLQueryInterface.insert (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\dialects\\abstract\\query-interface.js:308:21)\n    at async Thrift.save (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\model.js:2490:35)\n    at async Thrift.create (F:\\WORKON\\CODE\\PCO_BANKING\\EVOLUTION BANKING BACKEND\\node_modules\\sequelize\\lib\\model.js:1362:12)\n    at async createThriftAccount (file:///F:/WORKON/CODE/PCO_BANKING/EVOLUTION%20BANKING%20BACKEND/src/controllers/ThriftController.js:238:24)","timestamp":"2026-02-05 02:35:20"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 04:17:23"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:17:30"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T13:17:33.098Z","timestamp":"2026-02-05 04:17:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 04:17:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:17:33"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:18:29"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:18:29","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:18:29","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:18:29"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:18:46","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:18:46","totalCount":1}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 04:20:46"}
+{"accountId":"13","accountNo":"0110122000001","branch":"WETHRAL","businessUnit":"101","category":"LIABILITY","level":"info","message":"Ledger account created","organization":"LARSDAN BANK","timestamp":"2026-02-05 04:20:46"}
+{"level":"info","message":"COA-aligned GL account created successfully: 0110122000001 (CUSTOMER_DEPOSIT)","timestamp":"2026-02-05 04:20:46"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:21:51","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:21:51","totalCount":1}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T12:25:45.362Z","message":"Authenticated user logged out","timestamp":"2026-02-05 04:25:45","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T12:25:45.369Z","message":"Authenticated user logged out","timestamp":"2026-02-05 04:25:45","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:25:48"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:25:48","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:25:48"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:25:48","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:25:48"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:25:48","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:25:48","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:25:48"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T12:33:44.083Z","message":"Authenticated user logged out","timestamp":"2026-02-05 04:33:44","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-05T12:33:44.114Z","message":"Authenticated user logged out","timestamp":"2026-02-05 04:33:44","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":4,"username":"PCO04"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:33:49"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:33:49","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:33:49","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 04:33:49"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:33:59","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 04:33:59","totalCount":1}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 04:34:35"}
+{"accountId":"14","accountNo":"0110111070001","branch":"WETHRAL","businessUnit":"101","category":"ASSET","level":"info","message":"Ledger account created","organization":"LARSDAN BANK","timestamp":"2026-02-05 04:34:35"}
+{"level":"info","message":"COA-aligned GL account created successfully: 0110111070001 (BANK_ACCOUNT)","timestamp":"2026-02-05 04:34:35"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 04:49:52"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:50:01"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T13:50:03.252Z","timestamp":"2026-02-05 04:50:03"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 04:50:03"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:50:03"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 04:54:30"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:54:30"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T13:54:31.376Z","timestamp":"2026-02-05 04:54:31"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 04:54:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 04:54:31"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:11:01"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:11:08"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:11:12.290Z","timestamp":"2026-02-05 05:11:12"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:11:12"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:11:12"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:14:05"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:14:06"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:14:06.954Z","timestamp":"2026-02-05 05:14:06"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:14:06"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:14:06"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:21:03"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:21:05"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:21:06.636Z","timestamp":"2026-02-05 05:21:06"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:21:06"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:21:06"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:26:16"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:26:17"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:26:18.244Z","timestamp":"2026-02-05 05:26:18"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:26:18"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:26:18"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:30:02"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:30:03"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:30:04.614Z","timestamp":"2026-02-05 05:30:04"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:30:04"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:30:04"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:45:18"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:45:21"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:45:23.248Z","timestamp":"2026-02-05 05:45:23"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:45:23"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:45:23"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:48:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:48:37"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:48:38.166Z","timestamp":"2026-02-05 05:48:38"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:48:38"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:48:38"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 05:58:10"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:58:11"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T14:58:11.801Z","timestamp":"2026-02-05 05:58:11"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 05:58:11"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 05:58:11"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 06:10:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:10:23"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T15:10:24.783Z","timestamp":"2026-02-05 06:10:24"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 06:10:24"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:10:24"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 06:13:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:13:36"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T15:13:37.429Z","timestamp":"2026-02-05 06:13:37"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 06:13:37"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:13:37"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 06:22:17"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:22:18"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T15:22:18.554Z","timestamp":"2026-02-05 06:22:18"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 06:22:18"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:22:18"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 06:29:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:29:38"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T15:29:40.213Z","timestamp":"2026-02-05 06:29:40"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 06:29:40"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:29:40"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 06:42:41"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:42:42"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T15:42:42.590Z","timestamp":"2026-02-05 06:42:42"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 06:42:42"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 06:42:42"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 07:04:38"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:04:39"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T16:04:40.007Z","timestamp":"2026-02-05 07:04:40"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 07:04:40"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:04:40"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 07:22:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:22:40"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T16:22:44.521Z","timestamp":"2026-02-05 07:22:44"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 07:22:44"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:22:44"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 07:32:11"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:32:13"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T16:32:14.182Z","timestamp":"2026-02-05 07:32:14"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 07:32:14"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 07:32:14"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 11:43:00"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 11:43:19"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T20:43:31.216Z","timestamp":"2026-02-05 11:43:31"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 11:43:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 11:43:31"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 11:49:47"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 11:49:47","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 11:49:48","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 11:49:48"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 12:15:18"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:15:31"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T21:15:36.252Z","timestamp":"2026-02-05 12:15:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 12:15:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:15:36"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 12:46:41"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:46:53"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T21:46:57.726Z","timestamp":"2026-02-05 12:46:57"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 12:46:57"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:46:57"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 12:50:19"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:50:23"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T21:50:24.775Z","timestamp":"2026-02-05 12:50:24"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 12:50:24"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:50:24"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 12:58:08"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:58:14"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T21:58:17.681Z","timestamp":"2026-02-05 12:58:17"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 12:58:17"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 12:58:17"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 13:10:16"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 13:10:28"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T22:10:31.838Z","timestamp":"2026-02-05 13:10:31"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 13:10:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 13:10:31"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 14:01:18"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 14:01:18","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 14:01:18","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 14:01:18"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 14:11:23"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 14:11:23","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 14:11:24","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 14:11:24"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 14:59:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 14:59:31"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-05T23:59:33.445Z","timestamp":"2026-02-05 14:59:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 14:59:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 14:59:33"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 15:00:13","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 15:00:13"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 15:00:14","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 15:00:14"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 15:00:32","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 15:00:32","totalCount":1}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 15:01:31"}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 15:01:51"}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 15:02:40"}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 15:03:11"}
+{"accountId":"15","accountNo":"0110129000001","branch":"WETHRAL","businessUnit":"101","category":"LIABILITY","level":"info","message":"Ledger account created","organization":"LARSDAN BANK","timestamp":"2026-02-05 15:03:11"}
+{"level":"info","message":"COA-aligned GL account created successfully: 0110129000001 (SUSPENSE_ACCOUNT)","timestamp":"2026-02-05 15:03:11"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 20:59:11"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 20:59:12","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 20:59:12"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 20:59:12","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:34:35","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:34:35","totalCount":1}
+{"level":"info","message":"Starting COA-aligned GL account creation with Ledger linkage","timestamp":"2026-02-05 21:36:12"}
+{"accountId":"16","accountNo":"0110144040001","branch":"WETHRAL","businessUnit":"101","category":"REVENUE","level":"info","message":"Ledger account created","organization":"LARSDAN BANK","timestamp":"2026-02-05 21:36:13"}
+{"level":"info","message":"COA-aligned GL account created successfully: 0110144040001 (SERVICE_INCOME)","timestamp":"2026-02-05 21:36:13"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 21:52:26"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 21:52:34"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-06T06:52:39.172Z","timestamp":"2026-02-05 21:52:39"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 21:52:39"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 21:52:39"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-06T05:53:43.564Z","message":"Authenticated user logged out","timestamp":"2026-02-05 21:53:43","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-06T05:53:43.597Z","message":"Authenticated user logged out","timestamp":"2026-02-05 21:53:43","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 21:53:45"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:53:45","totalCount":1}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:53:46","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 21:53:46"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:53:46","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 21:53:46"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 21:53:46","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 21:53:47"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 22:03:29"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:03:31"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-06T07:03:33.261Z","timestamp":"2026-02-05 22:03:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 22:03:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:03:33"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 22:16:25"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:16:26"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-06T07:16:26.703Z","timestamp":"2026-02-05 22:16:26"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 22:16:26"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:16:26"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 22:31:30"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:31:33"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-06T07:31:36.157Z","timestamp":"2026-02-05 22:31:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 22:31:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 22:31:36"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-05 23:49:17"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 23:49:36"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-06T08:49:48.368Z","timestamp":"2026-02-05 23:49:48"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-05 23:49:48"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-05 23:49:48"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 23:54:55"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 23:54:55","totalCount":1}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-05 23:54:55"}
+{"count":1,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-05 23:54:55","totalCount":1}

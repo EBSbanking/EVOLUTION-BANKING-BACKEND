@@ -1,4 +1,4 @@
-// models/LoanAccount.js
+// models/LoanAccount.js - FIXED VERSION (NO FIELD MAPPINGS)
 import { DataTypes, Model, QueryTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -15,131 +15,133 @@ LoanAccount.init(
       type: DataTypes.STRING,
       allowNull: false,
       unique: true,
-      field: 'a_c_c_t__n_o'
+      comment: 'Account number'
     },
     ACCT_NM: {
       type: DataTypes.STRING,
       allowNull: false,
-      field: 'a_c_c_t__n_m'
+      comment: 'Account name'
     },
     CUST_ID: {
       type: DataTypes.STRING,
       allowNull: false,
-      field: 'c_u_s_t__i_d'
+      comment: 'Customer identifier'
     },
     LOAN_PRODUCT_ID: {
       type: DataTypes.INTEGER,
-      field: 'l_o_a_n__p_r_o_d_u_c_t__i_d'
+      comment: 'Loan product identifier'
     },
     AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       allowNull: false,
-      field: 'a_m_o_u_n_t'
+      comment: 'Loan amount'
     },
     DISBURSED_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 'd_i_s_b_u_r_s_e_d__a_m_o_u_n_t'
+      comment: 'Amount disbursed'
     },
     OUTSTANDING_PRINCIPAL: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 'o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l'
+      comment: 'Outstanding principal balance'
     },
     ACCRUED_INTEREST: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 'a_c_c_r_u_e_d__i_n_t_e_r_e_s_t'
+      comment: 'Accrued interest'
     },
     PENALTY_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 'p_e_n_a_l_t_y__a_m_o_u_n_t'
+      comment: 'Penalty amount'
     },
     INTEREST_RATE: {
       type: DataTypes.DECIMAL(10, 4),
       defaultValue: 0,
-      field: 'i_n_t_e_r_e_s_t__r_a_t_e'
+      comment: 'Interest rate'
     },
     LOAN_STATUS: {
       type: DataTypes.STRING(50),
       defaultValue: 'PENDING',
-      field: 'l_o_a_n__s_t_a_t_u_s'
+      comment: 'Loan status'
     },
     SERVICING_STATUS: {
       type: DataTypes.STRING(50),
       defaultValue: 'SERVICED',
-      field: 's_e_r_v_i_c_i_n_g__s_t_a_t_u_s'
+      comment: 'Servicing status'
     },
     APPLICATION_DATE: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
-      field: 'a_p_p_l_i_c_a_t_i_o_n__d_a_t_e'
+      comment: 'Application date'
     },
     APPROVAL_DATE: {
       type: DataTypes.DATE,
-      field: 'a_p_p_r_o_v_a_l__d_a_t_e'
+      comment: 'Approval date'
     },
     DISBURSEMENT_DATE: {
       type: DataTypes.DATE,
-      field: 'd_i_s_b_u_r_s_e_m_e_n_t__d_a_t_e'
+      comment: 'Disbursement date'
     },
     CLOSURE_DATE: {
       type: DataTypes.DATE,
-      field: 'c_l_o_s_u_r_e__d_a_t_e'
+      comment: 'Closure date'
     },
     LAST_REPAYMENT_DATE: {
       type: DataTypes.DATE,
-      field: 'l_a_s_t__r_e_p_a_y_m_e_n_t__d_a_t_e'
+      comment: 'Last repayment date'
     },
     LAST_REPAYMENT_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 'l_a_s_t__r_e_p_a_y_m_e_n_t__a_m_o_u_n_t'
+      comment: 'Last repayment amount'
     },
     NEXT_PAYMENT_DATE: {
       type: DataTypes.DATE,
-      field: 'n_e_x_t__p_a_y_m_e_n_t__d_a_t_e'
+      comment: 'Next payment date'
     },
     MATURITY_DT: {
       type: DataTypes.DATE,
-      field: 'm_a_t_u_r_i_t_y__d_t'
+      comment: 'Maturity date'
     },
     TOTAL_REPAID_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      field: 't_o_t_a_l__r_e_p_a_i_d__a_m_o_u_n_t'
+      comment: 'Total repaid amount'
     },
     TERM_CD: {
       type: DataTypes.STRING(20),
       defaultValue: 'MONTHLY',
-      field: 't_e_r_m__c_d'
+      comment: 'Term code (M=Monthly, Y=Yearly)'
     },
     TERM_VALUE: {
       type: DataTypes.INTEGER,
       defaultValue: 12,
-      field: 't_e_r_m__v_a_l_u_e'
+      comment: 'Term value (number of months/years)'
     },
     CUSTOMER_ACCOUNT_ID: {
       type: DataTypes.BIGINT,
-      field: 'c_u_s_t_o_m_e_r__a_c_c_o_u_n_t__i_d'
+      comment: 'Customer account identifier'
     },
     hasRepaymentSchedule: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-      field: 'has_repayment_schedule'
+      comment: 'Has repayment schedule'
     },
     repaymentScheduleId: {
       type: DataTypes.INTEGER,
-      field: 'repayment_schedule_id'
+      comment: 'Repayment schedule identifier'
     },
     createdAt: {
       type: DataTypes.DATE,
-      field: 'created_at'
+      defaultValue: DataTypes.NOW,
+      comment: 'Created at'
     },
     updatedAt: {
       type: DataTypes.DATE,
-      field: 'updated_at'
+      defaultValue: DataTypes.NOW,
+      comment: 'Updated at'
     }
   },
   {
@@ -280,6 +282,90 @@ LoanAccount.findByCustomerId = async function(customerId) {
   });
 };
 
+// ==================== ADDITIONAL HELPER METHODS ====================
+
+/**
+ * Find loan account with fallback search
+ */
+LoanAccount.findByAccountNumberFlexible = async function(accountNumber) {
+  try {
+    // Try direct search first
+    const account = await this.findByAccountNumber(accountNumber);
+    if (account) return account;
+    
+    // If not found, try raw SQL with different column names
+    const results = await sequelize.query(
+      `SELECT * FROM loan_accounts 
+       WHERE ACCT_NO = ? 
+          OR a_c_c_t__n_o = ? 
+          OR acc_t__n_o = ? 
+       LIMIT 1`,
+      {
+        replacements: [accountNumber, accountNumber, accountNumber],
+        type: QueryTypes.SELECT
+      }
+    );
+    
+    if (results && results.length > 0) {
+      // Convert raw result to model instance
+      return this.build(results[0], { isNewRecord: false });
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error in findByAccountNumberFlexible:', error);
+    return null;
+  }
+};
+
+/**
+ * Check and fix table structure
+ */
+LoanAccount.checkAndFixTableStructure = async function() {
+  try {
+    // Check if ACCT_NO column exists
+    const columnCheck = await sequelize.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = DATABASE() 
+       AND TABLE_NAME = 'loan_accounts' 
+       AND COLUMN_NAME = 'ACCT_NO'`,
+      { type: QueryTypes.SELECT }
+    );
+    
+    if (columnCheck.length === 0) {
+      console.log('⚠️ ACCT_NO column missing, checking for old column names...');
+      
+      // Check for old column names
+      const oldColumns = await sequelize.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = 'loan_accounts' 
+         AND (COLUMN_NAME LIKE '%acc%' OR COLUMN_NAME LIKE '%no%')`,
+        { type: QueryTypes.SELECT }
+      );
+      
+      console.log('Old account columns found:', oldColumns);
+      
+      // If we have an old column, rename it
+      if (oldColumns.length > 0) {
+        const oldColumn = oldColumns[0].COLUMN_NAME;
+        console.log(`🔄 Renaming ${oldColumn} to ACCT_NO`);
+        
+        await sequelize.query(
+          `ALTER TABLE loan_accounts CHANGE ${oldColumn} ACCT_NO VARCHAR(255)`
+        );
+        
+        console.log('✅ Column renamed successfully');
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error checking table structure:', error);
+    return false;
+  }
+};
+
 // ==================== AUTO-INITIALIZATION ====================
 
 // Auto-initialize on app startup (development only)
@@ -289,6 +375,10 @@ if (process.env.NODE_ENV === 'development' || process.env.AUTO_INIT_TABLES === '
     try {
       console.log('🚀 Auto-initializing LoanAccount table...');
       await LoanAccount.ensureTableExists();
+      
+      // Check and fix table structure
+      await LoanAccount.checkAndFixTableStructure();
+      
       console.log('✅ LoanAccount table ready');
     } catch (error) {
       console.warn('⚠️ Auto-initialization failed (will retry on first use):', error.message);

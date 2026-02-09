@@ -1,115 +1,141 @@
-﻿// Models/IdentificationInformation.js
+﻿// models/IdentificationInformation.js
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 const IdentificationInformation = sequelize.define('IdentificationInformation', {
-  ID: {
+  id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true,
     field: 'id'
   },
-  CUST_ID: {
-    type: DataTypes.INTEGER,
+
+  cust_id: {
+    type: DataTypes.STRING(50),           // ← Must match customers.CUST_ID type (likely VARCHAR)
     allowNull: false,
     field: 'cust_id',
     references: {
-      model: 'customers', // Reference to your Customer table
+      model: 'customers',
       key: 'CUST_ID'
     }
   },
-  CUST_NM: {
+
+  cust_nm: {
     type: DataTypes.STRING(100),
     allowNull: true,
     field: 'cust_nm'
   },
-  docId: {
+
+  doc_id: {
     type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
     field: 'doc_id',
     comment: 'Unique document identifier'
   },
-  documentType: {
-    type: DataTypes.ENUM('Passport', "Driver's License", 'National ID', "Voter's ID", 'Residence Permit', 'Military ID', 'Student ID', 'Other'),
+
+  document_type: {
+    type: DataTypes.ENUM(
+      'Passport',
+      "Driver's License",
+      'National ID',
+      "Voter's ID",
+      'Residence Permit',
+      'Military ID',
+      'Student ID',
+      'Other'
+    ),
     allowNull: false,
     field: 'document_type'
   },
-  documentId: {
+
+  document_number: {
     type: DataTypes.STRING(100),
     allowNull: false,
     field: 'document_number',
     comment: 'Official document number (e.g., passport number)'
   },
-  countryOfIssuer: {
+
+  country_of_issuer: {
     type: DataTypes.STRING(3),
     allowNull: false,
-    field: 'country_of_issuer',
     defaultValue: 'NGA',
+    field: 'country_of_issuer',
     comment: 'ISO 3-letter country code'
   },
-  issueDate: {
+
+  issue_date: {
     type: DataTypes.DATEONLY,
     allowNull: true,
     field: 'issue_date',
     comment: 'Date when document was issued'
   },
-  expiryDate: {
+
+  expiry_date: {
     type: DataTypes.DATEONLY,
     allowNull: false,
     field: 'expiry_date',
     comment: 'Document expiry date'
   },
-  imagePath: {
+
+  image_path: {
     type: DataTypes.STRING(500),
     allowNull: true,
     field: 'image_path',
     comment: 'Path or URL to the document image'
   },
-  imageThumbnail: {
+
+  image_thumbnail: {
     type: DataTypes.STRING(500),
     allowNull: true,
     field: 'image_thumbnail',
     comment: 'Path to thumbnail version of the image'
   },
+
   status: {
     type: DataTypes.ENUM('active', 'inactive', 'expired', 'lost', 'stolen'),
     allowNull: false,
     defaultValue: 'active',
     field: 'status'
   },
-  verificationStatus: {
+
+  verification_status: {
     type: DataTypes.ENUM('pending', 'verified', 'rejected', 'expired'),
     allowNull: false,
     defaultValue: 'pending',
     field: 'verification_status'
   },
-  verifiedBy: {
+
+  verified_by: {
     type: DataTypes.INTEGER,
     allowNull: true,
     field: 'verified_by',
     references: {
-      model: 'users', // Reference to your User table
+      model: 'users',
       key: 'id'
     }
   },
-  verificationDate: {
+
+  verification_date: {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'verification_date'
   },
-  verificationNotes: {
+
+  verification_notes: {
     type: DataTypes.TEXT,
     allowNull: true,
     field: 'verification_notes'
   },
-  isPrimary: {
+
+  is_primary: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false,
     field: 'is_primary',
     comment: 'Whether this is the primary identification document'
   },
+
   metadata: {
     type: DataTypes.JSON,
     allowNull: true,
@@ -121,220 +147,152 @@ const IdentificationInformation = sequelize.define('IdentificationInformation', 
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
+
+  // Only essential indexes to avoid "too many keys" error
   indexes: [
-    {
-      unique: true,
-      fields: ['doc_id'],
-      name: 'idx_doc_id_unique'
-    },
-    {
-      fields: ['cust_id'],
-      name: 'idx_cust_id'
-    },
-    {
-      fields: ['document_number'],
-      name: 'idx_document_number'
-    },
-    {
-      fields: ['document_type'],
-      name: 'idx_document_type'
-    },
-    {
-      fields: ['status'],
-      name: 'idx_status'
-    },
-    {
-      fields: ['expiry_date'],
-      name: 'idx_expiry_date'
-    },
-    {
-      fields: ['verification_status'],
-      name: 'idx_verification_status'
-    },
-    {
-      fields: ['is_primary'],
-      name: 'idx_is_primary'
-    },
-    // Composite index for common queries
-    {
-      fields: ['cust_id', 'is_primary'],
-      name: 'idx_cust_id_primary'
-    }
+    { unique: true, fields: ['doc_id'], name: 'idx_doc_id_unique' },
+    { fields: ['cust_id'], name: 'idx_cust_id' },
+    { fields: ['document_number'], name: 'idx_document_number' },
+    { fields: ['status', 'verification_status'], name: 'idx_status_verification' },
+    { fields: ['expiry_date'], name: 'idx_expiry_date' },
+    { fields: ['is_primary'], name: 'idx_is_primary' }
   ],
+
   hooks: {
-    beforeCreate: (identification) => {
-      // Generate docId if not provided
-      if (!identification.docId) {
+    beforeCreate: (doc) => {
+      // Generate unique doc_id if missing
+      if (!doc.doc_id) {
         const timestamp = Date.now();
-        const random = Math.floor(Math.random() * 1000);
-        identification.docId = `DOC-${timestamp}-${random}`;
+        const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        doc.doc_id = `DOC-${timestamp}-${random}`;
       }
-      
+
       // Normalize document number
-      if (identification.documentId) {
-        identification.documentId = identification.documentId.trim().toUpperCase();
+      if (doc.document_number) {
+        doc.document_number = doc.document_number.trim().toUpperCase();
       }
-      
-      // Set CUST_NM if not provided (you might want to fetch from customer table)
     },
-    beforeUpdate: (identification) => {
-      // If setting as primary, ensure only one primary per customer
-      if (identification.isPrimary && identification.changed('isPrimary')) {
-        // This logic would be better implemented in a separate method
-        // or using database triggers
+
+    beforeUpdate: (doc) => {
+      if (doc.changed('document_number')) {
+        doc.document_number = doc.document_number.trim().toUpperCase();
       }
     }
   }
 });
 
-// Static Methods
-IdentificationInformation.findByCustomerId = async function(customerId, options = {}) {
-  const defaults = {
-    where: { CUST_ID: customerId },
-    order: [['isPrimary', 'DESC'], ['created_at', 'DESC']]
-  };
-  
-  return await this.findAll({ ...defaults, ...options });
-};
+// ────────────────────────────────────────────────
+// STATIC METHODS
+// ────────────────────────────────────────────────
 
-IdentificationInformation.findActiveByCustomerId = async function(customerId) {
-  return await this.findAll({
-    where: {
-      CUST_ID: customerId,
-      status: 'active',
-      verificationStatus: 'verified'
-    },
-    order: [['isPrimary', 'DESC'], ['expiryDate', 'ASC']]
+IdentificationInformation.findByCustomerId = async function (customerId, options = {}) {
+  return this.findAll({
+    where: { cust_id: customerId },
+    order: [['is_primary', 'DESC'], ['created_at', 'DESC']],
+    ...options
   });
 };
 
-IdentificationInformation.findPrimaryDocument = async function(customerId) {
-  return await this.findOne({
+IdentificationInformation.findPrimary = async function (customerId) {
+  return this.findOne({
     where: {
-      CUST_ID: customerId,
-      isPrimary: true,
+      cust_id: customerId,
+      is_primary: true,
       status: 'active',
-      verificationStatus: 'verified'
+      verification_status: 'verified'
     }
   });
 };
 
-IdentificationInformation.findExpiredDocuments = async function(daysThreshold = 0) {
-  const expiryDate = new Date();
-  expiryDate.setDate(expiryDate.getDate() - daysThreshold);
-  
-  return await this.findAll({
-    where: {
-      expiryDate: {
-        [Op.lt]: expiryDate
-      },
-      status: 'active'
-    },
-    order: [['expiryDate', 'ASC']]
-  });
-};
-
-IdentificationInformation.findDocumentsExpiringSoon = async function(days = 30) {
+IdentificationInformation.findExpiringSoon = async function (days = 30) {
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
   const warningDate = new Date(today);
   warningDate.setDate(warningDate.getDate() + days);
-  
-  return await this.findAll({
+
+  return this.findAll({
     where: {
-      expiryDate: {
-        [Op.between]: [today, warningDate]
-      },
+      expiry_date: { [Op.between]: [today, warningDate] },
       status: 'active',
-      verificationStatus: 'verified'
+      verification_status: 'verified'
     },
-    order: [['expiryDate', 'ASC']]
+    order: [['expiry_date', 'ASC']]
   });
 };
 
-// Instance Methods
-IdentificationInformation.prototype.verify = async function(verifiedBy, notes = '') {
-  return await this.update({
-    verificationStatus: 'verified',
-    verifiedBy: verifiedBy,
-    verificationDate: new Date(),
-    verificationNotes: notes
+// ────────────────────────────────────────────────
+// INSTANCE METHODS
+// ────────────────────────────────────────────────
+
+IdentificationInformation.prototype.verify = async function (verifiedById, notes = '') {
+  return this.update({
+    verification_status: 'verified',
+    verified_by: verifiedById,
+    verification_date: new Date(),
+    verification_notes: notes || null
   });
 };
 
-IdentificationInformation.prototype.reject = async function(verifiedBy, notes = '') {
-  return await this.update({
-    verificationStatus: 'rejected',
-    verifiedBy: verifiedBy,
-    verificationDate: new Date(),
-    verificationNotes: notes,
+IdentificationInformation.prototype.reject = async function (verifiedById, notes = '') {
+  return this.update({
+    verification_status: 'rejected',
+    verified_by: verifiedById,
+    verification_date: new Date(),
+    verification_notes: notes || null,
     status: 'inactive'
   });
 };
 
-IdentificationInformation.prototype.markAsExpired = async function() {
-  return await this.update({
+IdentificationInformation.prototype.markExpired = async function () {
+  return this.update({
     status: 'expired',
-    isPrimary: false,
-    verificationStatus: 'expired'
+    is_primary: false,
+    verification_status: 'expired'
   });
 };
 
-IdentificationInformation.prototype.setAsPrimary = async function() {
-  const transaction = await sequelize.transaction();
-  
+IdentificationInformation.prototype.setAsPrimary = async function () {
+  const t = await sequelize.transaction();
+
   try {
-    // First, set all other documents for this customer as non-primary
+    // Reset other primary documents for this customer
     await this.constructor.update(
-      { isPrimary: false },
+      { is_primary: false },
       {
         where: {
-          CUST_ID: this.CUST_ID,
+          cust_id: this.cust_id,
           id: { [Op.ne]: this.id }
         },
-        transaction
+        transaction: t
       }
     );
-    
-    // Then set this document as primary
-    await this.update({ isPrimary: true }, { transaction });
-    
-    await transaction.commit();
+
+    // Set this one as primary
+    await this.update({ is_primary: true }, { transaction: t });
+
+    await t.commit();
     return this;
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
+  } catch (err) {
+    await t.rollback();
+    throw err;
   }
 };
 
-IdentificationInformation.prototype.isExpired = function() {
+IdentificationInformation.prototype.isExpired = function () {
+  if (!this.expiry_date) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
-  const expiry = new Date(this.expiryDate);
+  const expiry = new Date(this.expiry_date);
   expiry.setHours(0, 0, 0, 0);
-  
   return expiry < today;
 };
 
-IdentificationInformation.prototype.daysUntilExpiry = function() {
+IdentificationInformation.prototype.daysUntilExpiry = function () {
+  if (!this.expiry_date) return null;
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const expiry = new Date(this.expiryDate);
-  expiry.setHours(0, 0, 0, 0);
-  
+  const expiry = new Date(this.expiry_date);
   const diffTime = expiry - today;
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
-  return diffDays;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
-// Associations (to be set up in your models/index.js or initialization file)
-// Example:
-// Customer.hasMany(IdentificationInformation, { foreignKey: 'CUST_ID', sourceKey: 'CUST_ID' });
-// IdentificationInformation.belongsTo(Customer, { foreignKey: 'CUST_ID', targetKey: 'CUST_ID' });
-// IdentificationInformation.belongsTo(User, { foreignKey: 'verifiedBy', as: 'verifier' });
-
+// Export
 export default IdentificationInformation;

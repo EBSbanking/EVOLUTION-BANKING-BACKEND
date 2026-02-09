@@ -1,4 +1,4 @@
-﻿// models/DirectDebit.js - COMPLETE FIXED VERSION
+﻿// models/DirectDebit.js - COMPLETE FIXED VERSION WITH FIELD MAPPINGS
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -393,6 +393,7 @@ DirectDebit.init({
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true,
+    field: 'id',
     comment: 'Internal ID for database relationships'
   },
 
@@ -400,72 +401,84 @@ DirectDebit.init({
     type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
+    field: 'd_i_r_e_c_t__d_r__i_d',
     comment: 'Direct debit identifier'
   },
 
   FROM_DEPOSIT_ACCT_NO: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 'f_r_o_m__d_e_p_o_s_i_t__a_c_c_t__n_o',
     comment: 'Source deposit account number'
   },
 
   DIRECT_DR_DESC: {
     type: DataTypes.STRING(100),
     allowNull: false,
+    field: 'd_i_r_e_c_t__d_r__d_e_s_c',
     comment: 'Direct debit description'
   },
 
   DIRECT_DR_MANDATE_TY_CD: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'd_i_r_e_c_t__d_r__m_a_n_d_a_t_e__t_y__c_d',
     comment: 'Direct debit mandate type code'
   },
 
   XFER_MTHD_CD: {
     type: DataTypes.STRING(8),
     allowNull: false,
+    field: 'x_f_e_r__m_t_h_d__c_d',
     comment: 'Transfer method code'
   },
 
   PAY_CRNCY_ID: {
     type: DataTypes.STRING(3),
     allowNull: false,
+    field: 'p_a_y__c_r_n_c_y__i_d',
     comment: 'Payment currency code (e.g., USD, EUR, NGN)'
   },
 
   PAY_AMT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
+    field: 'p_a_y__a_m_t',
     comment: 'Payment amount'
   },
 
   TO_DEPOSIT_ACCT_NO: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 't_o__d_e_p_o_s_i_t__a_c_c_t__n_o',
     comment: 'Destination deposit account number'
   },
 
   MAX_PAY_AMT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
+    field: 'm_a_x__p_a_y__a_m_t',
     comment: 'Maximum payment amount'
   },
 
   SCHED_TY_CD: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 's_c_h_e_d__t_y__c_d',
     comment: 'Schedule type code'
   },
 
   NEXT_PAY_DT: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'n_e_x_t__p_a_y__d_t',
     comment: 'Next payment date'
   },
 
   NO_OF_PAYMENTS: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    field: 'n_o__o_f__p_a_y_m_e_n_t_s',
     comment: 'Number of payments',
     validate: {
       min: {
@@ -478,12 +491,14 @@ DirectDebit.init({
   PAY_FREQ_CD: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'p_a_y__f_r_e_q__c_d',
     comment: 'Payment frequency code'
   },
 
   PAY_FREQ_VALUE: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    field: 'p_a_y__f_r_e_q__v_a_l_u_e',
     comment: 'Payment frequency value',
     validate: {
       min: {
@@ -496,54 +511,63 @@ DirectDebit.init({
   EXPIRY_DT: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'e_x_p_i_r_y__d_t',
     comment: 'Expiry date'
   },
 
   NON_BUS_DUE_DT_OPTN_CD: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'n_o_n__b_u_s__d_u_e__d_t__o_p_t_n__c_d',
     comment: 'Non-business day due date option code'
   },
 
   REF_TXT: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 'r_e_f__t_x_t',
     comment: 'Reference text'
   },
 
   SUPPLEMENTARY_REF_TXT: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 's_u_p_p_l_e_m_e_n_t_a_r_y__r_e_f__t_x_t',
     comment: 'Supplementary reference text'
   },
 
   PAY_RSN_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    field: 'p_a_y__r_s_n__i_d',
     comment: 'Payment reason identifier'
   },
 
   SVCE_PROVIDER_ID: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 's_v_c_e__p_r_o_v_i_d_e_r__i_d',
     comment: 'Service provider identifier'
   },
 
   BENEFICIARY_ID: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 'b_e_n_e_f_i_c_i_a_r_y__i_d',
     comment: 'Beneficiary identifier'
   },
 
   SUPPLEMENTARY_INSTRUCTION: {
     type: DataTypes.STRING(255),
     allowNull: false,
+    field: 's_u_p_p_l_e_m_e_n_t_a_r_y__i_n_s_t_r_u_c_t_i_o_n',
     comment: 'Supplementary instruction'
   },
 
   REC_ST: {
     type: DataTypes.STRING(1),
     allowNull: false,
+    field: 'r_e_c__s_t',
     validate: {
       isIn: [['Y', 'N']]
     },
@@ -554,108 +578,126 @@ DirectDebit.init({
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 1,
+    field: 'v_e_r_s_i_o_n__n_o',
     comment: 'Version number'
   },
 
   ROW_TS: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'r_o_w__t_s',
     comment: 'Row timestamp'
   },
 
   USER_ID: {
     type: DataTypes.STRING(24),
     allowNull: false,
+    field: 'u_s_e_r__i_d',
     comment: 'User identifier'
   },
 
   CREATE_DT: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'c_r_e_a_t_e__d_t',
     comment: 'Create date'
   },
 
   CREATED_BY: {
     type: DataTypes.STRING(24),
     allowNull: false,
+    field: 'c_r_e_a_t_e_d__b_y',
     comment: 'Created by user'
   },
 
   SYS_CREATE_TS: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 's_y_s__c_r_e_a_t_e__t_s',
     comment: 'System create timestamp'
+  },
+
+  // Loan-related fields
+  LOAN_ACCOUNT_NO: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'l_o_a_n__a_c_c_o_u_n_t__n_o',
+    comment: 'Loan account number for loan repayments'
+  },
+
+  LOAN_ID: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'l_o_a_n__i_d',
+    comment: 'Loan identifier'
+  },
+
+  REPAYMENT_TYPE: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    defaultValue: 'STANDARD',
+    field: 'r_e_p_a_y_m_e_n_t__t_y_p_e',
+    validate: {
+      isIn: [['STANDARD', 'EARLY', 'PARTIAL', 'BALLOON']]
+    },
+    comment: 'Type of loan repayment'
+  },
+
+  INSTALLMENT_NUMBER: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 'i_n_s_t_a_l_l_m_e_n_t__n_u_m_b_e_r',
+    comment: 'Installment number for tracking'
+  },
+
+  TOTAL_INSTALLMENTS: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 't_o_t_a_l__i_n_s_t_a_l_l_m_e_n_t_s',
+    comment: 'Total number of installments'
+  },
+
+  PRINCIPAL_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true,
+    field: 'p_r_i_n_c_i_p_a_l__a_m_o_u_n_t',
+    comment: 'Principal portion of payment'
+  },
+
+  INTEREST_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true,
+    field: 'i_n_t_e_r_e s_t__a_m_o_u_n_t',
+    comment: 'Interest portion of payment'
+  },
+
+  PENALTY_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true,
+    defaultValue: 0,
+    field: 'p_e_n_a_l_t_y__a_m_o_u_n_t',
+    comment: 'Penalty amount if any'
+  },
+
+  LOAN_PRODUCT_CODE: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'l_o_a_n__p_r_o_d_u_c_t__c_o_d_e',
+    comment: 'Loan product code'
   },
 
   // Sequelize timestamps
   updatedAt: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'updated_at',
     defaultValue: DataTypes.NOW
   },
-  // Add these fields to your DirectDebit schema
-LOAN_ACCOUNT_NO: {
-  type: DataTypes.STRING(50),
-  allowNull: true,
-  comment: 'Loan account number for loan repayments'
-},
-
-LOAN_ID: {
-  type: DataTypes.STRING(50),
-  allowNull: true,
-  comment: 'Loan identifier'
-},
-
-REPAYMENT_TYPE: {
-  type: DataTypes.STRING(20),
-  allowNull: true,
-  defaultValue: 'STANDARD',
-  validate: {
-    isIn: [['STANDARD', 'EARLY', 'PARTIAL', 'BALLOON']]
-  },
-  comment: 'Type of loan repayment'
-},
-
-INSTALLMENT_NUMBER: {
-  type: DataTypes.INTEGER,
-  allowNull: true,
-  comment: 'Installment number for tracking'
-},
-
-TOTAL_INSTALLMENTS: {
-  type: DataTypes.INTEGER,
-  allowNull: true,
-  comment: 'Total number of installments'
-},
-
-PRINCIPAL_AMOUNT: {
-  type: DataTypes.DECIMAL(20, 2),
-  allowNull: true,
-  comment: 'Principal portion of payment'
-},
-
-INTEREST_AMOUNT: {
-  type: DataTypes.DECIMAL(20, 2),
-  allowNull: true,
-  comment: 'Interest portion of payment'
-},
-
-PENALTY_AMOUNT: {
-  type: DataTypes.DECIMAL(20, 2),
-  allowNull: true,
-  defaultValue: 0,
-  comment: 'Penalty amount if any'
-},
-
-LOAN_PRODUCT_CODE: {
-  type: DataTypes.STRING(50),
-  allowNull: true,
-  comment: 'Loan product code'
-},
 
   createdAt: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'created_at',
     defaultValue: DataTypes.NOW
   }
 }, {

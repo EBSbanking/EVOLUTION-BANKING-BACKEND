@@ -1,0 +1,99 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-09 00:05:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-09 00:05:31"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-09T09:05:36.612Z","timestamp":"2026-02-09 00:05:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-09 00:05:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-09 00:05:36"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:15:52"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:15:52","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:15:52","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:15:52"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:15:59.547Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:15:59","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:15:59.609Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:15:59","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:16:05"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:16:05","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:16:06"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:16:06","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:16:06","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:16:06"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:16:06","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:16:06"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:18:49"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:18:49","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:18:49"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:18:49","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:18:57","totalCount":0}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:19:14.731Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:19:14","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:19:14.812Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:19:14","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:19:17"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:19:17","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:19:18","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:19:18"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:19:18","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:19:18"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:19:18","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:19:18"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:20:25"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:20:26","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:20:26","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:20:26"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:23:11.995Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:23:11","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:23:12.004Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:23:12","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:24:53"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:24:53","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:24:53","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:24:53"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:41:37.631Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:41:37","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T08:41:37.790Z","message":"Authenticated user logged out","timestamp":"2026-02-09 00:41:37","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:41:42"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:41:42","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:41:42","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:41:42","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:41:42","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:41:42"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:41:43"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:41:43"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:42:51"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:42:51","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 00:42:51","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 00:42:51"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:01:53"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:01:53","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:01:53"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:01:53","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:26:39"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:26:39","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:26:39","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:26:39"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T09:26:59.042Z","message":"Authenticated user logged out","timestamp":"2026-02-09 01:26:59","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T09:26:59.059Z","message":"Authenticated user logged out","timestamp":"2026-02-09 01:26:59","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:31:11"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:31:12","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:31:12","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:31:12"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:31:13","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:31:13"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:31:13","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:31:13"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-09 01:38:04"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-09 01:38:12"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-09T10:38:17.167Z","timestamp":"2026-02-09 01:38:17"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-09 01:38:17"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-09 01:38:17"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:40:35"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:40:35","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:40:36"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:40:36","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:40:36","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:40:36"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:40:36","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:40:36"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:42:27"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:42:27","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:42:27"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:42:27","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:42:27"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:42:27","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-09 01:42:27","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-09 01:42:27"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T09:42:50.367Z","message":"Authenticated user logged out","timestamp":"2026-02-09 01:42:50","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-09T09:42:50.399Z","message":"Authenticated user logged out","timestamp":"2026-02-09 01:42:50","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":6,"username":"PCO03"}

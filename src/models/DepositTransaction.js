@@ -1,4 +1,4 @@
-﻿// models/DepositTransaction.js - COMPLETE WITH FIXED IMPORT
+﻿// models/DepositTransaction.js - COMPLETE WITH FIXED FIELD MAPPINGS
 import { DataTypes, Model, Op } from 'sequelize';
 import { sequelize } from '../../config/db.js'; // FIXED: Using named import
 
@@ -498,28 +498,32 @@ DepositTransaction.init({
     comment: 'Transaction identifier'
   },
 
-  // Account information
+  // Account information - FIXED FIELD MAPPINGS
   ACCT_ID: {
     type: DataTypes.STRING,
     allowNull: true,
+    field: 'a_c_c_t__i_d',
     comment: 'Account identifier'
   },
 
   ACCT_NO: {
     type: DataTypes.STRING,
     allowNull: false,
+    field: 'a_c_c_t__n_o',
     comment: 'Account number'
   },
 
   ACCT_NM: {
     type: DataTypes.STRING,
     allowNull: true,
+    field: 'a_c_c_t__n_m',
     comment: 'Account name'
   },
 
   GL_ACCT_NO: {
     type: DataTypes.STRING(25),
     allowNull: false,
+    field: 'g_l__a_c_c_t__n_o',
     comment: 'GL account number (format: xx-xx-xx-xx-xx-xx)',
     validate: {
       isValidGLAccount(value) {
@@ -533,6 +537,7 @@ DepositTransaction.init({
   TRANSACTION_TYPE: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 't_r_a_n_s_a_c_t_i_o_n__t_y_p_e',
     comment: 'Transaction type',
     validate: {
       isIn: [['Deposit']]
@@ -554,6 +559,7 @@ DepositTransaction.init({
   TRANSACTION_REF_NO: {
     type: DataTypes.STRING,
     allowNull: false,
+    field: 't_r_a_n_s_a_c_t_i_o_n__r_e_f__n_o',
     unique: true,
     comment: 'Transaction reference number'
   },
@@ -561,6 +567,7 @@ DepositTransaction.init({
   BALANCE_AFTER_TRANSACTION: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
+    field: 'b_a_l_a_n_c_e__a_f_t_e_r__t_r_a_n_s_a_c_t_i_o_n',
     comment: 'Balance after transaction',
     validate: {
       min: {
@@ -573,18 +580,21 @@ DepositTransaction.init({
   VALUE_DATE: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 'v_a_l_u_e__d_a_t_e',
     comment: 'Value date'
   },
 
   TRANSACTION_DATE: {
     type: DataTypes.DATE,
     allowNull: false,
+    field: 't_r_a_n_s_a_c_t_i_o_n__d_a_t_e',
     comment: 'Transaction date'
   },
 
   BUSINESS_UNIT: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'b_u_s_i_n_e_s_s__u_n_i_t',
     defaultValue: '001',
     comment: 'Business unit code'
   },
@@ -592,13 +602,15 @@ DepositTransaction.init({
   DEPOSITOR_NAME: {
     type: DataTypes.STRING(100),
     allowNull: false,
+    field: 'd_e_p_o_s_i_t_o_r__n_a_m_e',
     comment: 'Depositor name'
   },
 
-  // Currency count as JSON field (since Sequelize doesn't have nested schemas like Mongoose)
+  // Currency count as JSON field
   CURRENCY_COUNT: {
     type: DataTypes.JSON,
     allowNull: true,
+    field: 'c_u_r_r_e_n_c_y__c_o_u_n_t',
     defaultValue: () => ({
       OneThousandNaira: 0,
       FiveHundredNaira: 0,
@@ -616,6 +628,7 @@ DepositTransaction.init({
   REC_ST: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'r_e_c__s_t',
     defaultValue: 'Pending',
     validate: {
       isIn: [['Pending', 'Active', 'Inactive']]
@@ -626,6 +639,7 @@ DepositTransaction.init({
   STATUS: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 's_t_a_t_u_s',
     defaultValue: 'Pending',
     validate: {
       isIn: [['Pending', 'Approved', 'Rejected']]
@@ -636,54 +650,63 @@ DepositTransaction.init({
   DESCRIPTION: {
     type: DataTypes.TEXT,
     allowNull: true,
+    field: 'd_e_s_c_r_i_p_t_i_o_n',
     comment: 'Transaction description'
   },
 
   CUST_ID: {
     type: DataTypes.STRING,
     allowNull: false,
+    field: 'c_u_s_t__i_d',
     comment: 'Customer identifier'
   },
 
   USER_ID: {
     type: DataTypes.STRING,
     allowNull: false,
+    field: 'u_s_e_r__i_d',
     comment: 'User identifier'
   },
 
   APPROVED_BY: {
     type: DataTypes.STRING,
     allowNull: true,
+    field: 'a_p_p_r_o_v_e_d__b_y',
     comment: 'Approved by user'
   },
 
   APPROVED_DATE: {
     type: DataTypes.DATE,
     allowNull: true,
+    field: 'a_p_p_r_o_v_e_d__d_a_t_e',
     comment: 'Approval date'
   },
 
   REJECTED_BY: {
     type: DataTypes.STRING,
     allowNull: true,
+    field: 'r_e_j_e_c_t_e_d__b_y',
     comment: 'Rejected by user'
   },
 
   REJECTED_DATE: {
     type: DataTypes.DATE,
     allowNull: true,
+    field: 'r_e_j_e_c_t_e_d__d_a_t_e',
     comment: 'Rejection date'
   },
 
   GL_TransactionId: {
     type: DataTypes.INTEGER,
     allowNull: true,
+    field: 'g_l__transaction_id',
     comment: 'GL transaction identifier'
   },
 
   QueueTransactionId: {
     type: DataTypes.INTEGER,
     allowNull: true,
+    field: 'queue_transaction_id',
     comment: 'Queue transaction identifier'
   },
 
@@ -742,7 +765,7 @@ DepositTransaction.init({
     defaultValue: DataTypes.NOW
   }
 }, {
-  sequelize,  // This now uses the properly imported sequelize instance
+  sequelize,
   modelName: 'DepositTransaction',
   tableName: 'deposit_transaction',
   timestamps: true,

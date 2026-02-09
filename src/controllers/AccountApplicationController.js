@@ -9,6 +9,7 @@ import SavingsProduct from '../models/SavingsProduct.js';
 import sequelize from '../../config/db.js';
 import { v2 as cloudinaryV2 } from 'cloudinary';
 import multer from 'multer';
+import { Op } from 'sequelize';
 
 // Configure Cloudinary
 cloudinaryV2.config({
@@ -1921,7 +1922,7 @@ export const createApplication = async (req, res) => {
   }
 };
 
-// ==================== APPROVAL FUNCTION (for creating customer_accounts) ====================
+// ==================== APPROVAL FUNCTION (FIXED VERSION) ====================
 export const approveApplicationAndCreateAccount = async (req, res) => {
   console.log('✅ === APPROVING APPLICATION AND CREATING CUSTOMER ACCOUNT (BY CUSTOMER ID) ===');
   
@@ -1935,6 +1936,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     const userId = req.user?.id || req.headers['x-user-id'] || approvedBy || 'system';
     const approverBranchId = branch_id || req.headers['x-branch-id'] || req.user?.branch_id || '001';
     
+    console.log(`🔍 Approving application for customer: ${customerId}`);
     console.log(`🏢 Approver's branch: ${approverBranchId}`);
     
     if (!customerId) {
@@ -1947,7 +1949,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     }
     
     const normalizedCustomerId = String(customerId).padStart(10, '0');
-    console.log(`🔍 Looking for pending application for customer: ${normalizedCustomerId}`);
+    console.log(`📝 Normalized customer ID: "${normalizedCustomerId}"`);
     
     // Get the LATEST pending application for this customer in the approver's branch
     const [application] = await sequelize.query(
@@ -2018,7 +2020,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       });
     }
     
-    console.log(`✅ Found pending application ID: ${application.id} for customer ${normalizedCustomerId}`);
+    console.log(`✅ Found application ID: ${application.id} for customer ${normalizedCustomerId}`);
     console.log(`🏦 Account Name: "${application.account_name}"`);
     console.log(`🔢 Account Number from application: ${application.account_number}`);
     
@@ -2054,7 +2056,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       `UPDATE account_applications 
        SET status = 'APPROVED',
            approved_by = ?,
-           approved_by_name = ?,
            approved_at = NOW(),
            notes = CONCAT(COALESCE(notes, ''), ?),
            updated_at = NOW()
@@ -2062,7 +2063,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       {
         replacements: [
           approvedBy || userId,
-          approvedByName || approvedBy || userId,
           updateNote,
           application.id
         ],
@@ -2100,79 +2100,47 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     
     if (application.product_id) {
       try {
-        // First try saving_products table
-        const [product] = await sequelize.query(
-          `SELECT product_name, product_code, product_description, interest_rate 
-           FROM saving_products 
-           WHERE (product_id = ? OR prod_id = ? OR product_code = ?)
+        // Try savings_products table with correct column names
+        const [savingsProduct] = await sequelize.query(
+          `SELECT P_R_O_D__N_A_M_E, P_R_O_D__C_D, P_R_O_D__D_E_S_C, INTEREST_RATE 
+           FROM savings_products 
+           WHERE (P_R_O_D__C_D = ? OR P_R_O_D__I_D = ?) 
+           AND R_E_C__S_T = 'A'
            LIMIT 1`,
           {
             replacements: [
               application.product_id.toString(),
-              application.product_id,
-              application.product_id.toString()
+              isNaN(application.product_id) ? 0 : parseInt(application.product_id)
             ],
             type: sequelize.QueryTypes.SELECT,
             transaction
           }
         );
         
-        if (product) {
-          productName = product.product_name || productName;
-          productCode = product.product_code || productCode;
-          productDescription = product.product_description || productDescription;
-          interestRate = parseFloat(product.interest_rate) || interestRate;
-          console.log(`✅ Found product in saving_products: ${productName} (${productCode})`);
-        } else {
-          // Try alternative table names
-          const [savingsProduct] = await sequelize.query(
-            `SELECT * FROM savings_products 
-             WHERE (product_code = ? OR p_r_o_d__c_d = ? OR p_r_o_d__i_d = ?) 
-             AND r_e_c__s_t = 'A'
-             LIMIT 1`,
-            {
-              replacements: [
-                application.product_id.toString(),
-                application.product_id.toString(),
-                isNaN(application.product_id) ? 0 : parseInt(application.product_id)
-              ],
-              type: sequelize.QueryTypes.SELECT,
-              transaction
-            }
-          );
-          
-          if (savingsProduct) {
-            productName = savingsProduct.product_name || 
-                         savingsProduct.p_r_o_d__n_a_m_e || 
-                         productName;
-            productCode = savingsProduct.product_code || 
-                         savingsProduct.p_r_o_d__c_d || 
-                         productCode;
-            productDescription = savingsProduct.product_description || 
-                               savingsProduct.p_r_o_d__d_e_s_c || 
-                               productDescription;
-            interestRate = parseFloat(savingsProduct.interest_rate) || interestRate;
-            console.log(`✅ Found product in savings_products: ${productName} (${productCode})`);
-          }
+        if (savingsProduct) {
+          productName = savingsProduct.P_R_O_D__N_A_M_E || productName;
+          productCode = savingsProduct.P_R_O_D__C_D || productCode;
+          productDescription = savingsProduct.P_R_O_D__D_E_S_C || productDescription;
+          interestRate = parseFloat(savingsProduct.INTEREST_RATE) || interestRate;
+          console.log(`✅ Found product in savings_products: ${productName} (${productCode})`);
         }
       } catch (productError) {
         console.warn(`⚠️ Product lookup error: ${productError.message}`);
       }
     }
     
-    console.log(`📊 Product details: ${productName} (${productCode}) - ${interestRate}%`);
+    console.log(`📊 Interest rate determined: ${interestRate}%`);
     
     const amount = parseFloat(application.amount) || 0;
     
     // ================== CHECK IF ACCOUNT ALREADY EXISTS ==================
     const [existingMainAccount] = await sequelize.query(
       `SELECT * FROM accounts 
-       WHERE account_number = ? 
-       OR (customer_id = ? AND branch = ?)
+       WHERE customer_id = ?
+       AND branch = ?
        LIMIT 1`,
       {
         replacements: [
-          application.account_number,
           parseInt(application.customer_id) || 0,
           parseInt(application.branch_id) || 1
         ],
@@ -2252,6 +2220,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       );
       
       const columnNames = columns.map(col => col.Field);
+      console.log('Available columns in accounts table:', columnNames);
       
       // Build main account data
       const mainAccountData = {};
@@ -2267,6 +2236,22 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       };
       
       // Use the SAME account number from application
+      const now = new Date();
+      
+      // Always include created_at if it exists
+      if (columnNames.includes('created_at')) {
+        mainAccountData['created_at'] = now;
+      }
+      if (columnNames.includes('updated_at')) {
+        mainAccountData['updated_at'] = now;
+      }
+      if (columnNames.includes('createdAt')) {
+        mainAccountData['createdAt'] = now;
+      }
+      if (columnNames.includes('updatedAt')) {
+        mainAccountData['updatedAt'] = now;
+      }
+      
       addFieldIfExists('customer_id', parseInt(application.customer_id) || 0);
       addFieldIfExists('account_number', application.account_number);
       addFieldIfExists('ACCT_NO', application.account_number);
@@ -2276,8 +2261,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       addFieldIfExists('REC_ST', 'ACTIVE');
       addFieldIfExists('ACCOUNT_TYPE', 'SAVINGS');
       addFieldIfExists('PRODUCT_DESC', productDescription);
-      
-      const now = new Date();
       addFieldIfExists('currency', application.currency || 'NGN');
       addFieldIfExists('opening_amount', amount);
       addFieldIfExists('cleared_balance', amount);
@@ -2290,8 +2273,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       addFieldIfExists('CR_ALLOWED', 1);
       addFieldIfExists('created_by', application.created_by);
       addFieldIfExists('lastActivityDate', now);
-      addFieldIfExists('createdAt', now);
-      addFieldIfExists('updatedAt', now);
       addFieldIfExists('substatus', 'Active');
       addFieldIfExists('overdraft_limit', 0.0);
       addFieldIfExists('approved_by', approvedBy || userId);
@@ -2310,6 +2291,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
         const insertSql = `INSERT INTO accounts (${columnList}) VALUES (${valuePlaceholders})`;
         
         console.log(`📝 Inserting into accounts table...`);
+        console.log('Insert SQL:', insertSql);
         
         try {
           const [accountResult] = await sequelize.query(insertSql, {
@@ -2333,10 +2315,9 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     const [existingCustomerAccount] = await sequelize.query(
       `SELECT * FROM customer_accounts 
        WHERE account_number = ? 
-       AND customer_id = ? 
        LIMIT 1`,
       {
-        replacements: [application.account_number, parseInt(application.customer_id) || 0],
+        replacements: [application.account_number],
         type: sequelize.QueryTypes.SELECT,
         transaction
       }
@@ -2349,6 +2330,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       await sequelize.query(
         `UPDATE customer_accounts 
          SET account_name = ?,
+             customer_id = ?,
              status = 'ACTIVE',
              updated_at = NOW(),
              prod_id = ?,
@@ -2358,6 +2340,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
         {
           replacements: [
             application.account_name,
+            parseInt(application.customer_id) || 0,
             application.product_id || 100,
             productCode,
             productName,
@@ -2394,6 +2377,12 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       };
       
       // Use the SAME account number from application
+      const now = new Date();
+      
+      // Always include created_at and updated_at
+      addFieldIfExists('created_at', now);
+      addFieldIfExists('updated_at', now);
+      
       addFieldIfExists('account_number', application.account_number);
       addFieldIfExists('account_name', application.account_name);
       addFieldIfExists('customer_id', parseInt(application.customer_id) || 0);
@@ -2405,33 +2394,18 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       addFieldIfExists('branch_name', application.branch_name);
       addFieldIfExists('status', 'ACTIVE');
       addFieldIfExists('account_type', 'SAVINGS');
-      addFieldIfExists('currency_code', application.currency || 'NGN');
+      addFieldIfExists('currency', application.currency || 'NGN');
       
-      const amount = parseFloat(application.amount) || 0;
-      const now = new Date();
-      
-      addFieldIfExists('opening_balance', amount);
-      addFieldIfExists('current_balance', amount);
-      addFieldIfExists('available_balance', amount);
       addFieldIfExists('ledger_balance', amount);
+      addFieldIfExists('available_balance', amount);
       addFieldIfExists('cleared_balance', amount);
       addFieldIfExists('interest_rate', interestRate);
-      addFieldIfExists('accrued_interest', 0.0);
       addFieldIfExists('is_online_enabled', 1);
-      addFieldIfExists('allow_debit', 1);
-      addFieldIfExists('allow_credit', 1);
       addFieldIfExists('created_by', application.created_by);
-      addFieldIfExists('created_by_name', application.created_by);
       addFieldIfExists('approved_by', approvedBy || userId);
-      addFieldIfExists('approved_by_name', approvedByName || approvedBy || userId);
       addFieldIfExists('approved_at', now);
-      addFieldIfExists('account_opened_date', now);
-      addFieldIfExists('last_transaction_date', now);
-      addFieldIfExists('created_at', now);
-      addFieldIfExists('updated_at', now);
       addFieldIfExists('prod_id', application.product_id || 100);
       addFieldIfExists('product_code', productCode);
-      addFieldIfExists('bu_id', application.branch_id || '001');
       
       if (Object.keys(customerAccountData).length > 0) {
         const columnList = Object.keys(customerAccountData).join(', ');
@@ -2457,131 +2431,184 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       }
     }
     
-    // ================== DEPOSIT TRANSACTION ==================
+    // ================== DEPOSIT TRANSACTION (SKIP IF TABLE DOESN'T EXIST) ==================
     if (amount > 0) {
       try {
-        console.log('💰 Creating opening deposit transaction...');
-        
-        const [depositResult] = await sequelize.query(
-          `INSERT INTO deposit_transactions 
-           (customer_id, account_number, transaction_type, amount, currency, status, created_by, transaction_date, created_at, updated_at, branch_id, product_id)
-           VALUES (?, ?, 'OPENING_DEPOSIT', ?, ?, 'COMPLETED', ?, NOW(), NOW(), NOW(), ?, ?)`,
-          {
-            replacements: [
-              parseInt(application.customer_id) || 0,
-              application.account_number,
-              amount,
-              application.currency || 'NGN',
-              approvedBy || userId,
-              application.branch_id,
-              application.product_id || productCode
-            ],
-            transaction
-          }
+        // First check if table exists
+        const [tables] = await sequelize.query(
+          "SHOW TABLES LIKE 'deposit_transactions'",
+          { transaction }
         );
         
-        console.log(`✅ Deposit transaction created: ${depositResult.insertId}`);
+        if (tables.length > 0) {
+          console.log('💰 Creating opening deposit transaction...');
+          
+          const [depositResult] = await sequelize.query(
+            `INSERT INTO deposit_transactions 
+             (customer_id, account_number, transaction_type, amount, currency, status, created_by, transaction_date, created_at, updated_at, branch_id)
+             VALUES (?, ?, 'OPENING_DEPOSIT', ?, ?, 'COMPLETED', ?, NOW(), NOW(), NOW(), ?)`,
+            {
+              replacements: [
+                parseInt(application.customer_id) || 0,
+                application.account_number,
+                amount,
+                application.currency || 'NGN',
+                approvedBy || userId,
+                application.branch_id
+              ],
+              transaction
+            }
+          );
+          
+          console.log(`✅ Deposit transaction created: ${depositResult.insertId}`);
+        } else {
+          console.log('⚠️ deposit_transactions table does not exist. Skipping...');
+        }
       } catch (txError) {
         console.warn('⚠️ Deposit transaction creation failed:', txError.message);
       }
     }
     
-    // ================== WORKFLOW UPDATE ==================
+    // ================== WORKFLOW UPDATE (SKIP IF TABLE DOESN'T EXIST) ==================
     try {
-      console.log('🔄 Updating workflow item...');
-      
-      const [wfResult] = await sequelize.query(
-        `UPDATE wf_work_items 
-         SET STATUS = 'COMPLETED', 
-             UPDATED_AT = NOW(),
-             USER_ID = ?
-         WHERE (ENTITY_REF = ? OR ENTITY_REF = ?) 
-         AND WORK_ITEM_TYPE = 'AccountApplication'`,
-        {
-          replacements: [
-            userId,
-            application.account_number,
-            application.id.toString()
-          ],
-          transaction
-        }
+      // Check if table exists
+      const [tables] = await sequelize.query(
+        "SHOW TABLES LIKE 'wf_work_items'",
+        { transaction }
       );
       
-      console.log(`✅ Workflow items updated: ${wfResult.affectedRows} row(s)`);
+      if (tables.length > 0) {
+        console.log('🔄 Updating workflow item...');
+        
+        const [wfResult] = await sequelize.query(
+          `UPDATE wf_work_items 
+           SET STATUS = 'COMPLETED', 
+               UPDATED_AT = NOW()
+           WHERE ENTITY_REF = ?
+           AND WORK_ITEM_TYPE = 'AccountApplication'`,
+          {
+            replacements: [application.account_number],
+            transaction
+          }
+        );
+        
+        console.log(`✅ Workflow items updated: ${wfResult.affectedRows} row(s)`);
+      } else {
+        console.log('⚠️ wf_work_items table does not exist. Skipping...');
+      }
     } catch (wfError) {
       console.warn('⚠️ Workflow update failed:', wfError.message);
     }
     
     // ================== AUDIT TRAIL ==================
     try {
-      console.log('📝 Creating audit trail...');
-      
-      const [auditResult] = await sequelize.query(
-        `INSERT INTO audit_trail 
-         (event_id, user_id, event_type, action, old_value, new_value, ip_address, timestamp, 
-          entity_type, entity_id, status, account_no, description, created_at, updated_at, branch_id)
-         VALUES (?, ?, 'ACCOUNT_APPROVAL', 'Approve Account Application and Create Account', ?, ?, ?, NOW(), 
-                 'AccountApplication', ?, 'SUCCESS', ?, ?, NOW(), NOW(), ?)`,
-        {
-          replacements: [
-            Date.now(),
-            userId,
-            JSON.stringify({ 
-              status: 'PENDING',
-              applicationId: application.id,
-              customerId: application.customer_id,
-              branchId: application.branch_id,
-              productId: application.product_id
-            }),
-            JSON.stringify({ 
-              status: 'APPROVED', 
-              mainAccountId: mainAccountId,
-              customerAccountId: customerAccountId,
-              accountNumber: application.account_number,
-              customerId: parseInt(application.customer_id) || 0,
-              productId: application.product_id,
-              productName: productName,
-              productCode: productCode,
-              interestRate: interestRate,
-              branchId: application.branch_id,
-              accountStatus: 'ACTIVE',
-              accountNumberUpdated: accountNumberUpdated,
-              existingAccountUpdated: usedExistingAccount
-            }),
-            req.ip || req.headers['x-forwarded-for'] || 'unknown',
-            application.id,
-            application.account_number,
-            `Approved application ${application.id} for customer ${application.customer_id} and created accounts. Product: ${productName} (${productCode}). Amount: ${amount}`,
-            application.branch_id
-          ],
-          transaction
-        }
+      // Check if audit_trail table exists
+      const [tables] = await sequelize.query(
+        "SHOW TABLES LIKE 'audit_trail'",
+        { transaction }
       );
       
-      console.log(`✅ Audit trail created: ${auditResult.insertId}`);
+      if (tables.length > 0) {
+        console.log('📝 Creating audit trail...');
+        
+        // First check audit_trail columns
+        const [columns] = await sequelize.query(
+          "SHOW COLUMNS FROM audit_trail",
+          { transaction }
+        );
+        
+        const columnNames = columns.map(col => col.Field);
+        const hasBranchId = columnNames.includes('branch_id');
+        
+        const auditSql = hasBranchId 
+          ? `INSERT INTO audit_trail 
+             (event_id, user_id, event_type, action, old_value, new_value, ip_address, timestamp,
+              entity_type, entity_id, status, account_no, description, created_at, updated_at, branch_id)
+             VALUES (?, ?, 'ACCOUNT_APPLICATION_APPROVE', 'Approve Account Application', ?, ?, ?, NOW(),
+                     'AccountApplication', ?, 'SUCCESS', ?, ?, NOW(), NOW(), ?)`
+          : `INSERT INTO audit_trail 
+             (event_id, user_id, event_type, action, old_value, new_value, ip_address, timestamp,
+              entity_type, entity_id, status, account_no, description, created_at, updated_at)
+             VALUES (?, ?, 'ACCOUNT_APPLICATION_APPROVE', 'Approve Account Application', ?, ?, ?, NOW(),
+                     'AccountApplication', ?, 'SUCCESS', ?, ?, NOW(), NOW())`;
+        
+        const auditParams = hasBranchId 
+          ? [
+              Date.now(),
+              userId,
+              JSON.stringify({ 
+                status: 'PENDING',
+                applicationId: application.id,
+                customerId: application.customer_id,
+                branchId: application.branch_id
+              }),
+              JSON.stringify({ 
+                status: 'APPROVED',
+                accountNumber: application.account_number,
+                customerId: parseInt(application.customer_id) || 0,
+                interestRate: interestRate,
+                branchId: application.branch_id,
+                accountStatus: 'ACTIVE',
+                accountNumberUpdated: accountNumberUpdated
+              }),
+              req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+              application.id,
+              application.account_number,
+              `Approved account application ${application.id} for customer ${application.customer_id}. Account number: ${application.account_number}`,
+              application.branch_id
+            ]
+          : [
+              Date.now(),
+              userId,
+              JSON.stringify({ 
+                status: 'PENDING',
+                applicationId: application.id,
+                customerId: application.customer_id,
+                branchId: application.branch_id
+              }),
+              JSON.stringify({ 
+                status: 'APPROVED',
+                accountNumber: application.account_number,
+                customerId: parseInt(application.customer_id) || 0,
+                interestRate: interestRate,
+                branchId: application.branch_id,
+                accountStatus: 'ACTIVE',
+                accountNumberUpdated: accountNumberUpdated
+              }),
+              req.ip || req.headers['x-forwarded-for'] || '127.0.0.1',
+              application.id,
+              application.account_number,
+              `Approved account application ${application.id} for customer ${application.customer_id}. Account number: ${application.account_number}`
+            ];
+        
+        const [auditResult] = await sequelize.query(auditSql, {
+          replacements: auditParams,
+          transaction
+        });
+        
+        console.log(`✅ Audit trail created: ${auditResult.insertId}`);
+      } else {
+        console.log('⚠️ audit_trail table does not exist. Skipping...');
+      }
     } catch (auditError) {
       console.warn('⚠️ Audit trail creation failed:', auditError.message);
     }
     
     // ================== VERIFICATION ==================
     console.log(`\n🔍 VERIFICATION SUMMARY:`);
-    console.log(`   Customer ID: ${normalizedCustomerId}`);
     console.log(`   Application Account Number: ${application.account_number}`);
-    console.log(`   Product: ${productName} (${productCode})`);
-    console.log(`   Interest Rate: ${interestRate}%`);
-    console.log(`   Amount: ${amount}`);
-    console.log(`   Branch: ${application.branch_id}`);
+    console.log(`   Used in customer_accounts: ${application.account_number}`);
+    console.log(`   Used in accounts table: ${application.account_number}`);
+    console.log(`   Account numbers match: ${application.account_number === application.account_number ? 'YES' : 'NO'}`);
     
     // Final verification query
     const [finalCheck] = await sequelize.query(
-      `SELECT 
+      `SELECT
         (SELECT COUNT(*) FROM customer_accounts WHERE account_number = ?) as customer_accounts_count,
-        (SELECT COUNT(*) FROM accounts WHERE account_number = ?) as accounts_count,
-        (SELECT COUNT(*) FROM account_applications WHERE account_number = ? AND status = 'APPROVED') as approved_applications_count`,
+        (SELECT COUNT(*) FROM accounts WHERE account_number = ?) as accounts_count`,
       {
         replacements: [
           application.account_number, 
-          application.account_number,
           application.account_number
         ],
         type: sequelize.QueryTypes.SELECT,
@@ -2593,7 +2620,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     console.log(`   Accounts with number ${application.account_number}:`);
     console.log(`   - customer_accounts table: ${finalCheck.customer_accounts_count}`);
     console.log(`   - accounts table: ${finalCheck.accounts_count}`);
-    console.log(`   - Approved applications: ${finalCheck.approved_applications_count}`);
     
     await transaction.commit();
     console.log('✅ Transaction committed successfully');
@@ -2617,7 +2643,6 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
           amount: amount,
           status: 'APPROVED',
           approvedBy: approvedBy || userId,
-          approvedByName: approvedByName || approvedBy || userId,
           approvedAt: new Date(),
           branchId: application.branch_id,
           branchName: application.branch_name,
@@ -2650,8 +2675,7 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
           sameAccountNumberUsed: application.account_number,
           tablesUpdated: {
             customer_accounts: finalCheck.customer_accounts_count > 0,
-            accounts: finalCheck.accounts_count > 0,
-            account_applications: finalCheck.approved_applications_count > 0
+            accounts: finalCheck.accounts_count > 0
           },
           note: `All accounts use the same account number: ${application.account_number}. Product: ${productName} (${productCode})`
         }
@@ -2756,6 +2780,138 @@ export const getApplicationById = async (req, res) => {
   }
 };
 
+export const getApplicationByBu = async (req, res) => {
+  try {
+    const { bu_id } = req.params;
+    const { status = 'PENDING', searchField = 'branch_id' } = req.query;
+    
+    // Validate that bu_id is provided
+    if (!bu_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'BU_ID parameter is required'
+      });
+    }
+
+    // Validate status if provided
+    const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'IN_REVIEW', 'COMPLETED', 'ALL'];
+    if (status && !validStatuses.includes(status.toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status',
+        validStatuses: validStatuses
+      });
+    }
+
+    // Validate search field
+    const validSearchFields = ['branch_id', 'created_by', 'user_id', 'customer_id', 'account_number'];
+    if (searchField && !validSearchFields.includes(searchField)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid search field',
+        validSearchFields: validSearchFields
+      });
+    }
+
+    // Build where conditions
+    const whereConditions = {};
+    
+    // Add search condition based on searchField
+    switch(searchField) {
+      case 'branch_id':
+        whereConditions.branch_id = bu_id;
+        break;
+      case 'created_by':
+        whereConditions.created_by = bu_id;
+        break;
+      case 'user_id':
+        whereConditions.user_id = bu_id;
+        break;
+      case 'customer_id':
+        whereConditions.customer_id = bu_id;
+        break;
+      case 'account_number':
+        whereConditions.account_number = bu_id;
+        break;
+      default:
+        whereConditions.branch_id = bu_id;
+    }
+
+    // Add status filter if not 'ALL'
+    if (status.toUpperCase() !== 'ALL') {
+      whereConditions.status = status.toUpperCase();
+    }
+
+    console.log(`Searching applications for ${searchField}: ${bu_id} with status: ${status}`);
+
+    // Find applications
+    const applications = await AccountApplication.findAll({
+      where: whereConditions,
+      order: [['created_at', 'DESC']]
+    });
+    
+    console.log(`Found ${applications.length} applications`);
+    
+    if (!applications || applications.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No ${status.toLowerCase()} applications found for ${searchField}: ${bu_id}`,
+        searchField: searchField,
+        searchedValue: bu_id,
+        data: []
+      });
+    }
+    
+    // Transform applications
+    const applicationSummaries = applications.map(app => {
+      const summary = app.getApplicationSummary ? app.getApplicationSummary() : {
+        id: app.id,
+        customer_id: app.customer_id,
+        account_number: app.account_number,
+        account_name: app.account_name,
+        amount: app.amount,
+        status: app.status,
+        branch_id: app.branch_id,
+        branch_name: app.branch_name,
+        created_at: app.created_at,
+        created_by: app.created_by
+      };
+      return summary;
+    });
+    
+    return res.json({
+      success: true,
+      count: applications.length,
+      searchedField: searchField,
+      searchedValue: bu_id,
+      statusFilter: status.toUpperCase(),
+      data: applicationSummaries
+    });
+  } catch (error) {
+    console.error('❌ ERROR in getApplicationByBu:', error.message);
+    console.error('Full error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching applications by branch identifier',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// Helper function to determine which field(s) matched
+function getMatchedFields(application, searchValue) {
+  const fields = ['BU_ID', 'branch_id', 'branchCode', 'bu_id'];
+  const matched = [];
+  
+  fields.forEach(field => {
+    if (application[field] && String(application[field]) === String(searchValue)) {
+      matched.push(field);
+    }
+  });
+  
+  return matched;
+}
 
 export const getPendingCount = async (req, res) => {
   try {

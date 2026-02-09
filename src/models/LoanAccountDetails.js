@@ -1,13 +1,17 @@
+// src/models/LoanAccountDetails.js
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
+import { fixModelFields, fixIndexes } from '../helper/fixModelFields.js';
 
-const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
+// Define your fields in original format
+const fieldDefinitions = {
   // ===== CORE ACCOUNT IDENTIFICATION =====
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true
   },
+  
   ACCT_NO: {
     type: DataTypes.STRING(20),
     allowNull: false,
@@ -16,10 +20,12 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       is: /^[A-Z0-9]{10,20}$/
     }
   },
+  
   CUST_ID: {
     type: DataTypes.STRING,
     allowNull: false
   },
+  
   CUST_NM: {
     type: DataTypes.STRING,
     allowNull: false,
@@ -27,36 +33,44 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       notEmpty: true
     }
   },
+  
   PROD_ID: {
     type: DataTypes.STRING,
     allowNull: false
   },
+  
   APPL_ID: {
     type: DataTypes.STRING,
     allowNull: false,
     unique: true
   },
+  
   CRNCY_ID: {
     type: DataTypes.STRING(3),
     allowNull: false,
     defaultValue: 'NGN'
   },
+  
   BU_ID: {
     type: DataTypes.STRING,
     allowNull: false
   },
+  
   PRIMARY_OFFICER_ID: {
     type: DataTypes.STRING,
     allowNull: false
   },
+  
   SECONDARY_OFFICER_ID: {
     type: DataTypes.STRING,
     allowNull: true
   },
+  
   creditReference: {
     type: DataTypes.STRING(50),
     allowNull: true
   },
+  
   loanCycle: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -73,6 +87,7 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
     allowNull: false,
     defaultValue: DataTypes.NOW
   },
+  
   MATURITY_DT: {
     type: DataTypes.DATE,
     allowNull: false,
@@ -84,11 +99,13 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       }
     }
   },
+  
   TERM_CD: {
     type: DataTypes.ENUM('DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'),
     allowNull: false,
     defaultValue: 'MONTHLY'
   },
+  
   TERM_VALUE: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -98,23 +115,28 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
     },
     comment: 'Loan term in months for monthly, weeks for weekly, etc.'
   },
+  
   DISBURSEMENT_DATE: {
     type: DataTypes.DATE,
     allowNull: true
   },
+  
   DISBURSEMENT_LIMIT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true
   },
+  
   TRANSACTION_TYPE: {
     type: DataTypes.ENUM('CASH', 'TRANSFER', 'CHECK', 'WIRE'),
     allowNull: true,
     defaultValue: null
   },
+  
   fundingAcctNo: {
     type: DataTypes.STRING,
     allowNull: true
   },
+  
   REPAY_SRC_ACCT_NO: {
     type: DataTypes.STRING,
     allowNull: true
@@ -129,20 +151,24 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       max: 100
     }
   },
+  
   INDEX_RATE_ID: {
     type: DataTypes.STRING,
     allowNull: true
   },
+  
   accruedInterest: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0.00
   },
+  
   lastAccrualAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0.00
   },
+  
   averageDailyAccrualInterestRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: true
@@ -156,31 +182,37 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       min: 0
     }
   },
+  
   OUTSTANDING_BALANCE: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0
   },
+  
   AVAILABLE_BALANCE: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0
   },
+  
   LEDGER_BALANCE: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0
   },
+  
   CLEARED_BALANCE: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0
   },
+  
   payOffBalance: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     defaultValue: 0.00
   },
+  
   provision: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
@@ -189,6 +221,7 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
       min: 0
     }
   },
+  
   equalPeriodicPaymentAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true
@@ -200,20 +233,24 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
     allowNull: false,
     defaultValue: 'PENDING'
   },
+  
   LOAN_STATUS: {
     type: DataTypes.ENUM('APPLICATION', 'APPROVED', 'DISBURSED', 'REPAYING', 'CLOSED', 'DEFAULTED'),
     allowNull: false,
     defaultValue: 'APPLICATION'
   },
+  
   APPROVAL_STATUS: {
     type: DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'),
     allowNull: false,
     defaultValue: 'PENDING'
   },
+  
   lastSettlementDate: {
     type: DataTypes.DATE,
     allowNull: true
   },
+  
   nextSettlementDate: {
     type: DataTypes.DATE,
     allowNull: true
@@ -224,151 +261,152 @@ const LoanAccountDetails = sequelize.define('LoanAccountDetails', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  
   CREATED_AT: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW
   },
+  
   lastModifiedBy: {
     type: DataTypes.STRING,
     allowNull: true
   },
+  
   lastModifiedAt: {
     type: DataTypes.DATE,
     allowNull: true
   }
-}, {
-  tableName: 'loan_account_details',
-  timestamps: true,
-  createdAt: 'CREATED_AT',
-  updatedAt: 'lastModifiedAt',
-  hooks: {
-    beforeCreate: (loanAccount, options) => {
-      // Auto-calculate payoff balance
-      if (loanAccount.LEDGER_BALANCE && loanAccount.accruedInterest) {
-        loanAccount.payOffBalance = parseFloat((loanAccount.LEDGER_BALANCE + loanAccount.accruedInterest).toFixed(2));
-      }
-      
-      // Set lastModifiedBy if not set
-      if (!loanAccount.lastModifiedBy && loanAccount.CREATED_BY) {
-        loanAccount.lastModifiedBy = loanAccount.CREATED_BY;
-      }
-      
-      // Ensure consistent statuses
-      if (loanAccount.LOAN_STATUS === 'DISBURSED' && loanAccount.STATUS === 'APPROVED') {
-        loanAccount.STATUS = 'ACTIVE';
-      }
-    },
-    
-    beforeUpdate: (loanAccount, options) => {
-      // Auto-calculate payoff balance on update
-      if (loanAccount.LEDGER_BALANCE && loanAccount.accruedInterest) {
-        loanAccount.payOffBalance = parseFloat((loanAccount.LEDGER_BALANCE + loanAccount.accruedInterest).toFixed(2));
-      }
-      
-      // Update lastModifiedAt is handled automatically by Sequelize timestamps
-      
-      // Ensure consistent statuses
-      if (loanAccount.LOAN_STATUS === 'DISBURSED' && loanAccount.STATUS === 'APPROVED') {
-        loanAccount.STATUS = 'ACTIVE';
-      }
-    }
+};
+
+// Define indexes (using database column names)
+const modelIndexes = [
+  {
+    unique: true,
+    fields: ['ACCT_NO']
   },
-  getterMethods: {
-    remainingTerm() {
-      if (!this.MATURITY_DT) return 0;
-      const months = (new Date(this.MATURITY_DT) - new Date()) / (1000 * 60 * 60 * 24 * 30);
-      return Math.max(0, Math.ceil(months));
-    },
-    
-    daysPastDue() {
-      if (!this.nextSettlementDate || !['DELINQUENT', 'DEFAULTED'].includes(this.STATUS)) return 0;
-      return Math.floor((new Date() - new Date(this.nextSettlementDate)) / (1000 * 60 * 60 * 24));
-    }
+  {
+    unique: true,
+    fields: ['APPL_ID']
   },
-  indexes: [
-    {
-      unique: true,
-      fields: ['ACCT_NO']
+  {
+    fields: ['CUST_ID', 'STATUS']
+  },
+  {
+    fields: ['PROD_ID', 'STATUS']
+  },
+  {
+    fields: ['MATURITY_DT']
+  },
+  {
+    fields: ['next_settlement_date']
+  },
+  {
+    fields: ['STATUS']
+  },
+  {
+    fields: ['LOAN_STATUS']
+  }
+];
+
+// Create the model
+const LoanAccountDetails = sequelize.define('LoanAccountDetails', 
+  fixModelFields(fieldDefinitions), 
+  {
+    tableName: 'loan_account_details',
+    timestamps: true,
+    createdAt: 'CREATED_AT',
+    updatedAt: 'lastModifiedAt',
+    hooks: {
+      beforeCreate: (loanAccount, options) => {
+        // Note: Use the JavaScript property names in hooks
+        if (loanAccount.ledgerBalance && loanAccount.accruedInterest) {
+          loanAccount.payOffBalance = parseFloat((loanAccount.ledgerBalance + loanAccount.accruedInterest).toFixed(2));
+        }
+        
+        if (!loanAccount.lastModifiedBy && loanAccount.createdBy) {
+          loanAccount.lastModifiedBy = loanAccount.createdBy;
+        }
+        
+        if (loanAccount.loanStatus === 'DISBURSED' && loanAccount.status === 'APPROVED') {
+          loanAccount.status = 'ACTIVE';
+        }
+      },
+      
+      beforeUpdate: (loanAccount, options) => {
+        if (loanAccount.ledgerBalance && loanAccount.accruedInterest) {
+          loanAccount.payOffBalance = parseFloat((loanAccount.ledgerBalance + loanAccount.accruedInterest).toFixed(2));
+        }
+        
+        if (loanAccount.loanStatus === 'DISBURSED' && loanAccount.status === 'APPROVED') {
+          loanAccount.status = 'ACTIVE';
+        }
+      }
     },
-    {
-      unique: true,
-      fields: ['APPL_ID']
+    getterMethods: {
+      remainingTerm() {
+        if (!this.maturityDt) return 0;
+        const months = (new Date(this.maturityDt) - new Date()) / (1000 * 60 * 60 * 24 * 30);
+        return Math.max(0, Math.ceil(months));
+      },
+      
+      daysPastDue() {
+        if (!this.nextSettlementDate || !['DELINQUENT', 'DEFAULTED'].includes(this.status)) return 0;
+        return Math.floor((new Date() - new Date(this.nextSettlementDate)) / (1000 * 60 * 60 * 24));
+      }
     },
-    {
-      fields: ['CUST_ID', 'STATUS']
-    },
-    {
-      fields: ['PROD_ID', 'STATUS']
-    },
-    {
-      fields: ['MATURITY_DT']
-    },
-    {
-      fields: ['nextSettlementDate']
-    },
-    {
-      fields: ['STATUS']
-    },
-    {
-      fields: ['LOAN_STATUS']
-    }
-  ]
-});
+    indexes: fixIndexes(modelIndexes)
+  }
+);
 
 // Define associations
 LoanAccountDetails.associate = (models) => {
-  // Assuming you have Customer, Product models
   LoanAccountDetails.belongsTo(models.Customer, {
     foreignKey: 'CUST_ID',
-    targetKey: 'CUST_ID', // Adjust if your Customer model uses a different primary key
+    targetKey: 'CUST_ID',
     as: 'customer'
   });
   
   LoanAccountDetails.belongsTo(models.Product, {
     foreignKey: 'PROD_ID',
-    targetKey: 'PROD_ID', // Adjust if your Product model uses a different primary key
+    targetKey: 'PROD_ID',
     as: 'product'
   });
   
   LoanAccountDetails.belongsTo(models.User, {
     foreignKey: 'PRIMARY_OFFICER_ID',
-    targetKey: 'user_id', // Adjust based on your User model
+    targetKey: 'user_id',
     as: 'primaryOfficer'
   });
   
   LoanAccountDetails.belongsTo(models.User, {
     foreignKey: 'SECONDARY_OFFICER_ID',
-    targetKey: 'user_id', // Adjust based on your User model
+    targetKey: 'user_id',
     as: 'secondaryOfficer'
   });
   
   LoanAccountDetails.belongsTo(models.User, {
     foreignKey: 'CREATED_BY',
-    targetKey: 'user_id', // Adjust based on your User model
+    targetKey: 'user_id',
     as: 'createdByUser'
   });
 };
 
 // Add class methods
 LoanAccountDetails.findByStatus = function(status) {
-  return this.findAll({ where: { STATUS: status } });
+  return this.findAll({ where: { status: status } });
 };
 
 // Add instance methods
 LoanAccountDetails.prototype.calculateNextPayment = function() {
-  // Implementation for calculating next payment based on repayment frequency
-  // This would use TERM_CD and lastSettlementDate to determine next payment date and amount
-  
-  // Example implementation:
-  if (!this.lastSettlementDate || !this.TERM_CD) {
+  if (!this.lastSettlementDate || !this.termCd) {
     return null;
   }
   
   const lastDate = new Date(this.lastSettlementDate);
   let nextDate;
   
-  switch (this.TERM_CD) {
+  switch (this.termCd) {
     case 'DAILY':
       nextDate = new Date(lastDate.setDate(lastDate.getDate() + 1));
       break;
@@ -393,7 +431,6 @@ LoanAccountDetails.prototype.calculateNextPayment = function() {
   
   return {
     nextPaymentDate: nextDate,
-    // You might want to calculate the payment amount here
     estimatedAmount: this.equalPeriodicPaymentAmount || null
   };
 };

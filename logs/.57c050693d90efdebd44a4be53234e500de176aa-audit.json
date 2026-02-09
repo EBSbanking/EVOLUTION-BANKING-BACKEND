@@ -1,0 +1,155 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "logs\\.57c050693d90efdebd44a4be53234e500de176aa-audit.json",
+    "files": [
+        {
+            "date": 1768080999129,
+            "name": "logs\\rejections-2026-01-10.log",
+            "hash": "04ef30d5137a2a61c63e0f0b76fb60bdb0532bb670ce35de8676f2eb4fe487f5"
+        },
+        {
+            "date": 1768125892512,
+            "name": "logs\\rejections-2026-01-11.log",
+            "hash": "3e6d4de9f6710885f62541bdb2e7babd0286135ecbb58d4a83a2b6c6608c96df"
+        },
+        {
+            "date": 1768210450588,
+            "name": "logs\\rejections-2026-01-12.log",
+            "hash": "417bd1522229aba486e238a0b57b44bed3796ed92ac2306390f423e80c1fd457"
+        },
+        {
+            "date": 1768292238324,
+            "name": "logs\\rejections-2026-01-13.log",
+            "hash": "a8137d5f5fef84748b1f3435ab305bfe8ee2294a1a8e82782262ce3b9845bf2b"
+        },
+        {
+            "date": 1768379807377,
+            "name": "logs\\rejections-2026-01-14.log",
+            "hash": "c577a7080270082feabe0da0a9a29a11db06477a9941dc5a813a88fcded162bb"
+        },
+        {
+            "date": 1768464093334,
+            "name": "logs\\rejections-2026-01-15.log",
+            "hash": "81083db825dc761a86062a6cac9a41bd2cfaba0722663875b92c4b87156aa958"
+        },
+        {
+            "date": 1768553687215,
+            "name": "logs\\rejections-2026-01-16.log",
+            "hash": "9b022003790e98753749b4b7392f5b8ee60d3371d4e2e8dc11a5fdfd9eca7dba"
+        },
+        {
+            "date": 1768637968565,
+            "name": "logs\\rejections-2026-01-17.log",
+            "hash": "8fc69e682a14da236538169323fb0f1b9f82575e5d24c1d0fdeda89a7ff0d64f"
+        },
+        {
+            "date": 1768729741630,
+            "name": "logs\\rejections-2026-01-18.log",
+            "hash": "8be1dc5a79c09de62d915b0e2910f4057166a0b6ec06f38aeb27f9bb7a6df727"
+        },
+        {
+            "date": 1768811406957,
+            "name": "logs\\rejections-2026-01-19.log",
+            "hash": "29beb6e5f7c25a7e1ee57d7f6c4b8ed6fcbcafc10b10bae7d87418867b41a39d"
+        },
+        {
+            "date": 1768896784474,
+            "name": "logs\\rejections-2026-01-20.log",
+            "hash": "5f411ab9abf50f335ac4d0c360b4b63ac55880941cd49bbd15f064831f0d607a"
+        },
+        {
+            "date": 1768983081247,
+            "name": "logs\\rejections-2026-01-21.log",
+            "hash": "234d227b43e41130fea71f06bfe707805ee3d206f9be86babe09ddbeb29c9cf7"
+        },
+        {
+            "date": 1769189348043,
+            "name": "logs\\rejections-2026-01-23.log",
+            "hash": "217f444c35b28f7fad31dffdff1555e236e50dbc3b0efec6b55e683223ee1d91"
+        },
+        {
+            "date": 1769267818269,
+            "name": "logs\\rejections-2026-01-24.log",
+            "hash": "aad148ac26721eb652ae23c02adb8e000946b459ba6ee13d6db42223c8b1d9ca"
+        },
+        {
+            "date": 1769334444528,
+            "name": "logs\\rejections-2026-01-25.log",
+            "hash": "5313e6088b06533a37a63c25a4c67726f21de5cfe810b161f788b6171035f918"
+        },
+        {
+            "date": 1769433416239,
+            "name": "logs\\rejections-2026-01-26.log",
+            "hash": "c25757d8c1a8eec41cbedb0cdf24ea8750d1aa2138b6435a983e75c158c68fd5"
+        },
+        {
+            "date": 1769504819087,
+            "name": "logs\\rejections-2026-01-27.log",
+            "hash": "ad1daedd7f89acda046e95e80c5120e14bbc6e81437f735485471a1d2d84b510"
+        },
+        {
+            "date": 1769601543171,
+            "name": "logs\\rejections-2026-01-28.log",
+            "hash": "054a544a005dc866f2bf27f2837e1999c432c8af9b38e59e98f2cb876c963f2f"
+        },
+        {
+            "date": 1769680380938,
+            "name": "logs\\rejections-2026-01-29.log",
+            "hash": "9c7c93e9328b1b6c0cba45362d0ac68b45013d16a9a737e0204e2d0a5b459dd3"
+        },
+        {
+            "date": 1769868993433,
+            "name": "logs\\rejections-2026-01-31.log",
+            "hash": "22e4b203645b218d74b9770a985d37882b04548e04fcabd16bcda2a91d666c9f"
+        },
+        {
+            "date": 1769971774288,
+            "name": "logs\\rejections-2026-02-01.log",
+            "hash": "80e389bffac87e4b9cfdfcf0af789a3cd47386bfa86f0276b32e5b046f7329c5"
+        },
+        {
+            "date": 1770044324369,
+            "name": "logs\\rejections-2026-02-02.log",
+            "hash": "906a787eafad40758ebbfe584d59a47260b29ce8a523f634f99c0e72e345183a"
+        },
+        {
+            "date": 1770111846895,
+            "name": "logs\\rejections-2026-02-03.log",
+            "hash": "8bcad395c594171a54fd7356b3a4ff830b5fe8e1a861a9e6b3569fc2d2b26a3f"
+        },
+        {
+            "date": 1770200563110,
+            "name": "logs\\rejections-2026-02-04.log",
+            "hash": "884c6eee0d1561706d8f276a04b0e82925cf6c69f6c3b99e3d8919c287e4d793"
+        },
+        {
+            "date": 1770280205902,
+            "name": "logs\\rejections-2026-02-05.log",
+            "hash": "ca6913264274533f6993ffd7bf0bda7cca3440029397d2eb18b6ae5dcb136386"
+        },
+        {
+            "date": 1770365436293,
+            "name": "logs\\rejections-2026-02-06.log",
+            "hash": "87ccf87ff97d5ae5021d8a22a5d8b44cfb8803c34282afc8edaeee0ca1f8d255"
+        },
+        {
+            "date": 1770456514928,
+            "name": "logs\\rejections-2026-02-07.log",
+            "hash": "1c45e9abe5f2d659537be1bcca658ec89ae872ce974f0aea25c68bc879df28c8"
+        },
+        {
+            "date": 1770538910182,
+            "name": "logs\\rejections-2026-02-08.log",
+            "hash": "7ee4795b8477c6e9e34d2c7854de3bdfa7c7a52228924ddacd79ce3da1754d6a"
+        },
+        {
+            "date": 1770624320764,
+            "name": "logs\\rejections-2026-02-09.log",
+            "hash": "2dd73c5e3cc661aaf333ce7ea5af765f193784ef2b71c15e13cf9ba2386a39c2"
+        }
+    ],
+    "hashType": "sha256"
+}

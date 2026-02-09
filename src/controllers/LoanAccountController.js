@@ -9416,8 +9416,8 @@ async generateLoanContract(req, res) {
         const { 
             ACCT_NO, 
             generatedBy,
-            download = false, // Optional: if true, returns contract as downloadable file
-            saveToDatabase = true // Optional: save to database
+            download = false,
+            saveToDatabase = true
         } = req.body;
 
         console.log("DEBUG: ACCT_NO =", ACCT_NO);
@@ -9432,27 +9432,25 @@ async generateLoanContract(req, res) {
             });
         }
 
-        // Start transaction (read-only is fine)
+        // Start transaction
         transaction = await sequelize.transaction({ readOnly: true });
         console.log("DEBUG: Transaction started");
 
-        // ==================== 1. FIND LOAN ACCOUNT ====================
-        console.log(`DEBUG: Looking for loan account: ${ACCT_NO}`);
+        // ==================== 1. FIND LOAN ACCOUNT USING ACTUAL COLUMN NAME ====================
+        console.log(`DEBUG: Looking for loan account: ${ACCT_NO} in column a_c_c_t__n_o`);
         
         const loanAccounts = await sequelize.query(
             `SELECT * FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
             {
                 replacements: [ACCT_NO],
                 transaction,
-                type: sequelize.QueryTypes.SELECT
+                type: QueryTypes.SELECT
             }
         );
 
-        console.log("DEBUG: Query result type:", typeof loanAccounts);
-        console.log("DEBUG: Is array?", Array.isArray(loanAccounts));
-        console.log("DEBUG: Query result length:", loanAccounts ? loanAccounts.length : 0);
-
-        if (!loanAccounts || !Array.isArray(loanAccounts) || loanAccounts.length === 0) {
+        console.log("DEBUG: Query result length:", loanAccounts.length);
+        
+        if (loanAccounts.length === 0) {
             await transaction.rollback();
             return res.status(404).json({
                 success: false,
@@ -9460,271 +9458,266 @@ async generateLoanContract(req, res) {
                 code: "LOAN_NOT_FOUND",
                 debug: {
                     searchedAccount: ACCT_NO,
-                    resultType: typeof loanAccounts,
-                    resultLength: loanAccounts ? loanAccounts.length : 'null'
+                    columnUsed: 'a_c_c_t__n_o'
                 }
             });
         }
 
         const loanAccount = loanAccounts[0];
+        console.log("DEBUG: Found loan account successfully");
         
-        if (!loanAccount) {
-            await transaction.rollback();
-            return res.status(500).json({
-                success: false,
-                message: "Loan account object is null",
-                code: "INVALID_ACCOUNT_DATA",
-                debug: {
-                    loanAccountsLength: loanAccounts.length,
-                    firstElement: loanAccounts[0]
-                }
-            });
-        }
+        // ==================== 2. EXTRACT DATA USING ACTUAL COLUMN NAMES ====================
+        const customerId = loanAccount.CUST_ID || '';  // This column is already CUST_ID
+        const customerName = loanAccount.a_c_c_t__n_m || '';
+        const productId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 1001;
+        const interestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+        const loanAmount = parseFloat(loanAccount.a_m_o_u_n_t || 0);
+        const termCode = loanAccount.t_e_r_m__c_d || 'M';
+        const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
+        const loanPurpose = loanAccount.loan_purpose || 'Business';
+        const securityCollateral = loanAccount.security_collateral || 'Land';
+        const borrowerAddress = loanAccount.borrower_address || 'Address Not Provided';
 
-        console.log("DEBUG: Found loan account:", JSON.stringify(loanAccount, null, 2));
-        console.log("DEBUG: Loan account keys:", Object.keys(loanAccount).join(', '));
+        console.log("DEBUG: Extracted data:");
+        console.log("  Customer ID:", customerId);
+        console.log("  Customer Name:", customerName);
+        console.log("  Product ID:", productId);
+        console.log("  Interest Rate:", interestRate);
+        console.log("  Loan Amount:", loanAmount);
+        console.log("  Term Code:", termCode);
+        console.log("  Term Value:", termValue);
+        console.log("  Loan Purpose:", loanPurpose);
+        console.log("  Security:", securityCollateral);
 
-        // ==================== 2. GET CUSTOMER INFORMATION ====================
-        // Find the correct customer ID column
-        const customerIdColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('cust') || key.toLowerCase().includes('customer')
-        );
-        console.log("DEBUG: Possible customer ID columns:", customerIdColumns);
-        
-        const customerIdKey = customerIdColumns[0] || 'c_u_s_t__i_d';
-        const customerId = loanAccount[customerIdKey];
-        console.log(`DEBUG: Customer ID from loan (using column '${customerIdKey}'):`, customerId);
-        
-        // Find customer name column
-        const customerNameColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('name') || key.toLowerCase().includes('nm')
-        );
-        console.log("DEBUG: Possible customer name columns:", customerNameColumns);
-        
-        const customerNameKey = customerNameColumns[0] || 'a_c_c_t__n_m';
-        const customerName = loanAccount[customerNameKey] || '';
-        
-        const numericCustomerId = customerId ? parseInt(customerId.toString().replace(/^0+/, ''), 10) : null;
-        
-        console.log("DEBUG: Customer Name =", customerName);
-        console.log("DEBUG: Numeric Customer ID =", numericCustomerId);
+        // ==================== 3. GET CUSTOMER DETAILS ====================
+        let customerDetails = {
+            CUST_NM: customerName,
+            HOME_ADDRESS: borrowerAddress
+        };
 
-        // Get customer details
-        let customerDetails = {};
-
-        if (numericCustomerId) {
+        // Try to get customer details if we have an ID
+        if (customerId) {
             try {
                 const customerResults = await sequelize.query(
-                    `SELECT * FROM customers WHERE id = ? LIMIT 1`,
+                    `SELECT * FROM customers WHERE id = ? OR CUST_ID = ? LIMIT 1`,
                     {
-                        replacements: [numericCustomerId],
+                        replacements: [customerId, customerId],
                         transaction,
-                        type: sequelize.QueryTypes.SELECT
+                        type: QueryTypes.SELECT
                     }
                 );
 
                 if (customerResults && customerResults.length > 0) {
-                    const customerResult = customerResults[0];
-                    customerDetails = {
-                        ACCT_NM: customerResult.full_name || customerResult.name || customerName,
-                        CUST_NM: customerResult.full_name || customerResult.name || customerName,
-                        HOME_ADDRESS: customerResult.address || loanAccount.borrower_address || 'Address Not Provided',
-                        EMAIL: customerResult.email || '',
-                        PHONE: customerResult.phone_number || customerResult.phone || '',
-                        BVN: customerResult.bvn || ''
-                    };
-                    console.log("DEBUG: Found customer details from customers table");
-                } else {
-                    console.log("DEBUG: No customer found in customers table with ID:", numericCustomerId);
-                    customerDetails = {
-                        ACCT_NM: customerName,
-                        CUST_NM: customerName,
-                        HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
-                    };
+                    const customer = customerResults[0];
+                    console.log("DEBUG: Found customer details");
+                    
+                    // Get customer name
+                    customerDetails.CUST_NM = customer.full_name || customer.name || customerName;
+                    
+                    // Get address
+                    const addressFields = ['address', 'home_address', 'residential_address', 'contact_address'];
+                    for (const field of addressFields) {
+                        if (customer[field]) {
+                            customerDetails.HOME_ADDRESS = customer[field];
+                            break;
+                        }
+                    }
                 }
             } catch (error) {
                 console.warn("DEBUG: Could not get customer details:", error.message);
-                customerDetails = {
-                    ACCT_NM: customerName,
-                    CUST_NM: customerName,
-                    HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
-                };
             }
-        } else {
-            console.warn("DEBUG: No numeric customer ID available");
-            customerDetails = {
-                ACCT_NM: customerName,
-                CUST_NM: customerName,
-                HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
-            };
         }
 
-        // ==================== 3. GET LOAN PRODUCT DETAILS ====================
-        // Find product ID column
-        const productIdColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('prod') || key.toLowerCase().includes('product')
-        );
-        console.log("DEBUG: Possible product ID columns:", productIdColumns);
-        
-        const productIdKey = productIdColumns[0] || 'l_o_a_n__p_r_o_d_u_c_t__i_d';
-        const productId = loanAccount[productIdKey] || 1001;
-        console.log(`DEBUG: Product ID (using column '${productIdKey}'):`, productId);
-        
-        let productConfig = null;
-        
-        // Find interest rate column
-        const interestRateColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('interest') || key.toLowerCase().includes('rate')
-        );
-        console.log("DEBUG: Possible interest rate columns:", interestRateColumns);
-        
-        const interestRateKey = interestRateColumns[0] || 'i_n_t_e_r_e_s_t__r_a_t_e';
-        let effectiveInterestRate = parseFloat(loanAccount[interestRateKey] || 0);
-        console.log(`DEBUG: Interest rate (using column '${interestRateKey}'):`, effectiveInterestRate);
-        
-        // Find term code column
-        const termCodeColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('term') && key.toLowerCase().includes('cd')
-        );
-        const termCodeKey = termCodeColumns[0] || 't_e_r_m__c_d';
-        const termCode = loanAccount[termCodeKey] || 'M';
-        
-        // Find term value column
-        const termValueColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('term') && key.toLowerCase().includes('value')
-        );
-        const termValueKey = termValueColumns[0] || 't_e_r_m__v_a_l_u_e';
-        const termValue = parseFloat(loanAccount[termValueKey] || 0);
-        
-        // Find loan amount column
-        const amountColumns = Object.keys(loanAccount).filter(key => 
-            key.toLowerCase().includes('amount')
-        );
-        const amountKey = amountColumns[0] || 'a_m_o_u_n_t';
-        const loanAmount = parseFloat(loanAccount[amountKey] || 0);
-        
-        let processingFeeRate = 0;
+        // ==================== 4. GET LOAN PRODUCT DETAILS ====================
+        let processingFeeRate = 1.0;
+        let insuranceFeeRate = 1.0;
 
-        try {
-            const productResults = await sequelize.query(
-                `SELECT lp.*, 
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
-                       lp.processing_fee_g_l_code,
-                       lp.processing_fee_rate,
-                       lp.effective_interest_rate,
-                       lp.interest_rate,
-                       lp.fee_structure,
-                       lp.rate_information
-                FROM loan_products lp
-                WHERE lp.p_r_o_d__i_d = ?
-                LIMIT 1`,
-                {
-                    replacements: [productId],
-                    transaction,
-                    type: sequelize.QueryTypes.SELECT
-                }
-            );
-            
-            if (productResults && productResults.length > 0) {
-                productConfig = productResults[0];
-                console.log("DEBUG: Retrieved productConfig successfully");
+        if (productId) {
+            try {
+                const productResults = await sequelize.query(
+                    `SELECT * FROM loan_products WHERE id = ? OR p_r_o_d__i_d = ? LIMIT 1`,
+                    {
+                        replacements: [productId, productId],
+                        transaction,
+                        type: QueryTypes.SELECT
+                    }
+                );
                 
-                // Get processing fee rate
-                processingFeeRate = parseFloat(productConfig.processing_fee_rate || 0);
-                
-                // Try to get effective interest rate from loan product
-                if (productConfig.effective_interest_rate) {
-                    try {
-                        effectiveInterestRate = parseFloat(productConfig.effective_interest_rate);
-                        console.log("DEBUG: Using effective interest rate from product:", effectiveInterestRate);
-                    } catch (e) {
-                        console.warn("DEBUG: Could not parse effective interest rate, using loan account rate");
+                if (productResults && productResults.length > 0) {
+                    const product = productResults[0];
+                    console.log("DEBUG: Retrieved product details");
+                    
+                    // Get fees from product
+                    processingFeeRate = parseFloat(product.processing_fee_rate || 1.0);
+                    insuranceFeeRate = parseFloat(product.insurance_fee_rate || 1.0);
+                    
+                    // Update interest rate if available from product
+                    if (product.effective_interest_rate) {
+                        interestRate = parseFloat(product.effective_interest_rate);
+                    } else if (product.interest_rate) {
+                        interestRate = parseFloat(product.interest_rate);
                     }
                 }
-            } else {
-                console.warn("DEBUG: No product found with ID:", productId);
+            } catch (error) {
+                console.warn("DEBUG: Error retrieving product config:", error.message);
             }
-        } catch (error) {
-            console.warn("DEBUG: Error retrieving product config:", error.message);
         }
 
-        // ==================== 4. PREPARE LOAN DETAILS ====================
+        // ==================== 5. CALCULATE DATES AND AMOUNTS ====================
         const now = new Date();
-        const disbursementAmount = Math.abs(loanAmount); // Convert negative to positive
+        const disbursementAmount = Math.abs(loanAmount);
         
-        // Calculate dates
+        // Calculate maturity date
         const maturityDate = new Date(now);
-        if (termCode === 'M') {
+        if (termCode === 'M' || termCode === 'MONTHLY') {
             maturityDate.setMonth(maturityDate.getMonth() + termValue);
-        } else if (termCode === 'Y') {
+        } else if (termCode === 'Y' || termCode === 'YEARLY') {
             maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
         }
         
+        // First payment is 30 days from now
         const firstPaymentDate = new Date(now);
         firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
 
-        const loanDetails = {
-            AMOUNT: disbursementAmount,
-            INTEREST_RATE: effectiveInterestRate,
-            TERM_VALUE: termValue,
-            TERM_CD: termCode,
-            DISBURSEMENT_DATE: new Date(now),
-            FIRST_PAYMENT_DATE: firstPaymentDate,
-            LAST_PAYMENT_DATE: maturityDate,
-            NUMBER_OF_INSTALLMENTS: termValue,
-            borrower_name: customerName,
-            borrower_address: loanAccount.borrower_address || customerDetails.HOME_ADDRESS || 'Address Not Provided',
-            loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
-        };
-
-        // ==================== 5. PREPARE LOAN PRODUCT DETAILS ====================
-        let loanProductDetails = {};
-        if (productConfig) {
-            loanProductDetails = {
-                interestRate: parseFloat(productConfig.interest_rate) || effectiveInterestRate,
-                feeStructure: productConfig.fee_structure ? JSON.parse(productConfig.fee_structure) : [],
-                processingFeeRate: processingFeeRate,
-                rateInformation: productConfig.rate_information ? JSON.parse(productConfig.rate_information) : {}
-            };
-        }
+        // Calculate fees
+        const processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+        const insuranceFeeAmount = (disbursementAmount * insuranceFeeRate) / 100;
+        const totalFees = processingFeeAmount + insuranceFeeAmount;
 
         // ==================== 6. GENERATE CONTRACT TEXT ====================
-        const contractText = generateContractText(loanDetails, customerDetails, loanProductDetails, effectiveInterestRate);
+        const generateContractText = () => {
+            const today = new Date();
+            const formattedDate = today.toLocaleDateString('en-GB', {
+                day: '2-digit',
+                month: 'long',
+                year: 'numeric'
+            });
+            
+            // Helper function to convert number to words
+            const numberToWords = (num) => {
+                const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+                const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+                const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+                
+                if (num === 0) return 'Zero';
+                
+                // For amounts in thousands
+                const thousands = Math.floor(num / 1000);
+                const remainder = num % 1000;
+                
+                let words = '';
+                
+                if (thousands > 0) {
+                    words += numberToWords(thousands) + ' Thousand';
+                    if (remainder > 0) words += ' ';
+                }
+                
+                if (remainder > 0) {
+                    const hundreds = Math.floor(remainder / 100);
+                    const tensOnes = remainder % 100;
+                    
+                    if (hundreds > 0) {
+                        words += ones[hundreds] + ' Hundred';
+                        if (tensOnes > 0) words += ' ';
+                    }
+                    
+                    if (tensOnes > 0) {
+                        if (tensOnes < 10) {
+                            words += ones[tensOnes];
+                        } else if (tensOnes < 20) {
+                            words += teens[tensOnes - 10];
+                        } else {
+                            const ten = Math.floor(tensOnes / 10);
+                            const one = tensOnes % 10;
+                            words += tens[ten];
+                            if (one > 0) {
+                                words += ' ' + ones[one];
+                            }
+                        }
+                    }
+                }
+                
+                return words;
+            };
+            
+            const amountInWords = numberToWords(Math.floor(disbursementAmount)) + ' Naira Only';
+            
+            return `
+OFFER OF CREDIT FACILITY
+=========================================
+
+Date: ${formattedDate}                                         
+Customer Name: ${customerDetails.CUST_NM}
+ADDRESS: ${customerDetails.HOME_ADDRESS}
+
+OFFER OF CREDIT FACILITY
+
+We are pleased to inform you that your application for a loan has been approved under the following terms and conditions:
+
+1. Facility Type: Working Capital Loan
+2. Facility Amount: ${amountInWords} (₦${disbursementAmount.toLocaleString()})
+3. Purpose of Loan: ${loanPurpose}
+4. Tenor: ${termValue} ${termCode === 'M' || termCode === 'MONTHLY' ? 'Months' : 'Years'} from the date of disbursement.
+5. Repayment Type and Frequency: Monthly Repayments
+6. Interest Rate: ${interestRate}% per month subject to review in line with market conditions.
+7. Fees and Charges: ${(processingFeeRate + insuranceFeeRate)}%
+   • Processing Fee: ${processingFeeRate}% of facility amount (₦${processingFeeAmount.toLocaleString()})
+   • Insurance/Management Fee: ${insuranceFeeRate}% of facility amount (₦${insuranceFeeAmount.toLocaleString()})
+8. Security/Collateral: ${securityCollateral}
+9. Conditions Precedent to Disbursement:
+   The following conditions must be met before disbursement of funds:
+   A. Acceptance and execution of this offer letter.
+   B. Submission of duly completed loan application form.
+   C. Submission of required KYC documents.
+   D. Execution of security documents.
+   E. Provision of post-dated cheques or direct debit mandate.
+   F. Payment of all applicable fees.
+
+10. Conditions Subsequent:
+    The Borrower agrees to:
+    a. Use the facility strictly for the approved purpose.
+    b. Maintain good credit conduct and not default on any due repayment.
+    c. Notify the Bank promptly of any change in business address, contact details or significant business development.
+    d. Permit the Bank to carry out regular business visits or monitoring when required.
+    e. Promptly provide additional documentation or security if required due to adverse business changes or poor repayment behavior.
+
+11. Events of Default:
+    Default shall occur if:
+    a. Repayments are not made on due dates.
+    b. False or misleading information was provided.
+    c. Any covenant, undertaking, or obligation under this agreement is breached.
+    d. The Borrower becomes insolvent or is subject to legal proceedings affecting ability to repay.
+
+Kindly signify your acceptance of this offer by signing and returning a duplicate copy of this letter.
+
+Thank you for choosing GO LEXICA Resources & Finance Company. We look forward to a mutually beneficial relationship.
+
+Yours faithfully,
+
+For: GO-LEXICA RESOURCES & FINANCE COMPANY
+
+_________________________			______________________
+Pastor Tony Ekeh					Lilian Anulika Ndu
+Chairman								Business Manager
+
+CUSTOMER'S ACCEPTANCE
+
+I, ${customerDetails.CUST_NM}, hereby accept the terms and conditions of this loan offer.
+
+Signature: ___________________
+Date: ___________________
+
+Loan Account Number: ${ACCT_NO}
+Contract Generated: ${formattedDate}
+Generated By: ${generatedBy}
+            `;
+        };
+
+        const contractText = generateContractText();
         
         console.log("DEBUG: Contract text generated successfully");
 
-        // ==================== 7. CALCULATE FINANCIAL DETAILS ====================
-        // Calculate monthly payment
-        const calculateMonthlyPayment = (principal, annualRate, termValue, termCode) => {
-            const annualRateDecimal = annualRate / 100;
-            let monthlyRate, numberOfPayments;
-            
-            if (termCode === 'M') {
-                monthlyRate = annualRateDecimal / 12;
-                numberOfPayments = termValue;
-            } else {
-                // For years, convert to months
-                monthlyRate = annualRateDecimal / 12;
-                numberOfPayments = termValue * 12;
-            }
-            
-            if (monthlyRate > 0) {
-                return (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
-                       (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
-            } else {
-                return principal / numberOfPayments;
-            }
-        };
-
-        const monthlyPayment = calculateMonthlyPayment(disbursementAmount, effectiveInterestRate, termValue, termCode);
-        const totalInterest = (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100);
-        const totalPayable = disbursementAmount + totalInterest;
-        const processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
-
-        // ==================== 8. PREPARE RESPONSE ====================
+        // ==================== 7. PREPARE RESPONSE ====================
         const responseData = {
             success: true,
             message: "Loan contract generated successfully",
@@ -9733,37 +9726,39 @@ async generateLoanContract(req, res) {
                     loanAccount: ACCT_NO,
                     contractGeneratedDate: now,
                     borrowerDetails: customerDetails,
-                    loanDetails: loanDetails,
+                    loanDetails: {
+                        AMOUNT: disbursementAmount,
+                        INTEREST_RATE: interestRate,
+                        TERM_VALUE: termValue,
+                        TERM_CD: termCode,
+                        DISBURSEMENT_DATE: now,
+                        FIRST_PAYMENT_DATE: firstPaymentDate,
+                        MATURITY_DATE: maturityDate,
+                        LOAN_PURPOSE: loanPurpose,
+                        SECURITY_COLLATERAL: securityCollateral
+                    },
                     financialSummary: {
                         loanAmount: `₦${disbursementAmount.toLocaleString()}`,
-                        interestRate: `${effectiveInterestRate}%`,
-                        loanTerm: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
-                        monthlyPayment: `₦${monthlyPayment.toFixed(2).toLocaleString()}`,
-                        totalInterest: `₦${totalInterest.toFixed(2).toLocaleString()}`,
-                        totalPayable: `₦${totalPayable.toFixed(2).toLocaleString()}`,
-                        processingFee: `₦${processingFeeAmount.toFixed(2).toLocaleString()} (${processingFeeRate}%)`,
-                        firstPaymentDate: firstPaymentDate.toLocaleDateString(),
-                        maturityDate: maturityDate.toLocaleDateString()
-                    },
-                    productDetails: {
-                        productId: productId,
-                        productName: productConfig?.name || 'Unknown',
-                        processingFeeRate: `${processingFeeRate}%`
+                        interestRate: `${interestRate}% per month`,
+                        loanTerm: `${termValue} ${termCode === 'M' || termCode === 'MONTHLY' ? 'Months' : 'Years'}`,
+                        processingFee: `₦${processingFeeAmount.toLocaleString()} (${processingFeeRate}%)`,
+                        insuranceFee: `₦${insuranceFeeAmount.toLocaleString()} (${insuranceFeeRate}%)`,
+                        totalFees: `₦${totalFees.toLocaleString()}`
                     }
                 },
                 contractText: contractText,
                 metadata: {
                     generatedBy: generatedBy,
                     generationDate: now.toISOString(),
-                    loanStatus: loanAccount.l_o_a_n__s_t_a_t_u_s || 'UNKNOWN',
                     customerId: customerId,
-                    numericCustomerId: numericCustomerId
+                    customerName: customerDetails.CUST_NM,
+                    actualAccountColumn: 'a_c_c_t__n_o'
                 }
             }
         };
 
-        // ==================== 9. OPTIONAL: SAVE TO DATABASE ====================
-        if (saveToDatabase !== false) { // Default: save to database
+        // ==================== 8. OPTIONAL: SAVE TO DATABASE ====================
+        if (saveToDatabase !== false) {
             try {
                 // Check if contract already exists
                 const existingContracts = await sequelize.query(
@@ -9771,14 +9766,13 @@ async generateLoanContract(req, res) {
                     {
                         replacements: [ACCT_NO],
                         transaction,
-                        type: sequelize.QueryTypes.SELECT
+                        type: QueryTypes.SELECT
                     }
                 );
 
                 const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
                 
                 if (existingContracts && existingContracts.length > 0) {
-                    const existingContract = existingContracts[0];
                     // Update existing contract
                     await sequelize.query(
                         `UPDATE loan_contract_forms 
@@ -9793,117 +9787,49 @@ async generateLoanContract(req, res) {
                         }
                     );
                     console.log("DEBUG: Updated existing contract in database");
-                    responseData.data.contract.databaseRecord = {
-                        id: existingContract.id,
-                        contractNumber: existingContract.loan_contract_no || contractNumber,
-                        status: 'UPDATED'
-                    };
                 } else {
-                    // Create new contract
-                    // First check if table exists
-                    const tableCheck = await sequelize.query(
-                        `SHOW TABLES LIKE 'loan_contract_forms'`,
-                        { transaction, type: sequelize.QueryTypes.SELECT }
-                    );
-
-                    if (tableCheck.length === 0) {
-                        // Create table if it doesn't exist
-                        await sequelize.query(`
-                            CREATE TABLE IF NOT EXISTS loan_contract_forms (
-                                id INT PRIMARY KEY AUTO_INCREMENT,
-                                loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
-                                customer_id VARCHAR(255) NOT NULL,
-                                borrower_name VARCHAR(255) NOT NULL,
-                                co_signatory_name VARCHAR(255) DEFAULT '',
-                                borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
-                                loan_purpose VARCHAR(255) NOT NULL,
-                                loan_amount VARCHAR(255) NOT NULL,
-                                loan_term INT(11) NOT NULL,
-                                t_e_r_m__c_d ENUM('M','Y') DEFAULT 'M',
-                                interest_rate DECIMAL(7,4) NOT NULL,
-                                interest_rate_id INT(11) DEFAULT 101,
-                                guarantor_name VARCHAR(255) DEFAULT '',
-                                bank_name VARCHAR(255) NOT NULL,
-                                bank_short VARCHAR(255) NOT NULL,
-                                status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED','GENERATED') DEFAULT 'GENERATED',
-                                contract_text TEXT NOT NULL,
-                                u_s_e_r__i_d VARCHAR(255) NOT NULL,
-                                application_id VARCHAR(255) NOT NULL,
-                                loan_account_no VARCHAR(255) NOT NULL,
-                                funding_account_no VARCHAR(255) NOT NULL,
-                                workflow_id BIGINT(20) UNIQUE,
-                                fees LONGTEXT NOT NULL,
-                                signature_requirements LONGTEXT NOT NULL,
-                                metadata LONGTEXT NOT NULL,
-                                disbursement_date DATETIME,
-                                maturity_date DATETIME,
-                                created_at DATETIME NOT NULL,
-                                updated_at DATETIME NOT NULL
-                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-                            { transaction }
-                        );
-                    }
-
                     // Insert new contract
-                    const contractResult = await sequelize.query(
+                    await sequelize.query(
                         `INSERT INTO loan_contract_forms (
                             loan_contract_no,
                             customer_id,
                             borrower_name,
-                            co_signatory_name,
                             borrower_address,
                             loan_purpose,
                             loan_amount,
                             loan_term,
                             t_e_r_m__c_d,
                             interest_rate,
-                            interest_rate_id,
-                            guarantor_name,
-                            bank_name,
-                            bank_short,
                             status,
                             contract_text,
                             u_s_e_r__i_d,
-                            application_id,
                             loan_account_no,
-                            funding_account_no,
-                            workflow_id,
-                            fees,
-                            signature_requirements,
                             metadata,
                             disbursement_date,
                             maturity_date,
                             created_at,
                             updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         {
                             replacements: [
                                 contractNumber,
                                 customerId || 'UNKNOWN',
                                 customerName,
-                                loanAccount.co_signatory_name || '',
-                                loanAccount.borrower_address || 'Address Not Provided',
-                                loanAccount.loan_purpose || 'General Business Purpose',
+                                borrowerAddress,
+                                loanPurpose,
                                 disbursementAmount.toString(),
                                 termValue,
                                 termCode,
-                                effectiveInterestRate,
-                                101,
-                                loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
-                                process.env.BANK_NAME || 'Our Bank',
-                                process.env.BANK_SHORT_NAME || 'BANK',
+                                interestRate,
                                 'GENERATED',
                                 contractText,
                                 generatedBy,
                                 ACCT_NO,
-                                ACCT_NO,
-                                'N/A',
-                                null,
-                                JSON.stringify([]),
-                                JSON.stringify({}),
                                 JSON.stringify({
                                     generatedBy: generatedBy,
-                                    generationDate: now.toISOString()
+                                    generationDate: now.toISOString(),
+                                    processingFeeRate: processingFeeRate,
+                                    insuranceFeeRate: insuranceFeeRate
                                 }),
                                 now,
                                 maturityDate,
@@ -9913,36 +9839,21 @@ async generateLoanContract(req, res) {
                             transaction
                         }
                     );
-
-                    const contractId = contractResult[0].insertId;
-                    console.log(`DEBUG: Created new contract in database ID: ${contractId}`);
-                    
-                    responseData.data.contract.databaseRecord = {
-                        id: contractId,
-                        contractNumber: contractNumber,
-                        status: 'CREATED'
-                    };
+                    console.log(`DEBUG: Created new contract in database`);
                 }
             } catch (dbError) {
                 console.warn("DEBUG: Could not save contract to database:", dbError.message);
-                // Don't fail the request if database save fails
-                responseData.data.contract.databaseRecord = {
-                    error: dbError.message,
-                    status: 'NOT_SAVED'
-                };
             }
         }
 
-        // ==================== 10. COMMIT AND RESPOND ====================
+        // ==================== 9. COMMIT AND RESPOND ====================
         await transaction.commit();
         console.log("DEBUG: Transaction committed successfully");
 
-        // Option 1: Return as JSON (default)
         if (!download) {
             return res.status(200).json(responseData);
         }
         
-        // Option 2: Return as downloadable text file
         const fileName = `Loan-Contract-${ACCT_NO}-${Date.now()}.txt`;
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

@@ -429,7 +429,7 @@ import penaltyRoutes from './routes/LoanpenaltyRoutes.js';
 import organizationRoutes from './routes/OrganizationRoutes.js';
 import overdueLoanRoutes from './routes/OverdueLoansRoutes.js';
 import notificationRoutes from './routes/NotificationServiceRoutes.js';
-import guarantorAuditRoutes from './routes/guarantorAuditRoutes.js';
+import guarantorAuditRoutes from './routes/GuarantorAuditRoutes.js';
 import NextOfKinRoutes from './routes/NextOfKinRoutes.js';
 import AccountApplicationRoutes from './routes/AccountApplicationRoutes.js';
 import TransactionRoutes from './routes/TransactionRoutes.js';

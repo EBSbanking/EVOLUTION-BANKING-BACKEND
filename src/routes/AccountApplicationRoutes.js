@@ -24,7 +24,8 @@ import {
   // New document management endpoints
   addDocumentsToApplication,
   getApplicationDocuments,
-  deleteApplicationDocument
+  deleteApplicationDocument,
+  getApplicationByBu
 } from '../controllers/AccountApplicationController.js';
 
 const router = express.Router();
@@ -97,6 +98,10 @@ router.get('/routes', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Get applications by branch identifier (BU_ID, branch_id, branchCode, etc.)
+router.get('/by-bu/:bu_id', getApplicationByBu);
+
 
 // ========================================
 // APPLICATION CREATION ENDPOINTS

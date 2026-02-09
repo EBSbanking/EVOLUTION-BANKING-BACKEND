@@ -1,0 +1,4 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v22.20.0","platform":"win32","timestamp":"2025-12-08 11:25:41"}
+{"errors":["Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2025-12-08 11:25:41"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v22.20.0","platform":"win32","timestamp":"2025-12-08 11:29:26"}
+{"errors":["Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2025-12-08 11:29:27"}
