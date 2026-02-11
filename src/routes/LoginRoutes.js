@@ -1,3 +1,4 @@
+// routes/authRoutes.js
 import express from 'express';
 import asyncHandler from 'express-async-handler';
 import { login, emergencyPasswordReset, testConfigService } from '../controllers/LoginController.js';
@@ -8,6 +9,7 @@ import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, getRoleWithPermissions } from '../constants/roleMapping.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
+import { checkLicenseForRoute } from '../middlewares/licenseMiddleware.js'; // ADDED
 
 const router = express.Router();
 
@@ -29,11 +31,12 @@ const getAccessibleBusinessUnits = (userData, reqUser) => {
   return [userData.main_business_unit || reqUser?.main_business_unit || 'Wethral'];
 };
 
-// ✅ Public: Login
+// ✅ Public: Login (No license check needed)
 router.post('/login', login);
 
 // ✅ Public: Logout (simpler version without audit trail to avoid errors)
-router.post('/logout', (req, res) => {
+// CHANGED: Added checkLicenseForRoute middleware
+router.post('/logout', checkLicenseForRoute, (req, res) => {
   try {
     // Extract token from Authorization header or request body
     const authHeader = req.headers['authorization'];
@@ -72,7 +75,8 @@ router.post('/logout', (req, res) => {
 });
 
 // ✅ Protected: Logout with authentication (fixed without audit trail errors)
-router.post('/logout-protected', verifyToken, async (req, res) => {
+// CHANGED: Added checkLicenseForRoute middleware
+router.post('/logout-protected', verifyToken, checkLicenseForRoute, async (req, res) => {
   try {
     const { refreshToken } = req.body;
     const authHeader = req.headers['authorization'];
@@ -112,9 +116,11 @@ router.post('/logout-protected', verifyToken, async (req, res) => {
 });
 
 // ✅ Protected: Get authenticated user details (/me)
+// CHANGED: Added checkLicenseForRoute middleware
 router.get(
   '/me',
   verifyToken,
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       // Validate user ID from token

@@ -2,6 +2,7 @@
 import { Op } from 'sequelize';
 import Holiday from '../models/Holiday.js';
 import logger from './logger.js';
+import sequelize from '../../config/db.js';
 
 // ==================== HOLIDAY UTILITY FUNCTIONS ====================
 

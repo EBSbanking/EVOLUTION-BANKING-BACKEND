@@ -47,6 +47,8 @@ import LoanRepaymentTransaction from '../models/LoanRepaymentTransaction.js';
 import LoanEvent from '../models/LoanEvent.js';
 import { createOrUpdateAccount } from '../Services/accountService.js';
 
+import { getRepaymentHistoryService } from '../controllers/LoanRepaymentController.js'; // Import your repayment controller
+
 // Import sequelize instance and QueryTypes
 import sequelize from '../../config/db.js';
 import { QueryTypes, Op } from 'sequelize'; // Added Op for Sequelize operators
@@ -7587,65 +7589,126 @@ async rejectDisbursement (req, res) {
 // controllers/loanController.js - FIXED VERSION
 async getAllLoans(req, res) {
   try {
-    const { status, branch, product, page = 1, limit = 20 } = req.query;
+    const { 
+      status, 
+      branch, 
+      product, 
+      page = 1, 
+      limit = 20, 
+      showRepaymentStatus = true,
+      overdueOnly = false,
+      dueSoon = false 
+    } = req.query;
     
+    // Get current business date from OS system
+    const systemDate = await SystemDate.findOne({ 
+      order: [['created_at', 'DESC']] 
+    });
+    
+    const currentBusinessDate = systemDate?.currentBusinessDate || new Date();
+    
+    // Build query conditions
     let where = {};
-    // Use the exact field names from your model definition
-    if (status) where['$LoanAccount.LOAN_STATUS$'] = status;
-    if (branch) where['$LoanAccount.BU_ID$'] = branch; // Note: BU_ID doesn't exist in your model
-    if (product) where['$LoanAccount.LOAN_PRODUCT_ID$'] = product;
-
-    // Better: Use raw query for now to see what works
-    console.log('Testing direct query...');
     
-    // First, let's test with a simple query
-    const testQuery = await sequelize.query(
-      'SELECT a_c_c_t__n_o as ACCT_NO, a_c_c_t__n_m as ACCT_NM, l_o_a_n__s_t_a_t_u_s as LOAN_STATUS FROM loan_accounts LIMIT 5',
-      { type: QueryTypes.SELECT }
-    );
-    
-    console.log('Test query results:', testQuery);
-    
-    // If test works, use raw query for now
-    let whereClause = '';
-    const whereParams = [];
-    
+    // Status filtering
     if (status) {
-      whereClause += ' AND l_o_a_n__s_t_a_t_u_s = ?';
-      whereParams.push(status);
+      where.LOAN_STATUS = status;
     }
     
-    // Your model doesn't have BU_ID or PROD_ID, so remove those conditions
-    // You might need to adjust based on your actual table structure
+    if (branch) {
+      where.BU_ID = branch;
+    }
     
-    const query = `
-      SELECT * FROM loan_accounts 
-      WHERE 1=1 ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
+    if (product) {
+      where.LOAN_PRODUCT_ID = product;
+    }
     
-    const loans = await sequelize.query(query, {
-      replacements: [...whereParams, parseInt(limit), (page - 1) * limit],
-      type: QueryTypes.SELECT
+    // Overdue only filter
+    if (overdueOnly) {
+      where.LOAN_STATUS = { [Op.in]: ['OVERDUE', 'DELINQUENT'] };
+    }
+    
+    // Due soon filter
+    if (dueSoon) {
+      // We'll handle this in post-processing
+    }
+    
+    // Calculate pagination
+    const offset = (page - 1) * limit;
+    
+    // Get loans with pagination
+    const loans = await LoanAccount.findAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      include: [
+        {
+          model: CustomerAccount,
+          as: 'customerAccount',
+          attributes: ['account_number', 'customer_name', 'available_balance', 'currency_code']
+        }
+      ]
     });
-    
-    const countQuery = `SELECT COUNT(*) as total FROM loan_accounts WHERE 1=1 ${whereClause}`;
-    const [{ total }] = await sequelize.query(countQuery, {
-      replacements: whereParams,
-      type: QueryTypes.SELECT
-    });
+
+    // Get total count
+    const total = await LoanAccount.count({ where });
+
+    // If we want to check repayment status
+    let loansWithStatus = loans;
+    if (showRepaymentStatus === 'true' || showRepaymentStatus === true) {
+      loansWithStatus = await Promise.all(
+        loans.map(async (loan) => {
+          // Get repayment history
+          let repaymentHistory = [];
+          try {
+            repaymentHistory = await getRepaymentHistoryService(loan.ACCT_NO);
+          } catch (error) {
+            console.warn(`Could not fetch repayment history for ${loan.ACCT_NO}:`, error.message);
+          }
+          
+          // Calculate repayment status
+          const repaymentStatus = await calculateRepaymentStatus(loan, currentBusinessDate, repaymentHistory);
+          
+          // Create enhanced loan object
+          return {
+            ...loan.toJSON(),
+            repaymentStatus,
+            repaymentHistory: repaymentHistory.slice(0, 10), // Last 10 repayments
+            customerDetails: loan.customerAccount
+          };
+        })
+      );
+    }
+
+    // Filter for due soon if requested
+    if (dueSoon) {
+      loansWithStatus = loansWithStatus.filter(loan => 
+        loan.repaymentStatus?.status === 'DUE_SOON' || 
+        loan.repaymentStatus?.status === 'DUE_TODAY'
+      );
+    }
 
     return res.json({
       success: true,
-      data: loans,
+      data: loansWithStatus,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit)
-      }
+      },
+      filters: {
+        status,
+        branch,
+        product,
+        overdueOnly,
+        dueSoon
+      },
+      currentBusinessDate,
+      timestamp: new Date().toISOString()
     });
+    
   } catch (error) {
     console.error('❌ Loan fetch error:', error);
     return res.status(500).json({
@@ -7654,6 +7717,276 @@ async getAllLoans(req, res) {
       error: error.message
     });
   }
+},
+
+/**
+ * Comprehensive repayment status calculation
+ */
+async  calculateRepaymentStatus (req, res, loan, currentDate, repaymentHistory = []) {
+  try {
+    const loanData = loan.toJSON ? loan.toJSON() : loan;
+    const loanStatus = loanData.LOAN_STATUS?.toUpperCase();
+    const outstandingPrincipal = parseFloat(loanData.OUTSTANDING_PRINCIPAL || 0);
+    const disbursedAmount = parseFloat(loanData.DISBURSEMENT_LIMIT || 0);
+    const accruedInterest = parseFloat(loanData.ACCRUED_INTEREST || 0);
+    const penaltyAmount = parseFloat(loanData.PENALTY_AMOUNT || 0);
+    const maturityDate = loanData.MATURITY_DT ? new Date(loanData.MATURITY_DT) : null;
+    const nextRepaymentDate = loanData.NEXT_REPAYMENT_DATE ? new Date(loanData.NEXT_REPAYMENT_DATE) : null;
+    const lastRepaymentDate = loanData.LAST_REPAYMENT_DATE ? new Date(loanData.LAST_REPAYMENT_DATE) : null;
+    const installmentAmount = parseFloat(loanData.INSTALLMENT_AMOUNT || 0);
+    const totalInstallments = parseInt(loanData.TOTAL_INSTALLMENTS || 0);
+    const paidInstallments = parseInt(loanData.PAID_INSTALLMENTS || 0);
+    
+    // If loan is fully paid
+    if (outstandingPrincipal <= 0 && accruedInterest <= 0 && penaltyAmount <= 0) {
+      return {
+        status: 'PAID',
+        description: 'Loan fully repaid',
+        isDue: false,
+        isOverdue: false,
+        isDelinquent: false,
+        isMatured: maturityDate ? currentDate >= maturityDate : false,
+        daysOverdue: 0,
+        amountDue: 0,
+        totalOutstanding: 0,
+        breakdown: {
+          principal: 0,
+          interest: 0,
+          penalty: 0
+        }
+      };
+    }
+    
+    // Calculate total outstanding
+    const totalOutstanding = outstandingPrincipal + accruedInterest + penaltyAmount;
+    
+    // Check if loan is overdue based on maturity date
+    let isMaturedOverdue = false;
+    let daysSinceMaturity = 0;
+    
+    if (maturityDate && currentDate > maturityDate) {
+      isMaturedOverdue = true;
+      daysSinceMaturity = Math.floor((currentDate - maturityDate) / (1000 * 60 * 60 * 24));
+    }
+    
+    // Check next repayment date
+    let isRepaymentOverdue = false;
+    let daysSinceDue = 0;
+    let amountDue = 0;
+    
+    if (nextRepaymentDate) {
+      if (currentDate > nextRepaymentDate) {
+        isRepaymentOverdue = true;
+        daysSinceDue = Math.floor((currentDate - nextRepaymentDate) / (1000 * 60 * 60 * 24));
+        amountDue = installmentAmount;
+      } else if (currentDate.toDateString() === nextRepaymentDate.toDateString()) {
+        amountDue = installmentAmount;
+      }
+    }
+    
+    // Determine delinquency level
+    let isDelinquent = false;
+    let delinquencyLevel = 'CURRENT';
+    
+    if (isRepaymentOverdue) {
+      if (daysSinceDue > 90) {
+        isDelinquent = true;
+        delinquencyLevel = 'SEVERE';
+      } else if (daysSinceDue > 60) {
+        isDelinquent = true;
+        delinquencyLevel = 'HIGH';
+      } else if (daysSinceDue > 30) {
+        isDelinquent = true;
+        delinquencyLevel = 'MODERATE';
+      } else if (daysSinceDue > 15) {
+        isDelinquent = true;
+        delinquencyLevel = 'MILD';
+      }
+    }
+    
+    // Check for penalties
+    const hasPenalties = penaltyAmount > 0;
+    
+    // Determine overall status
+    let status = 'ACTIVE';
+    let description = 'Loan active';
+    
+    if (loanStatus === 'OVERDUE' || loanStatus === 'DELINQUENT') {
+      status = loanStatus;
+      description = `Loan is ${loanStatus.toLowerCase()}`;
+    } else if (isMaturedOverdue) {
+      status = 'MATURED_OVERDUE';
+      description = `Loan matured ${daysSinceMaturity} days ago`;
+    } else if (isRepaymentOverdue) {
+      status = 'OVERDUE';
+      description = `Repayment overdue by ${daysSinceDue} days`;
+    } else if (nextRepaymentDate && nextRepaymentDate > currentDate) {
+      const daysUntilDue = Math.ceil((nextRepaymentDate - currentDate) / (1000 * 60 * 60 * 24));
+      
+      if (daysUntilDue === 0) {
+        status = 'DUE_TODAY';
+        description = 'Repayment due today';
+      } else if (daysUntilDue <= 7) {
+        status = 'DUE_SOON';
+        description = `Repayment due in ${daysUntilDue} days`;
+      } else {
+        status = 'SCHEDULED';
+        description = `Next payment in ${daysUntilDue} days`;
+      }
+    }
+    
+    // Calculate payment progress
+    const paymentProgress = totalInstallments > 0 ? (paidInstallments / totalInstallments) * 100 : 0;
+    const principalProgress = disbursedAmount > 0 ? ((disbursedAmount - outstandingPrincipal) / disbursedAmount) * 100 : 0;
+    
+    // Analyze repayment pattern
+    const repaymentPattern = analyzeRepaymentPattern(repaymentHistory, totalInstallments, paidInstallments);
+    
+    return {
+      status,
+      description,
+      isDue: status === 'DUE_TODAY' || status === 'DUE_SOON',
+      isOverdue: isRepaymentOverdue || isMaturedOverdue || loanStatus === 'OVERDUE',
+      isDelinquent: isDelinquent || loanStatus === 'DELINQUENT',
+      isMatured: isMaturedOverdue,
+      delinquencyLevel,
+      daysOverdue: Math.max(daysSinceDue, daysSinceMaturity),
+      daysSinceLastRepayment: lastRepaymentDate ? 
+        Math.floor((currentDate - lastRepaymentDate) / (1000 * 60 * 60 * 24)) : null,
+      amountDue,
+      totalOutstanding,
+      breakdown: {
+        principal: outstandingPrincipal,
+        interest: accruedInterest,
+        penalty: penaltyAmount
+      },
+      schedule: {
+        nextRepaymentDate,
+        lastRepaymentDate,
+        maturityDate,
+        installmentAmount,
+        paidInstallments,
+        totalInstallments,
+        paymentProgress: Math.round(paymentProgress * 100) / 100,
+        principalProgress: Math.round(principalProgress * 100) / 100
+      },
+      flags: {
+        hasPenalties,
+        hasArrears: isRepaymentOverdue,
+        nearingMaturity: maturityDate && 
+          Math.floor((maturityDate - currentDate) / (1000 * 60 * 60 * 24)) <= 30,
+        irregularPayments: repaymentPattern.isIrregular,
+        frequentLatePayments: repaymentPattern.frequentLate
+      },
+      recommendations: generateRepaymentRecommendations(
+        status,
+        outstandingPrincipal,
+        accruedInterest,
+        penaltyAmount,
+        isDelinquent,
+        delinquencyLevel,
+        repaymentPattern
+      )
+    };
+    
+  } catch (error) {
+    console.error('Error calculating repayment status:', error);
+    return {
+      status: 'ERROR',
+      description: 'Error calculating repayment status',
+      isDue: false,
+      isOverdue: false,
+      isDelinquent: false,
+      error: error.message
+    };
+  }
+},
+
+/**
+ * Analyze repayment pattern
+ */
+async  analyzeRepaymentPattern (req, res, repaymentHistory, totalInstallments, paidInstallments) {
+  if (repaymentHistory.length === 0) {
+    return {
+      isIrregular: false,
+      frequentLate: false,
+      averageDaysLate: 0,
+      onTimePercentage: 100
+    };
+  }
+  
+  const recentRepayments = repaymentHistory.slice(0, Math.min(repaymentHistory.length, 12));
+  let lateCount = 0;
+  let totalDaysLate = 0;
+  
+  // Simple analysis - assume scheduled dates should be monthly
+  for (let i = 1; i < recentRepayments.length; i++) {
+    const daysBetween = Math.floor(
+      (new Date(recentRepayments[i-1].date) - new Date(recentRepayments[i].date)) / 
+      (1000 * 60 * 60 * 24)
+    );
+    
+    if (daysBetween > 35) { // More than 5 days late (assuming 30-day cycle)
+      lateCount++;
+      totalDaysLate += (daysBetween - 30);
+    }
+  }
+  
+  const onTimePercentage = recentRepayments.length > 1 ? 
+    ((recentRepayments.length - 1 - lateCount) / (recentRepayments.length - 1)) * 100 : 100;
+  
+  return {
+    isIrregular: lateCount > (recentRepayments.length * 0.3), // More than 30% late
+    frequentLate: lateCount > (recentRepayments.length * 0.5), // More than 50% late
+    averageDaysLate: lateCount > 0 ? Math.round(totalDaysLate / lateCount) : 0,
+    onTimePercentage: Math.round(onTimePercentage * 100) / 100,
+    missedInstallments: Math.max(0, totalInstallments - paidInstallments)
+  };
+},
+
+/**
+ * Generate repayment recommendations
+ */
+async generateRepaymentRecommendations(status, principal, interest, penalty, isDelinquent, delinquencyLevel, repaymentPattern) {
+  const recommendations = [];
+  
+  if (status === 'OVERDUE' || status === 'DELINQUENT') {
+    recommendations.push('Immediate payment required to avoid further penalties');
+    recommendations.push('Contact customer to discuss payment plan');
+  }
+  
+  if (penalty > 0) {
+    recommendations.push('Outstanding penalties need to be cleared');
+  }
+  
+  if (interest > (principal * 0.1)) { // High interest relative to principal
+    recommendations.push('Consider paying down accrued interest to reduce total cost');
+  }
+  
+  if (repaymentPattern.frequentLate) {
+    recommendations.push('Customer has history of late payments - consider adjusting repayment schedule');
+  }
+  
+  if (repaymentPattern.missedInstallments > 2) {
+    recommendations.push(`${repaymentPattern.missedInstallments} installments missed - review loan for possible restructuring`);
+  }
+  
+  if (delinquencyLevel === 'SEVERE') {
+    recommendations.push('Severe delinquency - escalate to collections department');
+  } else if (delinquencyLevel === 'HIGH') {
+    recommendations.push('High delinquency risk - initiate recovery procedures');
+  }
+  
+  if (status === 'DUE_SOON') {
+    recommendations.push('Send payment reminder to customer');
+  }
+  
+  // Add positive reinforcement
+  if (repaymentPattern.onTimePercentage >= 90) {
+    recommendations.push('Excellent repayment history - consider loyalty benefits');
+  }
+  
+  return recommendations;
 },
 
 
@@ -10822,6 +11155,132 @@ async getLoanAccountsByCustomerId(req, res) {
       });
     }
   },
+
+  /**
+ * Get repayment status overview dashboard
+ */
+async getRepaymentStatusOverview(req, res) {
+  try {
+    const currentDate = new Date();
+    
+    // Get all active loans
+    const activeLoans = await LoanAccount.findAll({
+      where: {
+        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED', 'OVERDUE', 'DELINQUENT'] }
+      },
+      include: [{
+        model: CustomerAccount,
+        as: 'customerAccount',
+        attributes: ['customer_name', 'account_number']
+      }]
+    });
+    
+    // Categorize loans by repayment status
+    const categories = {
+      paid: [],
+      current: [],
+      dueSoon: [],
+      dueToday: [],
+      overdue: [],
+      delinquent: [],
+      withPenalties: []
+    };
+    
+    let totalOutstanding = 0;
+    let totalInterest = 0;
+    let totalPenalty = 0;
+    
+    for (const loan of activeLoans) {
+      const repaymentHistory = await getRepaymentHistoryService(loan.ACCT_NO);
+      const repaymentStatus = await calculateRepaymentStatus(loan, currentDate, repaymentHistory);
+      
+      totalOutstanding += repaymentStatus.totalOutstanding;
+      totalInterest += repaymentStatus.breakdown.interest;
+      totalPenalty += repaymentStatus.breakdown.penalty;
+      
+      // Categorize
+      if (repaymentStatus.status === 'PAID') {
+        categories.paid.push(loan.ACCT_NO);
+      } else if (repaymentStatus.isDelinquent) {
+        categories.delinquent.push({
+          accountNo: loan.ACCT_NO,
+          customerName: loan.customerAccount?.customer_name,
+          amount: repaymentStatus.totalOutstanding,
+          daysOverdue: repaymentStatus.daysOverdue,
+          delinquencyLevel: repaymentStatus.delinquencyLevel
+        });
+      } else if (repaymentStatus.isOverdue) {
+        categories.overdue.push({
+          accountNo: loan.ACCT_NO,
+          customerName: loan.customerAccount?.customer_name,
+          amount: repaymentStatus.totalOutstanding,
+          daysOverdue: repaymentStatus.daysOverdue
+        });
+      } else if (repaymentStatus.status === 'DUE_TODAY') {
+        categories.dueToday.push({
+          accountNo: loan.ACCT_NO,
+          customerName: loan.customerAccount?.customer_name,
+          amountDue: repaymentStatus.amountDue
+        });
+      } else if (repaymentStatus.status === 'DUE_SOON') {
+        categories.dueSoon.push({
+          accountNo: loan.ACCT_NO,
+          customerName: loan.customerAccount?.customer_name,
+          amountDue: repaymentStatus.amountDue,
+          daysUntilDue: repaymentStatus.schedule?.nextRepaymentDate ? 
+            Math.ceil((repaymentStatus.schedule.nextRepaymentDate - currentDate) / (1000 * 60 * 60 * 24)) : null
+        });
+      } else {
+        categories.current.push(loan.ACCT_NO);
+      }
+      
+      if (repaymentStatus.breakdown.penalty > 0) {
+        categories.withPenalties.push({
+          accountNo: loan.ACCT_NO,
+          penaltyAmount: repaymentStatus.breakdown.penalty
+        });
+      }
+    }
+    
+    // Calculate metrics
+    const metrics = {
+      totalLoans: activeLoans.length,
+      totalOutstanding,
+      totalInterest,
+      totalPenalty,
+      overdueAmount: categories.overdue.reduce((sum, loan) => sum + loan.amount, 0),
+      delinquentAmount: categories.delinquent.reduce((sum, loan) => sum + loan.amount, 0),
+      collectionRate: totalOutstanding > 0 ? 
+        ((totalOutstanding - categories.overdue.reduce((sum, loan) => sum + loan.amount, 0)) / totalOutstanding) * 100 : 100,
+      averageDaysOverdue: categories.overdue.length > 0 ? 
+        categories.overdue.reduce((sum, loan) => sum + loan.daysOverdue, 0) / categories.overdue.length : 0
+    };
+    
+    return res.json({
+      success: true,
+      data: {
+        metrics,
+        categories,
+        summary: {
+          overdueLoans: categories.overdue.length,
+          delinquentLoans: categories.delinquent.length,
+          loansDueToday: categories.dueToday.length,
+          loansDueSoon: categories.dueSoon.length,
+          loansWithPenalties: categories.withPenalties.length
+        },
+        timestamp: currentDate.toISOString()
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Repayment status overview error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get repayment status overview',
+      error: error.message
+    });
+  }
+},
 
   // =========================
   // HELPER METHODS

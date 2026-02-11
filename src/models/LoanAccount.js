@@ -386,4 +386,49 @@ if (process.env.NODE_ENV === 'development' || process.env.AUTO_INIT_TABLES === '
   }, 2000);
 }
 
+
+// Add to LoanAccount.js static methods section
+
+/**
+ * Find overdue loans (static method for service use)
+ */
+LoanAccount.findOverdueLoans = async function(currentDate = new Date()) {
+  await this.ensureTableExists();
+  return await this.findAll({
+    where: {
+      LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },
+      NEXT_PAYMENT_DATE: {
+        [Op.lt]: currentDate
+      },
+      OUTSTANDING_PRINCIPAL: {
+        [Op.gt]: 0
+      }
+    }
+  });
+};
+
+/**
+ * Mark loans as overdue in bulk (static method for service use)
+ */
+LoanAccount.markLoansAsOverdue = async function(currentDate = new Date()) {
+  await this.ensureTableExists();
+  
+  const overdueLoans = await this.findOverdueLoans(currentDate);
+  let modifiedCount = 0;
+  
+  for (const loan of overdueLoans) {
+    try {
+      await loan.update({
+        LOAN_STATUS: 'OVERDUE',
+        updatedAt: new Date()
+      });
+      modifiedCount++;
+    } catch (error) {
+      console.error(`Failed to mark loan ${loan.ACCT_NO} as overdue:`, error.message);
+    }
+  }
+  
+  return { modifiedCount };
+};
+
 export default LoanAccount;

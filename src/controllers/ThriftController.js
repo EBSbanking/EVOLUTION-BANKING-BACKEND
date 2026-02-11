@@ -6,7 +6,7 @@ import { generateAccountIdentifiersFromCounter } from '../utils/generateAccountN
 
 // Import model loader functions
 import { 
-  initModels, 
+  initializeModels,  // Use the correct export name
   getCustomer, 
   getThrift, 
   getTransaction, 
@@ -15,16 +15,14 @@ import {
   areModelsInitialized 
 } from '../utils/modelLoader.js';
 
-// Initialize models on first use
-let modelsInitialized = false;
-
+// Then update the function call in ensureModelsInitialized()
 async function ensureModelsInitialized() {
   if (!modelsInitialized) {
     console.log('🔄 Ensuring models are initialized...');
     
     try {
-      // Initialize models
-      await initModels();
+      // Initialize models using the correct function name
+      await initializeModels();
       
       // Verify we have the models
       const Customer = getCustomer();
@@ -43,6 +41,10 @@ async function ensureModelsInitialized() {
     }
   }
 }
+// Initialize models on first use
+let modelsInitialized = false;
+
+
 
 // Helper function to get Cash GL account (CASH IN HAND)
 async function getCashGLAccount(sequelize, transaction = null) {

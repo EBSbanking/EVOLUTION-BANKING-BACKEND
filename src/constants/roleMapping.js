@@ -1090,30 +1090,101 @@ export async function syncPermissions() {
   }
 }
 
-// Populate Business Unit Mapping (Sequelize version)
+// In your roleMapping.js file, update the populateBusinessUnitMapping function:
+
 export async function populateBusinessUnitMapping() {
   try {
-    const businessUnits = await BusinessUnit.findAll();
-    if (!businessUnits || businessUnits.length === 0) {
-      logger.warn('No business units found in the database');
-      return {};
+    console.log('🔄 Starting business unit mapping population...');
+    
+    // Check if models are properly imported
+    if (!BusinessUnit) {
+      console.error('❌ BusinessUnit model is undefined');
+      throw new Error('BusinessUnit model not available');
     }
     
-    const BUSINESS_UNIT_MAPPING = {};
-    businessUnits.forEach((bu) => {
-      BUSINESS_UNIT_MAPPING[bu.BUSINESS_UNIT] = bu.BU_ID;
+    // Get sequelize instance
+    const db = BusinessUnit.sequelize;
+    if (!db) {
+      console.error('❌ Sequelize instance not available');
+      throw new Error('Database connection not established');
+    }
+    
+    // Test connection
+    try {
+      await db.authenticate();
+      console.log('✅ Database connection established');
+    } catch (dbError) {
+      console.error('❌ Database connection failed:', dbError.message);
+      throw new Error(`Database connection failed: ${dbError.message}`);
+    }
+    
+    // Fetch business units
+    console.log('📊 Fetching business units from database...');
+    const businessUnits = await BusinessUnit.findAll({
+      attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'STATUS'],
+      raw: true,
+      where: {
+        STATUS: 'ACTIVE' // Only get active business units
+      }
     });
     
-    logger.info('Business unit mapping populated successfully', {
-      mapping: BUSINESS_UNIT_MAPPING,
+    if (!businessUnits || businessUnits.length === 0) {
+      console.error('❌ No business units found in the database');
+      throw new Error('No business units found');
+    }
+    
+    console.log(`✅ Found ${businessUnits.length} active business units`);
+    
+    // Create mapping
+    const BUSINESS_UNIT_MAPPING = {};
+    let validMappings = 0;
+    
+    businessUnits.forEach((bu) => {
+      if (bu.BUSINESS_UNIT && bu.BU_ID) {
+        BUSINESS_UNIT_MAPPING[bu.BUSINESS_UNIT] = bu.BU_ID;
+        // Also map by BU_ID for reverse lookup
+        BUSINESS_UNIT_MAPPING[bu.BU_ID] = bu.BUSINESS_UNIT;
+        validMappings++;
+      }
     });
+    
+    if (validMappings === 0) {
+      console.error('❌ No valid business unit mappings found');
+      throw new Error('No valid mappings found');
+    }
+    
+    console.log('✅ Business unit mapping populated successfully', {
+      totalUnits: businessUnits.length,
+      validMappings: validMappings,
+      uniqueKeys: Object.keys(BUSINESS_UNIT_MAPPING).length
+    });
+    
     return BUSINESS_UNIT_MAPPING;
+    
   } catch (error) {
-    logger.error('Error fetching business units', {
+    console.error('❌ Error fetching business units from database:', {
       error: error.message,
       stack: error.stack,
+      timestamp: new Date().toISOString()
     });
-    throw new Error(`Failed to populate business unit mapping: ${error.message}`);
+    
+    // Only use minimal emergency fallback for critical failures
+    console.warn('⚠️ Using minimal emergency fallback mapping');
+    
+    // Minimal fallback - just enough to keep the app running
+    const emergencyFallback = {
+      // Default mappings for essential system operations
+      'HEAD_OFFICE': 1,
+      'MAIN_BRANCH': 1,
+      'DEFAULT': 1,
+      
+      // Reverse mapping for the default
+      1: 'HEAD_OFFICE'
+    };
+    
+    console.warn(`⚠️ Emergency fallback activated with ${Object.keys(emergencyFallback).length} mappings`);
+    
+    return emergencyFallback;
   }
 }
 

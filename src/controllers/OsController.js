@@ -12,11 +12,12 @@ import { checkIfLoanIsOverdue } from '../Services/loanOverdueChecker.js';
 import { createAuditTrail } from '../controllers/AudiTrailController.js';
 import ThriftController from '../controllers/ThriftController.js';
 import { processAutoCollections } from '../Services/autoCollectionService.js';
+import { initializeModels, getLoanAccount, getLoanRepayment } from '../models/index.js';
 
 // Import Sequelize models
 import SystemDate from '../models/SystemDate.js';
 import Holiday from '../models/Holiday.js';
-import LoanAccount from '../models/LoanAccount.js';
+// import LoanAccount from '../models/LoanAccount.js';
 import Ledger from '../models/Ledger.js';
 import GLTransactionQueue from '../models/GLTransactionQueue.js';
 import Reconciliation from '../models/Reconciliation.js';
@@ -39,6 +40,53 @@ import SystemDateController from './SystemDateController.js';
 // import { calculateNextBusinessDate } from './SystemDateController.js';
 
 // ==================== DIRECT DEBIT LOAN REPAYMENT SERVICE ====================
+
+// Then use them
+// ==================== DIRECT DEBIT LOAN REPAYMENT SERVICE ====================
+
+let modelsInitialized = false;
+
+async function ensureModelsInitialized() {
+  if (!modelsInitialized) {
+    try {
+      await initializeModels();
+      modelsInitialized = true;
+      console.log('✅ Models initialized in OsController');
+    } catch (error) {
+      console.error('❌ Failed to initialize models:', error.message);
+    }
+  }
+}
+
+/**
+ * Helper function to get LoanAccount model
+ */
+const getLoanAccountModel = () => {
+  return getLoanAccount ? getLoanAccount() : null;
+};
+
+/**
+ * Helper function to get LoanRepayment model
+ */
+const getLoanRepaymentModel = () => {
+  return getLoanRepayment ? getLoanRepayment() : null;
+};
+
+let activeLoans = [];
+try {
+  if (LoanAccount && LoanAccount.findAll) {
+    activeLoans = await LoanAccount.findAll({ 
+      where: {
+        LOAN_STATUS: 'ACTIVE'
+      }
+    });
+  } else {
+    console.warn('LoanAccount model not available, returning empty array');
+  }
+} catch (error) {
+  console.error('Error fetching loans:', error.message);
+  activeLoans = [];
+}
 
 /**
  * Process loan repayment direct debits
@@ -509,13 +557,45 @@ const generateTransactionId = () => {
 
 // ==================== MAIN SERVICE FUNCTIONS ====================
 
-/**
- * Process loan overdue and status
- */
 export const processLoanOverdueAndStatus = async () => {
   try {
     logger.info('🔄 Processing loan overdue status...');
     
+    // DEBUG: Add detailed logging
+    console.log('=== DEBUG processLoanOverdueAndStatus ===');
+    console.log('getLoanAccount type:', typeof getLoanAccount);
+    console.log('getLoanAccount is function?:', typeof getLoanAccount === 'function');
+    
+    // Get the models properly inside the function
+    const LoanAccount = getLoanAccount ? getLoanAccount() : null;
+    
+    console.log('LoanAccount result:', LoanAccount);
+    console.log('LoanAccount.findAll exists?:', LoanAccount?.findAll ? 'YES' : 'NO');
+    console.log('LoanAccount is class?:', typeof LoanAccount === 'function' ? 'YES' : 'NO');
+    
+    if (!LoanAccount || typeof LoanAccount.findAll !== 'function') {
+      const errorMsg = 'LoanAccount model not available or findAll not a function';
+      logger.error(errorMsg, {
+        loanAccountExists: !!LoanAccount,
+        loanAccountType: typeof LoanAccount,
+        findAllExists: LoanAccount?.findAll ? 'YES' : 'NO',
+        getLoanAccountType: typeof getLoanAccount,
+        getLoanAccountIsFunction: typeof getLoanAccount === 'function',
+        getLoanAccountValue: getLoanAccount
+      });
+      
+      // Return empty results but don't throw error
+      return {
+        success: false,
+        error: errorMsg,
+        results: {
+          overdueLoans: { accounts: [], count: 0 },
+          statusUpdates: { count: 0 }
+        }
+      };
+    }
+    
+    console.log('DEBUG: Calling LoanAccount.findAll...');
     const loans = await LoanAccount.findAll({
       where: {
         LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED'] }
@@ -523,6 +603,8 @@ export const processLoanOverdueAndStatus = async () => {
       raw: true
     });
 
+    console.log('DEBUG: Found', loans.length, 'loans');
+    
     let updatedCount = 0;
     
     for (const loanData of loans) {
@@ -585,6 +667,7 @@ export const processLoanOverdueAndStatus = async () => {
   }
 };
 
+
 // ==================== SYSTEM STATUS ====================
 
 const systemStatus = {
@@ -607,6 +690,17 @@ const systemStatus = {
       executionTime: null, 
       overdueCount: 0, 
       statusUpdateCount: 0,
+      processed: [],
+      failed: [],
+      skipped: []
+    },
+    loanRepaymentSync: { // Add this new service
+      healthy: true,
+      lastError: null,
+      lastRun: null,
+      executionTime: null,
+      updateCount: 0,
+      updatedCount: 0,
       processed: [],
       failed: [],
       skipped: []
@@ -663,7 +757,6 @@ const systemStatus = {
       individualLoans: {},
       groupLoans: {}
     },
-    // NEW: Direct Debit Loan Repayment Service
     directDebitLoanRepayment: {
       healthy: true,
       lastError: null,
@@ -942,6 +1035,179 @@ export const processEODGLTransactions = async (transaction = null) => {
     };
   }
 };
+// In your OSController.js
+
+/**
+ * Sync loan repayment statuses with repayment system
+ */
+export const syncLoanRepaymentStatuses = async () => {
+  try {
+    logger.info('🔄 Syncing loan repayment statuses with repayment system...');
+    
+    const activeLoans = await LoanAccount.findAll({
+      where: {
+        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED', 'OVERDUE', 'DELINQUENT'] },
+        OUTSTANDING_PRINCIPAL: { [Op.gt]: 0 }
+      }
+    });
+    
+    const updates = [];
+    const currentDate = new Date();
+    
+    for (const loan of activeLoans) {
+      try {
+        // Get repayment status using the same logic as getAllLoans
+        const repaymentHistory = await getRepaymentHistoryService(loan.ACCT_NO);
+        const repaymentStatus = await calculateRepaymentStatus(loan, currentDate, repaymentHistory);
+        
+        // Check if status needs update
+        let newStatus = loan.LOAN_STATUS;
+        
+        if (repaymentStatus.isDelinquent && loan.LOAN_STATUS !== 'DELINQUENT') {
+          newStatus = 'DELINQUENT';
+        } else if (repaymentStatus.isOverdue && loan.LOAN_STATUS !== 'OVERDUE' && loan.LOAN_STATUS !== 'DELINQUENT') {
+          newStatus = 'OVERDUE';
+        } else if (repaymentStatus.status === 'PAID' && loan.LOAN_STATUS !== 'CLOSED') {
+          newStatus = 'CLOSED';
+        }
+        
+        // Update if changed
+        if (newStatus !== loan.LOAN_STATUS) {
+          await loan.update({
+            LOAN_STATUS: newStatus,
+            last_updated: new Date()
+          });
+          
+          updates.push({
+            accountNo: loan.ACCT_NO,
+            oldStatus: loan.LOAN_STATUS,
+            newStatus,
+            reason: 'Repayment status sync'
+          });
+        }
+        
+      } catch (loanError) {
+        logger.error(`Error syncing loan ${loan.ACCT_NO}:`, loanError.message);
+      }
+    }
+    
+    logger.info('✅ Loan repayment status sync completed', {
+      totalLoans: activeLoans.length,
+      updates: updates.length,
+      updates
+    });
+    
+    return {
+      success: true,
+      totalLoans: activeLoans.length,
+      updates: updates.length,
+      updatedAccounts: updates
+    };
+    
+  } catch (error) {
+    logger.error('❌ Loan repayment status sync failed:', error.message);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+
+/**
+ * Manually trigger auto-collection
+ */
+export const triggerManualAutoCollection = async (req, res) => {
+  try {
+    const { 
+      accountNumbers = [], 
+      date, 
+      force = false,
+      collectionMethod,
+      limit = 100 
+    } = req.body;
+    
+    const collectionDate = date ? new Date(date) : new Date();
+    const batchId = `MANUAL_${collectionDate.toISOString().split('T')[0]}_${Date.now()}`;
+    
+    logger.info('🔧 Manual auto-collection triggered', {
+      batchId,
+      collectionDate,
+      accountCount: accountNumbers.length,
+      force,
+      collectionMethod
+    });
+    
+    let loansToProcess = [];
+    
+    if (accountNumbers.length > 0) {
+      // Process specific accounts
+      loansToProcess = await LoanAccount.findAll({
+        where: {
+          ACCT_NO: { [Op.in]: accountNumbers }
+        },
+        include: [{
+          model: CustomerAccount,
+          as: 'customerAccount',
+          required: true
+        }],
+        limit: Math.min(limit, COLLECTION_CONFIG.maxDailyCollections)
+      });
+    } else {
+      // Process all due loans (with limit)
+      const result = await identifyLoansForCollection(collectionDate);
+      loansToProcess = result.individualLoans.slice(0, limit);
+    }
+    
+    // Process the loans
+    const individualResults = await processIndividualLoans(
+      loansToProcess,
+      collectionDate,
+      batchId
+    );
+    
+    // Create audit trail
+    await createAuditTrail({
+      eventId: batchId,
+      userId: req.user?.id || 'SYSTEM',
+      eventType: 'MANUAL_AUTO_COLLECTION',
+      action: 'Manual Auto Collection Triggered',
+      oldValue: null,
+      newValue: {
+        accountCount: accountNumbers.length,
+        processed: individualResults.processed,
+        failed: individualResults.failed,
+        totalCollected: individualResults.totalCollected
+      },
+      ipAddress: req.ip || '127.0.0.1'
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Manual auto-collection completed',
+      batchId,
+      results: {
+        individual: individualResults,
+        summary: {
+          totalProcessed: individualResults.processed,
+          totalFailed: individualResults.failed,
+          totalCollected: individualResults.totalCollected,
+          collectionRate: individualResults.totalDue > 0 ? 
+            (individualResults.totalCollected / individualResults.totalDue) * 100 : 0
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error('Manual auto-collection failed:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Manual auto-collection failed',
+      error: error.message
+    });
+  }
+};
 
 /**
  * Process reconciliation
@@ -1206,6 +1472,7 @@ const executeService = async (serviceName, serviceFn) => {
       executionTime,
     };
 
+    // Handle different service types
     if (serviceName === 'loanProcessing' || serviceName === 'overdueLoans') {
       serviceDetails.processed = serviceResult.results?.overdueLoans?.accounts || [];
       serviceDetails.failed = [];
@@ -1218,7 +1485,22 @@ const executeService = async (serviceName, serviceFn) => {
         statusUpdateCount: serviceDetails.statusUpdateCount,
         executionTime,
       });
-    } else if (serviceName === 'loanStatusUpdates') {
+    } 
+    else if (serviceName === 'loanRepaymentSync') {
+      // Handle loan repayment sync service
+      serviceDetails.processed = serviceResult.updatedAccounts || [];
+      serviceDetails.failed = [];
+      serviceDetails.skipped = [];
+      serviceDetails.updateCount = serviceResult.totalLoans || 0;
+      serviceDetails.updatedCount = serviceResult.updates || 0;
+      
+      logger.info(`${serviceName} service completed`, {
+        totalLoans: serviceDetails.updateCount,
+        updatedAccounts: serviceDetails.updatedCount,
+        executionTime,
+      });
+    }
+    else if (serviceName === 'loanStatusUpdates') {
       serviceDetails.processed = serviceResult.updatedAccounts || [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
@@ -1228,7 +1510,8 @@ const executeService = async (serviceName, serviceFn) => {
         updateCount: serviceDetails.updateCount,
         executionTime,
       });
-    } else if (serviceName === 'glTransactions') {
+    }
+    else if (serviceName === 'glTransactions') {
       serviceDetails.processed = serviceResult.processed?.filter(r => r.status === 'PROCESSED') || [];
       serviceDetails.failed = serviceResult.failed || [];
       serviceDetails.skipped = serviceResult.skipped || [];
@@ -1238,7 +1521,8 @@ const executeService = async (serviceName, serviceFn) => {
         skipped: serviceDetails.skipped.length,
         executionTime,
       });
-    } else if (serviceName === 'reconciliation') {
+    }
+    else if (serviceName === 'reconciliation') {
       serviceDetails.updated = serviceResult.updated || 0;
       serviceDetails.processed = serviceResult.processed?.filter(r => r.status === 'RECONCILED') || [];
       serviceDetails.failed = serviceResult.failed || [];
@@ -1250,21 +1534,55 @@ const executeService = async (serviceName, serviceFn) => {
         skipped: serviceDetails.skipped.length,
         executionTime,
       });
-    } else if (serviceName === 'processAutoCollections') {
-      serviceDetails.processed = (serviceResult.results?.individual?.processed || 0) + (serviceResult.results?.group?.processed || 0);
-      serviceDetails.failed = (serviceResult.results?.individual?.failed || 0) + (serviceResult.results?.group?.failed || 0);
-      serviceDetails.skipped = [];
-      serviceDetails.individualLoans = serviceResult.results?.individual || {};
-      serviceDetails.groupLoans = serviceResult.results?.group || {};
-      
-      logger.info(`processAutoCollections service completed`, {
-        individualProcessed: serviceResult.results?.individual?.processed,
-        groupProcessed: serviceResult.results?.group?.processed,
-        totalProcessed: serviceDetails.processed,
-        totalFailed: serviceDetails.failed,
-        executionTime,
-      });
-    } else if (serviceName === 'dormantAccounts') {
+    }
+    // In your executeService function in OsController.js
+if (serviceName === 'processAutoCollections') {
+  // Execute auto collections
+  const collectionResult = await processAutoCollections({
+    date: systemStatus.currentBusinessDate || new Date()
+  });
+  
+  const serviceDetails = {
+    healthy: collectionResult.success,
+    lastError: collectionResult.success ? null : collectionResult.error,
+    lastRun: new Date(),
+    executionTime: collectionResult.executionTime || 0,
+    processed: collectionResult.results?.individual?.processed || 0,
+    failed: collectionResult.results?.individual?.failed || 0,
+    skipped: [],
+    individualLoans: {
+      processed: collectionResult.results?.individual?.processed || 0,
+      failed: collectionResult.results?.individual?.failed || 0,
+      overdueMarked: collectionResult.results?.individual?.overdueMarked || 0,
+      totalDue: collectionResult.results?.individual?.totalDue || 0
+    },
+    groupLoans: {
+      processed: collectionResult.results?.group?.processed || 0,
+      failed: collectionResult.results?.group?.failed || 0,
+      totalDue: collectionResult.results?.group?.totalDue || 0
+    },
+    collections: collectionResult.results?.individual?.collections || []
+  };
+  
+  systemStatus.services.processAutoCollections = serviceDetails;
+  
+  logger.info(`processAutoCollections service completed`, {
+    processed: serviceDetails.processed,
+    failed: serviceDetails.failed,
+    overdueMarked: serviceDetails.individualLoans.overdueMarked,
+    totalDue: serviceDetails.individualLoans.totalDue,
+    successRate: collectionResult.summary?.successRate || 0,
+    executionTime: serviceDetails.executionTime,
+  });
+  
+  return { 
+    success: collectionResult.success, 
+    result: collectionResult,
+    error: collectionResult.error 
+  };
+}
+    
+    else if (serviceName === 'dormantAccounts') {
       serviceDetails.processed = serviceResult.processed || [];
       serviceDetails.failed = serviceResult.failed || [];
       serviceDetails.skipped = serviceResult.skipped || [];
@@ -1273,7 +1591,8 @@ const executeService = async (serviceName, serviceFn) => {
         updateCount: serviceDetails.updateCount,
         executionTime,
       });
-    } else if (serviceName === 'pendingRepayments') {
+    }
+    else if (serviceName === 'pendingRepayments') {
       serviceDetails.processed = serviceResult.processed || [];
       serviceDetails.failed = serviceResult.failed || [];
       serviceDetails.skipped = serviceResult.skipped || [];
@@ -1282,7 +1601,8 @@ const executeService = async (serviceName, serviceFn) => {
         processedCount: serviceDetails.processedCount,
         executionTime,
       });
-    } else {
+    }
+    else {
       logger.info(`${serviceName} completed in ${executionTime}ms`, { executionTime });
     }
 
@@ -1303,36 +1623,49 @@ const executeService = async (serviceName, serviceFn) => {
       executionTime,
     };
 
+    // Set appropriate defaults for each service type
     if (serviceName === 'loanProcessing' || serviceName === 'overdueLoans') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
       serviceDetails.overdueCount = 0;
       serviceDetails.statusUpdateCount = 0;
-    } else if (serviceName === 'loanStatusUpdates') {
+    } 
+    else if (serviceName === 'loanRepaymentSync') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
       serviceDetails.updateCount = 0;
-    } else if (serviceName === 'glTransactions' || serviceName === 'reconciliation') {
+      serviceDetails.updatedCount = 0;
+    }
+    else if (serviceName === 'loanStatusUpdates') {
+      serviceDetails.processed = [];
+      serviceDetails.failed = [];
+      serviceDetails.skipped = [];
+      serviceDetails.updateCount = 0;
+    }
+    else if (serviceName === 'glTransactions' || serviceName === 'reconciliation') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
       if (serviceName === 'reconciliation') {
         serviceDetails.updated = 0;
       }
-    } else if (serviceName === 'processAutoCollections') {
+    }
+    else if (serviceName === 'processAutoCollections') {
       serviceDetails.processed = 0;
       serviceDetails.failed = 0;
       serviceDetails.skipped = [];
       serviceDetails.individualLoans = { processed: 0, failed: 0, totalDue: 0 };
       serviceDetails.groupLoans = { processed: 0, failed: 0, totalDue: 0, membersProcessed: 0, membersFailed: 0 };
-    } else if (serviceName === 'dormantAccounts') {
+    }
+    else if (serviceName === 'dormantAccounts') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
       serviceDetails.updateCount = 0;
-    } else if (serviceName === 'pendingRepayments') {
+    }
+    else if (serviceName === 'pendingRepayments') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
@@ -1344,6 +1677,7 @@ const executeService = async (serviceName, serviceFn) => {
     const isCritical = [
       'loanProcessing', 
       'overdueLoans',
+      'loanRepaymentSync', // Add to critical services
       'processAutoCollections', 
       'loanStatusUpdates', 
       'interestPosting', 
@@ -1723,6 +2057,7 @@ export const debugDateIssuesOS = async (req, res) => {
   }
 };
 
+
 /**
  * Get status (OS version)
  */
@@ -1737,6 +2072,7 @@ export const getStatusOS = async (req, res) => {
       lastRun: systemStatus.services[serviceName].lastRun,
       lastError: systemStatus.services[serviceName].lastError,
       executionTime: systemStatus.services[serviceName].executionTime,
+      // Add specific details for each service
       ...(serviceName === 'glTransactions' && {
         processed: systemStatus.services.glTransactions.processed,
         failed: systemStatus.services.glTransactions.failed,
@@ -1752,11 +2088,21 @@ export const getStatusOS = async (req, res) => {
         overdueCount: systemStatus.services.loanProcessing.overdueCount,
         statusUpdateCount: systemStatus.services.loanProcessing.statusUpdateCount,
       }),
+      ...(serviceName === 'loanRepaymentSync' && {
+        updateCount: systemStatus.services.loanRepaymentSync.updateCount,
+        updatedCount: systemStatus.services.loanRepaymentSync.updatedCount,
+      }),
       ...(serviceName === 'dormantAccounts' && {
         updateCount: systemStatus.services.dormantAccounts.updateCount,
       }),
       ...(serviceName === 'pendingRepayments' && {
         processedCount: systemStatus.services.pendingRepayments.processedCount,
+      }),
+      ...(serviceName === 'processAutoCollections' && {
+        processed: systemStatus.services.processAutoCollections.processed,
+        failed: systemStatus.services.processAutoCollections.failed,
+        individualLoans: systemStatus.services.processAutoCollections.individualLoans,
+        groupLoans: systemStatus.services.processAutoCollections.groupLoans,
       }),
     }));
 

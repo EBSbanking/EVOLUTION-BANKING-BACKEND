@@ -1,18 +1,8 @@
-﻿// models/LoanRepayment.js
+﻿// models/LoanRepayment.js - UPDATED VERSION
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
-import RepaymentSchedule from './RepaymentSchedules.js';
 
-class LoanRepayment extends Model {
-  static associate(models) {
-    // Define association with RepaymentSchedule
-    LoanRepayment.belongsTo(models.RepaymentSchedule, {
-      foreignKey: 'loan_account_id',
-      targetKey: 'loan_account_id',
-      as: 'repaymentSchedule'
-    });
-  }
-}
+class LoanRepayment extends Model {}
 
 LoanRepayment.init({
   id: {
@@ -85,13 +75,25 @@ LoanRepayment.init({
     allowNull: true,
     defaultValue: 0.00,
     field: 'penalty_amount'
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    field: 'created_at',
+    allowNull: true
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    field: 'updated_at',
+    allowNull: true
   }
 }, {
   sequelize,
   modelName: 'LoanRepayment',
   tableName: 'loan_repayments',
   timestamps: true,
-  underscored: false
+  underscored: false,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
 });
 
 export default LoanRepayment;

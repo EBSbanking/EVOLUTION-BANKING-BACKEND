@@ -1,8 +1,9 @@
 ﻿// models/SystemDate.js - UPDATED TO MATCH DATABASE SCHEMA
-import { DataTypes, Op } from 'sequelize';
+
 import sequelize from '../../config/db.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
 import logger from '../utils/logger.js';
+import { Model, DataTypes, Op } from 'sequelize';
 
 const SystemDate = sequelize.define('SystemDate', {
   id: {

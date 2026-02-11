@@ -1,5 +1,5 @@
 // src/models/BusinessRole.js - FIXED VERSION
-import { DataTypes, Model, Op } from 'sequelize';
+import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 // Import ROLE_MAPPING but defer its usage
@@ -381,6 +381,11 @@ BusinessRole.init(
   }
 );
 
+// Remove association code since Branch model doesn't exist
+// BusinessRole.associate = (models) => {
+//   // No associations for now
+// };
+
 // === INSTANCE METHODS ===
 BusinessRole.prototype.getRoleDetails = function () {
   return getRoleById(this.ROLE_ID);
@@ -426,155 +431,6 @@ BusinessRole.findByUserId = async function (userId, options = {}) {
     where: whereClause,
     order: [['ROLE_ID', 'ASC']],
   });
-};
-
-BusinessRole.findByBusinessUnit = async function (businessUnit, options = {}) {
-  const { includeInactive = false, businessUnitId = null } = options;
-  
-  const whereClause = { BUSINESS_UNIT: businessUnit };
-  if (businessUnitId) {
-    whereClause.BU_ID = businessUnitId;
-  }
-  if (!includeInactive) {
-    whereClause.REC_ST = 'Active';
-  }
-  
-  return await this.findAll({
-    where: whereClause,
-    order: [['USER_ID', 'ASC']],
-  });
-};
-
-BusinessRole.findByRoleId = async function (roleId, options = {}) {
-  const { includeInactive = false } = options;
-  
-  const whereClause = { ROLE_ID: roleId };
-  if (!includeInactive) {
-    whereClause.REC_ST = 'Active';
-  }
-  
-  return await this.findAll({
-    where: whereClause,
-    order: [['BUSINESS_UNIT', 'ASC'], ['USER_ID', 'ASC']],
-  });
-};
-
-BusinessRole.findUserRolesInBusinessUnit = async function (userId, businessUnit, businessUnitId = null) {
-  const whereClause = {
-    USER_ID: userId.toUpperCase(),
-    BUSINESS_UNIT: businessUnit,
-    REC_ST: 'Active',
-  };
-  
-  if (businessUnitId) {
-    whereClause.BU_ID = businessUnitId;
-  }
-  
-  return await this.findAll({
-    where: whereClause,
-  });
-};
-
-BusinessRole.upsertBusinessRole = async function (roleData, transaction = null) {
-  const {
-    ROLE_NM,
-    ROLE_ID,
-    USER_ID,
-    BUSINESS_UNIT,
-    BU_ID,
-    CREATED_BY,
-    CREATED_BY_ROLE = 'Unknown',
-    SUPERVISOR_FG = 'N',
-    ALLOW_TXN_POSTING_FG = null,
-    REC_ST = 'Active',
-    ADMIN_OVERRIDE = false,
-    WF_ITEM_ACCESS_LEVEL = '',
-    LAST_UPDATED_BY = null,
-  } = roleData;
-  
-  // Validate required fields
-  if (!ROLE_NM || !ROLE_ID || !USER_ID || !BUSINESS_UNIT || !BU_ID || !CREATED_BY) {
-    throw new Error('ROLE_NM, ROLE_ID, USER_ID, BUSINESS_UNIT, BU_ID, and CREATED_BY are required');
-  }
-  
-  // Validate role exists
-  if (!isValidRoleId(ROLE_ID)) {
-    throw new Error(`Invalid ROLE_ID: ${ROLE_ID}`);
-  }
-  
-  // Validate role name matches role ID
-  const expectedRoleName = getRoleById(ROLE_ID)?.ROLE_NM;
-  if (expectedRoleName && ROLE_NM.toUpperCase() !== expectedRoleName.toUpperCase()) {
-    throw new Error(`ROLE_NM "${ROLE_NM}" doesn't match ROLE_ID ${ROLE_ID}. Expected: "${expectedRoleName}"`);
-  }
-  
-  // Determine ALLOW_TXN_POSTING_FG
-  let txnPostingFlag = ALLOW_TXN_POSTING_FG;
-  if (txnPostingFlag === null) {
-    const roleConfig = getRoleById(ROLE_ID);
-    txnPostingFlag = roleConfig?.defaultTransactionPosting ? 'Y' : 'N';
-  }
-  
-  const [businessRole, created] = await this.upsert(
-    {
-      ROLE_NM: ROLE_NM.toUpperCase(),
-      ROLE_ID,
-      USER_ID: USER_ID.toUpperCase(),
-      BUSINESS_UNIT,
-      BU_ID,
-      CREATED_BY,
-      CREATED_BY_ROLE,
-      SUPERVISOR_FG,
-      ALLOW_TXN_POSTING_FG: txnPostingFlag,
-      REC_ST,
-      ADMIN_OVERRIDE,
-      WF_ITEM_ACCESS_LEVEL,
-      LAST_UPDATED_BY,
-    },
-    {
-      transaction,
-      returning: true,
-      conflictFields: ['USER_ID', 'ROLE_ID', 'BUSINESS_UNIT', 'BU_ID'],
-    }
-  );
-  
-  return { businessRole, created };
-};
-
-BusinessRole.deactivateRole = async function (userId, roleId, businessUnit, deactivatedBy) {
-  return await this.update(
-    {
-      REC_ST: 'Deactivated',
-      LAST_UPDATED_BY: deactivatedBy,
-      LAST_UPDATED_DT: new Date(),
-    },
-    {
-      where: {
-        USER_ID: userId.toUpperCase(),
-        ROLE_ID: roleId,
-        BUSINESS_UNIT: businessUnit,
-        REC_ST: 'Active',
-      },
-    }
-  );
-};
-
-BusinessRole.activateRole = async function (userId, roleId, businessUnit, activatedBy) {
-  return await this.update(
-    {
-      REC_ST: 'Active',
-      LAST_UPDATED_BY: activatedBy,
-      LAST_UPDATED_DT: new Date(),
-    },
-    {
-      where: {
-        USER_ID: userId.toUpperCase(),
-        ROLE_ID: roleId,
-        BUSINESS_UNIT: businessUnit,
-        REC_ST: 'Deactivated',
-      },
-    }
-  );
 };
 
 BusinessRole.getUserRolesSummary = async function (userId) {

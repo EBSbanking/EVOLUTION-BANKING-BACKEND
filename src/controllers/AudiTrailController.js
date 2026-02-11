@@ -220,6 +220,15 @@ export const createAuditTrail = async (req, res) => {
   try {
     console.log('📨 Received POST /audit-trails:', req.body);
     
+    // 🔥 FIX: Add null check for req.body
+    if (!req || !req.body) {
+      console.error('Invalid request or missing body in createAuditTrail');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid request: Missing request body'
+      });
+    }
+    
     const { 
       EVENT_TYPE, 
       USER_ID, 
@@ -229,8 +238,9 @@ export const createAuditTrail = async (req, res) => {
       IP_ADDRESS, 
       ENTITY_ID = '0',  // Default to '0' instead of undefined
       ENTITY_TYPE = 'general',
-      BRANCH = 1
-    } = req.body;
+      BRANCH = 1,
+      status
+    } = req.body || {};
     
     const user_id = req.user_id || USER_ID;  // From middleware or body
     const ip_address = req.ip_address || IP_ADDRESS || req.ip || '0.0.0.0';
@@ -262,21 +272,21 @@ export const createAuditTrail = async (req, res) => {
       BRANCH,
       ACTION,
       OLD_VALUE,
-      NEW_VALUE: NEW_VALUE || {},  // Ensure it's never null
+      NEW_VALUE: NEW_VALUE || {},
       IP_ADDRESS: ip_address,
-      ENTITY_ID: ENTITY_ID || '0',  // Ensure it's never null
+      ENTITY_ID: ENTITY_ID || '0',
       ENTITY_TYPE,
       additional_info: { 
         outcome: 'success', 
         source: 'manual_api',
         level: 'info',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        status: status || 'SUCCESS'
       }
     });
 
     console.log('✅ Audit created successfully:', auditEntry?.event_id);
 
-    // ✅ CRITICAL: Send response with proper structure
     return res.status(201).json({
       success: true,
       message: 'Audit trail entry created successfully',

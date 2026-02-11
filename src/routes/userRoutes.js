@@ -10,7 +10,7 @@ import {
   getUserByEmployerNumber,
   getAllUsers,
   getUserConfig,
- simpleResetPassword,
+  simpleResetPassword,
   getUserPermissions,
   getUserProfile,
   validatePermission,
@@ -34,11 +34,10 @@ import {
   enableUser,
   getUserTableInfo,
   getUsersByRoleId
-
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
-import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js'; // ✅ UPDATED: Use unified middleware
-import { dbHealthCheck } from '../middlewares/dbHealthCheck.js'; // ADD THIS IMPORT
+import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js';
+import { dbHealthCheck } from '../middlewares/dbHealthCheck.js';
 import User from '../models/User.js';
 import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, syncPermissions, getRoleWithPermissions } from '../constants/roleMapping.js';
@@ -46,7 +45,11 @@ import DepositTransaction from '../models/DepositTransaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
-
+// In authRoutes.js and userRoutes.js, change imports to:
+import { 
+  checkLicenseForUserCreation,
+  checkLicenseForRoute 
+} from '../middlewares/licenseMiddleware.js';
 const router = express.Router();
 
 // Permission groups derived from TellerDashboard.jsx MODULES
@@ -127,7 +130,8 @@ const safeGetPermissions = (permissionGroup) => {
 
 // 🔐 Public routes (no authentication required)
 router.post('/users/login', login);
-router.post('/users/register', registerUser);
+// CHANGED: Added license check for user creation
+router.post('/users/register', checkLicenseForUserCreation, registerUser);
 router.get('/users/get-ip', getClientIpController);
 
 // Debug routes (temporary - remove in production)
@@ -135,135 +139,165 @@ router.post('/debug-check', debugUserCheck);
 router.post('/force-reset-password', forceResetPassword);
 
 // 🔐 Authentication required routes (no specific permissions needed)
-router.get('/users/config', verifyToken, getUserConfig);
-router.get('/user/permissions', verifyToken, getUserPermissions);
-router.get('/user/profile', verifyToken, getUserProfile);
-router.post('/user/validate-permission', verifyToken, validatePermission);
-router.post('/user/validate-permissions', verifyToken, validatePermissions);
+// CHANGED: Added license check for routes
+router.get('/users/config', verifyToken, checkLicenseForRoute, getUserConfig);
+router.get('/user/permissions', verifyToken, checkLicenseForRoute, getUserPermissions);
+router.get('/user/profile', verifyToken, checkLicenseForRoute, getUserProfile);
+router.post('/user/validate-permission', verifyToken, checkLicenseForRoute, validatePermission);
+router.post('/user/validate-permissions', verifyToken, checkLicenseForRoute, validatePermissions);
 
 // ✅ Get users by Business Unit ID with filtering and pagination
-router.get('/:bu_id/users', verifyToken, getUsersByBU_ID);
+// CHANGED: Added license check
+router.get('/:bu_id/users', verifyToken, checkLicenseForRoute, getUsersByBU_ID);
 
 // ✅ Get Business Unit summary and statistics
-router.get('/:bu_id/summary', verifyToken, getBUSummary);
+// CHANGED: Added license check
+router.get('/:bu_id/summary', verifyToken, checkLicenseForRoute, getBUSummary);
 
-router.put('/enable/:identifier', enableUser);
-router.get('/:bu_id/users', getUsersByBU_ID);
-router.get('/table-info', getUserTableInfo);
-
-router.get('/users/by-role-id/:roleId', getUsersByRoleId);
-
- 
+// CHANGED: Added license check
+router.put('/enable/:identifier', verifyToken, checkLicenseForRoute, enableUser);
+router.get('/table-info', verifyToken, checkLicenseForRoute, getUserTableInfo);
+router.get('/users/by-role-id/:roleId', verifyToken, checkLicenseForRoute, getUsersByRoleId);
 
 // 🔐 Session Management Routes
-router.post('/user/reset-session', verifyToken, resetUser);
-router.get('/user/session-info', verifyToken, getUserSessionInfo);
-router.post('/admin/clear-user-caches/:user_name?', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), clearUserCaches);
+// CHANGED: Added license check
+router.post('/user/reset-session', verifyToken, checkLicenseForRoute, resetUser);
+router.get('/user/session-info', verifyToken, checkLicenseForRoute, getUserSessionInfo);
+router.post('/admin/clear-user-caches/:user_name?', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), checkLicenseForRoute, clearUserCaches);
 
 // 👤 User Management Routes (using unified permission middleware)
+// CHANGED: Added license check
 router.patch(
   '/users/deactivate/:userId',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   deactivateUser
 );
 
+// CHANGED: Added license check
 router.patch(
   '/users/activate/:userId',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   activateUser
 );
 
 // 🔐 Administrator permission verification route
+// CHANGED: Added license check
 router.get(
   '/user/verify-admin-permissions',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
   verifyAdministratorPermissions
 );
 
 // 🔐 Password management - FIXED ROUTE
-router.post('/reset-password', verifyToken, dbHealthCheck, simpleResetPassword);
+// CHANGED: Added license check
+router.post('/reset-password', verifyToken, dbHealthCheck, checkLicenseForRoute, simpleResetPassword);
 
 // 👤 User management (admin permissions required)
+// CHANGED: Added license check
 router.put(
   '/users/:userId',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   updateUser
 );
 
+// CHANGED: Added license check
 router.get(
   '/users/by-employer/:employer_number',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   getUserByEmployerNumber
 );
 
+// CHANGED: Added license check
 router.get(
   '/users',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   getAllUsers
 );
 
 // 🔓 User unlock routes
+// CHANGED: Added license check
 router.patch(
   '/users/unlock/:identifier',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   unlockUser
 );
 
+// CHANGED: Added license check
 router.post(
   '/users/unlock-multiple',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   unlockMultipleUsers
 );
 
+// CHANGED: Added license check
 router.get(
   '/users/locked',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   getLockedUsers
 );
 
+// CHANGED: Added license check
 router.post(
   '/users/reset-all-locked',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   resetAllLockedUsers
 );
 
+// CHANGED: Added license check
 router.get(
   '/users/lock-status/:identifier',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   getUserLockStatus
 );
 
 // 🔒 Force lock/unlock routes (admin only)
+// CHANGED: Added license check
 router.patch(
   '/users/force-lock/:identifier',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
   forceLockUser
 );
 
+// CHANGED: Added license check
 router.patch(
   '/users/force-unlock/:identifier',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
   unlockForceLockedUser
 );
 
 // 🔐 Protected route with admin verification
+// CHANGED: Added license check
 router.get(
   '/users/protected-route',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { userId, user_name, BU_ROLE_ID, role } = req.user;
@@ -305,10 +339,12 @@ router.get(
 );
 
 // 🔐 System administration routes (administrator only)
+// CHANGED: Added license check
 router.get(
   '/admin/system-status',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     res.json({
       success: true,
@@ -328,10 +364,12 @@ router.get(
 );
 
 // 🔐 Permission testing and debugging routes
+// CHANGED: Added license check
 router.get(
   '/user/permissions/debug',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { BU_ROLE_ID, user_name } = req.user;
@@ -361,10 +399,12 @@ router.get(
 );
 
 // 🔐 Role and permission management routes
+// CHANGED: Added license check
 router.get(
   '/roles',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const dbRoles = await Permissions.find().lean();
@@ -392,10 +432,12 @@ router.get(
   })
 );
 
+// CHANGED: Added license check
 router.get(
   '/permissions/groups',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const groups = PERMISSION_GROUPS.reduce((acc, group) => {
@@ -415,10 +457,12 @@ router.get(
   })
 );
 
+// CHANGED: Added license check
 router.get(
   '/roles/:roleId/permissions',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { roleId } = req.params;
@@ -455,7 +499,8 @@ router.get(
 );
 
 // Get user's current login hours
-router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
+// CHANGED: Added license check
+router.get('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     
@@ -475,7 +520,8 @@ router.get('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
 }));
 
 // Update user's login hours (user can update their own)
-router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) => {
+// CHANGED: Added license check
+router.patch('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     const { earliest_login_time, latest_login_time } = req.body;
     
@@ -522,13 +568,14 @@ router.patch('/users/login-hours', verifyToken, asyncHandler(async (req, res) =>
 }));
 
 // ADMIN: Get all users with their login hours (for the management table)
+// CHANGED: Added license check
 router.get(
   '/admin/users/login-hours',
   verifyToken,
-  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), // or your admin permission
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
-      // Select only the fields you need for the table
       const users = await User.findAll({
         attributes: [
           'id',
@@ -548,7 +595,7 @@ router.get(
 
       res.json({
         success: true,
-        data: users.map(user => user.get({ plain: true })) // convert Sequelize instance to plain object
+        data: users.map(user => user.get({ plain: true }))
       });
     } catch (error) {
       logger.error('Error fetching users login hours', {
@@ -565,16 +612,17 @@ router.get(
 );
 
 // ADMIN: Update a specific user's login hours
+// CHANGED: Added license check
 router.patch(
   '/admin/users/:userId/login-hours',
   verifyToken,
   checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { userId } = req.params;
       const { earliest_login_time, latest_login_time } = req.body;
 
-      // Optional: Validate time format
       const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
       if (earliest_login_time && !timeRegex.test(earliest_login_time)) {
         return res.status(400).json({
@@ -628,7 +676,8 @@ router.patch(
 );
 
 // Admin: Update any user's login hours
-router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), asyncHandler(async (req, res) => {
+// CHANGED: Added license check
+router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
     const { earliest_login_time, latest_login_time } = req.body;
@@ -667,10 +716,12 @@ router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSI
   }
 }));
 
+// CHANGED: Added license check
 router.put(
   '/roles/:roleId/permissions',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { roleId } = req.params;
@@ -718,10 +769,12 @@ router.put(
   })
 );
 
+// CHANGED: Added license check
 router.post(
   '/permissions/sync',
   verifyToken,
-  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.PERMISSION_MANAGEMENT.UPDATE_PERMISSIONS),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       await syncPermissions();
@@ -738,10 +791,12 @@ router.post(
 );
 
 // 🔐 Credit Officer statistics route
+// CHANGED: Added license check
 router.get(
   '/users/credit-officer/today-stats',
   verifyToken,
-  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       logger.info('Credit Officer stats endpoint hit', {
@@ -812,10 +867,12 @@ router.get(
 );
 
 // 🔐 Credit Officer recent activities route
+// CHANGED: Added license check
 router.get(
   '/users/credit-officer/recent-activities',
   verifyToken,
-  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       logger.info('Credit Officer recent activities endpoint hit', {
@@ -852,10 +909,12 @@ router.get(
 );
 
 // 🔐 Manager today stats route
+// CHANGED: Added license check
 router.get(
   '/users/manager/today-stats',
   verifyToken,
-  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const stats = {
@@ -884,10 +943,12 @@ router.get(
 );
 
 // 🔐 Manager recent approvals route
+// CHANGED: Added license check
 router.get(
   '/users/manager/recent-approvals',
   verifyToken,
-  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.DASHBOARD.MANAGER_DASHBOARD),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const approvals = [];
@@ -913,7 +974,8 @@ router.get(
 );
 
 // 🔐 Auth logout route
-router.post('/auth/logout', verifyToken, asyncHandler(async (req, res) => {
+// CHANGED: Added license check
+router.post('/auth/logout', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     logger.info('User logged out', { userId: req.user.userId, user_name: req.user.user_name });
     res.json({ success: true, message: 'Logged out successfully' });
@@ -932,10 +994,12 @@ router.post('/auth/logout', verifyToken, asyncHandler(async (req, res) => {
 }));
 
 // 🔐 Users approve route
+// CHANGED: Added license check
 router.get(
   '/users/approve/:id',
   verifyToken,
-  checkPermission(PERMISSIONS.APPROVAL.CUSTOMER_RELATED), // ✅ UPDATED: Use unified middleware
+  checkPermission(PERMISSIONS.APPROVAL.CUSTOMER_RELATED),
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       const { id } = req.params;
@@ -965,16 +1029,16 @@ router.get(
   })
 );
 
-
 // 🔐 Protected route: Get authenticated user details - UPDATED FOR SEQUELIZE
+// CHANGED: Added license check
 router.get(
   '/me',
   verifyToken,
+  checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
       console.log('🔍 /me endpoint - User from token:', req.user);
       
-      // ✅ FIXED: Remove mongoose check for Sequelize/MySQL
       if (!req.user || !req.user.userId) {
         console.log('❌ Missing userId in token:', {
           hasUser: !!req.user,
@@ -990,7 +1054,6 @@ router.get(
 
       console.log('🔍 Searching for user with ID:', req.user.userId);
       
-      // ✅ FIXED: Use Sequelize findByPk instead of mongoose findById
       const user = await User.findByPk(req.user.userId);
       if (!user) {
         console.log('❌ User not found with ID:', req.user.userId);
@@ -1019,7 +1082,6 @@ router.get(
       if (parseInt(userData.BU_ROLE_ID) === 1) {
         console.log('👑 Administrator detected');
         
-        // Generate all permissions for administrator
         permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
           const permissionGroup = PERMISSIONS[key];
           if (typeof permissionGroup === 'object') {
@@ -1048,7 +1110,6 @@ router.get(
             roleName = roleDetails.ROLE_NM;
             flattenedPermissions = Object.values(permissions).flat();
           } else {
-            // Fallback to basic permissions
             permissions = {
               DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
               CUSTOMER_ACCESS_LEVEL: [PERMISSIONS.CUSTOMER.VIEW]
@@ -1059,7 +1120,6 @@ router.get(
         }
       }
 
-      // Get accessible business units
       const accessibleBusinessUnits = userData.accessibleBusinessUnits || 
                                      [userData.main_business_unit || 'Wethral'];
 
@@ -1114,4 +1174,5 @@ router.get(
     }
   })
 );
+
 export default router;

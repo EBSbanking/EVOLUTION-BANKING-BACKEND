@@ -1,7 +1,7 @@
 // src/routes/LoanAccountRoutes.js
 import express from 'express';
 import LoanAccountController from '../controllers/LoanAccountController.js';
-import { authenticate } from '../middlewares/authMiddleware.js';
+import { authenticate, authorize } from '../middlewares/authMiddleware.js'; // Added authorize
 
 const router = express.Router();
 
@@ -22,6 +22,7 @@ if (LoanAccountController && typeof LoanAccountController === 'object') {
     approveAndDisburseLoan: methods.includes('approveAndDisburseLoan'),
     rejectDisbursement: methods.includes('rejectDisbursement'),
     generateLoanContract: methods.includes('generateLoanContract'),
+    getRepaymentStatusOverview: methods.includes('getRepaymentStatusOverview'),
   };
 
   console.log('Key methods available:', keyMethods);
@@ -326,6 +327,31 @@ if (LoanAccountController?.generateLoanContract) {
 }
 
 // =========================
+// REPAYMENT STATUS ROUTES
+// =========================
+
+/**
+ * @route   GET /api/loans/repayment/overview
+ * @desc    Get repayment status overview dashboard
+ * @access  Private (Loan Officers, Collections Agents, Branch Managers)
+ */
+if (LoanAccountController?.getRepaymentStatusOverview) {
+  router.get('/repayment/overview', 
+    authenticate, 
+    authorize(['LOAN_OFFICER', 'COLLECTIONS_AGENT', 'BRANCH_MANAGER']),
+    LoanAccountController.getRepaymentStatusOverview
+  );
+} else {
+  console.error('WARNING: getRepaymentStatusOverview not available');
+  router.get('/repayment/overview', authenticate, (req, res) => {
+    res.status(501).json({
+      success: false,
+      message: 'getRepaymentStatusOverview not implemented',
+    });
+  });
+}
+
+// =========================
 // UTILITY & HEALTH ROUTES
 // =========================
 
@@ -347,6 +373,7 @@ router.get('/health', (req, res) => {
   ].some((m) => methods.includes(m));
 
   const hasContract = methods.includes('generateLoanContract');
+  const hasRepaymentOverview = methods.includes('getRepaymentStatusOverview');
 
   res.json({
     success: true,
@@ -356,6 +383,7 @@ router.get('/health', (req, res) => {
     features: {
       pendingLoans: hasPendingMethods,
       contractGeneration: hasContract,
+      repaymentOverview: hasRepaymentOverview,
     },
     availableEndpoints: {
       pending: '/api/loans/pending (and sub-routes)',
@@ -363,6 +391,8 @@ router.get('/health', (req, res) => {
       queries: '/api/loans/loan-account/:ACCT_NO, /api/loans/customer/:custId, /api/loans',
       application: '/api/loans/apply (POST)',
       approval: '/api/loans/approve-and-disburse (POST)',
+      rejection: '/api/loans/reject-disbursement (POST)',
+      repayment: '/api/loans/repayment/overview (GET)',
     },
   });
 });

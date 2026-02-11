@@ -233,24 +233,27 @@ export const createBusinessRole = async (req, res) => {
   }
 };
 
-// Get BusinessRole by User ID
 export const getBusinessRoleByUserId = async (req, res) => {
   try {
     const { USER_ID } = req.params;
 
-    const businessRole = await BusinessRole.findOne({ 
+    console.log('🔍 Fetching business role for USER_ID:', USER_ID);
+
+    // Check if BusinessRole model is available
+    if (!BusinessRole) {
+      throw new Error('BusinessRole model not properly initialized');
+    }
+
+    // Find business roles without the Branch association
+    const businessRoles = await BusinessRole.findAll({ 
       where: { USER_ID },
-      include: [{
-        model: Branch,
-        as: 'branch',
-        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status', 'branchType']
-      }]
+      order: [['ROLE_ID', 'ASC']]
     });
 
-    if (!businessRole) {
+    if (!businessRoles || businessRoles.length === 0) {
       return res.status(404).json({ 
         success: false,
-        message: 'BusinessRole not found for this USER_ID',
+        message: 'No business roles found for this USER_ID',
         USER_ID 
       });
     }
@@ -258,14 +261,20 @@ export const getBusinessRoleByUserId = async (req, res) => {
     res.status(200).json({ 
       success: true,
       message: 'BusinessRole retrieved successfully', 
-      data: businessRole 
+      data: businessRoles,
+      count: businessRoles.length
     });
   } catch (error) {
-    console.error('Error fetching BusinessRole:', error);
+    console.error('❌ Error fetching BusinessRole:', error);
+    
     res.status(500).json({ 
       success: false,
       message: 'Error fetching BusinessRole', 
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? {
+        name: error.name,
+        stack: error.stack
+      } : undefined
     });
   }
 };
