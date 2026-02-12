@@ -1,0 +1,1 @@
+{"action":"server_start","entity_id":"server_startup","entity_type":"system","event_type":"SYSTEM_START","ip_address":"internal","level":"info","message":"Audit Event","new_value":{"timestamp":"2026-02-12T06:15:38.412Z","watTime":"2026-02-12T07:15:38.412Z"},"old_value":null,"outcome":"success","timestamp":"2026-02-11 22:15:38","user_id":"system"}
