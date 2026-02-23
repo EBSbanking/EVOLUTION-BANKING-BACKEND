@@ -57,6 +57,7 @@ const ensureAuditTableColumns = async (transaction = null) => {
 
 /** 🔹 Service function for internal use (no req/res) – Now hybrid via auditLogger */
 // Update ONLY the addAuditTrail function in your controller:
+/** 🔹 Service function for internal use (no req/res) – Now hybrid via auditLogger */
 export const addAuditTrail = async ({
   EVENT_TYPE,
   USER_ID,
@@ -72,7 +73,7 @@ export const addAuditTrail = async ({
 }) => {
   try {
     console.log('📝 Adding audit trail:', { EVENT_TYPE, USER_ID });
-    
+
     if (!EVENT_TYPE || !USER_ID) {
       console.log('⚠️ Skipping audit trail: missing EVENT_TYPE or USER_ID', {
         EVENT_TYPE,
@@ -81,9 +82,20 @@ export const addAuditTrail = async ({
       return null;
     }
 
+    // ========== ADD THIS TABLE EXISTENCE CHECK ==========
+    try {
+      // Check if audit_trail table exists
+      await AuditTrail.sequelize.query("SELECT 1 FROM audit_trail LIMIT 1");
+    } catch (tableError) {
+      console.log('⚠️ Audit trail table does not exist, skipping audit log');
+      console.log('📝 Table error details:', tableError.message);
+      return { success: false, message: 'Audit table missing', skipped: true };
+    }
+    // ========== END OF TABLE CHECK ==========
+
     // 🔥 REMOVE event_id generation - Let the database auto-generate it
     // const event_id = `AUDIT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     // Provide defaults for required fields
     const entity_id = ENTITY_ID || '0';  // Default to '0' instead of null
     const new_value = NEW_VALUE || {};   // Default to empty object instead of null
@@ -98,7 +110,7 @@ export const addAuditTrail = async ({
     const [result] = await AuditTrail.sequelize.query(
       `INSERT INTO audit_trail (
         USER_ID, EVENT_TYPE, ACTION, OLD_VALUE, NEW_VALUE,
-        IP_ADDRESS, timestamp, ENTITY_TYPE, ENTITY_ID, status, ADDITIONAL_INFO, 
+        IP_ADDRESS, timestamp, ENTITY_TYPE, ENTITY_ID, status, ADDITIONAL_INFO,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       {
@@ -127,9 +139,9 @@ export const addAuditTrail = async ({
 
     // Get the auto-generated event_id from the insert result
     const event_id = result.insertId;
-    
+
     console.log('🎉 Audit trail entry created:', { event_id, EVENT_TYPE, USER_ID });
-    
+
     // Try to use auditLogger (fire and forget)
     try {
       auditLogger.info('Audit Event', {
@@ -153,8 +165,8 @@ export const addAuditTrail = async ({
     } catch (logError) {
       console.warn('⚠️ auditLogger failed, continuing anyway:', logError.message);
     }
-    
-    return { 
+
+    return {
       event_id,
       USER_ID,
       EVENT_TYPE,
@@ -162,20 +174,20 @@ export const addAuditTrail = async ({
       created_at: now,
       updated_at: now
     };
-    
+
   } catch (error) {
     console.log('🔥 Error creating audit trail:', error.message);
-    
+
     // Self-audit the failure using raw query
     try {
       const timestamp = new Date();
       // 🔥 REMOVE string event_id generation for error too
       // const errorEventId = `ERROR_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const now = new Date();
-      
+
       // 🔥 Ensure audit table has required columns before error logging
       await ensureAuditTableColumns();
-      
+
       // 🔥 REMOVE event_id from error INSERT too
       const [errorResult] = await AuditTrail.sequelize.query(
         `INSERT INTO audit_trail (
@@ -205,7 +217,7 @@ export const addAuditTrail = async ({
           ]
         }
       );
-      
+
       const errorEventId = errorResult.insertId;
       console.log('📝 Error logged to audit trail:', { event_id: errorEventId });
     } catch (dbError) {
@@ -508,6 +520,7 @@ export const getAuditTrailById = async (req, res) => {
     });
   }
 };
+
 
 /** 🔹 Get Audit Trail Statistics */
 export const getAuditStats = async (req, res) => {

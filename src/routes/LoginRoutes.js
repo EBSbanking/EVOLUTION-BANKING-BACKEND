@@ -1,7 +1,12 @@
 // routes/authRoutes.js
 import express from 'express';
 import asyncHandler from 'express-async-handler';
-import { login, emergencyPasswordReset, testConfigService } from '../controllers/LoginController.js';
+import { 
+  login, 
+  changePassword,           // ✅ ADDED - Missing from your current file!
+  emergencyPasswordReset, 
+  testConfigService 
+} from '../controllers/LoginController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { restrictToPermission } from '../middlewares/rbac.js';
 import User from '../models/User.js';
@@ -9,7 +14,7 @@ import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, getRoleWithPermissions } from '../constants/roleMapping.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
-import { checkLicenseForRoute } from '../middlewares/licenseMiddleware.js'; // ADDED
+import { checkLicenseForRoute } from '../middlewares/licenseMiddleware.js';
 
 const router = express.Router();
 
@@ -31,21 +36,38 @@ const getAccessibleBusinessUnits = (userData, reqUser) => {
   return [userData.main_business_unit || reqUser?.main_business_unit || 'Wethral'];
 };
 
-// ✅ Public: Login (No license check needed)
-router.post('/login', login);
+// ============================================
+// ✅ AUTHENTICATION ROUTES - COMPLETE SET
+// ============================================
 
-// ✅ Public: Logout (simpler version without audit trail to avoid errors)
-// CHANGED: Added checkLicenseForRoute middleware
+/**
+ * 🔐 LOGIN ENDPOINTS
+ * Your frontend calls /login/login, we support both formats
+ */
+router.post('/login', login);                    // Standard endpoint
+router.post('/login/login', login);             // Your frontend uses this! ✅
+
+/**
+ * 🔑 PASSWORD MANAGEMENT
+ */
+// Change password with current password verification
+router.post('/change-password', verifyToken, changePassword);
+
+// Emergency password reset (admin only - should be protected!)
+router.post('/emergency-reset', emergencyPasswordReset);
+
+/**
+ * 🚪 LOGOUT ENDPOINTS
+ */
+// Public logout
 router.post('/logout', checkLicenseForRoute, (req, res) => {
   try {
-    // Extract token from Authorization header or request body
     const authHeader = req.headers['authorization'];
     const tokenFromHeader = authHeader && authHeader.split(' ')[1];
     const { refreshToken, accessToken } = req.body;
     
     const accessTokenToInvalidate = tokenFromHeader || accessToken;
     
-    // Log the logout action
     logger.info('User logged out (public endpoint)', {
       logoutTime: new Date().toISOString(),
       hasAccessToken: !!accessTokenToInvalidate,
@@ -74,15 +96,13 @@ router.post('/logout', checkLicenseForRoute, (req, res) => {
   }
 });
 
-// ✅ Protected: Logout with authentication (fixed without audit trail errors)
-// CHANGED: Added checkLicenseForRoute middleware
+// Protected logout with authentication
 router.post('/logout-protected', verifyToken, checkLicenseForRoute, async (req, res) => {
   try {
     const { refreshToken } = req.body;
     const authHeader = req.headers['authorization'];
     const accessToken = authHeader && authHeader.split(' ')[1];
     
-    // Log the logout action with user info
     logger.info('Authenticated user logged out', {
       userId: req.user?.userId,
       username: req.user?.user_name,
@@ -92,7 +112,6 @@ router.post('/logout-protected', verifyToken, checkLicenseForRoute, async (req, 
       ipAddress: req.ip || req.connection.remoteAddress
     });
     
-    // Simple success response without audit trail to avoid errors
     res.status(200).json({
       success: true,
       message: 'Logged out successfully',
@@ -115,8 +134,10 @@ router.post('/logout-protected', verifyToken, checkLicenseForRoute, async (req, 
   }
 });
 
-// ✅ Protected: Get authenticated user details (/me)
-// CHANGED: Added checkLicenseForRoute middleware
+/**
+ * 👤 USER PROFILE & SESSION
+ */
+// Get authenticated user details (/me)
 router.get(
   '/me',
   verifyToken,
@@ -153,7 +174,7 @@ router.get(
         const roleMap = Object.fromEntries(
           Object.values(ROLE_MAPPING).map(r => [r.ROLE_NM, r.id.toString()])
         );
-        BU_ROLE_ID = roleMap[userData.role] || '29'; // Fallback to Teller
+        BU_ROLE_ID = roleMap[userData.role] || '29';
       }
       BU_ROLE_ID = BU_ROLE_ID || req.user.roleId?.toString() || '29';
 
@@ -175,7 +196,6 @@ router.get(
             permissions = roleDetails.permissions || {};
             roleName = roleDetails.ROLE_NM || roleName;
           } else {
-            // Default Teller permissions
             permissions = {
               DASHBOARD_ACCESS_LEVEL: [
                 PERMISSIONS.DASHBOARD.VIEW,
@@ -218,8 +238,6 @@ router.get(
 
       const isAdmin = userData.isAdmin || req.user.isAdmin || BU_ROLE_ID === '1';
       const accessibleBusinessUnits = getAccessibleBusinessUnits(userData, req.user);
-
-      // Token timestamps
       const tokenIssuedAt = req.user.iat ? new Date(req.user.iat * 1000).toISOString() : null;
       const tokenExpiresAt = req.user.exp ? new Date(req.user.exp * 1000).toISOString() : null;
 
@@ -273,10 +291,56 @@ router.get(
   })
 );
 
-// ✅ Public: Emergency password reset (no auth required - careful in production!)
-router.post('/emergency-reset', emergencyPasswordReset);
+/**
+ * 🏢 BUSINESS ROLE ENDPOINT
+ * ✅ CRITICAL - Your frontend redirects here after login!
+ */
+router.get('/business-role', verifyToken, (req, res) => {
+  console.log('🏢 Business role endpoint accessed:', {
+    userId: req.user?.userId,
+    user_name: req.user?.user_name,
+    BU_ROLE_ID: req.user?.BU_ROLE_ID,
+    isAdmin: req.user?.isAdmin
+  });
 
-// ✅ NEW: Test Configuration Service (for debugging login hours)
+  res.json({
+    success: true,
+    message: 'Business role information',
+    user: {
+      userId: req.user?.userId,
+      user_name: req.user?.user_name,
+      BU_ROLE_ID: req.user?.BU_ROLE_ID,
+      role: req.user?.role,
+      isAdmin: req.user?.isAdmin,
+      businessUnit: req.user?.businessUnit || 'Wethral'
+    },
+    availableRoles: req.user?.isAdmin ? ['Administrator', 'Manager', 'Teller'] : [req.user?.role],
+    defaultRole: req.user?.role,
+    redirectTo: '/dashboard'
+  });
+});
+
+/**
+ * 🧪 TEST ENDPOINTS
+ */
+// Test Configuration Service
 router.get('/test-config', testConfigService);
+
+// Test auth status
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Auth routes are working',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      login: ['/login', '/login/login'],
+      password: ['/change-password', '/emergency-reset'],
+      logout: ['/logout', '/logout-protected'],
+      profile: ['/me'],
+      businessRole: ['/business-role'],
+      test: ['/test-config', '/status']
+    }
+  });
+});
 
 export default router;

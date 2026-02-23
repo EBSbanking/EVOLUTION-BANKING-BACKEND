@@ -491,6 +491,2843 @@ const LoanAccountController = {
   // =========================
   // CORE LOAN OPERATIONS
   // =========================
+// async applyForLoan(req, res) {
+//   // ==================== TABLE CREATION ====================
+//   try {
+//     console.log('🔍 Checking if loan_accounts table exists...');
+    
+//     // First try to create table directly using raw SQL
+//     await sequelize.query(`
+//       CREATE TABLE IF NOT EXISTS loan_accounts (
+//         id INT PRIMARY KEY AUTO_INCREMENT,
+//         loan_account_id BIGINT,
+//         a_c_c_t__n_o VARCHAR(255) UNIQUE NOT NULL,
+//         a_c_c_t__n_m VARCHAR(255) NOT NULL,
+//         c_u_s_t__i_d VARCHAR(255) NOT NULL,
+//         l_o_a_n__p_r_o_d_u_c_t__i_d INT,
+//         a_m_o_u_n_t DECIMAL(20,2) NOT NULL,
+//         d_i_s_b_u_r_s_e_d__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
+//         o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l DECIMAL(20,2) DEFAULT 0.00,
+//         a_c_c_r_u_e_d__i_n_t_e_r_e_s_t DECIMAL(20,2) DEFAULT 0.00,
+//         p_e_n_a_l_t_y__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
+//         i_n_t_e_r_e_s_t__r_a_t_e DECIMAL(10,4) DEFAULT 0.0000,
+//         l_o_a_n__s_t_a_t_u_s VARCHAR(50) DEFAULT 'PENDING',
+//         s_e_r_v_i_c_i_n_g__s_t_a_t_u_s VARCHAR(50) DEFAULT 'SERVICED',
+//         a_p_p_l_i_c_a_t_i_o_n__d_a_t_e DATETIME DEFAULT CURRENT_TIMESTAMP,
+//         a_p_p_r_o_v_a_l__d_a_t_e DATETIME,
+//         d_i_s_b_u_r_s_e_m_e_n t__d_a_t_e DATETIME,
+//         c_l_o_s_u_r_e__d_a_t_e DATETIME,
+//         l_a_s_t__r_e_p_a_y_m_e_n t__d_a_t_e DATETIME,
+//         l_a_s_t__r_e_p_a_y_m_e_n t__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
+//         n_e_x_t__p_a_y_m_e_n t__d_a_t_e DATETIME,
+//         m_a_t_u_r_i_t_y__d_t DATETIME,
+//         t_o_t_a_l__r_e_p_a_i_d__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
+//         t_e_r_m__c_d VARCHAR(20) DEFAULT 'MONTHLY',
+//         t_e_r_m__v_a_l_u_e INT DEFAULT 12,
+//         c_u_s_t_o_m_e_r__a_c_c_o_u_n t__i_d BIGINT,
+//         has_repayment_schedule BOOLEAN DEFAULT FALSE,
+//         repayment_schedule_id INT,
+//         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+//         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//         -- Essential fields that match your existing table
+//         G_U_A_R_A_N_T_O_R__I_D INT,
+//         d_i_s_b_u_r_s_e_m_e_n t__l_i_m_i_t DECIMAL(20,2),
+//         g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t DECIMAL(20,2),
+//         s_t_a_r_t__d_t DATETIME
+//       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+//     `);
+    
+//     console.log('✅ loan_accounts table created or already exists');
+    
+//   } catch (syncError) {
+//     console.error('❌ Error creating loan_accounts table:', syncError);
+//     // Try a simpler table creation
+//     try {
+//       console.log('🔄 Trying simpler table creation...');
+//       await sequelize.query(`
+//         CREATE TABLE IF NOT EXISTS loan_accounts (
+//           id INT PRIMARY KEY AUTO_INCREMENT,
+//           a_c_c_t__n_o VARCHAR(255) UNIQUE NOT NULL,
+//           a_c_c_t__n_m VARCHAR(255) NOT NULL,
+//           c_u_s_t__i_d VARCHAR(255) NOT NULL,
+//           a_m_o_u_n_t DECIMAL(20,2) NOT NULL,
+//           i_n_t_e_r_e_s_t__r_a_t_e DECIMAL(10,4) DEFAULT 0.0000,
+//           l_o_a_n__s_t_a_t_u_s VARCHAR(50) DEFAULT 'PENDING',
+//           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+//           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+//         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+//       `);
+//       console.log('✅ Simpler loan_accounts table created');
+//     } catch (simpleError) {
+//       console.error('❌ Even simple table creation failed:', simpleError);
+//       return res.status(500).json({
+//         success: false,
+//         message: 'Database table creation failed',
+//         error: simpleError.message,
+//         code: 'TABLE_CREATION_FAILED'
+//       });
+//     }
+//   }
+
+//   // ==================== CREATE COUNTERS TABLE IF NOT EXISTS ====================
+//   try {
+//     console.log('🔍 Checking if counters table exists...');
+    
+//     await sequelize.query(`
+//       CREATE TABLE IF NOT EXISTS counters (
+//         name VARCHAR(100) PRIMARY KEY,
+//         seq INT NOT NULL DEFAULT 0,
+//         description VARCHAR(255),
+//         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+//         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+//       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+//     `);
+    
+//     console.log('✅ counters table created or already exists');
+    
+//     // Initialize required counters if they don't exist
+//     const requiredCounters = [
+//       'creditApplicationId',
+//       'creditAppId', 
+//       'refNo',
+//       'custId',
+//       'loanAccountId',
+//       'loanDisbursementId',
+//       'repaymentScheduleId'
+//     ];
+    
+//     for (const counterName of requiredCounters) {
+//       try {
+//         const [existingCounter] = await sequelize.query(
+//           `SELECT COUNT(*) as count FROM counters WHERE name = ?`,
+//           { replacements: [counterName] }
+//         );
+        
+//         if (existingCounter[0].count === 0) {
+//           await sequelize.query(
+//             `INSERT INTO counters (name, seq, description) VALUES (?, 0, ?)`,
+//             {
+//               replacements: [counterName, `Counter for ${counterName}`]
+//             }
+//           );
+//           console.log(`✅ Initialized counter: ${counterName}`);
+//         }
+//       } catch (counterError) {
+//         console.warn(`⚠️ Could not initialize counter ${counterName}:`, counterError.message);
+//       }
+//     }
+    
+//   } catch (counterTableError) {
+//     console.error('❌ Error creating counters table:', counterTableError);
+//   }
+
+//   // ==================== CREATE LOAN_DISBURSEMENTS TABLE IF NOT EXISTS ====================
+//   console.log('\n=== CHECKING/ CREATING LOAN_DISBURSEMENTS TABLE ===');
+
+//   // ==================== INNER HELPER FUNCTIONS ====================
+   
+//   // For LoanAccount (uses full words)
+//   function mapTermCodeToFullWord(termCode) {
+//     const termMap = {
+//       'D': 'DAILY',
+//       'W': 'WEEKLY', 
+//       'BW': 'BI_WEEKLY',
+//       'M': 'MONTHLY',
+//       'Q': 'QUARTERLY',
+//       'Y': 'YEARLY'
+//     };
+    
+//     const upperTermCode = String(termCode).toUpperCase();
+//     return termMap[upperTermCode] || 'MONTHLY';
+//   }
+
+//   // For RepaymentSchedule (uses single-letter codes)
+//   function getRepaymentTermType(termCode) {
+//     const termCodeUpper = String(termCode).toUpperCase();
+    
+//     const termMap = {
+//       'D': 'D',
+//       'DAILY': 'D',
+//       'W': 'W',
+//       'WEEKLY': 'W',
+//       'BW': 'BW',
+//       'BI_WEEKLY': 'BW',
+//       'BI-WEEKLY': 'BW',
+//       'M': 'M',
+//       'MONTHLY': 'M',
+//       'Q': 'M',
+//       'QUARTERLY': 'M',
+//       'Y': 'Y',
+//       'YEARLY': 'Y'
+//     };
+    
+//     return termMap[termCodeUpper] || 'M';
+//   }
+
+//   // Helper function to get table columns
+//   async function getTableColumns(tableName, transaction) {
+//     try {
+//       const [columns] = await sequelize.query(
+//         `DESCRIBE ${tableName}`,
+//         { transaction }
+//       );
+//       return columns.map(col => col.Field);
+//     } catch (error) {
+//       console.warn(`Could not describe table ${tableName}:`, error.message);
+//       return [];
+//     }
+//   }
+
+//   async function getLoanCycleCount(custId, transaction) {
+//     try {
+//       console.log('🔍 Getting loan cycle count for CUST_ID:', custId);
+      
+//       // Check if table exists using information_schema
+//       const [tables] = await sequelize.query(
+//         `SELECT TABLE_NAME 
+//          FROM INFORMATION_SCHEMA.TABLES 
+//          WHERE TABLE_SCHEMA = DATABASE() 
+//          AND TABLE_NAME = 'loan_accounts'`,
+//         { type: QueryTypes.SELECT, transaction }
+//       );
+      
+//       if (tables.length === 0) {
+//         console.log('📊 Table just created, returning default count: 1');
+//         return 1;
+//       }
+      
+//       // If we get here, table exists - now count the loans
+//       const custIdStr = String(custId).trim();
+      
+//       // Use raw SQL query to be safe
+//       const [result] = await sequelize.query(
+//         `SELECT COUNT(*) as count FROM loan_accounts WHERE c_u_s_t__i_d = ?`,
+//         {
+//           replacements: [custIdStr],
+//           type: QueryTypes.SELECT,
+//           transaction
+//         }
+//       );
+      
+//       const count = result.count || 0;
+//       console.log(`📊 Found ${count} existing loans for customer ${custId}`);
+//       return count + 1;
+      
+//     } catch (error) {
+//       console.error('❌ Error in getLoanCycleCount:', error.message);
+      
+//       // If any error occurs, return default value
+//       console.log('⚠️ Returning default loan cycle count: 1');
+//       return 1;
+//     }
+//   }
+ 
+//   function calculateMaturityDate(startDate, termCode, termValue) {
+//     termCode = String(termCode).toUpperCase();
+//     const result = new Date(startDate);
+//     switch (termCode) {
+//       case 'D': result.setDate(result.getDate() + termValue); break;
+//       case 'W': result.setDate(result.getDate() + termValue * 7); break;
+//       case 'BW': result.setDate(result.getDate() + termValue * 14); break;
+//       case 'M': result.setMonth(result.getMonth() + termValue); break;
+//       case 'Q': result.setMonth(result.getonth() + termValue * 3); break;
+//       case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
+//       default: throw new Error(`Invalid term code: ${termCode}`);
+//     }
+//     return result;
+//   }
+ 
+//   function getPaymentFrequency(termCode, termValue) {
+//     termCode = String(termCode).toUpperCase();
+//     switch (termCode) {
+//       case 'D': return 'DAILY';
+//       case 'W': return 'WEEKLY';
+//       case 'BW': return 'BI_WEEKLY';
+//       case 'M': return 'MONTHLY';
+//       case 'Q': return 'QUARTERLY';
+//       case 'Y': return termValue <= 1 ? 'MONTHLY' : 'YEARLY';
+//       default: return 'MONTHLY';
+//     }
+//   }
+ 
+//   async function findGuarantor(guarantorId, transaction) {
+//     try {
+//       if (!guarantorId) {
+//         return null;
+//       }
+
+//       if (!isNaN(guarantorId)) {
+//         const byNumber = await Guarantor.findOne({ 
+//           where: { GUARANTOR_ID: Number(guarantorId) },
+//           transaction 
+//         });
+//         if (byNumber) return byNumber;
+//       }
+
+//       // For Sequelize, just try to find by GUARANTOR_ID as string or number
+//       const byString = await Guarantor.findOne({ 
+//         where: { GUARANTOR_ID: guarantorId.toString() },
+//         transaction 
+//       });
+//       return byString;
+//     } catch (error) {
+//       console.error('Error finding guarantor:', error);
+//       return null;
+//     }
+//   }
+ 
+//   async function checkGuarantorExistingLoans(guarantorId, transaction) {
+//     try {
+//       console.log(`Checking existing loans for guarantor: ${guarantorId}`);
+     
+//       const existingLoans = await LoanAccount.findAll({
+//         where: {
+//           G_U_A_R_A_N_T_O_R__I_D: guarantorId,
+//           l_o_a_n__s_t_a_t_u_s: { [Op.in]: ['ACTIVE', 'PENDING', 'APPROVED'] }
+//         },
+//         transaction
+//       });
+     
+//       console.log(`Found ${existingLoans.length} existing loans for guarantor`);
+
+//       if (existingLoans.length > 0) {
+//         const loanDetails = existingLoans.map(loan => ({
+//           loanAccountId: loan.loanAccountId,
+//           a_c_c_t__n_o: loan.a_c_c_t__n_o,
+//           l_o_a_n__s_t_a_t_u_s: loan.l_o_a_n__s_t_a_t_u_s,
+//           d_i_s_b_u_r_s_e_m_e_n_t__l_i_m_i_t: parseFloat(loan.d_i_s_b_u_r_s_e_m_e_n_t__l_i_m_i_t || '0'),
+//           g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t: parseFloat(loan.g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t || '0'),
+//           c_u_s_t__i_d: loan.c_u_s_t__i_d,
+//           s_t_a_r_t__d_t: loan.s_t_a_r_t__d_t,
+//           m_a_t_u_r_i_t_y__d_t: loan.m_a_t_u_r_i_t_y__d_t
+//         }));
+
+//         return {
+//           hasExistingLoans: true,
+//           totalExistingLoans: existingLoans.length,
+//           loanDetails: loanDetails,
+//           totalGuaranteedAmount: loanDetails.reduce((sum, loan) => sum + loan.g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t, 0)
+//         };
+//       }
+
+//       return {
+//         hasExistingLoans: false,
+//         totalExistingLoans: 0,
+//         loanDetails: [],
+//         totalGuaranteedAmount: 0
+//       };
+//     } catch (error) {
+//       console.error('Error checking guarantor existing loans:', error);
+//       return {
+//         hasExistingLoans: false,
+//         totalExistingLoans: 0,
+//         loanDetails: [],
+//         totalGuaranteedAmount: 0
+//       };
+//     }
+//   }
+ 
+//   async function findRateIndex(rateIndexId, transaction) {
+//     try {
+//       let query = {};
+     
+//       const numericId = parseInt(rateIndexId);
+//       if (!isNaN(numericId)) {
+//         query = { INDEX_RATE_ID: numericId };
+//       } else {
+//         query = { INDEX_RATE_ID: rateIndexId };
+//       }
+
+//       let rateIndex = await RateIndex.findOne({
+//         where: query,
+//         transaction
+//       });
+     
+//       if (!rateIndex) {
+//         console.warn(`Rate index ${rateIndexId} not found, looking for default...`);
+       
+//         rateIndex = await RateIndex.findOne({
+//           where: { IS_DEFAULT: true },
+//           transaction
+//         });
+       
+//         if (!rateIndex) {
+//           rateIndex = await RateIndex.findOne({
+//             transaction
+//           });
+         
+//           if (rateIndex) {
+//             console.warn(`Using first available rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+//           } else {
+//             console.warn('No rate indexes available in the system');
+//             return null;
+//           }
+//         } else {
+//           console.warn(`Using default rate index: ${rateIndex.INDEX_RATE_ID} instead of requested ${rateIndexId}`);
+//         }
+//       }
+     
+//       return rateIndex;
+//     } catch (error) {
+//       console.error('Error in findRateIndex:', error);
+//       return null;
+//     }
+//   }
+ 
+//   async function findLoanInterestRate(LOAN_PROUD_INT_ID, INDEX_RATE_ID, transaction) {
+//     try {
+//       console.log(`Looking for LoanInterestRate with LOAN_PROUD_INT_ID: ${LOAN_PROUD_INT_ID}, INDEX_RATE_ID: ${INDEX_RATE_ID}`);
+     
+//       let query = {};
+     
+//       // First, try to find by LOAN_PROUD_INT_ID
+//       if (LOAN_PROUD_INT_ID) {
+//         const numericLoanProudIntId = parseInt(LOAN_PROUD_INT_ID);
+//         if (!isNaN(numericLoanProudIntId)) {
+//           query = {
+//             LOAN_PROUD_INT_ID: numericLoanProudIntId,
+//             STATUS: 'ACTIVE'
+//           };
+//         } else {
+//           query = {
+//             LOAN_PROUD_INT_ID: LOAN_PROUD_INT_ID.toString(),
+//             STATUS: 'ACTIVE'
+//           };
+//         }
+       
+//         const loanInterestRate = await LoanInterestRate.findOne({
+//           where: query,
+//           transaction
+//         });
+       
+//         if (loanInterestRate) {
+//           console.log(`Found LoanInterestRate by LOAN_PROUD_INT_ID: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+//           return loanInterestRate;
+//         }
+//       }
+     
+//       // If not found by LOAN_PROUD_INT_ID, try by INDEX_RATE_ID
+//       if (INDEX_RATE_ID) {
+//         const indexRateId = parseInt(INDEX_RATE_ID);
+//         if (!isNaN(indexRateId)) {
+//           query = {
+//             INDEX_RATE_ID: indexRateId,
+//             STATUS: 'ACTIVE'
+//           };
+//         }
+       
+//         const loanInterestRate = await LoanInterestRate.findOne({
+//           where: query,
+//           transaction
+//         });
+       
+//         if (loanInterestRate) {
+//           console.log(`Found LoanInterestRate by INDEX_RATE_ID: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+//           return loanInterestRate;
+//         }
+//       }
+     
+//       // If still not found, try to find any active rate
+//       console.warn(`No LoanInterestRate found for LOAN_PROUD_INT_ID: ${LOAN_PROUD_INT_ID} or INDEX_RATE_ID: ${INDEX_RATE_ID}, looking for any active rate...`);
+     
+//       const fallbackRate = await LoanInterestRate.findOne({
+//         where: { STATUS: 'ACTIVE' },
+//         transaction
+//       });
+     
+//       if (fallbackRate) {
+//         console.warn(`Using fallback LoanInterestRate: ${fallbackRate.LOAN_PROUD_INT_ID} - ${fallbackRate.name}`);
+//         return fallbackRate;
+//       }
+     
+//       console.warn('No active LoanInterestRate found in the system');
+//       return null;
+     
+//     } catch (error) {
+//       console.error('Error in findLoanInterestRate:', error);
+//       return null;
+//     }
+//   }
+ 
+//   async function findLoanInterestRateByProduct(PROD_ID, INDEX_RATE_ID, transaction) {
+//     try {
+//       console.log(`Looking for LoanInterestRate for product: ${PROD_ID}`);
+     
+//       // Try to find rates that might be associated with this product
+//       let loanInterestRate = await LoanInterestRate.findOne({
+//         where: {
+//           [Op.or]: [
+//             { name: { [Op.like]: `%PROD_${PROD_ID}%` } },
+//             { code: { [Op.like]: `%LO-%-${PROD_ID}%` } },
+//             { description: { [Op.like]: `%Product ${PROD_ID}%` } }
+//           ],
+//           STATUS: 'ACTIVE'
+//         },
+//         transaction
+//       });
+     
+//       if (!loanInterestRate) {
+//         // Try by INDEX_RATE_ID if provided
+//         if (INDEX_RATE_ID) {
+//           const indexRateId = parseInt(INDEX_RATE_ID);
+//           if (!isNaN(indexRateId)) {
+//             loanInterestRate = await LoanInterestRate.findOne({
+//               where: {
+//                 INDEX_RATE_ID: indexRateId,
+//                 STATUS: 'ACTIVE'
+//               },
+//               transaction
+//             });
+//           }
+//         }
+       
+//         if (!loanInterestRate) {
+//           // Try to find any active rate
+//           loanInterestRate = await LoanInterestRate.findOne({
+//             where: { STATUS: 'ACTIVE' },
+//             transaction
+//           });
+         
+//           if (loanInterestRate) {
+//             console.warn(`Using first available LoanInterestRate: ${loanInterestRate.LOAN_PROUD_INT_ID} for product ${PROD_ID}`);
+//           }
+//         }
+//       }
+     
+//       if (loanInterestRate) {
+//         console.log(`Found LoanInterestRate for product ${PROD_ID}: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
+//       }
+     
+//       return loanInterestRate;
+//     } catch (error) {
+//       console.error('Error in findLoanInterestRateByProduct:', error);
+//       return null;
+//     }
+//   }
+ 
+//   function safeDecimal(value, fieldName = 'value') {
+//     console.log(`safeDecimal: Converting field ${fieldName} with value:`, value);
+   
+//     if (value === null || value === undefined) {
+//       throw new Error(`Invalid ${fieldName}: null or undefined. Field: ${fieldName}, Value: ${value}`);
+//     }
+   
+//     const numericValue = typeof value === 'string' ? parseFloat(value) : Number(value);
+   
+//     if (isNaN(numericValue)) {
+//       throw new Error(`Invalid ${fieldName}: not a number. Field: ${fieldName}, Value: ${value}`);
+//     }
+   
+//     if (!isFinite(numericValue)) {
+//       throw new Error(`Invalid ${fieldName}: infinite value. Field: ${fieldName}, Value: ${value}`);
+//     }
+   
+//     return parseFloat(numericValue.toFixed(2));
+//   }
+
+//   // Helper function for decimal conversion
+//   function toDecimal(value) {
+//     if (value === null || value === undefined) return 0.00;
+//     return parseFloat(value.toString());
+//   }
+ 
+//   const normalizeBorrowerAddress = (address) => {
+//     if (!address || typeof address !== 'object') return null;
+//     return {
+//       street: address.street || address.Street || '',
+//       city: address.city || address.City || '',
+//       state: address.state || address.State || '',
+//       zipCode: address.zipCode || address.ZIPCode || address.zipcode || '',
+//       country: address.country || address.Country || 'Nigeria'
+//     };
+//   };
+ 
+//   async function generateWorkflowIdentifiers() {
+//     const timestamp = Date.now();
+//     return {
+//       TRANSACTION_ID: `TXN-${timestamp}`,
+//       WORK_ITEM_ID: `WORK-${timestamp}`,
+//       EVENT_ID: `EVT-${timestamp}`,
+//       WORKFLOW_ID: `WF-${timestamp}`,
+//       TRAN_JOURNAL_ID: `JRN-${timestamp}`
+//     };
+//   }
+ 
+//   async function generateLoanAccountNumberByProdId(prodId) {
+//     const prefix = prodId.toString().padStart(3, '0');
+//     const randomSuffix = Math.floor(1000000 + Math.random() * 9000000).toString().padStart(7, '0');
+//     return `${prefix}${randomSuffix}`;
+//   }
+
+//   // ==================== GET EXPECTED FLAT RATE ====================
+//   function getExpectedFlatRate(req) {
+//     console.log('\n=== DEBUG getExpectedFlatRate ===');
+//     console.log('Checking request for flat rate:');
+    
+//     // Priority 1: Check for explicit flat rate in request
+//     if (req.body.FLAT_RATE) {
+//         const flatRate = parseFloat(req.body.FLAT_RATE);
+//         if (!isNaN(flatRate) && flatRate > 0) {
+//             console.log(`Found FLAT_RATE in request: ${flatRate}%`);
+//             return flatRate;
+//         }
+//     }
+    
+//     // Priority 2: Check for ANNUAL_RATE in request
+//     if (req.body.ANNUAL_RATE) {
+//         const annualRate = parseFloat(req.body.ANNUAL_RATE);
+//         if (!isNaN(annualRate) && annualRate > 0) {
+//             console.log(`Found ANNUAL_RATE in request: ${annualRate}%`);
+//             return annualRate;
+//         }
+//     }
+    
+//     // Priority 3: Return null to let LoanProduct determine the rate
+//     console.log('No rate specified in request, using LoanProduct rate');
+//     return null;
+//   }
+
+//   // ==================== CORRECTED FLAT RATE EMI CALCULATION ====================
+//   function calculateFlatRateEMI(principal, annualRatePercent, termValue, termCode, paymentFrequency, startDate) {
+//     console.log('=== CORRECTED FLAT RATE (SIMPLE INTEREST) CALCULATION ===');
+//     console.log(`Principal: ₦${principal}, Annual Rate: ${annualRatePercent}%, Term: ${termValue} ${termCode}, Frequency: ${paymentFrequency}`);
+    
+//     // Convert annual rate to monthly rate
+//     const monthlyRatePercent = annualRatePercent / 12;
+//     console.log(`Monthly Rate: ${monthlyRatePercent.toFixed(2)}%`);
+    
+//     // Calculate total interest for the entire term
+//     const totalInterest = principal * (annualRatePercent / 100) * (termValue / 12);
+//     console.log(`Total Interest for ${termValue} months: ₦${totalInterest.toFixed(2)}`);
+    
+//     const totalRepayable = principal + totalInterest;
+//     const emi = totalRepayable / termValue;
+    
+//     console.log(`Total Repayable: ₦${totalRepayable.toFixed(2)}`);
+//     console.log(`EMI (per month): ₦${emi.toFixed(2)}`);
+
+//     function calculateNextPaymentDate(installmentNumber, paymentFrequency, startDate) {
+//       const date = new Date(startDate);
+//       switch (paymentFrequency.toUpperCase()) {
+//         case 'DAILY': date.setDate(date.getDate() + installmentNumber); break;
+//         case 'WEEKLY': date.setDate(date.getDate() + (installmentNumber * 7)); break;
+//         case 'BI_WEEKLY': date.setDate(date.getDate() + (installmentNumber * 14)); break;
+//         case 'MONTHLY': date.setMonth(date.getMonth() + installmentNumber); break;
+//         case 'QUARTERLY': date.setMonth(date.getMonth() + (installmentNumber * 3)); break;
+//         case 'SEMI_ANNUALLY': date.setMonth(date.getMonth() + (installmentNumber * 6)); break;
+//         case 'ANNUALLY': date.setFullYear(date.getFullYear() + installmentNumber); break;
+//         default: date.setMonth(date.getMonth() + installmentNumber);
+//       }
+//       return date.toISOString().split('T')[0];
+//     }
+
+//     const installments = [];
+//     let remainingPrincipal = principal;
+
+//     for (let i = 1; i <= termValue; i++) {
+//       const interestPortion = totalInterest / termValue;
+//       let principalPortion = emi - interestPortion;
+
+//       // Adjust for the last installment
+//       if (i === termValue) {
+//         principalPortion = remainingPrincipal;
+//       }
+
+//       remainingPrincipal -= principalPortion;
+//       if (remainingPrincipal < 0.01) remainingPrincipal = 0;
+
+//       const dueDate = calculateNextPaymentDate(i, paymentFrequency, startDate);
+
+//       installments.push({
+//         installmentNo: i,
+//         dueDate,
+//         principal: Number(principalPortion.toFixed(2)),
+//         interest: Number(interestPortion.toFixed(2)),
+//         totalPayment: Number((principalPortion + interestPortion).toFixed(2)),
+//         remainingBalance: Number(remainingPrincipal.toFixed(2))
+//       });
+//     }
+
+//     return {
+//       emi: Number(emi.toFixed(2)),
+//       totalInterest: Number(totalInterest.toFixed(2)),
+//       totalRepayable: Number(totalRepayable.toFixed(2)),
+//       totalPayment: Number(totalRepayable.toFixed(2)),
+//       installments,
+//       calculationMethod: 'FLAT_RATE',
+//       annualRateUsed: annualRatePercent,
+//       monthlyRateUsed: monthlyRatePercent,
+//       annualRateEquivalent: annualRatePercent,
+//       isTermBasedRate: true
+//     };
+//   }
+
+//   // ==================== MISSING FUNCTION: calculateTotalFees ====================
+//   function calculateTotalFees(loanAccount, loanProduct) {
+//     console.log('\n=== CALCULATING TOTAL FEES ===');
+    
+//     try {
+//       // Get fee configuration from loan product or use defaults
+//       const feeConfig = loanProduct?.feeConfiguration || {
+//         processingFeeRate: 0, // 0% processing fee
+//         upfrontInterestRate: 0, // 0% upfront interest
+//         otherFees: []
+//       };
+      
+//       const principalAmount = parseFloat(loanAccount.a_m_o_u_n_t || loanAccount.AMOUNT || 0);
+      
+//       console.log('Fee calculation inputs:', {
+//         principalAmount,
+//         processingFeeRate: feeConfig.processingFeeRate,
+//         upfrontInterestRate: feeConfig.upfrontInterestRate,
+//         hasUpfrontInterestSetting: !!loanAccount.upfrontInterestPercentage
+//       });
+      
+//       // 1. Processing Fee
+//       const processingFee = principalAmount * (feeConfig.processingFeeRate / 100);
+      
+//       // 2. Upfront Interest (if applicable)
+//       let upfrontInterest = 0;
+      
+//       // Check if loan has upfront interest configured
+//       if (loanAccount.upfrontInterestPercentage) {
+//         const upfrontInterestRate = parseFloat(loanAccount.upfrontInterestPercentage) / 100;
+//         upfrontInterest = principalAmount * upfrontInterestRate;
+//         console.log(`Calculating upfront interest: ${principalAmount} × ${loanAccount.upfrontInterestPercentage}% = ${upfrontInterest}`);
+//       } else if (feeConfig.upfrontInterestRate > 0) {
+//         // Use product default
+//         upfrontInterest = principalAmount * (feeConfig.upfrontInterestRate / 100);
+//         console.log(`Using product upfront interest: ${principalAmount} × ${feeConfig.upfrontInterestRate}% = ${upfrontInterest}`);
+//       }
+      
+//       // 3. Other fees from product configuration
+//       let otherFeesTotal = 0;
+//       if (feeConfig.otherFees && Array.isArray(feeConfig.otherFees)) {
+//         feeConfig.otherFees.forEach(fee => {
+//           if (fee.amount) {
+//             otherFeesTotal += parseFloat(fee.amount);
+//           } else if (fee.rate) {
+//             otherFeesTotal += principalAmount * (fee.rate / 100);
+//           }
+//         });
+//       }
+      
+//       const totalFees = processingFee + upfrontInterest + otherFeesTotal;
+      
+//       console.log('Fee calculation results:', {
+//         processingFee: processingFee.toFixed(2),
+//         upfrontInterest: upfrontInterest.toFixed(2),
+//         otherFees: otherFeesTotal.toFixed(2),
+//         totalFees: totalFees.toFixed(2)
+//       });
+      
+//       return {
+//         total: totalFees,
+//         breakdown: {
+//           processingFee,
+//           upfrontInterest,
+//           otherFees: otherFeesTotal
+//         },
+//         principalAmount,
+//         feePercentage: totalFees > 0 ? (totalFees / principalAmount) * 100 : 0
+//       };
+      
+//     } catch (error) {
+//       console.error('Error calculating total fees:', error);
+      
+//       // Return zero fees in case of error
+//       return {
+//         total: 0,
+//         breakdown: {
+//           processingFee: 0,
+//           upfrontInterest: 0,
+//           otherFees: 0
+//         },
+//         principalAmount: parseFloat(loanAccount.a_m_o_u_n_t || loanAccount.AMOUNT || 0),
+//         feePercentage: 0
+//       };
+//     }
+//   }
+
+//   // ==================== NEW HELPER: Extract interest rate from LoanProduct ====================
+//   function extractInterestRateFromProduct(loanProduct) {
+//     console.log('=== EXTRACTING INTEREST RATE FROM LOAN PRODUCT ===');
+    
+//     if (!loanProduct) {
+//       console.warn('No loan product provided, using default rate');
+//       return {
+//         annualRate: 12.0,
+//         monthlyRate: 1.0,
+//         calculationMethod: 'FLAT_RATE',
+//         rateType: 'FIXED',
+//         interestType: 'SIMPLE',
+//         source: 'DEFAULT_FALLBACK'
+//       };
+//     }
+    
+//     console.log('LoanProduct data:', {
+//       productCode: loanProduct.productCode,
+//       name: loanProduct.name,
+//       PROD_ID: loanProduct.PROD_ID,
+//       interestRateFields: {
+//         LOAN_INTEREST_RATE_ID: loanProduct.LOAN_INTEREST_RATE_ID,
+//         LOAN_PROUD_INT_ID: loanProduct.LOAN_PROUD_INT_ID,
+//         DEFAULT_RATE_PER_MONTH: loanProduct.DEFAULT_RATE_PER_MONTH,
+//         TOTAL_INTEREST_RATE: loanProduct.TOTAL_INTEREST_RATE,
+//         RATE_TY: loanProduct.RATE_TY,
+//         INT_TY: loanProduct.INT_TY,
+//         CALCULATION_METHOD: loanProduct.CALCULATION_METHOD
+//       }
+//     });
+    
+//     // Priority 1: Check if product has DEFAULT_RATE_PER_MONTH
+//     if (loanProduct.DEFAULT_RATE_PER_MONTH) {
+//       const monthlyRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH);
+//       const annualRate = monthlyRate * 12;
+//       console.log(`Found DEFAULT_RATE_PER_MONTH: ${monthlyRate}% per month (${annualRate}% annual)`);
+      
+//       return {
+//         annualRate,
+//         monthlyRate,
+//         calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
+//         rateType: loanProduct.RATE_TY || 'FIXED',
+//         interestType: loanProduct.INT_TY || 'SIMPLE',
+//         source: 'LOAN_PRODUCT_DEFAULT_RATE',
+//         loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//         loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+//       };
+//     }
+    
+//     // Priority 2: Check if product has TOTAL_INTEREST_RATE
+//     if (loanProduct.TOTAL_INTEREST_RATE) {
+//       const totalRate = parseFloat(loanProduct.TOTAL_INTEREST_RATE);
+//       console.log(`Found TOTAL_INTEREST_RATE: ${totalRate}% total for term`);
+      
+//       return {
+//         annualRate: totalRate, // This is total for term, not annual
+//         monthlyRate: totalRate,
+//         calculationMethod: 'FLAT_RATE', // TOTAL_INTEREST_RATE usually indicates flat rate for term
+//         rateType: 'FIXED',
+//         interestType: 'SIMPLE',
+//         source: 'LOAN_PRODUCT_TOTAL_RATE',
+//         isTermBasedRate: true,
+//         loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//         loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+//       };
+//     }
+    
+//     // Priority 3: Check metadata or other fields
+//     if (loanProduct.metadata && loanProduct.metadata.interestRateConfiguration) {
+//       const config = loanProduct.metadata.interestRateConfiguration;
+//       console.log('Found interest rate in metadata:', config);
+      
+//       if (config.defaultRate) {
+//         const monthlyRate = parseFloat(config.defaultRate);
+//         const annualRate = monthlyRate * 12;
+        
+//         return {
+//           annualRate,
+//           monthlyRate,
+//           calculationMethod: config.calculationMethod || 'FLAT_RATE',
+//           rateType: config.rateType || 'FIXED',
+//           interestType: config.interestType || 'SIMPLE',
+//           source: 'LOAN_PRODUCT_METADATA',
+//           loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//           loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+//         };
+//       }
+//     }
+    
+//     // Priority 4: Check defaultGLAccounts or other fields
+//     if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.interestRate) {
+//       const rate = parseFloat(loanProduct.defaultGLAccounts.interestRate);
+//       console.log(`Found interest rate in defaultGLAccounts: ${rate}%`);
+      
+//       return {
+//         annualRate: rate,
+//         monthlyRate: rate / 12,
+//         calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
+//         rateType: loanProduct.RATE_TY || 'FIXED',
+//         interestType: loanProduct.INT_TY || 'SIMPLE',
+//         source: 'LOAN_PRODUCT_GL_ACCOUNTS',
+//         loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//         loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+//       };
+//     }
+    
+//     // Priority 5: Check if there's an interest rate field directly
+//     if (loanProduct.interestRate) {
+//       const rate = parseFloat(loanProduct.interestRate);
+//       console.log(`Found interestRate field: ${rate}%`);
+      
+//       return {
+//         annualRate: rate,
+//         monthlyRate: rate / 12,
+//         calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
+//         rateType: loanProduct.RATE_TY || 'FIXED',
+//         interestType: loanProduct.INT_TY || 'SIMPLE',
+//         source: 'LOAN_PRODUCT_DIRECT_FIELD',
+//         loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//         loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+//       };
+//     }
+    
+//     // Fallback: Use a default rate
+//     console.warn('⚠️ No interest rate found in LoanProduct, using default 12.0% annual');
+    
+//     return {
+//       annualRate: 12.0,
+//       monthlyRate: 1.0,
+//       calculationMethod: 'FLAT_RATE',
+//       rateType: 'FIXED',
+//       interestType: 'SIMPLE',
+//       source: 'DEFAULT_FALLBACK'
+//     };
+//   }
+
+//   // ==================== NEW HELPER: Fetch LoanInterestRate from database ====================
+//   async function fetchLoanInterestRate(loanInterestRateId, transaction) {
+//     if (!loanInterestRateId) {
+//       console.log('No LOAN_INTEREST_RATE_ID provided');
+//       return null;
+//     }
+    
+//     try {
+//       console.log(`Fetching LoanInterestRate with ID: ${loanInterestRateId}`);
+      
+//       // Try to find by LOAN_INTEREST_RATE_ID or LOAN_PROUD_INT_ID
+//       const loanInterestRate = await LoanInterestRate.findOne({
+//         where: {
+//           [Op.or]: [
+//             { id: loanInterestRateId },
+//             { LOAN_PROUD_INT_ID: loanInterestRateId }
+//           ],
+//           STATUS: 'ACTIVE'
+//         },
+//         transaction
+//       });
+      
+//       if (loanInterestRate) {
+//         console.log('Found LoanInterestRate:', {
+//           id: loanInterestRate.id,
+//           LOAN_PROUD_INT_ID: loanInterestRate.LOAN_PROUD_INT_ID,
+//           name: loanInterestRate.name,
+//           DEFAULT_RATE_PER_MONTH: loanInterestRate.DEFAULT_RATE_PER_MONTH,
+//           MIN_RATE_PER_MONTH: loanInterestRate.MIN_RATE_PER_MONTH,
+//           MAX_RATE_PER_MONTH: loanInterestRate.MAX_RATE_PER_MONTH,
+//           RATE_TYPE: loanInterestRate.RATE_TYPE,
+//           INTEREST_TYPE: loanInterestRate.INTEREST_TYPE,
+//           CALCULATION_METHOD: loanInterestRate.CALCULATION_METHOD,
+//           ANNUAL_PERCENTAGE_RATE: loanInterestRate.ANNUAL_PERCENTAGE_RATE
+//         });
+//         return loanInterestRate;
+//       }
+      
+//       console.warn(`LoanInterestRate not found for ID: ${loanInterestRateId}`);
+//       return null;
+//     } catch (error) {
+//       console.error('Error fetching LoanInterestRate:', error);
+//       return null;
+//     }
+//   }
+
+//   // ==================== MAIN LOGIC ====================
+
+//   if (!req.body || typeof req.body !== 'object') {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Invalid request body',
+//       code: 'INVALID_BODY',
+//     });
+//   }
+
+//   req.body.Borrower_address = normalizeBorrowerAddress(req.body.Borrower_address);
+
+//   const requiredFields = [
+//     'PROD_ID', 'CUST_ID', 'ACCT_NM', 'APPL_ID', 'PRODUCT_TYPE', 'CRNCY_ID', 'BU_ID',
+//     'PRIMARY_OFFICER_ID', 'DISBURSEMENT_LIMIT', 'START_DT', 'TERM_CD', 'TERM_VALUE',
+//     'CREATED_BY', 'REPAY_SRC_ACCT_NO', 'TRANSACTION_TYPE', 'GUARANTOR_ID'
+//   ];
+
+//   const missingFields = requiredFields.filter((field) => {
+//     return !req.body.hasOwnProperty(field) || req.body[field] === undefined || req.body[field] === null || req.body[field] === '';
+//   });
+
+//   if (missingFields.length > 0) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Missing or undefined required fields',
+//       missingFields,
+//       code: 'MISSING_FIELDS',
+//     });
+//   }
+
+//   if (!req.body.GUARANTOR_ID) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'GUARANTOR_ID is required',
+//       code: 'INVALID_GUARANTOR_ID',
+//     });
+//   }
+
+//   const calculationMethod = 'FLAT_RATE';
+//   console.log(`\n=== USING FLAT RATE CALCULATION METHOD ===`);
+
+//   const numericFields = {
+//     PROD_ID: req.body.PROD_ID,
+//     TERM_VALUE: req.body.TERM_VALUE,
+//     DISBURSEMENT_LIMIT: req.body.DISBURSEMENT_LIMIT,
+//   };
+
+//   const invalidNumericFields = Object.entries(numericFields).filter(([field, value]) => {
+//     return isNaN(parseFloat(value)) || parseFloat(value) <= 0;
+//   });
+
+//   if (invalidNumericFields.length > 0) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Invalid numeric fields',
+//       invalidFields: invalidNumericFields.map(([field]) => field),
+//       code: 'INVALID_NUMERIC_FIELDS',
+//     });
+//   }
+
+//   const upfrontInterest = req.body.UPFRONT_INTEREST || 0;
+//   const partialInterest = req.body.PARTIAL_INTEREST || false;
+//   const guaranteedAmount = req.body.GUARANTEED_AMT || req.body.DISBURSEMENT_LIMIT;
+
+//   // ==================== SEQUELIZE TRANSACTION ====================
+//   const transaction = await sequelize.transaction();
+  
+//   try {
+//     console.log('✓ Transaction started');
+
+//     // ==================== CREATE LOAN_DISBURSEMENTS TABLE IF NOT EXISTS ====================
+//     try {
+//       console.log('\n=== CHECKING/ CREATING LOAN_DISBURSEMENTS TABLE ===');
+      
+//       // First, check if table exists
+//       const [tables] = await sequelize.query(
+//         `SELECT TABLE_NAME 
+//          FROM INFORMATION_SCHEMA.TABLES 
+//          WHERE TABLE_SCHEMA = DATABASE() 
+//          AND TABLE_NAME = 'loan_disbursements'`,
+//         { transaction }
+//       );
+      
+//       if (tables.length === 0) {
+//         console.log('🔄 Creating loan_disbursements table...');
+        
+//         // Create a simplified version first
+//         await sequelize.query(`
+//           CREATE TABLE IF NOT EXISTS loan_disbursements (
+//             id INT PRIMARY KEY AUTO_INCREMENT,
+//             a_c_c_t__n_o VARCHAR(255) UNIQUE NOT NULL,
+//             a_p_p_l__i_d VARCHAR(255) NOT NULL,
+//             c_u_s_t__i_d VARCHAR(255) NOT NULL,
+//             i_n_t_e_r_e_s_t__r_a_t_e DECIMAL(7, 4) NOT NULL,
+//             t_e_r_m__v_a_l_u_e INT NOT NULL,
+//             t_e_r_m__c_d VARCHAR(255) NOT NULL,
+//             a_m_o_u_n_t DECIMAL(20, 2) NOT NULL,
+//             l_o_a_n__a_c_c_o_u_n t__i_d INT NOT NULL,
+//             r_e_p_a_y_m_e_n t__s_c_h_e_d_u_l_e__i_d INT NOT NULL,
+//             g_u_a_r_a_n_t_o_r__i_d INT NOT NULL,
+//             p_r_o_d__i_d VARCHAR(255) NOT NULL,
+//             p_r_o_d_u_c_t__t_y_p_e VARCHAR(255) NOT NULL,
+//             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+//             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//             s_t_a_t_u_s VARCHAR(50) DEFAULT 'PENDING'
+//           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+//         `, { transaction });
+        
+//         console.log('✅ Created simplified loan_disbursements table');
+//       } else {
+//         console.log('✅ loan_disbursements table already exists');
+//       }
+//     } catch (tableError) {
+//       console.error('❌ Error checking/creating loan_disbursements table:', tableError.message);
+//       // Don't fail - try to continue
+//     }
+
+//     let workflowIdentifiers;
+//     try {
+//       workflowIdentifiers = await generateWorkflowIdentifiers();
+//       console.log('✓ Workflow identifiers generated successfully');
+//     } catch (workflowIdError) {
+//       console.error('Failed to generate workflow identifiers:', workflowIdError);
+//       const timestamp = Date.now();
+//       workflowIdentifiers = {
+//         TRANSACTION_ID: `TXN-${timestamp}`,
+//         WORK_ITEM_ID: `WORK-${timestamp}`,
+//         EVENT_ID: `EVT-${timestamp}`,
+//         WORKFLOW_ID: `WF-${timestamp}`,
+//         TRAN_JOURNAL_ID: `JRN-${timestamp}`
+//       };
+//       console.log('✓ Using fallback workflow identifiers');
+//     }
+
+//     const { TRANSACTION_ID, EVENT_ID, WORK_ITEM_ID, WORKFLOW_ID, TRAN_JOURNAL_ID } = workflowIdentifiers;
+
+//     const numericValues = {
+//       INDEX_RATE_ID: req.body.INDEX_RATE_ID,
+//       PROD_ID: parseInt(req.body.PROD_ID),
+//       TERM_VALUE: parseInt(req.body.TERM_VALUE),
+//       CUST_ID: req.body.CUST_ID,
+//       GUARANTEED_AMT: safeDecimal(guaranteedAmount, 'GUARANTEED_AMT'),
+//       DISBURSEMENT_LIMIT: safeDecimal(req.body.DISBURSEMENT_LIMIT, 'DISBURSEMENT_LIMIT'),
+//     };
+
+//     const productValidation = {
+//       isValid: true,
+//       productType: req.body.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
+//       productName: `Product ${numericValues.PROD_ID}`,
+//       isLoanProduct: true,
+//       accountPrefix: 'LOAN',
+//       isGlobalProduct: true,
+//       BU_ID: ['*'],
+//       glAccounts: {},
+//       isAutoGenerated: true,
+//       wasUpdated: false
+//     };
+
+//     console.log(`✓ Product validated: ${productValidation.productType}`);
+
+//     let loanAccountNumber;
+//     const maxRetries = 3;
+//     let retries = 0;
+
+//     while (!loanAccountNumber && retries < maxRetries) {
+//       try {
+//         loanAccountNumber = await generateLoanAccountNumberByProdId(numericValues.PROD_ID);
+//         console.log(`Generated loanAccountNumber (attempt ${retries + 1}): ${loanAccountNumber}`);
+
+//         const existingLoanAccount = await LoanAccount.findOne({ where: { a_c_c_t__n_o: loanAccountNumber } });
+//         if (!existingLoanAccount) {
+//           console.log(`✓ Account number ${loanAccountNumber} is unique`);
+//           break;
+//         }
+
+//         console.warn(`Account number ${loanAccountNumber} already exists, retrying...`);
+//         loanAccountNumber = null;
+//         retries++;
+//       } catch (genError) {
+//         console.error('Failed to generate loan account number:', genError.message);
+//         retries++;
+//       }
+//     }
+
+//     if (!loanAccountNumber) {
+//       throw {
+//         code: 'ACCOUNT_GENERATION_FAILED',
+//         message: `Failed to generate a unique loan account number after ${maxRetries} attempts`,
+//         status: 500,
+//       };
+//     }
+
+//     const existingCreditApplication = await CreditApplication.findOne({ 
+//       where: { APPL_ID: req.body.APPL_ID },
+//       transaction 
+//     });
+//     if (existingCreditApplication) {
+//       throw {
+//         code: 'DUPLICATE_APPLICATION',
+//         message: `A CreditApplication with APPL_ID ${req.body.APPL_ID} already exists`,
+//         status: 409,
+//       };
+//     }
+
+//     const loanCycleCount = await getLoanCycleCount(numericValues.CUST_ID, transaction);
+
+//     console.log('\n=== DIAGNOSTIC: Product, Rate and Interest Rate Lookup ===');
+//     console.log('Looking for loan product with PROD_ID:', numericValues.PROD_ID);
+//     console.log('Looking for rate index with requested ID:', req.body.INDEX_RATE_ID);
+   
+//     let rateIndex, loanProduct, customer, guarantor, loanInterestRate;
+   
+//     try {
+//       const LOAN_PROUD_INT_ID = req.body.LOAN_PROUD_INT_ID || req.body.LOAN_INTEREST_RATE_ID;
+     
+//       // IMPORTANT FIX: Handle Customer lookup separately
+//       console.log('\n=== CUSTOMER LOOKUP DEBUG ===');
+//       console.log('Customer model type:', typeof Customer);
+      
+//       // Check if Customer is a function (factory) or a model
+//       let CustomerModel;
+//       if (typeof Customer === 'function') {
+//         // Customer is a factory function
+//         try {
+//           CustomerModel = Customer(sequelize);
+//           console.log('Customer factory function called successfully');
+//         } catch (factoryError) {
+//           console.error('Error calling Customer factory:', factoryError);
+//           // Fallback to raw query
+//           CustomerModel = null;
+//         }
+//       } else {
+//         // Customer is a model
+//         CustomerModel = Customer;
+//         console.log('Customer is already a model');
+//       }
+      
+//       if (CustomerModel && typeof CustomerModel.findOne === 'function') {
+//         // Use the model method
+//         console.log(`Looking for customer with CUST_ID: ${req.body.CUST_ID}`);
+//         customer = await CustomerModel.findOne({ 
+//           where: { CUST_ID: req.body.CUST_ID },
+//           transaction 
+//         });
+//         console.log('Customer lookup result:', customer ? 'Found' : 'Not found');
+//       } else {
+//         // Fallback: Use raw SQL query
+//         console.warn('Customer.findOne not available, using raw SQL query');
+//         const [customerResult] = await sequelize.query(
+//           `SELECT * FROM customers WHERE CUST_ID = ? AND REC_ST = 'ACTIVE' LIMIT 1`,
+//           {
+//             replacements: [req.body.CUST_ID],
+//             type: QueryTypes.SELECT,
+//             transaction
+//           }
+//         );
+        
+//         if (customerResult) {
+//           customer = {
+//             id: customerResult.id,
+//             CUST_ID: customerResult.CUST_ID,
+//             CUST_NM: customerResult.CUST_NM,
+//             FIRST_NAME: customerResult.FIRST_NAME,
+//             LAST_NAME: customerResult.LAST_NAME,
+//             EMAIL_ADDRESS: customerResult.EMAIL_ADDRESS,
+//             PHONE_NO: customerResult.PHONE_NO,
+//             HOME_ADDRESS: customerResult.HOME_ADDRESS,
+//             BVN: customerResult.BVN,
+//             NIN: customerResult.NIN,
+//             BU_ID: customerResult.BU_ID,
+//             REC_ST: customerResult.REC_ST,
+//             status: customerResult.status,
+//             created_at: customerResult.created_at,
+//             updated_at: customerResult.updated_at,
+//             // Add all other fields from result
+//             ...customerResult
+//           };
+//           console.log(`✓ Customer found via raw query: ${customer.CUST_ID} - ${customer.CUST_NM}`);
+//         }
+//       }
+      
+//       // Execute other lookups
+//       [rateIndex, loanProduct, guarantor] = await Promise.all([
+//         findRateIndex(req.body.INDEX_RATE_ID, transaction),
+//         LoanProduct.findOne({ where: { PROD_ID: numericValues.PROD_ID }, transaction }),
+//         findGuarantor(req.body.GUARANTOR_ID, transaction)
+//       ]);
+      
+//     } catch (error) {
+//       console.error('Error in Promise.all lookup:', error);
+//       throw {
+//         code: 'LOOKUP_ERROR',
+//         message: `Error during data lookup: ${error.message}`,
+//         status: 500,
+//       };
+//     }
+
+//     console.log('\n=== LOOKUP RESULTS ===');
+//     console.log('Rate Index found:', rateIndex ? `${rateIndex.INDEX_RATE_ID} (${rateIndex.INDEX_RATE}%)` : 'NOT FOUND');
+//     console.log('Loan Product found:', loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.PRODUCT_NAME || loanProduct.productName || loanProduct.name}` : 'NOT FOUND');
+//     console.log('Customer found:', customer ? `${customer.CUST_ID} - ${customer.CUST_NM}` : 'NOT FOUND');
+//     console.log('Guarantor found:', guarantor ? `${guarantor.GUARANTOR_ID} - ${guarantor.fullName}` : 'NOT FOUND');
+
+//     // Fetch LoanInterestRate if available
+//     if (loanProduct && loanProduct.LOAN_INTEREST_RATE_ID) {
+//       loanInterestRate = await fetchLoanInterestRate(loanProduct.LOAN_INTEREST_RATE_ID, transaction);
+//     } else if (LOAN_PROUD_INT_ID) {
+//       loanInterestRate = await findLoanInterestRate(LOAN_PROUD_INT_ID, req.body.INDEX_RATE_ID, transaction);
+//     } else {
+//       loanInterestRate = await findLoanInterestRateByProduct(numericValues.PROD_ID, req.body.INDEX_RATE_ID, transaction);
+//     }
+    
+//     console.log('Loan Interest Rate found:', loanInterestRate ?
+//       `${loanInterestRate.LOAN_PROUD_INT_ID || loanInterestRate.id} (Rate Type: ${loanInterestRate.RATE_TYPE}, Interest Type: ${loanInterestRate.INTEREST_TYPE}, ANNUAL_PERCENTAGE_RATE: ${loanInterestRate.ANNUAL_PERCENTAGE_RATE}%, DEFAULT_RATE_PER_MONTH: ${loanInterestRate.DEFAULT_RATE_PER_MONTH}%)` :
+//       'NOT FOUND');
+
+//     // ==================== INTEREST RATE DETERMINATION ====================
+//     console.log('\n=== DETERMINING INTEREST RATE FROM LOAN PRODUCT ===');
+//     let effectiveInterestRate;
+//     let interestRateNumber;
+//     let interestRateDetails = {};
+
+//     try {
+//       // First, check if we have a LoanProduct
+//       if (!loanProduct) {
+//         console.warn('⚠️ No LoanProduct found, using default rate');
+//         interestRateNumber = 12.0; // Default fallback
+//         interestRateDetails = {
+//           rateType: 'FIXED',
+//           interestType: 'SIMPLE',
+//           calculationMethod: 'FLAT_RATE',
+//           source: 'DEFAULT_NO_PRODUCT',
+//           annualRate: interestRateNumber,
+//           monthlyRate: interestRateNumber / 12
+//         };
+//       } else {
+//         // Extract rate from LoanProduct
+//         const productRateInfo = extractInterestRateFromProduct(loanProduct);
+        
+//         // If LoanProduct has LOAN_INTEREST_RATE_ID, fetch the actual rate
+//         if (loanProduct.LOAN_INTEREST_RATE_ID) {
+//           const fetchedLoanInterestRate = await fetchLoanInterestRate(
+//             loanProduct.LOAN_INTEREST_RATE_ID, 
+//             transaction
+//           );
+          
+//           if (fetchedLoanInterestRate && fetchedLoanInterestRate.DEFAULT_RATE_PER_MONTH) {
+//             // Use rate from LoanInterestRate table
+//             const monthlyRate = parseFloat(fetchedLoanInterestRate.DEFAULT_RATE_PER_MONTH);
+//             interestRateNumber = monthlyRate * 12; // Convert to annual
+            
+//             interestRateDetails = {
+//               rateType: fetchedLoanInterestRate.RATE_TYPE || 'FIXED',
+//               interestType: fetchedLoanInterestRate.INTEREST_TYPE || 'SIMPLE',
+//               calculationMethod: fetchedLoanInterestRate.CALCULATION_METHOD || 'FLAT_RATE',
+//               loanInterestRateId: fetchedLoanInterestRate.id,
+//               loanProudIntId: fetchedLoanInterestRate.LOAN_PROUD_INT_ID,
+//               source: 'LOAN_INTEREST_RATE_TABLE',
+//               annualRate: interestRateNumber,
+//               monthlyRate: monthlyRate,
+//               isTermBasedRate: fetchedLoanInterestRate.CALCULATION_METHOD === 'FLAT_RATE'
+//             };
+            
+//             console.log(`✓ Using rate from LoanInterestRate: ${monthlyRate}% per month (${interestRateNumber}% annual)`);
+//           } else {
+//             // Fall back to LoanProduct rate
+//             interestRateNumber = productRateInfo.annualRate;
+//             interestRateDetails = {
+//               ...productRateInfo,
+//               loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+//               source: productRateInfo.source + ' (LoanInterestRate not found)'
+//             };
+//             console.log(`✓ Using rate from LoanProduct (fallback): ${interestRateNumber}% annual`);
+//           }
+//         } else {
+//           // Use rate directly from LoanProduct
+//           interestRateNumber = productRateInfo.annualRate;
+//           interestRateDetails = productRateInfo;
+//           console.log(`✓ Using rate directly from LoanProduct: ${interestRateNumber}% annual`);
+//         }
+//       }
+      
+//       effectiveInterestRate = safeDecimal(interestRateNumber, 'determined_interest_rate');
+      
+//       console.log('\n=== FINAL RATE DECISION ===');
+//       console.log(`Loan Product: ${loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.name || loanProduct.productName}` : 'Not found'}`);
+//       console.log(`LOAN_INTEREST_RATE_ID: ${loanProduct?.LOAN_INTEREST_RATE_ID || 'Not set'}`);
+//       console.log(`USING INTEREST RATE: ${interestRateNumber}% annual`);
+//       console.log(`Monthly Rate: ${(interestRateNumber / 12).toFixed(2)}%`);
+//       console.log(`Source: ${interestRateDetails.source}`);
+//       console.log(`Calculation Method: ${interestRateDetails.calculationMethod}`);
+//       console.log(`Rate Type: ${interestRateDetails.rateType}`);
+      
+//     } catch (error) {
+//       console.error('Interest rate determination error:', error);
+//       throw {
+//         code: 'INTEREST_RATE_CALCULATION_ERROR',
+//         message: `Failed to determine interest rate: ${error.message}`,
+//         status: 500,
+//       };
+//     }
+   
+//     if (!loanProduct && productValidation.isLoanProduct) {
+//       console.warn(`⚠️ Loan product not found for PROD_ID ${numericValues.PROD_ID}, creating fallback product`);
+     
+//       const fallbackProduct = {
+//         PROD_ID: numericValues.PROD_ID,
+//         PRODUCT_NAME: productValidation.productName,
+//         PRODUCT_SHORT_NAME: productValidation.accountPrefix,
+//         PRODUCT_TYPE: productValidation.productType,
+//         productName: productValidation.productName,
+//         productDescription: `Fallback loan product for PROD_ID ${numericValues.PROD_ID}`,
+//         minAmount: safeDecimal('1000', 'minAmount'),
+//         maxAmount: safeDecimal('1000000', 'maxAmount'),
+//         minTerm: 1,
+//         maxTerm: 60,
+//         defaultGLAccounts: productValidation.glAccounts || {}
+//       };
+     
+//       loanProduct = fallbackProduct;
+//       console.log('✓ Using fallback product');
+//     }
+   
+//     if (!customer) {
+//       throw {
+//         code: 'CUSTOMER_NOT_FOUND',
+//         message: `Customer not found for CUST_ID ${req.body.CUST_ID}`,
+//         status: 404,
+//       };
+//     }
+   
+//     if (!guarantor) {
+//       throw {
+//         code: 'GUARANTOR_NOT_FOUND',
+//         message: `Guarantor with ID ${req.body.GUARANTOR_ID} not found`,
+//         status: 404,
+//       };
+//     }
+
+//     console.log('Checking guarantor existing loans...');
+//     const guarantorLoanCheck = await checkGuarantorExistingLoans(guarantor.id, transaction);
+
+//     if (guarantorLoanCheck.hasExistingLoans) {
+//       console.log(`Guarantor has ${guarantorLoanCheck.totalExistingLoans} existing guaranteed loans`);
+//       console.warn(`Guarantor ${guarantor.GUARANTOR_ID} (${guarantor.fullName}) is already guaranteeing ${guarantorLoanCheck.totalExistingLoans} loan(s)`);
+//     }
+
+//     const validTermCodes = ['D', 'W', 'BW', 'M', 'Q', 'Y'];
+//     if (!validTermCodes.includes(req.body.TERM_CD)) {
+//       throw {
+//         code: 'INVALID_TERM_CD',
+//         message: `Invalid TERM_CD: ${req.body.TERM_CD}. Must be one of ${validTermCodes.join(', ')}`,
+//         status: 400,
+//       };
+//     }
+
+//     const paymentFrequency = getPaymentFrequency(req.body.TERM_CD, numericValues.TERM_VALUE);
+
+//     const startDate = new Date(req.body.START_DT);
+//     const maturityDate = calculateMaturityDate(startDate, req.body.TERM_CD, numericValues.TERM_VALUE);
+
+//     let emiResult;
+//     let principalAmount;
+    
+//     // ==================== CORRECTED FLAT RATE EMI CALCULATION ====================
+//     try {
+//       console.log('\n=== CALCULATING CORRECTED FLAT RATE EMI ===');
+//       principalAmount = parseFloat(numericValues.DISBURSEMENT_LIMIT);
+      
+//       console.log(`\nLoan Details:`);
+//       console.log(`Principal Amount: ₦${principalAmount.toFixed(2)}`);
+//       console.log(`Annual Interest Rate: ${interestRateNumber}%`);
+//       console.log(`Term: ${numericValues.TERM_VALUE} months`);
+//       console.log(`Payment Frequency: ${paymentFrequency}`);
+
+//       // Calculate using CORRECTED flat rate formula
+//       emiResult = calculateFlatRateEMI(
+//         principalAmount,
+//         interestRateNumber, // Use determined interest rate
+//         numericValues.TERM_VALUE,
+//         req.body.TERM_CD,
+//         paymentFrequency,
+//         startDate
+//       );
+
+//       console.log('\n=== EMI CALCULATION RESULTS ===');
+//       console.log('Calculation Method:', emiResult.calculationMethod);
+//       console.log('Annual Rate Used:', emiResult.annualRateUsed + '%');
+//       console.log('Monthly Rate Used:', emiResult.monthlyRateUsed + '%');
+//       console.log('Total Interest:', emiResult.totalInterest.toFixed(2));
+//       console.log('Total Repayment:', emiResult.totalRepayable.toFixed(2));
+//       console.log('Monthly Payment (EMI):', emiResult.emi.toFixed(2));
+      
+//       // ==================== VERIFICATION CALCULATIONS ====================
+//       console.log('\n=== VERIFICATION CALCULATIONS ===');
+      
+//       // Manual calculation for verification
+//       const monthlyRate = interestRateNumber / 12;
+//       console.log(`\nManual Calculation Check:`);
+//       console.log(`Monthly Rate: ${monthlyRate.toFixed(2)}%`);
+      
+//       // Total interest = Principal × Annual Rate × (Term in months / 12)
+//       const manualTotalInterest = principalAmount * (interestRateNumber / 100) * (numericValues.TERM_VALUE / 12);
+//       console.log(`Total Interest (Principal × ${interestRateNumber}% × ${numericValues.TERM_VALUE}/12): ₦${manualTotalInterest.toFixed(2)}`);
+      
+//       // Total repayment = Principal + Total Interest
+//       const manualTotalRepayment = principalAmount + manualTotalInterest;
+//       console.log(`Total Repayment: ₦${manualTotalRepayment.toFixed(2)}`);
+      
+//       // EMI = Total Repayment ÷ Number of months
+//       const manualEMI = manualTotalRepayment / numericValues.TERM_VALUE;
+//       console.log(`EMI (Total Repayment / ${numericValues.TERM_VALUE}): ₦${manualEMI.toFixed(2)}`);
+      
+//       // Check if calculations match
+//       console.log(`\nVerification Results:`);
+//       console.log(`Total Interest Match: ${Math.abs(emiResult.totalInterest - manualTotalInterest) < 0.01 ? '✅ YES' : '❌ NO'}`);
+//       console.log(`Total Repayment Match: ${Math.abs(emiResult.totalRepayable - manualTotalRepayment) < 0.01 ? '✅ YES' : '❌ NO'}`);
+//       console.log(`EMI Match: ${Math.abs(emiResult.emi - manualEMI) < 0.01 ? '✅ YES' : '❌ NO'}`);
+      
+//     } catch (emiError) {
+//       console.error('EMI calculation error:', emiError);
+//       throw {
+//         code: 'INVALID_REPAYMENT_SCHEDULE',
+//         message: `Failed to generate repayment schedule: ${emiError.message}`,
+//         status: 500,
+//       };
+//     }
+
+//     const interestRateId = rateIndex?.INDEX_RATE_ID || 
+//                           loanInterestRate?.LOAN_PROUD_INT_ID || 
+//                           numericValues.PROD_ID;
+
+//     const loanInterestRateId = loanInterestRate?.LOAN_PROUD_INT_ID || loanInterestRate?.id || null;
+
+//     console.log('Debug - Setting interest rate IDs:', {
+//       INTEREST_RATE_ID: interestRateId,
+//       LOAN_INTEREST_RATE_ID: loanInterestRateId,
+//       ANNUAL_PERCENTAGE_RATE_USED: interestRateNumber + '%'
+//     });
+
+//     // ============ FIXED LOAN ACCOUNT CREATION ============
+//     console.log('\n=== CREATING LOAN ACCOUNT WITH CORRECT COLUMN NAMES ===');
+
+//     let loanAccountId;
+
+//     try {
+//       // First, let's check what columns actually exist in loan_accounts
+//       console.log('🔍 Checking loan_accounts table structure...');
+//       const [tableInfo] = await sequelize.query(
+//         `DESCRIBE loan_accounts`,
+//         { transaction }
+//       );
+      
+//       const existingColumns = tableInfo.map(col => col.Field);
+//       console.log('Existing columns in loan_accounts:', existingColumns);
+      
+//       // Build dynamic SQL based on what columns exist
+//       let columns = [];
+//       let values = [];
+//       let placeholders = [];
+      
+//       // Always include these basic columns
+//       columns.push('a_c_c_t__n_o');
+//       values.push(loanAccountNumber);
+//       placeholders.push('?');
+      
+//       columns.push('a_c_c_t__n_m');
+//       values.push(req.body.ACCT_NM);
+//       placeholders.push('?');
+      
+//       columns.push('c_u_s_t__i_d');
+//       values.push(req.body.CUST_ID);
+//       placeholders.push('?');
+      
+//       columns.push('a_m_o_u_n_t');
+//       values.push(numericValues.DISBURSEMENT_LIMIT);
+//       placeholders.push('?');
+      
+//       columns.push('i_n_t_e_r_e_s_t__r_a_t_e');
+//       values.push(effectiveInterestRate);
+//       placeholders.push('?');
+      
+//       columns.push('l_o_a_n__s_t_a_t_u_s');
+//       values.push('PENDING');
+//       placeholders.push('?');
+      
+//       columns.push('created_at');
+//       values.push(new Date());
+//       placeholders.push('?');
+      
+//       columns.push('updated_at');
+//       values.push(new Date());
+//       placeholders.push('?');
+      
+//       // Add optional columns only if they exist
+//       if (existingColumns.includes('l_o_a_n__p_r_o_d_u_c t__i_d')) {
+//         columns.push('l_o_a_n__p_r_o_d_u_c_t__i_d');
+//         values.push(numericValues.PROD_ID);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('G_U_A_R_A_N_T_O_R__I_D')) {
+//         columns.push('G_U_A_R_A_N_T_O_R__I_D');
+//         values.push(guarantor.id);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t')) {
+//         columns.push('g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t');
+//         values.push(numericValues.GUARANTEED_AMT);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('s_t_a_r_t__d_t')) {
+//         columns.push('s_t_a_r_t__d_t');
+//         values.push(startDate);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('t_e_r_m__c_d')) {
+//         columns.push('t_e_r_m__c_d');
+//         values.push(mapTermCodeToFullWord(req.body.TERM_CD));
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('t_e_r_m__v_a_l_u_e')) {
+//         columns.push('t_e_r_m__v_a_l_u_e');
+//         values.push(numericValues.TERM_VALUE);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('m_a_t_u_r_i_t_y__d_t')) {
+//         columns.push('m_a_t_u_r_i_t_y__d_t');
+//         values.push(maturityDate);
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('a_p_p_l_i_c_a_t_i_o_n__d_a_t_e')) {
+//         columns.push('a_p_p_l_i_c_a_t_i_o_n__d_a_t_e');
+//         values.push(new Date());
+//         placeholders.push('?');
+//       }
+      
+//       if (existingColumns.includes('s_e_r_v_i_c_i_n_g__s_t_a_t_u_s')) {
+//         columns.push('s_e_r_v_i_c_i_n_g__s_t_a_t_u_s');
+//         values.push('SERVICED');
+//         placeholders.push('?');
+//       }
+      
+//       const dynamicInsertQuery = `
+//         INSERT INTO loan_accounts (
+//           ${columns.join(', ')}
+//         ) VALUES (
+//           ${placeholders.join(', ')}
+//         )
+//       `;
+      
+//       console.log('Dynamic insert SQL:', dynamicInsertQuery);
+//       console.log('Inserting with values:', values);
+      
+//       const [loanAccountResult] = await sequelize.query(dynamicInsertQuery, {
+//         replacements: values,
+//         transaction
+//       });
+      
+//       // IMPORTANT FIX: Properly get the insertId
+//       loanAccountId = loanAccountResult.insertId;
+//       console.log(`✅ LoanAccount inserted with ID: ${loanAccountId}`);
+      
+//       // Verify the ID was actually inserted by querying the record
+//       if (!loanAccountId || isNaN(loanAccountId)) {
+//         console.error('❌ No valid insertId returned. Querying for the inserted record...');
+        
+//         const [recentLoans] = await sequelize.query(
+//           `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
+//           {
+//             replacements: [loanAccountNumber],
+//             transaction
+//           }
+//         );
+        
+//         if (recentLoans && recentLoans.length > 0) {
+//           loanAccountId = recentLoans[0].id;
+//           console.log(`✅ Found loan account ID via query: ${loanAccountId}`);
+//         } else {
+//           throw new Error('Could not retrieve loan account ID after insertion');
+//         }
+//       }
+      
+//     } catch (insertError) {
+//       console.error('Error in loan account creation:', insertError.message);
+      
+//       // Try a simpler insert if the complex one fails
+//       console.log('🔄 Trying simplest insert...');
+      
+//       const simplestInsertQuery = `
+//         INSERT INTO loan_accounts (
+//           a_c_c_t__n_o, a_c_c_t__n_m, c_u_s_t__i_d, a_m_o_u_n_t, 
+//           i_n_t_e_r_e_s_t__r_a_t_e, l_o_a_n__s_t_a_t_u_s,
+//           created_at, updated_at
+//         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+//       `;
+      
+//       const [loanAccountResult] = await sequelize.query(simplestInsertQuery, {
+//         replacements: [
+//           loanAccountNumber,
+//           req.body.ACCT_NM,
+//           req.body.CUST_ID,
+//           numericValues.DISBURSEMENT_LIMIT,
+//           effectiveInterestRate,
+//           'PENDING',
+//           new Date(),
+//           new Date()
+//         ],
+//         transaction
+//       });
+      
+//       loanAccountId = loanAccountResult.insertId;
+      
+//       // Verify the ID
+//       if (!loanAccountId || isNaN(loanAccountId)) {
+//         const [recentLoans] = await sequelize.query(
+//           `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
+//           {
+//             replacements: [loanAccountNumber],
+//             transaction
+//           }
+//         );
+        
+//         if (recentLoans && recentLoans.length > 0) {
+//           loanAccountId = recentLoans[0].id;
+//         } else {
+//           throw new Error('Could not retrieve loan account ID after simple insertion');
+//         }
+//       }
+      
+//       console.log(`✅ LoanAccount inserted with simplest fields, ID: ${loanAccountId}`);
+//     }
+
+//     // Create a loanAccount object for the rest of the code
+//     const loanAccount = {
+//       id: loanAccountId,
+//       a_c_c_t__n_o: loanAccountNumber,
+//       a_c_c_t__n_m: req.body.ACCT_NM,
+//       c_u_s_t__i_d: req.body.CUST_ID,
+//       l_o_a_n__p_r_o_d_u_c_t__i_d: numericValues.PROD_ID,
+//       a_m_o_u_n_t: numericValues.DISBURSEMENT_LIMIT,
+//       i_n_t_e_r_e_s_t__r_a_t_e: effectiveInterestRate,
+//       l_o_a_n__s_t_a_t_u_s: 'PENDING',
+//       d_i_s_b_u_r_s_e_m_e_n_t__l_i_m_i_t: numericValues.DISBURSEMENT_LIMIT,
+//       G_U_A_R_A_N_T_O_R__I_D: guarantor.id,
+//       g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t: numericValues.GUARANTEED_AMT,
+//       s_t_a_r_t__d_t: startDate,
+//       t_e_r_m__c_d: mapTermCodeToFullWord(req.body.TERM_CD),
+//       t_e_r_m__v_a_l_u_e: numericValues.TERM_VALUE,
+//       m_a_t_u_r_i_t_y__d_t: maturityDate,
+//       // Also keep simple names for compatibility
+//       ACCT_NO: loanAccountNumber,
+//       ACCT_NM: req.body.ACCT_NM,
+//       CUST_ID: req.body.CUST_ID,
+//       PROD_ID: numericValues.PROD_ID,
+//       AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+//       INTEREST_RATE: effectiveInterestRate,
+//       LOAN_STATUS: 'PENDING',
+//       DISBURSEMENT_LIMIT: numericValues.DISBURSEMENT_LIMIT,
+//       GUARANTOR_ID: guarantor.id,
+//       GUARANTEED_AMOUNT: numericValues.GUARANTEED_AMT,
+//       START_DT: startDate,
+//       TERM_CD: mapTermCodeToFullWord(req.body.TERM_CD),
+//       TERM_VALUE: numericValues.TERM_VALUE,
+//       MATURITY_DT: maturityDate,
+//       // Add other essential fields
+//       loanAccountId: parseInt(loanAccountNumber) || Date.now(),
+//       JOURNAL_ID: TRAN_JOURNAL_ID,
+//       APPL_ID: req.body.APPL_ID,
+//       PRODUCT_TYPE: productValidation.productType,
+//       CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+//       BU_ID: req.body.BU_ID,
+//       PRIMARY_OFFICER_ID: req.body.PRIMARY_OFFICER_ID,
+//       SECONDARY_OFFICER_ID: req.body.SECONDARY_OFFICER_ID || req.body.PRIMARY_OFFICER_ID,
+//       INTEREST_RATE_ID: interestRateId,
+//       LOAN_INTEREST_RATE_ID: loanInterestRateId,
+//       INTEREST_RATE_TYPE: interestRateDetails.rateType || 'FIXED',
+//       INTEREST_TYPE: interestRateDetails.interestType || 'SIMPLE',
+//       INTEREST_CALCULATION_METHOD: interestRateDetails.calculationMethod || 'FLAT_RATE',
+//       LOAN_STATUS: 'PENDING',
+//       PAYMENT_FREQUENCY: paymentFrequency,
+//       CREATED_BY: req.body.CREATED_BY,
+//       TRANSACTION_ID,
+//       EVENT_ID,
+//       TOTAL_INTEREST: safeDecimal(emiResult.totalInterest, 'emiResult.totalInterest'),
+//       TOTAL_REPAYMENT: safeDecimal(emiResult.totalRepayable, 'emiResult.totalRepayable'),
+//       REPAYMENT_SOURCE_ACCOUNT: req.body.REPAY_SRC_ACCT_NO,
+//       HAS_GUARANTOR: true,
+//       guarantorDetails: {
+//         name: guarantor.fullName,
+//         phone: guarantor.phoneNumber,
+//         relationship: guarantor.relationshipToBorrower,
+//         guarantorNumberId: guarantor.GUARANTOR_ID.toString(),
+//         email: guarantor.email,
+//         address: guarantor.address,
+//         existingGuarantees: guarantorLoanCheck.hasExistingLoans ? {
+//           totalExistingLoans: guarantorLoanCheck.totalExistingLoans,
+//           totalGuaranteedAmount: guarantorLoanCheck.totalGuaranteedAmount
+//         } : null
+//       },
+//       Borrower_address: req.body.Borrower_address ? {
+//         street: req.body.Borrower_address.street || '',
+//         city: req.body.Borrower_address.city || '',
+//         state: req.body.Borrower_address.state || '',
+//         zipCode: req.body.Borrower_address.zipCode || '',
+//         country: req.body.Borrower_address.country || 'Nigeria',
+//       } : undefined,
+//       upfrontInterestPercentage: safeDecimal(upfrontInterest, 'upfrontInterest'),
+//       partialUpfrontInterest: partialInterest,
+//       applicationDate: new Date(),
+//       lastUpdated: new Date(),
+//       interestRateDetails: interestRateDetails
+//     };
+
+//     console.log('✅ LoanAccount created with ACCT_NO:', loanAccount.ACCT_NO);
+//     console.log(`✅ LoanAccount.INTEREST_RATE set to: ${parseFloat(loanAccount.INTEREST_RATE)}%`);
+//     console.log(`✅ LoanAccount.ID verified as: ${loanAccount.id} (type: ${typeof loanAccount.id})`);
+    
+//     // ===== FIXED CODE - Update Guarantor =====
+//     try {
+//       const guarantorRecord = await Guarantor.findByPk(guarantor.id, { transaction });
+      
+//       if (guarantorRecord) {
+//         const currentLoans = guarantorRecord.guaranteedLoans || [];
+        
+//         if (!currentLoans.includes(loanAccount.id)) {
+//           currentLoans.push(loanAccount.id);
+//         }
+        
+//         const safeStatus = 'ACTIVE';
+        
+//         await guarantorRecord.update({
+//           guaranteedLoans: currentLoans,
+//           lastUsedDate: new Date(),
+//           status: safeStatus,
+//         }, { transaction });
+        
+//         console.log('✅ Guarantor updated successfully with status:', safeStatus);
+//       } else {
+//         console.warn(`Guarantor with ID ${guarantor.id} not found for update`);
+//       }
+//     } catch (guarantorUpdateError) {
+//       console.error('Error updating guarantor:', guarantorUpdateError.message);
+//       console.warn('Continuing despite guarantor update error');
+//     }
+
+//     // ==================== FIXED REPAYMENT SCHEDULE CREATION ====================
+//     console.log('\n=== CREATING REPAYMENT SCHEDULE ===');
+
+//     let repaymentSchedule;
+//     let repaymentScheduleId = null;
+
+//     try {
+//       console.log('🔍 Checking repayment_schedules table structure in detail...');
+//       const [tableInfo] = await sequelize.query(
+//         `DESCRIBE repayment_schedules`,
+//         { transaction }
+//       );
+      
+//       const existingColumns = tableInfo.map(col => col.Field);
+//       const requiredColumns = tableInfo
+//         .filter(col => col.Null === 'NO' && !col.Default && col.Field !== 'id')
+//         .map(col => col.Field);
+      
+//       console.log('ACTUAL columns in repayment_schedules:', existingColumns);
+//       console.log('REQUIRED columns (no default, not null):', requiredColumns);
+      
+//       console.log('🔄 Using raw SQL to insert repayment schedule...');
+      
+//       const columnsToInsert = [];
+//       const valuesToInsert = [];
+//       const placeholders = [];
+      
+//       const requiredFields = [
+//         { name: 'loan_account_id', value: loanAccountId, type: 'number' },
+//         { name: 'account_number', value: loanAccountNumber, type: 'string' },
+//         { name: 'customer_id', value: req.body.CUST_ID.toString(), type: 'string' },
+//         { name: 'status', value: 'PENDING', type: 'string' },
+//         { name: 'created_at', value: new Date(), type: 'date' },
+//         { name: 'updated_at', value: new Date(), type: 'date' }
+//       ];
+      
+//       requiredFields.forEach(field => {
+//         if (existingColumns.includes(field.name) || requiredColumns.includes(field.name)) {
+//           columnsToInsert.push(field.name);
+//           valuesToInsert.push(field.value);
+//           placeholders.push('?');
+//           console.log(`✓ Adding required field: ${field.name}`);
+//         }
+//       });
+      
+//       if (!columnsToInsert.includes('loan_account_id') && existingColumns.includes('loan_account_id')) {
+//         columnsToInsert.push('loan_account_id');
+//         valuesToInsert.push(loanAccountId);
+//         placeholders.push('?');
+//         console.log('✓ Adding loan_account_id (required field)');
+//       }
+      
+//       const optionalFields = [
+//         { name: 'start_date', value: startDate },
+//         { name: 'maturity_date', value: maturityDate },
+//         { name: 'principal_amount', value: numericValues.DISBURSEMENT_LIMIT },
+//         { name: 'interest_rate', value: effectiveInterestRate },
+//         { name: 'term', value: numericValues.TERM_VALUE },
+//         { name: 'term_type', value: getRepaymentTermType(req.body.TERM_CD) },
+//         { name: 'total_interest', value: safeDecimal(emiResult.totalInterest, 'emiResult.totalInterest') },
+//         { name: 'total_repayment', value: safeDecimal(emiResult.totalRepayable, 'emiResult.totalRepayable') },
+//         { name: 'emi_amount', value: safeDecimal(emiResult.emi, 'emiResult.emi') },
+//         { name: 'payment_frequency', value: paymentFrequency },
+//         { name: 'transaction_id', value: TRANSACTION_ID },
+//         { name: 'event_id', value: EVENT_ID },
+//         { name: 'created_by', value: req.body.CREATED_BY },
+//         { name: 'guarantor_id', value: guarantor.id },
+//         { name: 'guaranteed_amount', value: numericValues.GUARANTEED_AMT },
+//         { name: 'loan_interest_rate_id', value: loanInterestRateId }
+//       ];
+      
+//       optionalFields.forEach(field => {
+//         if (existingColumns.includes(field.name)) {
+//           columnsToInsert.push(field.name);
+//           valuesToInsert.push(field.value);
+//           placeholders.push('?');
+//           console.log(`✓ Adding optional field: ${field.name}`);
+//         }
+//       });
+      
+//       if (existingColumns.includes('schedule')) {
+//         columnsToInsert.push('schedule');
+//         valuesToInsert.push(JSON.stringify(emiResult.installments));
+//         placeholders.push('?');
+//         console.log('✓ Adding schedule (JSON)');
+//       }
+      
+//       if (existingColumns.includes('installments_json')) {
+//         columnsToInsert.push('installments_json');
+//         valuesToInsert.push(JSON.stringify(emiResult.installments));
+//         placeholders.push('?');
+//         console.log('✓ Adding installments_json');
+//       }
+      
+//       if (existingColumns.includes('metadata')) {
+//         columnsToInsert.push('metadata');
+//         valuesToInsert.push(JSON.stringify({
+//           calculationMethod: interestRateDetails.calculationMethod || 'FLAT_RATE',
+//           rateType: interestRateDetails.rateType || 'FIXED',
+//           interestType: interestRateDetails.interestType || 'SIMPLE',
+//           isTermBasedRate: interestRateDetails.isTermBasedRate || false
+//         }));
+//         placeholders.push('?');
+//         console.log('✓ Adding metadata');
+//       }
+      
+//       if (existingColumns.includes('calculation_method')) {
+//         console.warn('⚠️ calculation_method column exists, adding it');
+//         columnsToInsert.push('calculation_method');
+//         valuesToInsert.push(interestRateDetails.calculationMethod || 'FLAT_RATE');
+//         placeholders.push('?');
+//       }
+      
+//       console.log('Final columns to insert:', columnsToInsert);
+//       console.log('Values count:', valuesToInsert.length);
+      
+//       const missingRequired = requiredColumns.filter(col => !columnsToInsert.includes(col));
+//       if (missingRequired.length > 0) {
+//         console.error('Missing required columns:', missingRequired);
+//         console.log('🔄 Adding missing required columns...');
+//         missingRequired.forEach(col => {
+//           columnsToInsert.push(col);
+//           if (col === 'loan_account_id') {
+//             valuesToInsert.push(loanAccountId);
+//           } else if (col === 'account_number') {
+//             valuesToInsert.push(loanAccountNumber);
+//           } else if (col === 'customer_id') {
+//             valuesToInsert.push(req.body.CUST_ID.toString());
+//           } else if (col === 'status') {
+//             valuesToInsert.push('PENDING');
+//           } else if (col === 'created_at' || col === 'updated_at') {
+//             valuesToInsert.push(new Date());
+//           } else {
+//             valuesToInsert.push('');
+//           }
+//           placeholders.push('?');
+//           console.log(`✓ Added missing required column: ${col}`);
+//         });
+//       }
+      
+//       const insertQuery = `
+//         INSERT INTO repayment_schedules (
+//           ${columnsToInsert.join(', ')}
+//         ) VALUES (
+//           ${placeholders.join(', ')}
+//         )
+//       `;
+      
+//       console.log('Executing raw SQL insert for repayment schedule...');
+//       console.log('Query:', insertQuery);
+      
+//       const [result] = await sequelize.query(insertQuery, {
+//         replacements: valuesToInsert,
+//         transaction
+//       });
+      
+//       repaymentScheduleId = result.insertId;
+//       console.log('✅ RepaymentSchedule inserted with raw SQL. ID:', repaymentScheduleId);
+      
+//       if (!repaymentScheduleId || isNaN(repaymentScheduleId)) {
+//         console.warn('⚠️ No valid insertId returned. Trying alternative methods...');
+        
+//         const [lastIdResult] = await sequelize.query(
+//           'SELECT LAST_INSERT_ID() as last_id',
+//           { transaction }
+//         );
+        
+//         if (lastIdResult && lastIdResult[0] && lastIdResult[0].last_id) {
+//           repaymentScheduleId = lastIdResult[0].last_id;
+//           console.log(`✅ Got ID via LAST_INSERT_ID: ${repaymentScheduleId}`);
+//         } else {
+//           const [recentSchedules] = await sequelize.query(
+//             `SELECT id FROM repayment_schedules WHERE account_number = ? ORDER BY created_at DESC LIMIT 1`,
+//             {
+//               replacements: [loanAccountNumber],
+//               transaction
+//             }
+//           );
+          
+//           if (recentSchedules && recentSchedules.length > 0) {
+//             repaymentScheduleId = recentSchedules[0].id;
+//             console.log(`✅ Found ID via query: ${repaymentScheduleId}`);
+//           }
+//         }
+//       }
+      
+//       repaymentSchedule = {
+//         id: repaymentScheduleId,
+//         LOAN_ACCOUNT_ID: loanAccountId,
+//         ACCT_NO: loanAccountNumber,
+//         CUST_ID: req.body.CUST_ID.toString(),
+//         STATUS: 'PENDING',
+//         TRANSACTION_ID,
+//         EVENT_ID,
+//         CREATED_BY: req.body.CREATED_BY
+//       };
+      
+//       console.log('✅ Created repaymentSchedule object with ID:', repaymentSchedule.id);
+      
+//       console.log('Creating individual installment records...');
+//       const installmentsData = emiResult.installments.map((installment, index) => ({
+//         repayment_schedule_id: repaymentScheduleId,
+//         loan_account_id: loanAccountId,
+//         installment_no: installment.installmentNo || installment.installmentNumber || (index + 1),
+//         due_date: installment.dueDate,
+//         principal_amount: safeDecimal(installment.principal, `installment.principal for ${index}`),
+//         interest_amount: safeDecimal(installment.interest, `installment.interest for ${index}`),
+//         total_payment: safeDecimal(installment.totalPayment, `installment.totalPayment for ${index}`),
+//         remaining_balance: safeDecimal(installment.remainingBalance, `installment.remainingBalance for ${index}`),
+//         status: 'PENDING'
+//       }));
+      
+//       const [installmentTables] = await sequelize.query(
+//         `SHOW TABLES LIKE 'loan_installments'`,
+//         { transaction }
+//       );
+      
+//       if (installmentTables.length > 0) {
+//         try {
+//           const [installmentColumns] = await sequelize.query(
+//             `DESCRIBE loan_installments`,
+//             { transaction }
+//           );
+          
+//           const installmentColumnNames = installmentColumns.map(col => col.Field);
+//           console.log('loan_installments columns:', installmentColumnNames);
+          
+//           for (const installment of installmentsData) {
+//             const installmentColumns = [];
+//             const installmentValues = [];
+//             const installmentPlaceholders = [];
+            
+//             Object.keys(installment).forEach(key => {
+//               const columnExists = installmentColumnNames.some(col => 
+//                 col.toLowerCase() === key.toLowerCase()
+//               );
+              
+//               if (columnExists) {
+//                 installmentColumns.push(key);
+//                 installmentValues.push(installment[key]);
+//                 installmentPlaceholders.push('?');
+//               }
+//             });
+            
+//             if (installmentColumns.length > 0) {
+//               const installmentQuery = `
+//                 INSERT INTO loan_installments (
+//                   ${installmentColumns.join(', ')}
+//                 ) VALUES (
+//                   ${installmentPlaceholders.join(', ')}
+//                 )
+//               `;
+              
+//               await sequelize.query(installmentQuery, {
+//                 replacements: installmentValues,
+//                 transaction
+//               });
+//             }
+//           }
+          
+//           console.log(`✅ Created ${installmentsData.length} installment records via raw SQL`);
+          
+//         } catch (installmentError) {
+//           console.warn('⚠️ Could not create installment records:', installmentError.message);
+//           console.log('Continuing without individual installment records...');
+//         }
+//       } else {
+//         console.warn('⚠️ loan_installments table does not exist, skipping installment creation');
+//       }
+      
+//     } catch (repaymentError) {
+//       console.error('❌ Error creating RepaymentSchedule with raw SQL:', repaymentError.message);
+      
+//       console.log('🔄 Trying emergency fallback with only absolute required fields...');
+      
+//       try {
+//         let existingColumns = [];
+//         try {
+//           const [tableInfo] = await sequelize.query(
+//             `DESCRIBE repayment_schedules`,
+//             { transaction }
+//           );
+//           existingColumns = tableInfo.map(col => col.Field);
+//         } catch (descError) {
+//           console.warn('Could not describe table, using default columns');
+//           existingColumns = ['loan_account_id', 'account_number', 'customer_id', 'status', 'created_at', 'updated_at'];
+//         }
+        
+//         const emergencyFields = [];
+//         const emergencyValues = [];
+//         const emergencyPlaceholders = [];
+        
+//         const emergencyRequired = ['loan_account_id', 'account_number', 'customer_id', 'status'];
+        
+//         emergencyRequired.forEach(field => {
+//           if (existingColumns.includes(field)) {
+//             emergencyFields.push(field);
+//             if (field === 'loan_account_id') emergencyValues.push(loanAccountId);
+//             else if (field === 'account_number') emergencyValues.push(loanAccountNumber);
+//             else if (field === 'customer_id') emergencyValues.push(req.body.CUST_ID.toString());
+//             else if (field === 'status') emergencyValues.push('PENDING');
+//             emergencyPlaceholders.push('?');
+//           }
+//         });
+        
+//         if (existingColumns.includes('created_at')) {
+//           emergencyFields.push('created_at');
+//           emergencyValues.push(new Date());
+//           emergencyPlaceholders.push('?');
+//         }
+        
+//         if (existingColumns.includes('updated_at')) {
+//           emergencyFields.push('updated_at');
+//           emergencyValues.push(new Date());
+//           emergencyPlaceholders.push('?');
+//         }
+        
+//         if (emergencyFields.length === 0) {
+//           throw new Error('No valid fields found for emergency insert');
+//         }
+        
+//         const emergencyQuery = `
+//           INSERT INTO repayment_schedules (
+//             ${emergencyFields.join(', ')}
+//           ) VALUES (
+//             ${emergencyPlaceholders.join(', ')}
+//           )
+//         `;
+        
+//         console.log('Emergency query:', emergencyQuery);
+        
+//         const [result] = await sequelize.query(emergencyQuery, {
+//           replacements: emergencyValues,
+//           transaction
+//         });
+        
+//         repaymentScheduleId = result.insertId;
+//         console.log('✅ Emergency RepaymentSchedule created via raw SQL. ID:', repaymentScheduleId);
+        
+//         if (!repaymentScheduleId || isNaN(repaymentScheduleId)) {
+//           console.warn('⚠️ No ID from emergency insert, generating temporary ID');
+//           repaymentScheduleId = Date.now();
+//         }
+        
+//         repaymentSchedule = {
+//           id: repaymentScheduleId,
+//           LOAN_ACCOUNT_ID: loanAccountId,
+//           ACCT_NO: loanAccountNumber,
+//           CUST_ID: req.body.CUST_ID.toString(),
+//           STATUS: 'PENDING'
+//         };
+        
+//       } catch (emergencyError) {
+//         console.error('❌ Emergency creation failed:', emergencyError.message);
+        
+//         console.log('🔄 Creating dummy repayment schedule object...');
+//         repaymentScheduleId = Date.now();
+//         repaymentSchedule = {
+//           id: repaymentScheduleId,
+//           LOAN_ACCOUNT_ID: loanAccountId,
+//           ACCT_NO: loanAccountNumber,
+//           CUST_ID: req.body.CUST_ID.toString(),
+//           STATUS: 'PENDING',
+//           CREATED_BY: req.body.CREATED_BY,
+//           TRANSACTION_ID,
+//           EVENT_ID
+//         };
+        
+//         console.warn(`⚠️ Using dummy repayment schedule object with ID: ${repaymentScheduleId}. Loan will be created but repayment schedule may not be saved in database.`);
+//       }
+//     }
+
+//     console.log('\n=== REPAYMENT SCHEDULE VALIDATION CHECK ===');
+//     console.log('repaymentSchedule object:', repaymentSchedule);
+//     console.log('repaymentSchedule.id:', repaymentSchedule.id, 'type:', typeof repaymentSchedule.id);
+
+//     if (!repaymentSchedule || !repaymentSchedule.id) {
+//       console.error('❌ repaymentSchedule or its id is undefined/null');
+//       repaymentSchedule = repaymentSchedule || {};
+//       repaymentSchedule.id = Date.now();
+//       console.warn(`⚠️ Generated temporary ID: ${repaymentSchedule.id}`);
+//     }
+
+//     console.log('✅ Final repaymentSchedule.id:', repaymentSchedule.id);
+
+//     // ==================== LOAN DISBURSEMENT DATA CREATION ====================
+//     console.log('\n=== CREATING LOAN DISBURSEMENT RECORD ===');
+
+//     console.log('loanAccount object:', {
+//       id: loanAccount.id,
+//       hasId: !!loanAccount.id,
+//       typeOfId: typeof loanAccount.id
+//     });
+
+//     console.log('repaymentSchedule object:', {
+//       id: repaymentSchedule.id,
+//       hasId: !!repaymentSchedule.id,
+//       typeOfId: typeof repaymentSchedule.id
+//     });
+
+//     if (!loanAccount.id || isNaN(loanAccount.id)) {
+//       console.error('❌ loanAccount.id is invalid:', loanAccount.id);
+//       throw new Error('Invalid loan account ID');
+//     }
+
+//     if (!repaymentSchedule.id) {
+//       console.error('❌ repaymentSchedule.id is undefined/null');
+//       console.log('Attempting to continue with temporary ID...');
+      
+//       repaymentSchedule.id = Date.now();
+//       console.warn(`⚠️ Generated temporary repayment schedule ID: ${repaymentSchedule.id}`);
+//     }
+
+//     const repaymentScheduleIdNum = Number(repaymentSchedule.id);
+//     if (isNaN(repaymentScheduleIdNum)) {
+//       console.error('❌ repaymentSchedule.id is not a valid number:', repaymentSchedule.id);
+//       repaymentSchedule.id = Date.now();
+//       console.warn(`⚠️ Generated valid temporary repayment schedule ID: ${repaymentSchedule.id}`);
+//     }
+
+//     if (!guarantor.id || isNaN(guarantor.id)) {
+//       console.error('❌ guarantor.id is invalid:', guarantor.id);
+//       throw new Error('Invalid guarantor ID');
+//     }
+
+//     const validCalculationMethods = ['FLAT_RATE', 'DECLINING_BALANCE'];
+//     let calculationMethod = interestRateDetails.calculationMethod || 'FLAT_RATE';
+//     if (!validCalculationMethods.includes(calculationMethod)) {
+//       console.warn(`⚠️ Invalid calculation method: ${calculationMethod}, defaulting to FLAT_RATE`);
+//       calculationMethod = 'FLAT_RATE';
+//     }
+
+//     const productType = String(productValidation.productType || 'INDIVIDUAL_LOAN').toUpperCase();
+//     const sanitizedProductType = productType === 'PERSONAL LOAN' ? 'INDIVIDUAL_LOAN' : productType;
+
+//     const loanDisbursementData = {
+//       ACCT_NO: loanAccountNumber,
+//       APPL_ID: req.body.APPL_ID,
+//       CUST_ID: req.body.CUST_ID,
+      
+//       INTEREST_RATE: effectiveInterestRate,
+//       TERM_VALUE: numericValues.TERM_VALUE,
+//       TERM_CD: req.body.TERM_CD,
+//       AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+//       CALCULATION_METHOD: calculationMethod,
+//       PAYMENT_FREQUENCY: paymentFrequency,
+      
+//       EMI_AMOUNT: safeDecimal(emiResult.emi, 'emiResult.emi'),
+//       TOTAL_INTEREST: safeDecimal(emiResult.totalInterest, 'emiResult.totalInterest'),
+//       TOTAL_REPAYMENT: safeDecimal(emiResult.totalRepayable, 'emiResult.totalRepayable'),
+      
+//       LOAN_ACCOUNT_ID: Number(loanAccount.id),
+//       CREDIT_APPLICATION_ID: null,
+//       REPAYMENT_SCHEDULE_ID: Number(repaymentSchedule.id),
+//       GUARANTOR_ID: Number(guarantor.id),
+      
+//       TRANSACTION_ID,
+//       EVENT_ID,
+//       JOURNAL_ID: TRAN_JOURNAL_ID,
+      
+//       PROD_ID: String(numericValues.PROD_ID),
+//       PRODUCT_TYPE: sanitizedProductType,
+      
+//       ACCT_NM: req.body.ACCT_NM,
+//       CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+//       BU_ID: req.body.BU_ID,
+      
+//       PRIMARY_OFFICER_ID: req.body.PRIMARY_OFFICER_ID,
+//       REPAY_SRC_ACCT_NO: req.body.REPAY_SRC_ACCT_NO,
+      
+//       START_DT: startDate,
+//       MATURITY_DT: maturityDate,
+      
+//       borrower_address: req.body.Borrower_address || {},
+//       guarantor_details: {
+//         name: guarantor.fullName || '',
+//         phone: guarantor.phoneNumber || '',
+//         relationship: guarantor.relationshipToBorrower || '',
+//         guarantorNumberId: String(guarantor.GUARANTOR_ID || ''),
+//         email: guarantor.email || '',
+//         address: guarantor.address || '',
+//         existingGuarantees: guarantorLoanCheck.hasExistingLoans ? {
+//           totalExistingLoans: guarantorLoanCheck.totalExistingLoans,
+//           totalGuaranteedAmount: guarantorLoanCheck.totalGuaranteedAmount
+//         } : null
+//       },
+//       interest_rate_details: interestRateDetails || {},
+//       metadata: {},
+      
+//       STATUS: 'PENDING',
+//       CREATED_BY: req.body.CREATED_BY,
+      
+//       DISBURSEMENT_TYPE: 'CUSTOMER_ACCOUNT',
+//       FEES_AMOUNT: toDecimal(0),
+//       UPFRONT_INTEREST_AMOUNT: toDecimal(0),
+//       NET_DISBURSEMENT_AMOUNT: numericValues.DISBURSEMENT_LIMIT
+//     };
+
+//     console.log('\n=== LOAN DISBURSEMENT DATA VALIDATION ===');
+//     console.log('LOAN_ACCOUNT_ID:', loanDisbursementData.LOAN_ACCOUNT_ID, 'type:', typeof loanDisbursementData.LOAN_ACCOUNT_ID);
+//     console.log('REPAYMENT_SCHEDULE_ID:', loanDisbursementData.REPAYMENT_SCHEDULE_ID, 'type:', typeof loanDisbursementData.REPAYMENT_SCHEDULE_ID);
+//     console.log('GUARANTOR_ID:', loanDisbursementData.GUARANTOR_ID, 'type:', typeof loanDisbursementData.GUARANTOR_ID);
+//     console.log('CALCULATION_METHOD:', loanDisbursementData.CALCULATION_METHOD);
+//     console.log('PRODUCT_TYPE:', loanDisbursementData.PRODUCT_TYPE);
+
+//     let loanDisbursement;
+//     try {
+//       loanDisbursement = await LoanDisbursement.create(loanDisbursementData, { transaction });
+//       console.log('✅ LoanDisbursement created via Sequelize with ID:', loanDisbursement.id);
+//     } catch (sequelizeError) {
+//       console.error('❌ Sequelize create failed:', sequelizeError.message);
+      
+//       console.log('🔄 Trying raw SQL fallback...');
+      
+//       try {
+//         const tableColumns = await getTableColumns('loan_disbursements', transaction);
+        
+//         const insertData = {
+//           'a_c_c_t__n_o': loanAccountNumber,
+//           'a_p_p_l__i_d': req.body.APPL_ID,
+//           'c_u_s_t__i_d': req.body.CUST_ID,
+//           'i_n_t_e_r_e_s_t__r_a_t_e': effectiveInterestRate,
+//           't_e_r_m__v_a_l_u_e': numericValues.TERM_VALUE,
+//           't_e_r_m__c_d': req.body.TERM_CD,
+//           'a_m_o_u_n_t': numericValues.DISBURSEMENT_LIMIT,
+//           'l_o_a_n__a_c_c_o_u_n_t__i_d': Number(loanAccount.id),
+//           'r_e_p_a_y_m_e_n_t__s_c_h_e_d_u_l_e__i_d': Number(repaymentSchedule.id),
+//           'g_u_a_r_a_n_t_o_r__i_d': Number(guarantor.id),
+//           'p_r_o_d__i_d': String(numericValues.PROD_ID),
+//           'p_r_o_d_u_c_t__t_y_p_e': 'INDIVIDUAL_LOAN',
+//           's_t_a_t_u_s': 'PENDING',
+//           'created_at': new Date(),
+//           'updated_at': new Date()
+//         };
+        
+//         const columns = [];
+//         const values = [];
+//         const placeholders = [];
+        
+//         for (const [column, value] of Object.entries(insertData)) {
+//           if (tableColumns.includes(column)) {
+//             columns.push(column);
+//             values.push(value);
+//             placeholders.push('?');
+//           }
+//         }
+        
+//         if (columns.length > 0) {
+//           const insertQuery = `
+//             INSERT INTO loan_disbursements (
+//               ${columns.join(', ')}
+//             ) VALUES (
+//               ${placeholders.join(', ')}
+//             )
+//           `;
+          
+//           const [result] = await sequelize.query(insertQuery, {
+//             replacements: values,
+//             transaction
+//           });
+          
+//           console.log('✅ LoanDisbursement created via raw SQL with ID:', result.insertId);
+          
+//           loanDisbursement = {
+//             id: result.insertId,
+//             ...insertData,
+//             ACCT_NO: insertData['a_c_c_t__n_o'],
+//             APPL_ID: insertData['a_p_p_l__i_d'],
+//             CUST_ID: insertData['c_u_s_t__i_d'],
+//             INTEREST_RATE: insertData['i_n_t_e_r_e_s_t__r_a_t_e'],
+//             TERM_VALUE: insertData['t_e_r_m__v_a_l_u_e'],
+//             TERM_CD: insertData['t_e_r_m__c_d'],
+//             AMOUNT: insertData['a_m_o_u_n_t'],
+//             LOAN_ACCOUNT_ID: insertData['l_o_a_n__a_c_c_o_u_n_t__i_d'],
+//             REPAYMENT_SCHEDULE_ID: insertData['r_e_p_a_y_m_e_n_t__s_c_h_e_d_u_l_e__i_d'],
+//             GUARANTOR_ID: insertData['g_u_a_r_a_n_t_o_r__i_d'],
+//             PROD_ID: insertData['p_r_o_d__i_d'],
+//             PRODUCT_TYPE: insertData['p_r_o_d_u_c_t__t_y_p_e'],
+//             STATUS: insertData['s_t_a_t_u_s']
+//           };
+//         } else {
+//           throw new Error('No valid columns found for loan_disbursements table');
+//         }
+//       } catch (rawSQLError) {
+//         console.error('❌ Raw SQL fallback also failed:', rawSQLError.message);
+//         throw new Error('Failed to create loan disbursement record');
+//       }
+//     }
+
+//     console.log('=== DEBUG: REQUEST BODY STRUCTURE ===');
+//     console.log('Full req.body:', JSON.stringify(req.body, null, 2));
+
+//     const possibleAddressPaths = [
+//       'Borrower_address',
+//       'address',
+//       'borrowerAddress',
+//       'customer_address',
+//       'customerAddress'
+//     ];
+
+//     possibleAddressPaths.forEach(path => {
+//       if (req.body[path]) {
+//         console.log(`Found address at req.body.${path}:`, req.body[path]);
+//       }
+//     });
+
+//     const rootAddressFields = ['street', 'city', 'state', 'zipCode', 'country', 'postal_code'];
+//     rootAddressFields.forEach(field => {
+//       if (req.body[field]) {
+//         console.log(`Found root-level field req.body.${field}:`, req.body[field]);
+//       }
+//     });
+
+//     // ==================== CREDIT APPLICATION CREATION ====================
+//     console.log('\n=== CREATING CREDIT APPLICATION ===');
+
+//     let addressData = {};
+
+//     if (req.body.Borrower_address) {
+//       addressData = req.body.Borrower_address;
+//     } else if (req.body.address) {
+//       addressData = {
+//         street: req.body.address.street || req.body.address.address_line_1 || req.body.address.addressLine1 || '',
+//         city: req.body.address.city || '',
+//         state: req.body.address.state || '',
+//         zipCode: req.body.address.zipCode || req.body.address.postal_code || req.body.address.postalCode || req.body.address.zip_code || '',
+//         country: req.body.address.country || 'Nigeria'
+//       };
+//     } else if (req.body.street || req.body.city || req.body.state) {
+//       addressData = {
+//         street: req.body.street || req.body.address_line_1 || req.body.addressLine1 || '',
+//         city: req.body.city || '',
+//         state: req.body.state || '',
+//         zipCode: req.body.zipCode || req.body.postal_code || req.body.postalCode || req.body.zip_code || '',
+//         country: req.body.country || 'Nigeria'
+//       };
+//     } else {
+//       addressData = {
+//         street: '',
+//         city: '',
+//         state: '',
+//         zipCode: '',
+//         country: 'Nigeria'
+//       };
+//     }
+
+//     console.log('Address data from request:', addressData);
+
+//     let generatedCreditApplicationId;
+//     let generatedCustId;
+//     let generatedApplId;
+//     let generatedRefNo;
+
+//     try {
+//       generatedCreditApplicationId = await CreditApplication.generateCreditApplicationId();
+//       console.log('Generated creditApplicationId:', generatedCreditApplicationId);
+      
+//       if (!req.body.CUST_ID) {
+//         generatedCustId = await CreditApplication.generateCustId();
+//         console.log('Generated CUST_ID:', generatedCustId);
+//       }
+      
+//       if (!req.body.APPL_ID) {
+//         generatedApplId = await CreditApplication.generateApplId();
+//         console.log('Generated APPL_ID:', generatedApplId);
+//       }
+      
+//       generatedRefNo = await CreditApplication.generateRefNo();
+//       console.log('Generated REF_NO:', generatedRefNo);
+      
+//     } catch (idError) {
+//       console.error('Failed to generate IDs:', idError);
+//       generatedCreditApplicationId = Date.now() % 1000000;
+//       generatedCustId = req.body.CUST_ID || Date.now() % 100000;
+//       generatedApplId = req.body.APPL_ID || `APP-${Date.now()}`;
+//       generatedRefNo = `REF-${Date.now()}`;
+//       console.log('Using fallback IDs:', {
+//         creditApplicationId: generatedCreditApplicationId,
+//         CUST_ID: generatedCustId,
+//         APPL_ID: generatedApplId,
+//         REF_NO: generatedRefNo
+//       });
+//     }
+
+//     let creditApplication;
+//     try {
+//       creditApplication = await CreditApplication.create({
+//         creditApplicationId: generatedCreditApplicationId,
+//         CUST_NM: req.body.ACCT_NM || req.body.customerName || req.body.CUST_NM || 'Unknown Customer',
+//         CUST_ID: req.body.CUST_ID || generatedCustId || 0,
+//         APPL_ID: req.body.APPL_ID || generatedApplId || `APP-${Date.now()}`,
+//         PROD_ID: req.body.PROD_ID || numericValues.PROD_ID,
+        
+//         Borrower_address: addressData,
+        
+//         PRIME_LIMIT_AMT: numericValues.DISBURSEMENT_LIMIT?.toString() || '0',
+//         Purpose_of_Credit: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+//         REPAY_SRC_ACCT_NO: req.body.REPAY_SRC_ACCT_NO,
+//         TERM_CD: mapTermCodeToFullWord(req.body.TERM_CD) || 'MONTHLY',
+//         TERM_VALUE: numericValues.TERM_VALUE || 12,
+        
+//         BU_ID: req.body.BU_ID || '001',
+//         CREATED_BY: req.body.CREATED_BY || req.body.USER_ID || 'SYSTEM',
+//         USER_ID: req.body.USER_ID || req.body.CREATED_BY || 'SYSTEM',
+//         CRNCY_ID: req.body.CRNCY_ID || 'NGN',
+//         TRANSACTION_TYPE: req.body.TRANSACTION_TYPE || 'LOAN_DISBURSEMENT',
+//         STATUS: 'PENDING',
+//         REC_ST: 'active',
+//         LOAN_CYCLE: loanCycleCount || 1,
+        
+//         INTEREST_RATE: effectiveInterestRate,
+//         LOAN_INTEREST_RATE_ID: loanInterestRateId,
+//         INDEX_RATE_ID: req.body.INDEX_RATE_ID || null,
+        
+//         ACCT_ID: loanAccountNumber,
+//         ACCT_NO: loanAccountNumber,
+//         PRODUCT: productValidation.productType || 'LOAN',
+//         Credit_Type: 'LOAN',
+        
+//         APPL_DT: new Date(),
+//         CREATE_DT: new Date(),
+//         ROW_TS: new Date(),
+//         SYS_CREATE_TS: new Date(),
+        
+//         REF_NO: generatedRefNo,
+        
+//         VERSION_NO: 1,
+//         MULTI_CRNCY_FG: false
+        
+//       }, { 
+//         transaction,
+//         hooks: false
+//       });
+      
+//       console.log('✅ CreditApplication created successfully:', {
+//         id: creditApplication.id,
+//         creditApplicationId: creditApplication.creditApplicationId,
+//         APPL_ID: creditApplication.APPL_ID,
+//         CUST_NM: creditApplication.CUST_NM,
+//         status: creditApplication.STATUS,
+//         address: creditApplication.Borrower_address
+//       });
+      
+//       if (loanDisbursement && loanDisbursement.id) {
+//         try {
+//           await LoanDisbursement.update(
+//             { CREDIT_APPLICATION_ID: creditApplication.id },
+//             {
+//               where: { id: loanDisbursement.id },
+//               transaction
+//             }
+//           );
+//           console.log('✅ LoanDisbursement updated with CreditApplication reference');
+//         } catch (updateError) {
+//           console.warn('⚠️ Could not update LoanDisbursement with CreditApplication reference:', updateError.message);
+//         }
+//       }
+
+//     } catch (modelError) {
+//       console.error('❌ CreditApplication creation failed:', modelError.message);
+//       console.error('Model error details:', modelError);
+      
+//       console.log('Debug - addressData type:', typeof addressData);
+//       console.log('Debug - addressData:', addressData);
+//       console.log('Debug - Full request body keys:', Object.keys(req.body));
+      
+//       throw new Error(`CreditApplication creation failed: ${modelError.message}`);
+//     }
+
+//     if (loanDisbursement && loanDisbursement.id) {
+//       try {
+//         await LoanDisbursement.update(
+//           { CREDIT_APPLICATION_ID: creditApplication.id },
+//           {
+//             where: { id: loanDisbursement.id },
+//             transaction
+//           }
+//         );
+//         console.log('✅ LoanDisbursement updated with CreditApplication reference');
+//       } catch (updateError) {
+//         console.warn('⚠️ Could not update LoanDisbursement with CreditApplication reference:', updateError.message);
+//       }
+//     }
+
+//     console.log('\n=== FINAL VALIDATION ===');
+//     console.log(`Principal: ₦${principalAmount.toFixed(2)}`);
+//     console.log(`Interest Rate: ${interestRateNumber}% annual`);
+//     console.log(`Term: ${numericValues.TERM_VALUE} months`);
+//     console.log(`Calculated EMI: ₦${emiResult.emi.toFixed(2)}`);
+//     console.log(`✅ ALL CALCULATIONS COMPLETED SUCCESSFULLY`);
+
+//     // ==================== GENERATE LOAN CONTRACT ====================
+// console.log('\n=== GENERATING LOAN CONTRACT ===');
+
+// try {
+//   // Prepare data for contract generation
+//   const contractData = {
+//     loan_contract_no: `CONTRACT-${Date.now()}-${loanAccountNumber}`,
+//     customer_id: req.body.CUST_ID,
+//     borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+//     borrower_address: addressData?.street 
+//       ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
+//       : 'Address Not Provided',
+//     loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+//     loan_amount: numericValues.DISBURSEMENT_LIMIT.toString(),
+//     loan_term: numericValues.TERM_VALUE,
+//     t_e_r_m__c_d: req.body.TERM_CD || 'M',
+//     interest_rate: effectiveInterestRate,
+//     interest_rate_id: loanInterestRate?.id || 101, // Default interest rate ID
+//     guarantor_name: guarantor?.fullName || '',
+//     bank_name: process.env.BANK_NAME || 'Our Bank',
+//     bank_short: process.env.BANK_SHORT_NAME || 'BANK',
+//     status: 'PENDING',
+    
+//     // Generate contract text using your existing function
+//     contract_text: generateContractText(
+//       {
+//         AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+//         INTEREST_RATE: effectiveInterestRate,
+//         TERM_VALUE: numericValues.TERM_VALUE,
+//         TERM_CD: req.body.TERM_CD || 'M',
+//         loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+//         borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+//         borrower_address: addressData?.street 
+//           ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
+//           : 'Address Not Provided',
+//         DISBURSEMENT_DATE: startDate,
+//         NUMBER_OF_INSTALLMENTS: numericValues.TERM_VALUE,
+//         FIRST_PAYMENT_DATE: startDate,
+//         LAST_PAYMENT_DATE: maturityDate
+//       },
+//       customer,
+//       loanProduct,
+//       effectiveInterestRate
+//     ),
+    
+//     u_s_e_r__i_d: req.body.CREATED_BY || req.body.USER_ID || 'SYSTEM',
+//     application_id: creditApplication.id,
+//     loan_account_no: loanAccountNumber,
+//     funding_account_no: req.body.REPAY_SRC_ACCT_NO || '',
+//     workflow_id: WORK_ITEM_ID || Date.now(),
+    
+//     // Fees information
+//     fees: JSON.stringify({
+//       processing_fee: {
+//         rate: loanProduct?.processingFeeRate || 0,
+//         amount: (numericValues.DISBURSEMENT_LIMIT * (loanProduct?.processingFeeRate || 0) / 100).toFixed(2)
+//       },
+//       upfront_interest: {
+//         rate: upfrontInterest,
+//         amount: (numericValues.DISBURSEMENT_LIMIT * (upfrontInterest || 0) / 100).toFixed(2)
+//       }
+//     }),
+    
+//     // Signature requirements
+//     signature_requirements: JSON.stringify({
+//       required_signatures: [
+//         {
+//           party: 'BORROWER',
+//           required: true,
+//           field_name: 'borrower_signature'
+//         },
+//         {
+//           party: 'GUARANTOR',
+//           required: true,
+//           field_name: 'guarantor_signature'
+//         },
+//         {
+//           party: 'LENDER',
+//           required: true,
+//           field_name: 'lender_authorized_signature'
+//         }
+//       ]
+//     }),
+    
+//     // Metadata
+//     metadata: JSON.stringify({
+//       product_id: numericValues.PROD_ID,
+//       product_type: productValidation.productType,
+//       interest_rate_details: interestRateDetails,
+//       calculation_method: calculationMethod,
+//       emi_details: emiResult,
+//       guarantor_details: {
+//         id: guarantor.id,
+//         name: guarantor.fullName,
+//         relationship: guarantor.relationshipToBorrower
+//       }
+//     }),
+    
+//     disbursement_date: startDate,
+//     maturity_date: maturityDate,
+//     created_at: new Date(),
+//     updated_at: new Date()
+//   };
+
+//   console.log('Generated contract data:', {
+//     loan_contract_no: contractData.loan_contract_no,
+//     loan_account_no: contractData.loan_account_no,
+//     status: contractData.status
+//   });
+
+//   // Check if loan_contract_forms table exists and create it if needed
+//   try {
+//     await sequelize.query(`
+//       CREATE TABLE IF NOT EXISTS loan_contract_forms (
+//         id INT PRIMARY KEY AUTO_INCREMENT,
+//         loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+//         customer_id VARCHAR(255) NOT NULL,
+//         borrower_name VARCHAR(255) NOT NULL,
+//         co_signatory_name VARCHAR(255) DEFAULT '',
+//         borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+//         loan_purpose VARCHAR(255) NOT NULL,
+//         loan_amount VARCHAR(255) NOT NULL,
+//         loan_term INT NOT NULL,
+//         t_e_r_m__c_d ENUM('M','Y') NOT NULL DEFAULT 'M',
+//         interest_rate DECIMAL(7,4) NOT NULL,
+//         interest_rate_id INT NOT NULL DEFAULT 101,
+//         guarantor_name VARCHAR(255) DEFAULT '',
+//         bank_name VARCHAR(255) NOT NULL,
+//         bank_short VARCHAR(255) NOT NULL,
+//         status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') NOT NULL DEFAULT 'PENDING',
+//         contract_text TEXT NOT NULL,
+//         u_s_e_r__i_d VARCHAR(255) NOT NULL,
+//         application_id VARCHAR(255) NOT NULL,
+//         loan_account_no VARCHAR(255) NOT NULL,
+//         funding_account_no VARCHAR(255),
+//         workflow_id BIGINT,
+//         fees LONGTEXT NOT NULL,
+//         signature_requirements LONGTEXT NOT NULL,
+//         metadata LONGTEXT NOT NULL,
+//         disbursement_date DATETIME,
+//         maturity_date DATETIME,
+//         created_at DATETIME NOT NULL,
+//         updated_at DATETIME NOT NULL,
+//         INDEX idx_customer_id (customer_id),
+//         INDEX idx_status (status),
+//         INDEX idx_loan_account_no (loan_account_no),
+//         INDEX idx_application_id (application_id),
+//         INDEX idx_created_at (created_at),
+//         UNIQUE KEY uk_workflow_id (workflow_id)
+//       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+//     `, { transaction });
+    
+//     console.log('✅ loan_contract_forms table created or already exists');
+//   } catch (tableError) {
+//     console.warn('⚠️ Could not create loan_contract_forms table:', tableError.message);
+//   }
+
+//   // Insert contract into database
+//   const columns = Object.keys(contractData);
+//   const placeholders = columns.map(() => '?').join(', ');
+//   const values = columns.map(col => contractData[col]);
+  
+//   const insertContractQuery = `
+//     INSERT INTO loan_contract_forms (
+//       ${columns.join(', ')}
+//     ) VALUES (
+//       ${placeholders}
+//   )`;
+  
+//   const [contractResult] = await sequelize.query(insertContractQuery, {
+//     replacements: values,
+//     transaction
+//   });
+  
+//   console.log('✅ Loan contract generated with ID:', contractResult.insertId);
+  
+//   // Update loan account with contract reference
+//   await sequelize.query(
+//     `UPDATE loan_accounts SET 
+//       has_repayment_schedule = TRUE,
+//       repayment_schedule_id = ?,
+//       updated_at = ?
+//      WHERE id = ?`,
+//     {
+//       replacements: [repaymentScheduleId, new Date(), loanAccountId],
+//       transaction
+//     }
+//   );
+
+// } catch (contractError) {
+//   console.error('❌ Error generating loan contract:', contractError.message);
+//   console.error('Contract error details:', contractError);
+//   // Don't fail the entire loan application if contract generation fails
+//   console.warn('⚠️ Continuing without loan contract generation');
+// }
+
+//     // ==================== COMMIT TRANSACTION AND RETURN SUCCESS ====================
+//     await transaction.commit();
+//     console.log('✅ Transaction committed successfully');
+
+//  return res.status(201).json({
+//   success: true,
+//   message: 'Loan application submitted successfully - pending approval',
+//   status: 'PENDING',
+//   data: {
+//     loanAccountId: loanAccount.id,
+//     loanAccountNumber: loanAccountNumber,
+//     creditApplicationId: creditApplication.id,
+//     repaymentScheduleId: repaymentSchedule.id,
+//     loanDisbursementId: loanDisbursement.id,
+//     contractGenerated: true, // Add this
+//     contractStatus: 'PENDING', // Add this
+//     APPL_ID: req.body.APPL_ID,
+//     status: 'PENDING',
+//     productDetails: {
+//       PROD_ID: numericValues.PROD_ID,
+//       productType: productValidation.productType
+//     },
+//     loanDetails: {
+//       principal: principalAmount,
+//       interestRate: interestRateNumber + '%',
+//       term: numericValues.TERM_VALUE + ' months',
+//       emi: emiResult.emi,
+//       totalInterest: emiResult.totalInterest,
+//       totalRepayable: emiResult.totalRepayable
+//     },
+//     nextSteps: 'Loan requires manual approval before disbursement',
+//     approvalEndpoint: 'POST /api/loans/approve-and-disburse',
+//     approvalBodyExample: {
+//       ACCT_NO: loanAccountNumber,
+//       approvedBy: "[USER_ID]",
+//       approvalComments: "Optional approval comments"
+//     }
+//   }
+// });
+
+//   } catch (error) {
+//     // Rollback transaction on error
+//     if (transaction) {
+//       await transaction.rollback();
+//     }
+    
+//     console.error('❌ Loan application failed:', error);
+    
+//     return res.status(error.status || 500).json({
+//       success: false,
+//       message: error.message || 'Loan application failed',
+//       code: error.code || 'LOAN_APPLICATION_FAILED',
+//       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+//     });
+//   }
+// },
+
 async applyForLoan(req, res) {
   // ==================== TABLE CREATION ====================
   try {
@@ -515,23 +3352,23 @@ async applyForLoan(req, res) {
         s_e_r_v_i_c_i_n_g__s_t_a_t_u_s VARCHAR(50) DEFAULT 'SERVICED',
         a_p_p_l_i_c_a_t_i_o_n__d_a_t_e DATETIME DEFAULT CURRENT_TIMESTAMP,
         a_p_p_r_o_v_a_l__d_a_t_e DATETIME,
-        d_i_s_b_u_r_s_e_m_e_n t__d_a_t_e DATETIME,
+        d_i_s_b_u_r_s_e_m_e n t__d_a_t_e DATETIME,
         c_l_o_s_u_r_e__d_a_t_e DATETIME,
-        l_a_s_t__r_e_p_a_y_m_e_n t__d_a_t_e DATETIME,
-        l_a_s_t__r_e_p_a_y_m_e_n t__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
-        n_e_x_t__p_a_y_m_e_n t__d_a_t_e DATETIME,
+        l_a_s_t__r_e_p_a_y_m_e n t__d_a_t_e DATETIME,
+        l_a_s_t__r_e_p_a_y_m_e n t__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
+        n_e_x_t__p_a_y_m_e n t__d_a_t_e DATETIME,
         m_a_t_u_r_i_t_y__d_t DATETIME,
         t_o_t_a_l__r_e_p_a_i_d__a_m_o_u_n_t DECIMAL(20,2) DEFAULT 0.00,
         t_e_r_m__c_d VARCHAR(20) DEFAULT 'MONTHLY',
         t_e_r_m__v_a_l_u_e INT DEFAULT 12,
-        c_u_s_t_o_m_e_r__a_c_c_o_u_n t__i_d BIGINT,
+        c_u_s_t_o_m_e_r__a_c_c_o_u n t__i_d BIGINT,
         has_repayment_schedule BOOLEAN DEFAULT FALSE,
         repayment_schedule_id INT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         -- Essential fields that match your existing table
         G_U_A_R_A_N_T_O_R__I_D INT,
-        d_i_s_b_u_r_s_e_m_e_n t__l_i_m_i_t DECIMAL(20,2),
+        d_i_s_b_u_r_s_e_m_e n t__l_i_m_i_t DECIMAL(20,2),
         g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t DECIMAL(20,2),
         s_t_a_r_t__d_t DATETIME
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -730,7 +3567,7 @@ async applyForLoan(req, res) {
       case 'W': result.setDate(result.getDate() + termValue * 7); break;
       case 'BW': result.setDate(result.getDate() + termValue * 14); break;
       case 'M': result.setMonth(result.getMonth() + termValue); break;
-      case 'Q': result.setMonth(result.getonth() + termValue * 3); break;
+      case 'Q': result.setMonth(result.getMonth() + termValue * 3); break;
       case 'Y': result.setFullYear(result.getFullYear() + termValue); break;
       default: throw new Error(`Invalid term code: ${termCode}`);
     }
@@ -952,7 +3789,7 @@ async applyForLoan(req, res) {
   async function findLoanInterestRateByProduct(PROD_ID, INDEX_RATE_ID, transaction) {
     try {
       console.log(`Looking for LoanInterestRate for product: ${PROD_ID}`);
-     
+      
       // Try to find rates that might be associated with this product
       let loanInterestRate = await LoanInterestRate.findOne({
         where: {
@@ -965,7 +3802,7 @@ async applyForLoan(req, res) {
         },
         transaction
       });
-     
+      
       if (!loanInterestRate) {
         // Try by INDEX_RATE_ID if provided
         if (INDEX_RATE_ID) {
@@ -980,24 +3817,24 @@ async applyForLoan(req, res) {
             });
           }
         }
-       
+        
         if (!loanInterestRate) {
           // Try to find any active rate
           loanInterestRate = await LoanInterestRate.findOne({
             where: { STATUS: 'ACTIVE' },
             transaction
           });
-         
+          
           if (loanInterestRate) {
             console.warn(`Using first available LoanInterestRate: ${loanInterestRate.LOAN_PROUD_INT_ID} for product ${PROD_ID}`);
           }
         }
       }
-     
+      
       if (loanInterestRate) {
         console.log(`Found LoanInterestRate for product ${PROD_ID}: ${loanInterestRate.LOAN_PROUD_INT_ID} - ${loanInterestRate.name}`);
       }
-     
+      
       return loanInterestRate;
     } catch (error) {
       console.error('Error in findLoanInterestRateByProduct:', error);
@@ -1249,7 +4086,7 @@ async applyForLoan(req, res) {
     }
   }
 
-  // ==================== NEW HELPER: Extract interest rate from LoanProduct ====================
+  // ==================== EXTRACT INTEREST RATE FROM LOAN PRODUCT ====================
   function extractInterestRateFromProduct(loanProduct) {
     console.log('=== EXTRACTING INTEREST RATE FROM LOAN PRODUCT ===');
     
@@ -1266,57 +4103,21 @@ async applyForLoan(req, res) {
     }
     
     console.log('LoanProduct data:', {
-      productCode: loanProduct.productCode,
-      name: loanProduct.name,
       PROD_ID: loanProduct.PROD_ID,
-      interestRateFields: {
-        LOAN_INTEREST_RATE_ID: loanProduct.LOAN_INTEREST_RATE_ID,
-        LOAN_PROUD_INT_ID: loanProduct.LOAN_PROUD_INT_ID,
-        DEFAULT_RATE_PER_MONTH: loanProduct.DEFAULT_RATE_PER_MONTH,
-        TOTAL_INTEREST_RATE: loanProduct.TOTAL_INTEREST_RATE,
-        RATE_TY: loanProduct.RATE_TY,
-        INT_TY: loanProduct.INT_TY,
-        CALCULATION_METHOD: loanProduct.CALCULATION_METHOD
-      }
+      name: loanProduct.name,
+      productCode: loanProduct.productCode,
+      LOAN_INTEREST_RATE_ID: loanProduct.LOAN_INTEREST_RATE_ID,
+      LOAN_PROUD_INT_ID: loanProduct.LOAN_PROUD_INT_ID,
+      minAmount: loanProduct.minAmount,
+      maxAmount: loanProduct.maxAmount,
+      defaultGLAccounts: loanProduct.defaultGLAccounts,
+      processingFeeRate: loanProduct.processingFeeRate,
+      processingFeeGLCode: loanProduct.processingFeeGLCode,
+      isActive: loanProduct.isActive,
+      STATUS: loanProduct.STATUS
     });
     
-    // Priority 1: Check if product has DEFAULT_RATE_PER_MONTH
-    if (loanProduct.DEFAULT_RATE_PER_MONTH) {
-      const monthlyRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH);
-      const annualRate = monthlyRate * 12;
-      console.log(`Found DEFAULT_RATE_PER_MONTH: ${monthlyRate}% per month (${annualRate}% annual)`);
-      
-      return {
-        annualRate,
-        monthlyRate,
-        calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
-        rateType: loanProduct.RATE_TY || 'FIXED',
-        interestType: loanProduct.INT_TY || 'SIMPLE',
-        source: 'LOAN_PRODUCT_DEFAULT_RATE',
-        loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
-        loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
-      };
-    }
-    
-    // Priority 2: Check if product has TOTAL_INTEREST_RATE
-    if (loanProduct.TOTAL_INTEREST_RATE) {
-      const totalRate = parseFloat(loanProduct.TOTAL_INTEREST_RATE);
-      console.log(`Found TOTAL_INTEREST_RATE: ${totalRate}% total for term`);
-      
-      return {
-        annualRate: totalRate, // This is total for term, not annual
-        monthlyRate: totalRate,
-        calculationMethod: 'FLAT_RATE', // TOTAL_INTEREST_RATE usually indicates flat rate for term
-        rateType: 'FIXED',
-        interestType: 'SIMPLE',
-        source: 'LOAN_PRODUCT_TOTAL_RATE',
-        isTermBasedRate: true,
-        loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
-        loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
-      };
-    }
-    
-    // Priority 3: Check metadata or other fields
+    // Check for interest rate in metadata
     if (loanProduct.metadata && loanProduct.metadata.interestRateConfiguration) {
       const config = loanProduct.metadata.interestRateConfiguration;
       console.log('Found interest rate in metadata:', config);
@@ -1338,24 +4139,7 @@ async applyForLoan(req, res) {
       }
     }
     
-    // Priority 4: Check defaultGLAccounts or other fields
-    if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.interestRate) {
-      const rate = parseFloat(loanProduct.defaultGLAccounts.interestRate);
-      console.log(`Found interest rate in defaultGLAccounts: ${rate}%`);
-      
-      return {
-        annualRate: rate,
-        monthlyRate: rate / 12,
-        calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
-        rateType: loanProduct.RATE_TY || 'FIXED',
-        interestType: loanProduct.INT_TY || 'SIMPLE',
-        source: 'LOAN_PRODUCT_GL_ACCOUNTS',
-        loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
-        loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
-      };
-    }
-    
-    // Priority 5: Check if there's an interest rate field directly
+    // Check if the loan product has a direct interest rate field
     if (loanProduct.interestRate) {
       const rate = parseFloat(loanProduct.interestRate);
       console.log(`Found interestRate field: ${rate}%`);
@@ -1363,16 +4147,33 @@ async applyForLoan(req, res) {
       return {
         annualRate: rate,
         monthlyRate: rate / 12,
-        calculationMethod: loanProduct.CALCULATION_METHOD || 'FLAT_RATE',
-        rateType: loanProduct.RATE_TY || 'FIXED',
-        interestType: loanProduct.INT_TY || 'SIMPLE',
+        calculationMethod: 'FLAT_RATE',
+        rateType: 'FIXED',
+        interestType: 'SIMPLE',
         source: 'LOAN_PRODUCT_DIRECT_FIELD',
         loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
         loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
       };
     }
     
-    // Fallback: Use a default rate
+    // Check defaultGLAccounts for interest rate
+    if (loanProduct.defaultGLAccounts && loanProduct.defaultGLAccounts.interestRate) {
+      const rate = parseFloat(loanProduct.defaultGLAccounts.interestRate);
+      console.log(`Found interest rate in defaultGLAccounts: ${rate}%`);
+      
+      return {
+        annualRate: rate,
+        monthlyRate: rate / 12,
+        calculationMethod: 'FLAT_RATE',
+        rateType: 'FIXED',
+        interestType: 'SIMPLE',
+        source: 'LOAN_PRODUCT_GL_ACCOUNTS',
+        loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+        loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
+      };
+    }
+    
+    // Fallback: use default rate
     console.warn('⚠️ No interest rate found in LoanProduct, using default 12.0% annual');
     
     return {
@@ -1381,11 +4182,13 @@ async applyForLoan(req, res) {
       calculationMethod: 'FLAT_RATE',
       rateType: 'FIXED',
       interestType: 'SIMPLE',
-      source: 'DEFAULT_FALLBACK'
+      source: 'DEFAULT_FALLBACK',
+      loanInterestRateId: loanProduct.LOAN_INTEREST_RATE_ID,
+      loanProudIntId: loanProduct.LOAN_PROUD_INT_ID
     };
   }
 
-  // ==================== NEW HELPER: Fetch LoanInterestRate from database ====================
+  // ==================== FETCH LOAN INTEREST RATE ====================
   async function fetchLoanInterestRate(loanInterestRateId, transaction) {
     if (!loanInterestRateId) {
       console.log('No LOAN_INTEREST_RATE_ID provided');
@@ -1529,8 +4332,8 @@ async applyForLoan(req, res) {
             t_e_r_m__v_a_l_u_e INT NOT NULL,
             t_e_r_m__c_d VARCHAR(255) NOT NULL,
             a_m_o_u_n_t DECIMAL(20, 2) NOT NULL,
-            l_o_a_n__a_c_c_o_u_n t__i_d INT NOT NULL,
-            r_e_p_a_y_m_e_n t__s_c_h_e_d_u_l_e__i_d INT NOT NULL,
+            l_o_a_n__a_c_c_o_u n t__i_d INT NOT NULL,
+            r_e_p_a_y_m_e n t__s_c_h_e_d_u_l_e__i_d INT NOT NULL,
             g_u_a_r_a_n_t_o_r__i_d INT NOT NULL,
             p_r_o_d__i_d VARCHAR(255) NOT NULL,
             p_r_o_d_u_c_t__t_y_p_e VARCHAR(255) NOT NULL,
@@ -1716,6 +4519,7 @@ async applyForLoan(req, res) {
       // Execute other lookups
       [rateIndex, loanProduct, guarantor] = await Promise.all([
         findRateIndex(req.body.INDEX_RATE_ID, transaction),
+        // Find loan product - USING YOUR ACTUAL COLUMN NAMES
         LoanProduct.findOne({ where: { PROD_ID: numericValues.PROD_ID }, transaction }),
         findGuarantor(req.body.GUARANTOR_ID, transaction)
       ]);
@@ -1731,9 +4535,27 @@ async applyForLoan(req, res) {
 
     console.log('\n=== LOOKUP RESULTS ===');
     console.log('Rate Index found:', rateIndex ? `${rateIndex.INDEX_RATE_ID} (${rateIndex.INDEX_RATE}%)` : 'NOT FOUND');
-    console.log('Loan Product found:', loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.PRODUCT_NAME || loanProduct.productName || loanProduct.name}` : 'NOT FOUND');
+    console.log('Loan Product found:', loanProduct ? `${loanProduct.PROD_ID} - ${loanProduct.name || loanProduct.productName}` : 'NOT FOUND');
     console.log('Customer found:', customer ? `${customer.CUST_ID} - ${customer.CUST_NM}` : 'NOT FOUND');
     console.log('Guarantor found:', guarantor ? `${guarantor.GUARANTOR_ID} - ${guarantor.fullName}` : 'NOT FOUND');
+
+    // If loan product found, log its details with your column names
+    if (loanProduct) {
+      console.log('Loan product details:', {
+        PROD_ID: loanProduct.PROD_ID,
+        name: loanProduct.name,
+        productCode: loanProduct.productCode,
+        LOAN_INTEREST_RATE_ID: loanProduct.LOAN_INTEREST_RATE_ID,
+        LOAN_PROUD_INT_ID: loanProduct.LOAN_PROUD_INT_ID,
+        minAmount: loanProduct.minAmount,
+        maxAmount: loanProduct.maxAmount,
+        defaultGLAccounts: loanProduct.defaultGLAccounts,
+        processingFeeRate: loanProduct.processingFeeRate,
+        processingFeeGLCode: loanProduct.processingFeeGLCode,
+        isActive: loanProduct.isActive,
+        STATUS: loanProduct.STATUS
+      });
+    }
 
     // Fetch LoanInterestRate if available
     if (loanProduct && loanProduct.LOAN_INTEREST_RATE_ID) {
@@ -1837,18 +4659,22 @@ async applyForLoan(req, res) {
     if (!loanProduct && productValidation.isLoanProduct) {
       console.warn(`⚠️ Loan product not found for PROD_ID ${numericValues.PROD_ID}, creating fallback product`);
      
+      // Fallback product with your column names
       const fallbackProduct = {
         PROD_ID: numericValues.PROD_ID,
-        PRODUCT_NAME: productValidation.productName,
+        name: productValidation.productName,
         PRODUCT_SHORT_NAME: productValidation.accountPrefix,
         PRODUCT_TYPE: productValidation.productType,
-        productName: productValidation.productName,
-        productDescription: `Fallback loan product for PROD_ID ${numericValues.PROD_ID}`,
+        description: `Fallback loan product for PROD_ID ${numericValues.PROD_ID}`,
         minAmount: safeDecimal('1000', 'minAmount'),
         maxAmount: safeDecimal('1000000', 'maxAmount'),
-        minTerm: 1,
-        maxTerm: 60,
-        defaultGLAccounts: productValidation.glAccounts || {}
+        MIN_LOAN_TERM_VALUE: 1,
+        MAX_LOAN_TERM_VALUE: 60,
+        defaultGLAccounts: productValidation.glAccounts || {},
+        processingFeeRate: 0,
+        processingFeeGLCode: null,
+        isActive: true,
+        STATUS: 'ACTIVE'
       };
      
       loanProduct = fallbackProduct;
@@ -1971,202 +4797,191 @@ async applyForLoan(req, res) {
       LOAN_INTEREST_RATE_ID: loanInterestRateId,
       ANNUAL_PERCENTAGE_RATE_USED: interestRateNumber + '%'
     });
+  
+// ============ FIXED LOAN ACCOUNT CREATION ============
+console.log('\n=== CREATING LOAN ACCOUNT WITH CORRECT COLUMN NAMES ===');
 
-    // ============ FIXED LOAN ACCOUNT CREATION ============
-    console.log('\n=== CREATING LOAN ACCOUNT WITH CORRECT COLUMN NAMES ===');
+let loanAccountId;
 
-    let loanAccountId;
-
-    try {
-      // First, let's check what columns actually exist in loan_accounts
-      console.log('🔍 Checking loan_accounts table structure...');
-      const [tableInfo] = await sequelize.query(
-        `DESCRIBE loan_accounts`,
-        { transaction }
+try {
+  // Build dynamic SQL based on what columns exist
+  let columns = [];
+  let values = [];
+  let placeholders = [];
+  
+  // Always include these basic columns - WITH CORRECT COLUMN NAMES from your DESCRIBE
+  columns.push('a_c_c_t__n_o');
+  values.push(loanAccountNumber);
+  placeholders.push('?');
+  
+  columns.push('a_c_c_t__n_m');
+  values.push(req.body.ACCT_NM);
+  placeholders.push('?');
+  
+  // FIXED: Use the correct column name from your DESCRIBE - CUST_ID (all caps)
+  columns.push('CUST_ID');  // ← CORRECT: matches your actual column name
+  values.push(req.body.CUST_ID);
+  placeholders.push('?');
+  
+  columns.push('a_m_o_u_n_t');
+  values.push(numericValues.DISBURSEMENT_LIMIT);
+  placeholders.push('?');
+  
+  columns.push('i_n_t_e_r_e_s_t__r_a_t_e');
+  values.push(effectiveInterestRate);
+  placeholders.push('?');
+  
+  columns.push('l_o_a_n__s_t_a_t_u_s');
+  values.push('PENDING');
+  placeholders.push('?');
+  
+  columns.push('created_at');
+  values.push(new Date());
+  placeholders.push('?');
+  
+  columns.push('updated_at');
+  values.push(new Date());
+  placeholders.push('?');
+  
+  // Add optional columns from your DESCRIBE output
+  if (loanProduct) {
+    columns.push('l_o_a_n__p_r_o_d_u_c_t__i_d');
+    values.push(numericValues.PROD_ID);
+    placeholders.push('?');
+  }
+  
+  if (guarantor) {
+    columns.push('G_U_A_R_A_N_T_O_R__I_D');
+    values.push(guarantor.id);
+    placeholders.push('?');
+  }
+  
+  columns.push('g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t');
+  values.push(numericValues.GUARANTEED_AMT);
+  placeholders.push('?');
+  
+  columns.push('s_t_a_r_t__d_t');
+  values.push(startDate);
+  placeholders.push('?');
+  
+  columns.push('t_e_r_m__c_d');
+  values.push(mapTermCodeToFullWord(req.body.TERM_CD));
+  placeholders.push('?');
+  
+  columns.push('t_e_r_m__v_a_l_u_e');
+  values.push(numericValues.TERM_VALUE);
+  placeholders.push('?');
+  
+  columns.push('m_a_t_u_r_i_t_y__d_t');
+  values.push(maturityDate);
+  placeholders.push('?');
+  
+  columns.push('a_p_p_l_i_c_a_t_i_o_n__d_a_t_e');
+  values.push(new Date());
+  placeholders.push('?');
+  
+  columns.push('s_e_r_v_i_c_i_n_g__s_t_a_t_u_s');
+  values.push('SERVICED');
+  placeholders.push('?');
+  
+  const dynamicInsertQuery = `
+    INSERT INTO loan_accounts (
+      ${columns.join(', ')}
+    ) VALUES (
+      ${placeholders.join(', ')}
+    )
+  `;
+  
+  console.log('Dynamic insert SQL:', dynamicInsertQuery);
+  console.log('Inserting with values:', values);
+  
+  const [loanAccountResult] = await sequelize.query(dynamicInsertQuery, {
+    replacements: values,
+    transaction
+  });
+  
+  // Get the insertId
+  loanAccountId = loanAccountResult.insertId;
+  console.log(`✅ LoanAccount inserted with ID: ${loanAccountId}`);
+  
+  // Verify the ID was actually inserted
+  if (!loanAccountId || isNaN(loanAccountId)) {
+    console.error('❌ No valid insertId returned. Querying for the inserted record...');
+    
+    const [recentLoans] = await sequelize.query(
+      `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
+      {
+        replacements: [loanAccountNumber],
+        transaction
+      }
+    );
+    
+    if (recentLoans && recentLoans.length > 0) {
+      loanAccountId = recentLoans[0].id;
+      console.log(`✅ Found loan account ID via query: ${loanAccountId}`);
+    } else {
+      throw new Error('Could not retrieve loan account ID after insertion');
+    }
+  }
+  
+} catch (insertError) {
+  console.error('Error in loan account creation:', insertError.message);
+  
+  // Try a simpler insert if the complex one fails
+  console.log('🔄 Trying simplest insert with minimal fields...');
+  
+  try {
+    const simplestInsertQuery = `
+      INSERT INTO loan_accounts (
+        a_c_c_t__n_o, 
+        a_c_c_t__n_m, 
+        CUST_ID, 
+        a_m_o_u_n_t, 
+        i_n_t_e_r_e_s_t__r_a_t_e, 
+        l_o_a_n__s_t_a_t_u_s,
+        created_at, 
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const [loanAccountResult] = await sequelize.query(simplestInsertQuery, {
+      replacements: [
+        loanAccountNumber,
+        req.body.ACCT_NM,
+        req.body.CUST_ID,
+        numericValues.DISBURSEMENT_LIMIT,
+        effectiveInterestRate,
+        'PENDING',
+        new Date(),
+        new Date()
+      ],
+      transaction
+    });
+    
+    loanAccountId = loanAccountResult.insertId;
+    
+    // Verify the ID
+    if (!loanAccountId || isNaN(loanAccountId)) {
+      const [recentLoans] = await sequelize.query(
+        `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
+        {
+          replacements: [loanAccountNumber],
+          transaction
+        }
       );
       
-      const existingColumns = tableInfo.map(col => col.Field);
-      console.log('Existing columns in loan_accounts:', existingColumns);
-      
-      // Build dynamic SQL based on what columns exist
-      let columns = [];
-      let values = [];
-      let placeholders = [];
-      
-      // Always include these basic columns
-      columns.push('a_c_c_t__n_o');
-      values.push(loanAccountNumber);
-      placeholders.push('?');
-      
-      columns.push('a_c_c_t__n_m');
-      values.push(req.body.ACCT_NM);
-      placeholders.push('?');
-      
-      columns.push('c_u_s_t__i_d');
-      values.push(req.body.CUST_ID);
-      placeholders.push('?');
-      
-      columns.push('a_m_o_u_n_t');
-      values.push(numericValues.DISBURSEMENT_LIMIT);
-      placeholders.push('?');
-      
-      columns.push('i_n_t_e_r_e_s_t__r_a_t_e');
-      values.push(effectiveInterestRate);
-      placeholders.push('?');
-      
-      columns.push('l_o_a_n__s_t_a_t_u_s');
-      values.push('PENDING');
-      placeholders.push('?');
-      
-      columns.push('created_at');
-      values.push(new Date());
-      placeholders.push('?');
-      
-      columns.push('updated_at');
-      values.push(new Date());
-      placeholders.push('?');
-      
-      // Add optional columns only if they exist
-      if (existingColumns.includes('l_o_a_n__p_r_o_d_u_c t__i_d')) {
-        columns.push('l_o_a_n__p_r_o_d_u_c_t__i_d');
-        values.push(numericValues.PROD_ID);
-        placeholders.push('?');
+      if (recentLoans && recentLoans.length > 0) {
+        loanAccountId = recentLoans[0].id;
+      } else {
+        throw new Error('Could not retrieve loan account ID after simple insertion');
       }
-      
-      if (existingColumns.includes('G_U_A_R_A_N_T_O_R__I_D')) {
-        columns.push('G_U_A_R_A_N_T_O_R__I_D');
-        values.push(guarantor.id);
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t')) {
-        columns.push('g_u_a_r_a_n_t_e_e_d__a_m_o_u_n_t');
-        values.push(numericValues.GUARANTEED_AMT);
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('s_t_a_r_t__d_t')) {
-        columns.push('s_t_a_r_t__d_t');
-        values.push(startDate);
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('t_e_r_m__c_d')) {
-        columns.push('t_e_r_m__c_d');
-        values.push(mapTermCodeToFullWord(req.body.TERM_CD));
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('t_e_r_m__v_a_l_u_e')) {
-        columns.push('t_e_r_m__v_a_l_u_e');
-        values.push(numericValues.TERM_VALUE);
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('m_a_t_u_r_i_t_y__d_t')) {
-        columns.push('m_a_t_u_r_i_t_y__d_t');
-        values.push(maturityDate);
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('a_p_p_l_i_c_a_t_i_o_n__d_a_t_e')) {
-        columns.push('a_p_p_l_i_c_a_t_i_o_n__d_a_t_e');
-        values.push(new Date());
-        placeholders.push('?');
-      }
-      
-      if (existingColumns.includes('s_e_r_v_i_c_i_n_g__s_t_a_t_u_s')) {
-        columns.push('s_e_r_v_i_c_i_n_g__s_t_a_t_u_s');
-        values.push('SERVICED');
-        placeholders.push('?');
-      }
-      
-      const dynamicInsertQuery = `
-        INSERT INTO loan_accounts (
-          ${columns.join(', ')}
-        ) VALUES (
-          ${placeholders.join(', ')}
-        )
-      `;
-      
-      console.log('Dynamic insert SQL:', dynamicInsertQuery);
-      console.log('Inserting with values:', values);
-      
-      const [loanAccountResult] = await sequelize.query(dynamicInsertQuery, {
-        replacements: values,
-        transaction
-      });
-      
-      // IMPORTANT FIX: Properly get the insertId
-      loanAccountId = loanAccountResult.insertId;
-      console.log(`✅ LoanAccount inserted with ID: ${loanAccountId}`);
-      
-      // Verify the ID was actually inserted by querying the record
-      if (!loanAccountId || isNaN(loanAccountId)) {
-        console.error('❌ No valid insertId returned. Querying for the inserted record...');
-        
-        const [recentLoans] = await sequelize.query(
-          `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
-          {
-            replacements: [loanAccountNumber],
-            transaction
-          }
-        );
-        
-        if (recentLoans && recentLoans.length > 0) {
-          loanAccountId = recentLoans[0].id;
-          console.log(`✅ Found loan account ID via query: ${loanAccountId}`);
-        } else {
-          throw new Error('Could not retrieve loan account ID after insertion');
-        }
-      }
-      
-    } catch (insertError) {
-      console.error('Error in loan account creation:', insertError.message);
-      
-      // Try a simpler insert if the complex one fails
-      console.log('🔄 Trying simplest insert...');
-      
-      const simplestInsertQuery = `
-        INSERT INTO loan_accounts (
-          a_c_c_t__n_o, a_c_c_t__n_m, c_u_s_t__i_d, a_m_o_u_n_t, 
-          i_n_t_e_r_e_s_t__r_a_t_e, l_o_a_n__s_t_a_t_u_s,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-      
-      const [loanAccountResult] = await sequelize.query(simplestInsertQuery, {
-        replacements: [
-          loanAccountNumber,
-          req.body.ACCT_NM,
-          req.body.CUST_ID,
-          numericValues.DISBURSEMENT_LIMIT,
-          effectiveInterestRate,
-          'PENDING',
-          new Date(),
-          new Date()
-        ],
-        transaction
-      });
-      
-      loanAccountId = loanAccountResult.insertId;
-      
-      // Verify the ID
-      if (!loanAccountId || isNaN(loanAccountId)) {
-        const [recentLoans] = await sequelize.query(
-          `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? ORDER BY id DESC LIMIT 1`,
-          {
-            replacements: [loanAccountNumber],
-            transaction
-          }
-        );
-        
-        if (recentLoans && recentLoans.length > 0) {
-          loanAccountId = recentLoans[0].id;
-        } else {
-          throw new Error('Could not retrieve loan account ID after simple insertion');
-        }
-      }
+    }
+    
+    console.log(`✅ LoanAccount inserted with simplest fields, ID: ${loanAccountId}`);
+  } catch (simpleError) {
+    console.error('❌ Even simplest insert failed:', simpleError.message);
+    throw simpleError;
+  }
       
       console.log(`✅ LoanAccount inserted with simplest fields, ID: ${loanAccountId}`);
     }
@@ -3076,240 +5891,240 @@ async applyForLoan(req, res) {
     console.log(`✅ ALL CALCULATIONS COMPLETED SUCCESSFULLY`);
 
     // ==================== GENERATE LOAN CONTRACT ====================
-console.log('\n=== GENERATING LOAN CONTRACT ===');
+    console.log('\n=== GENERATING LOAN CONTRACT ===');
 
-try {
-  // Prepare data for contract generation
-  const contractData = {
-    loan_contract_no: `CONTRACT-${Date.now()}-${loanAccountNumber}`,
-    customer_id: req.body.CUST_ID,
-    borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
-    borrower_address: addressData?.street 
-      ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
-      : 'Address Not Provided',
-    loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
-    loan_amount: numericValues.DISBURSEMENT_LIMIT.toString(),
-    loan_term: numericValues.TERM_VALUE,
-    t_e_r_m__c_d: req.body.TERM_CD || 'M',
-    interest_rate: effectiveInterestRate,
-    interest_rate_id: loanInterestRate?.id || 101, // Default interest rate ID
-    guarantor_name: guarantor?.fullName || '',
-    bank_name: process.env.BANK_NAME || 'Our Bank',
-    bank_short: process.env.BANK_SHORT_NAME || 'BANK',
-    status: 'PENDING',
-    
-    // Generate contract text using your existing function
-    contract_text: generateContractText(
-      {
-        AMOUNT: numericValues.DISBURSEMENT_LIMIT,
-        INTEREST_RATE: effectiveInterestRate,
-        TERM_VALUE: numericValues.TERM_VALUE,
-        TERM_CD: req.body.TERM_CD || 'M',
-        loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+    try {
+      // Prepare data for contract generation
+      const contractData = {
+        loan_contract_no: `CONTRACT-${Date.now()}-${loanAccountNumber}`,
+        customer_id: req.body.CUST_ID,
         borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
         borrower_address: addressData?.street 
           ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
           : 'Address Not Provided',
-        DISBURSEMENT_DATE: startDate,
-        NUMBER_OF_INSTALLMENTS: numericValues.TERM_VALUE,
-        FIRST_PAYMENT_DATE: startDate,
-        LAST_PAYMENT_DATE: maturityDate
-      },
-      customer,
-      loanProduct,
-      effectiveInterestRate
-    ),
-    
-    u_s_e_r__i_d: req.body.CREATED_BY || req.body.USER_ID || 'SYSTEM',
-    application_id: creditApplication.id,
-    loan_account_no: loanAccountNumber,
-    funding_account_no: req.body.REPAY_SRC_ACCT_NO || '',
-    workflow_id: WORK_ITEM_ID || Date.now(),
-    
-    // Fees information
-    fees: JSON.stringify({
-      processing_fee: {
-        rate: loanProduct?.processingFeeRate || 0,
-        amount: (numericValues.DISBURSEMENT_LIMIT * (loanProduct?.processingFeeRate || 0) / 100).toFixed(2)
-      },
-      upfront_interest: {
-        rate: upfrontInterest,
-        amount: (numericValues.DISBURSEMENT_LIMIT * (upfrontInterest || 0) / 100).toFixed(2)
+        loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+        loan_amount: numericValues.DISBURSEMENT_LIMIT.toString(),
+        loan_term: numericValues.TERM_VALUE,
+        t_e_r_m__c_d: req.body.TERM_CD || 'M',
+        interest_rate: effectiveInterestRate,
+        interest_rate_id: loanInterestRate?.id || 101, // Default interest rate ID
+        guarantor_name: guarantor?.fullName || '',
+        bank_name: process.env.BANK_NAME || 'Our Bank',
+        bank_short: process.env.BANK_SHORT_NAME || 'BANK',
+        status: 'PENDING',
+        
+        // Generate contract text using your existing function
+        contract_text: generateContractText(
+          {
+            AMOUNT: numericValues.DISBURSEMENT_LIMIT,
+            INTEREST_RATE: effectiveInterestRate,
+            TERM_VALUE: numericValues.TERM_VALUE,
+            TERM_CD: req.body.TERM_CD || 'M',
+            loan_purpose: req.body.loan_purpose || req.body.Purpose_of_Credit || 'GENERAL LOAN',
+            borrower_name: req.body.ACCT_NM || customer?.CUST_NM || 'Unknown Borrower',
+            borrower_address: addressData?.street 
+              ? `${addressData.street}, ${addressData.city}, ${addressData.state}, ${addressData.country}`
+              : 'Address Not Provided',
+            DISBURSEMENT_DATE: startDate,
+            NUMBER_OF_INSTALLMENTS: numericValues.TERM_VALUE,
+            FIRST_PAYMENT_DATE: startDate,
+            LAST_PAYMENT_DATE: maturityDate
+          },
+          customer,
+          loanProduct,
+          effectiveInterestRate
+        ),
+        
+        u_s_e_r__i_d: req.body.CREATED_BY || req.body.USER_ID || 'SYSTEM',
+        application_id: creditApplication.id,
+        loan_account_no: loanAccountNumber,
+        funding_account_no: req.body.REPAY_SRC_ACCT_NO || '',
+        workflow_id: WORK_ITEM_ID || Date.now(),
+        
+        // Fees information from loan product
+        fees: JSON.stringify({
+          processing_fee: {
+            rate: loanProduct?.processingFeeRate || 0,
+            amount: (numericValues.DISBURSEMENT_LIMIT * (loanProduct?.processingFeeRate || 0) / 100).toFixed(2)
+          },
+          upfront_interest: {
+            rate: upfrontInterest,
+            amount: (numericValues.DISBURSEMENT_LIMIT * (upfrontInterest || 0) / 100).toFixed(2)
+          }
+        }),
+        
+        // Signature requirements
+        signature_requirements: JSON.stringify({
+          required_signatures: [
+            {
+              party: 'BORROWER',
+              required: true,
+              field_name: 'borrower_signature'
+            },
+            {
+              party: 'GUARANTOR',
+              required: true,
+              field_name: 'guarantor_signature'
+            },
+            {
+              party: 'LENDER',
+              required: true,
+              field_name: 'lender_authorized_signature'
+            }
+          ]
+        }),
+        
+        // Metadata
+        metadata: JSON.stringify({
+          product_id: numericValues.PROD_ID,
+          product_type: productValidation.productType,
+          interest_rate_details: interestRateDetails,
+          calculation_method: calculationMethod,
+          emi_details: emiResult,
+          guarantor_details: {
+            id: guarantor.id,
+            name: guarantor.fullName,
+            relationship: guarantor.relationshipToBorrower
+          }
+        }),
+        
+        disbursement_date: startDate,
+        maturity_date: maturityDate,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+
+      console.log('Generated contract data:', {
+        loan_contract_no: contractData.loan_contract_no,
+        loan_account_no: contractData.loan_account_no,
+        status: contractData.status
+      });
+
+      // Check if loan_contract_forms table exists and create it if needed
+      try {
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS loan_contract_forms (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+            customer_id VARCHAR(255) NOT NULL,
+            borrower_name VARCHAR(255) NOT NULL,
+            co_signatory_name VARCHAR(255) DEFAULT '',
+            borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+            loan_purpose VARCHAR(255) NOT NULL,
+            loan_amount VARCHAR(255) NOT NULL,
+            loan_term INT NOT NULL,
+            t_e_r_m__c_d ENUM('M','Y') NOT NULL DEFAULT 'M',
+            interest_rate DECIMAL(7,4) NOT NULL,
+            interest_rate_id INT NOT NULL DEFAULT 101,
+            guarantor_name VARCHAR(255) DEFAULT '',
+            bank_name VARCHAR(255) NOT NULL,
+            bank_short VARCHAR(255) NOT NULL,
+            status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') NOT NULL DEFAULT 'PENDING',
+            contract_text TEXT NOT NULL,
+            u_s_e_r__i_d VARCHAR(255) NOT NULL,
+            application_id VARCHAR(255) NOT NULL,
+            loan_account_no VARCHAR(255) NOT NULL,
+            funding_account_no VARCHAR(255),
+            workflow_id BIGINT,
+            fees LONGTEXT NOT NULL,
+            signature_requirements LONGTEXT NOT NULL,
+            metadata LONGTEXT NOT NULL,
+            disbursement_date DATETIME,
+            maturity_date DATETIME,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            INDEX idx_customer_id (customer_id),
+            INDEX idx_status (status),
+            INDEX idx_loan_account_no (loan_account_no),
+            INDEX idx_application_id (application_id),
+            INDEX idx_created_at (created_at),
+            UNIQUE KEY uk_workflow_id (workflow_id)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `, { transaction });
+        
+        console.log('✅ loan_contract_forms table created or already exists');
+      } catch (tableError) {
+        console.warn('⚠️ Could not create loan_contract_forms table:', tableError.message);
       }
-    }),
-    
-    // Signature requirements
-    signature_requirements: JSON.stringify({
-      required_signatures: [
+
+      // Insert contract into database
+      const columns = Object.keys(contractData);
+      const placeholders = columns.map(() => '?').join(', ');
+      const values = columns.map(col => contractData[col]);
+      
+      const insertContractQuery = `
+        INSERT INTO loan_contract_forms (
+          ${columns.join(', ')}
+        ) VALUES (
+          ${placeholders}
+      )`;
+      
+      const [contractResult] = await sequelize.query(insertContractQuery, {
+        replacements: values,
+        transaction
+      });
+      
+      console.log('✅ Loan contract generated with ID:', contractResult.insertId);
+      
+      // Update loan account with contract reference
+      await sequelize.query(
+        `UPDATE loan_accounts SET 
+          has_repayment_schedule = TRUE,
+          repayment_schedule_id = ?,
+          updated_at = ?
+         WHERE id = ?`,
         {
-          party: 'BORROWER',
-          required: true,
-          field_name: 'borrower_signature'
-        },
-        {
-          party: 'GUARANTOR',
-          required: true,
-          field_name: 'guarantor_signature'
-        },
-        {
-          party: 'LENDER',
-          required: true,
-          field_name: 'lender_authorized_signature'
+          replacements: [repaymentScheduleId, new Date(), loanAccountId],
+          transaction
         }
-      ]
-    }),
-    
-    // Metadata
-    metadata: JSON.stringify({
-      product_id: numericValues.PROD_ID,
-      product_type: productValidation.productType,
-      interest_rate_details: interestRateDetails,
-      calculation_method: calculationMethod,
-      emi_details: emiResult,
-      guarantor_details: {
-        id: guarantor.id,
-        name: guarantor.fullName,
-        relationship: guarantor.relationshipToBorrower
-      }
-    }),
-    
-    disbursement_date: startDate,
-    maturity_date: maturityDate,
-    created_at: new Date(),
-    updated_at: new Date()
-  };
+      );
 
-  console.log('Generated contract data:', {
-    loan_contract_no: contractData.loan_contract_no,
-    loan_account_no: contractData.loan_account_no,
-    status: contractData.status
-  });
-
-  // Check if loan_contract_forms table exists and create it if needed
-  try {
-    await sequelize.query(`
-      CREATE TABLE IF NOT EXISTS loan_contract_forms (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
-        customer_id VARCHAR(255) NOT NULL,
-        borrower_name VARCHAR(255) NOT NULL,
-        co_signatory_name VARCHAR(255) DEFAULT '',
-        borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
-        loan_purpose VARCHAR(255) NOT NULL,
-        loan_amount VARCHAR(255) NOT NULL,
-        loan_term INT NOT NULL,
-        t_e_r_m__c_d ENUM('M','Y') NOT NULL DEFAULT 'M',
-        interest_rate DECIMAL(7,4) NOT NULL,
-        interest_rate_id INT NOT NULL DEFAULT 101,
-        guarantor_name VARCHAR(255) DEFAULT '',
-        bank_name VARCHAR(255) NOT NULL,
-        bank_short VARCHAR(255) NOT NULL,
-        status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') NOT NULL DEFAULT 'PENDING',
-        contract_text TEXT NOT NULL,
-        u_s_e_r__i_d VARCHAR(255) NOT NULL,
-        application_id VARCHAR(255) NOT NULL,
-        loan_account_no VARCHAR(255) NOT NULL,
-        funding_account_no VARCHAR(255),
-        workflow_id BIGINT,
-        fees LONGTEXT NOT NULL,
-        signature_requirements LONGTEXT NOT NULL,
-        metadata LONGTEXT NOT NULL,
-        disbursement_date DATETIME,
-        maturity_date DATETIME,
-        created_at DATETIME NOT NULL,
-        updated_at DATETIME NOT NULL,
-        INDEX idx_customer_id (customer_id),
-        INDEX idx_status (status),
-        INDEX idx_loan_account_no (loan_account_no),
-        INDEX idx_application_id (application_id),
-        INDEX idx_created_at (created_at),
-        UNIQUE KEY uk_workflow_id (workflow_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `, { transaction });
-    
-    console.log('✅ loan_contract_forms table created or already exists');
-  } catch (tableError) {
-    console.warn('⚠️ Could not create loan_contract_forms table:', tableError.message);
-  }
-
-  // Insert contract into database
-  const columns = Object.keys(contractData);
-  const placeholders = columns.map(() => '?').join(', ');
-  const values = columns.map(col => contractData[col]);
-  
-  const insertContractQuery = `
-    INSERT INTO loan_contract_forms (
-      ${columns.join(', ')}
-    ) VALUES (
-      ${placeholders}
-  )`;
-  
-  const [contractResult] = await sequelize.query(insertContractQuery, {
-    replacements: values,
-    transaction
-  });
-  
-  console.log('✅ Loan contract generated with ID:', contractResult.insertId);
-  
-  // Update loan account with contract reference
-  await sequelize.query(
-    `UPDATE loan_accounts SET 
-      has_repayment_schedule = TRUE,
-      repayment_schedule_id = ?,
-      updated_at = ?
-     WHERE id = ?`,
-    {
-      replacements: [repaymentScheduleId, new Date(), loanAccountId],
-      transaction
+    } catch (contractError) {
+      console.error('❌ Error generating loan contract:', contractError.message);
+      console.error('Contract error details:', contractError);
+      // Don't fail the entire loan application if contract generation fails
+      console.warn('⚠️ Continuing without loan contract generation');
     }
-  );
-
-} catch (contractError) {
-  console.error('❌ Error generating loan contract:', contractError.message);
-  console.error('Contract error details:', contractError);
-  // Don't fail the entire loan application if contract generation fails
-  console.warn('⚠️ Continuing without loan contract generation');
-}
 
     // ==================== COMMIT TRANSACTION AND RETURN SUCCESS ====================
     await transaction.commit();
     console.log('✅ Transaction committed successfully');
 
- return res.status(201).json({
-  success: true,
-  message: 'Loan application submitted successfully - pending approval',
-  status: 'PENDING',
-  data: {
-    loanAccountId: loanAccount.id,
-    loanAccountNumber: loanAccountNumber,
-    creditApplicationId: creditApplication.id,
-    repaymentScheduleId: repaymentSchedule.id,
-    loanDisbursementId: loanDisbursement.id,
-    contractGenerated: true, // Add this
-    contractStatus: 'PENDING', // Add this
-    APPL_ID: req.body.APPL_ID,
-    status: 'PENDING',
-    productDetails: {
-      PROD_ID: numericValues.PROD_ID,
-      productType: productValidation.productType
-    },
-    loanDetails: {
-      principal: principalAmount,
-      interestRate: interestRateNumber + '%',
-      term: numericValues.TERM_VALUE + ' months',
-      emi: emiResult.emi,
-      totalInterest: emiResult.totalInterest,
-      totalRepayable: emiResult.totalRepayable
-    },
-    nextSteps: 'Loan requires manual approval before disbursement',
-    approvalEndpoint: 'POST /api/loans/approve-and-disburse',
-    approvalBodyExample: {
-      ACCT_NO: loanAccountNumber,
-      approvedBy: "[USER_ID]",
-      approvalComments: "Optional approval comments"
-    }
-  }
-});
+    return res.status(201).json({
+      success: true,
+      message: 'Loan application submitted successfully - pending approval',
+      status: 'PENDING',
+      data: {
+        loanAccountId: loanAccount.id,
+        loanAccountNumber: loanAccountNumber,
+        creditApplicationId: creditApplication.id,
+        repaymentScheduleId: repaymentSchedule.id,
+        loanDisbursementId: loanDisbursement.id,
+        contractGenerated: true,
+        contractStatus: 'PENDING',
+        APPL_ID: req.body.APPL_ID,
+        status: 'PENDING',
+        productDetails: {
+          PROD_ID: numericValues.PROD_ID,
+          productType: productValidation.productType
+        },
+        loanDetails: {
+          principal: principalAmount,
+          interestRate: interestRateNumber + '%',
+          term: numericValues.TERM_VALUE + ' months',
+          emi: emiResult.emi,
+          totalInterest: emiResult.totalInterest,
+          totalRepayable: emiResult.totalRepayable
+        },
+        nextSteps: 'Loan requires manual approval before disbursement',
+        approvalEndpoint: 'POST /api/loans/approve-and-disburse',
+        approvalBodyExample: {
+          ACCT_NO: loanAccountNumber,
+          approvedBy: "[USER_ID]",
+          approvalComments: "Optional approval comments"
+        }
+      }
+    });
 
   } catch (error) {
     // Rollback transaction on error
@@ -4302,6 +7117,2892 @@ async executeDisbursement(req, res) {
 // Make sure the path is correct
 
 
+// async approveAndDisburseLoan(req, res) {
+//     console.log("=== DEBUG: Starting approveAndDisburseLoan ===");
+//     console.log("Request body:", JSON.stringify(req.body, null, 2));
+    
+//     let transaction;
+    
+//     try {
+//         const { 
+//             ACCT_NO, 
+//             approvedBy, 
+//             approvalComments = "Loan approved for disbursement"
+//         } = req.body;
+
+//         console.log("DEBUG: ACCT_NO =", ACCT_NO);
+//         console.log("DEBUG: approvedBy =", approvedBy);
+
+//         // Validate required fields
+//         if (!ACCT_NO || !approvedBy) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "ACCT_NO and approvedBy are required",
+//                 code: "MISSING_FIELDS",
+//                 debug: {
+//                     receivedACCT_NO: ACCT_NO,
+//                     receivedApprovedBy: approvedBy
+//                 }
+//             });
+//         }
+
+//         // Start transaction
+//         transaction = await sequelize.transaction();
+//         console.log("DEBUG: Transaction started");
+
+//         // ==================== 1. FIND LOAN ACCOUNT ====================
+//         console.log(`DEBUG: Looking for loan account: ${ACCT_NO}`);
+        
+//         let loanAccounts;
+//         try {
+//             const result = await sequelize.query(
+//                 `SELECT * FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
+//                 {
+//                     replacements: [ACCT_NO],
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 }
+//             );
+//             loanAccounts = result;
+//             console.log("DEBUG: Query result type:", typeof result);
+//             console.log("DEBUG: Is array?", Array.isArray(result));
+//             console.log("DEBUG: Query result length:", result ? result.length : 0);
+//             console.log("DEBUG: Query result:", JSON.stringify(result, null, 2));
+//         } catch (queryError) {
+//             console.error("DEBUG: Database query failed:", queryError);
+//             if (transaction && !transaction.finished) {
+//                 await transaction.rollback();
+//             }
+//             return res.status(500).json({
+//                 success: false,
+//                 message: "Database query failed",
+//                 error: queryError.message,
+//                 code: "DATABASE_ERROR"
+//             });
+//         }
+
+//         console.log("DEBUG: loanAccounts =", loanAccounts);
+//         console.log("DEBUG: loanAccounts is array?", Array.isArray(loanAccounts));
+//         console.log("DEBUG: loanAccounts.length?", loanAccounts ? loanAccounts.length : 'null');
+
+//         if (!loanAccounts || !Array.isArray(loanAccounts) || loanAccounts.length === 0) {
+//             if (transaction && !transaction.finished) {
+//                 await transaction.rollback();
+//             }
+            
+//             try {
+//                 const allAccounts = await sequelize.query(
+//                     `SELECT a_c_c_t__n_o, l_o_a_n__s_t_a_t_u_s FROM loan_accounts LIMIT 5`,
+//                     { type: sequelize.QueryTypes.SELECT }
+//                 );
+                
+//                 const columnCheck = await sequelize.query(
+//                     `SHOW COLUMNS FROM loan_accounts`,
+//                     { type: sequelize.QueryTypes.SELECT }
+//                 );
+                
+//                 const accountColumns = columnCheck.map(col => col.Field);
+                
+//                 return res.status(404).json({
+//                     success: false,
+//                     message: `Loan account ${ACCT_NO} not found`,
+//                     code: "LOAN_NOT_FOUND",
+//                     debug: {
+//                         searchedAccount: ACCT_NO,
+//                         loanAccountsResult: loanAccounts,
+//                         firstFewAccounts: allAccounts,
+//                         tableColumns: accountColumns,
+//                         searchedColumn: 'a_c_c_t__n_o'
+//                     }
+//                 });
+//             } catch (error) {
+//                 return res.status(404).json({
+//                     success: false,
+//                     message: `Loan account ${ACCT_NO} not found`,
+//                     code: "LOAN_NOT_FOUND",
+//                     debug: {
+//                         searchedAccount: ACCT_NO,
+//                         errorCheckingTable: error.message
+//                     }
+//                 });
+//             }
+//         }
+
+//         const loanAccount = loanAccounts[0];
+//         console.log("DEBUG: loanAccount =", JSON.stringify(loanAccount, null, 2));
+//         console.log("DEBUG: loanAccount.l_o_a_n__s_t_a_t_u_s =", loanAccount.l_o_a_n__s_t_a_t_u_s);
+//         console.log("DEBUG: loanAccount type:", typeof loanAccount);
+//         console.log("DEBUG: loanAccount keys:", Object.keys(loanAccount));
+
+//         if (!loanAccount) {
+//             if (transaction && !transaction.finished) {
+//                 await transaction.rollback();
+//             }
+//             return res.status(500).json({
+//                 success: false,
+//                 message: "Loan account object is null",
+//                 code: "INVALID_ACCOUNT_DATA",
+//                 debug: {
+//                     loanAccountsLength: loanAccounts.length,
+//                     firstElement: loanAccounts[0]
+//                 }
+//             });
+//         }
+
+//         const currentStatus = loanAccount.l_o_a_n__s_t_a_t_u_s;
+//         const currentDisbursedAmount = parseFloat(loanAccount.d_i_s_b_u_r_s_e_d__a_m_o_u_n_t || 0);
+//         const currentOutstandingPrincipal = parseFloat(loanAccount.o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l || 0);
+//         const loanAmountValue = parseFloat(loanAccount.a_m_o_u_n_t || 0);
+//         const now = new Date();
+
+//         console.log("DEBUG: Current Status =", currentStatus);
+//         console.log("DEBUG: Current Disbursed Amount =", currentDisbursedAmount);
+//         console.log("DEBUG: Current Outstanding Principal =", currentOutstandingPrincipal);
+//         console.log("DEBUG: Loan Amount Value =", loanAmountValue);
+//         console.log("DEBUG: Disbursed Amount column value =", loanAccount.d_i_s_b_u_r_s_e_d__a_m_o_u_n_t);
+//         console.log("DEBUG: Outstanding Principal column value =", loanAccount.o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l);
+//         console.log("DEBUG: Amount column value =", loanAccount.a_m_o_u_n_t);
+
+//         // ==================== 2. CHECK DATA CONSISTENCY ====================
+//         // Get the absolute approved amount (should be positive)
+//         const approvedAmount = Math.abs(loanAmountValue);
+//         console.log("DEBUG: Approved Amount (absolute) =", approvedAmount);
+
+//         // ==================== 3. GET CUSTOMER INFORMATION ====================
+//         // Get customer ID from loan account and convert to numeric
+//         const customerId = loanAccount.c_u_s_t__i_d;
+//         const numericCustomerId = customerId ? parseInt(customerId.replace(/^0+/, ''), 10) : null;
+//         const customerName = loanAccount.a_c_c_t__n_m || '';
+        
+//         console.log("DEBUG: Customer ID from loan =", customerId);
+//         console.log("DEBUG: Numeric Customer ID =", numericCustomerId);
+//         console.log("DEBUG: Customer Name =", customerName);
+
+//         // ==================== 4. CHECK CURRENT STATUS ====================
+//         if (currentStatus === 'ACTIVE') {
+//             console.log(`DEBUG: Loan ${ACCT_NO} is already ACTIVE`);
+            
+//             // Note: currentDisbursedAmount is negative, so we compare absolute values
+//             if (Math.abs(currentDisbursedAmount) >= approvedAmount) {
+//                 if (transaction && !transaction.finished) {
+//                     await transaction.rollback();
+//                 }
+//                 return res.status(400).json({
+//                     success: false,
+//                     message: "Loan has already been fully disbursed",
+//                     code: "FULLY_DISBURSED",
+//                     data: {
+//                         ACCT_NO,
+//                         approvedAmount,
+//                         alreadyDisbursed: Math.abs(currentDisbursedAmount)
+//                     }
+//                 });
+//             }
+            
+//             const remainingAmount = approvedAmount - Math.abs(currentDisbursedAmount);
+//             console.log(`DEBUG: Remaining amount to disburse: ${remainingAmount}`);
+            
+//             // For ACTIVE loans, we're doing ADDITIONAL disbursement
+//             // Since amounts are negative, we subtract (make more negative)
+//             await sequelize.query(
+//                 `UPDATE loan_accounts 
+//                  SET d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = d_i_s_b_u_r_s_e_d__a_m_o_u_n_t - ?,
+//                      o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l - ?,
+//                      updated_at = ?
+//                  WHERE a_c_c_t__n_o = ?`,
+//                 {
+//                     replacements: [
+//                         remainingAmount,  // Subtract from negative (makes more negative)
+//                         remainingAmount,  // Subtract from negative (makes more negative)
+//                         now,
+//                         ACCT_NO
+//                     ],
+//                     transaction
+//                 }
+//             );
+            
+//             console.log(`DEBUG: Updated loan account for additional disbursement`);
+//             console.log(`DEBUG: Previous disbursed: ${currentDisbursedAmount}`);
+//             console.log(`DEBUG: New disbursed: ${currentDisbursedAmount - remainingAmount}`);
+            
+//         } else if (currentStatus === 'PENDING') {
+//             console.log(`DEBUG: Processing new disbursement for PENDING loan ${ACCT_NO}`);
+            
+//             // For PENDING loans, set all amounts to NEGATIVE (initial disbursement)
+//             const disbursementAmountForUpdate = -approvedAmount;  // Negative value
+            
+//             // Update all three fields consistently with negative values
+//             await sequelize.query(
+//                 `UPDATE loan_accounts 
+//                  SET l_o_a_n__s_t_a_t_u_s = 'ACTIVE',
+//                      a_m_o_u_n_t = ?,
+//                      d_i_s_b_u_r_s_e_d__a_m_o_u_n_t = ?,
+//                      a_p_p_r_o_v_a_l__d_a_t_e = ?,
+//                      d_i_s_b_u_r_s_e_m_e_n_t__d_a_t_e = ?,
+//                      o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = ?,
+//                      s_e_r_v_i_c_i_n_g__s_t_a_t_u_s = 'SERVICED',
+//                      updated_at = ?
+//                  WHERE a_c_c_t__n_o = ?`,
+//                 {
+//                     replacements: [
+//                         disbursementAmountForUpdate,  // Negative amount (e.g., -50000)
+//                         disbursementAmountForUpdate,  // Negative disbursed amount
+//                         now,
+//                         now,
+//                         disbursementAmountForUpdate,  // Negative outstanding principal
+//                         now,
+//                         ACCT_NO
+//                     ],
+//                     transaction
+//                 }
+//             );
+            
+//             console.log(`DEBUG: Updated loan account with negative values:`);
+//             console.log(`DEBUG:   Amount: ${disbursementAmountForUpdate}`);
+//             console.log(`DEBUG:   Disbursed: ${disbursementAmountForUpdate}`);
+//             console.log(`DEBUG:   Outstanding: ${disbursementAmountForUpdate}`);
+            
+//         } else {
+//             if (transaction && !transaction.finished) {
+//                 await transaction.rollback();
+//             }
+//             return res.status(400).json({
+//                 success: false,
+//                 message: `Cannot disburse loan with status: ${currentStatus}`,
+//                 code: "INVALID_STATUS",
+//                 data: {
+//                     ACCT_NO,
+//                     currentStatus,
+//                     allowedStatuses: ['PENDING', 'ACTIVE']
+//                 }
+//             });
+//         }
+
+//         // ==================== 5. CALCULATE DISBURSEMENT AMOUNT ====================
+//         // disbursementAmount should always be POSITIVE for calculations
+//         let disbursementAmount;
+
+//         if (currentStatus === 'ACTIVE') {
+//             // For additional disbursement on ACTIVE loan
+//             disbursementAmount = approvedAmount - Math.abs(currentDisbursedAmount);
+//         } else if (currentStatus === 'PENDING') {
+//             // For initial disbursement
+//             disbursementAmount = approvedAmount;
+//         } else {
+//             disbursementAmount = 0;
+//         }
+
+//         console.log("DEBUG: Disbursement Amount (positive for calculations) = ₦" + disbursementAmount.toLocaleString());
+//         console.log("DEBUG: Note: Loan account stores amounts as NEGATIVE values");
+//         console.log("DEBUG:       This represents the bank's receivable asset");
+
+//         // ==================== 6. GET CUSTOMER ACCOUNT DETAILS ====================
+//         let customerAccountNumber = null;
+//         let customerAccountDetails = null;
+//         let accountsTableRecord = null;
+//         let customerAccountsTableRecord = null;
+
+//         try {
+//             console.log("DEBUG: Getting customer account details...");
+            
+//             // FIRST: Try to get the account number from loan application (credit_applications table)
+//             let targetAccountNumber = null;
+            
+//             // Check if there's a repay source account number in credit_applications table
+//             try {
+//                 console.log(`DEBUG: Looking for repay account in credit_applications for loan ${ACCT_NO}`);
+                
+//                 const [creditAppResult] = await sequelize.query(
+//                     `SELECT r_e_p_a_y__s_r_c__a_c_c_t__n_o FROM credit_applications WHERE a_c_c_t__n_o = ? LIMIT 1`,
+//                     {
+//                         replacements: [ACCT_NO],
+//                         transaction,
+//                         type: sequelize.QueryTypes.SELECT
+//                     }
+//                 );
+                
+//                 console.log("DEBUG: credit_applications query result:", creditAppResult);
+                
+//                 if (creditAppResult && creditAppResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o) {
+//                     targetAccountNumber = creditAppResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o;
+//                     console.log("DEBUG: ✓ Found repay source account from credit_applications:", targetAccountNumber);
+//                 } else {
+//                     console.log("DEBUG: ✗ No repay account found in credit_applications");
+//                     if (creditAppResult) {
+//                         console.log("DEBUG: Available columns in result:", Object.keys(creditAppResult));
+//                     }
+//                 }
+//             } catch (creditAppError) {
+//                 console.log("DEBUG: Could not get account from credit_applications:", creditAppError.message);
+//             }
+            
+//             // SECOND: If no account from credit app, check loan_accounts table for account number
+//             if (!targetAccountNumber) {
+//                 console.log("DEBUG: Checking loan_accounts for account number...");
+//                 try {
+//                     // Some loan systems store the customer account number in loan_accounts
+//                     const [loanAccountDetails] = await sequelize.query(
+//                         `SELECT c_u_s_t_o_m_e_r__a_c_c_o_u_n_t__n_o, d_i_s_b_u_r_s_e_m_e_n_t__a_c_c_o_u_n_t FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
+//                         {
+//                             replacements: [ACCT_NO],
+//                             transaction,
+//                             type: sequelize.QueryTypes.SELECT
+//                         }
+//                     );
+                    
+//                     if (loanAccountDetails) {
+//                         console.log("DEBUG: Loan account details:", loanAccountDetails);
+//                         if (loanAccountDetails.c_u_s_t_o_m_e_r__a_c_c_o_u_n_t__n_o) {
+//                             targetAccountNumber = loanAccountDetails.c_u_s_t_o_m_e_r__a_c_c_o_u_n_t__n_o;
+//                             console.log("DEBUG: Found customer account in loan_accounts:", targetAccountNumber);
+//                         } else if (loanAccountDetails.d_i_s_b_u_r_s_e_m_e_n_t__a_c_c_o_u_n_t) {
+//                             targetAccountNumber = loanAccountDetails.d_i_s_b_u_r_s_e_m_e_n_t__a_c_c_o_u_n_t;
+//                             console.log("DEBUG: Found disbursement account in loan_accounts:", targetAccountNumber);
+//                         }
+//                     }
+//                 } catch (loanAccountError) {
+//                     console.log("DEBUG: Could not get account from loan_accounts:", loanAccountError.message);
+//                 }
+//             }
+            
+//             // THIRD: If still no account number, use customer ID search as fallback
+//             if (!targetAccountNumber && customerId) {
+//                 console.log("DEBUG: No account number found, searching by customer ID:", numericCustomerId);
+                
+//                 // Direct query to customer_accounts with numeric ID
+//                 const findAccountQuery = `SELECT account_number FROM customer_accounts WHERE customer_id = ${numericCustomerId} LIMIT 1`;
+//                 console.log("DEBUG: Executing customer ID search:", findAccountQuery);
+                
+//                 const [accountResult] = await sequelize.query(findAccountQuery, {
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 });
+                
+//                 console.log("DEBUG: Customer ID search result:", accountResult);
+                
+//                 if (accountResult && accountResult.account_number) {
+//                     targetAccountNumber = accountResult.account_number;
+//                     console.log("DEBUG: ✓ Found account by customer ID:", targetAccountNumber);
+//                 } else {
+//                     console.log("DEBUG: ✗ No account found by customer ID");
+//                 }
+//             }
+            
+//             // FOURTH: If we have an account number, search for it in the database
+//             if (targetAccountNumber) {
+//                 customerAccountNumber = targetAccountNumber;
+//                 console.log("DEBUG: ✓ Using account number:", customerAccountNumber);
+                
+//                 // Search in customer_accounts table
+//                 console.log("DEBUG: Searching customer_accounts for account:", customerAccountNumber);
+//                 const custAccountQuery = `SELECT * FROM customer_accounts WHERE account_number = '${customerAccountNumber}' LIMIT 1`;
+//                 console.log("DEBUG: Executing:", custAccountQuery);
+                
+//                 const [custAccountResult] = await sequelize.query(custAccountQuery, {
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 });
+                
+//                 if (custAccountResult) {
+//                     customerAccountsTableRecord = custAccountResult;
+//                     console.log("DEBUG: ✓ Found in customer_accounts table!");
+//                     console.log("DEBUG: Account details:", {
+//                         id: customerAccountsTableRecord.id,
+//                         account_number: customerAccountsTableRecord.account_number,
+//                         customer_id: customerAccountsTableRecord.customer_id,
+//                         account_name: customerAccountsTableRecord.account_name,
+//                         current_balance: customerAccountsTableRecord.current_balance,
+//                         available_balance: customerAccountsTableRecord.available_balance,
+//                         ledger_balance: customerAccountsTableRecord.ledger_balance,
+//                         cleared_balance: customerAccountsTableRecord.cleared_balance
+//                     });
+//                 } else {
+//                     console.log("DEBUG: ✗ Account not found in customer_accounts table");
+//                     console.log("DEBUG: This is strange because we should have found account", customerAccountNumber);
+//                 }
+                
+//                 // Search in accounts table
+//                 console.log("DEBUG: Searching accounts table for account:", customerAccountNumber);
+//                 const accountsQuery = `SELECT * FROM accounts WHERE account_number = '${customerAccountNumber}' OR acct_no = '${customerAccountNumber}' LIMIT 1`;
+//                 console.log("DEBUG: Executing:", accountsQuery);
+                
+//                 const [accountsResult] = await sequelize.query(accountsQuery, {
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 });
+                
+//                 if (accountsResult) {
+//                     accountsTableRecord = accountsResult;
+//                     console.log("DEBUG: ✓ Found in accounts table");
+//                 } else {
+//                     console.log("DEBUG: ✗ Account not found in accounts table");
+//                 }
+                
+//                 // Create customer account details
+//                 if (customerAccountsTableRecord) {
+//                     customerAccountDetails = {
+//                         accountNumber: customerAccountNumber,
+//                         accountName: customerAccountsTableRecord.account_name || customerName || 'Unknown',
+//                         accountType: customerAccountsTableRecord.account_type || 'SAVINGS',
+//                         currency: customerAccountsTableRecord.currency_code || 'NGN',
+//                         currentLedgerBalance: parseFloat(customerAccountsTableRecord.ledger_balance || 0),
+//                         currentAvailableBalance: parseFloat(customerAccountsTableRecord.available_balance || 0),
+//                         currentClearedBalance: parseFloat(customerAccountsTableRecord.cleared_balance || 0),
+//                         currentBalance: parseFloat(customerAccountsTableRecord.current_balance || 0),
+//                         accountsTableRecord: accountsTableRecord,
+//                         customerAccountsTableRecord: customerAccountsTableRecord
+//                     };
+                    
+//                     console.log("DEBUG: ✓ Created customer account details object");
+//                 }
+//             } else {
+//                 console.log("DEBUG: ✗ No account number could be determined");
+//                 console.log("DEBUG: Tried:", {
+//                     fromCreditApp: false, // will be true if found
+//                     fromLoanAccount: false, // will be true if found  
+//                     fromCustomerId: !!customerId
+//                 });
+//             }
+            
+//         } catch (lookupError) {
+//             console.error("DEBUG: Error in customer account lookup:", lookupError.message);
+//             console.error("DEBUG: Error stack:", lookupError.stack);
+//         }
+
+//         // ==================== 7. UPDATE BOTH ACCOUNT TABLES ====================
+//         if (customerAccountNumber && customerAccountsTableRecord) {
+//             try {
+//                 console.log("DEBUG: =========================================");
+//                 console.log("DEBUG: ✓ CREDITING CUSTOMER ACCOUNT");
+//                 console.log("DEBUG: =========================================");
+//                 console.log("DEBUG: Account to credit:", customerAccountNumber);
+//                 console.log("DEBUG: Disbursement amount: ₦" + disbursementAmount.toLocaleString());
+                
+//                 // Get current balances
+//                 const currentLedgerBalance = parseFloat(customerAccountsTableRecord.ledger_balance || 0);
+//                 const currentAvailableBalance = parseFloat(customerAccountsTableRecord.available_balance || 0);
+//                 const currentClearedBalance = parseFloat(customerAccountsTableRecord.cleared_balance || 0);
+//                 const currentBalance = parseFloat(customerAccountsTableRecord.current_balance || 0);
+                
+//                 // Calculate new balances
+//                 const newLedgerBalance = currentLedgerBalance + disbursementAmount;
+//                 const newAvailableBalance = currentAvailableBalance + disbursementAmount;
+//                 const newClearedBalance = currentClearedBalance + disbursementAmount;
+//                 const newCurrentBalance = currentBalance + disbursementAmount;
+                
+//                 console.log("DEBUG: BALANCE UPDATE:");
+//                 console.log("DEBUG: ---------------------------------");
+//                 console.log("DEBUG: Type           | Current      | New");
+//                 console.log("DEBUG: ---------------------------------");
+//                 console.log("DEBUG: Ledger Balance | ₦" + currentLedgerBalance.toLocaleString().padEnd(10) + " | ₦" + newLedgerBalance.toLocaleString());
+//                 console.log("DEBUG: Available      | ₦" + currentAvailableBalance.toLocaleString().padEnd(10) + " | ₦" + newAvailableBalance.toLocaleString());
+//                 console.log("DEBUG: Cleared        | ₦" + currentClearedBalance.toLocaleString().padEnd(10) + " | ₦" + newClearedBalance.toLocaleString());
+//                 console.log("DEBUG: Current        | ₦" + currentBalance.toLocaleString().padEnd(10) + " | ₦" + newCurrentBalance.toLocaleString());
+//                 console.log("DEBUG: ---------------------------------");
+                
+//                 // Format date for SQL
+//                 const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
+                
+//                 // 1. UPDATE CUSTOMER_ACCOUNTS TABLE
+//                 console.log("\nDEBUG: Step 1: Updating customer_accounts table...");
+//                 const updateCustomerAccountQuery = `
+//                     UPDATE customer_accounts 
+//                     SET ledger_balance = ${newLedgerBalance},
+//                         available_balance = ${newAvailableBalance},
+//                         cleared_balance = ${newClearedBalance},
+//                         current_balance = ${newCurrentBalance},
+//                         last_transaction_date = '${sqlDate}',
+//                         updated_at = '${sqlDate}'
+//                     WHERE account_number = '${customerAccountNumber}'
+//                 `;
+                
+//                 console.log("DEBUG: Executing query...");
+//                 const customerUpdateResult = await sequelize.query(updateCustomerAccountQuery, { transaction });
+//                 console.log("DEBUG: ✓ customer_accounts table updated successfully");
+                
+//                 // 2. UPDATE ACCOUNTS TABLE USING ACCOUNT SERVICE
+//                 console.log("\nDEBUG: Step 2: Updating accounts table using AccountService...");
+                
+//                 try {
+//                     // Prepare account data for AccountService
+//                     const accountData = {
+//                         customer_id: numericCustomerId || customerAccountsTableRecord.customer_id || 0,
+//                         account_number: customerAccountNumber,
+//                         acct_no: customerAccountNumber,
+//                         acct_nm: customerAccountsTableRecord.account_name || customerName || 'Loan Customer',
+//                         account_type: customerAccountsTableRecord.account_type || 'SAVINGS',
+//                         product_type: 'SAVINGS',
+//                         product: 'Savings Account',
+//                         branch: 1, // REQUIRED! Use appropriate branch ID
+//                         ledger_balance: newLedgerBalance,
+//                         available_balance: newAvailableBalance,
+//                         cleared_balance: newClearedBalance,
+//                         rec_st: 'ACTIVE',
+//                         currency: customerAccountsTableRecord.currency_code || 'NGN',
+//                         online_enabled: 1,
+//                         dr_allowed: 1,
+//                         cr_allowed: 1,
+//                         last_activity_date: sqlDate,
+//                         created_by: approvedBy || 'LOAN_SYSTEM',
+//                         product_desc: 'Account for loan disbursement',
+                        
+//                         // Optional fields that might be needed
+//                         customer_code: customerId, // Use the original customer ID string
+//                         opening_amount: 0, // Default opening amount
+//                         interest_rate: 0, // No interest for savings account
+//                         accrued_interest: 0,
+//                         overdraft_limit: 0,
+//                         substatus: 'Active',
+//                         sms_alert: 'No',
+//                         email_alert: 'No',
+//                         is_overdraft_allowed: 0,
+//                         auto_approve: 0,
+//                         disbursement_method: 'Cash',
+//                         creation_date: sqlDate.substring(0, 10) // Just the date part
+//                     };
+                    
+//                     console.log("DEBUG: Calling AccountService.createOrUpdateAccount...");
+//                     const result = await createOrUpdateAccount(accountData, transaction);
+                    
+//                     if (result.success) {
+//                         console.log("DEBUG: ✓ AccountService operation successful:", result.message);
+//                         console.log("DEBUG: Action performed:", result.action);
+//                         console.log("DEBUG: Account ID:", result.account?.id || result.account?.insertId || 'Unknown');
+                        
+//                         // Store the account record for later use if needed
+//                         const updatedAccount = result.account;
+//                         if (updatedAccount && !accountsTableRecord) {
+//                             accountsTableRecord = updatedAccount;
+//                         }
+//                     } else {
+//                         console.warn("DEBUG: ⚠️ AccountService returned success: false");
+//                         console.warn("DEBUG: Message:", result.message);
+                        
+//                         // Fallback to manual creation/update
+//                         await fallbackToManualAccountUpdate(customerAccountNumber, accountData, transaction, sqlDate);
+//                     }
+                    
+//                 } catch (serviceError) {
+//                     console.error("DEBUG: ❌ AccountService failed:", serviceError.message);
+//                     console.error("DEBUG: Service error stack:", serviceError.stack);
+                    
+//                     // Fallback to manual creation/update
+//                     console.log("DEBUG: 🔄 Falling back to manual account update...");
+//                     await fallbackToManualAccountUpdate(customerAccountNumber, {
+//                         customer_id: numericCustomerId || customerAccountsTableRecord.customer_id || 0,
+//                         account_number: customerAccountNumber,
+//                         acct_nm: customerAccountsTableRecord.account_name || customerName || 'Loan Customer',
+//                         account_type: customerAccountsTableRecord.account_type || 'SAVINGS',
+//                         newLedgerBalance,
+//                         newAvailableBalance,
+//                         newClearedBalance,
+//                         currency: customerAccountsTableRecord.currency_code || 'NGN'
+//                     }, transaction, sqlDate);
+//                 }
+                
+//                 // 3. CREATE TRANSACTION RECORD
+//                 console.log("\nDEBUG: Step 3: Creating transaction record...");
+//                 try {
+//                     const transactionId = `LOAN-DISB-${ACCT_NO}-${Date.now()}`;
+                    
+//                     const transactionQuery = `
+//                         INSERT INTO customer_transactions (
+//                             transaction_id, account_number, transaction_type,
+//                             amount, description, balance_after,
+//                             transaction_date, reference_number, created_by
+//                         ) VALUES (
+//                             '${transactionId}',
+//                             '${customerAccountNumber}',
+//                             'CREDIT',
+//                             ${disbursementAmount},
+//                             'Loan disbursement from loan account ${ACCT_NO}',
+//                             ${newCurrentBalance},
+//                             '${sqlDate}',
+//                             '${ACCT_NO}',
+//                             '${approvedBy}'
+//                         )
+//                     `;
+                    
+//                     console.log("DEBUG: Creating transaction record...");
+//                     await sequelize.query(transactionQuery, { transaction });
+//                     console.log("DEBUG: ✓ Transaction record created");
+                    
+//                 } catch (txnError) {
+//                     console.warn("DEBUG: Could not create transaction record:", txnError.message);
+//                     console.warn("DEBUG: This is not critical - account was still updated");
+//                 }
+                
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: ✓ SUCCESS!");
+//                 console.log("DEBUG: =========================================");
+//                 console.log(`DEBUG: Account ${customerAccountNumber} credited with ₦${disbursementAmount.toLocaleString()}`);
+//                 console.log(`DEBUG: New balance: ₦${newCurrentBalance.toLocaleString()}`);
+//                 console.log("DEBUG: =========================================");
+                
+//             } catch (accountError) {
+//                 console.error("\nDEBUG: ✗ ERROR updating customer account:", accountError.message);
+//                 console.error("DEBUG: Error details:", accountError);
+//                 console.error("DEBUG: This is a critical error - account was NOT updated");
+//             }
+//         } else {
+//             console.log("\nDEBUG: =========================================");
+//             console.log("DEBUG: ✗ CRITICAL: Cannot update customer account");
+//             console.log("DEBUG: =========================================");
+//             console.log("DEBUG: Missing required data:");
+//             console.log("DEBUG: - Has account number:", !!customerAccountNumber);
+//             console.log("DEBUG: - Has account record:", !!customerAccountsTableRecord);
+//             console.log("DEBUG: - Customer ID:", customerId);
+//             console.log("DEBUG: - Numeric Customer ID:", numericCustomerId);
+            
+//             // Let's try a direct query to see what's in the database
+//             console.log("\nDEBUG: Diagnostic query - checking credit_applications:");
+//             try {
+//                 const diagQuery = `SELECT a_c_c_t__n_o, r_e_p_a_y__s_r_c__a_c_c_t__n_o FROM credit_applications WHERE a_c_c_t__n_o = '${ACCT_NO}' LIMIT 1`;
+//                 console.log("DEBUG: Executing:", diagQuery);
+                
+//                 const [diagResult] = await sequelize.query(diagQuery, { 
+//                     transaction, 
+//                     type: sequelize.QueryTypes.SELECT 
+//                 });
+                
+//                 console.log("DEBUG: Diagnostic result:", diagResult);
+                
+//                 if (diagResult) {
+//                     console.log("DEBUG: Found in credit_applications:");
+//                     console.log("DEBUG: - Account No:", diagResult.a_c_c_t__n_o);
+//                     console.log("DEBUG: - Repay Source Account:", diagResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o);
+                    
+//                     if (diagResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o) {
+//                         console.log("DEBUG: We have the account! It's:", diagResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o);
+                        
+//                         // Try to find it directly
+//                         const findAccountQuery = `SELECT * FROM customer_accounts WHERE account_number = '${diagResult.r_e_p_a_y__s_r_c__a_c_c_t__n_o}' LIMIT 1`;
+//                         console.log("DEBUG: Looking for account:", findAccountQuery);
+                        
+//                         const [foundAccount] = await sequelize.query(findAccountQuery, { 
+//                             transaction, 
+//                             type: sequelize.QueryTypes.SELECT 
+//                         });
+                        
+//                         console.log("DEBUG: Found account?", !!foundAccount);
+//                         if (foundAccount) {
+//                             console.log("DEBUG: Account details:", {
+//                                 account_number: foundAccount.account_number,
+//                                 customer_id: foundAccount.customer_id,
+//                                 account_name: foundAccount.account_name
+//                             });
+//                         }
+//                     }
+//                 } else {
+//                     console.log("DEBUG: No record found in credit_applications for loan", ACCT_NO);
+//                 }
+//             } catch (diagError) {
+//                 console.error("DEBUG: Diagnostic query failed:", diagError.message);
+//             }
+//         }
+
+//         // ==================== HELPER FUNCTION FOR FALLBACK ====================
+//         async function fallbackToManualAccountUpdate(accountNumber, accountData, transaction, sqlDate) {
+//             try {
+//                 console.log("DEBUG: Executing manual account update fallback...");
+                
+//                 // Check if account exists in accounts table
+//                 const accountsCheckQuery = `
+//                     SELECT id FROM accounts 
+//                     WHERE account_number = '${accountNumber}' 
+//                        OR acct_no = '${accountNumber}'
+//                     LIMIT 1
+//                 `;
+                
+//                 const [existingAccount] = await sequelize.query(accountsCheckQuery, {
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 });
+                
+//                 if (existingAccount && existingAccount.id) {
+//                     // Update existing account
+//                     const updateAccountsQuery = `
+//                         UPDATE accounts 
+//                         SET ledger_balance = ${accountData.ledger_balance || accountData.newLedgerBalance || 0},
+//                             available_balance = ${accountData.available_balance || accountData.newAvailableBalance || 0},
+//                             cleared_balance = ${accountData.cleared_balance || accountData.newClearedBalance || 0},
+//                             last_activity_date = '${sqlDate}',
+//                             updated_at = '${sqlDate}'
+//                         WHERE account_number = '${accountNumber}' 
+//                            OR acct_no = '${accountNumber}'
+//                     `;
+                    
+//                     await sequelize.query(updateAccountsQuery, { transaction });
+//                     console.log("DEBUG: ✓ accounts table updated via manual fallback");
+//                 } else {
+//                     // Create new account
+//                     const createAccountsQuery = `
+//                         INSERT INTO accounts (
+//                             customer_id, account_number, acct_no, acct_nm,
+//                             account_type, product_type, product,
+//                             ledger_balance, available_balance, cleared_balance,
+//                             rec_st, currency, online_enabled,
+//                             dr_allowed, cr_allowed, last_activity_date,
+//                             created_at, updated_at, branch
+//                         ) VALUES (
+//                             ${accountData.customer_id || 'NULL'},
+//                             '${accountNumber}',
+//                             '${accountNumber}',
+//                             '${accountData.acct_nm || 'Loan Customer'}',
+//                             '${accountData.account_type || 'SAVINGS'}',
+//                             'SAVINGS',
+//                             'Savings Account',
+//                             ${accountData.ledger_balance || accountData.newLedgerBalance || 0},
+//                             ${accountData.available_balance || accountData.newAvailableBalance || 0},
+//                             ${accountData.cleared_balance || accountData.newClearedBalance || 0},
+//                             'ACTIVE',
+//                             '${accountData.currency || 'NGN'}',
+//                             1,
+//                             1,
+//                             1,
+//                             '${sqlDate}',
+//                             '${sqlDate}',
+//                             '${sqlDate}',
+//                             1  -- BRANCH ID (required!)
+//                         )
+//                     `;
+                    
+//                     console.log("DEBUG: Creating account in accounts table via manual fallback...");
+//                     const createResult = await sequelize.query(createAccountsQuery, { transaction });
+//                     console.log("DEBUG: ✓ Created account in accounts table via manual fallback, ID:", createResult[0]?.insertId);
+//                 }
+                
+//             } catch (fallbackError) {
+//                 console.error("DEBUG: ❌ Manual fallback also failed:", fallbackError.message);
+//                 console.error("DEBUG: This is a serious issue - accounts table may not be updated");
+//             }
+//         }
+
+//         // ==================== 8. CREATE/UPDATE DISBURSEMENT RECORD ====================
+//         // Check if loan_disbursements table exists
+//         const disbTables = await sequelize.query(
+//             `SELECT TABLE_NAME 
+//              FROM INFORMATION_SCHEMA.TABLES 
+//              WHERE TABLE_SCHEMA = DATABASE() 
+//              AND TABLE_NAME = 'loan_disbursements'`,
+//             { transaction, type: sequelize.QueryTypes.SELECT }
+//         );
+        
+//         let disbursementRecord;
+        
+//         if (disbTables.length > 0) {
+//             console.log("DEBUG: loan_disbursements table exists");
+            
+//             // Check for existing disbursements using the correct column name
+//             const existingDisbursements = await sequelize.query(
+//                 `SELECT * FROM loan_disbursements WHERE a_c_c_t__n_o = ?`,
+//                 {
+//                     replacements: [ACCT_NO],
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 }
+//             );
+            
+//             if (existingDisbursements.length > 0) {
+//                 // Update existing disbursement record
+//                 const existingId = existingDisbursements[0].id;
+                
+//                 // Update status to APPROVED (or COMPLETED)
+//                 await sequelize.query(
+//                     `UPDATE loan_disbursements 
+//                      SET s_t_a_t_u_s = 'APPROVED',
+//                          updated_at = ?
+//                      WHERE id = ?`,
+//                     {
+//                         replacements: [now, existingId],
+//                         transaction
+//                     }
+//                 );
+                
+//                 disbursementRecord = { id: existingId };
+//                 console.log(`DEBUG: Updated existing disbursement record ID: ${existingId}`);
+                
+//             } else {
+//                 // Create new disbursement record using existing table structure
+//                 console.log("DEBUG: Creating new disbursement record with existing table structure");
+                
+//                 const result = await sequelize.query(
+//                     `INSERT INTO loan_disbursements (
+//                         a_c_c_t__n_o, 
+//                         a_p_p_l__i_d,
+//                         c_u_s_t__i_d,
+//                         i_n_t_e_r_e_s_t__r_a_t_e,
+//                         t_e_r_m__v_a_l_u_e,
+//                         t_e_r_m__c_d,
+//                         a_m_o_u_n_t,
+//                         l_o_a_n__a_c_c_o_u_n_t__i_d,
+//                         s_t_a_t_u_s,
+//                         created_at,
+//                         updated_at
+//                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                     {
+//                         replacements: [
+//                             ACCT_NO,
+//                             ACCT_NO,
+//                             loanAccount.c_u_s_t__i_d,
+//                             loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0,
+//                             loanAccount.t_e_r_m__v_a_l_u_e || 0,
+//                             loanAccount.t_e_r_m__c_d || 'MONTHLY',
+//                             disbursementAmount,
+//                             loanAccount.id,
+//                             'APPROVED',
+//                             now,
+//                             now
+//                         ],
+//                         transaction
+//                     }
+//                 );
+                
+//                 disbursementRecord = { id: result[0].insertId };
+//                 console.log(`DEBUG: Created new disbursement record ID: ${disbursementRecord.id}`);
+//             }
+//         } else {
+//             console.log("DEBUG: loan_disbursements table does not exist, creating it...");
+            
+//             // Create table with proper column names based on your existing schema
+//             await sequelize.query(`
+//                 CREATE TABLE IF NOT EXISTS loan_disbursements (
+//                     id INT PRIMARY KEY AUTO_INCREMENT,
+//                     a_c_c_t__n_o VARCHAR(255),
+//                     a_p_p_l__i_d VARCHAR(255),
+//                     c_u_s_t__i_d VARCHAR(255),
+//                     i_n_t_e_r_e_s_t__r_a_t_e DECIMAL(7,4),
+//                     t_e_r_m__v_a_l_u_e INT,
+//                     t_e_r_m__c_d VARCHAR(255),
+//                     a_m_o_u_n_t DECIMAL(20,2),
+//                     l_o_a_n__a_c_c_o_u_n_t__i_d INT,
+//                     r_e_p_a_y_m_e n_t__s_c_h_e_d_u_l_e__i_d INT,
+//                     g_u_a_r_a_n_t_o_r__i_d INT,
+//                     p_r_o_d__i_d VARCHAR(255),
+//                     p_r_o_d_u_c_t__t_y_p_e VARCHAR(255),
+//                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+//                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//                     s_t_a_t_u_s VARCHAR(50) DEFAULT 'PENDING'
+//                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+//                 { transaction }
+//             );
+            
+//             // Create new disbursement record
+//             const result = await sequelize.query(
+//                 `INSERT INTO loan_disbursements (
+//                     a_c_c_t__n_o, 
+//                     a_p_p_l__i_d,
+//                     c_u_s_t__i_d,
+//                     i_n_t_e_r_e_s_t__r_a_t_e,
+//                     t_e_r_m__v_a_l_u_e,
+//                     t_e_r_m__c_d,
+//                     a_m_o_u_n_t,
+//                     l_o_a_n__a_c_c_o_u_n_t__i_d,
+//                     s_t_a_t_u_s,
+//                     created_at,
+//                     updated_at
+//                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                 {
+//                     replacements: [
+//                         ACCT_NO,
+//                         ACCT_NO,
+//                         loanAccount.c_u_s_t__i_d,
+//                         loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0,
+//                         loanAccount.t_e_r_m__v_a_l_u_e || 0,
+//                         loanAccount.t_e_r_m__c_d || 'MONTHLY',
+//                         disbursementAmount,
+//                         loanAccount.id,
+//                         'APPROVED',
+//                         now,
+//                         now
+//                     ],
+//                     transaction
+//                 }
+//             );
+            
+//             disbursementRecord = { id: result[0].insertId };
+//             console.log(`DEBUG: Created new disbursement record ID: ${disbursementRecord.id}`);
+//         }
+
+//         // ==================== 9. UPDATE CREDIT APPLICATION ====================
+//         // Check if credit_applications table exists
+//         const creditTables = await sequelize.query(
+//             `SELECT TABLE_NAME 
+//              FROM INFORMATION_SCHEMA.TABLES 
+//              WHERE TABLE_SCHEMA = DATABASE() 
+//              AND TABLE_NAME = 'credit_applications'`,
+//             { transaction, type: sequelize.QueryTypes.SELECT }
+//         );
+
+//         if (creditTables.length > 0) {
+//             console.log("DEBUG: credit_applications table exists, attempting update...");
+            
+//             try {
+//                 // Use the correct column name a_c_c_t__n_o instead of ACCT_NO
+//                 await sequelize.query(
+//                     `UPDATE credit_applications 
+//                      SET s_t_a_t_u_s = 'APPROVED',
+//                          a_p_p_r_o_v_e_d__b_y = ?,
+//                          a_p_p_r_o_v_a_l__d_t = ?,
+//                          c_o_m_m_e_n_t_s = CONCAT(COALESCE(c_o_m_m_e_n_t_s, ''), ?),
+//                          r_o_w__t_s = ?
+//                      WHERE a_c_c_t__n_o = ?`,
+//                     {
+//                         replacements: [
+//                             approvedBy, 
+//                             now, 
+//                             ` | ${approvalComments}`,
+//                             now, 
+//                             ACCT_NO
+//                         ],
+//                         transaction
+//                     }
+//                 );
+//                 console.log("DEBUG: Credit application updated");
+//             } catch (creditUpdateError) {
+//                 console.error("DEBUG: Failed to update credit application:", creditUpdateError.message);
+//                 // Don't rollback for this error - just log and continue
+//             }
+//         } else {
+//             console.log("DEBUG: credit_applications table does not exist, skipping update");
+//         }
+
+//         // ==================== 10. POST TO GENERAL LEDGER ====================
+//         try {
+//             const transactionId = `LOAN-DISB-${ACCT_NO}-${Date.now()}`;
+//             const journalId = `JRNL-LOAN-${Date.now()}`;
+            
+//             console.log("DEBUG: =========================================");
+//             console.log("DEBUG: GENERAL LEDGER POSTING");
+//             console.log("DEBUG: =========================================");
+//             console.log(`DEBUG: Transaction ID: ${transactionId}`);
+//             console.log(`DEBUG: Journal ID: ${journalId}`);
+//             console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
+//             console.log(`DEBUG: Gross Disbursement Amount: ₦${disbursementAmount.toLocaleString()}`);
+            
+//             // Check if ledgers table exists
+//             const ledgersTableCheck = await sequelize.query(
+//                 `SELECT TABLE_NAME 
+//                  FROM INFORMATION_SCHEMA.TABLES 
+//                  WHERE TABLE_SCHEMA = DATABASE() 
+//                  AND TABLE_NAME = 'ledgers'`,
+//                 { transaction, type: sequelize.QueryTypes.SELECT }
+//             );
+            
+//             if (ledgersTableCheck.length > 0) {
+//                 console.log("DEBUG: ✓ ledgers table exists");
+                
+//                 // Get current date in SQL format
+//                 const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
+                
+//                 // ==================== 10.1. GET LOAN PRODUCT CONFIGURATION ====================
+//                 console.log("\nDEBUG: Step 1: Getting loan product configuration...");
+
+//                 let productConfig = null;
+//                 let principalGLAccount = null;
+//                 let interestGLAccount = null;
+//                 let processingFeeGLAccount = null;
+//                 let processingFeeRate = 0;
+//                 let processingFeeAmount = 0;
+
+//                 try {
+//                     // Try to get the loan product ID from loan_accounts
+//                     console.log("DEBUG: Attempting to get product ID from loan account:", ACCT_NO);
+                    
+//                     const loanAccountQuery = `
+//                         SELECT l_o_a_n__p_r_o_d_u_c_t__i_d 
+//                         FROM loan_accounts 
+//                         WHERE a_c_c_t__n_o = ? 
+//                         LIMIT 1
+//                     `;
+                    
+//                     const [loanAccountResult] = await sequelize.query(loanAccountQuery, {
+//                         replacements: [ACCT_NO],
+//                         transaction,
+//                         type: sequelize.QueryTypes.SELECT
+//                     });
+                    
+//                     let productId = null;
+//                     let usingDefaultProduct = false;
+                    
+//                     if (loanAccountResult && loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d) {
+//                         productId = loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d;
+//                         console.log("DEBUG: Found product ID in loan account:", productId);
+//                     } else {
+//                         console.warn("DEBUG: ⚠️ No product ID found in loan account, using default product");
+//                         usingDefaultProduct = true;
+                        
+//                         // Get the default/active loan product (first active product)
+//                         const defaultProductQuery = `
+//                             SELECT p_r_o_d__i_d 
+//                             FROM loan_products 
+//                             WHERE is_active = 1 
+//                             AND s_t_a_t_u_s = 'ACTIVE'
+//                             LIMIT 1
+//                         `;
+                        
+//                         const [defaultProductResult] = await sequelize.query(defaultProductQuery, {
+//                             transaction,
+//                             type: sequelize.QueryTypes.SELECT
+//                         });
+                        
+//                         if (defaultProductResult && defaultProductResult.p_r_o_d__i_d) {
+//                             productId = defaultProductResult.p_r_o_d__i_d;
+//                             console.warn("DEBUG: ⚠️ Using default product ID:", productId);
+//                         } else {
+//                             // If no active product, use the first product in the table
+//                             const firstProductQuery = `
+//                                 SELECT p_r_o_d__i_d 
+//                                 FROM loan_products 
+//                                 LIMIT 1
+//                             `;
+                            
+//                             const [firstProductResult] = await sequelize.query(firstProductQuery, {
+//                                 transaction,
+//                                 type: sequelize.QueryTypes.SELECT
+//                             });
+                            
+//                             if (firstProductResult && firstProductResult.p_r_o_d__i_d) {
+//                                 productId = firstProductResult.p_r_o_d__i_d;
+//                                 console.warn("DEBUG: ⚠️ Using first available product ID:", productId);
+//                             } else {
+//                                 console.error("DEBUG: ❌ No loan products found in the database");
+//                                 throw new Error("No loan products configured in the system. Please create a loan product first.");
+//                             }
+//                         }
+//                     }
+                    
+//                     // Now get the loan product using the product ID
+//                     const productQuery = `
+//                         SELECT lp.*, 
+//                                JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
+//                                JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
+//                                JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
+//                                JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
+//                                lp.processing_fee_g_l_code,
+//                                lp.processing_fee_rate
+//                         FROM loan_products lp
+//                         WHERE lp.p_r_o_d__i_d = ?
+//                         LIMIT 1
+//                     `;
+                    
+//                     const [productResult] = await sequelize.query(productQuery, {
+//                         replacements: [productId],
+//                         transaction,
+//                         type: sequelize.QueryTypes.SELECT
+//                     });
+                    
+//                     if (productResult) {
+//                         productConfig = productResult;
+                        
+//                         if (usingDefaultProduct) {
+//                             console.warn("DEBUG: ⚠️ Using default/first available loan product:");
+//                             console.warn(`DEBUG:   Product ID: ${productResult.p_r_o_d__i_d}`);
+//                             console.warn(`DEBUG:   Product Name: ${productResult.name}`);
+//                             console.warn("DEBUG:   NOTE: Consider updating the loan account with a proper product ID");
+                            
+//                             // Update the loan account with the product ID for future reference
+//                             try {
+//                                 await sequelize.query(
+//                                     `UPDATE loan_accounts 
+//                                      SET l_o_a_n__p_r_o_d_u_c_t__i_d = ? 
+//                                      WHERE a_c_c_t__n_o = ?`,
+//                                     {
+//                                         replacements: [productId, ACCT_NO],
+//                                         transaction
+//                                     }
+//                                 );
+//                                 console.log("DEBUG: ✓ Updated loan account with product ID:", productId);
+//                             } catch (updateError) {
+//                                 console.warn("DEBUG: Could not update loan account with product ID:", updateError.message);
+//                             }
+//                         } else {
+//                             console.log("DEBUG: ✓ Found loan product configuration");
+//                             console.log("DEBUG: Product ID:", productResult.p_r_o_d__i_d);
+//                             console.log("DEBUG: Product Name:", productResult.name);
+//                         }
+                        
+//                         // Extract GL accounts from default_g_l_accounts JSON
+//                         if (productResult.default_g_l_accounts) {
+//                             try {
+//                                 const glAccounts = JSON.parse(productResult.default_g_l_accounts);
+//                                 principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+//                                 interestGLAccount = glAccounts.interestGLAccountNo;
+//                                 processingFeeGLAccount = glAccounts.processingFeeGLCode;
+                                
+//                                 console.log("DEBUG: Extracted GL accounts from default_g_l_accounts:");
+//                                 console.log("DEBUG:   Principal GL Account:", principalGLAccount);
+//                                 console.log("DEBUG:   Interest GL Account:", interestGLAccount);
+//                                 console.log("DEBUG:   Processing Fee GL Account:", processingFeeGLAccount);
+                                
+//                                 // Validate that required GL accounts are present
+//                                 if (!principalGLAccount) {
+//                                     throw new Error("Principal GL account not found in loan product configuration");
+//                                 }
+//                                 if (!interestGLAccount) {
+//                                     console.warn("DEBUG: Warning: Interest GL account not found in loan product configuration");
+//                                 }
+//                                 if (!processingFeeGLAccount) {
+//                                     console.warn("DEBUG: Warning: Processing Fee GL account not found in default_g_l_accounts");
+//                                 }
+                                
+//                             } catch (e) {
+//                                 console.error("DEBUG: ❌ Could not parse GL accounts JSON:", e.message);
+//                                 throw new Error(`Invalid GL accounts configuration in loan product: ${e.message}`);
+//                             }
+//                         } else {
+//                             console.error("DEBUG: ❌ No default_g_l_accounts found in loan product");
+//                             throw new Error("Loan product does not have GL accounts configured");
+//                         }
+                        
+//                         // Get processing fee details
+//                         processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
+                        
+//                         // Calculate processing fee amount
+//                         if (processingFeeRate > 0) {
+//                             processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+//                             console.log("DEBUG: Processing Fee Rate:", processingFeeRate + '%');
+//                             console.log("DEBUG: Processing Fee Amount: ₦" + processingFeeAmount.toLocaleString());
+//                         }
+                        
+//                         // If processingFeeGLAccount not found in default_g_l_accounts, use processing_fee_g_l_code
+//                         if (!processingFeeGLAccount && productResult.processing_fee_g_l_code) {
+//                             processingFeeGLAccount = productResult.processing_fee_g_l_code;
+//                             console.log("DEBUG: Using processing_fee_g_l_code for fee:", processingFeeGLAccount);
+//                         }
+                        
+//                         // Also check fee_structure for processing fee GL account
+//                         if (productResult.fee_structure && !processingFeeGLAccount) {
+//                             try {
+//                                 const feeStructure = JSON.parse(productResult.fee_structure);
+//                                 const processingFee = feeStructure.find(fee => 
+//                                     fee.feeType === 'PROCESSING' || fee.name === 'Processing Fee'
+//                                 );
+//                                 if (processingFee && processingFee.glAccountCode) {
+//                                     processingFeeGLAccount = processingFee.glAccountCode;
+//                                     console.log("DEBUG: Found Processing Fee GL account in fee_structure:", processingFeeGLAccount);
+//                                 }
+//                             } catch (e) {
+//                                 console.warn("DEBUG: Could not parse fee_structure:", e.message);
+//                             }
+//                         }
+                        
+//                         console.log("DEBUG: ✓ GL accounts configured successfully:");
+//                         console.log("DEBUG:   Principal: ", principalGLAccount);
+//                         console.log("DEBUG:   Interest:  ", interestGLAccount || "Not configured");
+//                         console.log("DEBUG:   Fee:       ", processingFeeGLAccount || "Not configured");
+                        
+//                     } else {
+//                         console.error("DEBUG: ❌ No loan product found for product ID:", productId);
+//                         throw new Error(`Loan product with ID ${productId} not found in loan_products table`);
+//                     }
+//                 } catch (productError) {
+//                     console.error("DEBUG: ❌ ERROR getting loan product configuration:", productError.message);
+//                     console.error("DEBUG: This is a critical error - loan cannot be disbursed without GL accounts");
+                    
+//                     // Rollback the transaction since we can't proceed without GL accounts
+//                     if (transaction && !transaction.finished) {
+//                         await transaction.rollback();
+//                     }
+                    
+//                     return res.status(500).json({
+//                         success: false,
+//                         message: "Loan disbursement failed: Missing GL account configuration",
+//                         error: productError.message,
+//                         code: "MISSING_GL_CONFIGURATION",
+//                         debug: {
+//                             loanAccount: ACCT_NO,
+//                             error: productError.message,
+//                             requiredInfo: "Loan product must have GL accounts configured in default_g_l_accounts",
+//                             suggestion: "1. Check if loan_products table has any products\n2. Check if default_g_l_accounts JSON is valid\n3. Ensure at least one product is active"
+//                         }
+//                     });
+//                 }
+                
+//                 // ==================== 10.2. CALCULATE INTEREST COMPONENT ====================
+//                 console.log("\nDEBUG: Step 2: Calculating interest component...");
+                
+//                 let interestAmount = 0;
+//                 const interestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+//                 const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
+                
+//                 if (interestRate > 0 && termValue > 0) {
+//                     // Calculate interest for the full loan term
+//                     interestAmount = (disbursementAmount * interestRate * termValue) / (12 * 100); // Monthly calculation
+//                     console.log("DEBUG: Interest Rate:", interestRate + "%");
+//                     console.log("DEBUG: Term Value:", termValue + " months");
+//                     console.log("DEBUG: Calculated Interest: ₦" + interestAmount.toLocaleString());
+//                 } else {
+//                     console.log("DEBUG: No interest rate or term specified, skipping interest component");
+//                 }
+                
+//                 // ==================== 10.3. VERIFY GL ACCOUNTS EXIST IN gl_accounts TABLE ====================
+//                 console.log("\nDEBUG: Step 3: Verifying GL accounts in gl_accounts table...");
+
+//                 // Function to check if GL account exists and get its details
+//                 const getGLAccountDetails = async (glAccountNo) => {
+//                     try {
+//                         const accountCheck = await sequelize.query(
+//                             `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t,
+//                                     l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e,
+//                                     c_u_r_r_e_n_t__b_a_l_a_n_c_e, b_a_l__c_d,
+//                                     c_r__a_l_l_o_w_e_d, d_r__a_l_l_o_w_e_d, r_e_c__s_t,
+//                                     c_u_r_r_e_n_c_y__c_o_d_e, c_o_n_t_r_o_l__a_c_c_t__f_g,
+//                                     s_u_s_p_e_n_s_e__a_c_c_t__f_g, p_o_s_t__a_l_l_o_w
+//                              FROM gl_accounts 
+//                              WHERE g_l__a_c_c_t__n_o = ? 
+//                              LIMIT 1`,
+//                             {
+//                                 replacements: [glAccountNo],
+//                                 transaction,
+//                                 type: sequelize.QueryTypes.SELECT
+//                             }
+//                         );
+                        
+//                         if (accountCheck && accountCheck.length > 0) {
+//                             const account = accountCheck[0];
+                            
+//                             // Check if account is active
+//                             if (account.r_e_c__s_t !== 'Active') {
+//                                 console.warn(`DEBUG: GL account ${glAccountNo} is not active (status: ${account.r_e_c__s_t})`);
+//                                 return null;
+//                             }
+                            
+//                             console.log(`DEBUG: ✓ Found GL account: ${account.g_l__a_c_c_t__n_o} - ${account.a_c_c_t__d_e_s_c}`);
+//                             console.log(`DEBUG:   Account Category: ${account.g_l__a_c_c_t__c_a_t}`);
+//                             console.log(`DEBUG:   Balance Code: ${account.b_a_l__c_d}`);
+//                             console.log(`DEBUG:   Current Balance: ₦${parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0).toLocaleString()}`);
+//                             console.log(`DEBUG:   DR Allowed: ${account.d_r__a_l_l_o_w_e_d}, CR Allowed: ${account.c_r__a_l_l_o_w_e_d}`);
+//                             console.log(`DEBUG:   Post Allowed: ${account.p_o_s_t__a_l_l_o_w}`);
+//                             console.log(`DEBUG:   Control Account: ${account.c_o_n_t_r_o_l__a_c_c_t__f_g}, Suspense: ${account.s_u_s_p_e_n_s_e__a_c_c_t__f_g}`);
+                            
+//                             return {
+//                                 accountNo: account.g_l__a_c_c_t__n_o,
+//                                 accountName: account.a_c_c_t__d_e_s_c,
+//                                 accountCategory: account.g_l__a_c_c_t__c_a_t,
+//                                 balanceCode: account.b_a_l__c_d,
+//                                 currentBalance: parseFloat(account.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
+//                                 ledgerBalance: parseFloat(account.l_e_d_g_e_r__b_a_l_a_n_c_e || 0),
+//                                 availableBalance: parseFloat(account.a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e || 0),
+//                                 openingBalance: parseFloat(account.o_p_e_n_i_n_g__b_a_l_a_n_c_e || 0),
+//                                 drAllowed: account.d_r__a_l_l_o_w_e_d,
+//                                 crAllowed: account.c_r__a_l_l_o_w_e_d,
+//                                 postAllowed: account.p_o_s_t__a_l_l_o_w,
+//                                 isControlAccount: account.c_o_n_t_r_o_l__a_c_c_t__f_g,
+//                                 isSuspenseAccount: account.s_u_s_p_e_n_s_e__a_c_c_t__f_g,
+//                                 currency: account.c_u_r_r_e_n_c_y__c_o_d_e || 'NGN',
+//                                 status: account.r_e_c__s_t
+//                             };
+//                         } else {
+//                             console.log(`DEBUG: ✗ GL account ${glAccountNo} not found`);
+//                             return null;
+//                         }
+//                     } catch (error) {
+//                         console.error(`DEBUG: Error checking GL account ${glAccountNo}:`, error.message);
+//                         return null;
+//                     }
+//                 };
+
+//                 // Get details for all required GL accounts from loan product configuration
+//                 console.log("DEBUG: Fetching GL accounts from loan product configuration...");
+//                 const principalGL = await getGLAccountDetails(principalGLAccount);
+//                 const interestGL = interestGLAccount ? await getGLAccountDetails(interestGLAccount) : null;
+//                 const processingFeeGL = processingFeeGLAccount ? await getGLAccountDetails(processingFeeGLAccount) : null;
+
+//                 // ==================== PLACE THE CUSTOMER GL ACCOUNT LOGIC HERE ====================
+//                 // Get Customer GL Account (from customer_accounts or use appropriate GL)
+//                 let customerGL = null;
+
+//                 // First try: Check if customer has a GL account with their account number
+//                 if (customerAccountNumber) {
+//                     customerGL = await getGLAccountDetails(customerAccountNumber);
+//                     if (customerGL) {
+//                         console.log(`DEBUG: Found customer GL account using account number: ${customerAccountNumber}`);
+//                     }
+//                 }
+
+//                 // Second try: Look for customer deposit/savings GL accounts (LIABILITY type)
+//                 if (!customerGL) {
+//                     console.log("DEBUG: Searching for customer deposit GL accounts...");
+                    
+//                     const customerDepositAccounts = await sequelize.query(
+//                         `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c, g_l__a_c_c_t__c_a_t
+//                          FROM gl_accounts 
+//                          WHERE (a_c_c_t__d_e_s_c LIKE '%Customer%' 
+//                                 OR a_c_c_t__d_e_s_c LIKE '%Deposit%'
+//                                 OR a_c_c_t__d_e_s_c LIKE '%Savings%'
+//                                 OR a_c_c_t__d_e_s_c LIKE '%Current Account%')
+//                            AND g_l__a_c_c_t__c_a_t = 'LIABILITY'
+//                            AND r_e_c__s_t = 'Active'
+//                            AND c_r__a_l_l_o_w_e_d = 1
+//                          LIMIT 1`,
+//                         { transaction, type: sequelize.QueryTypes.SELECT }
+//                     );
+                    
+//                     if (customerDepositAccounts && customerDepositAccounts.length > 0) {
+//                         customerGL = await getGLAccountDetails(customerDepositAccounts[0].g_l__a_c_c_t__n_o);
+//                         console.log(`DEBUG: Using customer deposit GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
+//                     }
+//                 }
+
+//                 // Third try: Look for suspense accounts
+//                 if (!customerGL) {
+//                     console.log("DEBUG: Searching for suspense GL accounts...");
+                    
+//                     const suspenseAccounts = await sequelize.query(
+//                         `SELECT g_l__a_c_c_t__n_o 
+//                          FROM gl_accounts 
+//                          WHERE (a_c_c_t__d_e_s_c LIKE '%Suspense%' 
+//                                 OR g_l__a_c_c_t__c_a_t = 'SUSPENSE'
+//                                 OR s_u_s_p_e_n_s_e__a_c_c_t__f_g = 1)
+//                            AND r_e_c__s_t = 'Active'
+//                            AND c_r__a_l_l_o_w_e_d = 1
+//                          LIMIT 1`,
+//                         { transaction, type: sequelize.QueryTypes.SELECT }
+//                     );
+                    
+//                     if (suspenseAccounts && suspenseAccounts.length > 0) {
+//                         customerGL = await getGLAccountDetails(suspenseAccounts[0].g_l__a_c_c_t__n_o);
+//                         console.log(`DEBUG: Using suspense GL account: ${customerGL.accountNo} - ${customerGL.accountName}`);
+//                     }
+//                 }
+
+//                 // Fourth try: If still no customer GL, use the principal GL account as last resort
+//                 if (!customerGL && principalGL) {
+//                     console.warn("DEBUG: No suitable customer GL account found, using principal GL account as suspense");
+//                     customerGL = principalGL;
+//                     console.warn(`DEBUG: WARNING: Using principal GL account (${principalGL.accountNo}) as customer account. This may cause accounting issues.`);
+//                 }
+
+//                 // If we still don't have a customer GL account, throw an error
+//                 if (!customerGL) {
+//                     console.error("DEBUG: ❌ Could not find any suitable GL account for customer");
+//                     throw new Error(`No suitable GL account found for customer. Tried: 
+//                     - Customer account number: ${customerAccountNumber || 'Not available'}
+//                     - Customer deposit accounts
+//                     - Suspense accounts
+//                     - Principal GL account`);
+//                 }
+
+//                 // Validate that principal GL account is found and active
+//                 if (!principalGL) {
+//                     console.error("DEBUG: ❌ Principal GL account not found or not active:", principalGLAccount);
+//                     throw new Error(`Principal GL account ${principalGLAccount} not found or not active. Please verify:
+//                     1. The GL account exists in gl_accounts table
+//                     2. The GL account is marked as 'Active' (r_e_c__s_t = 'Active')
+//                     3. The GL account allows posting (p_o_s_t__a_l_l_o_w = 1)`);
+//                 }
+
+//                 // Validate that customer GL allows credit transactions
+//                 if (customerGL.crAllowed !== 1) {
+//                     console.warn(`DEBUG: ⚠️ Warning: Credit not allowed for customer GL account ${customerGL.accountNo}`);
+//                     console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
+//                 }
+
+//                 // Validate that principal GL allows debit transactions
+//                 if (principalGL.drAllowed !== 1) {
+//                     console.warn(`DEBUG: ⚠️ Warning: Debit not allowed for principal GL account ${principalGL.accountNo}`);
+//                     console.warn("DEBUG: The transaction may fail if posting restrictions are enforced");
+//                 }
+
+//                 // Validate that accounts allow posting
+//                 if (principalGL.postAllowed !== 1) {
+//                     console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for principal GL account ${principalGL.accountNo}`);
+//                 }
+
+//                 if (customerGL.postAllowed !== 1) {
+//                     console.warn(`DEBUG: ⚠️ Warning: Posting not allowed for customer GL account ${customerGL.accountNo}`);
+//                 }
+
+//                 // Log GL account validation summary
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: GL ACCOUNT VALIDATION SUMMARY");
+//                 console.log("DEBUG: =========================================");
+//                 console.log(`DEBUG: Principal GL Account:`);
+//                 console.log(`  Account No: ${principalGL.accountNo}`);
+//                 console.log(`  Account Name: ${principalGL.accountName}`);
+//                 console.log(`  Category: ${principalGL.accountCategory}`);
+//                 console.log(`  Balance: ₦${principalGL.currentBalance.toLocaleString()}`);
+//                 console.log(`  DR Allowed: ${principalGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${principalGL.crAllowed ? 'Yes' : 'No'}`);
+
+//                 console.log(`\nDEBUG: Customer GL Account:`);
+//                 console.log(`  Account No: ${customerGL.accountNo}`);
+//                 console.log(`  Account Name: ${customerGL.accountName}`);
+//                 console.log(`  Category: ${customerGL.accountCategory}`);
+//                 console.log(`  Balance: ₦${customerGL.currentBalance.toLocaleString()}`);
+//                 console.log(`  DR Allowed: ${customerGL.drAllowed ? 'Yes' : 'No'}, CR Allowed: ${customerGL.crAllowed ? 'Yes' : 'No'}`);
+
+//                 if (interestGL) {
+//                     console.log(`\nDEBUG: Interest GL Account:`);
+//                     console.log(`  Account No: ${interestGL.accountNo}`);
+//                     console.log(`  Account Name: ${interestGL.accountName}`);
+//                     console.log(`  Category: ${interestGL.accountCategory}`);
+//                     console.log(`  Balance: ₦${interestGL.currentBalance.toLocaleString()}`);
+//                 }
+
+//                 if (processingFeeGL) {
+//                     console.log(`\nDEBUG: Processing Fee GL Account:`);
+//                     console.log(`  Account No: ${processingFeeGL.accountNo}`);
+//                     console.log(`  Account Name: ${processingFeeGL.accountName}`);
+//                     console.log(`  Category: ${processingFeeGL.accountCategory}`);
+//                     console.log(`  Balance: ₦${processingFeeGL.currentBalance.toLocaleString()}`);
+//                 }
+
+//                 console.log("DEBUG: =========================================");
+//                 console.log("DEBUG: ✓ All GL accounts validated successfully");
+//                 // ==================== END OF CUSTOMER GL ACCOUNT LOGIC ====================
+
+//                 // ==================== 10.4. CREATE GL TRANSACTIONS ====================
+//                 console.log("\nDEBUG: Step 4: Creating GL transactions...");
+                
+//                 // Generate unique TransactionId (BigInt)
+//                 const baseTransactionId = BigInt(Date.now());
+                
+//                 // 1. PRINCIPAL TRANSACTION: DR Principal GL, CR Customer GL (FULL AMOUNT)
+//                 if (principalGL && customerGL) {
+//                     const principalTransactionId = `${transactionId}-PRINCIPAL`;
+//                     const glTransactionId1 = baseTransactionId;
+                    
+//                     await sequelize.query(
+//                         `INSERT INTO gl_account_transactions (
+//                             JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+//                             AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+//                             TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+//                             createdAt, updatedAt
+//                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                         {
+//                             replacements: [
+//                                 journalId,
+//                                 principalTransactionId,
+//                                 principalGL.accountNo,  // DEBIT: Principal Asset increases
+//                                 customerGL.accountNo,   // CREDIT: Customer Liability increases (FULL AMOUNT)
+//                                 disbursementAmount,     // FULL DISBURSEMENT AMOUNT
+//                                 `Loan principal disbursement of ₦${disbursementAmount.toLocaleString()} for ${ACCT_NO} to ${customerName || 'customer'}`,
+//                                 approvedBy,
+//                                 approvedBy,
+//                                 'LOAN_DISBURSEMENT_PRINCIPAL',
+//                                 'NGN',
+//                                 'POSTED',
+//                                 glTransactionId1,
+//                                 sqlDate,
+//                                 sqlDate
+//                             ],
+//                             transaction
+//                         }
+//                     );
+                    
+//                     console.log("DEBUG: ✓ Principal Transaction:");
+//                     console.log(`  DEBIT:  ${principalGL.accountNo} (Principal Asset) +₦${disbursementAmount.toLocaleString()}`);
+//                     console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${disbursementAmount.toLocaleString()}`);
+//                     console.log(`  Note: Full disbursement amount credited to customer`);
+//                 }
+                
+//                 // 2. INTEREST TRANSACTION (if applicable): DR Interest GL, CR Customer GL
+//                 if (interestGL && interestAmount > 0 && customerGL) {
+//                     const interestTransactionId = `${transactionId}-INTEREST`;
+//                     const glTransactionId2 = baseTransactionId + 1n;
+                    
+//                     await sequelize.query(
+//                         `INSERT INTO gl_account_transactions (
+//                             JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+//                             AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+//                             TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+//                             createdAt, updatedAt
+//                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                         {
+//                             replacements: [
+//                                 journalId,
+//                                 interestTransactionId,
+//                                 interestGL.accountNo,   // DEBIT: Interest Asset increases
+//                                 customerGL.accountNo,   // CREDIT: Customer Liability increases further
+//                                 interestAmount,
+//                                 `Loan interest accrual of ₦${interestAmount.toLocaleString()} for ${ACCT_NO}. Rate: ${interestRate}%, Term: ${termValue} months`,
+//                                 approvedBy,
+//                                 approvedBy,
+//                                 'LOAN_DISBURSEMENT_INTEREST',
+//                                 'NGN',
+//                                 'POSTED',
+//                                 glTransactionId2,
+//                                 sqlDate,
+//                                 sqlDate
+//                             ],
+//                             transaction
+//                         }
+//                     );
+                    
+//                     console.log("DEBUG: ✓ Interest Transaction:");
+//                     console.log(`  DEBIT:  ${interestGL.accountNo} (Interest Asset) +₦${interestAmount.toLocaleString()}`);
+//                     console.log(`  CREDIT: ${customerGL.accountNo} (Customer Liability) +₦${interestAmount.toLocaleString()}`);
+//                 }
+                
+//                 // 3. PROCESSING FEE TRANSACTION (if applicable): DR Customer GL, CR Processing Fee GL
+//                 if (processingFeeGL && processingFeeAmount > 0 && customerGL) {
+//                     const feeTransactionId = `${transactionId}-PROCESSING-FEE`;
+//                     const glTransactionId3 = baseTransactionId + 2n;
+                    
+//                     await sequelize.query(
+//                         `INSERT INTO gl_account_transactions (
+//                             JOURNAL_ID, TRANSACTION_ID, DR_ACCT_NO, CR_ACCT_NO, 
+//                             AMOUNT, NARRATION, CREATED_BY, UPDATED_BY,
+//                             TRANSACTION_TYPE, CURRENCY_CODE, STATUS, TransactionId,
+//                             createdAt, updatedAt
+//                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                         {
+//                             replacements: [
+//                                 journalId,
+//                                 feeTransactionId,
+//                                 customerGL.accountNo,      // DEBIT: Customer Liability decreases (fee deducted)
+//                                 processingFeeGL.accountNo, // CREDIT: Processing Fee Revenue increases
+//                                 processingFeeAmount,
+//                                 `Processing fee of ₦${processingFeeAmount.toLocaleString()} for loan ${ACCT_NO}. Rate: ${processingFeeRate}${productConfig?.fee_structure ? '%' : ''}`,
+//                                 approvedBy,
+//                                 approvedBy,
+//                                 'PROCESSING_FEE',
+//                                 'NGN',
+//                                 'POSTED',
+//                                 glTransactionId3,
+//                                 sqlDate,
+//                                 sqlDate
+//                             ],
+//                             transaction
+//                         }
+//                     );
+                    
+//                     console.log("DEBUG: ✓ Processing Fee Transaction:");
+//                     console.log(`  DEBIT:  ${customerGL.accountNo} (Customer Liability) -₦${processingFeeAmount.toLocaleString()}`);
+//                     console.log(`  CREDIT: ${processingFeeGL.accountNo} (Processing Fee Revenue) +₦${processingFeeAmount.toLocaleString()}`);
+//                     console.log(`  Note: Processing fee debited from customer account separately`);
+//                 }
+                
+//                 // ==================== 10.5. CORRECT GL ACCOUNT BALANCES UPDATE ====================
+//                 console.log("\nDEBUG: Step 5: Updating GL account balances with CORRECT accounting...");
+
+//                 // First, let's log all account details
+//                 console.log("\nDEBUG: ACCOUNT DETAILS:");
+//                 console.log(`1. Customer GL: ${customerGL.accountNo} (${customerGL.accountCategory})`);
+//                 console.log(`2. Principal/Portfolio GL: ${principalGL.accountNo} (${principalGL.accountCategory})`);
+//                 console.log(`3. Interest GL: ${interestGL.accountNo} (${interestGL.accountCategory})`);
+//                 console.log(`4. Processing Fee GL: ${processingFeeGL.accountNo} (${processingFeeGL.accountCategory})`);
+
+//                 // Function to update GL accounts with proper accounting
+//                 const updateGLAccountBalance = async (accountNo, amount, isDebit, description) => {
+//                     try {
+//                         const accountDetails = await getGLAccountDetails(accountNo);
+//                         const accountCategory = accountDetails.accountCategory;
+//                         const currentBalance = accountDetails.currentBalance;
+                        
+//                         console.log(`\nDEBUG: Updating ${accountNo} (${accountCategory})`);
+//                         console.log(`  Transaction: ${isDebit ? 'DEBIT' : 'CREDIT'} ₦${amount.toLocaleString()}`);
+//                         console.log(`  Description: ${description}`);
+//                         console.log(`  Current Balance: ₦${currentBalance.toLocaleString()}`);
+                        
+//                         // Determine change amount based on account type
+//                         let changeAmount = 0;
+                        
+//                         if (accountCategory === 'ASSET') {
+//                             // Asset: Debit increases, Credit decreases
+//                             changeAmount = isDebit ? amount : -amount;
+//                             console.log(`  Action: ${isDebit ? 'DEBIT increases' : 'CREDIT decreases'} asset`);
+//                         } else if (accountCategory === 'REVENUE' || accountCategory === 'LIABILITY') {
+//                             // Revenue/Liability: Credit increases, Debit decreases
+//                             changeAmount = isDebit ? -amount : amount;
+//                             console.log(`  Action: ${isDebit ? 'DEBIT decreases' : 'CREDIT increases'} ${accountCategory.toLowerCase()}`);
+//                         }
+                        
+//                         console.log(`  Change: ${changeAmount >= 0 ? '+' : ''}₦${changeAmount.toLocaleString()}`);
+                        
+//                         // Calculate new balance
+//                         const newBalance = currentBalance + changeAmount;
+//                         console.log(`  New Balance: ₦${newBalance.toLocaleString()}`);
+                        
+//                         // Update gl_accounts table
+//                         const glUpdateQuery = `
+//                             UPDATE gl_accounts 
+//                             SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
+//                                 c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
+//                                 a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
+//                                 updated_at = ?
+//                             WHERE g_l__a_c_c_t__n_o = ?
+//                         `;
+                        
+//                         await sequelize.query(glUpdateQuery, {
+//                             replacements: [newBalance, newBalance, newBalance, sqlDate, accountNo],
+//                             transaction
+//                         });
+                        
+//                         // Update ledgers table
+//                         const ledgerUpdateQuery = `
+//                             UPDATE ledgers 
+//                             SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
+//                                 c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
+//                                 a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
+//                                 r_o_w__t_s = ?,
+//                                 updated_at = ?
+//                             WHERE g_l__a_c_c_t__n_o = ?
+//                         `;
+                        
+//                         await sequelize.query(ledgerUpdateQuery, {
+//                             replacements: [newBalance, newBalance, newBalance, sqlDate, sqlDate, accountNo],
+//                             transaction
+//                         });
+                        
+//                         console.log(`  ✓ Both tables updated`);
+                        
+//                         // Update audit trail
+//                         try {
+//                             const auditQuery = `
+//                                 UPDATE gl_accounts 
+//                                 SET balance_history = JSON_ARRAY_APPEND(
+//                                     COALESCE(balance_history, '[]'), 
+//                                     '$', 
+//                                     JSON_OBJECT(
+//                                         'date', ?,
+//                                         'previous_balance', ?,
+//                                         'change', ?,
+//                                         'new_balance', ?,
+//                                         'transaction_type', ?,
+//                                         'loan_account', ?,
+//                                         'description', ?
+//                                     )
+//                                 ),
+//                                 transactions = JSON_ARRAY_APPEND(
+//                                     COALESCE(transactions, '[]'),
+//                                     '$',
+//                                     JSON_OBJECT(
+//                                         'date', ?,
+//                                         'amount', ?,
+//                                         'type', ?,
+//                                         'loan_account', ?,
+//                                         'description', ?,
+//                                         'new_balance', ?
+//                                     )
+//                                 )
+//                                 WHERE g_l__a_c_c_t__n_o = ?
+//                             `;
+                            
+//                             const transactionType = isDebit ? 'DEBIT' : 'CREDIT';
+                            
+//                             await sequelize.query(auditQuery, {
+//                                 replacements: [
+//                                     sqlDate, 
+//                                     currentBalance, 
+//                                     changeAmount, 
+//                                     newBalance,
+//                                     transactionType,
+//                                     ACCT_NO,
+//                                     description,
+//                                     sqlDate, 
+//                                     amount, 
+//                                     transactionType, 
+//                                     ACCT_NO, 
+//                                     description,
+//                                     newBalance,
+//                                     accountNo
+//                                 ],
+//                                 transaction
+//                             });
+                            
+//                             console.log(`  ✓ Audit trail updated`);
+//                         } catch (auditError) {
+//                             console.warn(`  ! Audit trail error: ${auditError.message}`);
+//                         }
+                        
+//                         return newBalance;
+                        
+//                     } catch (error) {
+//                         console.error(`  ✗ Error updating ${accountNo}: ${error.message}`);
+//                         throw error;
+//                     }
+//                 };
+
+//                 // Now apply the CORRECT accounting entries:
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: APPLYING CORRECT ACCOUNTING ENTRIES");
+//                 console.log("DEBUG: =========================================");
+
+//                 // 1. PRINCIPAL DISBURSEMENT (₦500,000)
+//                 console.log("\nDEBUG: 1. PRINCIPAL DISBURSEMENT:");
+//                 // CREDIT Customer GL (Asset: money goes out to customer)
+//                 // This REDUCES customer's balance
+//                 await updateGLAccountBalance(
+//                     customerGL.accountNo,
+//                     disbursementAmount,
+//                     false, // CREDIT (decreases asset)
+//                     `Principal disbursement to customer - Loan ${ACCT_NO}`
+//                 );
+
+//                 // DEBIT Loan Portfolio GL (Asset: loan receivable increases)
+//                 // This INCREASES loan portfolio
+//                 await updateGLAccountBalance(
+//                     principalGL.accountNo,
+//                     disbursementAmount,
+//                     true, // DEBIT (increases asset)
+//                     `Loan portfolio increase - Loan ${ACCT_NO}`
+//                 );
+
+//                 // 2. INTEREST ACCRUAL (₦186,000)
+//                 console.log("\nDEBUG: 2. INTEREST ACCRUAL:");
+//                 // DEBIT Customer GL (Asset: interest owed increases loan amount)
+//                 // This INCREASES customer's loan balance
+//                 await updateGLAccountBalance(
+//                     customerGL.accountNo,
+//                     interestAmount,
+//                     true, // DEBIT (increases asset - customer owes more)
+//                     `Interest accrual added to loan - Loan ${ACCT_NO}`
+//                 );
+
+//                 // CREDIT Interest Income GL (Revenue: interest income earned)
+//                 // This INCREASES interest income
+//                 await updateGLAccountBalance(
+//                     interestGL.accountNo,
+//                     interestAmount,
+//                     false, // CREDIT (increases revenue)
+//                     `Interest income earned - Loan ${ACCT_NO}`
+//                 );
+
+//                 // 3. PROCESSING FEE (₦15,000) - DEDUCTED FROM CUSTOMER ACCOUNT
+//                 console.log("\nDEBUG: 3. PROCESSING FEE (Deducted from customer account):");
+//                 // Since processing fee is paid FROM customer account (not added to loan):
+//                 // CREDIT Customer GL (Asset: fee deducted from customer balance)
+//                 // This REDUCES customer's account balance
+//                 await updateGLAccountBalance(
+//                     customerGL.accountNo,
+//                     processingFeeAmount,
+//                     false, // CREDIT (decreases asset)
+//                     `Processing fee deducted from account - Loan ${ACCT_NO}`
+//                 );
+
+//                 // DEBIT Processing Fee GL (Revenue: fee income earned)
+//                 // OR if Processing Fee GL is REVENUE: CREDIT increases it
+//                 await updateGLAccountBalance(
+//                     processingFeeGL.accountNo,
+//                     processingFeeAmount,
+//                     false, // CREDIT (increases revenue)
+//                     `Processing fee income - Loan ${ACCT_NO}`
+//                 );
+
+//                 // SUMMARY
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: TRANSACTION SUMMARY");
+//                 console.log("DEBUG: =========================================");
+
+//                 console.log(`\nLoan ${ACCT_NO}:`);
+//                 console.log(`Principal Disbursed: ₦${disbursementAmount.toLocaleString()}`);
+//                 console.log(`Interest Accrued: ₦${interestAmount.toLocaleString()}`);
+//                 console.log(`Processing Fee Deducted: ₦${processingFeeAmount.toLocaleString()}`);
+
+//                 console.log(`\nCustomer's Position:`);
+//                 console.log(`- Received: ₦${disbursementAmount.toLocaleString()} (principal)`);
+//                 console.log(`- Owes: ₦${(disbursementAmount + interestAmount).toLocaleString()} (principal + interest)`);
+//                 console.log(`- Paid: ₦${processingFeeAmount.toLocaleString()} (processing fee)`);
+
+//                 // Get final balances
+//                 const getFinalBalance = async (accountNo) => {
+//                     const query = `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`;
+//                     const [result] = await sequelize.query(query, {
+//                         replacements: [accountNo],
+//                         type: sequelize.QueryTypes.SELECT
+//                     });
+//                     return result?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
+//                 };
+
+//                 const finalBalances = {
+//                     customer: await getFinalBalance(customerGL.accountNo),
+//                     principal: await getFinalBalance(principalGL.accountNo),
+//                     interest: await getFinalBalance(interestGL.accountNo),
+//                     processingFee: await getFinalBalance(processingFeeGL.accountNo)
+//                 };
+
+//                 console.log("\nDEBUG: FINAL BALANCES:");
+//                 console.log(`Customer GL: ₦${finalBalances.customer.toLocaleString()}`);
+//                 console.log(`Principal/Portfolio GL: ₦${finalBalances.principal.toLocaleString()}`);
+//                 console.log(`Interest GL: ₦${finalBalances.interest.toLocaleString()}`);
+//                 console.log(`Processing Fee GL: ₦${finalBalances.processingFee.toLocaleString()}`);
+
+//                 // Calculate expected values based on account types
+//                 console.log("\nDEBUG: EXPECTED VALUES:");
+
+//                 // Customer GL (ASSET account):
+//                 // - CREDIT ₦500,000 (disbursement) = -500,000
+//                 // - DEBIT ₦186,000 (interest) = +186,000  
+//                 // - CREDIT ₦15,000 (processing fee) = -15,000
+//                 // Expected: -500,000 + 186,000 - 15,000 = -329,000
+//                 const customerExpected = -disbursementAmount + interestAmount - processingFeeAmount;
+//                 console.log(`Customer GL should be: ₦${customerExpected.toLocaleString()} (Negative balance = customer owes bank)`);
+
+//                 // Principal GL (ASSET account):
+//                 // - DEBIT ₦500,000 = +500,000
+//                 const principalExpected = disbursementAmount;
+//                 console.log(`Principal GL should be: ₦${principalExpected.toLocaleString()} (Loan portfolio asset)`);
+
+//                 // Interest GL (REVENUE account):
+//                 // - CREDIT ₦186,000 = +186,000
+//                 const interestExpected = interestAmount;
+//                 console.log(`Interest GL should be: ₦${interestExpected.toLocaleString()} (Interest income)`);
+
+//                 // Processing Fee GL (REVENUE account):
+//                 // - CREDIT ₦15,000 = +15,000
+//                 const feeExpected = processingFeeAmount;
+//                 console.log(`Processing Fee GL should be: ₦${feeExpected.toLocaleString()} (Fee income)`);
+
+//                 // Verify
+//                 console.log("\nDEBUG: VERIFICATION:");
+//                 console.log(`Customer GL: ${Math.abs(finalBalances.customer - customerExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${customerExpected.toLocaleString()}, Actual: ₦${finalBalances.customer.toLocaleString()})`);
+//                 console.log(`Principal GL: ${Math.abs(finalBalances.principal - principalExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${principalExpected.toLocaleString()}, Actual: ₦${finalBalances.principal.toLocaleString()})`);
+//                 console.log(`Interest GL: ${Math.abs(finalBalances.interest - interestExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${interestExpected.toLocaleString()}, Actual: ₦${finalBalances.interest.toLocaleString()})`);
+//                 console.log(`Processing Fee GL: ${Math.abs(finalBalances.processingFee - feeExpected) < 0.01 ? '✓' : '✗'} (Expected: ₦${feeExpected.toLocaleString()}, Actual: ₦${finalBalances.processingFee.toLocaleString()})`);
+
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: ✓ ACCOUNTING COMPLETE");
+//                 console.log("DEBUG: =========================================");
+                
+//                 // ==================== 10.6. UPDATE CUSTOMER ACCOUNT WITH PROCESSING FEE ====================
+//                 console.log("\nDEBUG: Step 6: Updating customer account with processing fee...");
+                
+//                 if (customerAccountNumber && customerAccountsTableRecord && processingFeeAmount > 0) {
+//                     try {
+//                         // Calculate customer's final balance after all transactions
+//                         const customerFinalCredit = disbursementAmount; // Full disbursement credited
+//                         const customerFinalDebit = processingFeeAmount; // Processing fee debited
+//                         const customerNetChange = customerFinalCredit - customerFinalDebit;
+                        
+//                         console.log("DEBUG: Customer Account Reconciliation:");
+//                         console.log(`DEBUG:   Credit (Loan Disbursement): +₦${customerFinalCredit.toLocaleString()}`);
+//                         console.log(`DEBUG:   Debit (Processing Fee): -₦${customerFinalDebit.toLocaleString()}`);
+//                         console.log(`DEBUG:   Net Change: +₦${customerNetChange.toLocaleString()}`);
+                        
+//                         // Get current balances
+//                         const currentLedgerBalance = parseFloat(customerAccountsTableRecord.ledger_balance || 0);
+//                         const currentAvailableBalance = parseFloat(customerAccountsTableRecord.available_balance || 0);
+//                         const currentClearedBalance = parseFloat(customerAccountsTableRecord.cleared_balance || 0);
+//                         const currentBalance = parseFloat(customerAccountsTableRecord.current_balance || 0);
+                        
+//                         // Calculate new balances (full disbursement minus processing fee)
+//                         const newLedgerBalance = currentLedgerBalance + customerNetChange;
+//                         const newAvailableBalance = currentAvailableBalance + customerNetChange;
+//                         const newClearedBalance = currentClearedBalance + customerNetChange;
+//                         const newCurrentBalance = currentBalance + customerNetChange;
+                        
+//                         console.log("DEBUG: Updating customer_accounts table...");
+                        
+//                         // Update customer_accounts table
+//                         await sequelize.query(
+//                             `UPDATE customer_accounts 
+//                              SET ledger_balance = ${newLedgerBalance},
+//                                  available_balance = ${newAvailableBalance},
+//                                  cleared_balance = ${newClearedBalance},
+//                                  current_balance = ${newCurrentBalance},
+//                                  last_transaction_date = '${sqlDate}',
+//                                  updated_at = '${sqlDate}'
+//                              WHERE account_number = '${customerAccountNumber}'`,
+//                             { transaction }
+//                         );
+                        
+//                         console.log("DEBUG: ✓ Customer account updated:");
+//                         console.log(`DEBUG:   Previous Balance: ₦${currentBalance.toLocaleString()}`);
+//                         console.log(`DEBUG:   Net Credit: +₦${customerNetChange.toLocaleString()}`);
+//                         console.log(`DEBUG:   New Balance: ₦${newCurrentBalance.toLocaleString()}`);
+                        
+//                     } catch (custError) {
+//                         console.error("DEBUG: Error updating customer account with processing fee:", custError.message);
+//                     }
+//                 }
+                
+//                 // ==================== 10.7. SUMMARY ====================
+//                 console.log("\nDEBUG: =========================================");
+//                 console.log("DEBUG: LEDGER POSTING SUMMARY");
+//                 console.log("DEBUG: =========================================");
+//                 console.log(`DEBUG: Journal ID: ${journalId}`);
+//                 console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
+//                 console.log(`DEBUG: Customer: ${customerName || 'N/A'}`);
+//                 console.log(`DEBUG: Customer Account: ${customerAccountNumber || 'N/A'}`);
+//                 console.log("\nDEBUG: TRANSACTION BREAKDOWN:");
+//                 console.log(`DEBUG: 1. Principal Disbursement: ₦${disbursementAmount.toLocaleString()}`);
+//                 if (interestAmount > 0) {
+//                     console.log(`DEBUG: 2. Interest Accrual: ₦${interestAmount.toLocaleString()}`);
+//                 }
+//                 if (processingFeeAmount > 0) {
+//                     console.log(`DEBUG: 3. Processing Fee: ₦${processingFeeAmount.toLocaleString()}`);
+//                 }
+                
+//                 console.log("\nDEBUG: CUSTOMER IMPACT:");
+//                 console.log(`DEBUG:   Total Credit (Loan): +₦${disbursementAmount.toLocaleString()}`);
+//                 if (processingFeeAmount > 0) {
+//                     console.log(`DEBUG:   Processing Fee Debit: -₦${processingFeeAmount.toLocaleString()}`);
+//                     console.log(`DEBUG:   Net to Customer: ₦${(disbursementAmount - processingFeeAmount).toLocaleString()}`);
+//                 } else {
+//                     console.log(`DEBUG:   Net to Customer: ₦${disbursementAmount.toLocaleString()}`);
+//                 }
+                
+//                 console.log("\nDEBUG: GL ACCOUNTS USED:");
+//                 console.log(`DEBUG:   Principal GL: ${principalGL?.accountNo || 'N/A'}`);
+//                 console.log(`DEBUG:   Interest GL: ${interestGL?.accountNo || 'N/A'}`);
+//                 console.log(`DEBUG:   Processing Fee GL: ${processingFeeGL?.accountNo || 'N/A'}`);
+//                 console.log(`DEBUG:   Customer GL: ${customerGL?.accountNo || 'N/A'}`);
+//                 console.log("DEBUG: =========================================");
+                
+//             } else {
+//                 console.log("DEBUG: ledgers table does not exist, skipping ledger posting");
+//             }
+            
+//         } catch (glError) {
+//             console.error("DEBUG: GL posting failed:", glError.message);
+//             console.error("DEBUG: Error stack:", glError.stack);
+//             // Don't rollback for GL errors - they're not critical for the loan disbursement
+//         }
+
+//         // ==================== 11. CREATE AUDIT LOG ====================
+//         try {
+//             const auditTables = await sequelize.query(
+//                 `SELECT TABLE_NAME 
+//                  FROM INFORMATION_SCHEMA.TABLES 
+//                  WHERE TABLE_SCHEMA = DATABASE() 
+//                  AND TABLE_NAME = 'audit_logs'`,
+//                 { transaction, type: sequelize.QueryTypes.SELECT }
+//             );
+            
+//             if (auditTables.length > 0) {
+//                 await sequelize.query(
+//                     `INSERT INTO audit_logs (
+//                         action, entity_type, entity_id, description,
+//                         performed_by, performed_at, old_values, new_values,
+//                         transaction_id, amount
+//                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//                     {
+//                         replacements: [
+//                             'LOAN_DISBURSEMENT',
+//                             'LOAN_ACCOUNT',
+//                             loanAccount.id,
+//                             `Loan ${ACCT_NO} approved and disbursed by ${approvedBy}`,
+//                             approvedBy,
+//                             now,
+//                             JSON.stringify({ 
+//                                 status: currentStatus, 
+//                                 disbursed_amount: currentDisbursedAmount,
+//                                 outstanding_principal: currentOutstandingPrincipal,
+//                                 loan_amount: loanAccount.a_m_o_u_n_t,
+//                                 customer_id: customerId,
+//                                 numeric_customer_id: numericCustomerId
+//                             }),
+//                             JSON.stringify({ 
+//                                 status: 'ACTIVE', 
+//                                 disbursed_amount: currentStatus === 'ACTIVE' 
+//                                     ? (currentDisbursedAmount + disbursementAmount)
+//                                     : disbursementAmount,
+//                                 outstanding_principal: currentStatus === 'ACTIVE'
+//                                     ? (currentOutstandingPrincipal + disbursementAmount)
+//                                     : disbursementAmount,
+//                                 loan_amount: -disbursementAmount,
+//                                 disbursement_date: now,
+//                                 customer_account: customerAccountNumber,
+//                                 customer_account_balance_impact: customerAccountNumber ? `+₦${disbursementAmount.toLocaleString()}` : 'No customer account found',
+//                                 tables_updated: [
+//                                     accountsTableRecord ? 'accounts' : null,
+//                                     customerAccountsTableRecord ? 'customer_accounts' : 'new_record_created'
+//                                 ].filter(Boolean),
+//                                 customer_id_converted: numericCustomerId
+//                             }),
+//                             `DISB-${Date.now()}`,
+//                             disbursementAmount
+//                         ],
+//                         transaction
+//                     }
+//                 );
+//                 console.log("DEBUG: Audit log created");
+//             } else {
+//                 console.log("DEBUG: audit_logs table does not exist, skipping audit log");
+//             }
+//         } catch (auditError) {
+//             console.error("DEBUG: Could not create audit log:", auditError.message);
+//         }
+//       // ==================== HELPER FUNCTION: generateContractText ====================
+// function generateContractText(loanDetails, customerDetails, productDetails, effectiveInterestRate) {
+//     const now = new Date();
+//     const formattedDate = now.toLocaleDateString('en-US', { 
+//         year: 'numeric', 
+//         month: 'long', 
+//         day: 'numeric' 
+//     });
+    
+//     const maturityDate = loanDetails.LAST_PAYMENT_DATE.toLocaleDateString('en-US', {
+//         year: 'numeric',
+//         month: 'long',
+//         day: 'numeric'
+//     });
+    
+//     const firstPaymentDate = loanDetails.FIRST_PAYMENT_DATE.toLocaleDateString('en-US', {
+//         year: 'numeric',
+//         month: 'long',
+//         day: 'numeric'
+//     });
+    
+//     // Calculate monthly payment
+//     const principal = loanDetails.AMOUNT;
+//     const annualRate = effectiveInterestRate / 100;
+//     const monthlyRate = annualRate / 12;
+//     const numberOfPayments = loanDetails.NUMBER_OF_INSTALLMENTS;
+    
+//     let monthlyPayment = 0;
+//     if (monthlyRate > 0) {
+//         monthlyPayment = (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
+//                         (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+//     } else {
+//         monthlyPayment = principal / numberOfPayments;
+//     }
+    
+//     // Build the contract text
+//     const contractText = `
+// LOAN AGREEMENT AND CONTRACT
+
+// THIS LOAN AGREEMENT is made and entered into on this ${formattedDate}
+
+// BETWEEN:
+
+// ${process.env.BANK_NAME || "OUR BANK PLC"}
+// (hereinafter referred to as "the Lender")
+
+// AND:
+
+// ${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
+// Address: ${customerDetails.HOME_ADDRESS || "Address Not Provided"}
+// (hereinafter referred to as "the Borrower")
+
+// WHEREAS:
+// 1. The Borrower has applied for a loan from the Lender.
+// 2. The Lender has agreed to grant the loan to the Borrower subject to the terms and conditions herein.
+
+// NOW, THEREFORE, in consideration of the mutual covenants and promises herein contained, the parties agree as follows:
+
+// ARTICLE 1: LOAN DETAILS
+// 1.1 Loan Amount: ₦${loanDetails.AMOUNT.toLocaleString()}
+// 1.2 Disbursement Date: ${loanDetails.DISBURSEMENT_DATE.toLocaleDateString()}
+// 1.3 Interest Rate: ${effectiveInterestRate}% per annum
+// 1.4 Loan Term: ${loanDetails.TERM_VALUE} ${loanDetails.TERM_CD === 'M' ? 'Months' : 'Years'}
+// 1.5 Maturity Date: ${maturityDate}
+// 1.6 Purpose of Loan: ${loanDetails.loan_purpose || "General Business Purpose"}
+
+// ARTICLE 2: REPAYMENT TERMS
+// 2.1 Number of Installments: ${loanDetails.NUMBER_OF_INSTALLMENTS}
+// 2.2 Monthly Installment: ₦${monthlyPayment.toFixed(2).toLocaleString()}
+// 2.3 First Payment Date: ${firstPaymentDate}
+// 2.4 Payment Method: Direct debit from the Borrower's account with the Lender
+// 2.5 Account for Repayment: ${customerDetails.ACCT_NM || "Borrower's Account"}
+
+// ARTICLE 3: INTEREST AND CHARGES
+// 3.1 Interest shall accrue on the outstanding principal balance from the disbursement date.
+// 3.2 Interest is calculated on a monthly reducing balance basis.
+// 3.3 Late payment penalty: 5% of the overdue amount per month.
+// 3.4 Early repayment is allowed without penalty after 3 months.
+
+// ARTICLE 4: DEFAULT AND REMEDIES
+// 4.1 The Borrower shall be in default if:
+//     a) Any installment is not paid within 7 days of its due date;
+//     b) The Borrower becomes insolvent or bankrupt;
+//     c) Any representation or warranty made by the Borrower is false.
+// 4.2 Upon default, the Lender may:
+//     a) Declare the entire outstanding amount immediately due and payable;
+//     b) Charge default interest at 15% per annum;
+//     c) Exercise any other rights available under applicable law.
+
+// ARTICLE 5: REPRESENTATIONS AND WARRANTIES
+// The Borrower represents and warrants that:
+// 5.1 All information provided is true and accurate.
+// 5.2 The Borrower has the capacity to enter into this agreement.
+// 5.3 The loan proceeds will be used solely for the purpose stated in Article 1.6.
+
+// ARTICLE 6: GOVERNING LAW
+// This agreement shall be governed by and construed in accordance with the laws of Nigeria.
+
+// ARTICLE 7: SIGNATURES
+// IN WITNESS WHEREOF, the parties have executed this agreement on the date first above written.
+
+// _________________________
+// For and on behalf of
+// ${process.env.BANK_NAME || "OUR BANK PLC"}
+
+// Name: ___________________
+// Title: __________________
+// Date: ___________________
+
+// _________________________
+// The Borrower
+
+// Name: ${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
+// Signature: ___________________
+// Date: ___________________
+
+// WITNESS:
+// _________________________
+// Name: ___________________
+// Address: ________________
+// Date: ___________________
+
+// This document constitutes the entire agreement between the parties.
+//     `;
+    
+//     return contractText;
+// }
+
+// // ==================== X. CREATE LOAN CONTRACT FORM ====================
+// console.log("\nDEBUG: Creating loan contract form...");
+
+// try {
+//     // Check if loan_contract_forms table exists
+//     const contractsTableCheck = await sequelize.query(
+//         `SELECT TABLE_NAME 
+//          FROM INFORMATION_SCHEMA.TABLES 
+//          WHERE TABLE_SCHEMA = DATABASE() 
+//          AND TABLE_NAME = 'loan_contract_forms'`,
+//         { transaction, type: sequelize.QueryTypes.SELECT }
+//     );
+    
+//     if (contractsTableCheck.length === 0) {
+//         console.log("DEBUG: loan_contract_forms table does not exist, creating it...");
+        
+//         await sequelize.query(`
+//             CREATE TABLE IF NOT EXISTS loan_contract_forms (
+//                 id INT PRIMARY KEY AUTO_INCREMENT,
+//                 loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
+//                 customer_id VARCHAR(255) NOT NULL,
+//                 borrower_name VARCHAR(255) NOT NULL,
+//                 co_signatory_name VARCHAR(255) DEFAULT '',
+//                 borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
+//                 loan_purpose VARCHAR(255) NOT NULL,
+//                 loan_amount VARCHAR(255) NOT NULL,
+//                 loan_term INT(11) NOT NULL,
+//                 t_e_r_m__c_d ENUM('M','Y') DEFAULT 'M',
+//                 interest_rate DECIMAL(7,4) NOT NULL,
+//                 interest_rate_id INT(11) DEFAULT 101,
+//                 guarantor_name VARCHAR(255) DEFAULT '',
+//                 bank_name VARCHAR(255) NOT NULL,
+//                 bank_short VARCHAR(255) NOT NULL,
+//                 status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') DEFAULT 'PENDING',
+//                 contract_text TEXT NOT NULL,
+//                 u_s_e_r__i_d VARCHAR(255) NOT NULL,
+//                 application_id VARCHAR(255) NOT NULL,
+//                 loan_account_no VARCHAR(255) NOT NULL,
+//                 funding_account_no VARCHAR(255) NOT NULL,
+//                 workflow_id BIGINT(20) UNIQUE,
+//                 fees LONGTEXT NOT NULL,
+//                 signature_requirements LONGTEXT NOT NULL,
+//                 metadata LONGTEXT NOT NULL,
+//                 disbursement_date DATETIME,
+//                 maturity_date DATETIME,
+//                 created_at DATETIME NOT NULL,
+//                 updated_at DATETIME NOT NULL
+//             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+//             { transaction }
+//         );
+        
+//         console.log("DEBUG: ✓ loan_contract_forms table created");
+//     }
+    
+//     // Generate contract number
+//     const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
+    
+//     // Calculate maturity date based on term
+//     const termCode = loanAccount.t_e_r_m__c_d || 'M';
+//     const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
+//     const maturityDate = new Date(now);
+    
+//     if (termCode === 'M') {
+//         maturityDate.setMonth(maturityDate.getMonth() + termValue);
+//     } else if (termCode === 'Y') {
+//         maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
+//     }
+    
+//     // Get loan product details for contract - WITH FALLBACK LOGIC
+//     let loanProductDetails = {};
+//     let effectiveInterestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+//     let processingFeeAmount = 0;
+//     let processingFeeRate = 0;
+//     let principalGLAccount = null;
+//     let interestGLAccount = null;
+//     let processingFeeGLAccount = null;
+
+//     // Check if productConfig exists, if not, try to get it again
+//     if (!productConfig) {
+//         console.log("DEBUG: productConfig not found in scope, attempting to retrieve loan product...");
+//         try {
+//             // Get the product ID from loan account (updated during GL posting)
+//             const productId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 1001;
+            
+//             const productQuery = `
+//                 SELECT lp.*, 
+//                        JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
+//                        JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
+//                        JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
+//                        JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
+//                        lp.processing_fee_g_l_code,
+//                        lp.processing_fee_rate,
+//                        lp.effective_interest_rate,
+//                        lp.interest_rate,
+//                        lp.fee_structure,
+//                        lp.rate_information
+//                 FROM loan_products lp
+//                 WHERE lp.p_r_o_d__i_d = ?
+//                 LIMIT 1
+//             `;
+            
+//             const [productResult] = await sequelize.query(productQuery, {
+//                 replacements: [productId],
+//                 transaction,
+//                 type: sequelize.QueryTypes.SELECT
+//             });
+            
+//             if (productResult) {
+//                 productConfig = productResult;
+//                 console.log("DEBUG: Retrieved productConfig successfully for contract");
+                
+//                 // Extract GL accounts for reference in contract metadata
+//                 if (productResult.default_g_l_accounts) {
+//                     try {
+//                         const glAccounts = JSON.parse(productResult.default_g_l_accounts);
+//                         principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+//                         interestGLAccount = glAccounts.interestGLAccountNo;
+//                         processingFeeGLAccount = glAccounts.processingFeeGLCode;
+//                     } catch (e) {
+//                         console.warn("DEBUG: Could not parse GL accounts JSON for contract");
+//                     }
+//                 }
+                
+//                 // Get processing fee details
+//                 processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
+//                 processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+//             } else {
+//                 console.warn("DEBUG: Could not retrieve productConfig from database");
+//             }
+//         } catch (error) {
+//             console.warn("DEBUG: Error retrieving productConfig for contract:", error.message);
+//         }
+//     } else {
+//         console.log("DEBUG: Using existing productConfig for contract");
+        
+//         // Extract GL accounts from existing productConfig
+//         if (productConfig.default_g_l_accounts) {
+//             try {
+//                 const glAccounts = JSON.parse(productConfig.default_g_l_accounts);
+//                 principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+//                 interestGLAccount = glAccounts.interestGLAccountNo;
+//                 processingFeeGLAccount = glAccounts.processingFeeGLCode;
+//             } catch (e) {
+//                 console.warn("DEBUG: Could not parse GL accounts JSON from existing productConfig");
+//             }
+//         }
+        
+//         // Get processing fee details
+//         processingFeeRate = parseFloat(productConfig.processing_fee_rate || 0);
+//         processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+//     }
+    
+//     // Set loan product details
+//     if (productConfig) {
+//         loanProductDetails = {
+//             interestRate: parseFloat(productConfig.interest_rate) || effectiveInterestRate,
+//             feeStructure: productConfig.fee_structure ? JSON.parse(productConfig.fee_structure) : [],
+//             processingFeeRate: processingFeeRate,
+//             rateInformation: productConfig.rate_information ? JSON.parse(productConfig.rate_information) : {}
+//         };
+        
+//         // Try to get effective interest rate from loan product
+//         if (productConfig.effective_interest_rate) {
+//             try {
+//                 effectiveInterestRate = parseFloat(productConfig.effective_interest_rate);
+//             } catch (e) {
+//                 console.warn("DEBUG: Could not parse effective interest rate, using loan account rate");
+//             }
+//         }
+//     } else {
+//         console.warn("DEBUG: No productConfig available, using loan account values");
+//         loanProductDetails = {
+//             interestRate: effectiveInterestRate,
+//             feeStructure: [],
+//             processingFeeRate: 0,
+//             rateInformation: {}
+//         };
+//     }
+    
+//     // Prepare loan details for contract
+//     const firstPaymentDate = new Date(now); // Create a new date object
+//     firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
+    
+//     const loanDetails = {
+//         AMOUNT: disbursementAmount,
+//         INTEREST_RATE: effectiveInterestRate,
+//         TERM_VALUE: termValue,
+//         TERM_CD: termCode,
+//         DISBURSEMENT_DATE: new Date(now), // Create a copy of now
+//         FIRST_PAYMENT_DATE: firstPaymentDate,
+//         LAST_PAYMENT_DATE: maturityDate,
+//         NUMBER_OF_INSTALLMENTS: termValue,
+//         borrower_name: customerName || loanAccount.a_c_c_t__n_m || 'Customer',
+//         borrower_address: loanAccount.borrower_address || customerAccountDetails?.address || 'Address Not Provided',
+//         loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
+//     };
+    
+//     // Prepare customer details
+//     const customerDetails = {
+//         ACCT_NM: customerName,
+//         CUST_NM: customerName,
+//         HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+//     };
+    
+//     // Generate contract text using your function
+//     const contractText = generateContractText(loanDetails, customerDetails, loanProductDetails, effectiveInterestRate);
+    
+//     console.log("DEBUG: Contract text generated successfully");
+    
+//     // Prepare fees data
+//     let feesData = [];
+//     if (productConfig?.fee_structure) {
+//         try {
+//             feesData = JSON.parse(productConfig.fee_structure);
+//         } catch (e) {
+//             console.warn("DEBUG: Could not parse fee structure");
+//             feesData = [];
+//         }
+//     }
+    
+//     // Prepare signature requirements
+//     const signatureRequirements = {
+//         requiredSignatures: [
+//             {
+//                 role: "Borrower",
+//                 name: customerName,
+//                 required: true
+//             },
+//             {
+//                 role: "Lender Representative",
+//                 name: approvedBy,
+//                 required: true
+//             }
+//         ],
+//         coSignatories: [],
+//         witnessRequired: false
+//     };
+    
+//     // Add guarantor if exists
+//     if (loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e) {
+//         signatureRequirements.requiredSignatures.push({
+//             role: "Guarantor",
+//             name: loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e,
+//             required: true
+//         });
+//         signatureRequirements.coSignatories.push(loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e);
+//     }
+    
+//     // Prepare metadata
+//     const metadata = {
+//         generatedBy: approvedBy,
+//         generationDate: now.toISOString(),
+//         loanProductId: productConfig?.p_r_o_d__i_d || loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 'Unknown',
+//         loanAccountNumber: ACCT_NO,
+//         customerAccountNumber: customerAccountNumber,
+//         disbursementAmount: disbursementAmount,
+//         interestAmount: (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100), // Calculate interest
+//         processingFeeAmount: processingFeeAmount,
+//         processingFeeRate: processingFeeRate,
+//         effectiveInterestRate: effectiveInterestRate,
+//         termDetails: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
+//         glAccounts: {
+//             principalGL: principalGLAccount,
+//             interestGL: interestGLAccount,
+//             processingFeeGL: processingFeeGLAccount
+//         },
+//         customerDetails: {
+//             customerId: customerId,
+//             customerName: customerName,
+//             accountNumber: customerAccountNumber
+//         },
+//         financialSummary: {
+//             totalLoanAmount: disbursementAmount,
+//             totalPayable: disbursementAmount + (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100),
+//             monthlyPayment: calculateMonthlyPayment(disbursementAmount, effectiveInterestRate, termValue, termCode)
+//         }
+//     };
+    
+//     // Helper function to calculate monthly payment
+//     function calculateMonthlyPayment(principal, annualRate, termValue, termCode) {
+//         const annualRateDecimal = annualRate / 100;
+//         let monthlyRate, numberOfPayments;
+        
+//         if (termCode === 'M') {
+//             monthlyRate = annualRateDecimal / 12;
+//             numberOfPayments = termValue;
+//         } else {
+//             // For years, convert to months
+//             monthlyRate = annualRateDecimal / 12;
+//             numberOfPayments = termValue * 12;
+//         }
+        
+//         if (monthlyRate > 0) {
+//             return (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
+//                    (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
+//         } else {
+//             return principal / numberOfPayments;
+//         }
+//     }
+    
+//     // Insert contract into loan_contract_forms table
+//     const contractResult = await sequelize.query(
+//         `INSERT INTO loan_contract_forms (
+//             loan_contract_no,
+//             customer_id,
+//             borrower_name,
+//             co_signatory_name,
+//             borrower_address,
+//             loan_purpose,
+//             loan_amount,
+//             loan_term,
+//             t_e_r_m__c_d,
+//             interest_rate,
+//             interest_rate_id,
+//             guarantor_name,
+//             bank_name,
+//             bank_short,
+//             status,
+//             contract_text,
+//             u_s_e_r__i_d,
+//             application_id,
+//             loan_account_no,
+//             funding_account_no,
+//             workflow_id,
+//             fees,
+//             signature_requirements,
+//             metadata,
+//             disbursement_date,
+//             maturity_date,
+//             created_at,
+//             updated_at
+//         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+//         {
+//             replacements: [
+//                 contractNumber,
+//                 customerId,
+//                 customerName,
+//                 loanAccount.co_signatory_name || '',
+//                 loanAccount.borrower_address || 'Address Not Provided',
+//                 loanAccount.loan_purpose || 'General Business Purpose',
+//                 disbursementAmount.toString(),
+//                 termValue,
+//                 termCode,
+//                 effectiveInterestRate,
+//                 101, // Default interest rate ID
+//                 loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
+//                 process.env.BANK_NAME || 'Our Bank',
+//                 process.env.BANK_SHORT_NAME || 'BANK',
+//                 'DISBURSED',
+//                 contractText,
+//                 approvedBy,
+//                 ACCT_NO, // Using loan account as application ID
+//                 ACCT_NO,
+//                 customerAccountNumber || 'N/A',
+//                 null, // workflow_id
+//                 JSON.stringify(feesData),
+//                 JSON.stringify(signatureRequirements),
+//                 JSON.stringify(metadata),
+//                 now,
+//                 maturityDate,
+//                 now,
+//                 now
+//             ],
+//             transaction
+//         }
+//     );
+    
+//     const contractId = contractResult[0].insertId;
+//     console.log(`DEBUG: ✓ Created loan contract form ID: ${contractId}, Contract No: ${contractNumber}`);
+    
+//     // Also update loan_accounts with contract reference
+//     await sequelize.query(
+//         `UPDATE loan_accounts 
+//          SET l_o_a_n__c_o_n_t_r_a_c_t__n_o = ?,
+//              contract_status = 'SIGNED'
+//          WHERE a_c_c_t__n_o = ?`,
+//         {
+//             replacements: [contractNumber, ACCT_NO],
+//             transaction
+//         }
+//     );
+    
+//     console.log("DEBUG: ✓ Loan contract form created and linked to loan account");
+    
+//     // Store contract reference for response (INSIDE the try block)
+//     const contractRecord = {
+//         id: contractId,
+//         contractNumber: contractNumber,
+//         status: 'DISBURSED',
+//         generatedDate: now,
+//         maturityDate: maturityDate
+//     };
+    
+// } catch (contractError) {
+//     console.error("DEBUG: ✗ Error creating loan contract form:", contractError.message);
+//     console.error("DEBUG: Contract error stack:", contractError.stack);
+//     // Don't rollback for contract errors - it's not critical for disbursement
+// }
+
+//         // ==================== 12. UPDATE LOAN PORTFOLIO ====================
+//         try {
+//             console.log("\nDEBUG: =========================================");
+//             console.log("DEBUG: UPDATING LOAN PORTFOLIO");
+//             console.log("DEBUG: =========================================");
+            
+//             // Use simpler table check
+//             const portfolioTableCheck = await sequelize.query(
+//                 `SHOW TABLES LIKE 'loan_portfolio'`,
+//                 { transaction, type: sequelize.QueryTypes.SELECT }
+//             );
+            
+//             console.log("DEBUG: Portfolio table check result:", portfolioTableCheck);
+            
+//             if (portfolioTableCheck && portfolioTableCheck.length > 0) {
+//                 console.log("DEBUG: ✓ loan_portfolio table exists");
+                
+//                 // Get current month and year
+//                 const currentDate = new Date();
+//                 const currentMonth = currentDate.getMonth() + 1; // 1-12
+//                 const currentYear = currentDate.getFullYear();
+                
+//                 console.log(`DEBUG: Current period: Month ${currentMonth}, Year ${currentYear}`);
+                
+//                 // Get loan product details - check what fields actually exist in loanAccount
+//                 console.log("DEBUG: Available loan account fields:", Object.keys(loanAccount));
+                
+//                 // Use default values if fields don't exist
+//                 const loanProductId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 
+//                                      loanAccount.p_r_o_d__i_d || 
+//                                      loanAccount.product_id || 
+//                                      0;
+                
+//                 const branchId = loanAccount.b_r_a_n_c_h__i_d || 
+//                                 loanAccount.branch_id || 
+//                                 '001';
+                
+//                 const productCode = loanAccount.p_r_o_d__c_d || 
+//                                   loanAccount.product_code || 
+//                                   'GENERAL_LOAN';
+                
+//                 const productType = loanAccount.p_r_o_d_u_c_t__t_y_p_e || 
+//                                   loanAccount.product_type || 
+//                                   'GENERAL_LOAN';
+                
+//                 const productName = loanAccount.p_r_o_d_u_c_t__n_a_m_e || 
+//                                   loanAccount.product_name || 
+//                                   'General Loan';
+                
+//                 console.log("DEBUG: Loan product details:", {
+//                     loanProductId,
+//                     branchId,
+//                     productCode,
+//                     productType,
+//                     productName
+//                 });
+                
+//                 // Check if portfolio record exists for this month/year/product/branch
+//                 console.log("DEBUG: Checking for existing portfolio record...");
+                
+//                 const existingPortfolioQuery = `
+//                     SELECT * FROM loan_portfolio 
+//                     WHERE m_o_n_t_h = ${currentMonth} 
+//                       AND y_e_a_r = ${currentYear} 
+//                       AND p_r_o_d__i_d = ${loanProductId} 
+//                       AND b_r_a_n_c_h__i_d = '${branchId}' 
+//                     LIMIT 1
+//                 `;
+                
+//                 console.log("DEBUG: Executing portfolio check query:", existingPortfolioQuery);
+                
+//                 const existingPortfolio = await sequelize.query(existingPortfolioQuery, {
+//                     transaction,
+//                     type: sequelize.QueryTypes.SELECT
+//                 });
+                
+//                 console.log("DEBUG: Existing portfolio check result:", existingPortfolio);
+//                 console.log("DEBUG: Number of existing records:", existingPortfolio ? existingPortfolio.length : 0);
+                
+//                 if (existingPortfolio && existingPortfolio.length > 0) {
+//                     // Update existing portfolio record
+//                     const portfolioId = existingPortfolio[0].id;
+//                     console.log(`DEBUG: ✓ Found existing portfolio record ID: ${portfolioId}`);
+                    
+//                     // Get current values for calculation
+//                     const currentTotalPrincipal = parseFloat(existingPortfolio[0].t_o_t_a_l__p_r_i_n_c_i_p_a_l || 0);
+//                     const currentNumberOfLoans = parseInt(existingPortfolio[0].n_u_m_b_e_r__o_f__l_o_a_n_s || 0);
+                    
+//                     // Calculate new average loan size
+//                     const newTotalPrincipal = currentTotalPrincipal + disbursementAmount;
+//                     const newNumberOfLoans = currentNumberOfLoans + 1;
+//                     const newAverageLoanSize = newTotalPrincipal / newNumberOfLoans;
+                    
+//                     console.log("DEBUG: Portfolio update calculations:", {
+//                         currentTotalPrincipal,
+//                         currentNumberOfLoans,
+//                         disbursementAmount,
+//                         newTotalPrincipal,
+//                         newNumberOfLoans,
+//                         newAverageLoanSize
+//                     });
+                    
+//                     const updatePortfolioQuery = `
+//     UPDATE loan_portfolio 
+//     SET t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + ${disbursementAmount},
+//         t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + ${disbursementAmount},
+//         t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+//         o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+//         n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
+//         a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
+//         d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
+//         a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = ${newAverageLoanSize},
+//         u_p_d_a_t_e_d__d_a_t_e = '${now.toISOString().slice(0, 19).replace('T', ' ')}',
+//         u_p_d_a_t_e_d__b_y = '${approvedBy}'
+//     WHERE id = ${portfolioId}
+// `;
+                    
+//                     console.log("DEBUG: Executing update query:", updatePortfolioQuery);
+                    
+//                     const updateResult = await sequelize.query(updatePortfolioQuery, { transaction });
+//                     console.log("DEBUG: ✓ Updated existing loan portfolio record");
+//                     console.log("DEBUG: Update result:", updateResult);
+                    
+//                 } else {
+//                     // Create new portfolio record
+//                     console.log("DEBUG: ✗ No existing portfolio found, creating new record...");
+                    
+//                     // For new record, average loan size is just this loan amount
+//                     const averageLoanSize = disbursementAmount;
+//                     const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
+                    
+//                     const insertPortfolioQuery = `
+//     INSERT INTO loan_portfolio (
+//         b_r_a_n_c_h__i_d,
+//         p_r_o_d__i_d,
+//         p_r_o_d_u_c_t__c_o_d_e,
+//         p_r_o_d_u_c_t__n_a_m_e,
+//         p_r_o_d_u_c_t__t_y_p_e,
+//         m_o_n_t_h,
+//         y_e_a_r,
+//         c_u_r_r_e_n_c_y,
+//         t_o_t_a_l__d_i_s_b_u_r_s_e_d,
+//         t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
+//         t_o_t_a_l__p_r_i_n_c_i_p_a_l,
+//         o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
+//         n_u_m_b_e_r__o_f__l_o_a_n_s,
+//         a_c_t_i_v_e__l_o_a_n_s,
+//         d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,  // FIXED!
+//         a_v_e_r_a_g_e__l_o_a_n__s_i_z_e,
+//         s_t_a_t_u_s,
+//         c_r_e_a_t_e_d__b_y,
+//         u_p_d_a_t_e_d__b_y,
+//         c_r_e_a_t_e_d__d_a_t_e,
+//         u_p_d_a_t_e_d__d_a_t_e
+//     ) VALUES (
+//         '${branchId}',
+//         ${loanProductId},
+//         '${productCode}',
+//         '${productName}',
+//         '${productType}',
+//         ${currentMonth},
+//         ${currentYear},
+//         'NGN',
+//         ${disbursementAmount},
+//         ${disbursementAmount},
+//         ${disbursementAmount},
+//         ${disbursementAmount},
+//         1,
+//         1,
+//         1,  // Fixed value position
+//         ${averageLoanSize},
+//         'ACTIVE',
+//         '${approvedBy}',
+//         '${approvedBy}',
+//         '${sqlDate}',
+//         '${sqlDate}'
+//     )
+// `;
+                    
+//                     console.log("DEBUG: Executing insert query:", insertPortfolioQuery);
+                    
+//                     const insertResult = await sequelize.query(insertPortfolioQuery, { transaction });
+//                     console.log("DEBUG: ✓ Created new loan portfolio record");
+//                     console.log("DEBUG: Insert result:", insertResult);
+//                 }
+                
+//                 console.log("DEBUG: ✓ Loan portfolio updated successfully");
+                
+//             } else {
+//                 console.log("DEBUG: ✗ loan_portfolio table does not exist or not found");
+//                 console.log("DEBUG: Table check result was:", portfolioTableCheck);
+//             }
+//         } catch (portfolioError) {
+//             console.error("DEBUG: ✗ ERROR updating loan portfolio:", portfolioError.message);
+//             console.error("DEBUG: Error details:", portfolioError);
+//             // Don't rollback for portfolio errors - it's not critical
+//         }
+
+//         // ==================== 13. COMMIT TRANSACTION ====================
+//         await transaction.commit();
+//         console.log("DEBUG: Transaction committed successfully");
+
+//         // ==================== 14. PREPARE RESPONSE ====================
+//         const totalDisbursedNow = currentStatus === 'ACTIVE' 
+//             ? (currentDisbursedAmount + disbursementAmount) 
+//             : disbursementAmount;
+        
+//         const newOutstandingPrincipal = currentStatus === 'ACTIVE'
+//             ? (currentOutstandingPrincipal + disbursementAmount)
+//             : disbursementAmount;
+        
+//         // Define portfolio variables
+//         const currentMonth = now.getMonth() + 1;
+//         const currentYear = now.getFullYear();
+//         const loanProductId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 0;
+//         const branchId = loanAccount.b_r_a_n_c_h__i_d || '001';
+        
+//         const responseData = {
+//             success: true,
+//             message: currentStatus === 'ACTIVE' 
+//                 ? "Additional disbursement recorded successfully" 
+//                 : "Loan approved and disbursed successfully",
+//             data: {
+//                 loanAccount: {
+//                     ACCT_NO,
+//                     previousStatus: currentStatus,
+//                     newStatus: 'ACTIVE',
+//                     previousAmount: loanAmountValue,
+//                     newAmount: -disbursementAmount,
+//                     approvedAmount: approvedAmount,
+//                     previousDisbursed: currentDisbursedAmount,
+//                     currentDisbursement: disbursementAmount,
+//                     totalDisbursed: totalDisbursedNow,
+//                     previousOutstanding: currentOutstandingPrincipal,
+//                     newOutstanding: newOutstandingPrincipal,
+//                     remainingLimit: approvedAmount - totalDisbursedNow,
+//                     approvalDate: now,
+//                     disbursementDate: now,
+//                     approvedBy,
+//                     approvalComments,
+//                     customerId: customerId,
+//                     numericCustomerId: numericCustomerId
+//                 },
+//                 disbursement: {
+//                     id: disbursementRecord.id,
+//                     status: 'APPROVED',
+//                     customerAccount: customerAccountNumber,
+//                     customerAccountType: customerAccountDetails?.accountType || 'UNKNOWN',
+//                     amount: disbursementAmount
+//                 },
+//                 customerAccountUpdate: customerAccountNumber && customerAccountDetails ? {
+//                     accountNumber: customerAccountNumber,
+//                     customerId: customerId,
+//                     numericCustomerId: numericCustomerId,
+//                     previousBalances: {
+//                         ledger: customerAccountDetails.currentLedgerBalance,
+//                         available: customerAccountDetails.currentAvailableBalance,
+//                         cleared: customerAccountDetails.currentClearedBalance,
+//                         current: customerAccountDetails.currentBalance
+//                     },
+//                     newBalances: {
+//                         ledger: customerAccountDetails.currentLedgerBalance + disbursementAmount,
+//                         available: customerAccountDetails.currentAvailableBalance + disbursementAmount,
+//                         cleared: customerAccountDetails.currentClearedBalance + disbursementAmount,
+//                         current: customerAccountDetails.currentBalance + disbursementAmount
+//                     },
+//                     currency: customerAccountDetails.currency || 'NGN',
+//                     tablesUpdated: [
+//                         accountsTableRecord ? 'accounts' : null,
+//                         customerAccountsTableRecord ? 'customer_accounts' : 'new_record_created'
+//                     ].filter(Boolean),
+//                     accountCreated: !customerAccountsTableRecord?.id ? 'Yes' : 'No'
+//                 } : {
+//                     note: "No customer account found to update",
+//                     customerId: customerId,
+//                     numericCustomerId: numericCustomerId,
+//                     searchedAccountName: customerName,
+//                     searchedInTables: ['customer_accounts', 'accounts']
+//                 },
+//                 portfolioUpdate: {
+//                     updated: true,
+//                     month: currentMonth,
+//                     year: currentYear,
+//                     productId: loanProductId,
+//                     branchId: branchId,
+//                     amount: disbursementAmount,
+//                     message: "Loan portfolio statistics updated"
+//                 },
+//                 accountingSummary: {
+//                     loanAccount: `Debited: -₦${disbursementAmount.toLocaleString()} (Loan account set to negative)`,
+//                     customerAccount: customerAccountNumber 
+//                         ? `Credited: +₦${disbursementAmount.toLocaleString()} to account ${customerAccountNumber}`
+//                         : "No customer account found to credit",
+//                     netEffect: customerAccountNumber 
+//                         ? "Funds transferred from loan account to customer account" 
+//                         : "Loan disbursed but customer account not updated"
+//                 },
+//                 debug: {
+//                     transactionId: `DISB-${Date.now()}`,
+//                     timestamp: now.toISOString(),
+//                     loanAccountId: loanAccount.id,
+//                     customerId: customerId,
+//                     numericCustomerId: numericCustomerId,
+//                     customerAccountFound: !!customerAccountNumber,
+//                     accountsTableUpdated: !!accountsTableRecord,
+//                     customerAccountsTableUpdated: !!customerAccountsTableRecord,
+//                     accountsTableRecordExists: !!accountsTableRecord,
+//                     customerAccountsTableRecordExists: !!customerAccountsTableRecord,
+//                     searchDetails: {
+//                         searchedCustomerId: customerId,
+//                         searchedNumericId: numericCustomerId,
+//                         searchedName: customerName
+//                     }
+//                 }
+//             }
+//         };
+
+//         // Add note for partial disbursement
+//         const remainingAfter = approvedAmount - totalDisbursedNow;
+//         if (remainingAfter > 0) {
+//             responseData.data.note = "Partial disbursement completed";
+//             responseData.data.remainingForDisbursement = remainingAfter;
+//         }
+
+//         console.log("=== DEBUG: Sending success response ===");
+//         return res.status(200).json(responseData);
+//     } catch (error) {
+//         // ==================== ERROR HANDLING ====================
+//         console.error("DEBUG: Error in approveAndDisburseLoan:", error);
+//         console.error("DEBUG: Error stack:", error.stack);
+        
+//         try {
+//             if (transaction) {
+//                 // Check transaction state before attempting rollback
+//                 if (!transaction.finished) {
+//                     await transaction.rollback();
+//                     console.log("DEBUG: Transaction rolled back successfully");
+//                 } else {
+//                     console.log("DEBUG: Transaction already finished with state:", transaction.finished);
+//                 }
+//             }
+//         } catch (rollbackError) {
+//             console.error("DEBUG: Rollback failed:", rollbackError.message);
+//             // Continue with original error handling
+//         }
+
+//         return res.status(500).json({
+//             success: false,
+//             message: "Approval process failed",
+//             error: error.message,
+//             code: "APPROVAL_PROCESS_ERROR",
+//             debug: {
+//                 errorName: error.name,
+//                 errorMessage: error.message,
+//                 errorLine: error.lineNumber,
+//                 errorColumn: error.columnNumber,
+//                 fullError: process.env.NODE_ENV === 'development' ? error.stack : 'Hidden in production'
+//             }
+//         });
+//     }
+// },
 async approveAndDisburseLoan(req, res) {
     console.log("=== DEBUG: Starting approveAndDisburseLoan ===");
     console.log("Request body:", JSON.stringify(req.body, null, 2));
@@ -5063,7 +10764,279 @@ async approveAndDisburseLoan(req, res) {
             }
         }
 
-        // ==================== 8. CREATE/UPDATE DISBURSEMENT RECORD ====================
+        // ==================== 8. GET LOAN PRODUCT CONFIGURATION ====================
+       // ==================== 8. GET LOAN PRODUCT CONFIGURATION ====================
+console.log("\nDEBUG: Getting loan product configuration...");
+
+let productConfig = null;
+let principalGLAccount = null;
+let interestGLAccount = null;
+let processingFeeGLAccount = null;
+let processingFeeRate = 0;
+let processingFeeAmount = 0;
+
+try {
+    // Try to get the loan product ID from loan_accounts
+    console.log("DEBUG: Attempting to get product ID from loan account:", ACCT_NO);
+    
+    const loanAccountQuery = `
+        SELECT l_o_a_n__p_r_o_d_u_c_t__i_d 
+        FROM loan_accounts 
+        WHERE a_c_c_t__n_o = ? 
+        LIMIT 1
+    `;
+    
+    const [loanAccountResult] = await sequelize.query(loanAccountQuery, {
+        replacements: [ACCT_NO],
+        transaction,
+        type: sequelize.QueryTypes.SELECT
+    });
+    
+    let productId = null;
+    let usingDefaultProduct = false;
+    
+    if (loanAccountResult && loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d) {
+        productId = loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d;
+        console.log("DEBUG: Found product ID in loan account:", productId);
+    } else {
+        console.warn("DEBUG: ⚠️ No product ID found in loan account, using default product");
+        usingDefaultProduct = true;
+        
+        // Get the default/active loan product (first active product) - USING THE VIEW
+        const defaultProductQuery = `
+            SELECT PROD_ID 
+            FROM loan_product 
+            WHERE isActive = 1 
+            AND STATUS = 'ACTIVE'
+            LIMIT 1
+        `;
+        
+        const [defaultProductResult] = await sequelize.query(defaultProductQuery, {
+            transaction,
+            type: sequelize.QueryTypes.SELECT
+        });
+        
+        if (defaultProductResult && defaultProductResult.PROD_ID) {
+            productId = defaultProductResult.PROD_ID;
+            console.warn("DEBUG: ⚠️ Using default product ID:", productId);
+        } else {
+            // If no active product, use the first product in the view
+            const firstProductQuery = `
+                SELECT PROD_ID 
+                FROM loan_product 
+                LIMIT 1
+            `;
+            
+            const [firstProductResult] = await sequelize.query(firstProductQuery, {
+                transaction,
+                type: sequelize.QueryTypes.SELECT
+            });
+            
+            if (firstProductResult && firstProductResult.PROD_ID) {
+                productId = firstProductResult.PROD_ID;
+                console.warn("DEBUG: ⚠️ Using first available product ID:", productId);
+            } else {
+                console.error("DEBUG: ❌ No loan products found in the database");
+                throw new Error("No loan products configured in the system. Please create a loan product first.");
+            }
+        }
+    }
+    
+    // Now get the loan product using the product ID - USING THE VIEW
+    const productQuery = `
+        SELECT 
+            PROD_ID,
+            name,
+            productCode,
+            PRODUCT_SHORT_NAME,
+            description,
+            PRODUCT_TYPE,
+            LOAN_INTEREST_RATE_ID,
+            LOAN_PROUD_INT_ID,
+            minAmount,
+            maxAmount,
+            MIN_LOAN_TERM_VALUE,
+            MAX_LOAN_TERM_VALUE,
+            LOAN_TERM_TYPE,
+            BU_ID,
+            isGlobalProduct,
+            visibility,
+            REPAYMENT_TYPE,
+            PAYMENT_FREQUENCY,
+            TERM_CD,
+            CRNCY_ID,
+            allowedCurrencies,
+            CALCULATION_METHOD_OVERRIDE,
+            INTEREST_TYPE_OVERRIDE,
+            defaultGLAccounts,
+            branchGLAccounts,
+            feeStructure,
+            processingFeeRate,
+            processingFeeGLCode,
+            lateFeePerDay,
+            maxLateFee,
+            productCategory,
+            productSubCategory,
+            riskLevel,
+            collateralRequired,
+            eligibilityCriteria,
+            EFFECTIVE_DT,
+            EXPIRY_DT,
+            VERSION,
+            STATUS,
+            isActive,
+            createdBy,
+            USER_ID,
+            LAST_MODIFIED_BY,
+            metadata,
+            created_at,
+            updated_at
+        FROM loan_product 
+        WHERE PROD_ID = ?
+        LIMIT 1
+    `;
+    
+    const [productResult] = await sequelize.query(productQuery, {
+        replacements: [productId],
+        transaction,
+        type: sequelize.QueryTypes.SELECT
+    });
+    
+    if (productResult) {
+        productConfig = productResult;
+        
+        if (usingDefaultProduct) {
+            console.warn("DEBUG: ⚠️ Using default/first available loan product:");
+            console.warn(`DEBUG:   Product ID: ${productResult.PROD_ID}`);
+            console.warn(`DEBUG:   Product Name: ${productResult.name}`);
+            console.warn("DEBUG:   NOTE: Consider updating the loan account with a proper product ID");
+            
+            // Update the loan account with the product ID for future reference
+            try {
+                await sequelize.query(
+                    `UPDATE loan_accounts 
+                     SET l_o_a_n__p_r_o_d_u_c_t__i_d = ? 
+                     WHERE a_c_c_t__n_o = ?`,
+                    {
+                        replacements: [productId, ACCT_NO],
+                        transaction
+                    }
+                );
+                console.log("DEBUG: ✓ Updated loan account with product ID:", productId);
+            } catch (updateError) {
+                console.warn("DEBUG: Could not update loan account with product ID:", updateError.message);
+            }
+        } else {
+            console.log("DEBUG: ✓ Found loan product configuration");
+            console.log("DEBUG: Product ID:", productResult.PROD_ID);
+            console.log("DEBUG: Product Name:", productResult.name);
+        }
+        
+        // Extract GL accounts from defaultGLAccounts JSON
+        if (productResult.defaultGLAccounts) {
+            try {
+                const glAccounts = typeof productResult.defaultGLAccounts === 'string' 
+                    ? JSON.parse(productResult.defaultGLAccounts) 
+                    : productResult.defaultGLAccounts;
+                
+                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
+                interestGLAccount = glAccounts.interestGLAccountNo;
+                processingFeeGLAccount = glAccounts.processingFeeGLCode;
+                
+                console.log("DEBUG: Extracted GL accounts from defaultGLAccounts:");
+                console.log("DEBUG:   Principal GL Account:", principalGLAccount);
+                console.log("DEBUG:   Interest GL Account:", interestGLAccount);
+                console.log("DEBUG:   Processing Fee GL Account:", processingFeeGLAccount);
+                
+                // Validate that required GL accounts are present
+                if (!principalGLAccount) {
+                    throw new Error("Principal GL account not found in loan product configuration");
+                }
+                if (!interestGLAccount) {
+                    console.warn("DEBUG: Warning: Interest GL account not found in loan product configuration");
+                }
+                if (!processingFeeGLAccount) {
+                    console.warn("DEBUG: Warning: Processing Fee GL account not found in defaultGLAccounts");
+                }
+                
+            } catch (e) {
+                console.error("DEBUG: ❌ Could not parse GL accounts JSON:", e.message);
+                throw new Error(`Invalid GL accounts configuration in loan product: ${e.message}`);
+            }
+        } else {
+            console.error("DEBUG: ❌ No defaultGLAccounts found in loan product");
+            throw new Error("Loan product does not have GL accounts configured");
+        }
+        
+        // Get processing fee details
+        processingFeeRate = parseFloat(productResult.processingFeeRate || 0);
+        
+        // Calculate processing fee amount
+        if (processingFeeRate > 0) {
+            processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
+            console.log("DEBUG: Processing Fee Rate:", processingFeeRate + '%');
+            console.log("DEBUG: Processing Fee Amount: ₦" + processingFeeAmount.toLocaleString());
+        }
+        
+        // If processingFeeGLAccount not found in defaultGLAccounts, use processingFeeGLCode
+        if (!processingFeeGLAccount && productResult.processingFeeGLCode) {
+            processingFeeGLAccount = productResult.processingFeeGLCode;
+            console.log("DEBUG: Using processingFeeGLCode for fee:", processingFeeGLAccount);
+        }
+        
+        // Also check feeStructure for processing fee GL account
+        if (productResult.feeStructure && !processingFeeGLAccount) {
+            try {
+                const feeStructure = typeof productResult.feeStructure === 'string'
+                    ? JSON.parse(productResult.feeStructure)
+                    : productResult.feeStructure;
+                    
+                const processingFee = Array.isArray(feeStructure) ? feeStructure.find(fee => 
+                    fee.feeType === 'PROCESSING' || fee.name === 'Processing Fee'
+                ) : null;
+                
+                if (processingFee && processingFee.glAccountCode) {
+                    processingFeeGLAccount = processingFee.glAccountCode;
+                    console.log("DEBUG: Found Processing Fee GL account in feeStructure:", processingFeeGLAccount);
+                }
+            } catch (e) {
+                console.warn("DEBUG: Could not parse feeStructure:", e.message);
+            }
+        }
+        
+        console.log("DEBUG: ✓ GL accounts configured successfully:");
+        console.log("DEBUG:   Principal: ", principalGLAccount);
+        console.log("DEBUG:   Interest:  ", interestGLAccount || "Not configured");
+        console.log("DEBUG:   Fee:       ", processingFeeGLAccount || "Not configured");
+        
+    } else {
+        console.error("DEBUG: ❌ No loan product found for product ID:", productId);
+        throw new Error(`Loan product with ID ${productId} not found in loan_product view`);
+    }
+} catch (productError) {
+    console.error("DEBUG: ❌ ERROR getting loan product configuration:", productError.message);
+    console.error("DEBUG: This is a critical error - loan cannot be disbursed without GL accounts");
+    
+    // Rollback the transaction since we can't proceed without GL accounts
+    if (transaction && !transaction.finished) {
+        await transaction.rollback();
+    }
+    
+    return res.status(500).json({
+        success: false,
+        message: "Loan disbursement failed: Missing GL account configuration",
+        error: productError.message,
+        code: "MISSING_GL_CONFIGURATION",
+        debug: {
+            loanAccount: ACCT_NO,
+            error: productError.message,
+            requiredInfo: "Loan product must have GL accounts configured in defaultGLAccounts",
+            suggestion: "1. Check if loan_product view has any products\n2. Check if defaultGLAccounts JSON is valid\n3. Ensure at least one product is active"
+        }
+    });
+}
+
+        // ==================== 9. CREATE/UPDATE DISBURSEMENT RECORD ====================
         // Check if loan_disbursements table exists
         const disbTables = await sequelize.query(
             `SELECT TABLE_NAME 
@@ -5209,7 +11182,7 @@ async approveAndDisburseLoan(req, res) {
             console.log(`DEBUG: Created new disbursement record ID: ${disbursementRecord.id}`);
         }
 
-        // ==================== 9. UPDATE CREDIT APPLICATION ====================
+        // ==================== 10. UPDATE CREDIT APPLICATION ====================
         // Check if credit_applications table exists
         const creditTables = await sequelize.query(
             `SELECT TABLE_NAME 
@@ -5252,7 +11225,7 @@ async approveAndDisburseLoan(req, res) {
             console.log("DEBUG: credit_applications table does not exist, skipping update");
         }
 
-        // ==================== 10. POST TO GENERAL LEDGER ====================
+        // ==================== 11. POST TO GENERAL LEDGER ====================
         try {
             const transactionId = `LOAN-DISB-${ACCT_NO}-${Date.now()}`;
             const journalId = `JRNL-LOAN-${Date.now()}`;
@@ -5280,250 +11253,6 @@ async approveAndDisburseLoan(req, res) {
                 // Get current date in SQL format
                 const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
                 
-                // ==================== 10.1. GET LOAN PRODUCT CONFIGURATION ====================
-                console.log("\nDEBUG: Step 1: Getting loan product configuration...");
-
-                let productConfig = null;
-                let principalGLAccount = null;
-                let interestGLAccount = null;
-                let processingFeeGLAccount = null;
-                let processingFeeRate = 0;
-                let processingFeeAmount = 0;
-
-                try {
-                    // Try to get the loan product ID from loan_accounts
-                    console.log("DEBUG: Attempting to get product ID from loan account:", ACCT_NO);
-                    
-                    const loanAccountQuery = `
-                        SELECT l_o_a_n__p_r_o_d_u_c_t__i_d 
-                        FROM loan_accounts 
-                        WHERE a_c_c_t__n_o = ? 
-                        LIMIT 1
-                    `;
-                    
-                    const [loanAccountResult] = await sequelize.query(loanAccountQuery, {
-                        replacements: [ACCT_NO],
-                        transaction,
-                        type: sequelize.QueryTypes.SELECT
-                    });
-                    
-                    let productId = null;
-                    let usingDefaultProduct = false;
-                    
-                    if (loanAccountResult && loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d) {
-                        productId = loanAccountResult.l_o_a_n__p_r_o_d_u_c_t__i_d;
-                        console.log("DEBUG: Found product ID in loan account:", productId);
-                    } else {
-                        console.warn("DEBUG: ⚠️ No product ID found in loan account, using default product");
-                        usingDefaultProduct = true;
-                        
-                        // Get the default/active loan product (first active product)
-                        const defaultProductQuery = `
-                            SELECT p_r_o_d__i_d 
-                            FROM loan_products 
-                            WHERE is_active = 1 
-                            AND s_t_a_t_u_s = 'ACTIVE'
-                            LIMIT 1
-                        `;
-                        
-                        const [defaultProductResult] = await sequelize.query(defaultProductQuery, {
-                            transaction,
-                            type: sequelize.QueryTypes.SELECT
-                        });
-                        
-                        if (defaultProductResult && defaultProductResult.p_r_o_d__i_d) {
-                            productId = defaultProductResult.p_r_o_d__i_d;
-                            console.warn("DEBUG: ⚠️ Using default product ID:", productId);
-                        } else {
-                            // If no active product, use the first product in the table
-                            const firstProductQuery = `
-                                SELECT p_r_o_d__i_d 
-                                FROM loan_products 
-                                LIMIT 1
-                            `;
-                            
-                            const [firstProductResult] = await sequelize.query(firstProductQuery, {
-                                transaction,
-                                type: sequelize.QueryTypes.SELECT
-                            });
-                            
-                            if (firstProductResult && firstProductResult.p_r_o_d__i_d) {
-                                productId = firstProductResult.p_r_o_d__i_d;
-                                console.warn("DEBUG: ⚠️ Using first available product ID:", productId);
-                            } else {
-                                console.error("DEBUG: ❌ No loan products found in the database");
-                                throw new Error("No loan products configured in the system. Please create a loan product first.");
-                            }
-                        }
-                    }
-                    
-                    // Now get the loan product using the product ID
-                    const productQuery = `
-                        SELECT lp.*, 
-                               JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
-                               JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
-                               JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
-                               JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
-                               lp.processing_fee_g_l_code,
-                               lp.processing_fee_rate
-                        FROM loan_products lp
-                        WHERE lp.p_r_o_d__i_d = ?
-                        LIMIT 1
-                    `;
-                    
-                    const [productResult] = await sequelize.query(productQuery, {
-                        replacements: [productId],
-                        transaction,
-                        type: sequelize.QueryTypes.SELECT
-                    });
-                    
-                    if (productResult) {
-                        productConfig = productResult;
-                        
-                        if (usingDefaultProduct) {
-                            console.warn("DEBUG: ⚠️ Using default/first available loan product:");
-                            console.warn(`DEBUG:   Product ID: ${productResult.p_r_o_d__i_d}`);
-                            console.warn(`DEBUG:   Product Name: ${productResult.name}`);
-                            console.warn("DEBUG:   NOTE: Consider updating the loan account with a proper product ID");
-                            
-                            // Update the loan account with the product ID for future reference
-                            try {
-                                await sequelize.query(
-                                    `UPDATE loan_accounts 
-                                     SET l_o_a_n__p_r_o_d_u_c_t__i_d = ? 
-                                     WHERE a_c_c_t__n_o = ?`,
-                                    {
-                                        replacements: [productId, ACCT_NO],
-                                        transaction
-                                    }
-                                );
-                                console.log("DEBUG: ✓ Updated loan account with product ID:", productId);
-                            } catch (updateError) {
-                                console.warn("DEBUG: Could not update loan account with product ID:", updateError.message);
-                            }
-                        } else {
-                            console.log("DEBUG: ✓ Found loan product configuration");
-                            console.log("DEBUG: Product ID:", productResult.p_r_o_d__i_d);
-                            console.log("DEBUG: Product Name:", productResult.name);
-                        }
-                        
-                        // Extract GL accounts from default_g_l_accounts JSON
-                        if (productResult.default_g_l_accounts) {
-                            try {
-                                const glAccounts = JSON.parse(productResult.default_g_l_accounts);
-                                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
-                                interestGLAccount = glAccounts.interestGLAccountNo;
-                                processingFeeGLAccount = glAccounts.processingFeeGLCode;
-                                
-                                console.log("DEBUG: Extracted GL accounts from default_g_l_accounts:");
-                                console.log("DEBUG:   Principal GL Account:", principalGLAccount);
-                                console.log("DEBUG:   Interest GL Account:", interestGLAccount);
-                                console.log("DEBUG:   Processing Fee GL Account:", processingFeeGLAccount);
-                                
-                                // Validate that required GL accounts are present
-                                if (!principalGLAccount) {
-                                    throw new Error("Principal GL account not found in loan product configuration");
-                                }
-                                if (!interestGLAccount) {
-                                    console.warn("DEBUG: Warning: Interest GL account not found in loan product configuration");
-                                }
-                                if (!processingFeeGLAccount) {
-                                    console.warn("DEBUG: Warning: Processing Fee GL account not found in default_g_l_accounts");
-                                }
-                                
-                            } catch (e) {
-                                console.error("DEBUG: ❌ Could not parse GL accounts JSON:", e.message);
-                                throw new Error(`Invalid GL accounts configuration in loan product: ${e.message}`);
-                            }
-                        } else {
-                            console.error("DEBUG: ❌ No default_g_l_accounts found in loan product");
-                            throw new Error("Loan product does not have GL accounts configured");
-                        }
-                        
-                        // Get processing fee details
-                        processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
-                        
-                        // Calculate processing fee amount
-                        if (processingFeeRate > 0) {
-                            processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
-                            console.log("DEBUG: Processing Fee Rate:", processingFeeRate + '%');
-                            console.log("DEBUG: Processing Fee Amount: ₦" + processingFeeAmount.toLocaleString());
-                        }
-                        
-                        // If processingFeeGLAccount not found in default_g_l_accounts, use processing_fee_g_l_code
-                        if (!processingFeeGLAccount && productResult.processing_fee_g_l_code) {
-                            processingFeeGLAccount = productResult.processing_fee_g_l_code;
-                            console.log("DEBUG: Using processing_fee_g_l_code for fee:", processingFeeGLAccount);
-                        }
-                        
-                        // Also check fee_structure for processing fee GL account
-                        if (productResult.fee_structure && !processingFeeGLAccount) {
-                            try {
-                                const feeStructure = JSON.parse(productResult.fee_structure);
-                                const processingFee = feeStructure.find(fee => 
-                                    fee.feeType === 'PROCESSING' || fee.name === 'Processing Fee'
-                                );
-                                if (processingFee && processingFee.glAccountCode) {
-                                    processingFeeGLAccount = processingFee.glAccountCode;
-                                    console.log("DEBUG: Found Processing Fee GL account in fee_structure:", processingFeeGLAccount);
-                                }
-                            } catch (e) {
-                                console.warn("DEBUG: Could not parse fee_structure:", e.message);
-                            }
-                        }
-                        
-                        console.log("DEBUG: ✓ GL accounts configured successfully:");
-                        console.log("DEBUG:   Principal: ", principalGLAccount);
-                        console.log("DEBUG:   Interest:  ", interestGLAccount || "Not configured");
-                        console.log("DEBUG:   Fee:       ", processingFeeGLAccount || "Not configured");
-                        
-                    } else {
-                        console.error("DEBUG: ❌ No loan product found for product ID:", productId);
-                        throw new Error(`Loan product with ID ${productId} not found in loan_products table`);
-                    }
-                } catch (productError) {
-                    console.error("DEBUG: ❌ ERROR getting loan product configuration:", productError.message);
-                    console.error("DEBUG: This is a critical error - loan cannot be disbursed without GL accounts");
-                    
-                    // Rollback the transaction since we can't proceed without GL accounts
-                    if (transaction && !transaction.finished) {
-                        await transaction.rollback();
-                    }
-                    
-                    return res.status(500).json({
-                        success: false,
-                        message: "Loan disbursement failed: Missing GL account configuration",
-                        error: productError.message,
-                        code: "MISSING_GL_CONFIGURATION",
-                        debug: {
-                            loanAccount: ACCT_NO,
-                            error: productError.message,
-                            requiredInfo: "Loan product must have GL accounts configured in default_g_l_accounts",
-                            suggestion: "1. Check if loan_products table has any products\n2. Check if default_g_l_accounts JSON is valid\n3. Ensure at least one product is active"
-                        }
-                    });
-                }
-                
-                // ==================== 10.2. CALCULATE INTEREST COMPONENT ====================
-                console.log("\nDEBUG: Step 2: Calculating interest component...");
-                
-                let interestAmount = 0;
-                const interestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
-                const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
-                
-                if (interestRate > 0 && termValue > 0) {
-                    // Calculate interest for the full loan term
-                    interestAmount = (disbursementAmount * interestRate * termValue) / (12 * 100); // Monthly calculation
-                    console.log("DEBUG: Interest Rate:", interestRate + "%");
-                    console.log("DEBUG: Term Value:", termValue + " months");
-                    console.log("DEBUG: Calculated Interest: ₦" + interestAmount.toLocaleString());
-                } else {
-                    console.log("DEBUG: No interest rate or term specified, skipping interest component");
-                }
-                
-                // ==================== 10.3. VERIFY GL ACCOUNTS EXIST IN gl_accounts TABLE ====================
-                console.log("\nDEBUG: Step 3: Verifying GL accounts in gl_accounts table...");
-
                 // Function to check if GL account exists and get its details
                 const getGLAccountDetails = async (glAccountNo) => {
                     try {
@@ -5594,8 +11323,7 @@ async approveAndDisburseLoan(req, res) {
                 const interestGL = interestGLAccount ? await getGLAccountDetails(interestGLAccount) : null;
                 const processingFeeGL = processingFeeGLAccount ? await getGLAccountDetails(processingFeeGLAccount) : null;
 
-                // ==================== PLACE THE CUSTOMER GL ACCOUNT LOGIC HERE ====================
-                // Get Customer GL Account (from customer_accounts or use appropriate GL)
+                // Get Customer GL Account
                 let customerGL = null;
 
                 // First try: Check if customer has a GL account with their account number
@@ -5735,11 +11463,7 @@ async approveAndDisburseLoan(req, res) {
 
                 console.log("DEBUG: =========================================");
                 console.log("DEBUG: ✓ All GL accounts validated successfully");
-                // ==================== END OF CUSTOMER GL ACCOUNT LOGIC ====================
 
-                // ==================== 10.4. CREATE GL TRANSACTIONS ====================
-                console.log("\nDEBUG: Step 4: Creating GL transactions...");
-                
                 // Generate unique TransactionId (BigInt)
                 const baseTransactionId = BigInt(Date.now());
                 
@@ -5839,7 +11563,7 @@ async approveAndDisburseLoan(req, res) {
                                 customerGL.accountNo,      // DEBIT: Customer Liability decreases (fee deducted)
                                 processingFeeGL.accountNo, // CREDIT: Processing Fee Revenue increases
                                 processingFeeAmount,
-                                `Processing fee of ₦${processingFeeAmount.toLocaleString()} for loan ${ACCT_NO}. Rate: ${processingFeeRate}${productConfig?.fee_structure ? '%' : ''}`,
+                                `Processing fee of ₦${processingFeeAmount.toLocaleString()} for loan ${ACCT_NO}. Rate: ${processingFeeRate}${productConfig?.feeStructure ? '%' : ''}`,
                                 approvedBy,
                                 approvedBy,
                                 'PROCESSING_FEE',
@@ -5859,17 +11583,7 @@ async approveAndDisburseLoan(req, res) {
                     console.log(`  Note: Processing fee debited from customer account separately`);
                 }
                 
-                // ==================== 10.5. CORRECT GL ACCOUNT BALANCES UPDATE ====================
-                console.log("\nDEBUG: Step 5: Updating GL account balances with CORRECT accounting...");
-
-                // First, let's log all account details
-                console.log("\nDEBUG: ACCOUNT DETAILS:");
-                console.log(`1. Customer GL: ${customerGL.accountNo} (${customerGL.accountCategory})`);
-                console.log(`2. Principal/Portfolio GL: ${principalGL.accountNo} (${principalGL.accountCategory})`);
-                console.log(`3. Interest GL: ${interestGL.accountNo} (${interestGL.accountCategory})`);
-                console.log(`4. Processing Fee GL: ${processingFeeGL.accountNo} (${processingFeeGL.accountCategory})`);
-
-                // Function to update GL accounts with proper accounting
+                // Update GL account balances
                 const updateGLAccountBalance = async (accountNo, amount, isDebit, description) => {
                     try {
                         const accountDetails = await getGLAccountDetails(accountNo);
@@ -5915,82 +11629,7 @@ async approveAndDisburseLoan(req, res) {
                             transaction
                         });
                         
-                        // Update ledgers table
-                        const ledgerUpdateQuery = `
-                            UPDATE ledgers 
-                            SET l_e_d_g_e_r__b_a_l_a_n_c_e = ?,
-                                c_u_r_r_e_n_t__b_a_l_a_n_c_e = ?,
-                                a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = ?,
-                                r_o_w__t_s = ?,
-                                updated_at = ?
-                            WHERE g_l__a_c_c_t__n_o = ?
-                        `;
-                        
-                        await sequelize.query(ledgerUpdateQuery, {
-                            replacements: [newBalance, newBalance, newBalance, sqlDate, sqlDate, accountNo],
-                            transaction
-                        });
-                        
-                        console.log(`  ✓ Both tables updated`);
-                        
-                        // Update audit trail
-                        try {
-                            const auditQuery = `
-                                UPDATE gl_accounts 
-                                SET balance_history = JSON_ARRAY_APPEND(
-                                    COALESCE(balance_history, '[]'), 
-                                    '$', 
-                                    JSON_OBJECT(
-                                        'date', ?,
-                                        'previous_balance', ?,
-                                        'change', ?,
-                                        'new_balance', ?,
-                                        'transaction_type', ?,
-                                        'loan_account', ?,
-                                        'description', ?
-                                    )
-                                ),
-                                transactions = JSON_ARRAY_APPEND(
-                                    COALESCE(transactions, '[]'),
-                                    '$',
-                                    JSON_OBJECT(
-                                        'date', ?,
-                                        'amount', ?,
-                                        'type', ?,
-                                        'loan_account', ?,
-                                        'description', ?,
-                                        'new_balance', ?
-                                    )
-                                )
-                                WHERE g_l__a_c_c_t__n_o = ?
-                            `;
-                            
-                            const transactionType = isDebit ? 'DEBIT' : 'CREDIT';
-                            
-                            await sequelize.query(auditQuery, {
-                                replacements: [
-                                    sqlDate, 
-                                    currentBalance, 
-                                    changeAmount, 
-                                    newBalance,
-                                    transactionType,
-                                    ACCT_NO,
-                                    description,
-                                    sqlDate, 
-                                    amount, 
-                                    transactionType, 
-                                    ACCT_NO, 
-                                    description,
-                                    newBalance,
-                                    accountNo
-                                ],
-                                transaction
-                            });
-                            
-                            console.log(`  ✓ Audit trail updated`);
-                        } catch (auditError) {
-                            console.warn(`  ! Audit trail error: ${auditError.message}`);
-                        }
+                        console.log(`  ✓ GL account updated`);
                         
                         return newBalance;
                         
@@ -6000,15 +11639,14 @@ async approveAndDisburseLoan(req, res) {
                     }
                 };
 
-                // Now apply the CORRECT accounting entries:
+                // Apply accounting entries
                 console.log("\nDEBUG: =========================================");
-                console.log("DEBUG: APPLYING CORRECT ACCOUNTING ENTRIES");
+                console.log("DEBUG: APPLYING ACCOUNTING ENTRIES");
                 console.log("DEBUG: =========================================");
 
-                // 1. PRINCIPAL DISBURSEMENT (₦500,000)
+                // 1. PRINCIPAL DISBURSEMENT
                 console.log("\nDEBUG: 1. PRINCIPAL DISBURSEMENT:");
                 // CREDIT Customer GL (Asset: money goes out to customer)
-                // This REDUCES customer's balance
                 await updateGLAccountBalance(
                     customerGL.accountNo,
                     disbursementAmount,
@@ -6017,7 +11655,6 @@ async approveAndDisburseLoan(req, res) {
                 );
 
                 // DEBIT Loan Portfolio GL (Asset: loan receivable increases)
-                // This INCREASES loan portfolio
                 await updateGLAccountBalance(
                     principalGL.accountNo,
                     disbursementAmount,
@@ -6025,10 +11662,9 @@ async approveAndDisburseLoan(req, res) {
                     `Loan portfolio increase - Loan ${ACCT_NO}`
                 );
 
-                // 2. INTEREST ACCRUAL (₦186,000)
+                // 2. INTEREST ACCRUAL
                 console.log("\nDEBUG: 2. INTEREST ACCRUAL:");
                 // DEBIT Customer GL (Asset: interest owed increases loan amount)
-                // This INCREASES customer's loan balance
                 await updateGLAccountBalance(
                     customerGL.accountNo,
                     interestAmount,
@@ -6037,7 +11673,6 @@ async approveAndDisburseLoan(req, res) {
                 );
 
                 // CREDIT Interest Income GL (Revenue: interest income earned)
-                // This INCREASES interest income
                 await updateGLAccountBalance(
                     interestGL.accountNo,
                     interestAmount,
@@ -6045,11 +11680,9 @@ async approveAndDisburseLoan(req, res) {
                     `Interest income earned - Loan ${ACCT_NO}`
                 );
 
-                // 3. PROCESSING FEE (₦15,000) - DEDUCTED FROM CUSTOMER ACCOUNT
-                console.log("\nDEBUG: 3. PROCESSING FEE (Deducted from customer account):");
-                // Since processing fee is paid FROM customer account (not added to loan):
+                // 3. PROCESSING FEE
+                console.log("\nDEBUG: 3. PROCESSING FEE:");
                 // CREDIT Customer GL (Asset: fee deducted from customer balance)
-                // This REDUCES customer's account balance
                 await updateGLAccountBalance(
                     customerGL.accountNo,
                     processingFeeAmount,
@@ -6057,8 +11690,7 @@ async approveAndDisburseLoan(req, res) {
                     `Processing fee deducted from account - Loan ${ACCT_NO}`
                 );
 
-                // DEBIT Processing Fee GL (Revenue: fee income earned)
-                // OR if Processing Fee GL is REVENUE: CREDIT increases it
+                // CREDIT Processing Fee GL (Revenue: fee income earned)
                 await updateGLAccountBalance(
                     processingFeeGL.accountNo,
                     processingFeeAmount,
@@ -6107,26 +11739,15 @@ async approveAndDisburseLoan(req, res) {
                 // Calculate expected values based on account types
                 console.log("\nDEBUG: EXPECTED VALUES:");
 
-                // Customer GL (ASSET account):
-                // - CREDIT ₦500,000 (disbursement) = -500,000
-                // - DEBIT ₦186,000 (interest) = +186,000  
-                // - CREDIT ₦15,000 (processing fee) = -15,000
-                // Expected: -500,000 + 186,000 - 15,000 = -329,000
                 const customerExpected = -disbursementAmount + interestAmount - processingFeeAmount;
                 console.log(`Customer GL should be: ₦${customerExpected.toLocaleString()} (Negative balance = customer owes bank)`);
 
-                // Principal GL (ASSET account):
-                // - DEBIT ₦500,000 = +500,000
                 const principalExpected = disbursementAmount;
                 console.log(`Principal GL should be: ₦${principalExpected.toLocaleString()} (Loan portfolio asset)`);
 
-                // Interest GL (REVENUE account):
-                // - CREDIT ₦186,000 = +186,000
                 const interestExpected = interestAmount;
                 console.log(`Interest GL should be: ₦${interestExpected.toLocaleString()} (Interest income)`);
 
-                // Processing Fee GL (REVENUE account):
-                // - CREDIT ₦15,000 = +15,000
                 const feeExpected = processingFeeAmount;
                 console.log(`Processing Fee GL should be: ₦${feeExpected.toLocaleString()} (Fee income)`);
 
@@ -6141,91 +11762,6 @@ async approveAndDisburseLoan(req, res) {
                 console.log("DEBUG: ✓ ACCOUNTING COMPLETE");
                 console.log("DEBUG: =========================================");
                 
-                // ==================== 10.6. UPDATE CUSTOMER ACCOUNT WITH PROCESSING FEE ====================
-                console.log("\nDEBUG: Step 6: Updating customer account with processing fee...");
-                
-                if (customerAccountNumber && customerAccountsTableRecord && processingFeeAmount > 0) {
-                    try {
-                        // Calculate customer's final balance after all transactions
-                        const customerFinalCredit = disbursementAmount; // Full disbursement credited
-                        const customerFinalDebit = processingFeeAmount; // Processing fee debited
-                        const customerNetChange = customerFinalCredit - customerFinalDebit;
-                        
-                        console.log("DEBUG: Customer Account Reconciliation:");
-                        console.log(`DEBUG:   Credit (Loan Disbursement): +₦${customerFinalCredit.toLocaleString()}`);
-                        console.log(`DEBUG:   Debit (Processing Fee): -₦${customerFinalDebit.toLocaleString()}`);
-                        console.log(`DEBUG:   Net Change: +₦${customerNetChange.toLocaleString()}`);
-                        
-                        // Get current balances
-                        const currentLedgerBalance = parseFloat(customerAccountsTableRecord.ledger_balance || 0);
-                        const currentAvailableBalance = parseFloat(customerAccountsTableRecord.available_balance || 0);
-                        const currentClearedBalance = parseFloat(customerAccountsTableRecord.cleared_balance || 0);
-                        const currentBalance = parseFloat(customerAccountsTableRecord.current_balance || 0);
-                        
-                        // Calculate new balances (full disbursement minus processing fee)
-                        const newLedgerBalance = currentLedgerBalance + customerNetChange;
-                        const newAvailableBalance = currentAvailableBalance + customerNetChange;
-                        const newClearedBalance = currentClearedBalance + customerNetChange;
-                        const newCurrentBalance = currentBalance + customerNetChange;
-                        
-                        console.log("DEBUG: Updating customer_accounts table...");
-                        
-                        // Update customer_accounts table
-                        await sequelize.query(
-                            `UPDATE customer_accounts 
-                             SET ledger_balance = ${newLedgerBalance},
-                                 available_balance = ${newAvailableBalance},
-                                 cleared_balance = ${newClearedBalance},
-                                 current_balance = ${newCurrentBalance},
-                                 last_transaction_date = '${sqlDate}',
-                                 updated_at = '${sqlDate}'
-                             WHERE account_number = '${customerAccountNumber}'`,
-                            { transaction }
-                        );
-                        
-                        console.log("DEBUG: ✓ Customer account updated:");
-                        console.log(`DEBUG:   Previous Balance: ₦${currentBalance.toLocaleString()}`);
-                        console.log(`DEBUG:   Net Credit: +₦${customerNetChange.toLocaleString()}`);
-                        console.log(`DEBUG:   New Balance: ₦${newCurrentBalance.toLocaleString()}`);
-                        
-                    } catch (custError) {
-                        console.error("DEBUG: Error updating customer account with processing fee:", custError.message);
-                    }
-                }
-                
-                // ==================== 10.7. SUMMARY ====================
-                console.log("\nDEBUG: =========================================");
-                console.log("DEBUG: LEDGER POSTING SUMMARY");
-                console.log("DEBUG: =========================================");
-                console.log(`DEBUG: Journal ID: ${journalId}`);
-                console.log(`DEBUG: Loan Account: ${ACCT_NO}`);
-                console.log(`DEBUG: Customer: ${customerName || 'N/A'}`);
-                console.log(`DEBUG: Customer Account: ${customerAccountNumber || 'N/A'}`);
-                console.log("\nDEBUG: TRANSACTION BREAKDOWN:");
-                console.log(`DEBUG: 1. Principal Disbursement: ₦${disbursementAmount.toLocaleString()}`);
-                if (interestAmount > 0) {
-                    console.log(`DEBUG: 2. Interest Accrual: ₦${interestAmount.toLocaleString()}`);
-                }
-                if (processingFeeAmount > 0) {
-                    console.log(`DEBUG: 3. Processing Fee: ₦${processingFeeAmount.toLocaleString()}`);
-                }
-                
-                console.log("\nDEBUG: CUSTOMER IMPACT:");
-                console.log(`DEBUG:   Total Credit (Loan): +₦${disbursementAmount.toLocaleString()}`);
-                if (processingFeeAmount > 0) {
-                    console.log(`DEBUG:   Processing Fee Debit: -₦${processingFeeAmount.toLocaleString()}`);
-                    console.log(`DEBUG:   Net to Customer: ₦${(disbursementAmount - processingFeeAmount).toLocaleString()}`);
-                } else {
-                    console.log(`DEBUG:   Net to Customer: ₦${disbursementAmount.toLocaleString()}`);
-                }
-                
-                console.log("\nDEBUG: GL ACCOUNTS USED:");
-                console.log(`DEBUG:   Principal GL: ${principalGL?.accountNo || 'N/A'}`);
-                console.log(`DEBUG:   Interest GL: ${interestGL?.accountNo || 'N/A'}`);
-                console.log(`DEBUG:   Processing Fee GL: ${processingFeeGL?.accountNo || 'N/A'}`);
-                console.log(`DEBUG:   Customer GL: ${customerGL?.accountNo || 'N/A'}`);
-                console.log("DEBUG: =========================================");
-                
             } else {
                 console.log("DEBUG: ledgers table does not exist, skipping ledger posting");
             }
@@ -6236,7 +11772,7 @@ async approveAndDisburseLoan(req, res) {
             // Don't rollback for GL errors - they're not critical for the loan disbursement
         }
 
-        // ==================== 11. CREATE AUDIT LOG ====================
+        // ==================== 12. CREATE AUDIT LOG ====================
         try {
             const auditTables = await sequelize.query(
                 `SELECT TABLE_NAME 
@@ -6300,540 +11836,228 @@ async approveAndDisburseLoan(req, res) {
         } catch (auditError) {
             console.error("DEBUG: Could not create audit log:", auditError.message);
         }
-      // ==================== HELPER FUNCTION: generateContractText ====================
-function generateContractText(loanDetails, customerDetails, productDetails, effectiveInterestRate) {
-    const now = new Date();
-    const formattedDate = now.toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-    });
-    
-    const maturityDate = loanDetails.LAST_PAYMENT_DATE.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-    
-    const firstPaymentDate = loanDetails.FIRST_PAYMENT_DATE.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-    
-    // Calculate monthly payment
-    const principal = loanDetails.AMOUNT;
-    const annualRate = effectiveInterestRate / 100;
-    const monthlyRate = annualRate / 12;
-    const numberOfPayments = loanDetails.NUMBER_OF_INSTALLMENTS;
-    
-    let monthlyPayment = 0;
-    if (monthlyRate > 0) {
-        monthlyPayment = (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
-                        (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
-    } else {
-        monthlyPayment = principal / numberOfPayments;
-    }
-    
-    // Build the contract text
-    const contractText = `
-LOAN AGREEMENT AND CONTRACT
 
-THIS LOAN AGREEMENT is made and entered into on this ${formattedDate}
+        // ==================== 13. CREATE LOAN CONTRACT FORM ====================
+        console.log("\nDEBUG: Creating loan contract form...");
 
-BETWEEN:
-
-${process.env.BANK_NAME || "OUR BANK PLC"}
-(hereinafter referred to as "the Lender")
-
-AND:
-
-${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
-Address: ${customerDetails.HOME_ADDRESS || "Address Not Provided"}
-(hereinafter referred to as "the Borrower")
-
-WHEREAS:
-1. The Borrower has applied for a loan from the Lender.
-2. The Lender has agreed to grant the loan to the Borrower subject to the terms and conditions herein.
-
-NOW, THEREFORE, in consideration of the mutual covenants and promises herein contained, the parties agree as follows:
-
-ARTICLE 1: LOAN DETAILS
-1.1 Loan Amount: ₦${loanDetails.AMOUNT.toLocaleString()}
-1.2 Disbursement Date: ${loanDetails.DISBURSEMENT_DATE.toLocaleDateString()}
-1.3 Interest Rate: ${effectiveInterestRate}% per annum
-1.4 Loan Term: ${loanDetails.TERM_VALUE} ${loanDetails.TERM_CD === 'M' ? 'Months' : 'Years'}
-1.5 Maturity Date: ${maturityDate}
-1.6 Purpose of Loan: ${loanDetails.loan_purpose || "General Business Purpose"}
-
-ARTICLE 2: REPAYMENT TERMS
-2.1 Number of Installments: ${loanDetails.NUMBER_OF_INSTALLMENTS}
-2.2 Monthly Installment: ₦${monthlyPayment.toFixed(2).toLocaleString()}
-2.3 First Payment Date: ${firstPaymentDate}
-2.4 Payment Method: Direct debit from the Borrower's account with the Lender
-2.5 Account for Repayment: ${customerDetails.ACCT_NM || "Borrower's Account"}
-
-ARTICLE 3: INTEREST AND CHARGES
-3.1 Interest shall accrue on the outstanding principal balance from the disbursement date.
-3.2 Interest is calculated on a monthly reducing balance basis.
-3.3 Late payment penalty: 5% of the overdue amount per month.
-3.4 Early repayment is allowed without penalty after 3 months.
-
-ARTICLE 4: DEFAULT AND REMEDIES
-4.1 The Borrower shall be in default if:
-    a) Any installment is not paid within 7 days of its due date;
-    b) The Borrower becomes insolvent or bankrupt;
-    c) Any representation or warranty made by the Borrower is false.
-4.2 Upon default, the Lender may:
-    a) Declare the entire outstanding amount immediately due and payable;
-    b) Charge default interest at 15% per annum;
-    c) Exercise any other rights available under applicable law.
-
-ARTICLE 5: REPRESENTATIONS AND WARRANTIES
-The Borrower represents and warrants that:
-5.1 All information provided is true and accurate.
-5.2 The Borrower has the capacity to enter into this agreement.
-5.3 The loan proceeds will be used solely for the purpose stated in Article 1.6.
-
-ARTICLE 6: GOVERNING LAW
-This agreement shall be governed by and construed in accordance with the laws of Nigeria.
-
-ARTICLE 7: SIGNATURES
-IN WITNESS WHEREOF, the parties have executed this agreement on the date first above written.
-
-_________________________
-For and on behalf of
-${process.env.BANK_NAME || "OUR BANK PLC"}
-
-Name: ___________________
-Title: __________________
-Date: ___________________
-
-_________________________
-The Borrower
-
-Name: ${customerDetails.ACCT_NM || customerDetails.CUST_NM || "The Borrower"}
-Signature: ___________________
-Date: ___________________
-
-WITNESS:
-_________________________
-Name: ___________________
-Address: ________________
-Date: ___________________
-
-This document constitutes the entire agreement between the parties.
-    `;
-    
-    return contractText;
-}
-
-// ==================== X. CREATE LOAN CONTRACT FORM ====================
-console.log("\nDEBUG: Creating loan contract form...");
-
-try {
-    // Check if loan_contract_forms table exists
-    const contractsTableCheck = await sequelize.query(
-        `SELECT TABLE_NAME 
-         FROM INFORMATION_SCHEMA.TABLES 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = 'loan_contract_forms'`,
-        { transaction, type: sequelize.QueryTypes.SELECT }
-    );
-    
-    if (contractsTableCheck.length === 0) {
-        console.log("DEBUG: loan_contract_forms table does not exist, creating it...");
-        
-        await sequelize.query(`
-            CREATE TABLE IF NOT EXISTS loan_contract_forms (
-                id INT PRIMARY KEY AUTO_INCREMENT,
-                loan_contract_no VARCHAR(255) UNIQUE NOT NULL,
-                customer_id VARCHAR(255) NOT NULL,
-                borrower_name VARCHAR(255) NOT NULL,
-                co_signatory_name VARCHAR(255) DEFAULT '',
-                borrower_address VARCHAR(255) DEFAULT 'Address Not Provided',
-                loan_purpose VARCHAR(255) NOT NULL,
-                loan_amount VARCHAR(255) NOT NULL,
-                loan_term INT(11) NOT NULL,
-                t_e_r_m__c_d ENUM('M','Y') DEFAULT 'M',
-                interest_rate DECIMAL(7,4) NOT NULL,
-                interest_rate_id INT(11) DEFAULT 101,
-                guarantor_name VARCHAR(255) DEFAULT '',
-                bank_name VARCHAR(255) NOT NULL,
-                bank_short VARCHAR(255) NOT NULL,
-                status ENUM('PENDING','APPROVED','REJECTED','DISBURSED','ACTIVE','CLOSED') DEFAULT 'PENDING',
-                contract_text TEXT NOT NULL,
-                u_s_e_r__i_d VARCHAR(255) NOT NULL,
-                application_id VARCHAR(255) NOT NULL,
-                loan_account_no VARCHAR(255) NOT NULL,
-                funding_account_no VARCHAR(255) NOT NULL,
-                workflow_id BIGINT(20) UNIQUE,
-                fees LONGTEXT NOT NULL,
-                signature_requirements LONGTEXT NOT NULL,
-                metadata LONGTEXT NOT NULL,
-                disbursement_date DATETIME,
-                maturity_date DATETIME,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-            { transaction }
-        );
-        
-        console.log("DEBUG: ✓ loan_contract_forms table created");
-    }
-    
-    // Generate contract number
-    const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
-    
-    // Calculate maturity date based on term
-    const termCode = loanAccount.t_e_r_m__c_d || 'M';
-    const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
-    const maturityDate = new Date(now);
-    
-    if (termCode === 'M') {
-        maturityDate.setMonth(maturityDate.getMonth() + termValue);
-    } else if (termCode === 'Y') {
-        maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
-    }
-    
-    // Get loan product details for contract - WITH FALLBACK LOGIC
-    let loanProductDetails = {};
-    let effectiveInterestRate = parseFloat(loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
-    let processingFeeAmount = 0;
-    let processingFeeRate = 0;
-    let principalGLAccount = null;
-    let interestGLAccount = null;
-    let processingFeeGLAccount = null;
-
-    // Check if productConfig exists, if not, try to get it again
-    if (!productConfig) {
-        console.log("DEBUG: productConfig not found in scope, attempting to retrieve loan product...");
         try {
-            // Get the product ID from loan account (updated during GL posting)
-            const productId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 1001;
+            // Check if loan_contract_forms table exists
+            const contractsTableCheck = await sequelize.query(
+                `SELECT TABLE_NAME 
+                 FROM INFORMATION_SCHEMA.TABLES 
+                 WHERE TABLE_SCHEMA = DATABASE() 
+                 AND TABLE_NAME = 'loan_contract_forms'`,
+                { transaction, type: sequelize.QueryTypes.SELECT }
+            );
             
-            const productQuery = `
-                SELECT lp.*, 
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.loanGLAccount') as loanGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.principalGLAccountNo') as principalGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.interestGLAccountNo') as interestGLAccount,
-                       JSON_EXTRACT(lp.default_g_l_accounts, '$.processingFeeGLCode') as processingFeeGLAccount,
-                       lp.processing_fee_g_l_code,
-                       lp.processing_fee_rate,
-                       lp.effective_interest_rate,
-                       lp.interest_rate,
-                       lp.fee_structure,
-                       lp.rate_information
-                FROM loan_products lp
-                WHERE lp.p_r_o_d__i_d = ?
-                LIMIT 1
-            `;
-            
-            const [productResult] = await sequelize.query(productQuery, {
-                replacements: [productId],
-                transaction,
-                type: sequelize.QueryTypes.SELECT
-            });
-            
-            if (productResult) {
-                productConfig = productResult;
-                console.log("DEBUG: Retrieved productConfig successfully for contract");
+            if (contractsTableCheck.length === 0) {
+                console.log("DEBUG: loan_contract_forms table does not exist, skipping contract creation");
+                // Don't create the table here - just skip
+            } else {
+                // Generate contract number
+                const contractNumber = `LOAN-CONTRACT-${ACCT_NO}-${Date.now()}`;
                 
-                // Extract GL accounts for reference in contract metadata
-                if (productResult.default_g_l_accounts) {
+                // Calculate maturity date based on term
+                const termCode = loanAccount.t_e_r_m__c_d || 'M';
+                const termValue = parseFloat(loanAccount.t_e_r_m__v_a_l_u_e || 0);
+                const maturityDate = new Date(now);
+                
+                if (termCode === 'M') {
+                    maturityDate.setMonth(maturityDate.getMonth() + termValue);
+                } else if (termCode === 'Y') {
+                    maturityDate.setFullYear(maturityDate.getFullYear() + termValue);
+                }
+                
+                // Prepare loan details for contract
+                const firstPaymentDate = new Date(now);
+                firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
+                
+                const loanDetails = {
+                    AMOUNT: disbursementAmount,
+                    INTEREST_RATE: loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0,
+                    TERM_VALUE: termValue,
+                    TERM_CD: termCode,
+                    DISBURSEMENT_DATE: new Date(now),
+                    FIRST_PAYMENT_DATE: firstPaymentDate,
+                    LAST_PAYMENT_DATE: maturityDate,
+                    NUMBER_OF_INSTALLMENTS: termValue,
+                    borrower_name: customerName || loanAccount.a_c_c_t__n_m || 'Customer',
+                    borrower_address: loanAccount.borrower_address || 'Address Not Provided',
+                    loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
+                };
+                
+                // Prepare customer details
+                const customerDetails = {
+                    ACCT_NM: customerName,
+                    CUST_NM: customerName,
+                    HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
+                };
+                
+                // Generate contract text
+                const contractText = generateContractText(loanDetails, customerDetails, productConfig, loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0);
+                
+                console.log("DEBUG: Contract text generated successfully");
+                
+                // Prepare fees data
+                let feesData = [];
+                if (productConfig?.feeStructure) {
                     try {
-                        const glAccounts = JSON.parse(productResult.default_g_l_accounts);
-                        principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
-                        interestGLAccount = glAccounts.interestGLAccountNo;
-                        processingFeeGLAccount = glAccounts.processingFeeGLCode;
+                        feesData = typeof productConfig.feeStructure === 'string'
+                            ? JSON.parse(productConfig.feeStructure)
+                            : productConfig.feeStructure;
                     } catch (e) {
-                        console.warn("DEBUG: Could not parse GL accounts JSON for contract");
+                        console.warn("DEBUG: Could not parse fee structure");
+                        feesData = [];
                     }
                 }
                 
-                // Get processing fee details
-                processingFeeRate = parseFloat(productResult.processing_fee_rate || 0);
-                processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
-            } else {
-                console.warn("DEBUG: Could not retrieve productConfig from database");
+                // Prepare signature requirements
+                const signatureRequirements = {
+                    requiredSignatures: [
+                        {
+                            role: "Borrower",
+                            name: customerName,
+                            required: true
+                        },
+                        {
+                            role: "Lender Representative",
+                            name: approvedBy,
+                            required: true
+                        }
+                    ],
+                    coSignatories: [],
+                    witnessRequired: false
+                };
+                
+                // Add guarantor if exists
+                if (loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e) {
+                    signatureRequirements.requiredSignatures.push({
+                        role: "Guarantor",
+                        name: loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e,
+                        required: true
+                    });
+                    signatureRequirements.coSignatories.push(loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e);
+                }
+                
+                // Prepare metadata
+                const metadata = {
+                    generatedBy: approvedBy,
+                    generationDate: now.toISOString(),
+                    loanProductId: productConfig?.PROD_ID || loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 'Unknown',
+                    loanAccountNumber: ACCT_NO,
+                    customerAccountNumber: customerAccountNumber,
+                    disbursementAmount: disbursementAmount,
+                    interestAmount: interestAmount,
+                    processingFeeAmount: processingFeeAmount,
+                    processingFeeRate: processingFeeRate,
+                    effectiveInterestRate: loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0,
+                    termDetails: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
+                    glAccounts: {
+                        principalGL: principalGLAccount,
+                        interestGL: interestGLAccount,
+                        processingFeeGL: processingFeeGLAccount
+                    },
+                    customerDetails: {
+                        customerId: customerId,
+                        customerName: customerName,
+                        accountNumber: customerAccountNumber
+                    }
+                };
+                
+                // Insert contract into loan_contract_forms table
+                const contractResult = await sequelize.query(
+                    `INSERT INTO loan_contract_forms (
+                        loan_contract_no,
+                        customer_id,
+                        borrower_name,
+                        co_signatory_name,
+                        borrower_address,
+                        loan_purpose,
+                        loan_amount,
+                        loan_term,
+                        t_e_r_m__c_d,
+                        interest_rate,
+                        interest_rate_id,
+                        guarantor_name,
+                        bank_name,
+                        bank_short,
+                        status,
+                        contract_text,
+                        u_s_e_r__i_d,
+                        application_id,
+                        loan_account_no,
+                        funding_account_no,
+                        fees,
+                        signature_requirements,
+                        metadata,
+                        disbursement_date,
+                        maturity_date,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    {
+                        replacements: [
+                            contractNumber,
+                            customerId,
+                            customerName,
+                            loanAccount.co_signatory_name || '',
+                            loanAccount.borrower_address || 'Address Not Provided',
+                            loanAccount.loan_purpose || 'General Business Purpose',
+                            disbursementAmount.toString(),
+                            termValue,
+                            termCode,
+                            loanAccount.i_n_t_e_r_e_s_t__r_a_t_e || 0,
+                            101, // Default interest rate ID
+                            loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
+                            process.env.BANK_NAME || 'Our Bank',
+                            process.env.BANK_SHORT_NAME || 'BANK',
+                            'DISBURSED',
+                            contractText,
+                            approvedBy,
+                            ACCT_NO, // Using loan account as application ID
+                            ACCT_NO,
+                            customerAccountNumber || 'N/A',
+                            JSON.stringify(feesData),
+                            JSON.stringify(signatureRequirements),
+                            JSON.stringify(metadata),
+                            now,
+                            maturityDate,
+                            now,
+                            now
+                        ],
+                        transaction
+                    }
+                );
+                
+                const contractId = contractResult[0].insertId;
+                console.log(`DEBUG: ✓ Created loan contract form ID: ${contractId}, Contract No: ${contractNumber}`);
+                
+                // Update loan_accounts with contract reference
+                await sequelize.query(
+                    `UPDATE loan_accounts 
+                     SET l_o_a_n__c_o_n_t_r_a_c_t__n_o = ?,
+                         contract_status = 'SIGNED'
+                     WHERE a_c_c_t__n_o = ?`,
+                    {
+                        replacements: [contractNumber, ACCT_NO],
+                        transaction
+                    }
+                );
+                
+                console.log("DEBUG: ✓ Loan contract form created and linked to loan account");
             }
-        } catch (error) {
-            console.warn("DEBUG: Error retrieving productConfig for contract:", error.message);
+            
+        } catch (contractError) {
+            console.error("DEBUG: ✗ Error creating loan contract form:", contractError.message);
+            // Don't rollback for contract errors - it's not critical for disbursement
         }
-    } else {
-        console.log("DEBUG: Using existing productConfig for contract");
-        
-        // Extract GL accounts from existing productConfig
-        if (productConfig.default_g_l_accounts) {
-            try {
-                const glAccounts = JSON.parse(productConfig.default_g_l_accounts);
-                principalGLAccount = glAccounts.principalGLAccountNo || glAccounts.loanGLAccount;
-                interestGLAccount = glAccounts.interestGLAccountNo;
-                processingFeeGLAccount = glAccounts.processingFeeGLCode;
-            } catch (e) {
-                console.warn("DEBUG: Could not parse GL accounts JSON from existing productConfig");
-            }
-        }
-        
-        // Get processing fee details
-        processingFeeRate = parseFloat(productConfig.processing_fee_rate || 0);
-        processingFeeAmount = (disbursementAmount * processingFeeRate) / 100;
-    }
-    
-    // Set loan product details
-    if (productConfig) {
-        loanProductDetails = {
-            interestRate: parseFloat(productConfig.interest_rate) || effectiveInterestRate,
-            feeStructure: productConfig.fee_structure ? JSON.parse(productConfig.fee_structure) : [],
-            processingFeeRate: processingFeeRate,
-            rateInformation: productConfig.rate_information ? JSON.parse(productConfig.rate_information) : {}
-        };
-        
-        // Try to get effective interest rate from loan product
-        if (productConfig.effective_interest_rate) {
-            try {
-                effectiveInterestRate = parseFloat(productConfig.effective_interest_rate);
-            } catch (e) {
-                console.warn("DEBUG: Could not parse effective interest rate, using loan account rate");
-            }
-        }
-    } else {
-        console.warn("DEBUG: No productConfig available, using loan account values");
-        loanProductDetails = {
-            interestRate: effectiveInterestRate,
-            feeStructure: [],
-            processingFeeRate: 0,
-            rateInformation: {}
-        };
-    }
-    
-    // Prepare loan details for contract
-    const firstPaymentDate = new Date(now); // Create a new date object
-    firstPaymentDate.setDate(firstPaymentDate.getDate() + 30);
-    
-    const loanDetails = {
-        AMOUNT: disbursementAmount,
-        INTEREST_RATE: effectiveInterestRate,
-        TERM_VALUE: termValue,
-        TERM_CD: termCode,
-        DISBURSEMENT_DATE: new Date(now), // Create a copy of now
-        FIRST_PAYMENT_DATE: firstPaymentDate,
-        LAST_PAYMENT_DATE: maturityDate,
-        NUMBER_OF_INSTALLMENTS: termValue,
-        borrower_name: customerName || loanAccount.a_c_c_t__n_m || 'Customer',
-        borrower_address: loanAccount.borrower_address || customerAccountDetails?.address || 'Address Not Provided',
-        loan_purpose: loanAccount.loan_purpose || 'General Business Purpose'
-    };
-    
-    // Prepare customer details
-    const customerDetails = {
-        ACCT_NM: customerName,
-        CUST_NM: customerName,
-        HOME_ADDRESS: loanAccount.borrower_address || 'Address Not Provided'
-    };
-    
-    // Generate contract text using your function
-    const contractText = generateContractText(loanDetails, customerDetails, loanProductDetails, effectiveInterestRate);
-    
-    console.log("DEBUG: Contract text generated successfully");
-    
-    // Prepare fees data
-    let feesData = [];
-    if (productConfig?.fee_structure) {
-        try {
-            feesData = JSON.parse(productConfig.fee_structure);
-        } catch (e) {
-            console.warn("DEBUG: Could not parse fee structure");
-            feesData = [];
-        }
-    }
-    
-    // Prepare signature requirements
-    const signatureRequirements = {
-        requiredSignatures: [
-            {
-                role: "Borrower",
-                name: customerName,
-                required: true
-            },
-            {
-                role: "Lender Representative",
-                name: approvedBy,
-                required: true
-            }
-        ],
-        coSignatories: [],
-        witnessRequired: false
-    };
-    
-    // Add guarantor if exists
-    if (loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e) {
-        signatureRequirements.requiredSignatures.push({
-            role: "Guarantor",
-            name: loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e,
-            required: true
-        });
-        signatureRequirements.coSignatories.push(loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e);
-    }
-    
-    // Prepare metadata
-    const metadata = {
-        generatedBy: approvedBy,
-        generationDate: now.toISOString(),
-        loanProductId: productConfig?.p_r_o_d__i_d || loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 'Unknown',
-        loanAccountNumber: ACCT_NO,
-        customerAccountNumber: customerAccountNumber,
-        disbursementAmount: disbursementAmount,
-        interestAmount: (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100), // Calculate interest
-        processingFeeAmount: processingFeeAmount,
-        processingFeeRate: processingFeeRate,
-        effectiveInterestRate: effectiveInterestRate,
-        termDetails: `${termValue} ${termCode === 'M' ? 'Months' : 'Years'}`,
-        glAccounts: {
-            principalGL: principalGLAccount,
-            interestGL: interestGLAccount,
-            processingFeeGL: processingFeeGLAccount
-        },
-        customerDetails: {
-            customerId: customerId,
-            customerName: customerName,
-            accountNumber: customerAccountNumber
-        },
-        financialSummary: {
-            totalLoanAmount: disbursementAmount,
-            totalPayable: disbursementAmount + (disbursementAmount * effectiveInterestRate * termValue) / (12 * 100),
-            monthlyPayment: calculateMonthlyPayment(disbursementAmount, effectiveInterestRate, termValue, termCode)
-        }
-    };
-    
-    // Helper function to calculate monthly payment
-    function calculateMonthlyPayment(principal, annualRate, termValue, termCode) {
-        const annualRateDecimal = annualRate / 100;
-        let monthlyRate, numberOfPayments;
-        
-        if (termCode === 'M') {
-            monthlyRate = annualRateDecimal / 12;
-            numberOfPayments = termValue;
-        } else {
-            // For years, convert to months
-            monthlyRate = annualRateDecimal / 12;
-            numberOfPayments = termValue * 12;
-        }
-        
-        if (monthlyRate > 0) {
-            return (principal * monthlyRate * Math.pow(1 + monthlyRate, numberOfPayments)) / 
-                   (Math.pow(1 + monthlyRate, numberOfPayments) - 1);
-        } else {
-            return principal / numberOfPayments;
-        }
-    }
-    
-    // Insert contract into loan_contract_forms table
-    const contractResult = await sequelize.query(
-        `INSERT INTO loan_contract_forms (
-            loan_contract_no,
-            customer_id,
-            borrower_name,
-            co_signatory_name,
-            borrower_address,
-            loan_purpose,
-            loan_amount,
-            loan_term,
-            t_e_r_m__c_d,
-            interest_rate,
-            interest_rate_id,
-            guarantor_name,
-            bank_name,
-            bank_short,
-            status,
-            contract_text,
-            u_s_e_r__i_d,
-            application_id,
-            loan_account_no,
-            funding_account_no,
-            workflow_id,
-            fees,
-            signature_requirements,
-            metadata,
-            disbursement_date,
-            maturity_date,
-            created_at,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        {
-            replacements: [
-                contractNumber,
-                customerId,
-                customerName,
-                loanAccount.co_signatory_name || '',
-                loanAccount.borrower_address || 'Address Not Provided',
-                loanAccount.loan_purpose || 'General Business Purpose',
-                disbursementAmount.toString(),
-                termValue,
-                termCode,
-                effectiveInterestRate,
-                101, // Default interest rate ID
-                loanAccount.g_u_a_r_a_n_t_o_r__n_a_m_e || '',
-                process.env.BANK_NAME || 'Our Bank',
-                process.env.BANK_SHORT_NAME || 'BANK',
-                'DISBURSED',
-                contractText,
-                approvedBy,
-                ACCT_NO, // Using loan account as application ID
-                ACCT_NO,
-                customerAccountNumber || 'N/A',
-                null, // workflow_id
-                JSON.stringify(feesData),
-                JSON.stringify(signatureRequirements),
-                JSON.stringify(metadata),
-                now,
-                maturityDate,
-                now,
-                now
-            ],
-            transaction
-        }
-    );
-    
-    const contractId = contractResult[0].insertId;
-    console.log(`DEBUG: ✓ Created loan contract form ID: ${contractId}, Contract No: ${contractNumber}`);
-    
-    // Also update loan_accounts with contract reference
-    await sequelize.query(
-        `UPDATE loan_accounts 
-         SET l_o_a_n__c_o_n_t_r_a_c_t__n_o = ?,
-             contract_status = 'SIGNED'
-         WHERE a_c_c_t__n_o = ?`,
-        {
-            replacements: [contractNumber, ACCT_NO],
-            transaction
-        }
-    );
-    
-    console.log("DEBUG: ✓ Loan contract form created and linked to loan account");
-    
-    // Store contract reference for response (INSIDE the try block)
-    const contractRecord = {
-        id: contractId,
-        contractNumber: contractNumber,
-        status: 'DISBURSED',
-        generatedDate: now,
-        maturityDate: maturityDate
-    };
-    
-} catch (contractError) {
-    console.error("DEBUG: ✗ Error creating loan contract form:", contractError.message);
-    console.error("DEBUG: Contract error stack:", contractError.stack);
-    // Don't rollback for contract errors - it's not critical for disbursement
-}
 
-        // ==================== 12. UPDATE LOAN PORTFOLIO ====================
+        // ==================== 14. UPDATE LOAN PORTFOLIO ====================
         try {
             console.log("\nDEBUG: =========================================");
             console.log("DEBUG: UPDATING LOAN PORTFOLIO");
             console.log("DEBUG: =========================================");
             
-            // Use simpler table check
             const portfolioTableCheck = await sequelize.query(
                 `SHOW TABLES LIKE 'loan_portfolio'`,
                 { transaction, type: sequelize.QueryTypes.SELECT }
@@ -6851,29 +12075,24 @@ try {
                 
                 console.log(`DEBUG: Current period: Month ${currentMonth}, Year ${currentYear}`);
                 
-                // Get loan product details - check what fields actually exist in loanAccount
+                // Get loan product details
                 console.log("DEBUG: Available loan account fields:", Object.keys(loanAccount));
                 
-                // Use default values if fields don't exist
                 const loanProductId = loanAccount.l_o_a_n__p_r_o_d_u_c_t__i_d || 
-                                     loanAccount.p_r_o_d__i_d || 
-                                     loanAccount.product_id || 
+                                     productConfig?.PROD_ID || 
                                      0;
                 
                 const branchId = loanAccount.b_r_a_n_c_h__i_d || 
                                 loanAccount.branch_id || 
                                 '001';
                 
-                const productCode = loanAccount.p_r_o_d__c_d || 
-                                  loanAccount.product_code || 
+                const productCode = productConfig?.PRODUCT_SHORT_NAME || 
                                   'GENERAL_LOAN';
                 
-                const productType = loanAccount.p_r_o_d_u_c_t__t_y_p_e || 
-                                  loanAccount.product_type || 
+                const productType = productConfig?.PRODUCT_TYPE || 
                                   'GENERAL_LOAN';
                 
-                const productName = loanAccount.p_r_o_d_u_c_t__n_a_m_e || 
-                                  loanAccount.product_name || 
+                const productName = productConfig?.name || 
                                   'General Loan';
                 
                 console.log("DEBUG: Loan product details:", {
@@ -6930,19 +12149,19 @@ try {
                     });
                     
                     const updatePortfolioQuery = `
-    UPDATE loan_portfolio 
-    SET t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + ${disbursementAmount},
-        t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + ${disbursementAmount},
-        t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
-        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
-        n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
-        a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
-        d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
-        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = ${newAverageLoanSize},
-        u_p_d_a_t_e_d__d_a_t_e = '${now.toISOString().slice(0, 19).replace('T', ' ')}',
-        u_p_d_a_t_e_d__b_y = '${approvedBy}'
-    WHERE id = ${portfolioId}
-`;
+                        UPDATE loan_portfolio 
+                        SET t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + ${disbursementAmount},
+                            t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + ${disbursementAmount},
+                            t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+                            o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + ${disbursementAmount},
+                            n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
+                            a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
+                            d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
+                            a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = ${newAverageLoanSize},
+                            u_p_d_a_t_e_d__d_a_t_e = '${now.toISOString().slice(0, 19).replace('T', ' ')}',
+                            u_p_d_a_t_e_d__b_y = '${approvedBy}'
+                        WHERE id = ${portfolioId}
+                    `;
                     
                     console.log("DEBUG: Executing update query:", updatePortfolioQuery);
                     
@@ -6959,52 +12178,52 @@ try {
                     const sqlDate = now.toISOString().slice(0, 19).replace('T', ' ');
                     
                     const insertPortfolioQuery = `
-    INSERT INTO loan_portfolio (
-        b_r_a_n_c_h__i_d,
-        p_r_o_d__i_d,
-        p_r_o_d_u_c_t__c_o_d_e,
-        p_r_o_d_u_c_t__n_a_m_e,
-        p_r_o_d_u_c_t__t_y_p_e,
-        m_o_n_t_h,
-        y_e_a_r,
-        c_u_r_r_e_n_c_y,
-        t_o_t_a_l__d_i_s_b_u_r_s_e_d,
-        t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
-        t_o_t_a_l__p_r_i_n_c_i_p_a_l,
-        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
-        n_u_m_b_e_r__o_f__l_o_a_n_s,
-        a_c_t_i_v_e__l_o_a_n_s,
-        d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,  // FIXED!
-        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e,
-        s_t_a_t_u_s,
-        c_r_e_a_t_e_d__b_y,
-        u_p_d_a_t_e_d__b_y,
-        c_r_e_a_t_e_d__d_a_t_e,
-        u_p_d_a_t_e_d__d_a_t_e
-    ) VALUES (
-        '${branchId}',
-        ${loanProductId},
-        '${productCode}',
-        '${productName}',
-        '${productType}',
-        ${currentMonth},
-        ${currentYear},
-        'NGN',
-        ${disbursementAmount},
-        ${disbursementAmount},
-        ${disbursementAmount},
-        ${disbursementAmount},
-        1,
-        1,
-        1,  // Fixed value position
-        ${averageLoanSize},
-        'ACTIVE',
-        '${approvedBy}',
-        '${approvedBy}',
-        '${sqlDate}',
-        '${sqlDate}'
-    )
-`;
+                        INSERT INTO loan_portfolio (
+                            b_r_a_n_c_h__i_d,
+                            p_r_o_d__i_d,
+                            p_r_o_d_u_c_t__c_o_d_e,
+                            p_r_o_d_u_c_t__n_a_m_e,
+                            p_r_o_d_u_c_t__t_y_p_e,
+                            m_o_n_t_h,
+                            y_e_a_r,
+                            c_u_r_r_e_n_c_y,
+                            t_o_t_a_l__d_i_s_b_u_r_s_e_d,
+                            t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
+                            t_o_t_a_l__p_r_i_n_c_i_p_a_l,
+                            o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
+                            n_u_m_b_e_r__o_f__l_o_a_n_s,
+                            a_c_t_i_v_e__l_o_a_n_s,
+                            d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,
+                            a_v_e_r_a_g_e__l_o_a_n__s_i_z_e,
+                            s_t_a_t_u_s,
+                            c_r_e_a_t_e_d__b_y,
+                            u_p_d_a_t_e_d__b_y,
+                            c_r_e_a_t_e_d__d_a_t_e,
+                            u_p_d_a_t_e_d__d_a_t_e
+                        ) VALUES (
+                            '${branchId}',
+                            ${loanProductId},
+                            '${productCode}',
+                            '${productName}',
+                            '${productType}',
+                            ${currentMonth},
+                            ${currentYear},
+                            'NGN',
+                            ${disbursementAmount},
+                            ${disbursementAmount},
+                            ${disbursementAmount},
+                            ${disbursementAmount},
+                            1,
+                            1,
+                            1,
+                            ${averageLoanSize},
+                            'ACTIVE',
+                            '${approvedBy}',
+                            '${approvedBy}',
+                            '${sqlDate}',
+                            '${sqlDate}'
+                        )
+                    `;
                     
                     console.log("DEBUG: Executing insert query:", insertPortfolioQuery);
                     
@@ -7017,19 +12236,17 @@ try {
                 
             } else {
                 console.log("DEBUG: ✗ loan_portfolio table does not exist or not found");
-                console.log("DEBUG: Table check result was:", portfolioTableCheck);
             }
         } catch (portfolioError) {
             console.error("DEBUG: ✗ ERROR updating loan portfolio:", portfolioError.message);
-            console.error("DEBUG: Error details:", portfolioError);
             // Don't rollback for portfolio errors - it's not critical
         }
 
-        // ==================== 13. COMMIT TRANSACTION ====================
+        // ==================== 15. COMMIT TRANSACTION ====================
         await transaction.commit();
         console.log("DEBUG: Transaction committed successfully");
 
-        // ==================== 14. PREPARE RESPONSE ====================
+        // ==================== 16. PREPARE RESPONSE ====================
         const totalDisbursedNow = currentStatus === 'ACTIVE' 
             ? (currentDisbursedAmount + disbursementAmount) 
             : disbursementAmount;
@@ -10367,10 +15584,11 @@ async getPendingLoanByAccount (req, res) {
 /**
  * Get pending loans for a specific customer
  */
-async getPendingLoansByCustomer  (req, res)  {
+async getPendingLoansByCustomer(req, res) {
   try {
     const { customerId } = req.params;
     
+    // If customerId is actually the account_number
     const loans = await sequelize.query(`
       SELECT 
         id,
@@ -10385,7 +15603,7 @@ async getPendingLoansByCustomer  (req, res)  {
         t_e_r_m__v_a_l_u_e as term_value,
         created_at
       FROM loan_accounts 
-      WHERE c_u_s_t__i_d = ? 
+      WHERE a_c_c_t__n_o = ?  -- Using account_number instead of c_u_s_t__i_d
         AND l_o_a_n__s_t_a_t_u_s = 'PENDING'
       ORDER BY created_at DESC
     `, {
@@ -10403,7 +15621,8 @@ async getPendingLoansByCustomer  (req, res)  {
     console.error('Error in getPendingLoansByCustomer:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch customer pending loans' 
+      message: 'Failed to fetch customer pending loans',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 },

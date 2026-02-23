@@ -78,6 +78,184 @@ export const chartofAccountController = {
     }
   },
 
+  // ============================================
+  // 🔥 NEW: CLONE COA FOR NEW BRANCH
+  // ============================================
+  async cloneCOAForBranch(req, res) {
+    try {
+      const { sourceBranchCode, targetBranchCode, organization_code, options = {} } = req.body;
+      const { copyBalance = false, prefixNewCode = true, glCodePrefix = '' } = options;
+
+      console.log('🔄 Starting COA clone process:', {
+        sourceBranch: sourceBranchCode,
+        targetBranch: targetBranchCode,
+        organization: organization_code,
+        options
+      });
+
+      // Validate required fields
+      if (!sourceBranchCode || !targetBranchCode || !organization_code) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing required fields: sourceBranchCode, targetBranchCode, organization_code'
+        });
+      }
+
+      // Check if source branch exists and has accounts
+      const sourceAccounts = await ChartofAccount.findAll({
+        where: {
+          organization_code: parseInt(organization_code),
+          branch_code: sourceBranchCode,
+          is_deleted: false
+        }
+      });
+
+      if (sourceAccounts.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No accounts found in source branch ${sourceBranchCode}`,
+          data: { totalAccounts: 0 }
+        });
+      }
+
+      console.log(`📊 Found ${sourceAccounts.length} accounts in source branch`);
+
+      // Check if target branch already has accounts
+      const existingTargetAccounts = await ChartofAccount.count({
+        where: {
+          organization_code: parseInt(organization_code),
+          branch_code: targetBranchCode,
+          is_deleted: false
+        }
+      });
+
+      if (existingTargetAccounts > 0 && !options.overwrite) {
+        return res.status(409).json({
+          success: false,
+          message: `Target branch ${targetBranchCode} already has ${existingTargetAccounts} accounts. Use options.overwrite=true to replace them.`,
+          data: { existingAccounts: existingTargetAccounts }
+        });
+      }
+
+      // If overwrite is true, soft delete existing accounts in target branch
+      if (existingTargetAccounts > 0 && options.overwrite) {
+        console.log(`🗑️ Soft deleting ${existingTargetAccounts} existing accounts in target branch`);
+        await ChartofAccount.update(
+          {
+            is_deleted: true,
+            deleted_at: new Date(),
+            deleted_by: req.user?.id || 'system_clone'
+          },
+          {
+            where: {
+              organization_code: parseInt(organization_code),
+              branch_code: targetBranchCode,
+              is_deleted: false
+            }
+          }
+        );
+      }
+
+      // Clone each account
+      const clonedAccounts = [];
+      const errors = [];
+
+      for (const sourceAccount of sourceAccounts) {
+        try {
+          // Generate new GL code if needed
+          let newGlcode = sourceAccount.glcode;
+          if (prefixNewCode) {
+            // Replace branch portion of GL code or add prefix
+            if (sourceAccount.glcode) {
+              // Assuming GL code format contains branch code (e.g., 0100122000001)
+              // Replace the branch portion (positions 3-5) with target branch code
+              const branchSegment = targetBranchCode.padStart(3, '0');
+              newGlcode = sourceAccount.glcode.substring(0, 2) + branchSegment + sourceAccount.glcode.substring(5);
+            } else if (glCodePrefix) {
+              newGlcode = `${glCodePrefix}${sourceAccount.id}`;
+            }
+          }
+
+          // Create new account data
+          const newAccountData = {
+            name: sourceAccount.name,
+            glcode: newGlcode,
+            type: sourceAccount.type,
+            account_usage: sourceAccount.account_usage,
+            gl_group: sourceAccount.gl_group,
+            balance: copyBalance ? sourceAccount.balance : 0,
+            unreconciled_balance: copyBalance ? sourceAccount.unreconciled_balance : 0,
+            manual_entries: sourceAccount.manual_entries,
+            description: sourceAccount.description,
+            status: sourceAccount.status,
+            organization_code: sourceAccount.organization_code,
+            branch_code: targetBranchCode,
+            metadata: {
+              ...sourceAccount.metadata,
+              clonedFrom: {
+                sourceId: sourceAccount.id,
+                sourceBranch: sourceBranchCode,
+                sourceGlcode: sourceAccount.glcode,
+                clonedAt: new Date().toISOString(),
+                clonedBy: req.user?.id || 'system_clone'
+              }
+            },
+            created_by: req.user?.id || 'system_clone'
+          };
+
+          // Create the cloned account
+          const clonedAccount = await ChartofAccount.create(newAccountData);
+          clonedAccounts.push(clonedAccount);
+
+        } catch (accountError) {
+          console.error(`❌ Failed to clone account ${sourceAccount.id}:`, accountError.message);
+          errors.push({
+            sourceAccountId: sourceAccount.id,
+            sourceGlcode: sourceAccount.glcode,
+            error: accountError.message
+          });
+        }
+      }
+
+      // Prepare success response
+      const response = {
+        success: true,
+        message: `Successfully cloned ${clonedAccounts.length} accounts to branch ${targetBranchCode}`,
+        data: {
+          sourceBranch: sourceBranchCode,
+          targetBranch: targetBranchCode,
+          organization_code: parseInt(organization_code),
+          totalSource: sourceAccounts.length,
+          totalCloned: clonedAccounts.length,
+          totalErrors: errors.length,
+          clonedAccounts: clonedAccounts.map(acc => ({
+            id: acc.id,
+            name: acc.name,
+            glcode: acc.glcode,
+            type: acc.type
+          })),
+          errors: errors
+        }
+      };
+
+      // Add warnings if any
+      if (errors.length > 0) {
+        response.warning = `Some accounts failed to clone (${errors.length} errors)`;
+      }
+
+      console.log(`✅ Clone process completed: ${clonedAccounts.length}/${sourceAccounts.length} accounts cloned`);
+      res.status(201).json(response);
+
+    } catch (error) {
+      console.error('❌ Clone COA error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to clone chart of accounts for new branch',
+        error: error.message
+      });
+    }
+  },
+
   // READ - Get all accounts (FIXED with Sequelize)
   async getAccounts(req, res) {
     try {

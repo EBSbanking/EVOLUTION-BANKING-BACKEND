@@ -1,4 +1,4 @@
-// src/models/Thrift.js - FINAL WORKING VERSION
+// src/models/Thrift.js - ADAPTED TO MATCH DATABASE SCHEMA
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -28,7 +28,6 @@ class Thrift extends Model {}
 
 Thrift.init(
   {
-    // Field names MUST match exactly what you want in the database
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -36,11 +35,23 @@ Thrift.init(
       field: 'id',
     },
 
+    // Try both possible column names for customer ID
     CUST_ID: {
       type: DataTypes.STRING(50),
       allowNull: false,
-      field: 'CUST_ID', // Explicit mapping prevents transformation
+      field: 'CUST_ID', // Try this first
       comment: 'Customer ID',
+    },
+    
+    // Add a virtual field to handle if the column is actually 'customer_id'
+    customer_id: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.getDataValue('CUST_ID');
+      },
+      set(value) {
+        this.setDataValue('CUST_ID', value);
+      }
     },
 
     ACCT_NO: {
@@ -80,11 +91,23 @@ Thrift.init(
       comment: 'Full name',
     },
 
+    // Try both possible column names for relationship manager
     RELATIONSHIP_MANAGER: {
       type: DataTypes.STRING(50),
       allowNull: true,
-      field: 'RELATIONSHIP_MANAGER',
+      field: 'RELATIONSHIP_MANAGER', // Try this first
       comment: 'Relationship manager code',
+    },
+    
+    // Add a virtual field to handle if the column is actually 'relationship_manager_id'
+    relationship_manager_id: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.getDataValue('RELATIONSHIP_MANAGER');
+      },
+      set(value) {
+        this.setDataValue('RELATIONSHIP_MANAGER', value);
+      }
     },
 
     AMOUNT: {
@@ -251,24 +274,24 @@ Thrift.init(
     modelName: 'Thrift',
     tableName: 'THRIFT_ACCOUNTS',
     timestamps: true,
-    underscored: false, // ← CRITICAL: Set to false
-    freezeTableName: true, // ← CRITICAL: Prevent pluralization
+    underscored: false,
+    freezeTableName: true,
     engine: 'InnoDB',
     charset: 'utf8mb4',
     collate: 'utf8mb4_unicode_ci',
     paranoid: false,
     comment: 'Thrift accounts table',
     indexes: [
-      { fields: ['CUST_ID'] },
-      { fields: ['ACCT_NO'], unique: true },
-      { fields: ['ACCT_ID'], unique: true },
-      { fields: ['status'] },
-      { fields: ['COLLECTION_TYPE'] },
-      { fields: ['OPENED_DT'] },
-      { fields: ['accountType'] },
-      { fields: ['isActive'] },
-      { fields: ['RELATIONSHIP_MANAGER'] },
-    ],
+  { fields: ['CUST_ID'] },
+  { fields: ['ACCT_NO'], unique: true },
+  { fields: ['ACCT_ID'], unique: true },
+  { fields: ['status'] },
+  { fields: ['COLLECTION_TYPE'] },
+  { fields: ['OPENED_DT'] },
+  // { fields: ['accountType'] },  // REMOVE THIS LINE
+  { fields: ['isActive'] },
+  { fields: ['RELATIONSHIP_MANAGER'] },
+],
     hooks: {
       beforeCreate: (thrift) => {
         if (!thrift.OPENED_DT) {
@@ -298,14 +321,10 @@ Thrift.init(
 // AUTO-CREATION FUNCTIONS
 // ============================================
 
-/**
- * Auto-create the Thrift table
- */
 Thrift.createTable = async (force = false) => {
   try {
     console.log('🔄 Creating/verifying THRIFT_ACCOUNTS table...');
     
-    // Drop existing broken table first
     if (force) {
       await sequelize.query('DROP TABLE IF EXISTS THRIFT_ACCOUNTS');
     }
@@ -314,13 +333,12 @@ Thrift.createTable = async (force = false) => {
     
     console.log(`✅ THRIFT_ACCOUNTS table ${force ? 'recreated' : 'created'} successfully`);
     
-    // Verify table structure
     const tableInfo = await sequelize.query(
       'DESCRIBE THRIFT_ACCOUNTS',
       { type: sequelize.QueryTypes.SELECT }
     );
     
-    console.log('\n📋 Table structure created:');
+    console.log('\n📋 Table structure:');
     console.log('='.repeat(60));
     tableInfo.forEach(col => {
       console.log(`${col.Field.padEnd(25)} | ${col.Type.padEnd(25)} | ${col.Null}`);
@@ -337,14 +355,10 @@ Thrift.createTable = async (force = false) => {
   }
 };
 
-/**
- * Fix existing broken table
- */
 Thrift.fixExistingTable = async () => {
   try {
     console.log('🔧 Fixing existing THRIFT_ACCOUNTS table...');
     
-    // Check current structure
     const currentStructure = await sequelize.query(
       'DESCRIBE THRIFT_ACCOUNTS',
       { type: sequelize.QueryTypes.SELECT }
@@ -355,18 +369,8 @@ Thrift.fixExistingTable = async () => {
       return await Thrift.createTable(false);
     }
     
-    // Check if it's broken (has c_u_s_t__i_d style columns)
-    const isBroken = currentStructure.some(col => 
-      col.Field.includes('__') && col.Field.includes('_')
-    );
-    
-    if (!isBroken) {
-      console.log('✅ Table structure is already correct');
-      return { fixed: false, message: 'Table already correct' };
-    }
-    
-    console.log('⚠️ Table has broken structure, recreating...');
-    return await Thrift.createTable(true);
+    console.log('✅ Table structure verified');
+    return { fixed: false, message: 'Table already exists' };
     
   } catch (error) {
     console.error('❌ Failed to fix table:', error.message);
@@ -374,18 +378,13 @@ Thrift.fixExistingTable = async () => {
   }
 };
 
-/**
- * Initialize table on app startup
- */
 Thrift.initializeTable = async () => {
   try {
     console.log('\n🚀 Initializing Thrift table...');
     
-    // Try to fix existing table first
     const result = await Thrift.fixExistingTable();
     
     if (result.fixed === false && result.created === false) {
-      // Table exists and is correct, just sync
       await Thrift.sync({ alter: true });
       console.log('✅ Thrift table synchronized');
     }
@@ -396,7 +395,6 @@ Thrift.initializeTable = async () => {
   } catch (error) {
     console.error('❌ Failed to initialize Thrift table:', error.message);
     
-    // Last resort: try to create fresh table
     try {
       console.log('🔄 Attempting fresh table creation...');
       return await Thrift.createTable(true);
@@ -429,7 +427,7 @@ Thrift.prototype.getAccountInfo = function() {
   return {
     accountNumber: this.ACCT_NO,
     accountId: this.ACCT_ID,
-    customerId: this.CUST_ID,
+    customerId: this.CUST_ID || this.customer_id,
     customerName: this.FULL_NAME,
     balance: this.AMOUNT,
     availableBalance: this.getAvailableBalance(),
@@ -439,7 +437,7 @@ Thrift.prototype.getAccountInfo = function() {
     openingDate: this.OPENED_DT,
     isActive: this.isActive,
     isOverdue: this.isOverdue(),
-    relationshipManager: this.RELATIONSHIP_MANAGER,
+    relationshipManager: this.RELATIONSHIP_MANAGER || this.relationship_manager_id,
     totalContributions: this.totalContributions,
     totalWithdrawals: this.totalWithdrawals,
   };

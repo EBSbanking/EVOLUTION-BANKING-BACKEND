@@ -1,0 +1,336 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 03:31:02"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 03:31:11"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 03:31:13"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T12:31:20.905Z","timestamp":"2026-02-18 03:31:20"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 03:31:20"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 03:31:23"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:19:22"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:19:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:19:35"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:19:42.332Z","timestamp":"2026-02-18 04:19:42"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:19:42"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:25:39"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:25:42"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:25:43"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:25:48.330Z","timestamp":"2026-02-18 04:25:48"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:25:48"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:29:51"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:29:54"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:29:54"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:29:56.729Z","timestamp":"2026-02-18 04:29:56"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:29:56"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:29:57"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:34:30"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:34:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:34:37"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:34:40.860Z","timestamp":"2026-02-18 04:34:40"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:34:40"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:34:41"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:40:47"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:40:50"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:40:51"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:40:53.062Z","timestamp":"2026-02-18 04:40:53"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:40:53"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:43:53"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:43:56"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:43:56"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:43:58.668Z","timestamp":"2026-02-18 04:43:58"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:43:58"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:43:58"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:43:58"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:43:58"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:43:59"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:47:28"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:47:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:47:32"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:47:34.130Z","timestamp":"2026-02-18 04:47:34"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:47:34"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:50:28"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:50:31"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:50:31"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:50:33.598Z","timestamp":"2026-02-18 04:50:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:50:33"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:50:34"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:54:05"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:54:08"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:54:08"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:54:10.708Z","timestamp":"2026-02-18 04:54:10"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:54:10"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 04:59:17"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:59:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 04:59:20"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-18T13:59:22.357Z","timestamp":"2026-02-18 04:59:22"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 04:59:22"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-18 19:46:32"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 19:46:55"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-19T04:47:20.703Z","timestamp":"2026-02-18 19:47:20"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-18 19:47:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-18 19:47:20"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-18 19:47:25"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-18 19:47:25"}

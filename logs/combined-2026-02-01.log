@@ -1,5 +1,0 @@
-{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-01 10:49:34"}
-{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-01 10:49:55"}
-{"level":"info","message":"Server time initialized (WAT): 2026-02-01T19:50:05.501Z","timestamp":"2026-02-01 10:50:05"}
-{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-01 10:50:05"}
-{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-01 10:50:05"}

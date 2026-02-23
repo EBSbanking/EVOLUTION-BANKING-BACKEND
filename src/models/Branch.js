@@ -1,4 +1,4 @@
-// models/Branch.js - UPDATED WITH ALL FIELDS
+// models/Branch.js - UPDATED WITH ALL FIELDS AND DEFAULT SCOPE
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -187,6 +187,20 @@ Branch.init(
     tableName: 'branches',
     timestamps: false,
     underscored: false,
+    // Add default scope to exclude problematic BankId column
+    defaultScope: {
+      attributes: { 
+        exclude: [
+          'BankId', 
+          'bank_id', 
+          'BankId', 
+          'bankId', 
+          'Bank_Id',
+          'bank-id',
+          'Bank-Id'
+        ] 
+      }
+    },
     indexes: [
       {
         unique: true,
@@ -222,6 +236,13 @@ Branch.associate = (models) => {
     foreignKey: 'branch',
     as: 'businessUnit'
   });
+  
+  // If there's an association with Bank that's causing the BankId column,
+  // you can comment it out or fix it here
+  // Branch.belongsTo(models.Bank, {
+  //   foreignKey: 'bank_id', // Use actual column name if it exists
+  //   as: 'bank'
+  // });
 };
 
 export default Branch;

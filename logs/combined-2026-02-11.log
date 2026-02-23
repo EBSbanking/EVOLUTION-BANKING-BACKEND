@@ -295,3 +295,51 @@
 {"level":"info","message":"   USER: 1 models","timestamp":"2026-02-11 22:15:41"}
 {"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-11 22:15:41"}
 {"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-11 22:15:41"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-11 22:18:07"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-11 22:18:09"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-12T07:18:11.300Z","timestamp":"2026-02-11 22:18:11"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-11 22:18:11"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-11 22:18:11"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model User on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model Customer on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model CustomerAccount on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model LoanAccount on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model LoanRepayment on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model Deposit on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model Transaction on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model GLAccount on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Loaded critical model AuditTrail on demand","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, User, Customer, CustomerAccount, LoanAccount, LoanRepayment, Deposit, Transaction, GLAccount, AuditTrail","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   Total models loaded: 13","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   CUSTOMER: 2 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   LOAN: 2 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   DEPOSIT: 1 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   TRANSACTION: 1 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   USER: 1 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   ACCOUNTING: 1 models","timestamp":"2026-02-11 22:18:12"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-11 22:18:12"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:27:11.060Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:27:11","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:27:11.170Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:27:11","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0","userId":3,"username":"PCO01"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:28:48","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:28:48"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:28:48","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:28:48"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:29:15.243Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:29:15","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:29:15.255Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:29:15","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:29:54"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:29:54","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:29:54","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:29:54"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:30:07.738Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:30:07","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:30:07.753Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:30:07","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:31:00","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:31:00"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-11 22:31:00","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-11 22:31:00"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:31:06.373Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:31:06","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}
+{"hasRefreshToken":false,"ipAddress":"127.0.0.1","level":"info","logoutTime":"2026-02-12T06:31:06.389Z","message":"Authenticated user logged out","timestamp":"2026-02-11 22:31:06","userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36","userId":3,"username":"PCO01"}

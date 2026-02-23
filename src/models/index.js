@@ -1,4 +1,4 @@
-// models/index.js - COMPLETE UPDATED VERSION
+// models/index.js - COMPLETE FIXED VERSION (Customer removed from function-based)
 import sequelizeInstance from '../../config/db.js';
 import { DataTypes, Op, QueryTypes } from 'sequelize';
 
@@ -27,13 +27,14 @@ const models = {
   QueryTypes
 };
 
-// Define model paths - COMPLETE LIST WITHOUT DUPLICATES
+// Define model paths - COMPLETE LIST WITH THRIFT
 const modelPaths = {
   // ===== AML & COMPLIANCE =====
   'AML': './AML.js',
   'AMLThreshold': './AMLThreshold.js',
   'AccountApplication': './AccountApplication.js',
-  
+
+  // ===== DRAWER MODELS =====
   'Drawer': './Drawer.js',
   'DrawerCloseOut': './DrawerCloseOut.js',
   'DrawerUserRole': './DrawerUserRole.js',
@@ -45,26 +46,26 @@ const modelPaths = {
   'GuarantorAudit': './GuarantorAudit.js',
   'VaultAccessAttempt': './VaultAccessAttempt.js',
   'VaultMaintenanceLog': './VaultMaintenanceLog.js',
-  
+
   // ===== AUTHENTICATION & AUTHORIZATION =====
   'User': './User.js',
   'Permissions': './Permissions.js',
   'UserRole': './UserRole.js',
   'BusinessRole': './BusinessRole.js',
   'Role': './Role.js',
-  
+
   // ===== BUSINESS STRUCTURE =====
   'BusinessUnit': './BusinessUnit.js',
   'Branch': './Branch.js',
   'Organization': './Organization.js',
-  
+
   // ===== CUSTOMER MANAGEMENT =====
   'Customer': './Customer.js',
   'CustomerType': './CustomerType.js',
   'NextOfKin': './NextOfKin.js',
   'RelationshipOfficer': './RelationshipOfficer.js',
   'CreditOfficer': './CreditOfficer.js',
-  
+
   // ===== ACCOUNTS & PRODUCTS =====
   'CustomerAccount': './CustomerAccount.js',
   'DepositAccount': './DepositAccount.js',
@@ -72,13 +73,13 @@ const modelPaths = {
   'SavingsProduct': './SavingsProducts.js',
   'LoanProduct': './LoanProduct.js',
   'TermDeposit': './TermDeposit.js',
-  'Thrift': './Thrift.js',
+  'Thrift': './Thrift.js',           // THRIFT MODEL
   'Group': './Group.js',
   'GroupSavings': './GroupSavings.js',
-  
+
   // ===== INTEREST RATES =====
   'LoanInterestRate': './LoanInterestRate.js',
-  
+
   // ===== TRANSACTIONS =====
   'Transaction': './Transaction.js',
   'Deposit': './Deposit.js',
@@ -90,7 +91,7 @@ const modelPaths = {
   'DirectDebit': './DirectDebit.js',
   'DirectDebitRequest': './DirectDebitRequest.js',
   'StandingOrder': './StandingOrder.js',
-  
+
   // ===== GENERAL LEDGER & ACCOUNTING =====
   'GLAccount': './GLAccount.js',
   'ChartofAccount': './ChartofAccount.js',
@@ -98,13 +99,11 @@ const modelPaths = {
   'GLTransaction': './GLTransaction.js',
   'GLAccountTransaction': './GLAccountTransaction.js',
   'JournalEntry': './JournalEntry.js',
-  
-  // ===== YEAR-END CLOSING MODELS (NEW) =====
   'GLClosingPeriod': './GLClosingPeriod.js',
   'ScheduledTask': './ScheduledTask.js',
   'EOYReport': './EOYReport.js',
   'Holiday': './Holiday.js',
-  
+
   // ===== CREDIT & LENDING =====
   'CreditApplication': './CreditApplication.js',
   'LoanContractForm': './LoanContractForm.js',
@@ -114,26 +113,23 @@ const modelPaths = {
   'LoanPortfolio': './LoanPortfolio.js',
   'LoanFee': './LoanFee.js',
   'LoanPenalty': './LoanPenalty.js',
-  
+
   // ===== INTEREST & CHARGES =====
   'DepositAccountInterest': './DepositAccountInterest.js',
   'DepositAccountInterest_Tier': './DepositAccountInterest_Tier.js',
   'Charge': './Charge.js',
   'InterestCalculation': './InterestCalculation.js',
-  
+
   // ===== BANKING INFRASTRUCTURE =====
   'Bank': './Bank.js',
   'Vault': './Vault.js',
   'VaultAuthorizedPersonnel': './VaultAuthorizedPersonnel.js',
   'VaultPendingApproval': './VaultPendingApproval.js',
-  'Drawer': './Drawer.js',
-  'DrawerCurrencyDenomination': './DrawerCurrencyDenomination.js',
-  'DrawerUserRole': './DrawerUserRole.js',
-  
+
   // ===== GEOGRAPHICAL =====
   'Country': './Country.js',
   'State': './State.js',
-  
+
   // ===== WORKFLOW & PROCESSES =====
   'WorkflowProcess': './WF_BUSINESS_PROCESS.js',
   'WorkflowSubProcess': './WF_SUB_PROCESS.js',
@@ -142,11 +138,11 @@ const modelPaths = {
   'WorkflowBusinessRoleQueue': './WF_BusinessRoleQueue.js',
   'WorkflowSubProcessPolicy': './WF_SubProcessPolicy.js',
   'CustomerWorkflowRouting': './CustWorkflowRouting.js',
-  
+
   // ===== NOTIFICATIONS & COMMUNICATIONS =====
   'Notification': './Notification.js',
   'SMS': './SMS.js',
-  
+
   // ===== REPORTS & ANALYTICS =====
   'Report': './Report.js',
   'Dashboard': './Dashboard.js',
@@ -157,11 +153,10 @@ const modelPaths = {
   'DisbursementReport': './DisbursementReport.js',
   'LoanAccountSummary': './LoanAccountSummary.js',
   'DepositAccountSummary': './DepositAccountSummary.js',
-  
+
   // ===== SYSTEM & CONFIGURATION =====
   'Counter': './Counter.js',
   'SystemDate': './SystemDate.js',
-  'Holiday': './Holiday.js',
   'License': './License.js',
   'Configuration': './Configuration.js',
   'TransactionPolicy': './TransactionPolicy.js',
@@ -170,44 +165,40 @@ const modelPaths = {
   'Identifier': './Identifier.js',
   'Subfolder': './Subfolder.js',
   'Event': './Event.js',
-  
+
   // ===== UTILITIES =====
   'AutoReclassifyInformation': './AutoReclassifyInformation.js',
   'UploadFile': './UploadFile.js',
   'CleanupDB': './CleanupDB.js',
-  
+
   // ===== TELLER & OPERATIONS =====
   'TellerStat': './TellerStat.js',
   'DepositAccountApplication': './DepositAccountApplication.js',
   'IdentificationInformation': './IdentificationInformation.js',
-  
+
   // ===== PORTFOLIO MANAGEMENT =====
   'Portfolio': './Portfolio.js',
   'LoanCalculator': './LoanCalculator.js',
-
-  // ===== PRODUCTS SETUP =====
-  'SavingsProducts': './SavingsProducts.js',
-  'LoanProduct': './LoanProduct.js',
 };
 
 // Special handling for problematic models and function-based models
-const functionBasedModels = ['Customer', 'AML', 'WF_WORK_ITEM', 'RelationshipOfficer', 'GuarantorAudit', 'GLClosingPeriod'];
+// FIXED: Removed 'Customer' from this list since it's now a proper class model
+const functionBasedModels = ['AML', 'WF_WORK_ITEM', 'RelationshipOfficer', 'GuarantorAudit', 'GLClosingPeriod'];
 
 // Import a single model with enhanced error handling
 const importModel = async (modelName, modelPath) => {
   try {
     console.log(`📥 Importing ${modelName}...`);
-    
-    // Special handling for function-based models (like Customer)
+
+    // Special handling for function-based models
     if (functionBasedModels.includes(modelName)) {
       console.log(`⚠️ ${modelName} is a function-based model...`);
       try {
         const imported = await import(modelPath);
         let ModelFunction = imported.default || imported[modelName] || imported;
-        
+
         if (ModelFunction && typeof ModelFunction === 'function') {
           // For function-based models, we store the function
-          // It will be called with sequelize later in initializeModels
           models[modelName] = ModelFunction;
           console.log(`✅ ${modelName} function loaded (will be initialized later)`);
           return ModelFunction;
@@ -216,23 +207,20 @@ const importModel = async (modelName, modelPath) => {
         }
       } catch (specificError) {
         console.error(`❌ Special handling failed for ${modelName}:`, specificError.message);
-        // Create placeholder but don't fail completely
         const placeholder = createPlaceholderModel(modelName);
         models[modelName] = placeholder;
         console.log(`📝 ${modelName} placeholder created`);
         return placeholder;
       }
     }
-    
+
     // Normal import for other models
     const imported = await import(modelPath)
       .catch(async () => {
-        // Try relative path
         const relativePath = `.${modelPath}`;
         return await import(relativePath);
       })
       .catch(async () => {
-        // Try with .js extension
         const jsPath = `${modelPath.replace('.js', '')}.js`;
         return await import(jsPath);
       })
@@ -245,34 +233,22 @@ const importModel = async (modelName, modelPath) => {
       throw new Error(`Import returned null for ${modelName}`);
     }
 
-    // Get the model class (handles both default and named exports)
+    // Get the model class
     let ModelClass = imported.default || imported[modelName] || imported;
-    
-    // If we have a valid model class
+
     if (ModelClass) {
-      // Check if it's a Sequelize Model class
-      if (typeof ModelClass.init === 'function') {
-        // The model is already initialized in its own file
-        if (!ModelClass.sequelize || ModelClass.sequelize !== sequelizeInstance) {
-          console.log(`🔄 ${modelName} using its own initialization`);
-        }
-      }
-      
       models[modelName] = ModelClass;
       console.log(`✅ ${modelName} loaded successfully`);
       return ModelClass;
     }
-    
+
     throw new Error(`No valid export found for ${modelName}`);
-    
+
   } catch (error) {
     console.error(`❌ Failed to load ${modelName}:`, error.message);
-    
-    // Create placeholder for graceful degradation
     const placeholder = createPlaceholderModel(modelName);
     models[modelName] = placeholder;
     console.log(`📝 ${modelName} placeholder created`);
-    
     return placeholder;
   }
 };
@@ -280,21 +256,21 @@ const importModel = async (modelName, modelPath) => {
 // Load all models
 const loadModels = async () => {
   console.log(`🔄 Loading ${Object.keys(modelPaths).length} models...`);
-  
+
   // Load non-function-based models first
   for (const [modelName, modelPath] of Object.entries(modelPaths)) {
     if (!functionBasedModels.includes(modelName)) {
       await importModel(modelName, modelPath);
     }
   }
-  
+
   // Load function-based models last
   for (const [modelName, modelPath] of Object.entries(modelPaths)) {
     if (functionBasedModels.includes(modelName)) {
       await importModel(modelName, modelPath);
     }
   }
-  
+
   console.log(`✅ Loaded ${Object.keys(models).length - 4} models`);
   return models;
 };
@@ -302,30 +278,27 @@ const loadModels = async () => {
 // Initialize function-based models
 const initializeFunctionBasedModels = () => {
   console.log('🔧 Initializing function-based models...');
-  
-  // List of function-based models that need initialization
-  const modelsToInitialize = ['Customer', 'AML', 'WF_WORK_ITEM'];
-  
+
+  // FIXED: Removed 'Customer' from this list
+  const modelsToInitialize = ['AML', 'WF_WORK_ITEM', 'RelationshipOfficer', 'GuarantorAudit', 'GLClosingPeriod'];
+
   for (const modelName of modelsToInitialize) {
     const modelFunction = models[modelName];
-    
+
     if (modelFunction && typeof modelFunction === 'function') {
       try {
         console.log(`🔄 Initializing ${modelName}...`);
-        // Call the function with sequelizeInstance to get the actual model
         const initializedModel = modelFunction(sequelizeInstance);
-        
+
         if (initializedModel && typeof initializedModel.findOne === 'function') {
           models[modelName] = initializedModel;
           console.log(`✅ ${modelName} initialized successfully`);
         } else {
           console.error(`❌ ${modelName} function didn't return a valid Sequelize model`);
-          // Create placeholder
           models[modelName] = createPlaceholderModel(modelName);
         }
       } catch (error) {
         console.error(`❌ Failed to initialize ${modelName}:`, error.message);
-        // Create placeholder
         models[modelName] = createPlaceholderModel(modelName);
       }
     }
@@ -337,14 +310,29 @@ const initializeFunctionBasedModels = () => {
 // Table initialization for specific models
 const initializeTables = async () => {
   console.log('🔄 Initializing database tables...');
-  
+
   try {
+    // Initialize Thrift table if model has initializeTable method
+    if (models.Thrift && typeof models.Thrift.initializeTable === 'function') {
+      console.log('📊 Initializing Thrift table...');
+      await models.Thrift.initializeTable();
+    } else if (models.Thrift && typeof models.Thrift.sync === 'function') {
+      console.log('📊 Syncing Thrift table...');
+      await models.Thrift.sync({ alter: false, force: false });
+    }
+
+    // Initialize Customer table - CRITICAL FOR THRIFT
+    if (models.Customer && typeof models.Customer.sync === 'function') {
+      console.log('📊 Syncing Customer table...');
+      await models.Customer.sync({ alter: false, force: false });
+    }
+
     // Initialize LoanAccount table if the model has an initializeTable method
     if (models.LoanAccount && typeof models.LoanAccount.initializeTable === 'function') {
       console.log('📊 Initializing LoanAccount table...');
       await models.LoanAccount.initializeTable();
     }
-    
+
     // Initialize LoanInterestRate table (CRITICAL - fix for too many keys error)
     if (models.LoanInterestRate && typeof models.LoanInterestRate.initializeTable === 'function') {
       console.log('📊 Initializing LoanInterestRate table (manual mode to avoid too many keys error)...');
@@ -358,13 +346,13 @@ const initializeTables = async () => {
           "SHOW TABLES LIKE 'loan_interest_rates'",
           { type: QueryTypes.SELECT }
         );
-        
+
         if (tables.length === 0) {
           console.log('Creating loan_interest_rates table with safe options...');
-          await models.LoanInterestRate.sync({ 
-            force: false, 
+          await models.LoanInterestRate.sync({
+            force: false,
             alter: false, // Important: Don't use alter to avoid the 64-key limit issue
-            logging: console.log 
+            logging: console.log
           });
         } else {
           console.log('✅ loan_interest_rates table already exists');
@@ -373,10 +361,10 @@ const initializeTables = async () => {
         console.error('❌ Error handling LoanInterestRate table:', error.message);
       }
     }
-    
+
     // Initialize other critical tables with safe options
-    const criticalTables = ['CustomerAccount', 'LoanProduct', 'Transaction', 'User'];
-    
+    const criticalTables = ['CustomerAccount', 'LoanProduct', 'Transaction', 'User', 'Thrift'];
+
     for (const modelName of criticalTables) {
       if (models[modelName] && typeof models[modelName].sync === 'function') {
         try {
@@ -388,7 +376,7 @@ const initializeTables = async () => {
         }
       }
     }
-    
+
     console.log('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Failed to initialize tables:', error.message);
@@ -399,17 +387,17 @@ const initializeTables = async () => {
 const checkAndFixIndexes = async () => {
   try {
     console.log('🔍 Checking for excessive indexes in loan_interest_rates table...');
-    
+
     const [indexes] = await sequelizeInstance.query(
       `SHOW INDEX FROM loan_interest_rates`,
       { type: QueryTypes.SELECT }
     );
-    
+
     if (indexes && indexes.length > 10) {
       console.warn(`⚠️ Warning: loan_interest_rates table has ${indexes.length} indexes, which may cause issues`);
       console.log('💡 Recommendation: Use manual table creation with reduced indexes');
     }
-    
+
     // List current indexes for debugging
     console.log('📋 Current indexes in loan_interest_rates:');
     if (indexes && indexes.length > 0) {
@@ -419,7 +407,7 @@ const checkAndFixIndexes = async () => {
     } else {
       console.log('  No indexes found or table does not exist yet');
     }
-    
+
   } catch (error) {
     console.log('ℹ️ Could not check indexes (table may not exist yet):', error.message);
   }
@@ -430,17 +418,17 @@ const checkAndFixIndexes = async () => {
 // Set up associations
 const setupAssociations = async (models) => {
   console.log('🔗 Setting up associations...');
-  
+
   try {
     // ===== USER & AUTH ASSOCIATIONS =====
     if (models.User && models.UserRole) {
-      models.User.hasMany(models.UserRole, { 
-        foreignKey: 'user_id', 
-        as: 'userRoles' 
+      models.User.hasMany(models.UserRole, {
+        foreignKey: 'user_id',
+        as: 'userRoles'
       });
-      models.UserRole.belongsTo(models.User, { 
-        foreignKey: 'user_id', 
-        as: 'user' 
+      models.UserRole.belongsTo(models.User, {
+        foreignKey: 'user_id',
+        as: 'user'
       });
       console.log('✅ User ↔ UserRole');
     }
@@ -458,26 +446,26 @@ const setupAssociations = async (models) => {
     }
 
     if (models.UserRole && models.Permissions) {
-      models.UserRole.hasMany(models.Permissions, { 
-        foreignKey: 'role_id', 
-        as: 'permissions' 
+      models.UserRole.hasMany(models.Permissions, {
+        foreignKey: 'role_id',
+        as: 'permissions'
       });
-      models.Permissions.belongsTo(models.UserRole, { 
-        foreignKey: 'role_id', 
-        as: 'role' 
+      models.Permissions.belongsTo(models.UserRole, {
+        foreignKey: 'role_id',
+        as: 'role'
       });
       console.log('✅ UserRole ↔ Permissions');
     }
 
     // ===== CUSTOMER ASSOCIATIONS =====
     if (models.Customer && models.CustomerAccount) {
-      models.Customer.hasMany(models.CustomerAccount, { 
-        foreignKey: 'CUST_ID', 
-        as: 'accounts' 
+      models.Customer.hasMany(models.CustomerAccount, {
+        foreignKey: 'CUST_ID',
+        as: 'accounts'
       });
-      models.CustomerAccount.belongsTo(models.Customer, { 
-        foreignKey: 'CUST_ID', 
-        as: 'customer' 
+      models.CustomerAccount.belongsTo(models.Customer, {
+        foreignKey: 'CUST_ID',
+        as: 'customer'
       });
       console.log('✅ Customer ↔ CustomerAccount');
     }
@@ -516,6 +504,31 @@ const setupAssociations = async (models) => {
         as: 'customers'
       });
       console.log('✅ Customer ↔ RelationshipOfficer');
+    }
+
+    // ===== THRIFT ASSOCIATIONS =====
+    if (models.Thrift && models.Customer) {
+      models.Thrift.belongsTo(models.Customer, {
+        foreignKey: 'customer_id',
+        as: 'customer'
+      });
+      models.Customer.hasMany(models.Thrift, {
+        foreignKey: 'customer_id',
+        as: 'thriftAccounts'
+      });
+      console.log('✅ Thrift ↔ Customer');
+    }
+
+    if (models.Thrift && models.User) {
+      models.Thrift.belongsTo(models.User, {
+        foreignKey: 'relationship_manager_id',
+        as: 'relationshipManager'
+      });
+      models.User.hasMany(models.Thrift, {
+        foreignKey: 'relationship_manager_id',
+        as: 'managedThriftAccounts'
+      });
+      console.log('✅ Thrift ↔ User (Relationship Manager)');
     }
 
     // ===== LOAN ACCOUNT ASSOCIATIONS =====
@@ -575,12 +588,12 @@ const setupAssociations = async (models) => {
         foreignKey: 'INDEX_RATE_ID',
         as: 'IndexRate'
       });
-      
+
       models.RateIndex.hasMany(models.LoanInterestRate, {
         foreignKey: 'INDEX_RATE_ID',
         as: 'LoanInterestRates'
       });
-      
+
       console.log('✅ LoanInterestRate ↔ RateIndex associations set');
     }
 
@@ -591,7 +604,7 @@ const setupAssociations = async (models) => {
         onDelete: 'RESTRICT',
         onUpdate: 'CASCADE'
       });
-      
+
       models.LoanProduct.belongsTo(models.LoanInterestRate, {
         foreignKey: 'LOAN_PROUD_INT_ID',
         targetKey: 'LOAN_PROUD_INT_ID',
@@ -599,43 +612,42 @@ const setupAssociations = async (models) => {
         onDelete: 'RESTRICT',
         onUpdate: 'CASCADE'
       });
-      
+
       models.LoanInterestRate.hasMany(models.LoanProduct, {
         foreignKey: 'LOAN_INTEREST_RATE_ID',
         as: 'LoanProducts'
       });
-      
+
       models.LoanInterestRate.hasMany(models.LoanProduct, {
         foreignKey: 'LOAN_PROUD_INT_ID',
         targetKey: 'LOAN_PROUD_INT_ID',
         as: 'LoanProductsByProudId'
       });
-      
+
       console.log('✅ LoanProduct ↔ LoanInterestRate associations set');
     }
 
     // ===== GEOGRAPHICAL ASSOCIATIONS =====
     if (models.Country && models.State) {
-      models.Country.hasMany(models.State, { 
-        foreignKey: 'COUNTRY_ID', 
-        as: 'states' 
+      models.Country.hasMany(models.State, {
+        foreignKey: 'COUNTRY_ID',
+        as: 'states'
       });
-      models.State.belongsTo(models.Country, { 
-        foreignKey: 'COUNTRY_ID', 
-        as: 'country' 
+      models.State.belongsTo(models.Country, {
+        foreignKey: 'COUNTRY_ID',
+        as: 'country'
       });
       console.log('✅ Country ↔ State');
     }
 
     // ===== BANKING STRUCTURE ASSOCIATIONS =====
     if (models.Bank && models.Branch) {
-      models.Bank.hasMany(models.Branch, { 
-        foreignKey: 'bank_id', 
-        as: 'branches' 
+      models.Bank.hasMany(models.Branch, {
+        as: 'branches'
       });
-      models.Branch.belongsTo(models.Bank, { 
-        foreignKey: 'bank_id', 
-        as: 'bank' 
+      models.Branch.belongsTo(models.Bank, {
+        foreignKey: 'bank_id',
+        as: 'bank'
       });
       console.log('✅ Bank ↔ Branch');
     }
@@ -653,10 +665,10 @@ const setupAssociations = async (models) => {
     }
 
     console.log('✅ All associations complete');
-    
+
     // Check for index issues after associations are set
     await checkAndFixIndexes();
-    
+
   } catch (error) {
     console.error('❌ Association error (non-fatal):', error.message);
     // Don't throw, just log the error
@@ -673,26 +685,32 @@ const initializeModels = async () => {
     console.log('📦 Models already initialized, returning cached models');
     return models;
   }
-  
+
   try {
     console.log('🚀 Initializing all models...');
     await loadModels();
-    
+
     // CRITICAL STEP: Initialize function-based models (like Customer)
     initializeFunctionBasedModels();
-    
-    // Initialize database tables (including loan_interest_rates with manual mode)
+
+    // Initialize database tables (including Thrift and Customer)
     await initializeTables();
-    
+
     await setupAssociations(models);
     initialized = true;
     console.log('🎉 All models initialized successfully!');
+    
+    // Log available models for debugging
+    console.log('📊 Available models:', Object.keys(models).filter(key => 
+      !['sequelize', 'Op', 'DataTypes', 'QueryTypes'].includes(key)
+    ).join(', '));
+    
   } catch (error) {
     console.error('❌ Model initialization failed:', error.message);
     // Return models even if associations failed
     initialized = true;
   }
-  
+
   return models;
 };
 
@@ -766,20 +784,16 @@ export const getReport = () => models.Report;
 export const getConfiguration = () => models.Configuration;
 export const getAccountApplication = () => models.AccountApplication;
 export const getSavingsProduct = () => models.SavingsProduct;
-// Drawer models - getter functions
 export const getDrawerCloseOut = () => models.DrawerCloseOut;
 export const getDrawerUserRole = () => models.DrawerUserRole;
 export const getDrawerCurrencyDenomination = () => models.DrawerCurrencyDenomination;
 export const getDrawerCurrency = () => models.DrawerCurrency;
-
-// ✅ ADD THESE TWO MISSING GETTERS:
 export const getGLAccountTransaction = () => models.GLAccountTransaction;
-// ... continue with other getters ...
 
+// NEW: Thrift getter
+export const getThrift = () => models.Thrift;
 
-
-
-// ✅ Export sequelize getter
+// Export sequelize getter
 export const getSequelize = () => models.sequelize;
 
 // Export Op and DataTypes for convenience
@@ -836,6 +850,9 @@ export const DrawerUserRole = models.DrawerUserRole;
 export const DrawerCurrencyDenomination = models.DrawerCurrencyDenomination;
 export const DrawerCurrency = models.DrawerCurrency;
 
+// NEW: Thrift named export
+export const Thrift = models.Thrift;
+
 // OTHER DIRECT EXPORTS
 export const AML = models.AML;
 export const AMLThreshold = models.AMLThreshold;
@@ -858,18 +875,22 @@ export const CustWorkflowRouting = models.CustomerWorkflowRouting;
 export const AccountApplication = models.AccountApplication;
 export const GLAccountTransaction = models.GLAccountTransaction;
 
-
-
-// ✅ Export sequelize as a named export
+// Export sequelize as a named export
 export const sequelize = models.sequelize;
-
 
 console.log('📦 models/index.js module loaded');
 console.log('⚠️ Important: Models need to be initialized before use');
 console.log('💡 Usage:');
-console.log('   1. import { initializeModels, getLoanAccount } from "./models/index.js"');
+console.log('   1. import { initializeModels, getCustomer, getThrift } from "./models/index.js"');
 console.log('   2. await initializeModels()');
-console.log('   3. const loanAccount = await getLoanAccount().findOne({...})');
+console.log('   3. const customer = await getCustomer().findOne({...})');
+console.log('   4. const thrift = await getThrift().findAll({...})');
+console.log('');
+console.log('📊 Thrift Management features included:');
+console.log('   - Thrift model loaded and initialized');
+console.log('   - Association with Customer');
+console.log('   - Association with User (Relationship Manager)');
+console.log('   - Automatic table creation on startup');
 console.log('');
 console.log('📊 Loan Management features included:');
 console.log('   - Automatic table creation on startup');
@@ -880,5 +901,5 @@ console.log('   - Association with CustomerAccount');
 console.log('   - Association with LoanProduct');
 console.log('   - Association with LoanRepayment');
 console.log('   - LoanProduct ↔ LoanInterestRate associations');
-console.log('📋 Loan tables will be automatically created if not exists');
+console.log('📋 All tables will be automatically created if not exists');
 console.log('✅ All models and associations configured');

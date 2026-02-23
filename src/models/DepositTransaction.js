@@ -880,55 +880,146 @@ DepositTransaction.init({
       }
     }
   },
-  indexes: [
+ indexes: [
     // Primary index
-    { fields: ['id'] },
+    { 
+        fields: ['id'],
+        name: 'idx_deposit_transaction_id' 
+    },
     
     // Account-related indexes
-    { fields: ['ACCT_NO'] },
-    { fields: ['CUST_ID'] },
-    { fields: ['ACCT_NO', 'TRANSACTION_DATE'] },
-    { fields: ['CUST_ID', 'TRANSACTION_DATE'] },
+    { 
+        fields: ['ACCT_NO'],
+        name: 'idx_deposit_acct_no' 
+    },
+    { 
+        fields: ['CUST_ID'],
+        name: 'idx_deposit_cust_id' 
+    },
+    { 
+        fields: ['ACCT_NO', 'TRANSACTION_DATE'],
+        name: 'idx_deposit_acct_date'  // SHORT NAME!
+    },
+    { 
+        fields: ['CUST_ID', 'TRANSACTION_DATE'],
+        name: 'idx_deposit_cust_date'  // SHORT NAME!
+    },
     
     // Reference number index (unique)
-    { fields: ['TRANSACTION_REF_NO'], unique: true },
+    { 
+        fields: ['TRANSACTION_REF_NO'], 
+        unique: true,
+        name: 'idx_deposit_ref_no' 
+    },
     
     // Teller dashboard indexes
-    { fields: ['tellerId'] },
-    { fields: ['responsibility_centre'] },
-    { fields: ['type'] },
-    { fields: ['transactionDate'] },
-    { fields: ['tellerId', 'responsibility_centre'] },
-    { fields: ['tellerId', 'transactionDate'] },
-    { fields: ['responsibility_centre', 'transactionDate'] },
-    { fields: ['tellerId', 'responsibility_centre', 'transactionDate'] },
-    { fields: ['responsibility_centre', 'transactionDate', 'type'] },
+    { 
+        fields: ['tellerId'],
+        name: 'idx_deposit_teller' 
+    },
+    { 
+        fields: ['responsibility_centre'],
+        name: 'idx_deposit_resp_centre' 
+    },
+    { 
+        fields: ['type'],
+        name: 'idx_deposit_type' 
+    },
+    { 
+        fields: ['transactionDate'],
+        name: 'idx_deposit_date' 
+    },
+    { 
+        fields: ['tellerId', 'responsibility_centre'],
+        name: 'idx_deposit_teller_resp' 
+    },
+    { 
+        fields: ['tellerId', 'transactionDate'],
+        name: 'idx_deposit_teller_date' 
+    },
+    { 
+        fields: ['responsibility_centre', 'transactionDate'],
+        name: 'idx_deposit_resp_date' 
+    },
+    { 
+        fields: ['tellerId', 'responsibility_centre', 'transactionDate'],
+        name: 'idx_deposit_teller_resp_date' 
+    },
+    { 
+        fields: ['responsibility_centre', 'transactionDate', 'type'],
+        name: 'idx_deposit_resp_date_type' 
+    },
     
     // Status indexes
-    { fields: ['STATUS'] },
-    { fields: ['REC_ST'] },
-    { fields: ['STATUS', 'TRANSACTION_DATE'] },
+    { 
+        fields: ['STATUS'],
+        name: 'idx_deposit_status' 
+    },
+    { 
+        fields: ['REC_ST'],
+        name: 'idx_deposit_rec_st' 
+    },
+    { 
+        fields: ['STATUS', 'TRANSACTION_DATE'],
+        name: 'idx_deposit_status_date' 
+    },
     
     // GL-related indexes
-    { fields: ['GL_ACCT_NO'] },
-    { fields: ['GL_TransactionId'] },
-    { fields: ['QueueTransactionId'] },
+    { 
+        fields: ['GL_ACCT_NO'],
+        name: 'idx_deposit_gl_acct' 
+    },
+    { 
+        fields: ['GL_TransactionId'],
+        name: 'idx_deposit_gl_trans' 
+    },
+    { 
+        fields: ['QueueTransactionId'],
+        name: 'idx_deposit_queue' 
+    },
     
     // Date range indexes
-    { fields: ['TRANSACTION_DATE'] },
-    { fields: ['VALUE_DATE'] },
-    { fields: ['APPROVED_DATE'] },
-    { fields: ['REJECTED_DATE'] },
+    { 
+        fields: ['TRANSACTION_DATE'],
+        name: 'idx_deposit_trans_date' 
+    },
+    { 
+        fields: ['VALUE_DATE'],
+        name: 'idx_deposit_value_date' 
+    },
+    { 
+        fields: ['APPROVED_DATE'],
+        name: 'idx_deposit_approved_date' 
+    },
+    { 
+        fields: ['REJECTED_DATE'],
+        name: 'idx_deposit_rejected_date' 
+    },
     
     // Amount-based indexes
-    { fields: ['AMOUNT'] },
-    { fields: ['type', 'AMOUNT'] },
+    { 
+        fields: ['AMOUNT'],
+        name: 'idx_deposit_amount' 
+    },
+    { 
+        fields: ['type', 'AMOUNT'],
+        name: 'idx_deposit_type_amount' 
+    },
     
     // User-related indexes
-    { fields: ['USER_ID'] },
-    { fields: ['APPROVED_BY'] },
-    { fields: ['REJECTED_BY'] }
-  ],
+    { 
+        fields: ['USER_ID'],
+        name: 'idx_deposit_user' 
+    },
+    { 
+        fields: ['APPROVED_BY'],
+        name: 'idx_deposit_approved_by' 
+    },
+    { 
+        fields: ['REJECTED_BY'],
+        name: 'idx_deposit_rejected_by' 
+    }
+],
   scopes: {
     // Status scopes
     pending: {

@@ -48,42 +48,36 @@ app.use(helmet({
 app.use(hpp());
 app.use(monitor());
 
-// Enhanced CORS Configuration
-const allowedOrigins = [
-  process.env.REACT_APP_FRONTEND_URL,
-  process.env.CLIENT_URL,
-  process.env.CLIENT_URL_LOCAL,
-  process.env.CLIENT_URL_NETWORK,
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:8080',
-  'http://127.0.0.1:8080',
-].filter(Boolean);
-
-console.log('🛡️ CORS Allowed Origins:', allowedOrigins);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    console.log('🚫 CORS Blocked:', origin);
-    callback(new Error('Not allowed by CORS'));
-  },
+// ============================================
+// CORS CONFIGURATION - UPDATED WITH HTTPS
+// ============================================
+const corsOptions = {
+  origin: [
+    'https://evolutionbankingsolution-lexicalresource.com.ng',
+    'http://evolutionbankingsolution-lexicalresource.com.ng',
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000'
+  ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-request-id', 'x-auth-token']
-}));
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'app-id']
+};
+
+console.log('🛡️ CORS Allowed Origins:', corsOptions.origin);
+
+app.use(cors(corsOptions));
 
 // Additional CORS headers
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
+  if (origin && corsOptions.origin.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-request-id, x-auth-token');
+  res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
+  res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
   if (req.method === 'OPTIONS') return res.status(200).end();
   next();
 });
@@ -181,7 +175,7 @@ app.get('/health', async (req, res) => {
     dbStatus: dbDetails,
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development',
-    cors: { allowedOrigins: allowedOrigins.length, currentOrigin: req.headers.origin || 'none' }
+    cors: { allowedOrigins: corsOptions.origin.length, currentOrigin: req.headers.origin || 'none' }
   });
 });
 
@@ -212,37 +206,37 @@ app.get('/api', (req, res) => {
       customer: '/api/customer',
       nextOfKin: '/api/next-of-kins',
       customerTypes: '/api/customer-types',
-      
+
       // User Management
       users: '/api/users',
       login: '/api/login',
       userRoles: '/api/user-role',
       permissions: '/api/permissions',
-      
+
       // Account Management
       accounts: '/api/accounts',
       deposits: '/api/deposit',
       loans: '/api/loans',
       transactions: '/api/transaction',
-      
+
       // Workflow
       workflow: '/api/workflow',
       workItems: '/api/work-items',
-      
+
       // AML & Compliance
       aml: '/api/aml',
       amlThreshold: '/api/aml-threshold',
-      
+
       // System
       system: '/api/system',
       configuration: '/api/configuration',
       license: '/api/license',
-      
+
       // Reports
       reports: '/api/reports',
       analytics: '/api/analytics',
       dashboard: '/api/dashboard',
-      
+
       // Test & Debug
       test: '/api/test',
       debug: '/api/debug',
@@ -293,15 +287,15 @@ app.get('/api-docs', (req, res) => {
 });
 
 // CORS Debug endpoints
-app.get('/cors-info', (req, res) => res.json({ 
-  allowedOrigins, 
+app.get('/cors-info', (req, res) => res.json({
+  allowedOrigins: corsOptions.origin,
   currentOrigin: req.headers.origin || 'No origin',
-  allowedMethods: 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-  allowedHeaders: 'Content-Type, Authorization, X-Requested-With, Accept, Origin, x-request-id, x-auth-token'
+  allowedMethods: corsOptions.methods,
+  allowedHeaders: corsOptions.allowedHeaders
 }));
 app.options('/cors-test', (req, res) => res.status(200).end());
-app.post('/cors-test', (req, res) => res.json({ 
-  message: 'CORS test successful', 
+app.post('/cors-test', (req, res) => res.json({
+  message: 'CORS test successful',
   origin: req.headers.origin,
   timestamp: new Date().toISOString()
 }));
@@ -435,6 +429,7 @@ import AccountApplicationRoutes from './routes/AccountApplicationRoutes.js';
 import TransactionRoutes from './routes/TransactionRoutes.js';
 import EncrytionRoutes from './routes/EncryptionRoutes.js';
 
+
 // ============================================
 // MOUNT ALL ROUTES
 // ============================================
@@ -518,6 +513,8 @@ app.use('/api/sms', SMSRoutes);
 
 app.use('/api/analytics', AnalyticsRoutes);
 app.use('/api/audit-trails', AuditTrailRoutes);
+// FIXED: Use the correct imported variable name
+app.use('/api/audit', AuditTrailRoutes);  // Changed from auditTrailRoutes to AuditTrailRoutes
 app.use('/api/dashboard', dashboardRoutes);
 
 app.use('/api/upload', uploadFileRoutes);
@@ -602,9 +599,9 @@ app.use('/api/encyption-post-transactions', EncrytionRoutes);
 // CORS Error Handler
 app.use((err, req, res, next) => {
   if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ 
-      error: 'CORS Policy Failed', 
-      allowedOrigins,
+    return res.status(403).json({
+      error: 'CORS Policy Failed',
+      allowedOrigins: corsOptions.origin,
       currentOrigin: req.headers.origin,
       timestamp: new Date().toISOString()
     });

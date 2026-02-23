@@ -1,6 +1,5 @@
-// routes/CustomerRoutes.js - FIXED VERSION
+// routes/CustomerRoutes.js - COMPLETE UPDATED VERSION WITH BVN & LOAN ROUTES
 import express from 'express';
-import Customer from '../models/Customer.js';
 import logger from '../utils/logger.js';
 import {
   getAllCustomers,
@@ -14,14 +13,38 @@ import {
   searchCustomers,
   advancedSearchCustomers,
   createCustomer,
-   getCustomerSummary,
-   getCustomerSchema
-  // REMOVED: getCustomerSummary - not needed or create it
+  getCustomerSummary,
+  getCustomerSchema,
+  // NEW IMPORTS
+  getCustomerWithBVN,
+  findByBVN,
+  updateBVNVerification,
+  getCustomerWithLoans,
+  checkHasActiveLoan,
+  getCustomerFullSummary
 } from '../controllers/CustomerController.js';
 import { generateCustomerNumber } from '../utils/generateCustomerNumber.js';
 import { ensureModelsInitialized } from '../middlewares/modelMiddleware.js';
+import { initializeModels, getCustomer } from '../models/index.js';
 
 const router = express.Router();
+
+// Initialize models when routes are loaded
+let modelsInitialized = false;
+const initModels = async () => {
+  if (!modelsInitialized) {
+    console.log('🔄 Initializing models from CustomerRoutes...');
+    await initializeModels();
+    modelsInitialized = true;
+    console.log('✅ Models initialized from CustomerRoutes');
+  }
+};
+
+// Call initialization immediately
+initModels().catch(err => {
+  console.error('❌ Failed to initialize models in CustomerRoutes:', err);
+});
+
 // Apply the middleware to all customer routes
 router.use(ensureModelsInitialized);
 
@@ -40,6 +63,10 @@ const handleError = (res, error, defaultMessage = 'An error occurred') => {
     error: error.message 
   });
 };
+
+// ============================================
+// CORE CUSTOMER ROUTES
+// ============================================
 
 // CREATE CUSTOMER
 router.post('/customers', createCustomer);
@@ -68,18 +95,21 @@ router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
 // SEARCH CUSTOMERS
 router.get('/search', searchCustomers);
 
-// In your customer routes
+// GET CUSTOMER SCHEMA
 router.get('/schema', getCustomerSchema);
 
 // ADVANCED SEARCH CUSTOMERS
 router.get('/advanced-search', advancedSearchCustomers);
 
-// Add this route for dashboard summary
+// DASHBOARD SUMMARY
 router.get('/dashboard-summary', getCustomerSummary);
 
 // GENERATE CUSTOMER NUMBER
 router.get('/generate-customer-number', async (req, res) => {
   try {
+    // Make sure models are initialized
+    await initModels();
+    
     const { CUST_ID, CUST_NO } = await generateCustomerNumber();
     
     res.status(200).json({
@@ -107,6 +137,60 @@ router.get('/generate-customer-number', async (req, res) => {
     });
   }
 });
+
+// ============================================
+// BVN & VERIFICATION ROUTES (NEW)
+// ============================================
+
+/**
+ * @route   GET /api/customers/:customerId/bvn
+ * @desc    Get customer with BVN details by ID
+ * @access  Private
+ */
+router.get('/:customerId/bvn', getCustomerWithBVN);
+
+/**
+ * @route   GET /api/customers/bvn/:bvn
+ * @desc    Find customer by BVN number
+ * @access  Private
+ */
+router.get('/bvn/:bvn', findByBVN);
+
+/**
+ * @route   PUT /api/customers/:customerId/verify-bvn
+ * @desc    Update BVN verification status
+ * @access  Private
+ */
+router.put('/:customerId/verify-bvn', updateBVNVerification);
+
+// ============================================
+// LOAN-RELATED CUSTOMER ROUTES (NEW)
+// ============================================
+
+/**
+ * @route   GET /api/customers/:customerId/loans
+ * @desc    Get customer with their loan details
+ * @access  Private
+ */
+router.get('/:customerId/loans', getCustomerWithLoans);
+
+/**
+ * @route   GET /api/customers/:customerId/has-active-loan
+ * @desc    Check if customer has an active loan
+ * @access  Private
+ */
+router.get('/:customerId/has-active-loan', checkHasActiveLoan);
+
+/**
+ * @route   GET /api/customers/:customerId/full-summary
+ * @desc    Get customer full summary with BVN and loan status
+ * @access  Private
+ */
+router.get('/:customerId/full-summary', getCustomerFullSummary);
+
+// ============================================
+// BATCH UPLOAD & TEMPLATE ROUTES
+// ============================================
 
 // BATCH UPLOAD TEMPLATE
 router.get('/batch-template', (req, res) => {
@@ -361,6 +445,9 @@ router.post('/test-upload', (req, res) => {
 // MAIN BATCH UPLOAD ENDPOINT
 router.post('/batch-upload', async (req, res) => {
   try {
+    // Make sure models are initialized
+    await initModels();
+    
     logger.info('📁 Batch upload - Files received:', { files: req.files ? Object.keys(req.files) : 'None' });
     
     if (!req.files || !req.files.customersFile) {

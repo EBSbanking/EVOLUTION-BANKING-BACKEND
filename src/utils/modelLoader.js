@@ -122,7 +122,7 @@ class ModelLoader {
       // Branch/Organization
       'Branch.js', 'Organization.js',
       
-      // Banking
+      // Banking - THRIFT ADDED HERE
       'Bank.js', 'TellerStats.js', 'Thrift.js',
       
       // Credit/Thrift
@@ -174,7 +174,13 @@ class ModelLoader {
         const modelName = file.replace('.js', '');
         const modelModule = await import(`../models/${file}`);
         this.models[modelName] = modelModule.default || modelModule;
-        logger.debug(`✅ Loaded ${modelName} individually`);
+        
+        // Special logging for Thrift model
+        if (modelName === 'Thrift') {
+          logger.info(`✅ SUCCESS: Thrift model loaded from ${file}`);
+        } else {
+          logger.debug(`✅ Loaded ${modelName} individually`);
+        }
       } catch (error) {
         // Don't log warnings for optional models
         if (!this.isOptionalModel(file)) {
@@ -211,17 +217,48 @@ class ModelLoader {
       'Deposit',
       'Transaction',
       'GLAccount',
-      'AuditTrail'
+      'AuditTrail',
+      'Thrift'  // FIXED: Capitalized 'Thrift' (was 'thrift' in lowercase)
     ];
 
     for (const modelName of criticalModels) {
       if (!this.models[modelName]) {
         try {
+          logger.info(`🔍 Loading critical model ${modelName} on demand...`);
           const modelModule = await import(`../models/${modelName}.js`);
           this.models[modelName] = modelModule.default || modelModule;
           logger.info(`✅ Loaded critical model ${modelName} on demand`);
         } catch (error) {
           logger.error(`❌ Critical model ${modelName} not found: ${error.message}`);
+          
+          // Special handling for Thrift - try alternate paths
+          if (modelName === 'Thrift') {
+            try {
+              logger.info('🔄 Trying alternate path for Thrift model...');
+              // Try with different case variations
+              const alternatePaths = [
+                '../models/thrift.js',
+                '../models/THRIFT.js',
+                '../models/ThriftAccount.js',
+                '../models/THRIFT_ACCOUNTS.js'
+              ];
+              
+              for (const altPath of alternatePaths) {
+                try {
+                  const altModule = await import(altPath);
+                  if (altModule.default || altModule) {
+                    this.models.Thrift = altModule.default || altModule;
+                    logger.info(`✅ Loaded Thrift from alternate path: ${altPath}`);
+                    break;
+                  }
+                } catch (e) {
+                  // Continue trying
+                }
+              }
+            } catch (altError) {
+              logger.error('❌ All alternate paths failed for Thrift model');
+            }
+          }
         }
       }
     }
@@ -269,7 +306,7 @@ class ModelLoader {
       workflow: ['WF_BUSINESS_PROCESS', 'WF_QUEUE', 'WF_WORK_ITEM'],
       audit: ['AuditTrail'],
       notification: ['NotificationService', 'SMS'],
-      thrift: ['Thrift', 'TriftReport', 'CreditOfficer']
+      thrift: ['Thrift', 'TriftReport', 'CreditOfficer']  // 'Thrift' is capitalized here
     };
 
     const result = {};
@@ -560,7 +597,7 @@ export const getAMLThreshold = async () => {
   return modelLoader.getModel('AMLThreshold');
 };
 
-// Thrift Banking (THE MISSING EXPORT)
+// Thrift Banking (NOW PROPERLY EXPORTED)
 export const getThrift = async () => {
   await modelLoader.initialize();
   return modelLoader.getModel('Thrift');
@@ -885,6 +922,13 @@ if (process.env.NODE_ENV === 'development') {
         if (models.length > 0) {
           logger.info(`   ${category.toUpperCase()}: ${models.length} models`);
         }
+      }
+      
+      // Specifically check if Thrift was loaded
+      if (modelLoader.hasModel('Thrift')) {
+        logger.info('✅ Thrift model successfully loaded and available');
+      } else {
+        logger.warn('⚠️ Thrift model was not loaded - check for errors above');
       }
       
     } catch (error) {

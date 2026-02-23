@@ -1,10 +1,10 @@
-﻿// models/Transaction.js - FIXED VERSION
+﻿// models/Transaction.js - COMPLETE FIXED VERSION (Using camelCase columns)
 import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 // Get all transaction types
 const getAllTransactionTypes = () => [
- 'DEPOSIT','WITHDRAWAL','TRANSFER','LOAN_DISBURSEMENT',
+  'DEPOSIT','WITHDRAWAL','TRANSFER','LOAN_DISBURSEMENT',
   'LOAN_REPAYMENT','FEE_CHARGE','INTEREST_CREDIT','INTEREST_CHARGE',
   'PENALTY_CHARGE','SALARY_PAYMENT','BILL_PAYMENT','ATM_WITHDRAWAL',
   'ONLINE_TRANSFER','MOBILE_TRANSFER','STANDING_ORDER','DIRECT_DEBIT',
@@ -19,166 +19,189 @@ const Transaction = sequelize.define('Transaction', {
     autoIncrement: true,
     field: 'id'
   },
+  
+  // Map model fields to database columns
   ACCT_NO: {
     type: DataTypes.STRING(50),
     allowNull: false,
     field: 'account_number'
   },
+  
   ACCT_ID: {
     type: DataTypes.STRING(50),
     allowNull: false,
     field: 'account_id'
   },
+  
   BU_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
     field: 'bu_id'
   },
+  
   CUST_ID: {
     type: DataTypes.STRING(50),
     allowNull: false,
     field: 'customer_id'
   },
+  
   ACCT_NM: {
     type: DataTypes.STRING(255),
     allowNull: false,
     field: 'account_name'
   },
+  
   AMOUNT: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
     field: 'amount'
   },
+  
   transactionDirection: {
     type: DataTypes.ENUM('CREDIT', 'DEBIT'),
     allowNull: false,
     defaultValue: 'CREDIT',
     field: 'transaction_direction'
   },
+  
   TRANSACTIONDATE: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW,
     field: 'transaction_date'
   },
+  
   TRANSACTION_TYPE: {
     type: DataTypes.ENUM(...getAllTransactionTypes()),
     allowNull: false,
     field: 'transaction_type'
   },
-  // **FIXED: This should map to transaction_identifier column**
+  
   TRANSACTION_IDENTIFIER: {
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
-    field: 'transaction_identifier' // Map to database column
+    field: 'transaction_identifier'
   },
+  
   TRANSACTION_ID: {
     type: DataTypes.STRING(50),
     allowNull: true,
     field: 'transaction_id'
   },
+  
   EVENT_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
     field: 'event_id'
   },
+  
   TRAN_JOURNAL_ID: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    field: 'journal_id' // Map to journal_id column
+    field: 'journal_id'
   },
+  
   REFERENCE: {
     type: DataTypes.STRING(100),
     unique: true,
     allowNull: false,
     field: 'reference'
   },
+  
   description: {
     type: DataTypes.TEXT,
     allowNull: true,
     field: 'description'
   },
+  
   currency: {
     type: DataTypes.ENUM('NGN', 'USD', 'GBP', 'EUR'),
     defaultValue: 'NGN',
     field: 'currency'
   },
+  
   createdBy: {
     type: DataTypes.STRING(50),
     allowNull: false,
     field: 'created_by'
   },
+  
   status: {
     type: DataTypes.ENUM('PENDING', 'PENDING_APPROVAL', 'COMPLETED', 'FAILED', 'REVERSED'),
     defaultValue: 'PENDING',
     field: 'status'
   },
+  
   FLAGGED_FOR_AML: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
     field: 'flagged_for_aml'
   },
+  
   AML_REASON: {
     type: DataTypes.STRING(255),
     allowNull: true,
     field: 'aml_reason'
   },
+  
   AML_THRESHOLD_USED: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
     field: 'aml_threshold_used'
   },
+  
   APPROVAL_NOTES: {
     type: DataTypes.TEXT,
     allowNull: true,
     field: 'approval_notes'
   },
+  
   APPROVED_BY: {
     type: DataTypes.STRING(50),
     allowNull: true,
     field: 'approved_by'
   },
+  
   APPROVAL_DATE: {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'approval_date'
   },
+  
   REJECTION_NOTES: {
     type: DataTypes.TEXT,
     allowNull: true,
     field: 'rejection_notes'
   },
+  
   REJECTED_BY: {
     type: DataTypes.STRING(50),
     allowNull: true,
     field: 'rejected_by'
   },
+  
   REJECTION_DATE: {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'rejection_date'
   },
+  
   metadata: {
     type: DataTypes.JSON,
     allowNull: true,
     field: 'metadata'
-  },
-  created_at: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    field: 'created_at'
-  },
-  updated_at: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    onUpdate: DataTypes.NOW,
-    field: 'updated_at'
   }
+  
+  // NOTE: created_at/updated_at fields removed - Sequelize will auto-manage them
+  // with timestamps: true using the createdAt/updatedAt columns in the database
+  
 }, {
   tableName: 'transactions',
   timestamps: true,
-  underscored: false, // **CHANGED: Set to false since we're manually mapping fields**
+  createdAt: 'createdAt',  // Use camelCase column in database
+  updatedAt: 'updatedAt',  // Use camelCase column in database
+  underscored: false,      // Don't use underscored names for auto-generated fields
   indexes: [
     {
       unique: true,
@@ -189,54 +212,43 @@ const Transaction = sequelize.define('Transaction', {
       fields: ['reference']
     },
     {
-      unique: false,
       fields: ['account_number']
     },
     {
-      unique: false,
       fields: ['account_id']
     },
     {
-      unique: false,
       fields: ['transaction_date']
     },
     {
-      unique: false,
       fields: ['transaction_type']
     },
     {
-      unique: false,
       fields: ['customer_id']
     },
     {
-      unique: false,
       fields: ['status']
     },
     {
-      unique: false,
       fields: ['created_by']
     },
     // Compound indexes
     {
-      unique: false,
       fields: ['account_number', 'transaction_date']
     },
     {
-      unique: false,
       fields: ['customer_id', 'status']
     },
     {
-      unique: false,
       fields: ['transaction_date', 'status']
     },
     {
-      unique: false,
       fields: ['account_number', 'transaction_type']
     }
   ]
 });
 
-// **FIXED: Update the beforeCreate hook to use TRANSACTION_IDENTIFIER**
+// Before create hook
 Transaction.beforeCreate(async (transaction, options) => {
   console.log('Before create hook - Checking IDs:', { 
     TRANSACTION_IDENTIFIER: transaction.TRANSACTION_IDENTIFIER,
@@ -308,9 +320,22 @@ Transaction.beforeCreate(async (transaction, options) => {
       REFERENCE: transaction.REFERENCE
     });
   }
+
+  // Ensure timestamps are set (Sequelize should handle this, but just in case)
+  if (!transaction.createdAt) {
+    transaction.createdAt = new Date();
+  }
+  if (!transaction.updatedAt) {
+    transaction.updatedAt = new Date();
+  }
 });
 
-// **FIXED: Update all helper methods to use TRANSACTION_IDENTIFIER**
+// Before update hook
+Transaction.beforeUpdate((transaction) => {
+  transaction.updatedAt = new Date();
+});
+
+// Generate transaction IDs helper
 Transaction.generateTransactionIds = async () => {
   try {
     const [lastTransaction] = await sequelize.query(
@@ -335,7 +360,7 @@ Transaction.generateTransactionIds = async () => {
   }
 };
 
-
+// Get transaction by reference
 Transaction.getTransactionByReference = async (reference) => {
   try {
     const transaction = await Transaction.findOne({
@@ -349,6 +374,7 @@ Transaction.getTransactionByReference = async (reference) => {
   }
 };
 
+// Get transactions by date range
 Transaction.getTransactionsByDateRange = async (startDate, endDate, filters = {}) => {
   try {
     const whereClause = {
@@ -389,6 +415,7 @@ Transaction.getTransactionsByDateRange = async (startDate, endDate, filters = {}
   }
 };
 
+// Approve transaction
 Transaction.approveTransaction = async (transactionId, approvedBy, notes = '') => {
   try {
     const transaction = await Transaction.findByPk(transactionId);
@@ -415,6 +442,7 @@ Transaction.approveTransaction = async (transactionId, approvedBy, notes = '') =
   }
 };
 
+// Reject transaction
 Transaction.rejectTransaction = async (transactionId, rejectedBy, notes = '') => {
   try {
     const transaction = await Transaction.findByPk(transactionId);
@@ -441,6 +469,7 @@ Transaction.rejectTransaction = async (transactionId, rejectedBy, notes = '') =>
   }
 };
 
+// Reverse transaction
 Transaction.reverseTransaction = async (transactionId, reversedBy, reason = '') => {
   try {
     const transaction = await Transaction.findByPk(transactionId);
@@ -493,6 +522,7 @@ Transaction.reverseTransaction = async (transactionId, reversedBy, reason = '') 
   }
 };
 
+// Get next transaction ID
 Transaction.getNextTransactionId = async () => {
   try {
     const [lastTransaction] = await sequelize.query(
@@ -507,6 +537,7 @@ Transaction.getNextTransactionId = async () => {
   }
 };
 
+// Get transaction stats
 Transaction.getTransactionStats = async (filters = {}) => {
   try {
     let whereClause = '';
@@ -565,7 +596,8 @@ Transaction.initializeTable = async () => {
           'FEE_CHARGE', 'INTEREST_CREDIT', 'INTEREST_CHARGE', 'PENALTY_CHARGE',
           'SALARY_PAYMENT', 'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER',
           'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 'CHEQUE_DEPOSIT',
-          'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND'
+          'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND',
+          'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'THRIFT_BANK_PAYMENT'
         ) NOT NULL,
         transaction_identifier INT UNIQUE NOT NULL,
         transaction_id VARCHAR(50),
@@ -586,8 +618,8 @@ Transaction.initializeTable = async () => {
         rejected_by VARCHAR(50),
         rejection_date DATETIME,
         metadata JSON,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_account_number (account_number),
         INDEX idx_account_id (account_id),
         INDEX idx_transaction_date (transaction_date),
@@ -602,14 +634,14 @@ Transaction.initializeTable = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Transactions table initialized');
+    console.log('✅ Transactions table initialized');
     
     // Create sequence table for transaction IDs if it doesn't exist
     await sequelize.query(`
       CREATE TABLE IF NOT EXISTS transaction_sequence (
         id INT AUTO_INCREMENT PRIMARY KEY,
         last_value INT DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
       INSERT INTO transaction_sequence (last_value) 
@@ -618,7 +650,7 @@ Transaction.initializeTable = async () => {
       WHERE NOT EXISTS (SELECT 1 FROM transaction_sequence LIMIT 1);
     `);
     
-    console.log('âœ… Transaction sequence initialized');
+    console.log('✅ Transaction sequence initialized');
     
     return true;
   } catch (error) {
@@ -627,11 +659,11 @@ Transaction.initializeTable = async () => {
   }
 };
 
-// Sync the model (creates table if it doesn't exist)
+// Sync the model
 Transaction.syncTable = async () => {
   try {
     await Transaction.sync({ alter: true });
-    console.log('âœ… Transaction table synced');
+    console.log('✅ Transaction table synced');
     return true;
   } catch (error) {
     console.error('Error syncing Transaction table:', error.message);

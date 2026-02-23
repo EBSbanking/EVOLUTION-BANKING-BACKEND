@@ -1,0 +1,201 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-22 00:20:28"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 00:20:33"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T09:20:36.043Z","timestamp":"2026-02-22 00:20:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-22 00:20:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 00:20:36"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-22 00:20:38"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-22 00:33:08"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 00:33:12"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T09:33:14.682Z","timestamp":"2026-02-22 00:33:14"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-22 00:33:14"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 00:33:14"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-22 00:33:18"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-22 01:01:51"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 01:02:06"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T10:02:12.733Z","timestamp":"2026-02-22 01:02:12"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-22 01:02:12"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 01:02:12"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-22 01:02:16"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-22 02:56:22"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 02:56:30"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T11:56:36.932Z","timestamp":"2026-02-22 02:56:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-22 02:56:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 02:56:36"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-22 02:56:41"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-22 03:06:16"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 03:06:19"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T12:06:21.613Z","timestamp":"2026-02-22 03:06:21"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-22 03:06:21"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-22 03:06:21"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-22 03:06:24"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-22 03:06:24"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:11:13","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:11:13"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:11:13","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:11:13"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:27:54"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:27:54","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:27:54","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:27:54"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:37:16","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:37:16"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:37:16","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:37:16"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:38:01"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:38:01","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:38:02"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:38:02","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:44:33","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:44:33"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:44:33","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:44:33"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:53:06"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:53:06","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 05:53:07"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 05:53:07","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:05:26","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:05:26"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:05:26","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:05:26"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:05:46","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:05:46"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:05:46","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:05:46"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:09:19"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:09:19","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:09:19"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:09:19","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:12:32"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:12:32","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:12:33","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:12:33"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:20:47"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:20:47","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:20:47"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:20:47","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:36:48"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:36:48","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:36:48"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:36:48","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:42:00","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:42:00"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:42:00","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:42:00"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:58:42","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:58:43"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 06:58:43","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 06:58:43"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:03:57","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:03:57"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:03:58","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:03:58"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:14:44"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:14:44","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:14:44","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:14:44"}
+{"BU_ID":"101","SYSUSER_ID":"003","businessRolesCreated":1,"level":"info","message":"User roles created successfully for USER_ID: PCO03 (numeric ID: 6)","role_id":3,"roles":["Teller"],"rolesCount":1,"timestamp":"2026-02-22 07:21:20","userName":"PCO03"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:23:06"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:23:06","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:23:07","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:23:07"}
+{"BU_ID":"101","SYSUSER_ID":"004","businessRolesCreated":1,"level":"info","message":"User roles created successfully for USER_ID: PCO05 (numeric ID: 5)","role_id":4,"roles":["Branch Manager"],"rolesCount":1,"timestamp":"2026-02-22 07:29:53","userName":"PCO05"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:30:22"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:30:22","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:30:22","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:30:22"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:55:21"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:55:21","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 07:55:21","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 07:55:21"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 08:14:06"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 08:14:07","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 08:14:07","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 08:14:07"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 08:37:26"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 08:37:26","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-02-22 08:37:26","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-02-22 08:37:26"}

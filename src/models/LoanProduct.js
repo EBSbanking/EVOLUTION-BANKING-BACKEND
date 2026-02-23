@@ -1,4 +1,4 @@
-﻿// models/LoanProduct.js - UPDATED WITH FLEXIBLE PRODUCT_TYPE
+﻿// models/LoanProduct.js - COMPLETE UPDATED WITH DATABASE FIELD MAPPINGS
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
@@ -331,7 +331,6 @@ class LoanProductInterestCalculator {
 }
 
 // ==================== LOAN PRODUCT MODEL ====================
-
 const LoanProduct = sequelize.define('LoanProduct', {
   // ======================
   // PRODUCT IDENTIFICATION
@@ -339,35 +338,46 @@ const LoanProduct = sequelize.define('LoanProduct', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
-    autoIncrement: true
+    autoIncrement: true,
+    field: 'id'  // Maps to id in the view
   },
+  
   PROD_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
+    field: 'PROD_ID',  // Now using the view's column name (was p_r_o_d__i_d)
     validate: {
       isNumeric: true,
       min: 1
     }
   },
+  
   productCode: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    unique: true
+    unique: true,
+    field: 'productCode'  // Now using the view's column name (was product_code)
   },
+  
   name: {
     type: DataTypes.STRING(255),
     allowNull: false,
+    field: 'name',
     trim: true
   },
+  
   PRODUCT_SHORT_NAME: {
     type: DataTypes.STRING(100),
     allowNull: false,
+    field: 'PRODUCT_SHORT_NAME',  // Now using the view's column name
     trim: true,
     uppercase: true
   },
+  
   description: {
     type: DataTypes.TEXT,
+    field: 'description',
     trim: true
   },
   
@@ -378,6 +388,7 @@ const LoanProduct = sequelize.define('LoanProduct', {
     type: DataTypes.STRING(100),
     allowNull: false,
     defaultValue: 'GENERAL_LOAN',
+    field: 'PRODUCT_TYPE',  // Now using the view's column name
     comment: 'Flexible product type - can be any valid loan product type'
   },
   
@@ -389,6 +400,7 @@ const LoanProduct = sequelize.define('LoanProduct', {
   LOAN_INTEREST_RATE_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
+    field: 'LOAN_INTEREST_RATE_ID',  // Now using the view's column name
     references: {
       model: 'loan_interest_rates',
       key: 'id'
@@ -399,6 +411,7 @@ const LoanProduct = sequelize.define('LoanProduct', {
   LOAN_PROUD_INT_ID: {
     type: DataTypes.INTEGER,
     allowNull: true,
+    field: 'LOAN_PROUD_INT_ID',  // Now using the view's column name
     comment: 'Business key to link with LoanInterestRate.LOAN_PROUD_INT_ID'
   },
 
@@ -410,38 +423,47 @@ const LoanProduct = sequelize.define('LoanProduct', {
   minAmount: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'minAmount'  // Now using the view's column name (was min_amount)
   },
+  
   maxAmount: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'maxAmount'  // Now using the view's column name (was max_amount)
   },
 
   // Loan Term Constraints
   MIN_LOAN_TERM_VALUE: {
     type: DataTypes.INTEGER,
     defaultValue: 1,
+    field: 'MIN_LOAN_TERM_VALUE',  // Now using the view's column name
     validate: {
       min: 1
     }
   },
+  
   MAX_LOAN_TERM_VALUE: {
     type: DataTypes.INTEGER,
     defaultValue: 60,
+    field: 'MAX_LOAN_TERM_VALUE',  // Now using the view's column name
     validate: {
       min: 1
     }
   },
+  
   LOAN_TERM_TYPE: {
     type: DataTypes.ENUM('DAYS', 'WEEKS', 'MONTHS', 'QUARTERS', 'YEARS'),
-    defaultValue: 'MONTHS'
+    defaultValue: 'MONTHS',
+    field: 'LOAN_TERM_TYPE'  // Now using the view's column name
   },
 
   // Business Unit Configuration
   BU_ID: {
     type: DataTypes.TEXT,
     allowNull: false,
+    field: 'BU_ID',  // Now using the view's column name
     get() {
       const value = this.getDataValue('BU_ID');
       return value ? value.split(',') : [];
@@ -454,38 +476,51 @@ const LoanProduct = sequelize.define('LoanProduct', {
       }
     }
   },
+  
   isGlobalProduct: {
     type: DataTypes.BOOLEAN,
-    defaultValue: false
+    defaultValue: false,
+    field: 'isGlobalProduct'  // Now using the view's column name
   },
+  
   visibility: {
     type: DataTypes.ENUM('GLOBAL', 'SELECTED_BUS', 'SPECIFIC_BRANCHES'),
-    defaultValue: 'SELECTED_BUS'
+    defaultValue: 'SELECTED_BUS',
+    field: 'visibility'
   },
 
   // Payment Configuration
   REPAYMENT_TYPE: {
     type: DataTypes.ENUM('DAILY', 'WEEKLY', 'MONTHLY', 'BULLET', 'CUSTOM'),
     allowNull: false,
-    defaultValue: 'MONTHLY'
+    defaultValue: 'MONTHLY',
+    field: 'REPAYMENT_TYPE'  // Now using the view's column name
   },
+  
   PAYMENT_FREQUENCY: {
     type: DataTypes.ENUM('DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'),
     allowNull: false,
-    defaultValue: 'MONTHLY'
+    defaultValue: 'MONTHLY',
+    field: 'PAYMENT_FREQUENCY'  // Now using the view's column name
   },
+  
   TERM_CD: {
     type: DataTypes.ENUM('D', 'W', 'M', 'Q', 'Y'),
-    allowNull: false
+    allowNull: false,
+    field: 'TERM_CD'  // Now using the view's column name
   },
+  
   CRNCY_ID: {
     type: DataTypes.STRING(3),
     allowNull: false,
-    defaultValue: 'NGN'
+    defaultValue: 'NGN',
+    field: 'CRNCY_ID'  // Now using the view's column name
   },
+  
   allowedCurrencies: {
     type: DataTypes.TEXT,
     defaultValue: 'NGN',
+    field: 'allowedCurrencies',  // Now using the view's column name
     get() {
       const value = this.getDataValue('allowedCurrencies');
       return value ? value.split(',') : ['NGN'];
@@ -503,11 +538,14 @@ const LoanProduct = sequelize.define('LoanProduct', {
   CALCULATION_METHOD_OVERRIDE: {
     type: DataTypes.ENUM('FLAT', 'REDUCING_BALANCE', 'RULE_OF_78'),
     allowNull: true,
+    field: 'CALCULATION_METHOD_OVERRIDE',  // Now using the view's column name
     comment: 'Optional override of interest rate calculation method'
   },
+  
   INTEREST_TYPE_OVERRIDE: {
     type: DataTypes.ENUM('SIMPLE', 'COMPOUND'),
     allowNull: true,
+    field: 'INTEREST_TYPE_OVERRIDE',  // Now using the view's column name
     comment: 'Optional override of interest type'
   },
 
@@ -516,11 +554,14 @@ const LoanProduct = sequelize.define('LoanProduct', {
   // ======================
   defaultGLAccounts: {
     type: DataTypes.JSON,
-    defaultValue: {}
+    defaultValue: {},
+    field: 'defaultGLAccounts'  // Now using the view's column name
   },
+  
   branchGLAccounts: {
     type: DataTypes.JSON,
-    defaultValue: []
+    defaultValue: [],
+    field: 'branchGLAccounts'  // Now using the view's column name
   },
 
   // ======================
@@ -528,23 +569,32 @@ const LoanProduct = sequelize.define('LoanProduct', {
   // ======================
   feeStructure: {
     type: DataTypes.JSON,
-    defaultValue: []
+    defaultValue: [],
+    field: 'feeStructure'  // Now using the view's column name
   },
+  
   processingFeeRate: {
     type: DataTypes.DECIMAL(5, 2),
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'processingFeeRate'  // Now using the view's column name
   },
+  
   processingFeeGLCode: {
     type: DataTypes.STRING(50),
-    defaultValue: ''
+    defaultValue: '',
+    field: 'processingFeeGLCode'  // Now using the view's column name
   },
+  
   lateFeePerDay: {
     type: DataTypes.DECIMAL(10, 2),
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'lateFeePerDay'  // Now using the view's column name
   },
+  
   maxLateFee: {
     type: DataTypes.DECIMAL(10, 2),
-    defaultValue: null
+    defaultValue: null,
+    field: 'maxLateFee'  // Now using the view's column name
   },
 
   // ======================
@@ -553,24 +603,33 @@ const LoanProduct = sequelize.define('LoanProduct', {
   productCategory: {
     type: DataTypes.STRING(50),
     allowNull: true,
+    field: 'productCategory',  // Now using the view's column name
     comment: 'Optional product category for grouping'
   },
+  
   productSubCategory: {
     type: DataTypes.STRING(50),
     allowNull: true,
+    field: 'productSubCategory',  // Now using the view's column name
     comment: 'Optional product sub-category'
   },
+  
   riskLevel: {
     type: DataTypes.ENUM('LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH'),
-    defaultValue: 'MEDIUM'
+    defaultValue: 'MEDIUM',
+    field: 'riskLevel'  // Now using the view's column name
   },
+  
   collateralRequired: {
     type: DataTypes.BOOLEAN,
-    defaultValue: false
+    defaultValue: false,
+    field: 'collateralRequired'  // Now using the view's column name
   },
+  
   eligibilityCriteria: {
     type: DataTypes.JSON,
     defaultValue: {},
+    field: 'eligibilityCriteria',  // Now using the view's column name
     comment: 'JSON object containing eligibility criteria'
   },
 
@@ -580,23 +639,32 @@ const LoanProduct = sequelize.define('LoanProduct', {
   EFFECTIVE_DT: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'EFFECTIVE_DT'  // Now using the view's column name
   },
+  
   EXPIRY_DT: {
     type: DataTypes.DATE,
-    defaultValue: null
+    defaultValue: null,
+    field: 'EXPIRY_DT'  // Now using the view's column name
   },
+  
   VERSION: {
     type: DataTypes.INTEGER,
-    defaultValue: 1
+    defaultValue: 1,
+    field: 'VERSION'  // Now using the view's column name
   },
+  
   STATUS: {
     type: DataTypes.ENUM('ACTIVE', 'INACTIVE', 'PENDING', 'DRAFT', 'ARCHIVED'),
-    defaultValue: 'DRAFT'
+    defaultValue: 'DRAFT',
+    field: 'STATUS'  // Now using the view's column name
   },
+  
   isActive: {
     type: DataTypes.BOOLEAN,
-    defaultValue: true
+    defaultValue: true,
+    field: 'isActive'  // Now using the view's column name
   },
 
   // ======================
@@ -605,16 +673,21 @@ const LoanProduct = sequelize.define('LoanProduct', {
   createdBy: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    defaultValue: 'SYSTEM'
+    defaultValue: 'SYSTEM',
+    field: 'createdBy'  // Now using the view's column name
   },
+  
   USER_ID: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    defaultValue: 'SYSTEM'
+    defaultValue: 'SYSTEM',
+    field: 'USER_ID'  // Now using the view's column name
   },
+  
   LAST_MODIFIED_BY: {
     type: DataTypes.STRING(100),
-    defaultValue: ''
+    defaultValue: '',
+    field: 'LAST_MODIFIED_BY'  // Now using the view's column name
   },
 
   // ======================
@@ -633,13 +706,14 @@ const LoanProduct = sequelize.define('LoanProduct', {
         customType: false,
         tags: []
       }
-    }
+    },
+    field: 'metadata'
   }
 }, {
-  tableName: 'loan_products',
+  tableName: 'loan_product',  // FIXED: Use the view instead of the table
   timestamps: true,
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   indexes: [
     {
       name: 'idx_prod_id',
@@ -679,6 +753,7 @@ const LoanProduct = sequelize.define('LoanProduct', {
       fields: ['PRODUCT_SHORT_NAME']
     }
   ],
+  
   hooks: {
     beforeCreate: async (loanProduct) => {
       await loanProduct.validateAndSyncInterestRate();

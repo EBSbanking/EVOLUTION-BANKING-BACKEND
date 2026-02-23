@@ -1,0 +1,299 @@
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 13:24:22"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 13:24:29"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-21T22:24:33.653Z","timestamp":"2026-02-21 13:24:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 13:24:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 13:24:33"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 13:24:38"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 13:34:25"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 13:34:26"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-21T22:34:27.482Z","timestamp":"2026-02-21 13:34:27"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 13:34:27"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 13:34:27"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 13:34:29"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 22:22:19"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:24:39"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T07:25:36.008Z","timestamp":"2026-02-21 22:25:36"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 22:25:36"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:25:36"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 22:26:18"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 22:35:24"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:37:05"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T07:38:18.978Z","timestamp":"2026-02-21 22:38:18"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 22:38:19"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:38:19"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 22:39:20"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 22:50:55"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:51:22"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T07:51:33.495Z","timestamp":"2026-02-21 22:51:33"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 22:51:33"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 22:51:33"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 22:51:41"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:05:34"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:05:55"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:06:03.415Z","timestamp":"2026-02-21 23:06:03"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:06:03"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:06:03"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:06:09"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:17:06"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:17:10"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:17:12.741Z","timestamp":"2026-02-21 23:17:12"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:17:12"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:17:12"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:17:15"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:19:20"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:19:21"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:19:21.940Z","timestamp":"2026-02-21 23:19:21"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:19:21"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:19:21"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:19:23"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:26:47"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:26:56"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:27:01.165Z","timestamp":"2026-02-21 23:27:01"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:27:01"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:27:01"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:27:06"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:30:46"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:30:51"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:30:53.229Z","timestamp":"2026-02-21 23:30:53"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:30:53"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:30:53"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:30:56"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:43:49"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:43:56"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:44:00.229Z","timestamp":"2026-02-21 23:44:00"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:44:00"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:44:00"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:44:06"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:48:44"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:48:51"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:48:55.139Z","timestamp":"2026-02-21 23:48:55"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:48:55"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:48:55"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:48:58"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-02-21 23:56:08"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:56:12"}
+{"level":"info","message":"Server time initialized (WAT): 2026-02-22T08:56:14.949Z","timestamp":"2026-02-21 23:56:14"}
+{"error":"auditLogger.info(...).catch is not a function","level":"warn","message":"Could not log startup audit","timestamp":"2026-02-21 23:56:14"}
+{"errors":["Role 28: Permission undefined not found in REPORT","Role 28: Permission undefined not found in REPORT","Role 38: Permission undefined not found in VAULT"],"level":"warn","message":"Permission validation errors","timestamp":"2026-02-21 23:56:14"}
+{"level":"info","message":"🔧 Auto-initializing models in development mode...","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"🚀 Initializing model loader...","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"✅ Models loaded via index.js","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"✅ Model loader initialized successfully","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"📊 Loaded models: sequelize, Op, DataTypes, QueryTypes, AMLThreshold, AccountApplication, Drawer, DrawerCloseOut, DrawerUserRole, DrawerCurrencyDenomination, DrawerCurrency, AuditTrail, VaultAccessAttempt, VaultMaintenanceLog, User, Permissions, UserRole, BusinessRole, Role, BusinessUnit, Branch, Organization, Customer, CustomerType, NextOfKin, CreditOfficer, CustomerAccount, DepositAccount, LoanAccount, SavingsProduct, LoanProduct, TermDeposit, Thrift, Group, GroupSavings, LoanInterestRate, Transaction, Deposit, Withdrawal, CashWithdrawalTransaction, DepositTransaction, LoanRepayment, LoanRepaymentTransaction, DirectDebit, DirectDebitRequest, StandingOrder, GLAccount, ChartofAccount, GLCategory, GLTransaction, GLAccountTransaction, JournalEntry, ScheduledTask, EOYReport, Holiday, CreditApplication, LoanContractForm, Guarantor, Collection, OverdueLoan, LoanPortfolio, LoanFee, LoanPenalty, DepositAccountInterest, DepositAccountInterest_Tier, Charge, InterestCalculation, Bank, Vault, VaultAuthorizedPersonnel, VaultPendingApproval, Country, State, WorkflowProcess, WorkflowSubProcess, WorkflowItem, WorkflowQueue, WorkflowBusinessRoleQueue, WorkflowSubProcessPolicy, CustomerWorkflowRouting, Notification, SMS, Report, Dashboard, Analytics, AccountStatement, IncomeExpense, TriftReport, DisbursementReport, LoanAccountSummary, DepositAccountSummary, Counter, SystemDate, License, Configuration, TransactionPolicy, ProductTypeMapping, RateIndex, Identifier, Subfolder, Event, AutoReclassifyInformation, UploadFile, CleanupDB, TellerStat, DepositAccountApplication, IdentificationInformation, Portfolio, LoanCalculator, AML, GuarantorAudit, RelationshipOfficer, GLClosingPeriod","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"📊 Model Statistics:","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   Total models loaded: 113","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   CUSTOMER: 5 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   LOAN: 4 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   DEPOSIT: 4 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   TRANSACTION: 3 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   USER: 2 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   SYSTEM: 4 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   ACCOUNTING: 2 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   AUDIT: 1 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   NOTIFICATION: 1 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"   THRIFT: 3 models","timestamp":"2026-02-21 23:56:17"}
+{"level":"info","message":"✅ Thrift model successfully loaded and available","timestamp":"2026-02-21 23:56:17"}

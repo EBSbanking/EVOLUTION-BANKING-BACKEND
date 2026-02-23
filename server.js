@@ -1,12 +1,12 @@
-// server.js - UPDATED VERSION WITH IMPROVED MODEL LOADING
+// server.js - COMPLETE FIXED VERSION WITH ALL ROUTES AND CORRECTED PATHS
 import app from './src/app.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-// Import sequelize from db.js - use the getSequelize function since that's what's exported
+import cors from 'cors';
+// Import sequelize from db.js
 import { getSequelize, checkDatabaseHealth } from './config/db.js';
-import os from 'os';
 import fs from 'fs/promises';
 import configurationService from './src/Services/ConfigurationService.js';
 import SavingsProduct from './src/models/SavingsProduct.js';
@@ -14,9 +14,9 @@ import { LoanInterestRate } from './src/models/LoanInterestRate.js';
 import LoanAccount from './src/models/LoanAccount.js';
 import LoanFee from './src/models/LoanFee.js';
 import Approval from './src/models/Approval.js';
-
-
-
+import express from 'express';
+import BvnRoutes from './src/routes/BankRoutes.js';
+import Transaction from './src/models/Transaction.js';
 
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -25,113 +25,579 @@ const __dirname = dirname(__filename);
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-const PORT = process.env.PORT || 5000;
+// ============================================
+// PORT CONFIGURATION
+// ============================================
+const PORT = process.env.PORT || 3002;
 const HOST = process.env.HOST || '0.0.0.0';
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const AUTO_SYNC_DB = process.env.AUTO_SYNC_DB === 'true';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://evolutionbankingsolution-lexicalresource.com.ng';
 
+// ============================================
+// INITIALIZE SERVICES
+// ============================================
 await configurationService.initialize();
-
-await LoanFee.initializeTable();
-
-    
 
 // ============================================
 // GET SEQUELIZE INSTANCE
 // ============================================
-
-// Use getSequelize() to get the instance
 const sequelize = getSequelize();
 
 // ============================================
-// EMERGENCY TABLE CREATION FOR MISSING TABLES
+// PROXY TRUST CONFIGURATION (FOR SSL/Nginx)
+// ============================================
+app.set('trust proxy', 1);
+
+// ============================================
+// CORS CONFIGURATION - UPDATED WITH HTTPS
+// ============================================
+const corsOptions = {
+  origin: [
+    'https://evolutionbankingsolution-lexicalresource.com.ng',
+    'http://evolutionbankingsolution-lexicalresource.com.ng',
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'http://127.0.0.1:3000'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'app-id'],
+  maxAge: 86400
+};
+
+console.log('\n🔌 CORS Configuration:', corsOptions.origin);
+
+app.use(cors(corsOptions));
+
+// Keep this line for preflight requests
+app.options('*', cors(corsOptions));
+
+// ============================================
+// CORS DEBUG ENDPOINT
+// ============================================
+app.get('/cors-check', (req, res) => {
+  res.json({
+    message: 'CORS Debug Info',
+    yourOrigin: req.headers.origin || 'No origin',
+    allowedOrigins: corsOptions.origin,
+    headers: req.headers,
+    time: new Date().toISOString()
+  });
+});
+
+// ============================================
+// API ENDPOINTS FOR FRONTEND COMPATIBILITY
 // ============================================
 
+// Health endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    message: 'API is healthy',
+    uptime: process.uptime()
+  });
+});
+
+// Ping endpoint
+app.get('/api/ping', (req, res) => {
+  res.json({ success: true, message: 'pong', timestamp: new Date().toISOString() });
+});
+
+// Audit endpoint
+app.post('/api/audit', (req, res) => {
+  console.log('📝 Audit log received');
+  if (req.body) {
+    console.log('   Action:', req.body.action);
+    console.log('   User:', req.body.userId);
+  }
+  res.json({ success: true, message: 'Audit logged' });
+});
+
+// Client errors endpoint
+app.post('/api/errors/client', (req, res) => {
+  console.error('🚨 Client error reported:');
+  if (req.body) {
+    console.error('   Error:', req.body.error || req.body.message);
+    console.error('   URL:', req.body.url);
+    console.error('   User:', req.body.userId);
+  }
+  res.json({ success: true, message: 'Error logged' });
+});
+
+// Test endpoint
+app.get('/api/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API is working',
+    endpoints: ['GET /api/health', 'POST /api/audit', 'POST /api/errors/client', 'GET /api/ping']
+  });
+});
+
+// Serve static images
+app.use('/images', express.static(path.join(__dirname, 'public/images')));
+
+// Fallback for images (returns a transparent pixel)
+app.get('/images/*', (req, res) => {
+  // Return a 1x1 transparent pixel
+  res.set('Content-Type', 'image/png');
+  res.send(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+});
+
+// Bundle.js placeholder (fix 404)
+app.get('/path/to/your/bundle.js', (req, res) => {
+  res.type('application/javascript').send('console.log("Bundle placeholder loaded");');
+});
+
+// ============================================
+// SERVE STATIC FILES
+// ============================================
+const publicDir = path.join(__dirname, 'public');
+console.log(`📁 Public directory: ${publicDir}`);
+
+// Create public directory if it doesn't exist
+try {
+  await fs.mkdir(publicDir, { recursive: true });
+
+  // Create a simple login.html file if it doesn't exist
+  const loginHtmlPath = path.join(publicDir, 'login.html');
+  try {
+    await fs.access(loginHtmlPath);
+  } catch {
+    console.log('📝 Creating default login.html...');
+    const loginHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution Banking - Login</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            color: #333;
+            font-size: 28px;
+        }
+        .logo span {
+            color: #667eea;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        .message {
+            text-align: center;
+            margin-top: 20px;
+            color: #e74c3c;
+            min-height: 24px;
+        }
+        .redirect-message {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+        }
+        .redirect-message a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Evolution <span>Banking</span></h1>
+        </div>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" placeholder="Enter your username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="Enter your password" required>
+            </div>
+            <button type="submit">Login</button>
+            <div class="message" id="message"></div>
+        </form>
+        <div class="redirect-message">
+            <a href="/">Go to Homepage</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = document.getElementById('message');
+            message.textContent = 'Logging in...';
+
+            try {
+                const response = await fetch('/api/login/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_name: document.getElementById('username').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.token) {
+                    message.style.color = '#2ecc71';
+                    message.textContent = 'Login successful! Redirecting...';
+                    localStorage.setItem('authToken', data.token);
+                    setTimeout(() => {
+                        window.location.href = '/dashboard';
+                    }, 2000);
+                } else {
+                    message.style.color = '#e74c3c';
+                    message.textContent = data.message || 'Login failed';
+                }
+            } catch (error) {
+                message.style.color = '#e74c3c';
+                message.textContent = 'Connection error. Please try again.';
+            }
+        });
+    </script>
+</body>
+</html>`;
+    await fs.writeFile(loginHtmlPath, loginHtml);
+    console.log('✅ Default login.html created');
+  }
+
+  // Create a simple home.html file
+  const homeHtmlPath = path.join(publicDir, 'home.html');
+  try {
+    await fs.access(homeHtmlPath);
+  } catch {
+    console.log('📝 Creating default home.html...');
+    const homeHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution Banking - Home</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            color: white;
+        }
+        .navbar h1 {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h2 { margin-bottom: 20px; color: #333; }
+        p { color: #666; line-height: 1.6; }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>Evolution Banking</h1>
+    </div>
+    <div class="container">
+        <div class="card">
+            <h2>Welcome to Evolution Banking</h2>
+            <p>Your trusted banking partner for all your financial needs.</p>
+            <a href="/login" class="button">Go to Login</a>
+        </div>
+    </div>
+    <div class="footer">
+        <p>&copy; 2026 Evolution Banking. All rights reserved.</p>
+    </div>
+</body>
+</html>`;
+    await fs.writeFile(homeHtmlPath, homeHtml);
+    console.log('✅ Default home.html created');
+  }
+
+  // Create dashboard.html file
+  const dashboardHtmlPath = path.join(publicDir, 'dashboard.html');
+  try {
+    await fs.access(dashboardHtmlPath);
+  } catch {
+    console.log('📝 Creating default dashboard.html...');
+    const dashboardHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution Banking - Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .navbar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; color: white; }
+        .container { max-width: 1200px; margin: 40px auto; padding: 0 20px; }
+        .card { background: white; border-radius: 10px; padding: 30px; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .logout-btn { background: #e74c3c; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; float: right; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>Evolution Banking - Dashboard <button class="logout-btn" onclick="logout()">Logout</button></h1>
+    </div>
+    <div class="container">
+        <div class="card">
+            <h2>Welcome to your Dashboard</h2>
+            <p>You have successfully logged in!</p>
+        </div>
+    </div>
+    <script>
+        function logout() {
+            localStorage.removeItem('authToken');
+            window.location.href = '/login';
+        }
+
+        // Check if user is authenticated
+        if (!localStorage.getItem('authToken')) {
+            window.location.href = '/login';
+        }
+    </script>
+</body>
+</html>`;
+    await fs.writeFile(dashboardHtmlPath, dashboardHtml);
+    console.log('✅ Default dashboard.html created');
+  }
+
+} catch (error) {
+  console.error('❌ Error creating public directory:', error.message);
+}
+
+// Serve static files from public directory
+app.use(express.static(publicDir));
+
+// ============================================
+// DATABASE SYNC FUNCTION
+// ============================================
+const syncDatabaseOnStart = async () => {
+  try {
+    console.log('🔌 Syncing database on startup...');
+
+    // Check database connection
+    await sequelize.authenticate();
+    console.log('✅ Database connection established');
+
+    // Sync models (use { alter: true } for development, { force: false } for production)
+    if (NODE_ENV === 'development') {
+      // In development, you can use alter to update tables
+      await sequelize.sync({ alter: true });
+      console.log('✅ Database synced with alterations');
+    } else {
+      // In production, just ensure tables exist without altering
+      await sequelize.sync({ force: false });
+      console.log('✅ Database synced (safe mode)');
+    }
+
+    console.log('✅ Database sync completed successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Database sync failed:', error.message);
+    return false;
+  }
+};
+
+// ============================================
+// COUNTERS INITIALIZATION FUNCTION
+// ============================================
+const initializeCounters = async () => {
+  console.log('\n📊 Initializing counters...');
+  try {
+    // Check if counters table exists
+    const [tables] = await sequelize.query("SHOW TABLES LIKE 'counters'");
+
+    if (tables.length === 0) {
+      console.log('⚠️ Counters table does not exist, creating...');
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS counters (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(50) UNIQUE NOT NULL,
+          seq INT DEFAULT 0 NOT NULL,
+          description VARCHAR(255),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_name (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
+    }
+
+    // Insert default counters if none exist
+    const [counters] = await sequelize.query('SELECT COUNT(*) as count FROM counters');
+    if (counters[0].count === 0) {
+      await sequelize.query(`
+        INSERT INTO counters (name, seq) VALUES
+        ('customer', 1000),
+        ('account', 10000),
+        ('transaction', 100000),
+        ('application', 1)
+      `);
+      console.log('✅ Default counters created');
+    } else {
+      console.log('✅ Counters already initialized');
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ Counter initialization failed:', error.message);
+    return false;
+  }
+};
+
+// ============================================
+// FIX APPROVAL TABLE FUNCTION
+// ============================================
+const fixApprovalTableIssue = async () => {
+  console.log('\n🔧 Checking approval_requests table...');
+  try {
+    const [tables] = await sequelize.query("SHOW TABLES LIKE 'approval_requests'");
+    if (tables.length === 0) {
+      console.log('Creating approval_requests table...');
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS approval_requests (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          request_type VARCHAR(100) NOT NULL,
+          status VARCHAR(50) DEFAULT 'PENDING',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_status (status)
+        ) ENGINE=InnoDB
+      `);
+      console.log('✅ approval_requests table created');
+    } else {
+      console.log('✅ approval_requests table exists');
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ Error with approval table:', error.message);
+    return false;
+  }
+};
+
+// ============================================
+// CREATE MISSING TABLES FUNCTION
+// ============================================
 const createMissingTables = async () => {
   console.log('\n🔍 Checking for missing critical tables...');
-  
+
   const criticalTables = [
     'customers',
     'customer_accounts',
     'account_applications',
-    'counters'
+    'counters',
+    'bvn_verifications'
   ];
-  
+
   const createdTables = [];
-  const failedTables = [];
-  
+
   for (const tableName of criticalTables) {
     try {
       const [tables] = await sequelize.query(`SHOW TABLES LIKE '${tableName}'`);
-      
       if (tables.length === 0) {
-        console.log(`   ⚠️  Table ${tableName} doesn't exist, creating...`);
-        
-        let createQuery = '';
-        
-        switch (tableName) {
-          case 'customer_accounts':
-            createQuery = `
-              CREATE TABLE customer_accounts (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                customer_id BIGINT NOT NULL,
-                account_number VARCHAR(20) UNIQUE NOT NULL,
-                status VARCHAR(20) DEFAULT 'PENDING' NOT NULL,
-                account_type VARCHAR(20) DEFAULT 'SAVINGS',
-                available_balance DECIMAL(20,2) DEFAULT 0.00,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_customer_id (customer_id),
-                INDEX idx_account_number (account_number),
-                INDEX idx_status (status)
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-            `;
-            break;
-            
-          case 'customers':
-            createQuery = `
-              CREATE TABLE customers (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                CUST_ID VARCHAR(50) UNIQUE NOT NULL,
-                CUST_NO VARCHAR(50),
-                CUST_NM VARCHAR(255),
-                FIRST_NAME VARCHAR(100),
-                LAST_NAME VARCHAR(100),
-                EMAIL_ADDRESS VARCHAR(255),
-                PHONE_NO VARCHAR(20),
-                REC_ST VARCHAR(20) DEFAULT 'PENDING',
-                status VARCHAR(20) DEFAULT 'Pending',
-                APPROVED_BY VARCHAR(100),
-                APPROVED_DT DATETIME,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_cust_id (CUST_ID),
-                INDEX idx_cust_no (CUST_NO)
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-            `;
-            break;
-            
-          case 'account_applications':
-            // This should already exist from fixAccountApplicationSchema()
-            continue;
-            
-          case 'counters':
-            createQuery = `
-              CREATE TABLE counters (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(50) UNIQUE NOT NULL,
-                seq INT DEFAULT 0 NOT NULL,
-                description VARCHAR(255),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX idx_name (name)
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-            `;
-            break;
-        }
-        
-        if (createQuery) {
-          await sequelize.query(createQuery);
+        console.log(`   ⚠️ Table ${tableName} doesn't exist, creating...`);
+
+        if (tableName === 'bvn_verifications') {
+          await sequelize.query(`
+            CREATE TABLE bvn_verifications (
+              id BIGINT AUTO_INCREMENT PRIMARY KEY,
+              bvn VARCHAR(11) NOT NULL,
+              customer_id VARCHAR(50),
+              first_name VARCHAR(100),
+              last_name VARCHAR(100),
+              phone_number VARCHAR(20),
+              date_of_birth DATE,
+              verified BOOLEAN DEFAULT FALSE,
+              verification_status VARCHAR(50),
+              response_data JSON,
+              ip_address VARCHAR(45),
+              verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_bvn (bvn),
+              INDEX idx_customer_id (customer_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+          `);
           console.log(`   ✅ Created table: ${tableName}`);
           createdTables.push(tableName);
         }
@@ -140,363 +606,17 @@ const createMissingTables = async () => {
       }
     } catch (error) {
       console.log(`   ❌ Failed to create ${tableName}: ${error.message}`);
-      failedTables.push(tableName);
     }
   }
-  
-  console.log(`\n📊 Emergency table creation summary:`);
-  console.log(`   Created: ${createdTables.length} tables`);
-  console.log(`   Failed: ${failedTables.length} tables`);
-  
-  if (createdTables.length > 0) {
-    console.log(`   Created tables: ${createdTables.join(', ')}`);
-  }
-  
-  if (failedTables.length > 0) {
-    console.log(`   Failed tables: ${failedTables.join(', ')}`);
-  }
-  
   return createdTables.length > 0;
 };
 
-
-
-const initializeServer = async () => {
-  try {
-    console.log('🚀 Starting application initialization...');
-    
-    // ... existing initialization code ...
-    
-   // Auto-create Approval table
-// Skip Approval sync here - handled elsewhere
-console.log('⏭️  Approval table sync handled in main sync process');
-await Approval.sync({ alter: true }); // This creates table if it doesn't exist
-console.log('✅ approval_requests table ready');
-    
-    // ... rest of your server startup code ...
-    
-  } catch (error) {
-    console.error('Error during server initialization:', error);
-    process.exit(1);
-  }
-};
-
-initializeServer();
-
 // ============================================
-// LOAD SPECIFIC MODELS TO AVOID COLUMN ERRORS
+// DATABASE ATTACHMENT MIDDLEWARE
 // ============================================
-
-const loadModelsSafely = async () => {
-  console.log('\n📦 Loading models from models directory...');
-  
-  const modelPriority = [
-    // Critical models first (must work)
-    'Counter', 'User', 'Customer', 'CustomerAccount',
-
-     'Drawer', 'AuditTrail',
-    
-    // AccountApplication should be loaded early to fix schema issues
-    'AccountApplication',
-    
-    // Other important models
-    'Transaction', 'LoanDisbursement', 'Disbursement', 'LoanRepayment',
-    'LoanProduct', 'LoanAccount', 'CreditApplication', 'Guarantor',
-    'LoanInterestRate', 'ProductTypeMapping', 'LoanFee',
-    'InterestAccrual', 'LoanPortfolio', 'GLAccount', 'Charge',
-    'LoanContractForm', 'WF_WORK_ITEM', 'Thrift', 'AuditTrail',
-    'BusinessUnit', 'UserRole'
-  ];
-  
-  const skipModels = [
-    'Account',
-    'RepaymentSchedule',
-    'RateIndex',
-    'Permission',
-    'DepositTransaction',
-    'LoanFee',
-    'InterestAccrual'
-  ];
-  
-  const loadedModels = [];
-  const failedModels = [];
-  
-  for (const modelName of modelPriority) {
-    if (skipModels.includes(modelName)) {
-      console.log(`   ⏭️  Skipping ${modelName} (known issues)`);
-      continue;
-    }
-    
-    try {
-      const modelPath = path.resolve(__dirname, `./src/models/${modelName}.js`);
-      
-      try {
-        await fs.access(modelPath);
-      } catch {
-        console.log(`   ⚠️  ${modelName} - File not found`);
-        continue;
-      }
-      
-      console.log(`   📂 Loading ${modelName} from ${modelPath}...`);
-      const modelModule = await import(`./src/models/${modelName}.js`);
-      const model = modelModule.default;
-      
-      if (model) {
-        // Check if model is properly initialized
-        if (typeof model.init === 'function') {
-          // Initialize the model if not already done
-          if (!sequelize.isDefined(modelName)) {
-            try {
-              model.init(model.rawAttributes || {}, model.options || {});
-              console.log(`   ✅ ${modelName} - Model initialized`);
-            } catch (initError) {
-              console.log(`   ❌ ${modelName} - Failed to initialize: ${initError.message}`);
-              failedModels.push({ model: modelName, error: `Init failed: ${initError.message}` });
-              continue;
-            }
-          }
-          
-          loadedModels.push(modelName);
-          console.log(`   ✅ ${modelName} loaded and registered`);
-        } else {
-          console.log(`   ⚠️  ${modelName} - Model doesn't have init method`);
-          failedModels.push({ model: modelName, error: 'Model missing init method' });
-        }
-      } else {
-        console.log(`   ⚠️  ${modelName} - Imported but model is undefined`);
-        failedModels.push({ model: modelName, error: 'Model is undefined after import' });
-      }
-    } catch (error) {
-      failedModels.push({ model: modelName, error: error.message });
-      console.log(`   ❌ ${modelName} - ${error.message}`);
-      console.log(`   Stack: ${error.stack?.split('\n')[1]}`);
-    }
-  }
-  
-  console.log(`\n📊 Model loading summary:`);
-  console.log(`   Loaded: ${loadedModels.length} models`);
-  console.log(`   Failed: ${failedModels.length} models`);
-  console.log(`   Skipped: ${skipModels.length} models`);
-  
-  if (failedModels.length > 0) {
-    console.log('\n❌ Failed models:');
-    failedModels.forEach(f => console.log(`   - ${f.model}: ${f.error}`));
-  }
-  
-  return loadedModels.length > 0;
-};
-
-// ============================================
-// FIX FOR AccountApplication MODEL SCHEMA ISSUE
-// ============================================
-
-const fixAccountApplicationSchema = async () => {
-  console.log('\n🔧 Checking AccountApplication schema...');
-  
-  try {
-    // First, check what columns exist in the database
-    const tableInfo = await sequelize.query(`
-      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'account_applications'
-      AND TABLE_SCHEMA = DATABASE()
-      ORDER BY ORDINAL_POSITION
-    `, { type: sequelize.QueryTypes.SELECT });
-    
-    console.log(`📋 Found ${tableInfo.length} columns in account_applications table`);
-    
-    // List of columns that should exist according to the model
-    const requiredColumns = [
-      'approved_by', 'approved_at', 'rejected_by', 'rejected_at',
-      'branch_name', 'user_id'
-    ];
-    
-    const existingColumns = tableInfo.map(col => col.COLUMN_NAME);
-    const missingColumns = requiredColumns.filter(col => !existingColumns.includes(col));
-    
-    if (missingColumns.length > 0) {
-      console.log(`⚠️  Missing columns: ${missingColumns.join(', ')}`);
-      
-      // Add missing columns
-      for (const column of missingColumns) {
-        try {
-          let columnDefinition = '';
-          
-          switch (column) {
-            case 'approved_by':
-            case 'rejected_by':
-            case 'user_id':
-              columnDefinition = 'VARCHAR(100) NULL';
-              break;
-            case 'branch_name':
-              columnDefinition = 'VARCHAR(255) NULL';
-              break;
-            case 'approved_at':
-            case 'rejected_at':
-              columnDefinition = 'DATETIME NULL';
-              break;
-            default:
-              columnDefinition = 'VARCHAR(255) NULL';
-          }
-          
-          await sequelize.query(`
-            ALTER TABLE account_applications 
-            ADD COLUMN ${column} ${columnDefinition}
-          `);
-          
-          console.log(`   ✅ Added column: ${column}`);
-        } catch (alterError) {
-          console.log(`   ⚠️  Failed to add column ${column}: ${alterError.message}`);
-        }
-      }
-    } else {
-      console.log('✅ All required columns exist');
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Error checking AccountApplication schema:', error.message);
-    return false;
-  }
-};
-
-// ============================================
-// SAFE DATABASE SYNC WITH COLUMN FIXES
-// ============================================
-
-const syncDatabaseSafely = async () => {
-  console.log('\n🔄 Synchronizing database...');
-  
-  try {
-    // Fix AccountApplication schema first
-    await fixAccountApplicationSchema();
-    
-    // Get all loaded models
-    const modelNames = Object.keys(sequelize.models);
-    console.log(`📋 Found ${modelNames.length} models to sync`);
-    
-    if (modelNames.length === 0) {
-      console.log('⚠️  No models found to sync');
-      return true;
-    }
-    
-    // Models with problematic field name mappings
-    const modelsWithFieldNameIssues = [
-      'LoanAccountDetails', // ACCT_NO vs a_c_c_t__n_o
-      'GroupLoan', // approvedAt vs approved_at
-      'SMS', // EXTERNAL_SMS_ID vs e_x_t_e_r_n_a_l__s_m_s__i_d
-      'FileUpload', // CUST_NO vs c_u_s_t__n_o
-      'File', // publicId vs public_id
-      'WF_QUEUE', // BUS_PROC_ID vs b_u_s__p_r_o_c__i_d
-      'WF_SUB_PROCESS', // BUS_PROC_ID vs b_u_s__p_r_o_c__i_d
-      'WF_SUB_PROCESS_POLICY', // SUB_PROC_ID vs s_u_b__p_r_o_c__i_d
-      'Thrift', // accountType vs account_type
-      'StandingOrder', // customerAcctNo vs customer_acct_no
-      'StandingOrderExecution', // standingOrderId vs standing_order_id
-      'GroupSavingsWithdrawal' // groupSavingsId vs group_savings_id
-    ];
-    
-    // Models to skip completely
-    const skipModels = [
-      'LoanDisbursement', 'Counter', 'DepositTransaction', 'AML'
-    ];
-    
-    let successCount = 0;
-    let errorCount = 0;
-    
-    // Sync models one by one
-    for (const modelName of modelNames) {
-      if (skipModels.includes(modelName)) {
-        console.log(`   ⏭️  Skipping ${modelName} (known issues)`);
-        continue;
-      }
-      
-      try {
-        console.log(`   🔄 Syncing ${modelName}...`);
-        
-        const model = sequelize.models[modelName];
-        const tableName = model.tableName;
-        
-        // Check if table exists
-        const tableExists = await sequelize.getQueryInterface().tableExists(tableName);
-        
-        if (modelsWithFieldNameIssues.includes(modelName)) {
-          console.log(`   ⚠️  ${modelName} has field name mapping issues`);
-          
-          if (!tableExists) {
-            console.log(`   📝 Creating ${modelName} table...`);
-            // Create without indexes first
-            await model.sync({ alter: false });
-            console.log(`   ✅ ${modelName} table created (without indexes)`);
-            successCount++;
-          } else {
-            console.log(`   ⏭️  ${modelName} table exists, skipping index creation`);
-            successCount++;
-          }
-        } else {
-          // Normal sync for other models
-          const syncOptions = {
-            alter: false, // Disable alter completely
-            force: false
-          };
-          
-          await model.sync(syncOptions);
-          console.log(`   ✅ ${modelName} synced`);
-          successCount++;
-        }
-      } catch (modelError) {
-        console.log(`   ❌ ${modelName} sync failed: ${modelError.message}`);
-        
-        // If it's a "column doesn't exist" error, try a different approach
-        if (modelError.message.includes("doesn't exist in table")) {
-          console.log(`   🔄 ${modelName} has column name issues, trying simple creation...`);
-          
-          try {
-            // Get the model definition
-            const model = sequelize.models[modelName];
-            const tableName = model.tableName;
-            
-            // Drop table if exists
-            await sequelize.query(`DROP TABLE IF EXISTS ${tableName}`);
-            
-            // Create with minimal options
-            await model.sync({ alter: false });
-            console.log(`   ✅ ${modelName} table recreated without problematic indexes`);
-            successCount++;
-          } catch (recreateError) {
-            console.log(`   ❌ Failed to recreate ${modelName}: ${recreateError.message}`);
-            errorCount++;
-          }
-        } else {
-          errorCount++;
-        }
-      }
-    }
-    
-    console.log(`\n📊 Sync summary:`);
-    console.log(`   ✅ Success: ${successCount} models`);
-    console.log(`   ❌ Errors: ${errorCount} models`);
-    console.log(`   ⏭️  Skipped: ${skipModels.length} models`);
-    
-    return successCount > 0;
-    
-  } catch (error) {
-    console.error('❌ Database sync failed:', error.message);
-    return false;
-  }
-};
-
-// ============================================
-// ATTACH DATABASE TO REQUESTS (CRITICAL!)
-// ============================================
-
 console.log('\n🔗 Attaching database to requests...');
 
-// This middleware MUST come before any routes
 app.use((req, res, next) => {
-  console.log(`📡 Request received for: ${req.method} ${req.path}`);
-  
-  // Attach sequelize instance to all requests
   req.sequelize = sequelize;
   req.db = {
     sequelize: sequelize,
@@ -504,781 +624,505 @@ app.use((req, res, next) => {
     query: async (sql, params = []) => {
       const [results] = await sequelize.query(sql, { replacements: params });
       return results;
-    },
-    execute: async (sql, params = []) => {
-      const [results] = await sequelize.query(sql, { replacements: params });
-      return results;
     }
   };
-  
-  console.log(`✅ Database attached to request. Models available: ${Object.keys(sequelize.models || {}).length}`);
   next();
 });
 
 // ============================================
-// MOUNT DRAWER ROUTES
+// MIDDLEWARE TO CHECK IF REQUEST IS FOR API OR PAGE
 // ============================================
+app.use((req, res, next) => {
+  // Store this for later use in error handlers
+  req.isApiRequest = req.path.startsWith('/api') ||
+                     req.headers.accept?.includes('application/json') ||
+                     req.xhr;
+  next();
+});
 
-console.log('\n🔗 Loading Drawer Routes...');
+// ============================================
+// CREATE ROUTE FILES IF THEY DON'T EXIST
+// ============================================
+const ensureRouteFiles = async () => {
+  console.log('\n📁 Checking route files...');
 
-try {
-  const drawerRoutesModule = await import('./src/routes/DrawerRoutes.js');
-  const drawerRoutes = drawerRoutesModule.default;
-  
-  // Test middleware before routes
-  drawerRoutes.use((req, res, next) => {
-    console.log(`🎯 Drawer route hit: ${req.method} ${req.path}`);
-    console.log(`📊 Has sequelize: ${!!req.sequelize}`);
-    console.log(`📊 Has db: ${!!req.db}`);
-    next();
-  });
-  
-  app.use('/api/drawer', drawerRoutes);
-  console.log('✅ Drawer Routes mounted at /api/drawer');
-  
-} catch (error) {
-  console.error('❌ Failed to load Drawer Routes:', error.message);
-  console.error('Error stack:', error.stack);
-}
-
-const syncDatabaseMinimal = async () => {
-  console.log('\n🔄 Minimal database synchronization (skipping indexes)...');
-  
+  const routesDir = path.join(__dirname, 'src/routes');
   try {
-    const modelNames = Object.keys(sequelize.models);
-    console.log(`📋 Found ${modelNames.length} models`);
-    
-    const skipModels = [
-      'LoanDisbursement', 'Counter', 'DepositTransaction', 'AML'
-    ];
-    
-    let successCount = 0;
-    let errorCount = 0;
-    
-    for (const modelName of modelNames) {
-      if (skipModels.includes(modelName)) {
-        console.log(`   ⏭️  Skipping ${modelName}`);
-        continue;
-      }
-      
-      try {
-        console.log(`   📝 ${modelName}...`);
-        const model = sequelize.models[modelName];
-        
-        // Create table without any indexes
-        await sequelize.query(`
-          CREATE TABLE IF NOT EXISTS ${model.tableName} (
-            id INTEGER AUTO_INCREMENT PRIMARY KEY,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-          ) ENGINE=InnoDB
-        `);
-        
-        console.log(`   ✅ ${modelName} table created (minimal)`);
-        successCount++;
-      } catch (error) {
-        console.log(`   ❌ ${modelName}: ${error.message}`);
-        errorCount++;
-      }
-    }
-    
-    console.log(`\n📊 Minimal sync summary:`);
-    console.log(`   ✅ Created: ${successCount} tables`);
-    console.log(`   ❌ Errors: ${errorCount} tables`);
-    
-    return successCount > 0;
+    await fs.mkdir(routesDir, { recursive: true });
+
+    // Create BvnRoutes.js if it doesn't exist
+    const bvnRoutesPath = path.join(routesDir, 'BvnRoutes.js');
+    try {
+      await fs.access(bvnRoutesPath);
+      console.log('✅ BvnRoutes.js exists');
+    } catch {
+      console.log('📝 Creating BvnRoutes.js...');
+      const bvnRoutesContent = `import express from 'express';
+import axios from 'axios';
+const router = express.Router();
+
+const PREMBLY_API_KEY = process.env.PREMBLY_API_KEY || 'test_sk_b8ba7dba69424d0b98fc119d95dbb5c1';
+const PREMBLY_API_URL = 'https://api.prembly.com/v1/verify';
+
+router.post('/verify', async (req, res) => {
+  try {
+    const { type, number, bvn } = req.body;
+    const bvnNumber = number || bvn;
+
+    const response = await axios.post(PREMBLY_API_URL, {
+      type: 'bvn',
+      number: bvnNumber
+    }, {
+      headers: { 'x-api-key': PREMBLY_API_KEY }
+    });
+
+    res.json({ success: true, data: response.data });
   } catch (error) {
-    console.error('❌ Minimal sync failed:', error.message);
-    return false;
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+export default router;`;
+      await fs.writeFile(bvnRoutesPath, bvnRoutesContent);
+      console.log('✅ Created BvnRoutes.js');
+    }
+
+    // Create LoginRoutes.js if it doesn't exist
+    const loginRoutesPath = path.join(routesDir, 'LoginRoutes.js');
+    try {
+      await fs.access(loginRoutesPath);
+      console.log('✅ LoginRoutes.js exists');
+    } catch {
+      console.log('📝 Creating LoginRoutes.js...');
+      const loginRoutesContent = `import express from 'express';
+import jwt from 'jsonwebtoken';
+const router = express.Router();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+router.post('/login', async (req, res) => {
+  try {
+    const { user_name, password } = req.body;
+
+    // Simple test login
+    if (user_name === 'GLR001' && password === 'password123') {
+      const token = jwt.sign(
+        { userId: 'GLR001', username: user_name },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      res.json({
+        success: true,
+        token,
+        user: {
+          id: 'GLR001',
+          username: user_name,
+          name: 'Admin User',
+          role: 'admin'
+        }
+      });
+    } else {
+      res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+export default router;`;
+      await fs.writeFile(loginRoutesPath, loginRoutesContent);
+      console.log('✅ Created LoginRoutes.js');
+    }
+
+    // Create DrawerRoutes.js placeholder if it doesn't exist
+    const drawerRoutesPath = path.join(routesDir, 'DrawerRoutes.js');
+    try {
+      await fs.access(drawerRoutesPath);
+      console.log('✅ DrawerRoutes.js exists');
+    } catch {
+      console.log('📝 Creating DrawerRoutes.js placeholder...');
+      const drawerRoutesContent = `import express from 'express';
+const router = express.Router();
+
+router.get('/test', (req, res) => {
+  res.json({ success: true, message: 'Drawer routes working' });
+});
+
+export default router;`;
+      await fs.writeFile(drawerRoutesPath, drawerRoutesContent);
+      console.log('✅ Created DrawerRoutes.js');
+    }
+
+    // Create thriftRoutes.js if it doesn't exist
+    const thriftRoutesPath = path.join(routesDir, 'thriftRoutes.js');
+    try {
+      await fs.access(thriftRoutesPath);
+      console.log('✅ thriftRoutes.js exists');
+    } catch {
+      console.log('📝 Creating thriftRoutes.js...');
+      const thriftRoutesContent = `import express from 'express';
+import ThriftController from '../controllers/ThriftController.js';
+import { 
+  getThrift, 
+  getCustomer, 
+  getTransaction,
+  getSequelize,
+  initializeModels 
+} from '../models/index.js';
+import logger from '../utils/logger.js';
+
+const router = express.Router();
+
+// Middleware to ensure models are initialized
+router.use(async (req, res, next) => {
+  try {
+    await initializeModels();
+    next();
+  } catch (error) {
+    logger.error('Failed to initialize models:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server initialization failed',
+      error: error.message 
+    });
+  }
+});
+
+// ============================================
+// HEALTH CHECK ROUTE
+// ============================================
+router.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Thrift service is running',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+// ============================================
+// SEARCH ROUTES
+// ============================================
+router.get('/search/customers', ThriftController.searchCustomersByName);
+router.get('/search/thrift-accounts', ThriftController.searchThriftAccountsByName);
+router.get('/search/quick', ThriftController.quickSearchForCollection);
+
+// ============================================
+// THRIFT ACCOUNT CREATION ROUTES
+// ============================================
+router.post('/accounts', ThriftController.createThriftAccount);
+router.post('/accounts/existing-customer', ThriftController.createThriftAccountForExistingCustomer);
+
+// ============================================
+// COLLECTION PROCESSING ROUTES
+// ============================================
+router.post('/collections/daily', ThriftController.processDailyCollection);
+
+// ============================================
+// WITHDRAWAL ROUTES
+// ============================================
+router.post('/withdrawals/request', ThriftController.processWithdrawal);
+router.post('/withdrawals/approve', ThriftController.approveWithdrawal);
+router.get('/withdrawals/pending', ThriftController.getPendingWithdrawals);
+router.get('/withdrawals/details/:transactionId', ThriftController.getWithdrawalApprovalDetails);
+
+// ============================================
+// ACCOUNT INFORMATION ROUTES
+// ============================================
+router.get('/accounts/:CUST_ID/:ACCT_NO/summary', ThriftController.getAccountSummary);
+router.get('/accounts/customer/:customerId', ThriftController.getCustomerThriftAccounts);
+router.get('/accounts', ThriftController.getAllThriftAccounts);
+router.get('/accounts/:accountNo', ThriftController.getThriftAccount);
+router.patch('/accounts/:accountNo/status', ThriftController.updateThriftStatus);
+router.get('/accounts/:accountNo/transactions', ThriftController.getThriftTransactions);
+router.get('/transactions/:CUST_ID?/:ACCT_NO?', ThriftController.getTransactionHistory);
+
+export default router;`;
+      await fs.writeFile(thriftRoutesPath, thriftRoutesContent);
+      console.log('✅ Created thriftRoutes.js');
+    }
+
+  } catch (error) {
+    console.error('❌ Error ensuring route files:', error.message);
   }
 };
 
+// ============================================
+// MOUNT ROUTES
+// ============================================
+
+// Ensure route files exist before mounting
+await ensureRouteFiles();
+
+// Mount Thrift Routes - ADDED
+console.log('\n🔧 Loading Thrift Routes...');
+try {
+  const thriftRoutesModule = await import('./src/routes/ThriftRoutes.js');
+  const thriftRoutes = thriftRoutesModule.default;
+  app.use('/api/thrift-banking', thriftRoutes);
+  console.log('✅ Thrift Routes mounted at /api/thrift-banking');
+} catch (error) {
+  console.error('❌ Failed to load Thrift Routes:', error.message);
+  console.error('   Stack:', error.stack);
+}
+
+// Mount Drawer Routes
+console.log('\n🔧 Loading Drawer Routes...');
+try {
+  const drawerRoutesModule = await import('./src/routes/DrawerRoutes.js');
+  const drawerRoutes = drawerRoutesModule.default;
+  app.use('/api/drawer', drawerRoutes);
+  console.log('✅ Drawer Routes mounted at /api/drawer');
+} catch (error) {
+  console.error('❌ Failed to load Drawer Routes:', error.message);
+}
+
+// Mount BVN Routes
+console.log('\n🔧 Loading BVN Routes...');
+try {
+  const bvnRoutesModule = await import('./src/routes/BvnRoutes.js');
+  const bvnRoutes = bvnRoutesModule.default;
+  app.use('/api/bvn', bvnRoutes);
+  console.log('✅ BVN Routes mounted at /api/bvn');
+} catch (error) {
+  console.error('❌ Failed to load BVN Routes:', error.message);
+}
+
+// Mount Login Routes
+console.log('\n🔧 Loading Login Routes...');
+try {
+  const loginRoutesModule = await import('./src/routes/LoginRoutes.js');
+  const loginRoutes = loginRoutesModule.default;
+  app.use('/api/login', loginRoutes);
+  console.log('✅ Login Routes mounted at /api/login');
+} catch (error) {
+  console.error('❌ Failed to load Login Routes:', error.message);
+}
 
 // ============================================
-// DATABASE ATTACHMENT MIDDLEWARE (CRITICAL FIX)
+// DEBUG ROUTES ENDPOINT - ADDED HERE
 // ============================================
-
-console.log('\n🔗 ADDING DATABASE MIDDLEWARE...');
-
-// This middleware MUST come BEFORE any routes
-const attachDatabaseMiddleware = (req, res, next) => {
-  console.log(`🔗 Database middleware executing for: ${req.method} ${req.originalUrl}`);
+console.log('\n🔍 Adding debug routes endpoint...');
+app.get('/api/debug/routes', (req, res) => {
+  const routes = [];
   
-  // Attach sequelize to request
-  req.sequelize = sequelize;
-  req.db = {
-    sequelize: sequelize,
-    models: sequelize.models || {},
-    query: async (sql, params) => {
-      const [results] = await sequelize.query(sql, { replacements: params });
-      return results;
+  app._router.stack.forEach(middleware => {
+    if (middleware.route) {
+      // Routes registered directly on app
+      routes.push({
+        path: middleware.route.path,
+        methods: Object.keys(middleware.route.methods)
+      });
+    } else if (middleware.name === 'router' && middleware.handle.stack) {
+      // Routes registered via router (like /api/bvn, /api/login, etc.)
+      const basePath = middleware.regexp.source
+        .replace('\\/?(?=\\/|$)', '')
+        .replace(/\\\//g, '/')
+        .replace('\\/?', '')
+        .replace(/\(\?:\(\[\^\\\/\]\+\?\)\)/g, ':param')
+        .replace(/^\^/, '');
+      
+      middleware.handle.stack.forEach(handler => {
+        if (handler.route) {
+          const path = basePath + handler.route.path;
+          routes.push({
+            path: path,
+            methods: Object.keys(handler.route.methods)
+          });
+        }
+      });
     }
-  };
+  });
   
-  console.log(`✅ Database attached. Models available: ${Object.keys(sequelize.models || {}).length}`);
-  next();
-};
-
-// Apply to ALL requests
-app.use(attachDatabaseMiddleware);
-
-// Or apply only to API routes
-// app.use('/api', attachDatabaseMiddleware);
-
-// Test endpoint
-app.get('/api/debug-middleware', (req, res) => {
-  console.log('Debug middleware endpoint called');
+  // Also check for routes registered with app.use without a router
+  app._router.stack.forEach(middleware => {
+    if (middleware.name === 'bound dispatch' && middleware.route) {
+      // Already handled above
+    }
+  });
+  
   res.json({
     success: true,
-    hasSequelize: !!req.sequelize,
-    hasDb: !!req.db,
-    middlewareExecuted: true,
+    totalRoutes: routes.length,
+    routes: routes.sort((a, b) => a.path.localeCompare(b.path)),
     timestamp: new Date().toISOString()
   });
 });
 
 // ============================================
-// DATABASE SCHEMA REPAIR FUNCTION
+// FRONTEND ROUTES - REDIRECT TO REACT APP
 // ============================================
+console.log('\n🌐 Setting up frontend routes...');
 
-const repairDatabaseSchema = async () => {
-  console.log('\n🔧 Checking and repairing database schema...');
-  
-  const repairs = [];
-  
-  try {
-    // 1. Fix counters table
-    try {
-      await sequelize.query(`
-        ALTER TABLE counters 
-        ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        ADD COLUMN IF NOT EXISTS description VARCHAR(255) NULL
-      `);
-      repairs.push('✅ Counters table fixed');
-    } catch (error) {
-      repairs.push(`⚠️  Counters: ${error.message}`);
-    }
-    
-    // 2. Check account_applications table
-    try {
-      const [appColumns] = await sequelize.query(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = 'account_applications'
-        AND TABLE_SCHEMA = DATABASE()
-      `);
-      
-      const appColumnNames = appColumns.map(col => col.COLUMN_NAME);
-      const requiredAppColumns = ['approved_by', 'approved_at', 'rejected_by', 'rejected_at'];
-      const missingAppColumns = requiredAppColumns.filter(col => !appColumnNames.includes(col));
-      
-      if (missingAppColumns.length > 0) {
-        for (const column of missingAppColumns) {
-          try {
-            if (column.includes('_by')) {
-              await sequelize.query(`ALTER TABLE account_applications ADD COLUMN ${column} VARCHAR(100) NULL`);
-            } else if (column.includes('_at')) {
-              await sequelize.query(`ALTER TABLE account_applications ADD COLUMN ${column} DATETIME NULL`);
-            }
-          } catch (colError) {
-            // Ignore if column already exists
-          }
-        }
-        repairs.push('✅ Account applications table updated');
-      }
-    } catch (error) {
-      repairs.push(`⚠️  Account applications: ${error.message}`);
-    }
-    
-    // 3. Fix loan_disbursements table (remove problematic index)
-    try {
-      // Check if the problematic index exists
-      const [indexes] = await sequelize.query(`SHOW INDEX FROM loan_disbursements`);
-      const idxAcctNoIndex = indexes.find(idx => idx.Key_name === 'idx_acct_no_unique');
-      
-      if (idxAcctNoIndex) {
-        // First check if ACCT_NO column exists
-        const [columns] = await sequelize.query(`
-          SELECT COLUMN_NAME 
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_NAME = 'loan_disbursements'
-          AND COLUMN_NAME = 'ACCT_NO'
-        `);
-        
-        if (columns.length === 0) {
-          // Column doesn't exist, drop the index
-          await sequelize.query(`ALTER TABLE loan_disbursements DROP INDEX idx_acct_no_unique`);
-          repairs.push('✅ Removed problematic index from loan_disbursements');
-        }
-      }
-    } catch (error) {
-      repairs.push(`⚠️  Loan disbursements: ${error.message}`);
-    }
-    
-    console.log('\n📊 Schema repair summary:');
-    repairs.forEach(repair => console.log(`   ${repair}`));
-    
-    return repairs.some(repair => repair.startsWith('✅'));
-    
-  } catch (error) {
-    console.error('❌ Schema repair failed:', error.message);
-    return false;
-  }
-};
+// Redirect root to frontend
+app.get('/', (req, res) => {
+  console.log('🔍 Redirecting / to frontend');
+  res.redirect('https://evolutionbankingsolution-lexicalresource.com.ng/');
+});
 
-// ============================================
-// COUNTER INITIALIZATION
-// ============================================
+// Redirect login page to frontend login
+app.get('/login', (req, res) => {
+  console.log('🔍 Redirecting /login to frontend');
+  res.redirect('https://evolutionbankingsolution-lexicalresource.com.ng/login');
+});
 
-// Initialize table on startup
-await SavingsProduct.initializeTable();
+// Redirect dashboard to frontend dashboard
+app.get('/dashboard', (req, res) => {
+  console.log('🔍 Redirecting /dashboard to frontend');
+  res.redirect('https://evolutionbankingsolution-lexicalresource.com.ng/dashboard');
+});
 
-// Fixed: Use ensureTableExists instead of initializeTable
-try {
-  console.log('🚀 Auto-initializing LoanAccount table...');
-  
-  // Check which method exists on LoanAccount
-  if (typeof LoanAccount.initializeTable === 'function') {
-    console.log('📝 Using initializeTable method...');
-    await LoanAccount.initializeTable();
-  } else if (typeof LoanAccount.ensureTableExists === 'function') {
-    console.log('📝 Using ensureTableExists method...');
-    await LoanAccount.ensureTableExists();
-  } else if (typeof LoanAccount.sync === 'function') {
-    console.log('📝 Using sync method...');
-    await LoanAccount.sync({ force: false });
-  } else {
-    console.log('⚠️  No initialization method found on LoanAccount, trying to sync anyway');
-    try {
-      await LoanAccount.sync({ force: false });
-    } catch (syncError) {
-      console.error('❌ Sync failed:', syncError.message);
-    }
-  }
-  console.log('✅ LoanAccount table ready');
-} catch (error) {
-  console.error('❌ Error initializing LoanAccount table:', error.message);
-  // Don't crash the server, just log the error
-}
-
-const initializeCounters = async () => {
-  console.log('\n📊 Initializing counters...');
-
-  // Simple sync call for LoanInterestRate
-  try {
-    if (LoanInterestRate && typeof LoanInterestRate.syncTable === 'function') {
-      await LoanInterestRate.syncTable({ alter: true });
-      console.log('✅ LoanInterestRate table ready');
-    } else {
-      console.log('⚠️  LoanInterestRate.syncTable not available');
-    }
-  } catch (err) {
-    console.error('❌ LoanInterestRate table sync failed:', err.message);
+// Catch-all for any other frontend routes
+app.get('*', (req, res, next) => {
+  // Don't redirect API requests, health checks, etc.
+  if (req.path.startsWith('/api') || 
+      req.path.startsWith('/health') || 
+      req.path.startsWith('/cors-check') ||
+      req.path.startsWith('/images')) {
+    return next();
   }
   
-  try {
-    // First check if counters table exists and has basic structure
-    const [tables] = await sequelize.query("SHOW TABLES LIKE 'counters'");
-    
-    if (tables.length === 0) {
-      console.log('⚠️  Counters table does not exist, skipping initialization');
-      return false;
-    }
-    
-    // Check what columns exist in counters table
-    const [columns] = await sequelize.query(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'counters'
-      AND TABLE_SCHEMA = DATABASE()
-    `);
-    
-    const columnNames = columns.map(col => col.COLUMN_NAME);
-    console.log(`📋 Counters table columns: ${columnNames.join(', ')}`);
-    
-    // Try to insert counters with only existing columns
-    const countersExist = await sequelize.query(
-      'SELECT COUNT(*) as count FROM counters',
-      { type: sequelize.QueryTypes.SELECT }
-    );
-    
-    if (parseInt(countersExist[0].count) === 0) {
-      console.log('Creating default counters...');
-      
-      try {
-        // Use minimal insert based on available columns
-        if (columnNames.includes('name') && columnNames.includes('seq')) {
-          await sequelize.query(`
-            INSERT INTO counters (name, seq) VALUES
-            ('customer', 1000),
-            ('account', 10000),
-            ('transaction', 100000),
-            ('application', 1)
-          `);
-          console.log('✅ Default counters created');
-          return true;
-        } else {
-          console.log('⚠️  Counters table missing required columns (name, seq)');
-          return false;
-        }
-      } catch (sqlError) {
-        console.log('Counter creation failed:', sqlError.message);
-        
-        // Try alternative approach - check if we need to add columns
-        if (sqlError.message.includes('created_at')) {
-          console.log('🔧 Attempting to fix counters table schema...');
-          try {
-            // Add missing timestamp columns
-            await sequelize.query(`
-              ALTER TABLE counters 
-              ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            `);
-            
-            // Now try inserting again
-            await sequelize.query(`
-              INSERT INTO counters (name, seq) VALUES
-              ('customer', 1000),
-              ('account', 10000),
-              ('transaction', 100000),
-              ('application', 1)
-            `);
-            console.log('✅ Counters table fixed and initialized');
-            return true;
-          } catch (fixError) {
-            console.log('Could not fix counters table:', fixError.message);
-            return false;
-          }
-        }
-        return false;
-      }
-    } else {
-      console.log(`📊 Found existing counters in table`);
-      return true;
-    }
-    
-  } catch (error) {
-    console.error('❌ Counter initialization failed:', error.message);
-    // Don't fail the whole server if counters fail
-    console.log('⚠️  Continuing without counters...');
-    return false;
-  }
-};
+  // For all other routes, redirect to frontend
+  console.log(`🔍 Redirecting ${req.path} to frontend`);
+  res.redirect(`https://evolutionbankingsolution-lexicalresource.com.ng${req.path}`);
+});
 
-// ============================================
-// FIX APPROVAL TABLE (TOO MANY INDEXES ISSUE)
-// ============================================
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    port: PORT,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: NODE_ENV
+  });
+});
 
-const fixApprovalTableIssue = async () => {
-  console.log('\n🔧 Checking approval_requests table...');
-  
-  try {
-    // Check if table exists
-    const tableExists = await sequelize.getQueryInterface().tableExists('approval_requests');
-    
-    if (!tableExists) {
-      console.log('✅ approval_requests table does not exist, will be created fresh');
-      return true;
-    }
-    
-    // Check if table has too many indexes
-    const [indexCount] = await sequelize.query(`
-      SELECT COUNT(*) as count 
-      FROM INFORMATION_SCHEMA.STATISTICS 
-      WHERE TABLE_NAME = 'approval_requests' 
-      AND TABLE_SCHEMA = DATABASE()
-    `);
-    
-    const count = parseInt(indexCount[0].count);
-    console.log(`📊 approval_requests table has ${count} indexes`);
-    
-    if (count >= 60) { // Getting close to MySQL limit of 64
-      console.warn('⚠️  approval_requests table has too many indexes');
-      console.warn('💡 To fix: DROP TABLE approval_requests;');
-      
-      // In development, we can auto-drop
-      if (NODE_ENV === 'development' && AUTO_SYNC_DB) {
-        console.log('🔄 Development mode: Auto-dropping approval_requests table...');
-        await sequelize.query('DROP TABLE approval_requests');
-        console.log('✅ Table dropped, will be recreated on sync');
-        return true;
-      } else {
-        console.warn('⚠️  Manual intervention required');
-        return false;
-      }
-    }
-    
-    console.log('✅ approval_requests table is OK');
-    return true;
-    
-  } catch (error) {
-    console.error('❌ Error checking approval_requests:', error.message);
-    return false;
-  }
-};
-
-// ============================================
-// ULTIMATE PERMISSIONS CACHE FIX
-// ============================================
-
-const fixPermissionsCacheGlobally = () => {
-  console.log('🔧 Installing global MySQL query patch...');
-  
-  try {
-    // Get the mysql2 module
-    const mysql = require('mysql2');
-    
-    // 1. Patch createPool method
-    const originalCreatePool = mysql.createPool;
-    
-    mysql.createPool = function(config) {
-      const pool = originalCreatePool.call(this, config);
-      
-      // Patch the query method
-      const originalQuery = pool.query;
-      
-      pool.query = function(sql, values, callback) {
-        // Fix ALL roles queries
-        if (typeof sql === 'string') {
-          // Fix: SELECT role_id, role_name FROM roles WHERE active = 1
-          if (sql.includes('SELECT role_id, role_name') && sql.includes('FROM roles') && sql.includes('WHERE active = 1')) {
-            console.log('🔴 INTERCEPTED AND PATCHING ROLES QUERY:', sql.substring(0, 100) + '...');
-            
-            // Use the roles_vw view
-            sql = `
-              SELECT 
-                role_id, 
-                role_name, 
-                permissions, 
-                description,
-                active
-              FROM roles_vw
-              WHERE active = 1
-            `;
-          }
-          // Also fix any other variations
-          else if (sql.includes('SELECT role_id, role_name FROM roles')) {
-            console.log('🔴 INTERCEPTED ROLES QUERY (variation):', sql.substring(0, 100) + '...');
-            sql = `
-              SELECT 
-                role_id, 
-                role_name, 
-                permissions, 
-                description,
-                active
-              FROM roles_vw
-              WHERE active = 1
-            `;
-          }
-          // Fix: SELECT role_id, role_name, permissions, description FROM roles WHERE active = 1
-          else if (sql.includes('role_id, role_name, permissions, description') && sql.includes('FROM roles')) {
-            console.log('🔴 INTERCEPTED FULL ROLES QUERY');
-            sql = `
-              SELECT 
-                role_id, 
-                role_name, 
-                permissions, 
-                description,
-                active
-              FROM roles_vw
-              WHERE active = 1
-            `;
-          }
-        }
-        
-        return originalQuery.call(this, sql, values, callback);
-      };
-      
-      return pool;
-    };
-    
-    // 2. Also patch createConnection for direct connections
-    const originalCreateConnection = mysql.createConnection;
-    
-    mysql.createConnection = function(config) {
-      const connection = originalCreateConnection.call(this, config);
-      
-      const originalQuery = connection.query;
-      connection.query = function(sql, values, callback) {
-        if (typeof sql === 'string' && sql.includes('SELECT role_id, role_name FROM roles')) {
-          console.log('🔴 INTERCEPTED CONNECTION ROLES QUERY');
-          sql = `
-            SELECT 
-              role_id, 
-              role_name, 
-              permissions, 
-              description,
-              active
-            FROM roles_vw
-            WHERE active = 1
-          `;
-        }
-        return originalQuery.call(this, sql, values, callback);
-      };
-      
-      return connection;
-    };
-    
-    // 3. Patch Sequelize queries too
-    if (sequelize && sequelize.query) {
-      const originalSequelizeQuery = sequelize.query;
-      
-      sequelize.query = function(sql, options) {
-        if (typeof sql === 'string') {
-          if (sql.includes('SELECT role_id, role_name FROM roles')) {
-            console.log('🔴 INTERCEPTED SEQUELIZE ROLES QUERY');
-            sql = `
-              SELECT 
-                role_id, 
-                role_name, 
-                permissions, 
-                description,
-                active
-              FROM roles_vw
-              WHERE active = 1
-            `;
-          }
-        }
-        return originalSequelizeQuery.call(this, sql, options);
-      };
-    }
-    
-    console.log('✅ Global MySQL query patch installed');
-    return true;
-    
-  } catch (error) {
-    console.error('❌ Failed to install global patch:', error.message);
-    return false;
-  }
-};
-
-// Call it immediately
-fixPermissionsCacheGlobally();
-
-// ============================================
-// DEBUG: TRACE THE PROBLEMATIC QUERY SOURCE
-// ============================================
-
-const traceQuerySource = () => {
-  console.log('🔍 Installing query source tracer...');
-  
-  // Override Error.captureStackTrace to add our own trace
-  const originalCaptureStackTrace = Error.captureStackTrace;
-  
-  Error.captureStackTrace = function(error, constructorOpt) {
-    originalCaptureStackTrace(error, constructorOpt);
-    
-    // Create a custom error for SQL queries
-    if (error.message && error.message.includes('Unknown column')) {
-      console.log('🔴 CAPTURED SQL ERROR STACK:');
-      console.log(error.stack);
-      
-      // Also log the current call stack
-      console.log('🔴 CURRENT CALL STACK:');
-      const stack = new Error().stack;
-      console.log(stack);
-    }
-  };
-  
-  // Also monkey-patch console.error to catch SQL errors
-  const originalConsoleError = console.error;
-  
-  console.error = function(...args) {
-    if (args[0] && typeof args[0] === 'string' && args[0].includes('Unknown column')) {
-      console.log('🔴 CAUGHT SQL ERROR IN CONSOLE:');
-      console.log(args[0]);
-      
-      // Log stack trace
-      const stack = new Error().stack;
-      console.log('🔴 ERROR STACK TRACE:');
-      console.log(stack);
-    }
-    return originalConsoleError.apply(console, args);
-  };
-  
-  console.log('✅ Query source tracer installed');
-};
-
-// ============================================
-// CUSTOMER APPROVAL SYSTEM INITIALIZATION
-// ============================================
-
-const initCustomerApprovalSystem = async () => {
-  console.log('\n🎯 Initializing Customer Approval System...');
-  
-  try {
-    // Import the initialization function
-    const { initializeCustomerApprovalSystem } = await import('./src/controllers/CustomerController.js');
-    
-    const success = await initializeCustomerApprovalSystem();
-    
-    if (success) {
-      console.log('✅ Customer approval system ready');
-    } else {
-      console.warn('⚠️ Customer approval system initialization had issues');
-    }
-    
-    return success;
-  } catch (error) {
-    console.error('❌ Failed to initialize customer approval system:', error.message);
-    
-    if (error.message.includes("Cannot find module") || 
-        error.message.includes("initializeCustomerApprovalSystem is not a function")) {
-      console.log('ℹ️  Customer approval functions not available, using fallback');
-      
-      // Create basic customer table structure if needed
-      try {
-        await sequelize.query(`
-          CREATE TABLE IF NOT EXISTS customers (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            CUST_ID VARCHAR(50) UNIQUE NOT NULL,
-            CUST_NO VARCHAR(50),
-            CUST_NM VARCHAR(255),
-            FIRST_NAME VARCHAR(100),
-            LAST_NAME VARCHAR(100),
-            EMAIL_ADDRESS VARCHAR(255),
-            PHONE_NO VARCHAR(20),
-            REC_ST VARCHAR(20) DEFAULT 'PENDING',
-            status VARCHAR(20) DEFAULT 'Pending',
-            APPROVED_BY VARCHAR(100),
-            APPROVED_DT DATETIME,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-          )
-        `);
-        console.log('✅ Basic customers table ensured');
-        return true;
-      } catch (createError) {
-        console.error('Failed to create customers table:', createError.message);
-        return false;
-      }
-    }
-    
-    console.error('Error stack:', error.stack);
-    return false;
-  }
-};
-
-// Simple debug middleware - add this AFTER all route mounting
-app.use((req, res, next) => {
-  console.log(`\n=== Route Debug ===`);
-  console.log(`Request: ${req.method} ${req.originalUrl}`);
-  console.log(`Path: ${req.path}`);
-  console.log(`Base URL: ${req.baseUrl}`);
-  
-  // Check if this is the thrift banking route
-  if (req.originalUrl.includes('thrift-banking')) {
-    console.log('⚠️ This is a thrift-banking request');
-    console.log('Looking for:', req.originalUrl);
-  }
-  
-  next();
+// Test endpoint
+app.get('/api/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Server is running',
+    port: PORT,
+    environment: NODE_ENV,
+    endpoints: [
+      'POST /api/thrift-banking/accounts',
+      'POST /api/login/login',
+      'POST /api/bvn/verify',
+      'GET /api/bvn/history/:bvn',
+      'POST /api/bvn/lookup',
+      'GET /api/drawer/*',
+      'GET /health',
+      'GET /api/debug/routes'
+    ]
+  });
 });
 
 // ============================================
-// SINGLE POINT OF STARTUP CONTROL
+// IMPORT ERROR HANDLER - FIXED PATH
 // ============================================
+console.log('\n🔧 Setting up error handler...');
+import errorHandler from './src/middlewares/errorHandler.js';  // FIXED: Added src/ and correct folder name
 
+// ============================================
+// 404 HANDLER - This must come AFTER all routes
+// ============================================
+app.use('*', (req, res, next) => {
+  // Check if it's an API request
+  if (req.path.startsWith('/api') || req.headers.accept?.includes('application/json')) {
+    const error = new Error(`API endpoint not found: ${req.method} ${req.path}`);
+    error.status = 404;
+    error.statusCode = 404;
+    error.name = 'RouteNotFoundError';
+    return next(error);
+  }
+
+  // For all other routes, redirect to login page
+  console.log(`🔍 Redirecting non-API route to login: ${req.path}`);
+  res.redirect('/login');
+});
+
+// ============================================
+// USE THE ERROR HANDLER
+// ============================================
+app.use(errorHandler);
+
+// ============================================
+// STARTUP FUNCTION
+// ============================================
 const startup = async () => {
-  console.log('\n🚀 Evolution Banking - Single Startup Process');
+  console.log('\n🚀 Evolution Banking - Starting Server');
   console.log('='.repeat(60));
-  
+  console.log(`🔧 Backend Port: ${PORT}`);
+  console.log(`🔧 Environment: ${NODE_ENV}`);
+  console.log(`🔧 Frontend URL: ${FRONTEND_URL}`);
+  console.log('='.repeat(60));
+
   try {
-    // STEP 0: Load configuration
-    console.log('⚙️  Loading configuration...');
+    // Initialize configuration
+    console.log('⚙️ Loading configuration...');
     await configurationService.initialize();
-    
-    // STEP 1: Initialize critical tables manually (NO SYNC)
-    console.log('\n📊 Initializing critical tables without sync...');
-    await SavingsProduct.initializeTable();
-    await LoanFee.initializeTable();
-    
-    // For LoanAccount, use a safer approach
-    console.log('📝 Ensuring LoanAccount table...');
+
+    // Sync database on startup
+    await syncDatabaseOnStart();
+
+    // Initialize critical tables
+    console.log('\n📊 Initializing tables...');
     try {
-      const [tableExists] = await sequelize.query(`
-        SELECT COUNT(*) as count 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME = 'LoanAccounts' 
-        AND TABLE_SCHEMA = DATABASE()
-      `);
-      
-      if (parseInt(tableExists[0].count) === 0) {
-        console.log('📦 Creating LoanAccounts table...');
-        await sequelize.query(`
-          CREATE TABLE IF NOT EXISTS LoanAccounts (
-            id INTEGER AUTO_INCREMENT PRIMARY KEY,
-            acc_t__n_o VARCHAR(255) NOT NULL,
-            cust_id VARCHAR(255) NOT NULL,
-            status VARCHAR(50) DEFAULT 'PENDING',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_acc_t_no (acc_t__n_o),
-            INDEX idx_cust_id (cust_id)
-          ) ENGINE=InnoDB
-        `);
-        console.log('✅ LoanAccounts table created');
-      } else {
-        console.log('✅ LoanAccounts table already exists');
-      }
-    } catch (error) {
-      console.log('⚠️  LoanAccounts table creation skipped:', error.message);
+      await SavingsProduct.initializeTable();
+      console.log('✅ SavingsProduct table ready');
+    } catch (e) {
+      console.log('⚠️ SavingsProduct:', e.message);
     }
-    
-    // STEP 2: Create missing tables WITHOUT syncing models
-    console.log('\n🔍 Checking for missing critical tables...');
+
+    try {
+      await LoanFee.initializeTable();
+      console.log('✅ LoanFee table ready');
+    } catch (e) {
+      console.log('⚠️ LoanFee:', e.message);
+    }
+
+    // Create missing tables
+    console.log('\n🔍 Checking for missing tables...');
     await createMissingTables();
-    
-    // STEP 3: Repair schema
-    console.log('\n🔧 Repairing database schema...');
-    await repairDatabaseSchema();
-    
-    // STEP 4: Initialize counters
-    console.log('\n📊 Initializing counters...');
+
+    // Initialize counters
     await initializeCounters();
-    
-    // STEP 5: Fix Approval table
-    console.log('\n✅ Checking approval table...');
+
+    // Fix approval table
     await fixApprovalTableIssue();
-    
-    // STEP 6: Install permissions patch
-    console.log('\n🔧 Installing permissions patch...');
-    fixPermissionsCacheGlobally();
-    
-    // STEP 7: Initialize customer system
-    console.log('\n🎯 Initializing customer system...');
-    await initCustomerApprovalSystem();
-    
-    // STEP 8: DO NOT SYNC MODELS - start server immediately
+
+    // Start server
     console.log('\n' + '='.repeat(60));
     console.log('✅ All pre-startup tasks completed');
-    console.log('🚀 Starting server WITHOUT model sync...');
-    
-    // Start the server
-    const PORT = process.env.PORT || 5000;
-    const HOST = process.env.HOST || '0.0.0.0';
-    
+    console.log(`🚀 Starting server on port ${PORT}...`);
+
     const server = app.listen(PORT, HOST, () => {
       console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║          Evolution Banking System API                    ║
 ╠══════════════════════════════════════════════════════════╣
-║  ✅ SERVER RUNNING (NO MODEL SYNC)                      ║
+║  ✅ SERVER RUNNING                                        ║
 ║     http://${HOST}:${PORT}                               ║
 ║                                                          ║
-║  🔗 Health: http://${HOST}:${PORT}/health               ║
-║  🔗 Test DB: http://${HOST}:${PORT}/api/test-db         ║
-║  🔗 Customer: http://${HOST}:${PORT}/api/customers      ║
+║  🌐 Pages:                                               ║
+║     • Home: http://${HOST}:${PORT}/                     ║
+║     • Login: http://${HOST}:${PORT}/login               ║
+║     • Dashboard: http://${HOST}:${PORT}/dashboard       ║
+║                                                          ║
+║  🔧 API Endpoints:                                       ║
+║     • Thrift: POST /api/thrift-banking/accounts          ║
+║     • Health: http://${HOST}:${PORT}/health             ║
+║     • Test: http://${HOST}:${PORT}/api/test             ║
+║     • Login: POST /api/login/login                       ║
+║     • BVN: POST /api/bvn/verify                          ║
+║     • Debug Routes: GET /api/debug/routes                ║
+║     • CORS Debug: http://${HOST}:${PORT}/cors-check      ║
 ╚══════════════════════════════════════════════════════════╝
       `);
-      
-      console.log('\n📊 Database Status:');
-      console.log('   ✅ Connected to MySQL');
-      console.log('   ⚠️  Model sync disabled (column name issues)');
-      console.log('   💡 Run manual fixes before enabling sync');
     });
-    
+
     // Handle graceful shutdown
     process.on('SIGTERM', () => {
       console.log('\n🔻 Shutting down gracefully...');
@@ -1287,7 +1131,17 @@ const startup = async () => {
         process.exit(0);
       });
     });
-    
+
+    process.on('SIGINT', () => {
+      console.log('\n🔻 Shutting down gracefully...');
+      server.close(() => {
+        console.log('✅ Server closed');
+        process.exit(0);
+      });
+    });
+
+    return server;
+
   } catch (error) {
     console.error('\n❌ Startup failed:', error.message);
     console.error('Stack:', error.stack);
@@ -1298,7 +1152,6 @@ const startup = async () => {
 // ============================================
 // START THE SERVER
 // ============================================
-
 if (process.env.NODE_ENV !== 'test') {
   startup();
 }

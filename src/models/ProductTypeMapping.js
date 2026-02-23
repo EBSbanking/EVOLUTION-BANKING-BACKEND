@@ -1,4 +1,4 @@
-﻿// models/ProductTypeMapping.js - UPDATED VERSION
+﻿// models/ProductTypeMapping.js - COMPLETE UPDATED VERSION WITH ALL METHODS
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -85,15 +85,6 @@ class ProductTypeMapping extends Model {
       }
     }
     
-    // Optional: Check if GL account exists in database (if you have a GLAccount model)
-    // const glAccount = await GLAccount.findOne({ where: { GL_ACCT_NO: glAccountNo } });
-    // if (!glAccount) {
-    //   return {
-    //     isValid: false,
-    //     error: `GL account not found: ${glAccountNo}`
-    //   };
-    // }
-    
     return { isValid: true };
   }
 
@@ -163,9 +154,8 @@ class ProductTypeMapping extends Model {
       'STAFF_SALARY_ADVANCE', 'STAFF_LOAN', 'INDIVIDUAL_LOAN', 'CORPORATE_LOAN',
       'OVERDRAFT', 'HOME_IMPROVEMENT_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN',
       'SCHOOL_IMPROVEMENT_LOAN', 'AGRICULTURE_LOAN',
-      // Additional product types from your system
       'SAVINGS', 'TERM_DEPOSIT', 'GENERAL_LOAN', 'MORTGAGE', 'CREDIT_CARD',
-      'LINE_OF_CREDIT', 'HOME_LOAN', 'STAFF_SALARY_ADVANCE'
+      'LINE_OF_CREDIT', 'HOME_LOAN'
     ];
     
     if (!mappingData.productType || !validProductTypes.includes(mappingData.productType.toUpperCase())) {
@@ -495,18 +485,20 @@ class ProductTypeMapping extends Model {
 }
 
 ProductTypeMapping.init({
-  // Primary key
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true,
+    field: 'id',
     comment: 'Internal ID for database relationships'
   },
 
+  // IMPORTANT: This field maps to p_r_o_d__i_d in the database
   PROD_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
+    field: 'p_r_o_d__i_d',
     comment: 'Product identifier',
     validate: {
       isPositive(value) {
@@ -520,6 +512,7 @@ ProductTypeMapping.init({
   productType: {
     type: DataTypes.STRING(50),
     allowNull: false,
+    field: 'product_type',
     comment: 'Product type',
     validate: {
       isIn: [[
@@ -530,7 +523,6 @@ ProductTypeMapping.init({
         'STAFF_SALARY_ADVANCE', 'STAFF_LOAN', 'INDIVIDUAL_LOAN', 'CORPORATE_LOAN',
         'OVERDRAFT', 'HOME_IMPROVEMENT_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN',
         'SCHOOL_IMPROVEMENT_LOAN', 'AGRICULTURE_LOAN',
-        // Additional product types
         'SAVINGS', 'TERM_DEPOSIT', 'GENERAL_LOAN', 'MORTGAGE', 'CREDIT_CARD',
         'LINE_OF_CREDIT', 'HOME_LOAN'
       ]]
@@ -540,24 +532,28 @@ ProductTypeMapping.init({
   productName: {
     type: DataTypes.STRING(100),
     allowNull: false,
+    field: 'product_name',
     comment: 'Product name'
   },
 
   PROD_DESC: {
     type: DataTypes.STRING(500),
     allowNull: true,
+    field: 'p_r_o_d__d_e_s_c',
     comment: 'Product description'
   },
 
   PROD_CD: {
     type: DataTypes.STRING(50),
     allowNull: true,
+    field: 'p_r_o_d__c_d',
     comment: 'Product code'
   },
 
   accountPrefix: {
     type: DataTypes.STRING(10),
     allowNull: false,
+    field: 'account_prefix',
     comment: 'Account number prefix',
     validate: {
       len: {
@@ -567,56 +563,62 @@ ProductTypeMapping.init({
     }
   },
 
-  // GL accounts stored as JSON object
   glAccounts: {
     type: DataTypes.JSON,
     allowNull: true,
     defaultValue: {},
+    field: 'gl_accounts',
     comment: 'GL account mappings'
   },
 
-  // Additional fields for LoanProduct integration
   LOAN_INTEREST_RATE_ID: {
     type: DataTypes.INTEGER,
     allowNull: true,
+    field: 'l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d',
     comment: 'Reference to LoanInterestRate'
   },
 
   LOAN_PROUD_INT_ID: {
     type: DataTypes.INTEGER,
     allowNull: true,
+    field: 'l_o_a_n__p_r_o_u_d__i_n_t__i_d',
     comment: 'Business key for interest rate'
   },
 
   PRODUCT_SHORT_NAME: {
     type: DataTypes.STRING(20),
     allowNull: true,
+    field: 'p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e',
     comment: 'Product short name'
   },
 
   productCode: {
     type: DataTypes.STRING(50),
     allowNull: true,
+    field: 'product_code',
     comment: 'Product code (alternative to PROD_CD)'
-  },
-
-  // Sequelize timestamps
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
   },
 
   createdAt: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
+  },
+
+  updatedAt: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
   sequelize,
   modelName: 'ProductTypeMapping',
   tableName: 'product_type_mapping',
   timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   hooks: {
     beforeValidate: (mapping) => {
       // Trim string fields
@@ -654,68 +656,35 @@ ProductTypeMapping.init({
     },
     
     beforeCreate: async (mapping) => {
-      // Validate the mapping
       const validation = await ProductTypeMapping.validateMapping(mapping);
-      
       if (!validation.isValid) {
         throw new Error(validation.errors.join(', '));
       }
-      
-      // Optionally format GL accounts to hyphenated format before saving
-      // mapping.formatAllGLAccountsToHyphenated();
     },
     
     beforeUpdate: async (mapping) => {
-      // Validate the mapping on update
       const validation = await ProductTypeMapping.validateMapping({
         ...mapping.getProductMappingDetails(),
         id: mapping.id
       });
-      
       if (!validation.isValid) {
         throw new Error(validation.errors.join(', '));
-      }
-    },
-    
-    afterFind: (results) => {
-      // Format GL accounts after finding (optional)
-      if (!results) return;
-      
-      if (Array.isArray(results)) {
-        results.forEach(result => {
-          if (result.glAccounts) {
-            // Optionally format to hyphenated format when retrieving
-            // result.formatAllGLAccountsToHyphenated();
-          }
-        });
-      } else if (results.glAccounts) {
-        // Optionally format to hyphenated format when retrieving
-        // results.formatAllGLAccountsToHyphenated();
       }
     }
   },
   indexes: [
-    // Primary indexes
     { fields: ['id'] },
-    { fields: ['PROD_ID'], unique: true },
-    
-    // Product type indexes
-    { fields: ['productType'] },
-    { fields: ['productName'] },
-    { fields: ['PRODUCT_SHORT_NAME'] },
-    
-    // Account prefix index
-    { fields: ['accountPrefix'] },
-    
-    // Loan interest rate reference
-    { fields: ['LOAN_INTEREST_RATE_ID'] },
-    { fields: ['LOAN_PROUD_INT_ID'] },
-    
-    // Composite indexes for common queries
-    { fields: ['PROD_ID', 'productType'] },
-    { fields: ['productType', 'productName'] },
-    { fields: ['accountPrefix', 'productType'] },
-    { fields: ['PRODUCT_SHORT_NAME', 'productType'] }
+    { fields: ['p_r_o_d__i_d'], unique: true },
+    { fields: ['product_type'] },
+    { fields: ['product_name'] },
+    { fields: ['p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e'] },
+    { fields: ['account_prefix'] },
+    { fields: ['l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d'] },
+    { fields: ['l_o_a_n__p_r_o_u_d__i_n_t__i_d'] },
+    { fields: ['p_r_o_d__i_d', 'product_type'] },
+    { fields: ['product_type', 'product_name'] },
+    { fields: ['account_prefix', 'product_type'] },
+    { fields: ['p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e', 'product_type'] }
   ],
   scopes: {
     byProdId: (prodId) => ({
@@ -734,7 +703,7 @@ ProductTypeMapping.init({
       where: {
         productType: {
           [Op.or]: [
-            { [Op.iLike]: '%LOAN%' },
+            { [Op.like]: '%LOAN%' },
             { [Op.eq]: 'MORTGAGE' },
             { [Op.eq]: 'OVERDRAFT' },
             { [Op.eq]: 'CREDIT_CARD' }
@@ -787,20 +756,13 @@ ProductTypeMapping.init({
     },
     withCompleteGLSetup: {
       where: {
-        // Check for essential GL accounts
         [Op.and]: [
           { glAccounts: { [Op.ne]: null } },
           sequelize.where(
-            sequelize.fn('jsonb_array_length', sequelize.fn('jsonb_object_keys', sequelize.col('glAccounts'))),
+            sequelize.fn('JSON_LENGTH', sequelize.col('gl_accounts')),
             { [Op.gte]: 3 }
           )
         ]
-      }
-    },
-    activeProducts: {
-      where: {
-        // Assuming you have an isActive field or status field
-        // Add your active status logic here
       }
     },
     sortedByName: {
