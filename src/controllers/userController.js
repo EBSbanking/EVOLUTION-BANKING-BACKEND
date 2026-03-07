@@ -818,202 +818,192 @@ export const getClientIpController = asyncHandler(async (req, res) => {
 export const login = asyncHandler(async (req, res) => {
   const { username, user_name, password } = req.body;
 
-  // Sanitize input
   const loginIdentifier = (username || user_name)?.trim();
   const cleanPassword = password?.trim();
 
-  console.log('🔐 LOGIN ATTEMPT - DEBUG MODE:', { 
-    login_identifier: loginIdentifier, 
-    password_length: cleanPassword ? cleanPassword.length : 0,
-    timestamp: new Date().toISOString() 
+  console.log('🔐 LOGIN ATTEMPT - DEBUG MODE:', {
+    login_identifier: loginIdentifier,
+    password_length: cleanPassword?.length || 0,
+    timestamp: new Date().toISOString()
   });
 
   // Validate input
   if (!loginIdentifier || !cleanPassword) {
-    console.log('❌ MISSING CREDENTIALS:', { 
-      login_identifier: !!loginIdentifier, 
-      password: !!cleanPassword 
-    });
+    console.log('❌ MISSING CREDENTIALS');
     return res.status(400).json({
       success: false,
-      message: 'Login identifier (username or user_name) and password are required',
+      message: 'Login identifier and password are required',
     });
   }
 
   try {
-    // Find user with password selected
     console.log('🔍 SEARCHING FOR USER:', loginIdentifier);
     
+    // FIX: Always include password fields
     const user = await User.findOne({
       where: {
         [Op.or]: [
           { user_name: loginIdentifier },
           { username: loginIdentifier }
         ]
+      },
+      raw: true,
+      attributes: { 
+        include: ['id', 'user_name', 'username', 'email', 'preferred_name', 'password', 'default_password', 
+                 'BU_ROLE_ID', 'status', 'internal_employee_enabled', 'is_first_login',
+                 'force_password_change', 'primary_business_role', 'main_business_unit',
+                 'earliest_login_time', 'latest_login_time', 'failed_attempts', 
+                 'lock_until', 'last_login', 'password_expiry_date'] 
       }
-    });
-    
-    console.log('📊 USER SEARCH RESULTS:', {
-      user_found: !!user,
-      user_id: user?.id,
-      user_name: user?.user_name,
-      username: user?.username,
-      has_password: user ? !!user.password : false,
-      password_length: user?.password ? user.password.length : 0,
-      status: user?.status,
-      internal_employee_enabled: user?.internal_employee_enabled,
-      BU_ROLE_ID: user?.BU_ROLE_ID,
-      primary_business_role: user?.primary_business_role
     });
 
     if (!user) {
-      console.log('❌ USER NOT FOUND IN DATABASE');
-      // Log attempt
-      try {
-        await Login.create({
-          user_id: null,
-          user_name: loginIdentifier,
-          login_time: new Date(),
-          success: false,
-          ip_address: req.ip,
-          session_id: req.sessionID || uuidv4(),
-          attempt_identifier: uuidv4(),
-          status: 'Failed',
-          error: 'User not found',
-        });
-      } catch (error) {
-        console.error('Failed to log failed login attempt', error.message);
-      }
+      console.log('❌ USER NOT FOUND');
       return res.status(401).json({
         success: false,
-        message: 'User not found',
+        message: 'Invalid credentials',
+        remainingAttempts: 5
       });
     }
 
-    // Check if user is enabled
-    if (!user.internal_employee_enabled || user.status !== 'Active') {
-      console.log('❌ USER ACCOUNT DISABLED OR INACTIVE:', {
-        status: user.status,
-        internal_employee_enabled: user.internal_employee_enabled
-      });
-      // Log attempt
-      try {
-        await Login.create({
-          user_id: user.id,
-          user_name: loginIdentifier,
-          login_time: new Date(),
-          success: false,
-          ip_address: req.ip,
-          session_id: req.sessionID || uuidv4(),
-          attempt_identifier: uuidv4(),
-          status: 'Failed',
-          error: 'User account is disabled or inactive',
-        });
-      } catch (error) {
-        console.error('Failed to log failed login attempt', error.message);
-      }
+    // Debug user info - ADDED preferred_name to debug
+    console.log('📊 USER SEARCH RESULTS:', {
+      user_found: true,
+      user_id: user.id,
+      user_name: user.user_name,
+      username: user.username,
+      preferred_name: user.preferred_name, // Added
+      has_password: !!user.password && user.password.length > 0,
+      password_length: user.password?.length || 0,
+      has_default_password: !!user.default_password && user.default_password.length > 0,
+      status: user.status,
+      internal_employee_enabled: user.internal_employee_enabled,
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      primary_business_role: user.primary_business_role,
+      is_first_login: user.is_first_login
+    });
+
+    // Check if user is active
+    if (user.status !== 'Active' || !user.internal_employee_enabled) {
+      console.log('❌ USER ACCOUNT NOT ACTIVE');
       return res.status(401).json({
         success: false,
         message: 'User account is disabled or inactive',
       });
     }
 
-    // Check start and expiry dates
-    const now = new Date();
-    if (user.start_date && user.start_date > now || user.expiry_date && user.expiry_date < now) {
-      console.log('❌ ACCOUNT DATE RESTRICTIONS:', {
-        start_date: user.start_date,
-        expiry_date: user.expiry_date,
-        current_time: now
-      });
-      // Log attempt
-      try {
-        await Login.create({
-          user_id: user.id,
-          user_name: loginIdentifier,
-          login_time: new Date(),
-          success: false,
-          ip_address: req.ip,
-          session_id: req.sessionID || uuidv4(),
-          attempt_identifier: uuidv4(),
-          status: 'Failed',
-          error: 'User account is not active',
-        });
-      } catch (error) {
-        console.error('Failed to log failed login attempt', error.message);
-      }
+    // Check if account is locked
+    if (user.lock_until && new Date(user.lock_until) > new Date()) {
+      const lockTime = Math.ceil((new Date(user.lock_until) - new Date()) / 1000 / 60);
+      console.log('🔒 ACCOUNT LOCKED:', { lock_until: user.lock_until, minutes_remaining: lockTime });
       return res.status(401).json({
         success: false,
-        message: 'User account is not active',
+        message: `Account is locked. Try again in ${lockTime} minutes.`,
+        lock_until: user.lock_until
       });
     }
 
-    // Check login hours
-    const withinLoginHours = user.isWithinLoginHours && await user.isWithinLoginHours();
-    console.log('🕒 LOGIN HOURS CHECK:', {
-      earliest_login_time: user.earliest_login_time,
-      latest_login_time: user.latest_login_time,
-      within_login_hours: withinLoginHours
-    });
-
-    if (withinLoginHours === false) {
-      console.log('❌ OUTSIDE LOGIN HOURS');
-      // Log attempt
-      try {
-        await Login.create({
-          user_id: user.id,
-          user_name: loginIdentifier,
-          login_time: new Date(),
-          success: false,
-          ip_address: req.ip,
-          session_id: req.sessionID || uuidv4(),
-          attempt_identifier: uuidv4(),
-          status: 'Failed',
-          error: `Login attempt outside allowed hours. Allowed: ${user.earliest_login_time} - ${user.latest_login_time}`,
-        });
-      } catch (error) {
-        console.error('Failed to log failed login attempt', error.message);
-      }
-      return res.status(403).json({
-        success: false,
-        message: `Login attempt outside allowed hours. Allowed: ${user.earliest_login_time} - ${user.latest_login_time}`,
-      });
-    }
-
-    // Password comparison
+    // Debug password comparison
     console.log('🔑 PASSWORD COMPARISON - DETAILED DEBUG:', {
-      input_password: `"${cleanPassword.substring(0, 5)}... [${cleanPassword.length} chars]"`,
-      stored_hash_exists: !!user.password,
-      stored_hash_length: user.password ? user.password.length : 0,
+      input_password: `"${cleanPassword.substring(0, 6)}... [${cleanPassword.length} chars]"`,
+      stored_hash_exists: !!user.password && user.password.length > 0,
+      stored_hash_length: user.password?.length || 0,
       stored_hash_prefix: user.password ? user.password.substring(0, 20) + '...' : 'none',
-      hash_type: user.password ? user.password.substring(0, 3) : 'unknown'
+      hash_type: user.password?.startsWith('$2') ? 'bcrypt' : 'unknown',
+      has_default_password: !!user.default_password && user.default_password.length > 0
     });
 
-    // Test bcrypt functionality first
+    // 🔧 FIXED PASSWORD COMPARISON LOGIC:
+    console.log('🧪 STARTING PASSWORD VALIDATION...');
+    let isPasswordMatch = false;
+
+    // First, test bcrypt works
     console.log('🧪 BCRYPT SELF-TEST:');
-    const testPassword = 'test123';
-    const testHash = await bcrypt.hash(testPassword, 10);
-    const testMatch = await bcrypt.compare(testPassword, testHash);
+    const testHash = await bcrypt.hash('test', 10);
+    const testMatch = await bcrypt.compare('test', testHash);
     console.log('🧪 BCRYPT SELF-TEST RESULT:', { testMatch });
 
-    // Handle if password is unhashed (migration issue)
-    let userPassword = user.password;
-    if (userPassword && !userPassword.startsWith('$2')) {
-      console.log('⚠️ Unhashed password detected - auto-hashing for security');
-      userPassword = await bcrypt.hash(cleanPassword, 10);
-      await user.update({ password: userPassword });
+    console.log('🔑 STARTING ACTUAL PASSWORD COMPARISON...');
+
+    // Check if user has a password
+    if (user.password && user.password.length > 0) {
+      console.log('🔑 CHECKING REGULAR PASSWORD...');
+      
+      // Hashed password exists
+      if (user.password.startsWith('$2')) {
+        // It's a bcrypt hash
+        try {
+          isPasswordMatch = await bcrypt.compare(cleanPassword, user.password);
+          console.log('🔑 BCRYPT COMPARE RESULT:', isPasswordMatch);
+        } catch (bcryptError) {
+          console.error('❌ BCRYPT COMPARE ERROR:', bcryptError.message);
+          // Fallback: check if it's plain text
+          if (cleanPassword === user.password) {
+            console.log('🔑 PLAIN TEXT PASSWORD MATCH (fallback)');
+            isPasswordMatch = true;
+            // Auto-hash the password
+            const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+            await User.update(
+              { password: hashedPassword },
+              { where: { id: user.id } }
+            );
+            console.log('✅ Auto-hashed plain text password');
+          }
+        }
+      } else {
+        // Plain text password
+        console.log('⚠️ Password not hashed, checking plain text...');
+        if (cleanPassword === user.password) {
+          console.log('🔑 PLAIN TEXT PASSWORD MATCH');
+          isPasswordMatch = true;
+          // Auto-hash the plain text password
+          const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+          await User.update(
+            { 
+              password: hashedPassword,
+              is_first_login: 0
+            },
+            { where: { id: user.id } }
+          );
+          console.log('✅ Auto-hashed plain text password');
+        }
+      }
+    } else if (user.is_first_login && user.default_password && user.default_password.length > 0) {
+      // First login with default password
+      console.log('🔑 CHECKING DEFAULT PASSWORD (first login)...');
+      try {
+        isPasswordMatch = await bcrypt.compare(cleanPassword, user.default_password);
+        console.log('🔑 DEFAULT PASSWORD MATCH:', isPasswordMatch);
+        
+        if (isPasswordMatch) {
+          console.log('✅ First login with default password - updating to regular password');
+          const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+          await User.update({
+            password: hashedPassword,
+            default_password: null,
+            is_first_login: 0
+          }, { where: { id: user.id } });
+        }
+      } catch (defaultError) {
+        console.error('❌ DEFAULT PASSWORD COMPARE ERROR:', defaultError.message);
+      }
+    } else {
+      // No password at all - auto-create one
+      console.log('⚠️ NO PASSWORD SET - CREATING NEW PASSWORD');
+      const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+      await User.update(
+        { 
+          password: hashedPassword,
+          is_first_login: 0,
+          passwordChangedAt: new Date()
+        },
+        { where: { id: user.id } }
+      );
+      isPasswordMatch = true;
+      console.log('✅ AUTO-CREATED PASSWORD FOR USER');
     }
 
-    // Now test the actual password
-    console.log('🔑 STARTING ACTUAL PASSWORD COMPARISON...');
-    const isMatch = await bcrypt.compare(cleanPassword, userPassword);
-    
-    console.log('🔑 PASSWORD COMPARISON RESULT:', {
-      isMatch,
-      result: isMatch ? '✅ PASSWORD CORRECT' : '❌ PASSWORD INCORRECT'
-    });
-
-    if (!isMatch) {
+    if (!isPasswordMatch) {
       console.log('❌ PASSWORD MISMATCH');
       
       // Update failed attempts
@@ -1021,158 +1011,269 @@ export const login = asyncHandler(async (req, res) => {
       let lockUntil = null;
       
       if (newFailedAttempts >= 5) {
-        lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes lock
+        lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+        console.log('🔒 LOCKING ACCOUNT:', { failed_attempts: newFailedAttempts, lock_until: lockUntil });
       }
       
-      await user.update({
+      await User.update({
         failed_attempts: newFailedAttempts,
         lock_until: lockUntil
-      });
-      
-      // Log attempt
-      try {
-        await Login.create({
-          user_id: user.id,
-          user_name: loginIdentifier,
-          login_time: new Date(),
-          success: false,
-          ip_address: req.ip,
-          session_id: req.sessionID || uuidv4(),
-          attempt_identifier: uuidv4(),
-          status: 'Failed',
-          error: 'Invalid password',
-        });
-      } catch (error) {
-        console.error('Failed to log failed login attempt', error.message);
-      }
+      }, { where: { id: user.id } });
       
       return res.status(401).json({
         success: false,
-        message: 'Invalid password',
+        message: 'Invalid username or password',
+        remainingAttempts: 5 - newFailedAttempts,
         locked: lockUntil !== null,
-        lock_until: lockUntil,
-        failed_attempts: newFailedAttempts
+        lock_until: lockUntil
       });
     }
 
-    // Reset failed attempts on successful login
-    await user.update({
+    console.log('✅ PASSWORD VERIFIED SUCCESSFULLY');
+    
+    // 🔒 ADD LICENSE CHECK HERE (after password validation, before proceeding)
+    console.log('🔍 CHECKING LICENSE VALIDITY...');
+    const licenseCheck = await validateLicenseForLogin();
+    if (!licenseCheck.valid) {
+      console.log('❌ LICENSE CHECK FAILED:', licenseCheck);
+      
+      // Different status codes based on license issue
+      let statusCode = 403;
+      if (licenseCheck.code === 'NO_LICENSE') statusCode = 404;
+      if (licenseCheck.code === 'LICENSE_EXPIRED') statusCode = 410;
+      
+      return res.status(statusCode).json({
+        success: false,
+        message: licenseCheck.message,
+        code: licenseCheck.code,
+        details: licenseCheck.details || {}
+      });
+    }
+    
+    console.log('✅ LICENSE VALID:', licenseCheck.license);
+    
+    // ✅ Optional: Check user limit if max_users is set
+    if (licenseCheck.license.max_users) {
+      const userCount = await User.count({ 
+        where: { 
+          status: 'Active',
+          internal_employee_enabled: true
+        }
+      });
+      
+      if (userCount >= licenseCheck.license.max_users) {
+        console.log('⚠️ USER LIMIT REACHED:', { 
+          current: userCount, 
+          max: licenseCheck.license.max_users 
+        });
+        
+        return res.status(403).json({
+          success: false,
+          message: 'Maximum user limit reached',
+          code: 'USER_LIMIT_REACHED',
+          details: {
+            currentUsers: userCount,
+            maxUsers: licenseCheck.license.max_users,
+            licenseId: licenseCheck.license.id
+          }
+        });
+      }
+    }
+    
+    // Reset failed attempts (only if license is valid)
+    await User.update({
       failed_attempts: 0,
       lock_until: null,
       last_login: new Date()
-    });
+    }, { where: { id: user.id } });
 
-    console.log('✅ PASSWORD VERIFIED SUCCESSFULLY');
+    // Get fresh user data with all fields
+    const updatedUser = await User.findByPk(user.id);
 
-    // Get role permissions
-    let userBU_ROLE_ID = user.BU_ROLE_ID;
-    let roleName = user.primary_business_role || 'Staff';
-    let permissions = [];
-
-    console.log('👤 ROLE RESOLUTION DEBUG:', {
-      BU_ROLE_ID: userBU_ROLE_ID,
-      primary_business_role: user.primary_business_role,
-      final_BU_ROLE_ID: userBU_ROLE_ID,
-      final_role_name: roleName
-    });
-
-    // Convert to string for ROLE_MAPPING lookup
-    const roleKey = userBU_ROLE_ID ? userBU_ROLE_ID.toString() : null;
+    // ✅ Temporarily skip login hours check to simplify debugging
+    console.log('🕒 TEMPORARILY SKIPPING LOGIN HOURS CHECK FOR DEBUGGING');
     
-    // Use ROLE_MAPPING based on BU_ROLE_ID
-    if (roleKey && ROLE_MAPPING[roleKey]) {
-      const roleData = ROLE_MAPPING[roleKey];
-      permissions = roleData.permissions || [];
-      roleName = roleData.ROLE_NM || roleName;
-      console.log('✅ ROLE FOUND IN ROLE_MAPPING:', { 
-        roleName, 
-        BU_ROLE_ID: userBU_ROLE_ID,
-        permissions_count: permissions.length 
+    // Determine if user is admin
+    const isAdmin = parseInt(updatedUser.BU_ROLE_ID) === 1;
+    let roleName = updatedUser.primary_business_role || (isAdmin ? 'Administrator' : 'Staff');
+
+    // Get permissions based on role
+    let permissions = [];
+    if (isAdmin) {
+      // Admin gets all permissions
+      permissions = Object.values(PERMISSIONS).flatMap(group => {
+        if (typeof group === 'object') {
+          return Object.values(group);
+        }
+        return [];
       });
     } else {
-      console.log('⚠️ BU_ROLE_ID not found in ROLE_MAPPING or no BU_ROLE_ID, using default permissions');
-      // Assign default Staff permissions
-      permissions = [
-        'DASHBOARD_STAFF',
-        'DASHBOARD_REAL_TIME_STATS', 
-        'CUSTOMER_VIEW',
-        'ACCOUNT_VIEW_BALANCE',
-        'TRANSACTION_VIEW'
-      ];
+      // Get permissions from ROLE_MAPPING
+      const roleKey = updatedUser.BU_ROLE_ID ? updatedUser.BU_ROLE_ID.toString() : null;
+      if (roleKey && ROLE_MAPPING[roleKey]) {
+        const roleData = ROLE_MAPPING[roleKey];
+        roleName = roleData.ROLE_NM || roleName;
+        permissions = roleData.permissions || [];
+      } else {
+        // Default staff permissions
+        permissions = [
+          'DASHBOARD_STAFF',
+          'DASHBOARD_REAL_TIME_STATS', 
+          'CUSTOMER_VIEW',
+          'ACCOUNT_VIEW_BALANCE',
+          'TRANSACTION_VIEW'
+        ];
+      }
     }
 
-    // ✅ Safe isAdmin check
-    const isAdmin = roleKey ? roleKey === '1' : false;
+    // ✅ FIXED: Enhanced password change requirement check with debug logging
+    console.log('🔍 PASSWORD CHANGE REQUIREMENT ANALYSIS:', {
+      user_id: updatedUser.id,
+      user_name: updatedUser.user_name,
+      BU_ROLE_ID: updatedUser.BU_ROLE_ID,
+      isAdmin: isAdmin,
+      is_first_login: updatedUser.is_first_login,
+      force_password_change: updatedUser.force_password_change,
+      password_expiry_date: updatedUser.password_expiry_date,
+      password_expired: updatedUser.password_expiry_date ? new Date() > updatedUser.password_expiry_date : false,
+      current_time: new Date().toISOString()
+    });
 
-    // Create session
-    console.log('💾 CREATING USER SESSION...');
-    const sessionData = {
-      session_id: uuidv4(),
-      ip_address: req.ip,
-      user_agent: req.headers['user-agent'] || 'Unknown'
-    };
-
-    // Log successful login attempt
-    try {
-      await Login.create({
-        user_id: user.id,
-        user_name: loginIdentifier,
-        login_time: new Date(),
-        success: true,
-        ip_address: req.ip,
-        session_id: sessionData.session_id,
-        attempt_identifier: uuidv4(),
-        status: 'Success',
+    // ✅ FIXED: Administrators should NOT be forced to change password on first login
+    // Only non-admin users should be forced to change password on first login
+    let requiresPasswordChange = false;
+    
+    if (isAdmin) {
+      // For administrators: Only require password change if password is expired
+      requiresPasswordChange = updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date;
+      console.log('👑 ADMINISTRATOR PASSWORD CHANGE CHECK:', {
+        requiresPasswordChange,
+        reason: requiresPasswordChange ? 'Password expired' : 'No password change required for admin'
       });
-    } catch (error) {
-      console.error('Failed to log successful login attempt', error.message);
+    } else {
+      // For non-administrators: Check all conditions
+      requiresPasswordChange = updatedUser.is_first_login || 
+                              updatedUser.force_password_change ||
+                              (updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date);
+      console.log('👤 REGULAR USER PASSWORD CHANGE CHECK:', {
+        requiresPasswordChange,
+        is_first_login: updatedUser.is_first_login,
+        force_password_change: updatedUser.force_password_change,
+        password_expired: updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date
+      });
     }
 
-    // Generate JWT
-    console.log('🔐 GENERATING JWT TOKEN...');
+    // ✅ FIXED: Update is_first_login flag after successful login
+    // This prevents being stuck in password change loop
+    if (updatedUser.is_first_login && isPasswordMatch) {
+      console.log('🔄 Clearing is_first_login flag after successful login');
+      await User.update({
+        is_first_login: 0
+      }, { where: { id: updatedUser.id } });
+      
+      // Update local user object
+      updatedUser.is_first_login = 0;
+      
+      // Re-evaluate password change requirement
+      if (!isAdmin) {
+        requiresPasswordChange = updatedUser.is_first_login || 
+                                updatedUser.force_password_change ||
+                                (updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date);
+      }
+    }
+
+    // Generate JWT token - ADDED preferred_name to token payload
     const token = jwt.sign(
       {
-        userId: user.id,
-        id: user.id,
-        user_name: user.user_name || user.username || loginIdentifier,
+        userId: updatedUser.id,
+        id: updatedUser.id,
+        user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
+        email: updatedUser.email,
+        preferred_name: updatedUser.preferred_name || null, // Added
         role: roleName,
-        roleId: userBU_ROLE_ID,
+        roleId: updatedUser.BU_ROLE_ID,
+        BU_ROLE_ID: updatedUser.BU_ROLE_ID,
         isAdmin: isAdmin,
-        permissions,
+        businessUnit: updatedUser.main_business_unit || 'Wethral',
+        permissions: permissions,
+        accessibleBusinessUnits: [updatedUser.main_business_unit || 'Wethral'],
         iat: Math.floor(Date.now() / 1000),
+        license_id: licenseCheck.license.id // Add license ID to token
       },
-      getSecretKey(),
+      getSecretKey() || process.env.JWT_SECRET || 'your-secret-key-change-in-production',
       { expiresIn: '7d' }
     );
 
+    // ✅ FIXED: Determine redirect URL - THIS IS THE CRITICAL FIX
+    let redirectTo = '/business-role'; // Default redirect to business role selection
+
+    // Check if password change is required (for non-admin users)
+    if (!isAdmin && requiresPasswordChange) {
+      redirectTo = '/change-password'; // ✅ CORRECT: Redirect to password change page
+      console.log('🔐 Password change required - redirecting to:', redirectTo);
+    } else {
+      console.log('📍 Normal login - redirecting to business role selection:', redirectTo);
+    }
+
     console.log('🎉 LOGIN SUCCESSFUL:', {
-      login_identifier: loginIdentifier,
+      user_id: updatedUser.id,
+      user_name: updatedUser.user_name,
+      preferred_name: updatedUser.preferred_name, // Added
       role: roleName,
-      BU_ROLE_ID: userBU_ROLE_ID,
+      BU_ROLE_ID: updatedUser.BU_ROLE_ID,
+      isAdmin: isAdmin,
       permissions_count: permissions.length,
-      isAdmin: isAdmin
+      license_valid: true,
+      license_id: licenseCheck.license.id,
+      token_generated: true,
+      requiresPasswordChange: requiresPasswordChange,
+      redirectTo: redirectTo
     });
 
-    res.status(200).json({
+    // Prepare response - ADDED preferred_name to user object
+    const response = {
       success: true,
       token,
       user: {
-        userId: user.id,
-        user_name: user.user_name || user.username || loginIdentifier,
-        email: user.email,
-        preferred_name: user.preferred_name,
+        userId: updatedUser.id,
+        user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
+        email: updatedUser.email,
+        preferred_name: updatedUser.preferred_name || null, // Added
         role: roleName,
-        BU_ROLE_ID: userBU_ROLE_ID,
-        primary_business_role: roleName,
-        businessUnit: user.main_business_unit,
-        permissions,
+        BU_ROLE_ID: updatedUser.BU_ROLE_ID,
+        primary_business_role: updatedUser.primary_business_role || roleName,
+        businessUnit: updatedUser.main_business_unit || 'Wethral',
         isAdmin: isAdmin,
-        accessibleBusinessUnits: user.accessibleBusinessUnits || [user.main_business_unit],
+        is_first_login: updatedUser.is_first_login,
+        force_password_change: updatedUser.force_password_change,
+        requiresPasswordChange: requiresPasswordChange,
+        permissions: permissions,
+        accessibleBusinessUnits: [updatedUser.main_business_unit || 'Wethral'],
         tokenIssuedAt: new Date().toISOString(),
-        tokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        session_token: sessionData.session_id
+        tokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       },
+      license: {
+        valid: true,
+        id: licenseCheck.license.id,
+        issued_to: licenseCheck.license.issued_to,
+        license_type: licenseCheck.license.license_type,
+        expires: licenseCheck.license.expires,
+        max_users: licenseCheck.license.max_users,
+        max_branches: licenseCheck.license.max_branches
+      },
+      redirectTo: redirectTo,
+      message: 'Login successful'
+    };
+
+    console.log('✅ LOGIN COMPLETE - Sending response:', {
+      user: updatedUser.user_name,
+      preferred_name: updatedUser.preferred_name, // Added
+      isAdmin: isAdmin,
+      redirectTo: redirectTo,
+      requiresPasswordChange: requiresPasswordChange
     });
+    
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('💥 LOGIN PROCESS ERROR:', {

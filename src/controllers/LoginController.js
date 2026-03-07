@@ -1,4 +1,4 @@
-// src/controllers/LoginController.js - UPDATED VERSION WITH /business-role REDIRECT
+// src/controllers/LoginController.js - COMPLETE FIXED VERSION
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
@@ -119,7 +119,7 @@ export const login = asyncHandler(async (req, res) => {
       },
       raw: true,
       attributes: { 
-        include: ['id', 'user_name', 'username', 'email', 'password', 'default_password', 
+        include: ['id', 'user_name', 'username', 'email', 'preferred_name', 'password', 'default_password', 
                  'BU_ROLE_ID', 'status', 'internal_employee_enabled', 'is_first_login',
                  'force_password_change', 'primary_business_role', 'main_business_unit',
                  'earliest_login_time', 'latest_login_time', 'failed_attempts', 
@@ -136,12 +136,13 @@ export const login = asyncHandler(async (req, res) => {
       });
     }
 
-    // Debug user info
+    // Debug user info - ADDED preferred_name to debug
     console.log('📊 USER SEARCH RESULTS:', {
       user_found: true,
       user_id: user.id,
       user_name: user.user_name,
       username: user.username,
+      preferred_name: user.preferred_name, // Added
       has_password: !!user.password && user.password.length > 0,
       password_length: user.password?.length || 0,
       has_default_password: !!user.default_password && user.default_password.length > 0,
@@ -451,13 +452,14 @@ export const login = asyncHandler(async (req, res) => {
       }
     }
 
-    // Generate JWT token
+    // Generate JWT token - ADDED preferred_name to token payload
     const token = jwt.sign(
       {
         userId: updatedUser.id,
         id: updatedUser.id,
         user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
         email: updatedUser.email,
+        preferred_name: updatedUser.preferred_name || null, // Added
         role: roleName,
         roleId: updatedUser.BU_ROLE_ID,
         BU_ROLE_ID: updatedUser.BU_ROLE_ID,
@@ -472,9 +474,21 @@ export const login = asyncHandler(async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // ✅ FIXED: Determine redirect URL - THIS IS THE CRITICAL FIX
+    let redirectTo = '/business-role'; // Default redirect to business role selection
+
+    // Check if password change is required (for non-admin users)
+    if (!isAdmin && requiresPasswordChange) {
+      redirectTo = '/change-password'; // ✅ CORRECT: Redirect to password change page
+      console.log('🔐 Password change required - redirecting to:', redirectTo);
+    } else {
+      console.log('📍 Normal login - redirecting to business role selection:', redirectTo);
+    }
+
     console.log('🎉 LOGIN SUCCESSFUL:', {
       user_id: updatedUser.id,
       user_name: updatedUser.user_name,
+      preferred_name: updatedUser.preferred_name, // Added
       role: roleName,
       BU_ROLE_ID: updatedUser.BU_ROLE_ID,
       isAdmin: isAdmin,
@@ -483,17 +497,10 @@ export const login = asyncHandler(async (req, res) => {
       license_id: licenseCheck.license.id,
       token_generated: true,
       requiresPasswordChange: requiresPasswordChange,
-      redirectTo: requiresPasswordChange ? '/change-password' : '/business-role' // CHANGED HERE
+      redirectTo: redirectTo
     });
 
-    // ✅ FIXED: ALWAYS redirect to business-role page after successful login (unless password change needed)
-    let redirectTo = '/business-role'; // CHANGED FROM '/dashboard' TO '/business-role'
-    
-    if (!isAdmin && requiresPasswordChange) {
-      redirectTo = '/dashboard';
-    }
-
-    // Prepare response
+    // Prepare response - ADDED preferred_name to user object
     const response = {
       success: true,
       token,
@@ -501,6 +508,7 @@ export const login = asyncHandler(async (req, res) => {
         userId: updatedUser.id,
         user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
         email: updatedUser.email,
+        preferred_name: updatedUser.preferred_name || null, // Added
         role: roleName,
         BU_ROLE_ID: updatedUser.BU_ROLE_ID,
         primary_business_role: updatedUser.primary_business_role || roleName,
@@ -523,12 +531,13 @@ export const login = asyncHandler(async (req, res) => {
         max_users: licenseCheck.license.max_users,
         max_branches: licenseCheck.license.max_branches
       },
-      redirectTo: redirectTo, // ✅ Now '/business-role' unless password change needed
+      redirectTo: redirectTo,
       message: 'Login successful'
     };
 
     console.log('✅ LOGIN COMPLETE - Sending response:', {
       user: updatedUser.user_name,
+      preferred_name: updatedUser.preferred_name, // Added
       isAdmin: isAdmin,
       redirectTo: redirectTo,
       requiresPasswordChange: requiresPasswordChange
@@ -918,7 +927,7 @@ export const testConfigService = asyncHandler(async (req, res) => {
 // Export all functions
 export default { 
   login, 
-  changePassword, // ✅ Export the new changePassword function
+  changePassword,
   emergencyPasswordReset, 
   testConfigService 
 };

@@ -1734,6 +1734,8 @@ export const approveCustomer = async (req, res) => {
     const { customerId } = req.params;
     const { approvedBy } = req.body;
     
+    console.log('📝 Approving customer:', { customerId, approvedBy });
+    
     if (!customerId) {
       return res.status(400).json({
         success: false,
@@ -1744,16 +1746,36 @@ export const approveCustomer = async (req, res) => {
     // Initialize models
     const { Customer: custModel } = await initModels();
     
-    const customer = await custModel.findByPk(customerId);
+    // Find customer by multiple possible fields, excluding problematic columns
+    const customer = await custModel.findOne({
+      where: {
+        [Op.or]: [
+          { id: customerId },
+          { CUST_ID: customerId },
+          { CUST_NO: customerId }
+        ]
+      },
+      attributes: {
+        exclude: ['customer_type_id', 'relationship_officer_id'] // Exclude problematic columns
+      }
+    });
     
     if (!customer) {
+      console.log('❌ Customer not found with ID:', customerId);
       return res.status(404).json({
         success: false,
         message: 'Customer not found'
       });
     }
     
-    // Update customer status
+    console.log('✅ Customer found:', {
+      id: customer.id,
+      CUST_ID: customer.CUST_ID,
+      CUST_NO: customer.CUST_NO,
+      CUST_NM: customer.CUST_NM
+    });
+    
+    // Update customer status - only update fields that exist
     await customer.update({
       REC_ST: 'APPROVED',
       status: 'Approved',
@@ -1761,10 +1783,34 @@ export const approveCustomer = async (req, res) => {
       APPROVED_DT: new Date()
     });
     
+    // Fetch the updated customer without problematic columns
+    const updatedCustomer = await custModel.findOne({
+      where: { id: customer.id },
+      attributes: {
+        exclude: ['customer_type_id', 'relationship_officer_id']
+      }
+    });
+    
+    console.log('✅ Customer approved successfully');
+    
     res.json({
       success: true,
       message: 'Customer approved successfully',
-      customer: customer.toJSON()
+      customer: updatedCustomer ? {
+        id: updatedCustomer.id,
+        CUST_ID: updatedCustomer.CUST_ID,
+        CUST_NO: updatedCustomer.CUST_NO,
+        CUST_NM: updatedCustomer.CUST_NM,
+        status: updatedCustomer.status,
+        REC_ST: updatedCustomer.REC_ST
+      } : {
+        id: customer.id,
+        CUST_ID: customer.CUST_ID,
+        CUST_NO: customer.CUST_NO,
+        CUST_NM: customer.CUST_NM,
+        status: 'Approved',
+        REC_ST: 'APPROVED'
+      }
     });
     
   } catch (error) {
@@ -1785,6 +1831,8 @@ export const rejectCustomer = async (req, res) => {
     const { customerId } = req.params;
     const { rejectedBy, rejectionReason } = req.body;
     
+    console.log('📝 Rejecting customer:', { customerId, rejectedBy, rejectionReason });
+    
     if (!customerId) {
       return res.status(400).json({
         success: false,
@@ -1795,14 +1843,34 @@ export const rejectCustomer = async (req, res) => {
     // Initialize models
     const { Customer: custModel } = await initModels();
     
-    const customer = await custModel.findByPk(customerId);
+    // Find customer by multiple possible fields, excluding problematic columns
+    const customer = await custModel.findOne({
+      where: {
+        [Op.or]: [
+          { id: customerId },
+          { CUST_ID: customerId },
+          { CUST_NO: customerId }
+        ]
+      },
+      attributes: {
+        exclude: ['customer_type_id', 'relationship_officer_id'] // Exclude problematic columns
+      }
+    });
     
     if (!customer) {
+      console.log('❌ Customer not found with ID:', customerId);
       return res.status(404).json({
         success: false,
         message: 'Customer not found'
       });
     }
+    
+    console.log('✅ Customer found:', {
+      id: customer.id,
+      CUST_ID: customer.CUST_ID,
+      CUST_NO: customer.CUST_NO,
+      CUST_NM: customer.CUST_NM
+    });
     
     // Update customer status
     await customer.update({
@@ -1810,13 +1878,37 @@ export const rejectCustomer = async (req, res) => {
       status: 'Rejected',
       REJECTED_BY: rejectedBy || 'system',
       REJECTED_DT: new Date(),
-      rejectionReason: rejectionReason || 'No reason provided'
+      REJECTION_REASON: rejectionReason || 'No reason provided'
     });
+    
+    // Fetch the updated customer without problematic columns
+    const updatedCustomer = await custModel.findOne({
+      where: { id: customer.id },
+      attributes: {
+        exclude: ['customer_type_id', 'relationship_officer_id']
+      }
+    });
+    
+    console.log('✅ Customer rejected successfully');
     
     res.json({
       success: true,
       message: 'Customer rejected successfully',
-      customer: customer.toJSON()
+      customer: updatedCustomer ? {
+        id: updatedCustomer.id,
+        CUST_ID: updatedCustomer.CUST_ID,
+        CUST_NO: updatedCustomer.CUST_NO,
+        CUST_NM: updatedCustomer.CUST_NM,
+        status: updatedCustomer.status,
+        REC_ST: updatedCustomer.REC_ST
+      } : {
+        id: customer.id,
+        CUST_ID: customer.CUST_ID,
+        CUST_NO: customer.CUST_NO,
+        CUST_NM: customer.CUST_NM,
+        status: 'Rejected',
+        REC_ST: 'REJECTED'
+      }
     });
     
   } catch (error) {

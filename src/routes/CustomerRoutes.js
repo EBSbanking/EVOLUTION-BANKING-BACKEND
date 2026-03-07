@@ -83,14 +83,26 @@ router.get('/customers/:CUST_ID', getCustomerById);
 // UPDATE CUSTOMER DATA
 router.put('/customers/:CUST_ID', updateCustomer);
 
-// APPROVE CUSTOMER
-router.put('/approve/:customerId', approveCustomer);
-
-// REJECT CUSTOMER
-router.put('/reject/:customerId', rejectCustomer);
-
 // DEACTIVATE CUSTOMER
 router.patch('/customers/:CUST_ID/deactivate', deactivateCustomer);
+
+// ============================================
+// APPROVAL & REJECTION ROUTES - Multiple URL patterns for flexibility
+// ============================================
+
+// APPROVE CUSTOMER - Multiple URL patterns
+router.put('/approve/:customerId', approveCustomer);
+router.put('/customers/approve/:customerId', approveCustomer);
+router.put('/customer/approve/:customerId', approveCustomer);
+
+// REJECT CUSTOMER - Multiple URL patterns
+router.put('/reject/:customerId', rejectCustomer);
+router.put('/customers/reject/:customerId', rejectCustomer);
+router.put('/customer/reject/:customerId', rejectCustomer);
+
+// ============================================
+// SEARCH & UTILITY ROUTES
+// ============================================
 
 // SEARCH CUSTOMERS
 router.get('/search', searchCustomers);
@@ -147,21 +159,21 @@ router.get('/generate-customer-number', async (req, res) => {
  * @desc    Get customer with BVN details by ID
  * @access  Private
  */
-router.get('/:customerId/bvn', getCustomerWithBVN);
+router.get('/customers/:customerId/bvn', getCustomerWithBVN);
 
 /**
  * @route   GET /api/customers/bvn/:bvn
  * @desc    Find customer by BVN number
  * @access  Private
  */
-router.get('/bvn/:bvn', findByBVN);
+router.get('/customers/bvn/:bvn', findByBVN);
 
 /**
  * @route   PUT /api/customers/:customerId/verify-bvn
  * @desc    Update BVN verification status
  * @access  Private
  */
-router.put('/:customerId/verify-bvn', updateBVNVerification);
+router.put('/customers/:customerId/verify-bvn', updateBVNVerification);
 
 // ============================================
 // LOAN-RELATED CUSTOMER ROUTES (NEW)
@@ -172,21 +184,21 @@ router.put('/:customerId/verify-bvn', updateBVNVerification);
  * @desc    Get customer with their loan details
  * @access  Private
  */
-router.get('/:customerId/loans', getCustomerWithLoans);
+router.get('/customers/:customerId/loans', getCustomerWithLoans);
 
 /**
  * @route   GET /api/customers/:customerId/has-active-loan
  * @desc    Check if customer has an active loan
  * @access  Private
  */
-router.get('/:customerId/has-active-loan', checkHasActiveLoan);
+router.get('/customers/:customerId/has-active-loan', checkHasActiveLoan);
 
 /**
  * @route   GET /api/customers/:customerId/full-summary
  * @desc    Get customer full summary with BVN and loan status
  * @access  Private
  */
-router.get('/:customerId/full-summary', getCustomerFullSummary);
+router.get('/customers/:customerId/full-summary', getCustomerFullSummary);
 
 // ============================================
 // BATCH UPLOAD & TEMPLATE ROUTES

@@ -1,4 +1,5 @@
-﻿import { DataTypes, Model, Op } from 'sequelize';
+﻿// src/models/Bank.js
+import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class Bank extends Model {}
@@ -70,7 +71,9 @@ Bank.init(
     sequelize,
     modelName: 'Bank',
     tableName: 'banks',
-    timestamps: true, // Adds createdAt and updatedAt
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
     underscored: true,
     hooks: {
       beforeValidate: (bank) => {
@@ -150,9 +153,9 @@ Bank.getAll = async function(page = 1, limit = 20, filters = {}) {
   }
   
   if (filters.search) {
-    whereClause[Op.or] = [
-      { name: { [Op.like]: `%${filters.search}%` } },
-      { code: { [Op.like]: `%${filters.search}%` } },
+    whereClause[sequelize.Sequelize.Op.or] = [
+      { name: { [sequelize.Sequelize.Op.like]: `%${filters.search}%` } },
+      { code: { [sequelize.Sequelize.Op.like]: `%${filters.search}%` } },
     ];
   }
   

@@ -1,4 +1,4 @@
-﻿// models/Transaction.js - COMPLETE FIXED VERSION (Using camelCase columns)
+﻿// models/Transaction.js - CORRECTED VERSION (Using snake_case to match database)
 import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -193,15 +193,12 @@ const Transaction = sequelize.define('Transaction', {
     field: 'metadata'
   }
   
-  // NOTE: created_at/updated_at fields removed - Sequelize will auto-manage them
-  // with timestamps: true using the createdAt/updatedAt columns in the database
-  
 }, {
   tableName: 'transactions',
   timestamps: true,
-  createdAt: 'createdAt',  // Use camelCase column in database
-  updatedAt: 'updatedAt',  // Use camelCase column in database
-  underscored: false,      // Don't use underscored names for auto-generated fields
+  createdAt: 'created_at',  // Use snake_case column in database
+  updatedAt: 'updated_at',  // Use snake_case column in database
+  underscored: true,        // Use underscored naming convention
   indexes: [
     {
       unique: true,
@@ -320,19 +317,11 @@ Transaction.beforeCreate(async (transaction, options) => {
       REFERENCE: transaction.REFERENCE
     });
   }
-
-  // Ensure timestamps are set (Sequelize should handle this, but just in case)
-  if (!transaction.createdAt) {
-    transaction.createdAt = new Date();
-  }
-  if (!transaction.updatedAt) {
-    transaction.updatedAt = new Date();
-  }
 });
 
 // Before update hook
 Transaction.beforeUpdate((transaction) => {
-  transaction.updatedAt = new Date();
+  // updated_at will be handled automatically by Sequelize
 });
 
 // Generate transaction IDs helper
@@ -364,7 +353,7 @@ Transaction.generateTransactionIds = async () => {
 Transaction.getTransactionByReference = async (reference) => {
   try {
     const transaction = await Transaction.findOne({
-      where: { reference: reference }
+      where: { REFERENCE: reference }
     });
     
     return transaction;
@@ -486,7 +475,7 @@ Transaction.reverseTransaction = async (transactionId, reversedBy, reason = '') 
     const reversalData = {
       ...transaction.toJSON(),
       id: undefined,
-      TRANSACTION_ID: await Transaction.getNextTransactionId(),
+      TRANSACTION_IDENTIFIER: await Transaction.getNextTransactionId(),
       transactionDirection: transaction.transactionDirection === 'CREDIT' ? 'DEBIT' : 'CREDIT',
       status: 'REVERSED',
       createdBy: reversedBy,
@@ -618,8 +607,8 @@ Transaction.initializeTable = async () => {
         rejected_by VARCHAR(50),
         rejection_date DATETIME,
         metadata JSON,
-        createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_account_number (account_number),
         INDEX idx_account_id (account_id),
         INDEX idx_transaction_date (transaction_date),
@@ -641,7 +630,7 @@ Transaction.initializeTable = async () => {
       CREATE TABLE IF NOT EXISTS transaction_sequence (
         id INT AUTO_INCREMENT PRIMARY KEY,
         last_value INT DEFAULT 0,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       
       INSERT INTO transaction_sequence (last_value) 

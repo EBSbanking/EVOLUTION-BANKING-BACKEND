@@ -824,242 +824,331 @@ createProduct: asyncHandler(async (req, res) => {
 }),
 
   // GET PRODUCT WITH INTEREST RATE DETAILS
-  getProduct: asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    let product;
-    
-    // Helper function to parse product ID
-    const parseProductId = (id) => {
-      const parsedId = parseInt(id, 10);
-      if (!isNaN(parsedId)) {
-        return { type: 'PROD_ID', value: parsedId };
-      }
-      return { type: 'productCode', value: id };
-    };
-    
-    // Parse the ID to determine what type it is
-    const parsedId = parseProductId(id);
-    let whereClause;
-    
-    switch (parsedId.type) {
-      case 'PROD_ID':
-        whereClause = { PROD_ID: parsedId.value, STATUS: 'ACTIVE' };
-        break;
-      case 'productCode':
-        whereClause = { productCode: parsedId.value, STATUS: 'ACTIVE' };
-        break;
-      default:
-        whereClause = { id: parsedId.value, STATUS: 'ACTIVE' };
+// GET PRODUCT WITH INTEREST RATE DETAILS - FIXED BU_ID HANDLING
+getProduct: asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  let product;
+  
+  // Helper function to parse product ID
+  const parseProductId = (id) => {
+    const parsedId = parseInt(id, 10);
+    if (!isNaN(parsedId)) {
+      return { type: 'PROD_ID', value: parsedId };
     }
-   
-    product = await LoanProduct.findOne({
-      where: whereClause
+    return { type: 'productCode', value: id };
+  };
+  
+  // Parse the ID to determine what type it is
+  const parsedId = parseProductId(id);
+  let whereClause;
+  
+  switch (parsedId.type) {
+    case 'PROD_ID':
+      whereClause = { PROD_ID: parsedId.value, STATUS: 'ACTIVE' };
+      break;
+    case 'productCode':
+      whereClause = { productCode: parsedId.value, STATUS: 'ACTIVE' };
+      break;
+    default:
+      whereClause = { id: parsedId.value, STATUS: 'ACTIVE' };
+  }
+ 
+  product = await LoanProduct.findOne({
+    where: whereClause
+  });
+  
+  if (!product) {
+    return res.status(404).json({
+      success: false,
+      message: 'Active loan product not found'
     });
-    
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Active loan product not found'
-      });
+  }
+  
+  // Get interest rate details
+  const interestRate = product.LOAN_INTEREST_RATE_ID ? 
+    await LoanInterestRate.findByPk(product.LOAN_INTEREST_RATE_ID) : null;
+  
+  // ===== FIXED: Handle BU_ID safely =====
+  const branchDetails = [];
+  let branchCodes = [];
+  
+  if (product.BU_ID) {
+    if (typeof product.BU_ID === 'string') {
+      // If it's a string, split by comma
+      branchCodes = product.BU_ID.split(',').filter(Boolean);
+    } else if (Array.isArray(product.BU_ID)) {
+      // If it's already an array, use it directly
+      branchCodes = product.BU_ID.filter(Boolean);
+    } else if (typeof product.BU_ID === 'object') {
+      // If it's some other object, try to convert
+      try {
+        const stringified = JSON.stringify(product.BU_ID);
+        if (stringified.startsWith('[')) {
+          const parsed = JSON.parse(stringified);
+          if (Array.isArray(parsed)) {
+            branchCodes = parsed.filter(Boolean);
+          }
+        } else {
+          // Treat as comma-separated string
+          branchCodes = String(product.BU_ID).split(',').filter(Boolean);
+        }
+      } catch (e) {
+        console.warn(`Could not parse BU_ID for product ${product.PROD_ID}:`, product.BU_ID);
+        branchCodes = [];
+      }
+    } else {
+      // Fallback: convert to string and split
+      branchCodes = String(product.BU_ID).split(',').filter(Boolean);
     }
-    
-    // Get interest rate details
-    const interestRate = product.LOAN_INTEREST_RATE_ID ? 
-      await LoanInterestRate.findByPk(product.LOAN_INTEREST_RATE_ID) : null;
-    
-    // Get branch details
-    const branchDetails = [];
-    const branchCodes = product.BU_ID ? product.BU_ID.split(',').filter(Boolean) : [];
-    
-    for (const branchCode of branchCodes) {
-      if (branchCode === '*') {
+  }
+  
+  // Remove duplicates and trim
+  branchCodes = [...new Set(branchCodes.map(code => String(code).trim()))];
+  
+  for (const branchCode of branchCodes) {
+    if (branchCode === '*') {
+      branchDetails.push({
+        branchCode: '*',
+        branchName: 'All Branches',
+        branchType: 'GLOBAL'
+      });
+    } else {
+      const branch = await Branch.findOne({ where: { branchCode } });
+      if (branch) {
         branchDetails.push({
-          branchCode: '*',
-          branchName: 'All Branches',
-          branchType: 'GLOBAL'
+          branchCode: branch.branchCode,
+          branchName: branch.branchName,
+          branchType: branch.branchType,
+          organizationName: branch.organizationName
         });
       } else {
-        const branch = await Branch.findOne({ where: { branchCode } });
-        if (branch) {
-          branchDetails.push({
-            branchCode: branch.branchCode,
-            branchName: branch.branchName,
-            branchType: branch.branchType,
-            organizationName: branch.organizationName
-          });
-        }
-      }
-    }
-    
-    // Combine product and interest rate data
-    const responseData = {
-      ...product.toJSON(),
-      branchDetails,
-      interestRate: interestRate ? {
-        id: interestRate.id,
-        name: interestRate.name,
-        description: interestRate.description,
-        RATE_TYPE: interestRate.RATE_TYPE,
-        INTEREST_TYPE: interestRate.INTEREST_TYPE,
-        CALCULATION_METHOD: interestRate.CALCULATION_METHOD,
-        MIN_RATE_PER_MONTH: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'),
-        MAX_RATE_PER_MONTH: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
-        DEFAULT_RATE_PER_MONTH: parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0'),
-        LOAN_PROUD_INT_ID: interestRate.LOAN_PROUD_INT_ID
-      } : null
-    };
-    
-    res.json({
-      success: true,
-      data: responseData
-    });
-  }),
-
-  // GET ALL LOAN PRODUCTS WITH INTEREST RATE INFO
-  getAllLoanProducts: asyncHandler(async (req, res) => {
-    const {
-      page = 1,
-      limit = 10,
-      search,
-      productType,
-      termType,
-      isActive,
-      buId,
-      status = 'ACTIVE'
-    } = req.query;
-    
-    const where = { STATUS: status };
-    
-    // Search filter
-    if (search) {
-      where[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { productCode: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
-        { PRODUCT_SHORT_NAME: { [Op.like]: `%${search}%` } }
-      ];
-    }
-    
-    // Product type filter
-    if (productType) {
-      where.PRODUCT_TYPE = productType;
-    }
-    
-    // Term type filter
-    if (termType) {
-      where.LOAN_TERM_TYPE = termType.toUpperCase();
-    }
-    
-    // Active status filter
-    if (isActive !== undefined) {
-      where.isActive = isActive === 'true';
-    }
-    
-    // Business Unit (branch code) filter
-    if (buId) {
-      const branch = await Branch.findOne({
-        where: {
-          branchCode: buId,
-          status: 'ACTIVE'
-        }
-      });
-     
-      if (!branch) {
-        return res.status(400).json({
-          success: false,
-          message: `Branch with code ${buId} not found or inactive`
+        // Branch not found but code exists in BU_ID
+        branchDetails.push({
+          branchCode,
+          branchName: `Unknown Branch (${branchCode})`,
+          branchType: 'UNKNOWN'
         });
       }
-     
-      where[Op.or] = [
-        { BU_ID: { [Op.like]: `%${buId}%` } },
-        { BU_ID: { [Op.like]: '%*%' } }
-      ];
     }
-    
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const offset = (pageNum - 1) * limitNum;
-    
-    const { count, rows: products } = await LoanProduct.findAndCountAll({
-      where,
-      limit: limitNum,
-      offset,
-      order: [['createdAt', 'DESC']]
-    });
-    
-    // Enhance products with branch details and interest rate info
-    const enhancedProducts = await Promise.all(
-      products.map(async (product) => {
-        // Get interest rate details
-        const interestRate = product.LOAN_INTEREST_RATE_ID ? 
-          await LoanInterestRate.findByPk(product.LOAN_INTEREST_RATE_ID) : null;
-        
-        const branchDetails = [];
-        const branchCodes = product.BU_ID ? product.BU_ID.split(',').filter(Boolean) : [];
-       
-        // Get branch information for each branch code
-        for (const branchCode of branchCodes) {
-          if (branchCode === '*') {
-            branchDetails.push({
-              branchCode: '*',
-              branchName: 'All Branches',
-              branchType: 'GLOBAL'
-            });
-          } else {
-            const branch = await Branch.findOne({ where: { branchCode } });
-            if (branch) {
-              branchDetails.push({
-                branchCode: branch.branchCode,
-                branchName: branch.branchName,
-                branchType: branch.branchType,
-                organizationName: branch.organizationName
-              });
-            }
-          }
-        }
-       
-        return {
-          PROD_ID: product.PROD_ID,
-          PRODUCT_NAME: product.name,
-          PRODUCT_SHORT_NAME: product.PRODUCT_SHORT_NAME,
-          PRODUCT_TYPE: product.PRODUCT_TYPE,
-          MIN_LOAN_AMOUNT: parseFloat(product.minAmount || '0'),
-          MAX_LOAN_AMOUNT: parseFloat(product.maxAmount || '0'),
-          LOAN_TERM_TYPE: product.LOAN_TERM_TYPE,
-          MIN_LOAN_TERM_VALUE: product.MIN_LOAN_TERM_VALUE,
-          MAX_LOAN_TERM_VALUE: product.MAX_LOAN_TERM_VALUE,
-          TERM_RANGE: `${product.MIN_LOAN_TERM_VALUE || 1}-${product.MAX_LOAN_TERM_VALUE || 60} ${product.LOAN_TERM_TYPE || 'MONTHS'}`,
-          HAS_INTEREST_RATE_REFERENCE: !!interestRate,
-          INTEREST_RATE: interestRate ? {
-            id: interestRate.id,
-            name: interestRate.name,
-            rateType: interestRate.RATE_TYPE,
-            minRate: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'),
-            maxRate: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
-            defaultRate: parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0'),
-            loanProudIntId: interestRate.LOAN_PROUD_INT_ID
-          } : null,
-          STATUS: product.STATUS,
-          BRANCHES: branchDetails,
-          isGlobalProduct: product.isGlobalProduct,
-          createdAt: product.createdAt,
-          updatedAt: product.updatedAt
-        };
-      })
-    );
-    
-    res.json({
-      success: true,
-      data: enhancedProducts,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total: count,
-        pages: Math.ceil(count / limitNum)
+  }
+  
+  // Combine product and interest rate data
+  const responseData = {
+    ...product.toJSON(),
+    branchDetails,
+    interestRate: interestRate ? {
+      id: interestRate.id,
+      name: interestRate.name,
+      description: interestRate.description,
+      RATE_TYPE: interestRate.RATE_TYPE,
+      INTEREST_TYPE: interestRate.INTEREST_TYPE,
+      CALCULATION_METHOD: interestRate.CALCULATION_METHOD,
+      MIN_RATE_PER_MONTH: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'),
+      MAX_RATE_PER_MONTH: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
+      DEFAULT_RATE_PER_MONTH: parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0'),
+      LOAN_PROUD_INT_ID: interestRate.LOAN_PROUD_INT_ID
+    } : null,
+    // Include raw BU_ID for debugging (optional)
+    _raw_BU_ID: product.BU_ID
+  };
+  
+  res.json({
+    success: true,
+    data: responseData
+  });
+}),
+
+  // GET ALL LOAN PRODUCTS WITH INTEREST RATE INFO - FIXED ORDER BY CLAUSE
+ // GET ALL LOAN PRODUCTS WITH INTEREST RATE INFO - FIXED BU_ID HANDLING
+getAllLoanProducts: asyncHandler(async (req, res) => {
+  const {
+    page = 1,
+    limit = 10,
+    search,
+    productType,
+    termType,
+    isActive,
+    buId,
+    status = 'ACTIVE'
+  } = req.query;
+  
+  const where = { STATUS: status };
+  
+  // Search filter
+  if (search) {
+    where[Op.or] = [
+      { name: { [Op.like]: `%${search}%` } },
+      { productCode: { [Op.like]: `%${search}%` } },
+      { description: { [Op.like]: `%${search}%` } },
+      { PRODUCT_SHORT_NAME: { [Op.like]: `%${search}%` } }
+    ];
+  }
+  
+  // Product type filter
+  if (productType) {
+    where.PRODUCT_TYPE = productType;
+  }
+  
+  // Term type filter
+  if (termType) {
+    where.LOAN_TERM_TYPE = termType.toUpperCase();
+  }
+  
+  // Active status filter
+  if (isActive !== undefined) {
+    where.isActive = isActive === 'true';
+  }
+  
+  // Business Unit (branch code) filter
+  if (buId) {
+    const branch = await Branch.findOne({
+      where: {
+        branchCode: buId,
+        status: 'ACTIVE'
       }
     });
-  }),
+   
+    if (!branch) {
+      return res.status(400).json({
+        success: false,
+        message: `Branch with code ${buId} not found or inactive`
+      });
+    }
+   
+    where[Op.or] = [
+      { BU_ID: { [Op.like]: `%${buId}%` } },
+      { BU_ID: { [Op.like]: '%*%' } }
+    ];
+  }
+  
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+  
+  const { count, rows: products } = await LoanProduct.findAndCountAll({
+    where,
+    limit: limitNum,
+    offset,
+    order: [['created_at', 'DESC']]
+  });
+  
+  // Enhance products with branch details and interest rate info
+  const enhancedProducts = await Promise.all(
+    products.map(async (product) => {
+      // Get interest rate details
+      const interestRate = product.LOAN_INTEREST_RATE_ID ? 
+        await LoanInterestRate.findByPk(product.LOAN_INTEREST_RATE_ID) : null;
+      
+      const branchDetails = [];
+      
+      // ===== FIXED: Handle BU_ID safely =====
+      // BU_ID could be a string, array, or null/undefined
+      let branchCodes = [];
+      
+      if (product.BU_ID) {
+        if (typeof product.BU_ID === 'string') {
+          // If it's a string, split by comma
+          branchCodes = product.BU_ID.split(',').filter(Boolean);
+        } else if (Array.isArray(product.BU_ID)) {
+          // If it's already an array, use it directly
+          branchCodes = product.BU_ID.filter(Boolean);
+        } else if (typeof product.BU_ID === 'object') {
+          // If it's some other object, try to convert
+          try {
+            const stringified = JSON.stringify(product.BU_ID);
+            if (stringified.startsWith('[')) {
+              const parsed = JSON.parse(stringified);
+              if (Array.isArray(parsed)) {
+                branchCodes = parsed.filter(Boolean);
+              }
+            } else {
+              // Treat as comma-separated string
+              branchCodes = String(product.BU_ID).split(',').filter(Boolean);
+            }
+          } catch (e) {
+            console.warn(`Could not parse BU_ID for product ${product.PROD_ID}:`, product.BU_ID);
+            branchCodes = [];
+          }
+        } else {
+          // Fallback: convert to string and split
+          branchCodes = String(product.BU_ID).split(',').filter(Boolean);
+        }
+      }
+      
+      // Remove duplicates and trim
+      branchCodes = [...new Set(branchCodes.map(code => String(code).trim()))];
+      
+      // Get branch information for each branch code
+      for (const branchCode of branchCodes) {
+        if (branchCode === '*') {
+          branchDetails.push({
+            branchCode: '*',
+            branchName: 'All Branches',
+            branchType: 'GLOBAL'
+          });
+        } else {
+          const branch = await Branch.findOne({ where: { branchCode } });
+          if (branch) {
+            branchDetails.push({
+              branchCode: branch.branchCode,
+              branchName: branch.branchName,
+              branchType: branch.branchType,
+              organizationName: branch.organizationName
+            });
+          } else {
+            // Branch not found but code exists in BU_ID
+            branchDetails.push({
+              branchCode,
+              branchName: `Unknown Branch (${branchCode})`,
+              branchType: 'UNKNOWN'
+            });
+          }
+        }
+      }
+     
+      return {
+        PROD_ID: product.PROD_ID,
+        PRODUCT_NAME: product.name,
+        PRODUCT_SHORT_NAME: product.PRODUCT_SHORT_NAME,
+        PRODUCT_TYPE: product.PRODUCT_TYPE,
+        MIN_LOAN_AMOUNT: parseFloat(product.minAmount || '0'),
+        MAX_LOAN_AMOUNT: parseFloat(product.maxAmount || '0'),
+        LOAN_TERM_TYPE: product.LOAN_TERM_TYPE,
+        MIN_LOAN_TERM_VALUE: product.MIN_LOAN_TERM_VALUE,
+        MAX_LOAN_TERM_VALUE: product.MAX_LOAN_TERM_VALUE,
+        TERM_RANGE: `${product.MIN_LOAN_TERM_VALUE || 1}-${product.MAX_LOAN_TERM_VALUE || 60} ${product.LOAN_TERM_TYPE || 'MONTHS'}`,
+        HAS_INTEREST_RATE_REFERENCE: !!interestRate,
+        INTEREST_RATE: interestRate ? {
+          id: interestRate.id,
+          name: interestRate.name,
+          rateType: interestRate.RATE_TYPE,
+          minRate: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'),
+          maxRate: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
+          defaultRate: parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0'),
+          loanProudIntId: interestRate.LOAN_PROUD_INT_ID
+        } : null,
+        STATUS: product.STATUS,
+        BRANCHES: branchDetails,
+        isGlobalProduct: product.isGlobalProduct,
+        createdAt: product.created_at,
+        updatedAt: product.updated_at,
+        // Include raw BU_ID for debugging
+        _raw_BU_ID: product.BU_ID
+      };
+    })
+  );
+  
+  res.json({
+    success: true,
+    data: enhancedProducts,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: count,
+      pages: Math.ceil(count / limitNum)
+    }
+  });
+}),
 
   // GET PRODUCTS BY INTEREST RATE
   getProductsByInterestRate: asyncHandler(async (req, res) => {
@@ -1088,11 +1177,12 @@ createProduct: asyncHandler(async (req, res) => {
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
     
+    // FIXED: Changed 'createdAt' to 'created_at'
     const { count, rows: products } = await LoanProduct.findAndCountAll({
       where,
       limit: limitNum,
       offset,
-      order: [['createdAt', 'DESC']]
+      order: [['created_at', 'DESC']]  // ← FIXED
     });
     
     res.json({
@@ -1120,7 +1210,7 @@ createProduct: asyncHandler(async (req, res) => {
           MAX_LOAN_TERM_VALUE: product.MAX_LOAN_TERM_VALUE,
           isGlobalProduct: product.isGlobalProduct,
           BU_ID: product.BU_ID,
-          createdAt: product.createdAt
+          createdAt: product.created_at  // ← FIXED
         })),
         pagination: {
           page: pageNum,
@@ -1145,6 +1235,7 @@ createProduct: asyncHandler(async (req, res) => {
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
     
+    // FIXED: Changed 'name' to appropriate order column
     const { count, rows: products } = await LoanProduct.findAndCountAll({
       where: {
         LOAN_PROUD_INT_ID: loanProudIntId,
@@ -2068,7 +2159,7 @@ createProduct: asyncHandler(async (req, res) => {
       // Update ProductTypeMapping
       await ProductTypeMapping.update({
         LOAN_INTEREST_RATE_ID: newInterestRateId,
-        updatedAt: new Date()
+        updated_at: new Date()  // ← FIXED: changed from updatedAt to updated_at
       }, {
         where: { PROD_ID: product.PROD_ID },
         transaction

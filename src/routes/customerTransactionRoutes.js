@@ -6,7 +6,7 @@ import {
   getTransactionById,
   searchTransactions,
   exportTransactions,
-} from "../controllers/customerTransactionController.js";
+} from "../controllers/CustomerTransactionController.js";
 
 
 const router = express.Router();

@@ -1,4 +1,4 @@
-// app.js - EXPRESS APP ONLY (NO SERVER STARTUP)
+// app.js - EXPRESS APP ONLY (NO SERVER STARTUP) - WITH LAZY LOADING
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -27,6 +27,8 @@ dotenv.config();
 import { errorHandler } from './middlewares/errorHandler.js';
 import { notFound } from './middlewares/errors/NotFoundError.js';
 
+import ThriftSettingsRoutes from './routes/ThriftSettingsRoutes.js';
+
 // Initialize express app
 const app = express();
 
@@ -40,7 +42,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:"],
     },
   },
@@ -49,7 +51,7 @@ app.use(hpp());
 app.use(monitor());
 
 // ============================================
-// CORS CONFIGURATION - UPDATED WITH HTTPS
+// CORS CONFIGURATION
 // ============================================
 const corsOptions = {
   origin: [
@@ -62,7 +64,7 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'app-id']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'app-id', 'x-webhook-signature', 'x-nip-signature']
 };
 
 console.log('🛡️ CORS Allowed Origins:', corsOptions.origin);
@@ -83,7 +85,7 @@ app.use((req, res, next) => {
 });
 
 // Rate Limiting
-const limiter = rateLimit({
+const apiLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
   message: 'Too many requests from this IP, please try again later.',
@@ -94,11 +96,38 @@ const limiter = rateLimit({
     return isDev || isLogin || isLicense;
   }
 });
-app.use('/api', limiter);
 
-// Body parsing middleware
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb', parameterLimit: 100000 }));
+// Webhook rate limiter (higher limits)
+const webhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  message: 'Too many webhook requests',
+  skip: (req) => process.env.NODE_ENV === 'development'
+});
+
+// Apply rate limiting
+app.use('/api', apiLimiter);
+app.use('/api/inwardfunds', webhookLimiter);
+app.use('/api/webhook', webhookLimiter);
+app.use('/api/nip', webhookLimiter);
+
+app.use ('/api/thriftsetup', ThriftSettingsRoutes);
+
+// Body parsing middleware - IMPORTANT: Raw body needed for webhook signature verification
+app.use(express.json({ 
+  limit: '50mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '50mb', 
+  parameterLimit: 100000,
+  verify: (req, res, buf) => {
+    req.rawBody = req.rawBody || buf.toString();
+  }
+}));
 app.use(cookieParser());
 
 // Compression middleware
@@ -127,7 +156,7 @@ app.use(expressSession({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 86400000, // 24 hours
+    maxAge: 86400000,
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax'
   }
 }));
@@ -150,7 +179,7 @@ if (cloudinaryConfig.cloud_name && cloudinaryConfig.api_key && cloudinaryConfig.
 }
 
 // ============================================
-// HEALTH & UTILITY ENDPOINTS
+// HEALTH & UTILITY ENDPOINTS (These work immediately)
 // ============================================
 
 // Health check endpoint
@@ -175,7 +204,12 @@ app.get('/health', async (req, res) => {
     dbStatus: dbDetails,
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development',
-    cors: { allowedOrigins: corsOptions.origin.length, currentOrigin: req.headers.origin || 'none' }
+    cors: { allowedOrigins: corsOptions.origin.length, currentOrigin: req.headers.origin || 'none' },
+    webhooks: {
+      inwardFunds: '/api/inwardfunds/webhook',
+      multiGateway: '/api/webhook',
+      nip: '/api/nip'
+    }
   });
 });
 
@@ -187,7 +221,193 @@ app.get('/server-time', (req, res) => res.json({
 }));
 
 // ============================================
-// API ROOT ENDPOINTS - ADDED
+// LAZY LOAD ROUTES - THESE LOAD AFTER SERVER STARTS
+// ============================================
+
+// Helper function to lazy load routes
+const lazyLoadRoute = (routePath) => {
+  return async (req, res, next) => {
+    try {
+      console.log(`🔄 Lazy loading route: ${routePath}`);
+      const module = await import(routePath);
+      const handler = module.default;
+      handler(req, res, next);
+    } catch (error) {
+      console.error(`❌ Failed to lazy load route ${routePath}:`, error.message);
+      
+      // Return a 503 Service Unavailable with helpful message
+      res.status(503).json({
+        success: false,
+        message: 'Service not available',
+        error: `Route ${req.path} could not be loaded`,
+        details: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  };
+};
+
+// Mount webhook routes lazily
+app.use('/api/inwardfunds', lazyLoadRoute('./routes/InwardFundsTransferRoutes.js'));
+app.use('/api/webhook', lazyLoadRoute('./routes/WebhookRoutes.js'));
+app.use('/api/nip/webhook', lazyLoadRoute('./routes/NipWebhookRoutes.js'));
+
+// Mount all other routes lazily
+app.use('/api/users', lazyLoadRoute('./routes/userRoutes.js'));
+app.use('/api/login', lazyLoadRoute('./routes/LoginRoutes.js'));
+app.use('/api/user-role', lazyLoadRoute('./routes/UserRoleRoutes.js'));
+app.use('/api/permissions', lazyLoadRoute('./routes/PermissionRoutes.js'));
+
+app.use('/api/aml', lazyLoadRoute('./routes/amlRoutes.js'));
+app.use('/api/aml-threshold', lazyLoadRoute('./routes/AMLThresholdRoutes.js'));
+
+app.use('/api/customer', lazyLoadRoute('./routes/CustomerRoutes.js'));
+app.use('/api/customers-account', lazyLoadRoute('./routes/CustomerAccountRoutes.js'));
+app.use('/api/customer-types', lazyLoadRoute('./routes/CustomerTypeRoutes.js'));
+app.use('/api/identifications', lazyLoadRoute('./routes/IdentificationInformationRoutes.js'));
+app.use('/api/guarantors', lazyLoadRoute('./routes/GuarantorRoutes.js'));
+app.use('/api/upload-guarantors', lazyLoadRoute('./routes/uploadGuarantorDocumentsRoutes.js'));
+
+app.use('/api/deposit', lazyLoadRoute('./routes/DepositRoutes.js'));
+app.use('/api/deposit-transaction', lazyLoadRoute('./routes/DepositTransactionRoutes.js'));
+app.use('/api/deposit-summary', lazyLoadRoute('./routes/DepositAccountSummaryRoutes.js'));
+app.use('/api/deposit-account-application', lazyLoadRoute('./routes/DepositAccountApplicationRoutes.js'));
+app.use('/api/deposit-account-history', lazyLoadRoute('./routes/DepositAccountHistoryRoutes.js'));
+app.use('/api/deposit-account-interest', lazyLoadRoute('./routes/DepositAccountInterestRoute.js'));
+app.use('/api/deposit-account-interest-audit', lazyLoadRoute('./routes/Deposit_Account_INTEREST$AUDRoutes.js'));
+app.use('/api/deposit-account-interest-option', lazyLoadRoute('./routes/DepositAccountInterestOptionRoutes.js'));
+app.use('/api/deposit-account-interest-tier', lazyLoadRoute('./routes/DepositAccountInterest_TierRoutes.js'));
+app.use('/api/deposit-account-monthly-stat', lazyLoadRoute('./routes/DepositAccountMonthlyStatRoute.js'));
+app.use('/api/deposit-search', lazyLoadRoute('./routes/DepositSearchRoutes.js'));
+app.use('/api/term-deposit', lazyLoadRoute('./routes/TermDepositRoutes.js'));
+app.use('/api/transaction', lazyLoadRoute('./routes/transactionsRoutes.js'));
+app.use('/api/cash-withdrawals', lazyLoadRoute('./routes/CashWithdrawalTransactionRoutes.js'));
+app.use('/api/withdrawals', lazyLoadRoute('./routes/withdrawalRoutes.js'));
+
+app.use('/api/loans', lazyLoadRoute('./routes/LoanAccountRoutes.js'));
+app.use('/api/loan-accounts-details', lazyLoadRoute('./routes/LoanAccountDetailsRoutes.js'));
+app.use('/api/loan-contract-form', lazyLoadRoute('./routes/LoanContractFormRoutes.js'));
+app.use('/api/loan-fees', lazyLoadRoute('./routes/LoanFeeRoutes.js'));
+app.use('/api/loan-product', lazyLoadRoute('./routes/LoanProductRoutes.js'));
+app.use('/api/loan-repayments', lazyLoadRoute('./routes/LoanRepaymentRoute.js'));
+app.use('/api/overdue', lazyLoadRoute('./routes/OverdueLoansRoutes.js'));
+app.use('/api/repayment-schedule', lazyLoadRoute('./routes/repaymentScheduleRoutes.js'));
+app.use('/api/credit-applications', lazyLoadRoute('./routes/CreditApplicationRoutes.js'));
+
+app.use('/api/system-date', lazyLoadRoute('./routes/systemDateRoutes.js'));
+app.use('/api/holiday', lazyLoadRoute('./routes/holidayRoutes.js'));
+app.use('/api/business-units', lazyLoadRoute('./routes/BusinessUnitRoutes.js'));
+app.use('/api/business-roles', lazyLoadRoute('./routes/businessRoleRoutes.js'));
+app.use('/api/license', lazyLoadRoute('./routes/LicenseRoutes.js'));
+app.use('/api/countries', lazyLoadRoute('./routes/CountryRoutes.js'));
+app.use('/api/os', lazyLoadRoute('./routes/OsRoutes.js'));
+app.use('/api/products', lazyLoadRoute('./routes/SavingsProductsRoutes.js'));
+app.use('/api/product-mapping', lazyLoadRoute('./routes/productTypeMappingRoutes.js'));
+
+app.use('/api/workflow', lazyLoadRoute('./routes/WF_BUSINESS_PROCESSRoutes.js'));
+app.use('/api/workflow-queue', lazyLoadRoute('./routes/WF_QUEUERoutes.js'));
+app.use('/api/work-items', lazyLoadRoute('./routes/WF_WORK_ITEMRoutes.js'));
+app.use('/api/sub-process', lazyLoadRoute('./routes/WF_SUB_PROCESSRoutes.js'));
+app.use('/api/sub-process-policy', lazyLoadRoute('./routes/WF_SubProcessPolicyRoutes.js'));
+app.use('/api/business-role-queue', lazyLoadRoute('./routes/WF_BusinessRoleQueueRoutes.js'));
+app.use('/api/customer-workflow-routing', lazyLoadRoute('./routes/CustWorkflowRoutingRoutes.js'));
+
+app.use('/api/gl-accounts', lazyLoadRoute('./routes/GLAccountRoutes.js'));
+app.use('/api/gl-transactions', lazyLoadRoute('./routes/GLAccountTransactionRoutes.js'));
+app.use('/api/ledgers', lazyLoadRoute('./routes/LedgerRoutes.js'));
+app.use('/api/interest-rates', lazyLoadRoute('./routes/InterestCalculationServiceRoutes.js'));
+
+app.use('/api/drawer', lazyLoadRoute('./routes/DrawerRoutes.js'));
+app.use('/api/drawer-currency-denomination', lazyLoadRoute('./routes/DrawerCurrencyDenominationRoutes.js'));
+app.use('/api/drawer-reassignments', lazyLoadRoute('./routes/DrawerReassignmentRoutes.js'));
+app.use('/api/drawer-user-role', lazyLoadRoute('./routes/DrawerUserRoleRoutes.js'));
+
+app.use('/api/direct-debits', lazyLoadRoute('./routes/DirectDebitRoutes.js'));
+app.use('/api/direct-debit-requests', lazyLoadRoute('./routes/DirectDebitRequestRoute.js'));
+app.use('/api/direct-debit-schedulers', lazyLoadRoute('./routes/DirectDebitSchedulerRoutes.js'));
+
+app.use('/api/notification', lazyLoadRoute('./routes/NotificationServiceRoutes.js'));
+app.use('/api/sms', lazyLoadRoute('./routes/SMSRoutes.js'));
+
+app.use('/api/analytics', lazyLoadRoute('./routes/AnalyticsRoute.js'));
+app.use('/api/audit-trails', lazyLoadRoute('./routes/AuditTrailRoutes.js'));
+app.use('/api/audit', lazyLoadRoute('./routes/AuditTrailRoutes.js'));
+app.use('/api/dashboard', lazyLoadRoute('./routes/dashboardRoutes.js'));
+
+app.use('/api/upload', lazyLoadRoute('./routes/uploadFileRoutes.js'));
+app.use('/api/subfolders', lazyLoadRoute('./routes/SubfolderRoutes.js'));
+
+app.use('/api/event', lazyLoadRoute('./routes/eventRoutes.js'));
+app.use('/api/reclassify', lazyLoadRoute('./routes/AutoReclassifyRoutes.js'));
+app.use('/api/officers', lazyLoadRoute('./routes/RelationshipOfficerRoutes.js'));
+app.use('/api/policy', lazyLoadRoute('./routes/TransactionPolicyRoutes.js'));
+
+app.use('/api/system', lazyLoadRoute('./routes/system.js'));
+app.use('/api/config', lazyLoadRoute('./routes/config.js'));
+
+app.use('/api/reports', lazyLoadRoute('./routes/reportRoutes.js'));
+app.use('/api/account-report', lazyLoadRoute('./routes/accountStatementRoutes.js'));
+app.use('/api/reports/income-expense', lazyLoadRoute('./routes/incomeExpenseRoutes.js'));
+
+app.use('/api/savings-product', lazyLoadRoute('./routes/SavingsProductsRoutes.js'));
+app.use('/api/charges', lazyLoadRoute('./routes/ChargeRoutes.js'));
+app.use('/api/identifiers', lazyLoadRoute('./routes/identifierRoutes.js'));
+app.use('/api/gl-categories', lazyLoadRoute('./routes/glCategoriesRoutes.js'));
+app.use('/api/branches', lazyLoadRoute('./routes/BranchRoutes.js'));
+app.use('/api/organization', lazyLoadRoute('./routes/OrganizationRoutes.js'));
+
+app.use('/api/banking', lazyLoadRoute('./routes/BankRoutes.js'));
+app.use('/api/teller', lazyLoadRoute('./routes/tellerStatsRoutes.js'));
+app.use('/api/thrift-banking', lazyLoadRoute('./routes/ThriftRoutes.js'));
+
+app.use('/api/users/credit-officer', lazyLoadRoute('./routes/creditOfficerRoutes.js'));
+app.use('/api/thrift-report', lazyLoadRoute('./routes/TriftReportRoutes.js'));
+
+app.use('/api/cleandb', lazyLoadRoute('./routes/CleanupDB.js'));
+
+app.use('/api/standing-order', lazyLoadRoute('./routes/StandingOrderRoutes.js'));
+
+app.use('/api/portfolio-report', lazyLoadRoute('./routes/LoanPortfolioRoutes.js'));
+
+app.use('/api/group', lazyLoadRoute('./routes/GroupRoutes.js'));
+
+app.use('/api/group-savings', lazyLoadRoute('./routes/GroupSavingsRoutes.js'));
+app.use('/api/debug', lazyLoadRoute('./routes/uploadTest.js'));
+
+app.use('/api/loan-account-summary', lazyLoadRoute('./routes/LoanAccountSummaryRoutes.js'));
+app.use('/api/loan-repayment-transaction', lazyLoadRoute('./routes/loanRepaymentTransactionRoutes.js'));
+app.use('/api/collections', lazyLoadRoute('./routes/CollectionRoutes.js'));
+app.use('/api/accounts', lazyLoadRoute('./routes/AccountRoutes.js'));
+app.use('/api/chart-of-accounts', lazyLoadRoute('./routes/chartofAccountRoutes.js'));
+app.use('/api/account-statements', lazyLoadRoute('./routes/accountStatementRoutes.js'));
+
+app.use('/api/vault-config', lazyLoadRoute('./routes/vaultConfigRoutes.js'));
+app.use('/api/vault', lazyLoadRoute('./routes/VaultRoutes.js'));
+app.use('/api/test', lazyLoadRoute('./routes/testRoutes.js'));
+app.use('/api/vault/transactions', lazyLoadRoute('./routes/VaultTransactions.js'));
+app.use('/api/calculator', lazyLoadRoute('./routes/loanCalculatorRoutes.js'));
+app.use('/api/portfolio', lazyLoadRoute('./routes/PorfolioRoutes.js'));
+app.use('/api/index-rates', lazyLoadRoute('./routes/RateIndexRoutes.js'));
+
+app.use("/api/customer-transactions", lazyLoadRoute('./routes/customerTransactionRoutes.js'));
+app.use("/api/Loan-disbursement-report", lazyLoadRoute('./routes/DisbursementReportRoutes.js'));
+
+// Mount new MySQL/Sequelize routes
+app.use('/api/penalties', lazyLoadRoute('./routes/LoanpenaltyRoutes.js'));
+app.use('/api/organizations', lazyLoadRoute('./routes/OrganizationRoutes.js'));
+app.use('/api/overdue-loans', lazyLoadRoute('./routes/OverdueLoansRoutes.js'));
+app.use('/api/notifications', lazyLoadRoute('./routes/NotificationServiceRoutes.js'));
+app.use('/api/guarantor-audits', lazyLoadRoute('./routes/GuarantorAuditRoutes.js'));
+app.use('/api/next-of-kins', lazyLoadRoute('./routes/NextOfKinRoutes.js'));
+app.use('/api/configuration', lazyLoadRoute('./routes/ConfigurationRoutes.js'));
+app.use('/api/account-applications', lazyLoadRoute('./routes/AccountApplicationRoutes.js'));
+app.use('/api/post-transactions', lazyLoadRoute('./routes/TransactionRoutes.js'));
+
+// Encryption routes
+app.use('/api/encyption-post-transactions', lazyLoadRoute('./routes/EncryptionRoutes.js'));
+
+// ============================================
+// API ROOT ENDPOINTS (These work immediately)
 // ============================================
 
 // Root API endpoint
@@ -201,58 +421,26 @@ app.get('/api', (req, res) => {
     health: '/health',
     serverTime: '/server-time',
     corsInfo: '/cors-info',
-    endpoints: {
-      // Customer Management
-      customer: '/api/customer',
-      nextOfKin: '/api/next-of-kins',
-      customerTypes: '/api/customer-types',
-
-      // User Management
-      users: '/api/users',
-      login: '/api/login',
-      userRoles: '/api/user-role',
-      permissions: '/api/permissions',
-
-      // Account Management
-      accounts: '/api/accounts',
-      deposits: '/api/deposit',
-      loans: '/api/loans',
-      transactions: '/api/transaction',
-
-      // Workflow
-      workflow: '/api/workflow',
-      workItems: '/api/work-items',
-
-      // AML & Compliance
-      aml: '/api/aml',
-      amlThreshold: '/api/aml-threshold',
-
-      // System
-      system: '/api/system',
-      configuration: '/api/configuration',
-      license: '/api/license',
-
-      // Reports
-      reports: '/api/reports',
-      analytics: '/api/analytics',
-      dashboard: '/api/dashboard',
-
-      // Test & Debug
-      test: '/api/test',
-      debug: '/api/debug',
-      health: '/health'
+    note: 'Routes are loaded lazily. First request to any endpoint may be slow as it loads the route.',
+    webhooks: {
+      inwardFunds: {
+        webhook: 'POST /api/inwardfunds/webhook',
+        health: 'GET /api/inwardfunds/webhook/health'
+      },
+      multiGateway: {
+        webhook: 'POST /api/webhook',
+        gatewaySpecific: 'POST /api/webhook/:gateway',
+        gateways: 'GET /api/webhook/gateways',
+        health: 'GET /api/webhook/health'
+      },
+      nip: {
+        fundsTransfer: 'POST /api/nip/fundstransfer',
+        nameEnquiry: 'POST /api/nip/nameenquiry',
+        statusEnquiry: 'POST /api/nip/statusenquiry',
+        reversal: 'POST /api/nip/reversal',
+        health: 'GET /api/nip/health'
+      }
     }
-  });
-});
-
-// API version endpoint
-app.get('/api/v1', (req, res) => {
-  res.json({
-    success: true,
-    message: 'API v1',
-    version: '1.0.0',
-    timestamp: new Date().toISOString(),
-    documentation: 'Visit /api for full endpoint list'
   });
 });
 
@@ -261,27 +449,13 @@ app.get('/api-docs', (req, res) => {
   res.json({
     name: 'Evolution Banking System API',
     version: '1.0.0',
-    description: 'Complete banking system API with customer management, transactions, loans, deposits, and workflow automation',
+    description: 'Complete banking system API with lazy-loaded routes',
     baseUrl: '/api',
-    endpoints: {
-      // New MySQL/Sequelize endpoints
-      penalty: '/api/penalties',
-      organization: '/api/organizations',
-      overdue_loans: '/api/overdue-loans',
-      notifications: '/api/notifications',
-      guarantor_audits: '/api/guarantor-audits',
-      insurance_policies: '/api/insurance-policies',
-      interest_accruals: '/api/interest-accruals',
-      // Legacy endpoints (from your existing system)
-      users: '/api/users',
-      customers: '/api/customer',
-      deposits: '/api/deposit',
-      loans: '/api/loans',
-      workflow: '/api/workflow',
-      gl_accounts: '/api/gl-accounts',
-      vault: '/api/vault',
-      nextOfKin: '/api/next-of-kins',
-      configuration: '/api/configuration'
+    note: 'Routes are loaded on first request. Initial request may be slower.',
+    webhooks: {
+      inwardFunds: { endpoint: '/api/inwardfunds/webhook', methods: ['POST'] },
+      multiGateway: { endpoint: '/api/webhook', supportedGateways: ['nip', 'stripe', 'paypal', 'json'] },
+      nip: { endpoints: ['/api/nip/fundstransfer', '/api/nip/nameenquiry', '/api/nip/statusenquiry', '/api/nip/reversal'] }
     }
   });
 });
@@ -301,296 +475,170 @@ app.post('/cors-test', (req, res) => res.json({
 }));
 
 // ============================================
-// IMPORT ALL EXISTING ROUTES
+// WEBHOOK TEST ENDPOINTS (Development only)
 // ============================================
 
-// Import your existing routes (unchanged)
-import amlRoutes from './routes/amlRoutes.js';
-import AMLThresholdRoutes from './routes/AMLThresholdRoutes.js';
-import userRoutes from './routes/userRoutes.js';
-import LoginRoutes from './routes/LoginRoutes.js';
-import AuditTrailRoutes from './routes/AuditTrailRoutes.js';
-import AutoReclassifyRoutes from './routes/AutoReclassifyRoutes.js';
-import AnalyticsRoutes from './routes/AnalyticsRoute.js';
-import businessRoleRoutes from './routes/businessRoleRoutes.js';
-import BusinessUnitRoutes from './routes/BusinessUnitRoutes.js';
-import CashWithdrawalTransactionRoutes from './routes/CashWithdrawalTransactionRoutes.js';
-import CountryRoutes from './routes/CountryRoutes.js';
-import CreditApplicationRoutes from './routes/CreditApplicationRoutes.js';
-import CustWorkflowRoutingRoutes from './routes/CustWorkflowRoutingRoutes.js';
-import CustomerAccountRoutes from './routes/CustomerAccountRoutes.js';
-import CustomerRoutes from './routes/CustomerRoutes.js';
-import CustomerTypeRoutes from './routes/CustomerTypeRoutes.js';
-import dashboardRoutes from './routes/dashboardRoutes.js';
-import DepositAccountApplicationRoutes from './routes/DepositAccountApplicationRoutes.js';
-import DepositAccountHistoryRoutes from './routes/DepositAccountHistoryRoutes.js';
-import DepositAccountInterestOptionRoutes from './routes/DepositAccountInterestOptionRoutes.js';
-import DepositAccountInterestRoutes from './routes/DepositAccountInterestRoute.js';
-import DepositAccountInterest_TierRoutes from './routes/DepositAccountInterest_TierRoutes.js';
-import DepositAccountMonthlyStatRoute from './routes/DepositAccountMonthlyStatRoute.js';
-import DepositAccountSummaryRoutes from './routes/DepositAccountSummaryRoutes.js';
-import DepositRoutes from './routes/DepositRoutes.js';
-import DepositSearchRoutes from './routes/DepositSearchRoutes.js';
-import DepositTransactionRoutes from './routes/DepositTransactionRoutes.js';
-import Deposit_Account_INTEREST$AUDRoutes from './routes/Deposit_Account_INTEREST$AUDRoutes.js';
-import DirectDebitRequestRoutes from './routes/DirectDebitRequestRoute.js';
-import DirectDebitRoutes from './routes/DirectDebitRoutes.js';
-import DirectDebitSchedulerRoutes from './routes/DirectDebitSchedulerRoutes.js';
-import DrawerCurrencyDenominationRoutes from './routes/DrawerCurrencyDenominationRoutes.js';
-import DrawerRoutes from './routes/DrawerRoutes.js';
-import DrawerUserRoleRoutes from './routes/DrawerUserRoleRoutes.js';
-import drawerReassignmentRoutes from './routes/DrawerReassignmentRoutes.js';
-import eventRoutes from './routes/eventRoutes.js';
-import getRepaymentSchedule from './routes/repaymentScheduleRoutes.js';
-import GLAccountRoutes from './routes/GLAccountRoutes.js';
-import GLAccountTransactionRoutes from './routes/GLAccountTransactionRoutes.js';
-import GuarantorRoutes from './routes/GuarantorRoutes.js';
-import holidayRoutes from './routes/holidayRoutes.js';
-import IdentificationInformationRoutes from './routes/IdentificationInformationRoutes.js';
-import InterestCalculationServiceRoutes from './routes/InterestCalculationServiceRoutes.js';
-import ledgerRoutes from './routes/LedgerRoutes.js';
-import LicenseRoutes from './routes/LicenseRoutes.js';
-import LoanAccountDetailsRoutes from './routes/LoanAccountDetailsRoutes.js';
-import LoanAccountRoutes from './routes/LoanAccountRoutes.js';
-import LoanContractFormRoutes from './routes/LoanContractFormRoutes.js';
-import LoanFeeRoutes from './routes/LoanFeeRoutes.js';
-import LoanProductRoutes from './routes/LoanProductRoutes.js';
-import LoanRepaymentRoutes from './routes/LoanRepaymentRoute.js';
-import NotificationServiceRoutes from './routes/NotificationServiceRoutes.js';
-import OsRoutes from './routes/OsRoutes.js';
-import OverdueLoanRoutes from './routes/OverdueLoansRoutes.js';
-import PermissionRoutes from './routes/PermissionRoutes.js';
-import productTypeMappingRoutes from './routes/productTypeMappingRoutes.js';
-import RelationshipofficerRoutes from './routes/RelationshipOfficerRoutes.js';
-import SMSRoutes from './routes/SMSRoutes.js';
-import SubfolderRoutes from './routes/SubfolderRoutes.js';
-import systemDateRoutes from './routes/systemDateRoutes.js';
-import TermDepositRoutes from './routes/TermDepositRoutes.js';
-import TransactionPolicyRoutes from './routes/TransactionPolicyRoutes.js';
-import transactionRoutes from './routes/transactionsRoutes.js';
-import uploadFileRoutes from './routes/uploadFileRoutes.js';
-import uploadGuarantorDocumentsRoutes from './routes/uploadGuarantorDocumentsRoutes.js';
-import UserRoleRoutes from './routes/UserRoleRoutes.js';
-import WF_BUSINESS_PROCESS from './routes/WF_BUSINESS_PROCESSRoutes.js';
-import WF_BusinessRoleQueue from './routes/WF_BusinessRoleQueueRoutes.js';
-import WF_QUEUERoutes from './routes/WF_QUEUERoutes.js';
-import WF_SUB_PROCESS from './routes/WF_SUB_PROCESSRoutes.js';
-import WF_SubProcessPolicy from './routes/WF_SubProcessPolicyRoutes.js';
-import WF_WORK_ITEMRoutes from './routes/WF_WORK_ITEMRoutes.js';
-import withdrawalRoutes from './routes/withdrawalRoutes.js';
-import systemRoutes from './routes/system.js';
-import configRoutes from './routes/config.js';
-import InwardFundsTransferWebhook from './routes/InwardFundsTransferWebhook.js';
-import reportRoutes from './routes/reportRoutes.js';
-import accountStatementRoutes from './routes/accountStatementRoutes.js';
-import incomeExpenseRoutes from './routes/incomeExpenseRoutes.js';
-import SavingsProductsRoutes from './routes/SavingsProductsRoutes.js';
-import ChargeRoutes from './routes/ChargeRoutes.js';
-import identifierRoutes from './routes/identifierRoutes.js';
-import glCategoriesRoutes from './routes/glCategoriesRoutes.js';
-import BranchRoutes from './routes/BranchRoutes.js';
-import OrganizationRoutes from './routes/OrganizationRoutes.js';
-import BankRoutes from './routes/BankRoutes.js';
-import tellerStatsRoutes from './routes/tellerStatsRoutes.js';
-import ThriftRoutes from './routes/ThriftRoutes.js';
-import creditOfficerRoutes from './routes/creditOfficerRoutes.js';
-import TriftReportRoutes from './routes/TriftReportRoutes.js';
-import CleanupDB from './routes/CleanupDB.js';
-import StandingOrderRoutes from './routes/StandingOrderRoutes.js';
-import LoanPortfolioRoutes from './routes/LoanPortfolioRoutes.js';
-import GroupRoutes from './routes/GroupRoutes.js';
-import groupSavingsRoutes from './routes/GroupSavingsRoutes.js';
-import uploadTestRoutes from './routes/uploadTest.js';
-import LoanAccountSummaryRoutes from './routes/LoanAccountSummaryRoutes.js';
-import loanRepaymentTransactionRoutes from './routes/loanRepaymentTransactionRoutes.js';
-import CollectionRoutes from './routes/CollectionRoutes.js';
-import AccountRoutes from './routes/AccountRoutes.js';
-import chartofAccountRoutes from './routes/chartofAccountRoutes.js';
-import AccountStatementRoutes from './routes/accountStatementRoutes.js';
-import VaultRoutes from './routes/VaultRoutes.js';
-import vaultConfigRoutes from './routes/vaultConfigRoutes.js';
-import testRoutes from './routes/testRoutes.js';
-import vaultTransactionRoutes from './routes/VaultTransactions.js';
-import loanCalculatorRoutes from './routes/loanCalculatorRoutes.js';
-import PortfolioRoutes from './routes/PorfolioRoutes.js';
-import RateIndexRoutes from './routes/RateIndexRoutes.js';
-import customerTransactionRoutes from './routes/customerTransactionRoutes.js';
-import DisbursementReportRoutes from './routes/DisbursementReportRoutes.js';
-import ConfigurationRoutes from './routes/ConfigurationRoutes.js';
-
-// Import new MySQL/Sequelize routes
-import penaltyRoutes from './routes/LoanpenaltyRoutes.js';
-import organizationRoutes from './routes/OrganizationRoutes.js';
-import overdueLoanRoutes from './routes/OverdueLoansRoutes.js';
-import notificationRoutes from './routes/NotificationServiceRoutes.js';
-import guarantorAuditRoutes from './routes/GuarantorAuditRoutes.js';
-import NextOfKinRoutes from './routes/NextOfKinRoutes.js';
-import AccountApplicationRoutes from './routes/AccountApplicationRoutes.js';
-import TransactionRoutes from './routes/TransactionRoutes.js';
-import EncrytionRoutes from './routes/EncryptionRoutes.js';
-
-
-// ============================================
-// MOUNT ALL ROUTES
-// ============================================
-
-// Mount your existing routes (unchanged)
-app.use('/api/users', userRoutes);
-app.use('/api/login', LoginRoutes);
-app.use('/api/user-role', UserRoleRoutes);
-app.use('/api/permissions', PermissionRoutes);
-
-app.use('/api/aml', amlRoutes);
-app.use('/api/aml-threshold', AMLThresholdRoutes);
-
-app.use('/api/customer', CustomerRoutes);
-app.use('/api/customers-account', CustomerAccountRoutes);
-app.use('/api/customer-types', CustomerTypeRoutes);
-app.use('/api/identifications', IdentificationInformationRoutes);
-app.use('/api/guarantors', GuarantorRoutes);
-app.use('/api/upload-guarantors', uploadGuarantorDocumentsRoutes);
-
-app.use('/api/deposit', DepositRoutes);
-app.use('/api/deposit-transaction', DepositTransactionRoutes);
-app.use('/api/deposit-summary', DepositAccountSummaryRoutes);
-app.use('/api/deposit-account-application', DepositAccountApplicationRoutes);
-app.use('/api/deposit-account-history', DepositAccountHistoryRoutes);
-app.use('/api/deposit-account-interest', DepositAccountInterestRoutes);
-app.use('/api/deposit-account-interest-audit', Deposit_Account_INTEREST$AUDRoutes);
-app.use('/api/deposit-account-interest-option', DepositAccountInterestOptionRoutes);
-app.use('/api/deposit-account-interest-tier', DepositAccountInterest_TierRoutes);
-app.use('/api/deposit-account-monthly-stat', DepositAccountMonthlyStatRoute);
-app.use('/api/deposit-search', DepositSearchRoutes);
-app.use('/api/term-deposit', TermDepositRoutes);
-app.use('/api/transaction', transactionRoutes);
-app.use('/api/cash-withdrawals', CashWithdrawalTransactionRoutes);
-app.use('/api/withdrawals', withdrawalRoutes);
-
-app.use('/api/loans', LoanAccountRoutes);
-app.use('/api/loan-accounts-details', LoanAccountDetailsRoutes);
-app.use('/api/loan-contract-form', LoanContractFormRoutes);
-app.use('/api/loan-fees', LoanFeeRoutes);
-app.use('/api/loan-product', LoanProductRoutes);
-app.use('/api/loan-repayments', LoanRepaymentRoutes);
-app.use('/api/overdue', OverdueLoanRoutes);
-app.use('/api/repayment-schedule', getRepaymentSchedule);
-app.use('/api/credit-applications', CreditApplicationRoutes);
-
-app.use('/api/system-date', systemDateRoutes);
-app.use('/api/holiday', holidayRoutes);
-app.use('/api/business-units', BusinessUnitRoutes);
-app.use('/api/business-roles', businessRoleRoutes);
-app.use('/api/license', LicenseRoutes);
-app.use('/api/countries', CountryRoutes);
-app.use('/api/os', OsRoutes);
-app.use('/api/products', SavingsProductsRoutes);
-app.use('/api/product-mapping', productTypeMappingRoutes);
-
-app.use('/api/workflow', WF_BUSINESS_PROCESS);
-app.use('/api/workflow-queue', WF_QUEUERoutes);
-app.use('/api/work-items', WF_WORK_ITEMRoutes);
-app.use('/api/sub-process', WF_SUB_PROCESS);
-app.use('/api/sub-process-policy', WF_SubProcessPolicy);
-app.use('/api/business-role-queue', WF_BusinessRoleQueue);
-app.use('/api/customer-workflow-routing', CustWorkflowRoutingRoutes);
-
-app.use('/api/gl-accounts', GLAccountRoutes);
-app.use('/api/gl-transactions', GLAccountTransactionRoutes);
-app.use('/api/ledgers', ledgerRoutes);
-app.use('/api/interest-rates', InterestCalculationServiceRoutes);
-
-app.use('/api/drawer', DrawerRoutes);
-app.use('/api/drawer-currency-denomination', DrawerCurrencyDenominationRoutes);
-app.use('/api/drawer-reassignments', drawerReassignmentRoutes);
-app.use('/api/drawer-user-role', DrawerUserRoleRoutes);
-
-app.use('/api/direct-debits', DirectDebitRoutes);
-app.use('/api/direct-debit-requests', DirectDebitRequestRoutes);
-app.use('/api/direct-debit-schedulers', DirectDebitSchedulerRoutes);
-
-app.use('/api/notification', NotificationServiceRoutes);
-app.use('/api/sms', SMSRoutes);
-
-app.use('/api/analytics', AnalyticsRoutes);
-app.use('/api/audit-trails', AuditTrailRoutes);
-// FIXED: Use the correct imported variable name
-app.use('/api/audit', AuditTrailRoutes);  // Changed from auditTrailRoutes to AuditTrailRoutes
-app.use('/api/dashboard', dashboardRoutes);
-
-app.use('/api/upload', uploadFileRoutes);
-app.use('/api/subfolders', SubfolderRoutes);
-
-app.use('/api/event', eventRoutes);
-app.use('/api/reclassify', AutoReclassifyRoutes);
-app.use('/api/officers', RelationshipofficerRoutes);
-app.use('/api/policy', TransactionPolicyRoutes);
-
-app.use('/api/system', systemRoutes);
-app.use('/api/config', configRoutes);
-
-app.use('/api/inwardfunds', InwardFundsTransferWebhook);
-
-app.use('/api/reports', reportRoutes);
-app.use('/api/account-report', accountStatementRoutes);
-app.use('/api/reports/income-expense', incomeExpenseRoutes);
-
-app.use('/api/savings-product', SavingsProductsRoutes);
-app.use('/api/charges', ChargeRoutes);
-app.use('/api/identifiers', identifierRoutes);
-app.use('/api/gl-categories', glCategoriesRoutes);
-app.use('/api/branches', BranchRoutes);
-app.use('/api/organization', OrganizationRoutes);
-
-app.use('/api/banking', BankRoutes);
-app.use('/api/teller', tellerStatsRoutes);
-app.use('/api/thrift-banking', ThriftRoutes);
-
-app.use('/api/users/credit-officer', creditOfficerRoutes);
-app.use('/api/thrift-report', TriftReportRoutes);
-
-app.use('/api/cleandb', CleanupDB);
-
-app.use('/api/standing-order', StandingOrderRoutes);
-
-app.use('/api/portfolio-report', LoanPortfolioRoutes);
-
-app.use('/api/group', GroupRoutes);
-
-app.use('/api/group-savings', groupSavingsRoutes);
-app.use('/api/debug', uploadTestRoutes);
-app.use('/api/branch', BranchRoutes);
-
-app.use('/api/loan-account-summary', LoanAccountSummaryRoutes);
-app.use('/api/loan-repayment-transaction', loanRepaymentTransactionRoutes);
-app.use('/api/collections', CollectionRoutes);
-app.use('/api/accounts', AccountRoutes);
-app.use('/api/chart-of-accounts', chartofAccountRoutes);
-app.use('/api/account-statements', AccountStatementRoutes);
-
-app.use('/api/vault-config', vaultConfigRoutes);
-app.use('/api/vault', VaultRoutes);
-app.use('/api/test', testRoutes);
-app.use('/api/vault/transactions', vaultTransactionRoutes);
-app.use('/api/calculator', loanCalculatorRoutes);
-app.use('/api/portfolio', PortfolioRoutes);
-app.use('/api/index-rates', RateIndexRoutes);
-
-app.use("/api/customer-transactions", customerTransactionRoutes);
-app.use("/api/Loan-disbursement-report", DisbursementReportRoutes);
-
-// Mount new MySQL/Sequelize routes
-app.use('/api/penalties', penaltyRoutes);
-app.use('/api/organizations', organizationRoutes);
-app.use('/api/overdue-loans', overdueLoanRoutes);
-app.use('/api/notifications', NotificationServiceRoutes);
-app.use('/api/guarantor-audits', guarantorAuditRoutes);
-app.use('/api/next-of-kins', NextOfKinRoutes);
-app.use('/api/configuration', ConfigurationRoutes);
-app.use('/api/account-applications', AccountApplicationRoutes);
-app.use('/api/post-transactions', TransactionRoutes);
-
-//EncytionRoutes//
-app.use('/api/encyption-post-transactions', EncrytionRoutes);
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/test/webhooks', (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Webhook Tester</title>
+        <style>
+          body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+          .container { max-width: 1200px; margin: 0 auto; }
+          .header { background: #2c3e50; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+          .note { background: #f39c12; color: white; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+          .endpoint { background: white; padding: 20px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+          .method { display: inline-block; padding: 3px 8px; border-radius: 5px; font-weight: bold; }
+          .method.post { background: #27ae60; color: white; }
+          .method.get { background: #3498db; color: white; }
+          .success { color: #27ae60; }
+          .error { color: #e74c3c; }
+          textarea { width: 100%; height: 200px; font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+          button { background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+          button:hover { background: #2980b9; }
+          .result { background: #2c3e50; color: white; padding: 20px; border-radius: 10px; margin-top: 20px; overflow-x: auto; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔌 Webhook Tester</h1>
+            <p>Test all webhook endpoints</p>
+          </div>
+          
+          <div class="note">
+            ⚠️ Routes are loaded lazily. First request to each endpoint may be slow as it loads the route.
+          </div>
+          
+          <!-- Rest of the HTML remains the same -->
+          <div class="grid">
+            <div>
+              <h2>Inward Funds Webhook</h2>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Inward Funds</h3>
+                <code>/api/inwardfunds/webhook</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method get">GET</span> Health Check</h3>
+                <code>/api/inwardfunds/webhook/health</code>
+              </div>
+            </div>
+            
+            <div>
+              <h2>Multi-Gateway Webhook</h2>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Auto-Detect</h3>
+                <code>/api/webhook</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Gateway Specific</h3>
+                <code>/api/webhook/:gateway</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method get">GET</span> Supported Gateways</h3>
+                <code>/api/webhook/gateways</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method get">GET</span> Health</h3>
+                <code>/api/webhook/health</code>
+              </div>
+            </div>
+            
+            <div>
+              <h2>NIP Webhooks</h2>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Funds Transfer</h3>
+                <code>/api/nip/fundstransfer</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Name Enquiry</h3>
+                <code>/api/nip/nameenquiry</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Status Enquiry</h3>
+                <code>/api/nip/statusenquiry</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method post">POST</span> Reversal</h3>
+                <code>/api/nip/reversal</code>
+              </div>
+              <div class="endpoint">
+                <h3><span class="method get">GET</span> Health</h3>
+                <code>/api/nip/health</code>
+              </div>
+            </div>
+          </div>
+          
+          <h2>Test Webhook</h2>
+          <div class="endpoint">
+            <form id="webhookForm">
+              <label>Endpoint:</label>
+              <select id="endpoint" style="width: 100%; padding: 10px; margin: 10px 0;">
+                <option value="/api/inwardfunds/webhook">Inward Funds Webhook</option>
+                <option value="/api/webhook">Multi-Gateway (Auto-Detect)</option>
+                <option value="/api/webhook/nip">Multi-Gateway (NIP)</option>
+                <option value="/api/webhook/stripe">Multi-Gateway (Stripe)</option>
+                <option value="/api/nip/fundstransfer">NIP Funds Transfer</option>
+                <option value="/api/nip/nameenquiry">NIP Name Enquiry</option>
+              </select>
+              
+              <label>Payload (JSON):</label>
+              <textarea id="payload">{
+  "transfers": [
+    {
+      "XFER_REF": "TEST" + Date.now(),
+      "XFER_AMT": 5000,
+      "XFER_CRNCY_ID": 1,
+      "BENEFICIARY_ACCT": "1234567890",
+      "BENEFICIARY_NM": "John Doe",
+      "REMITTER_NM": "Jane Smith",
+      "VALUE_DT": "${new Date().toISOString().split('T')[0]}"
+    }
+  ]
+}</textarea>
+              
+              <button type="submit">Send Webhook</button>
+            </form>
+            <div id="result" class="result"></div>
+          </div>
+        </div>
+        
+        <script>
+          document.getElementById('webhookForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const endpoint = document.getElementById('endpoint').value;
+            const payload = document.getElementById('payload').value;
+            
+            try {
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'x-webhook-signature': 'test-signature',
+                  'x-webhook-timestamp': Date.now().toString()
+                },
+                body: payload
+              });
+              
+              const data = await response.json();
+              document.getElementById('result').innerHTML = 
+                '<h3 class="success">✅ Success!</h3><pre>' + 
+                JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+              document.getElementById('result').innerHTML = 
+                '<h3 class="error">❌ Error: ' + error.message + '</h3>';
+            }
+          };
+        </script>
+      </body>
+      </html>
+    `);
+  });
+}
 
 // ============================================
 // ERROR HANDLING
@@ -609,8 +657,12 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// 404 handler - Enhanced to provide more information
+// 404 handler
 app.use('*', (req, res) => {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   res.status(404).json({
     success: false,
     message: `Route not found: ${req.originalUrl}`,
@@ -619,8 +671,7 @@ app.use('*', (req, res) => {
     suggestions: [
       'Check the API documentation at /api-docs',
       'Verify the endpoint URL',
-      'Ensure the HTTP method is correct',
-      'Check if you have proper permissions'
+      'Ensure the HTTP method is correct'
     ],
     availableEndpoints: {
       apiRoot: '/api',
@@ -639,7 +690,6 @@ if (process.env.NODE_ENV === 'production') {
   const staticPath = path.join(__dirname, 'build');
   app.use(express.static(staticPath));
   app.get('*', (req, res) => {
-    // Don't show React app for API routes
     if (req.originalUrl.startsWith('/api')) {
       return res.status(404).json({
         success: false,
@@ -651,5 +701,5 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Export the Express app (NO SERVER STARTUP HERE)
+// Export the Express app
 export default app;

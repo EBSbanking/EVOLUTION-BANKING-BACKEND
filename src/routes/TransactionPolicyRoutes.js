@@ -9,7 +9,7 @@ import {
   deactivatePolicy,
   getPolicyStats,
   initializePolicyTables
-} from '../controllers/transactionPolicyController.js';
+} from '../controllers/TransactionPolicyController.js';
 
 const router = express.Router();
 

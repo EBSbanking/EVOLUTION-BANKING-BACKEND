@@ -238,12 +238,24 @@ Thrift.init(
       comment: 'Date of last transaction',
     },
 
+    // === ADD THIS FIELD ===
     isActive: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
-      field: 'is_active',
+      field: 'isActive', // Try exact match first
       comment: 'Account active status',
+    },
+
+    // === ALSO ADD THIS FOR is_active (snake_case) ===
+    is_active: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        return this.getDataValue('isActive');
+      },
+      set(value) {
+        this.setDataValue('isActive', value);
+      }
     },
 
     notes: {
@@ -282,16 +294,17 @@ Thrift.init(
     paranoid: false,
     comment: 'Thrift accounts table',
     indexes: [
-  { fields: ['CUST_ID'] },
-  { fields: ['ACCT_NO'], unique: true },
-  { fields: ['ACCT_ID'], unique: true },
-  { fields: ['status'] },
-  { fields: ['COLLECTION_TYPE'] },
-  { fields: ['OPENED_DT'] },
-  // { fields: ['accountType'] },  // REMOVE THIS LINE
-  { fields: ['isActive'] },
-  { fields: ['RELATIONSHIP_MANAGER'] },
-],
+      { fields: ['CUST_ID'] },
+      { fields: ['ACCT_NO'], unique: true },
+      { fields: ['ACCT_ID'], unique: true },
+      { fields: ['status'] },
+      { fields: ['COLLECTION_TYPE'] },
+      { fields: ['OPENED_DT'] },
+      // { fields: ['accountType'] },  // REMOVE THIS LINE
+      { fields: ['isActive'] }, // Add index for isActive
+      { fields: ['is_active'] }, // Add index for is_active as well
+      { fields: ['RELATIONSHIP_MANAGER'] },
+    ],
     hooks: {
       beforeCreate: (thrift) => {
         if (!thrift.OPENED_DT) {
@@ -303,6 +316,10 @@ Thrift.init(
         if (!thrift.notes) {
           thrift.notes = `Thrift account created on ${new Date().toISOString()}`;
         }
+        // Ensure isActive is set
+        if (thrift.isActive === undefined || thrift.isActive === null) {
+          thrift.isActive = true;
+        }
       },
       beforeUpdate: (thrift) => {
         if (thrift.changed('AMOUNT')) {
@@ -312,10 +329,49 @@ Thrift.init(
           thrift.isActive = false;
           thrift.notes = thrift.notes ? `${thrift.notes}\nAccount closed on ${new Date().toISOString()}` : `Account closed on ${new Date().toISOString()}`;
         }
+        // Update isActive based on status if not manually set
+        if (thrift.changed('status') && !thrift.changed('isActive')) {
+          thrift.isActive = thrift.status === 'ACTIVE';
+        }
+      },
+      beforeValidate: (thrift) => {
+        // Ensure isActive is always set based on status if not explicitly set
+        if (thrift.status && thrift.isActive === undefined) {
+          thrift.isActive = thrift.status === 'ACTIVE';
+        }
       },
     },
   }
 );
+
+// ============================================
+// ADD A METHOD TO SYNC isActive FIELD
+// ============================================
+
+Thrift.syncIsActive = async () => {
+  try {
+    console.log('🔄 Syncing isActive field with status...');
+    
+    // Update isActive based on status
+    const [updated] = await sequelize.query(`
+      UPDATE THRIFT_ACCOUNTS 
+      SET isActive = CASE 
+        WHEN status = 'ACTIVE' THEN 1 
+        ELSE 0 
+      END
+      WHERE isActive IS NULL OR isActive != CASE 
+        WHEN status = 'ACTIVE' THEN 1 
+        ELSE 0 
+      END
+    `);
+    
+    console.log(`✅ Synced ${updated} records`);
+    return { synced: updated };
+  } catch (error) {
+    console.error('❌ Failed to sync isActive:', error.message);
+    return { error: error.message };
+  }
+};
 
 // ============================================
 // AUTO-CREATION FUNCTIONS
@@ -369,8 +425,21 @@ Thrift.fixExistingTable = async () => {
       return await Thrift.createTable(false);
     }
     
+    // Check if isActive column exists
+    const hasIsActive = currentStructure.some(col => col.Field === 'isActive');
+    
+    if (!hasIsActive) {
+      console.log('📦 Adding isActive column...');
+      await sequelize.query('ALTER TABLE THRIFT_ACCOUNTS ADD COLUMN isActive BOOLEAN DEFAULT true');
+      console.log('✅ isActive column added');
+    }
+    
     console.log('✅ Table structure verified');
-    return { fixed: false, message: 'Table already exists' };
+    
+    // Sync isActive values
+    await Thrift.syncIsActive();
+    
+    return { fixed: hasIsActive ? false : true, message: 'Table structure verified' };
     
   } catch (error) {
     console.error('❌ Failed to fix table:', error.message);
@@ -435,7 +504,7 @@ Thrift.prototype.getAccountInfo = function() {
     status: this.status,
     collectionType: this.COLLECTION_TYPE,
     openingDate: this.OPENED_DT,
-    isActive: this.isActive,
+    isActive: this.isActive, // Now properly populated
     isOverdue: this.isOverdue(),
     relationshipManager: this.RELATIONSHIP_MANAGER || this.relationship_manager_id,
     totalContributions: this.totalContributions,

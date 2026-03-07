@@ -1,5 +1,7 @@
-// src/controllers/businessRoleController.js
+// src/controllers/businessRoleController.js - Complete fixed version
+
 import sequelize from '../../config/db.js';
+import { Op } from 'sequelize'; // ✅ IMPORTANT: Add this import for Op
 import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
 import BusinessUnit from '../models/BusinessUnit.js';
@@ -23,8 +25,12 @@ export const createBusinessRole = async (req, res) => {
       BU_ID,
       SUPERVISOR_FG,
       ALLOW_TXN_POSTING_FG = 'N',
+      ALLOW_EXCH_RATE_OVR_FG = 'N', // Added missing field
+      DEF_ROLE_FG = 'N', // Added missing field
       WF_ITEM_ACCESS_LEVEL = ''
     } = req.body;
+
+    console.log('Creating business role with data:', { USER_ID, ROLE_ID, ROLE_NM, BU_ID, BUSINESS_UNIT });
 
     // 1. VALIDATE REQUIRED FIELDS
     const requiredFields = { ROLE_NM, ROLE_ID, USER_ID };
@@ -52,14 +58,16 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 3. ✅ RESOLVE BRANCH/BUSINESS UNIT RELATIONSHIP
+    // 3. RESOLVE BRANCH/BUSINESS UNIT RELATIONSHIP
     let finalBusinessUnit = BUSINESS_UNIT;
     let finalBU_ID = BU_ID;
     let branchReference = null;
 
     if (BU_ID) {
+      // Find branch by BU_ID (branchCode)
       const branch = await Branch.findOne({ 
-        where: { branchCode: BU_ID },
+        where: { branchCode: BU_ID.toString().padStart(3, '0') },
+        attributes: ['id', 'branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status'],
         transaction 
       });
       
@@ -71,31 +79,33 @@ export const createBusinessRole = async (req, res) => {
         });
       }
 
+      // Try to find business unit
       const businessUnit = await BusinessUnit.findOne({ 
         where: { 
-          BU_ID: BU_ID,
-          branchId: branch.id 
+          BU_ID: parseInt(BU_ID)
         },
+        attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'DESCRIPTION'],
         transaction
       });
 
-      if (!businessUnit) {
-        await transaction.rollback();
-        return res.status(404).json({
-          success: false,
-          message: `Business Unit not found for branch ${BU_ID}`
-        });
+      if (businessUnit) {
+        finalBusinessUnit = businessUnit.BUSINESS_UNIT;
+        finalBU_ID = businessUnit.BU_ID;
+      } else {
+        // Use branch info if no business unit
+        finalBusinessUnit = branch.branchName;
+        finalBU_ID = parseInt(BU_ID);
       }
-
-      finalBusinessUnit = businessUnit.BUSINESS_UNIT || branch.branchName;
-      finalBU_ID = businessUnit.BU_ID;
       branchReference = branch.id;
+
     } else if (BUSINESS_UNIT) {
+      // Find business unit by name
       const businessUnit = await BusinessUnit.findOne({ 
         where: sequelize.where(
           sequelize.fn('LOWER', sequelize.col('BUSINESS_UNIT')),
           sequelize.fn('LOWER', BUSINESS_UNIT)
         ),
+        attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'DESCRIPTION'],
         transaction
       });
       
@@ -107,18 +117,18 @@ export const createBusinessRole = async (req, res) => {
         });
       }
 
-      const branch = await Branch.findByPk(businessUnit.branchId, { transaction });
-      if (!branch) {
-        await transaction.rollback();
-        return res.status(404).json({
-          success: false,
-          message: `Branch not found for business unit ${BUSINESS_UNIT}`
-        });
-      }
-
+      // Try to find branch by BU_ID
+      const branchCode = businessUnit.BU_ID.toString().padStart(3, '0');
+      const branch = await Branch.findOne({ 
+        where: { branchCode: branchCode },
+        attributes: ['id', 'branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status'],
+        transaction 
+      });
+      
       finalBusinessUnit = businessUnit.BUSINESS_UNIT;
       finalBU_ID = businessUnit.BU_ID;
-      branchReference = branch.id;
+      branchReference = branch ? branch.id : null;
+      
     } else {
       await transaction.rollback();
       return res.status(400).json({
@@ -127,12 +137,22 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 4. CHECK FOR DUPLICATES
+    // 4. CHECK FOR DUPLICATES - ✅ FIXED: Using Op.or correctly
     const existingRole = await BusinessRole.findOne({
-      where: sequelize.or(
-        { ROLE_ID, USER_ID, BU_ID: finalBU_ID },
-        { ROLE_NM, USER_ID, BUSINESS_UNIT: finalBusinessUnit }
-      ),
+      where: {
+        [Op.or]: [ // ✅ Now Op is properly imported
+          { 
+            ROLE_ID: ROLE_ID, 
+            USER_ID: USER_ID, 
+            BU_ID: finalBU_ID 
+          },
+          { 
+            ROLE_NM: roleMapping.ROLE_NM, 
+            USER_ID: USER_ID, 
+            BUSINESS_UNIT: finalBusinessUnit 
+          }
+        ]
+      },
       transaction
     });
 
@@ -144,7 +164,7 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 5. CREATE NEW ROLE
+    // 5. CREATE NEW ROLE with all fields
     const newRole = await BusinessRole.create({
       ROLE_NM: roleMapping.ROLE_NM,
       ROLE_ID,
@@ -155,7 +175,9 @@ export const createBusinessRole = async (req, res) => {
       REC_ST: REC_ST?.toUpperCase() === 'ACTIVE' ? 'Active' : 'Inactive',
       VERSION_NO: VERSION_NO || 1,
       SUPERVISOR_FG: SUPERVISOR_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
-      ALLOW_TXN_POSTING_FG: ALLOW_TXN_POSTING_FG.toUpperCase() === 'Y' ? 'Y' : 'N',
+      ALLOW_TXN_POSTING_FG: ALLOW_TXN_POSTING_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
+      ALLOW_EXCH_RATE_OVR_FG: ALLOW_EXCH_RATE_OVR_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
+      DEF_ROLE_FG: DEF_ROLE_FG?.toUpperCase() === 'Y' ? 'Y' : 'N',
       WF_ITEM_ACCESS_LEVEL,
       CREATED_BY: req.user?.user_name || 'system',
       CREATED_BY_ROLE: req.user?.role || 'system',
@@ -164,14 +186,24 @@ export const createBusinessRole = async (req, res) => {
     }, { transaction });
 
     // 6. GET BRANCH INFO FOR RESPONSE
-    const populatedRole = await BusinessRole.findByPk(newRole.id, {
-      include: [{
-        model: Branch,
-        as: 'branch',
-        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status']
-      }],
-      transaction
-    });
+    let branchInfo = null;
+    if (branchReference) {
+      const branch = await Branch.findOne({
+        where: { id: branchReference },
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode', 'address', 'status'],
+        transaction
+      });
+      
+      if (branch) {
+        branchInfo = {
+          name: branch.branchName,
+          code: branch.branchCode,
+          organization: branch.organizationName,
+          address: branch.address,
+          status: branch.status
+        };
+      }
+    }
 
     await transaction.commit();
 
@@ -179,22 +211,18 @@ export const createBusinessRole = async (req, res) => {
     return res.status(201).json({
       success: true,
       data: {
-        id: populatedRole.id,
-        role: populatedRole.ROLE_NM,
-        user: populatedRole.USER_ID,
-        businessUnit: populatedRole.BUSINESS_UNIT,
-        buId: populatedRole.BU_ID,
-        branch: populatedRole.branch ? {
-          name: populatedRole.branch.branchName,
-          code: populatedRole.branch.branchCode,
-          organization: populatedRole.branch.organizationName,
-          address: populatedRole.branch.address,
-          status: populatedRole.branch.status
-        } : null,
+        id: newRole.id,
+        role: newRole.ROLE_NM,
+        user: newRole.USER_ID,
+        businessUnit: newRole.BUSINESS_UNIT,
+        buId: newRole.BU_ID,
+        branch: branchInfo,
         permissions: {
-          isSupervisor: populatedRole.SUPERVISOR_FG,
-          canPostTransactions: populatedRole.ALLOW_TXN_POSTING_FG,
-          workflowAccess: populatedRole.WF_ITEM_ACCESS_LEVEL
+          isSupervisor: newRole.SUPERVISOR_FG === 'Y',
+          canPostTransactions: newRole.ALLOW_TXN_POSTING_FG === 'Y',
+          canOverrideExchangeRate: newRole.ALLOW_EXCH_RATE_OVR_FG === 'Y',
+          isDefaultRole: newRole.DEF_ROLE_FG === 'Y',
+          workflowAccess: newRole.WF_ITEM_ACCESS_LEVEL
         }
       }
     });
@@ -232,6 +260,28 @@ export const createBusinessRole = async (req, res) => {
     });
   }
 };
+
+// Helper function for duplicate key messages
+export function getDuplicateKeyMessage(error) {
+  const fields = error.fields || {};
+  
+  if (fields.USER_ID && fields.BU_ID) {
+    return 'User already has a role assigned to this branch';
+  }
+  if (fields.USER_ID) {
+    return 'User already has a business role assigned';
+  }
+  if (fields.ROLE_ID) {
+    return 'Role ID already exists';
+  }
+  if (fields.BUSINESS_UNIT) {
+    return 'Business unit already assigned';
+  }
+  
+  return 'Duplicate key violation';
+}
+
+// Rest of your functions (getBusinessRoleByUserId, updateBusinessRole, etc.) remain the same...
 
 export const getBusinessRoleByUserId = async (req, res) => {
   try {
@@ -280,6 +330,7 @@ export const getBusinessRoleByUserId = async (req, res) => {
 };
 
 // Update a BusinessRole by USER_ID
+// Update a BusinessRole by USER_ID - FIXED VERSION
 export const updateBusinessRole = async (req, res) => {
   const transaction = await sequelize.transaction();
   
@@ -287,6 +338,9 @@ export const updateBusinessRole = async (req, res) => {
     const { USER_ID } = req.params;
     const updateData = req.body;
 
+    console.log('Updating business role for USER_ID:', USER_ID, 'with data:', updateData);
+
+    // Validate ROLE_ID if provided
     if (updateData.ROLE_ID && !ROLE_MAPPING[updateData.ROLE_ID]) {
       await transaction.rollback();
       return res.status(400).json({
@@ -299,12 +353,16 @@ export const updateBusinessRole = async (req, res) => {
       });
     }
 
+    // Sync ROLE_NM with ROLE_ID if needed
     if (updateData.ROLE_ID && !updateData.ROLE_NM) {
       updateData.ROLE_NM = ROLE_MAPPING[updateData.ROLE_ID].ROLE_NM;
     }
 
+    // Find ROLE_ID from ROLE_NM if needed
     if (updateData.ROLE_NM && !updateData.ROLE_ID) {
-      const matchingKey = Object.keys(ROLE_MAPPING).find(key => ROLE_MAPPING[key].ROLE_NM === updateData.ROLE_NM);
+      const matchingKey = Object.keys(ROLE_MAPPING).find(key => 
+        ROLE_MAPPING[key].ROLE_NM.toUpperCase() === updateData.ROLE_NM.toUpperCase()
+      );
       if (!matchingKey) {
         await transaction.rollback();
         return res.status(400).json({
@@ -313,12 +371,19 @@ export const updateBusinessRole = async (req, res) => {
           validRoles: Object.values(ROLE_MAPPING).map(role => role.ROLE_NM)
         });
       }
-      updateData.ROLE_ID = matchingKey;
+      updateData.ROLE_ID = parseInt(matchingKey);
     }
 
+    // Handle BU_ID/BUSINESS_UNIT relationship - FIXED
+    let branchReference = null;
+    let finalBusinessUnit = updateData.BUSINESS_UNIT;
+    let finalBU_ID = updateData.BU_ID;
+
     if (updateData.BU_ID) {
+      // Find branch by branchCode
       const branch = await Branch.findOne({ 
-        where: { branchCode: updateData.BU_ID },
+        where: { branchCode: updateData.BU_ID.toString().padStart(3, '0') },
+        attributes: ['id', 'branchName', 'branchCode', 'organizationName', 'organizationCode'],
         transaction 
       });
       
@@ -330,8 +395,31 @@ export const updateBusinessRole = async (req, res) => {
         });
       }
 
+      // Find business unit - FIXED: Removed IS_ACTIVE and branchId condition
       const businessUnit = await BusinessUnit.findOne({ 
-        where: { BU_ID: updateData.BU_ID },
+        where: { BU_ID: parseInt(updateData.BU_ID) },
+        attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'DESCRIPTION'],
+        transaction
+      });
+
+      if (businessUnit) {
+        updateData.BUSINESS_UNIT = businessUnit.BUSINESS_UNIT;
+        updateData.BU_ID = businessUnit.BU_ID;
+        branchReference = branch.id;
+      } else {
+        // Use branch info if no business unit
+        updateData.BUSINESS_UNIT = branch.branchName;
+        updateData.BU_ID = parseInt(updateData.BU_ID);
+        branchReference = branch.id;
+      }
+    } else if (updateData.BUSINESS_UNIT) {
+      // Find business unit by name
+      const businessUnit = await BusinessUnit.findOne({ 
+        where: sequelize.where(
+          sequelize.fn('LOWER', sequelize.col('BUSINESS_UNIT')),
+          sequelize.fn('LOWER', updateData.BUSINESS_UNIT)
+        ),
+        attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'DESCRIPTION'],
         transaction
       });
 
@@ -339,12 +427,21 @@ export const updateBusinessRole = async (req, res) => {
         await transaction.rollback();
         return res.status(404).json({
           success: false,
-          message: `Business Unit with ID ${updateData.BU_ID} not found`
+          message: `Business Unit "${updateData.BUSINESS_UNIT}" not found`
         });
       }
 
+      // Find branch by BU_ID
+      const branchCode = businessUnit.BU_ID.toString().padStart(3, '0');
+      const branch = await Branch.findOne({ 
+        where: { branchCode: branchCode },
+        attributes: ['id', 'branchName', 'branchCode', 'organizationName', 'organizationCode'],
+        transaction 
+      });
+
       updateData.BUSINESS_UNIT = businessUnit.BUSINESS_UNIT;
-      updateData.BRANCH_REF = branch.id;
+      updateData.BU_ID = businessUnit.BU_ID;
+      branchReference = branch ? branch.id : null;
     }
 
     // Find existing role
@@ -362,32 +459,58 @@ export const updateBusinessRole = async (req, res) => {
       });
     }
 
+    // Prepare update data - only include fields that exist in the model
+    const updatePayload = {
+      ROLE_NM: updateData.ROLE_NM || existingRole.ROLE_NM,
+      ROLE_ID: updateData.ROLE_ID || existingRole.ROLE_ID,
+      BUSINESS_UNIT: updateData.BUSINESS_UNIT || existingRole.BUSINESS_UNIT,
+      BU_ID: updateData.BU_ID || existingRole.BU_ID,
+      REC_ST: updateData.REC_ST || existingRole.REC_ST,
+      VERSION_NO: updateData.VERSION_NO || existingRole.VERSION_NO,
+      SUPERVISOR_FG: updateData.SUPERVISOR_FG || existingRole.SUPERVISOR_FG,
+      ALLOW_TXN_POSTING_FG: updateData.ALLOW_TXN_POSTING_FG || existingRole.ALLOW_TXN_POSTING_FG,
+      ALLOW_EXCH_RATE_OVR_FG: updateData.ALLOW_EXCH_RATE_OVR_FG || existingRole.ALLOW_EXCH_RATE_OVR_FG,
+      DEF_ROLE_FG: updateData.DEF_ROLE_FG || existingRole.DEF_ROLE_FG,
+      WF_ITEM_ACCESS_LEVEL: updateData.WF_ITEM_ACCESS_LEVEL || existingRole.WF_ITEM_ACCESS_LEVEL,
+      BRANCH_REF: branchReference || existingRole.BRANCH_REF,
+      LAST_UPDATED_BY: req.user?.user_name || 'system',
+      LAST_UPDATED_DT: new Date(),
+      ROW_TS: new Date()
+    };
+
     // Update role
-    const [updatedRows] = await BusinessRole.update(
-      {
-        ...updateData,
-        LAST_UPDATED_BY: req.user?.user_name || 'system',
-        LAST_UPDATED_DT: new Date(),
-        ROW_TS: new Date()
-      },
+    await BusinessRole.update(
+      updatePayload,
       {
         where: { USER_ID },
         transaction,
-        validate: true,
-        returning: true
+        validate: true
       }
     );
 
-    // Get updated role with branch info
+    // Get updated role - FIXED: Manual fetch without include
     const updatedRole = await BusinessRole.findOne({
       where: { USER_ID },
-      include: [{
-        model: Branch,
-        as: 'branch',
-        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode']
-      }],
       transaction
     });
+
+    // Get branch info separately if needed
+    let branchInfo = null;
+    if (updatedRole.BRANCH_REF) {
+      const branch = await Branch.findOne({
+        where: { id: updatedRole.BRANCH_REF },
+        attributes: ['branchName', 'branchCode', 'organizationName', 'organizationCode'],
+        transaction
+      });
+      
+      if (branch) {
+        branchInfo = {
+          name: branch.branchName,
+          code: branch.branchCode,
+          organization: branch.organizationName
+        };
+      }
+    }
 
     await transaction.commit();
 
@@ -395,16 +518,20 @@ export const updateBusinessRole = async (req, res) => {
       success: true,
       message: 'Business role updated successfully',
       data: {
-        roleId: updatedRole.id,
+        id: updatedRole.id,
         roleName: updatedRole.ROLE_NM,
         businessUnit: updatedRole.BUSINESS_UNIT,
         buId: updatedRole.BU_ID,
         userId: updatedRole.USER_ID,
         status: updatedRole.REC_ST,
-        branch: updatedRole.branch ? {
-          name: updatedRole.branch.branchName,
-          code: updatedRole.branch.branchCode
-        } : null
+        branch: branchInfo,
+        permissions: {
+          isSupervisor: updatedRole.SUPERVISOR_FG === 'Y',
+          canPostTransactions: updatedRole.ALLOW_TXN_POSTING_FG === 'Y',
+          canOverrideExchangeRate: updatedRole.ALLOW_EXCH_RATE_OVR_FG === 'Y',
+          isDefaultRole: updatedRole.DEF_ROLE_FG === 'Y',
+          workflowAccess: updatedRole.WF_ITEM_ACCESS_LEVEL
+        }
       }
     });
 
@@ -425,9 +552,10 @@ export const updateBusinessRole = async (req, res) => {
     }
 
     if (error.name === 'SequelizeUniqueConstraintError') {
+      const duplicateMessage = getDuplicateKeyMessage(error);
       return res.status(409).json({
         success: false,
-        message: getDuplicateKeyMessage(error),
+        message: duplicateMessage,
         code: 'DUPLICATE_RECORD'
       });
     }
@@ -435,7 +563,8 @@ export const updateBusinessRole = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      referenceId: `ERR-${Date.now()}`
+      referenceId: `ERR-${Date.now()}`,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -719,25 +848,25 @@ export const getUsersByBranchAndRole = async (req, res) => {
   }
 };
 
-// Helper function for duplicate key messages (Sequelize version)
-export function getDuplicateKeyMessage(error) {
-  const fields = error.fields || {};
+// // Helper function for duplicate key messages (Sequelize version)
+// export function getDuplicateKeyMessage(error) {
+//   const fields = error.fields || {};
   
-  if (fields.USER_ID && fields.BU_ID) {
-    return 'User already has a role assigned to this branch';
-  }
-  if (fields.USER_ID) {
-    return 'User already has a business role assigned';
-  }
-  if (fields.ROLE_ID) {
-    return 'Role ID already exists';
-  }
-  if (fields.BUSINESS_UNIT) {
-    return 'Business unit already assigned';
-  }
+//   if (fields.USER_ID && fields.BU_ID) {
+//     return 'User already has a role assigned to this branch';
+//   }
+//   if (fields.USER_ID) {
+//     return 'User already has a business role assigned';
+//   }
+//   if (fields.ROLE_ID) {
+//     return 'Role ID already exists';
+//   }
+//   if (fields.BUSINESS_UNIT) {
+//     return 'Business unit already assigned';
+//   }
   
-  return 'Duplicate key violation';
-}
+//   return 'Duplicate key violation';
+// }
 
 // Get role statistics
 export const getRoleStatistics = async (req, res) => {

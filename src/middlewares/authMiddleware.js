@@ -436,6 +436,59 @@ export const validateToken = (req, res, next) => {
   }
 };
 
+
+// Add this to your authMiddleware.js
+export const authenticateWebhook = (req, res, next) => {
+  try {
+    // Simple API key validation for webhooks
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+    const webhookSecret = process.env.WEBHOOK_SECRET;
+    
+    // If no webhook secret is configured, skip authentication (development mode)
+    if (!webhookSecret) {
+      console.warn('⚠️ WEBHOOK_SECRET not configured, skipping webhook authentication');
+      return next();
+    }
+    
+    // If no API key provided, check for signature headers
+    if (!apiKey) {
+      // Check for signature headers (NIP, Stripe, etc.)
+      if (req.headers['x-nip-signature'] || 
+          req.headers['stripe-signature'] || 
+          req.headers['paypal-transmission-sig'] ||
+          req.headers['x-webhook-signature']) {
+        // Let the individual webhook handlers verify signatures
+        return next();
+      }
+      
+      return res.status(401).json({
+        success: false,
+        message: 'No authentication provided',
+        code: 'NO_AUTH'
+      });
+    }
+    
+    // Simple API key validation
+    if (apiKey !== webhookSecret) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invalid API key',
+        code: 'INVALID_API_KEY'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Webhook authentication error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Webhook authentication failed',
+      code: 'AUTH_ERROR'
+    });
+  }
+};
+
+
 // ==================== TOKEN GENERATION ====================
 
 export const generateToken = (user) => {
@@ -477,5 +530,7 @@ export default {
   // Also include the aliases in the default export
   authenticate,
   hasRole,
-  validatePermission
+  validatePermission,
+  authenticateWebhook, // Add this line
+  authenticateWebhook // Add this line
 };

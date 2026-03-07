@@ -1,0 +1,13 @@
+{"level":"debug","message":"Fetching all branches","timestamp":"2026-03-02 04:00:00"}
+{"count":3,"level":"debug","message":"All branches fetched successfully","timestamp":"2026-03-02 04:00:01"}
+{"level":"debug","message":"Fetching all branches","timestamp":"2026-03-02 04:00:01"}
+{"count":3,"level":"debug","message":"All branches fetched successfully","timestamp":"2026-03-02 04:00:01"}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-03-02 04:00:03"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-03-02 04:00:03","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-03-02 04:00:03"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-03-02 04:00:03","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-03-02 04:19:20"}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-03-02 04:19:20","totalCount":0}
+{"count":0,"level":"info","limit":10,"message":"Fetched organizations","page":1,"timestamp":"2026-03-02 04:19:21","totalCount":0}
+{"level":"info","message":"📅 Getting current business date...","timestamp":"2026-03-02 04:19:21"}
+{"level":"info","logDir":"logs","message":"🚀 Winston logger initialized","nodeVersion":"v24.13.0","platform":"win32","timestamp":"2026-03-02 09:19:51"}

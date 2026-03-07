@@ -1,12 +1,10 @@
 import { Op } from 'sequelize';
-import { 
-  getThrift, 
-  initModels,
-  areModelsInitialized 
-} from '../utils/modelLoader.js';
 import logger from '../utils/logger.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import sequelize from '../../config/db.js';
+import Thrift from '../models/Thrift.js';
+import Transaction from '../models/Transaction.js'; // Import Transaction model
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -17,46 +15,15 @@ import {
   generateThriftAccountsReport 
 } from '../utils/pdfGenerator.js';
 
-// Initialize models on first use
-let modelsInitialized = false;
-
-async function ensureModelsInitialized() {
-  if (!modelsInitialized) {
-    console.log('🔄 Ensuring models are initialized for ThriftReportController...');
-    
-    try {
-      // Initialize models
-      await initModels();
-      
-      // Verify we have the Thrift model
-      const Thrift = getThrift();
-      
-      if (!Thrift) {
-        throw new Error('Thrift model not available after initialization');
-      }
-      
-      modelsInitialized = true;
-      console.log('✅ ThriftReportController models ready for use');
-    } catch (error) {
-      console.error('❌ Failed to initialize models for ThriftReportController:', error);
-      throw error;
-    }
-  }
-}
-
 class ThriftReportController {
   /**
    * Generate Thrift Accounts Report (PDF or Excel)
    */
   static async generateThriftAccountsReport(req, res) {
     try {
-      // Ensure models are initialized
-      await ensureModelsInitialized();
-      
       const { format = 'pdf', ...filters } = req.query;
       
-      // Get the Thrift model
-      const Thrift = getThrift();
+      // Verify Thrift model is available
       if (!Thrift) {
         return res.status(500).json({
           success: false,
@@ -117,7 +84,7 @@ class ThriftReportController {
           'account_type', 
           'total_contributions', 
           'total_withdrawals', 
-          'is_active'
+          'isActive'
         ],
         order: [['created_at', 'DESC']],
         raw: true // Get plain objects instead of Sequelize instances
@@ -143,23 +110,10 @@ class ThriftReportController {
           message: 'Excel report generation is not implemented yet',
           suggestion: 'Use PDF format instead'
         });
-        
-        /* If you have Excel generation implemented:
-        const excelPath = generateThriftAccountsExcelReport(thriftAccounts, filters);
-        
-        res.download(excelPath, `thrift_accounts_report_${new Date().toISOString().split('T')[0]}.xlsx`, (err) => {
-          if (err) {
-            logger.error('Error downloading Excel report', { error: err.message });
-          }
-          // Cleanup file after download
-          setTimeout(() => cleanupReportFiles(excelPath), 5000);
-        });
-        */
       } else {
         // Generate PDF report (default)
         // Transform data to match PDF generator expectations
         const transformedAccounts = thriftAccounts.map(account => ({
-          // Map Sequelize field names to PDF generator expected names
           id: account.id,
           CUST_ID: account.CUST_ID || '',
           ACCT_NO: account.ACCT_NO || '',
@@ -174,13 +128,13 @@ class ThriftReportController {
           status: account.status || 'active',
           opening_date: account.opening_date,
           created_at: account.created_at,
-          createdAt: account.created_at, // For PDF generator
+          createdAt: account.created_at,
           updated_at: account.updated_at,
           last_collection_date: account.last_collection_date,
           account_type: account.account_type,
           total_contributions: parseFloat(account.total_contributions || 0),
           total_withdrawals: parseFloat(account.total_withdrawals || 0),
-          is_active: account.is_active
+          is_active: account.isActive
         }));
 
         await generateThriftAccountsReport(transformedAccounts, filters, res);
@@ -206,14 +160,10 @@ class ThriftReportController {
    */
   static async getThriftAccountsForReport(req, res) {
     try {
-      // Ensure models are initialized
-      await ensureModelsInitialized();
-      
       const { page = 1, limit = 50, ...filters } = req.query;
       const offset = (page - 1) * limit;
 
-      // Get the Thrift model
-      const Thrift = getThrift();
+      // Verify Thrift model is available
       if (!Thrift) {
         return res.status(500).json({
           success: false,
@@ -270,7 +220,7 @@ class ThriftReportController {
           'account_type', 
           'total_contributions', 
           'total_withdrawals', 
-          'is_active'
+          'isActive'
         ],
         order: [['created_at', 'DESC']],
         offset: parseInt(offset),
@@ -284,7 +234,7 @@ class ThriftReportController {
       const totalWithdrawals = thriftAccounts.reduce((sum, account) => sum + parseFloat(account.total_withdrawals || 0), 0);
       
       const activeAccounts = thriftAccounts.filter(acc => 
-        acc.status === 'ACTIVE' || acc.status === 'active' || acc.is_active === true
+        acc.status === 'ACTIVE' || acc.status === 'active' || acc.isActive === true
       ).length;
       
       const collectionTypeStats = thriftAccounts.reduce((acc, account) => {
@@ -327,7 +277,7 @@ class ThriftReportController {
             accountType: account.account_type,
             totalContributions: parseFloat(account.total_contributions || 0),
             totalWithdrawals: parseFloat(account.total_withdrawals || 0),
-            isActive: account.is_active
+            isActive: account.isActive
           })),
           pagination: {
             page: parseInt(page),
@@ -363,14 +313,122 @@ class ThriftReportController {
   }
 
   /**
-   * Get Thrift Accounts Summary Statistics
+   * Get Thrift Transaction Summary (Credits and Debits)
+   */
+  static async getThriftTransactionSummary(req, res) {
+    try {
+      const { startDate, endDate, CUST_ID, ACCT_NO } = req.query;
+
+      // Build date filter
+      const dateFilter = {};
+      if (startDate && endDate) {
+        dateFilter.TRANSACTIONDATE = {
+          [Op.between]: [new Date(startDate), new Date(endDate)]
+        };
+      } else if (startDate) {
+        dateFilter.TRANSACTIONDATE = { [Op.gte]: new Date(startDate) };
+      } else if (endDate) {
+        dateFilter.TRANSACTIONDATE = { [Op.lte]: new Date(endDate) };
+      }
+
+      // Build account filter
+      const accountFilter = {};
+      if (CUST_ID) {
+        accountFilter.CUST_ID = CUST_ID;
+      }
+      if (ACCT_NO) {
+        accountFilter.ACCT_NO = ACCT_NO;
+      }
+
+      // Get total credits (DEPOSITS)
+      const totalCredits = await Transaction.sum('AMOUNT', {
+        where: {
+          TRANSACTION_TYPE: {
+            [Op.in]: ['DEPOSIT', 'SERVICE_FEE', 'THRIFT_OPENING', 'THRIFT_COLLECTION']
+          },
+          transactionDirection: 'CREDIT',
+          ...dateFilter,
+          ...accountFilter
+        }
+      });
+
+      // Get total debits (WITHDRAWALS)
+      const totalDebits = await Transaction.sum('AMOUNT', {
+        where: {
+          TRANSACTION_TYPE: {
+            [Op.in]: ['WITHDRAWAL', 'THRIFT_WITHDRAWAL', 'THRIFT_TRANSFER']
+          },
+          transactionDirection: 'DEBIT',
+          ...dateFilter,
+          ...accountFilter
+        }
+      });
+
+      // Get transaction counts by type
+      const transactionCounts = await Transaction.findAll({
+        where: {
+          ...dateFilter,
+          ...accountFilter
+        },
+        attributes: [
+          'TRANSACTION_TYPE',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount']
+        ],
+        group: ['TRANSACTION_TYPE'],
+        raw: true
+      });
+
+      // Get daily transaction summary
+      const dailySummary = await Transaction.findAll({
+        where: {
+          ...dateFilter,
+          ...accountFilter
+        },
+        attributes: [
+          [sequelize.fn('DATE', sequelize.col('TRANSACTIONDATE')), 'date'],
+          [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'transactionCount']
+        ],
+        group: [sequelize.fn('DATE', sequelize.col('TRANSACTIONDATE'))],
+        order: [[sequelize.fn('DATE', sequelize.col('TRANSACTIONDATE')), 'DESC']],
+        raw: true
+      });
+
+      res.json({
+        success: true,
+        data: {
+          summary: {
+            totalCredits: parseFloat(totalCredits || 0),
+            totalDebits: parseFloat(totalDebits || 0),
+            netBalance: parseFloat((totalCredits || 0) - (totalDebits || 0)),
+            transactionCount: transactionCounts.reduce((sum, t) => sum + parseInt(t.count || 0), 0)
+          },
+          transactionCounts,
+          dailySummary
+        }
+      });
+
+    } catch (error) {
+      logger.error('Error fetching thrift transaction summary', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch transaction summary',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Get Thrift Accounts Summary Statistics (Enhanced with transaction data)
    */
   static async getThriftSummaryStatistics(req, res) {
     try {
-      // Ensure models are initialized
-      await ensureModelsInitialized();
-      
-      const Thrift = getThrift();
+      // Verify Thrift model is available
       if (!Thrift) {
         return res.status(500).json({
           success: false,
@@ -387,35 +445,112 @@ class ThriftReportController {
           [Op.or]: [
             { status: 'ACTIVE' },
             { status: 'active' },
-            { is_active: true }
+            { isActive: true }
           ]
         }
       });
 
       // Get total amounts using raw queries for better performance
-      const [amountResult] = await Thrift.sequelize.query(
+      const [amountResult] = await sequelize.query(
         'SELECT COALESCE(SUM(AMOUNT), 0) as totalAmount FROM THRIFT_ACCOUNTS',
-        { type: Thrift.sequelize.QueryTypes.SELECT }
+        { type: sequelize.QueryTypes.SELECT }
       );
 
-      const [contributionsResult] = await Thrift.sequelize.query(
+      const [contributionsResult] = await sequelize.query(
         'SELECT COALESCE(SUM(total_contributions), 0) as totalContributions FROM THRIFT_ACCOUNTS',
-        { type: Thrift.sequelize.QueryTypes.SELECT }
+        { type: sequelize.QueryTypes.SELECT }
       );
 
-      const [withdrawalsResult] = await Thrift.sequelize.query(
+      const [withdrawalsResult] = await sequelize.query(
         'SELECT COALESCE(SUM(total_withdrawals), 0) as totalWithdrawals FROM THRIFT_ACCOUNTS',
-        { type: Thrift.sequelize.QueryTypes.SELECT }
+        { type: sequelize.QueryTypes.SELECT }
+      );
+
+      // Get transaction summaries from Transaction table
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const startOfYear = new Date(today.getFullYear(), 0, 1);
+
+      // Today's transactions
+      const [todayCredits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('DEPOSIT', 'SERVICE_FEE', 'THRIFT_OPENING', 'THRIFT_COLLECTION')
+         AND transaction_direction = 'CREDIT'
+         AND transaction_date >= ? AND transaction_date < ?`,
+        {
+          replacements: [today, tomorrow],
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+
+      const [todayDebits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('WITHDRAWAL', 'THRIFT_WITHDRAWAL', 'THRIFT_TRANSFER')
+         AND transaction_direction = 'DEBIT'
+         AND transaction_date >= ? AND transaction_date < ?`,
+        {
+          replacements: [today, tomorrow],
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+
+      // Month to date
+      const [monthCredits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('DEPOSIT', 'SERVICE_FEE', 'THRIFT_OPENING', 'THRIFT_COLLECTION')
+         AND transaction_direction = 'CREDIT'
+         AND transaction_date >= ?`,
+        {
+          replacements: [startOfMonth],
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+
+      const [monthDebits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('WITHDRAWAL', 'THRIFT_WITHDRAWAL', 'THRIFT_TRANSFER')
+         AND transaction_direction = 'DEBIT'
+         AND transaction_date >= ?`,
+        {
+          replacements: [startOfMonth],
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+
+      // Year to date
+      const [yearCredits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('DEPOSIT', 'SERVICE_FEE', 'THRIFT_OPENING', 'THRIFT_COLLECTION')
+         AND transaction_direction = 'CREDIT'
+         AND transaction_date >= ?`,
+        {
+          replacements: [startOfYear],
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+
+      const [yearDebits] = await sequelize.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
+         WHERE transaction_type IN ('WITHDRAWAL', 'THRIFT_WITHDRAWAL', 'THRIFT_TRANSFER')
+         AND transaction_direction = 'DEBIT'
+         AND transaction_date >= ?`,
+        {
+          replacements: [startOfYear],
+          type: sequelize.QueryTypes.SELECT
+        }
       );
 
       // Get collection type distribution
       const collectionStats = await Thrift.findAll({
         attributes: [
           'COLLECTION_TYPE',
-          [Thrift.sequelize.fn('COUNT', Thrift.sequelize.col('id')), 'count'],
-          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('AMOUNT')), 'totalAmount'],
-          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('total_contributions')), 'totalContributions'],
-          [Thrift.sequelize.fn('SUM', Thrift.sequelize.col('total_withdrawals')), 'totalWithdrawals']
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount'],
+          [sequelize.fn('SUM', sequelize.col('total_contributions')), 'totalContributions'],
+          [sequelize.fn('SUM', sequelize.col('total_withdrawals')), 'totalWithdrawals']
         ],
         group: ['COLLECTION_TYPE'],
         raw: true
@@ -436,23 +571,40 @@ class ThriftReportController {
       res.json({
         success: true,
         data: {
-          summary: {
+          accountSummary: {
             totalAccounts,
             activeAccounts,
             inactiveAccounts: totalAccounts - activeAccounts,
-            totalAmount: parseFloat(amountResult?.totalAmount || 0),
+            totalBalance: parseFloat(amountResult?.totalAmount || 0),
             totalContributions: parseFloat(contributionsResult?.totalContributions || 0),
             totalWithdrawals: parseFloat(withdrawalsResult?.totalWithdrawals || 0),
             netContributions: parseFloat(contributionsResult?.totalContributions || 0) - parseFloat(withdrawalsResult?.totalWithdrawals || 0),
-            recentAccounts,
-            collectionStats: collectionStats.map(stat => ({
-              type: stat.COLLECTION_TYPE || 'UNKNOWN',
-              count: parseInt(stat.count || 0),
-              totalAmount: parseFloat(stat.totalAmount || 0),
-              totalContributions: parseFloat(stat.totalContributions || 0),
-              totalWithdrawals: parseFloat(stat.totalWithdrawals || 0)
-            }))
-          }
+            recentAccounts
+          },
+          transactionSummary: {
+            today: {
+              credits: parseFloat(todayCredits?.total || 0),
+              debits: parseFloat(todayDebits?.total || 0),
+              net: parseFloat((todayCredits?.total || 0) - (todayDebits?.total || 0))
+            },
+            monthToDate: {
+              credits: parseFloat(monthCredits?.total || 0),
+              debits: parseFloat(monthDebits?.total || 0),
+              net: parseFloat((monthCredits?.total || 0) - (monthDebits?.total || 0))
+            },
+            yearToDate: {
+              credits: parseFloat(yearCredits?.total || 0),
+              debits: parseFloat(yearDebits?.total || 0),
+              net: parseFloat((yearCredits?.total || 0) - (yearDebits?.total || 0))
+            }
+          },
+          collectionStats: collectionStats.map(stat => ({
+            type: stat.COLLECTION_TYPE || 'UNKNOWN',
+            count: parseInt(stat.count || 0),
+            totalAmount: parseFloat(stat.totalAmount || 0),
+            totalContributions: parseFloat(stat.totalContributions || 0),
+            totalWithdrawals: parseFloat(stat.totalWithdrawals || 0)
+          }))
         }
       });
 
@@ -475,11 +627,9 @@ class ThriftReportController {
    */
   static async exportThriftAccountsToCSV(req, res) {
     try {
-      await ensureModelsInitialized();
-      
       const { ...filters } = req.query;
-      const Thrift = getThrift();
       
+      // Verify Thrift model is available
       if (!Thrift) {
         return res.status(500).json({
           success: false,
@@ -581,19 +731,125 @@ class ThriftReportController {
   }
 
   /**
+   * Get comprehensive thrift report with both account and transaction data
+   */
+  static async getComprehensiveThriftReport(req, res) {
+    try {
+      const { startDate, endDate } = req.query;
+
+      // Build date filter for transactions
+      const dateFilter = {};
+      if (startDate && endDate) {
+        dateFilter.TRANSACTIONDATE = {
+          [Op.between]: [new Date(startDate), new Date(endDate)]
+        };
+      }
+
+      // Get account summary
+      const accountSummary = await Thrift.findAll({
+        attributes: [
+          [sequelize.fn('COUNT', sequelize.col('id')), 'totalAccounts'],
+          [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalBalance'],
+          [sequelize.fn('SUM', sequelize.col('total_contributions')), 'totalContributions'],
+          [sequelize.fn('SUM', sequelize.col('total_withdrawals')), 'totalWithdrawals'],
+          [sequelize.fn('AVG', sequelize.col('AMOUNT')), 'averageBalance']
+        ],
+        raw: true
+      });
+
+      // Get active accounts count
+      const activeAccounts = await Thrift.count({
+        where: { 
+          [Op.or]: [
+            { status: 'ACTIVE' },
+            { isActive: true }
+          ]
+        }
+      });
+
+      // Get transaction summary
+      const transactionSummary = await Transaction.findAll({
+        where: dateFilter,
+        attributes: [
+          [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions'],
+          [sequelize.fn('SUM', 
+            sequelize.literal("CASE WHEN transaction_direction = 'CREDIT' THEN amount ELSE 0 END")
+          ), 'totalCredits'],
+          [sequelize.fn('SUM', 
+            sequelize.literal("CASE WHEN transaction_direction = 'DEBIT' THEN amount ELSE 0 END")
+          ), 'totalDebits'],
+          [sequelize.fn('SUM', 
+            sequelize.literal("CASE WHEN transaction_type = 'SERVICE_FEE' THEN amount ELSE 0 END")
+          ), 'totalFees']
+        ],
+        raw: true
+      });
+
+      // Get transaction counts by type
+      const transactionsByType = await Transaction.findAll({
+        where: dateFilter,
+        attributes: [
+          'TRANSACTION_TYPE',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('SUM', sequelize.col('AMOUNT')), 'totalAmount']
+        ],
+        group: ['TRANSACTION_TYPE'],
+        raw: true
+      });
+
+      res.json({
+        success: true,
+        data: {
+          period: {
+            startDate: startDate || 'All time',
+            endDate: endDate || 'Present'
+          },
+          accountSummary: {
+            totalAccounts: parseInt(accountSummary[0]?.totalAccounts || 0),
+            activeAccounts,
+            inactiveAccounts: parseInt(accountSummary[0]?.totalAccounts || 0) - activeAccounts,
+            totalBalance: parseFloat(accountSummary[0]?.totalBalance || 0),
+            totalContributions: parseFloat(accountSummary[0]?.totalContributions || 0),
+            totalWithdrawals: parseFloat(accountSummary[0]?.totalWithdrawals || 0),
+            averageBalance: parseFloat(accountSummary[0]?.averageBalance || 0)
+          },
+          transactionSummary: {
+            totalTransactions: parseInt(transactionSummary[0]?.totalTransactions || 0),
+            totalCredits: parseFloat(transactionSummary[0]?.totalCredits || 0),
+            totalDebits: parseFloat(transactionSummary[0]?.totalDebits || 0),
+            totalFees: parseFloat(transactionSummary[0]?.totalFees || 0),
+            netFlow: parseFloat((transactionSummary[0]?.totalCredits || 0) - (transactionSummary[0]?.totalDebits || 0))
+          },
+          transactionsByType
+        }
+      });
+
+    } catch (error) {
+      logger.error('Error generating comprehensive thrift report', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate comprehensive thrift report',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
+    }
+  }
+
+  /**
    * Simple endpoint to check if thrift reports are working
    */
   static async getThriftReportStatus(req, res) {
     try {
-      // Ensure models are initialized
-      await ensureModelsInitialized();
-      
-      const Thrift = getThrift();
-      
+      // Verify Thrift model is available
       if (!Thrift) {
         return res.json({
           success: false,
-          message: 'Thrift model not available'
+          message: 'Thrift model not available',
+          modelsInitialized: false,
+          timestamp: new Date().toISOString()
         });
       }
 
@@ -604,9 +860,18 @@ class ThriftReportController {
           [Op.or]: [
             { status: 'ACTIVE' },
             { status: 'active' },
-            { is_active: true }
+            { isActive: true }
           ]
         }
+      });
+
+      // Get transaction counts
+      const totalTransactions = await Transaction.count();
+      const totalCredits = await Transaction.sum('AMOUNT', {
+        where: { transactionDirection: 'CREDIT' }
+      });
+      const totalDebits = await Transaction.sum('AMOUNT', {
+        where: { transactionDirection: 'DEBIT' }
       });
 
       res.json({
@@ -614,8 +879,15 @@ class ThriftReportController {
         message: 'Thrift reports are working',
         data: {
           modelAvailable: true,
-          totalAccounts,
-          activeAccounts,
+          accountStats: {
+            totalAccounts,
+            activeAccounts
+          },
+          transactionStats: {
+            totalTransactions,
+            totalCredits: parseFloat(totalCredits || 0),
+            totalDebits: parseFloat(totalDebits || 0)
+          },
           modelsInitialized: true,
           timestamp: new Date().toISOString()
         }

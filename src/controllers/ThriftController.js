@@ -1,4 +1,4 @@
-// src/controllers/ThriftController.js - COMPLETE FIXED VERSION (NO CUSTOMER MODEL)
+// src/controllers/ThriftController.js - COMPLETE FIXED VERSION WITH THRIFT SETTINGS
 import { Op } from 'sequelize';
 import logger from '../utils/logger.js';
 import generateCustomerNumber from '../utils/generateCustomerNumber.js';
@@ -10,10 +10,23 @@ import Thrift from '../models/Thrift.js';
 import Transaction from '../models/Transaction.js';
 import User from '../models/User.js';
 import GLAccount from '../models/GLAccount.js';
+import ThriftSettings from '../models/ThriftSettings.js'; // Add this import
 
 // Track initialization
 let modelsInitialized = false;
 
+// Helper function to get ThriftSettings model
+async function getThriftSettingsModel() {
+  try {
+    const ThriftSettingsModel = ThriftSettings(sequelizeInstance);
+    // Test if it works
+    await ThriftSettingsModel.findOne();
+    return ThriftSettingsModel;
+  } catch (error) {
+    console.error('❌ Error initializing ThriftSettings model:', error.message);
+    return null;
+  }
+}
 
 // Helper function to ensure models are ready
 async function ensureModelsInitialized() {
@@ -368,7 +381,7 @@ class ThriftController {
   }
 
 // ─────────────────────────────────────────────
-//  Create new thrift account
+//  Create new thrift account (WITH THRIFT SETTINGS INTEGRATION)
 // ─────────────────────────────────────────────
 static async createThriftAccount(req, res) {
   let t = null;
@@ -376,6 +389,9 @@ static async createThriftAccount(req, res) {
   try {
     console.log('🚀 Starting createThriftAccount...');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
+    // Determine if we're in development mode
+    const isDevelopment = process.env.NODE_ENV === 'development';
     
     // Ensure models are initialized
     await ensureModelsInitialized();
@@ -490,34 +506,7 @@ static async createThriftAccount(req, res) {
       }
     }
 
-    // ─── Get GL Accounts and validate ───────────────────────
-    if (savingsProduct) {
-      console.log('✅ Using savings product configuration:', {
-        productId: savingsProduct.PROD_ID,
-        productName: savingsProduct.productName,
-        productCode: savingsProduct.productCode
-      });
-      
-      // Get GL accounts dynamically
-      CASH_GL = await getCashGLAccount(sequelizeInstance, t);
-      THRIFT_INCOME_GL = await getThriftServiceIncomeGL(sequelizeInstance, t);
-      
-      // Verify both GL accounts exist
-      if (!CASH_GL || !THRIFT_INCOME_GL) {
-        await t.rollback();
-        return res.status(400).json({
-          success: false,
-          error: 'GL accounts not configured',
-          details: `Cash GL: ${CASH_GL ? 'Found' : 'Missing'}, Income GL: ${THRIFT_INCOME_GL ? 'Found' : 'Missing'}`
-        });
-      }
-      
-      console.log('✅ Using dynamically found GL accounts:', {
-        cashGL: CASH_GL,
-        thriftIncomeGL: THRIFT_INCOME_GL
-      });
-      
-    } else {
+    if (!savingsProduct) {
       await t.rollback();
       return res.status(400).json({
         success: false,
@@ -525,6 +514,93 @@ static async createThriftAccount(req, res) {
         details: 'Please set up a savings product in the system first.'
       });
     }
+
+    console.log('✅ Using savings product configuration:', {
+      productId: savingsProduct.PROD_ID,
+      productName: savingsProduct.productName,
+      productCode: savingsProduct.productCode
+    });
+    
+    // ─── Get GL Accounts from ThriftSettings ─────────
+    console.log('🔍 Fetching thrift GL accounts from settings...');
+
+    try {
+      // Initialize ThriftSettings model with sequelize instance
+      const ThriftSettingsModel = ThriftSettings(sequelizeInstance);
+      
+      // Fetch both GL settings from ThriftSettings table
+      const settings = await ThriftSettingsModel.findAll({
+        where: {
+          setting_key: {
+            [Op.in]: ['thrift_cash_gl', 'thrift_income_gl']
+          }
+        },
+        transaction: t,
+        raw: true
+      });
+
+      if (settings && settings.length > 0) {
+        settings.forEach(setting => {
+          if (setting.setting_key === 'thrift_cash_gl') {
+            CASH_GL = setting.setting_value;
+            console.log(`✅ Found cash GL from settings: ${CASH_GL} - ${setting.description || ''}`);
+          } else if (setting.setting_key === 'thrift_income_gl') {
+            THRIFT_INCOME_GL = setting.setting_value;
+            console.log(`✅ Found income GL from settings: ${THRIFT_INCOME_GL} - ${setting.description || ''}`);
+          }
+        });
+      } else {
+        console.log('⚠️ No thrift GL settings found in database');
+      }
+    } catch (settingsError) {
+      console.error('❌ Error fetching thrift settings:', settingsError.message);
+    }
+
+    // Fallback: If not in settings, try to get from product's GL_ACCOUNTS field
+    if (!CASH_GL || !THRIFT_INCOME_GL) {
+      console.log('🔍 Falling back to product GL_ACCOUNTS...');
+      if (savingsProduct?.GL_ACCOUNTS) {
+        try {
+          const productGL = JSON.parse(savingsProduct.GL_ACCOUNTS);
+          CASH_GL = CASH_GL || productGL.cash_account || productGL.cash;
+          THRIFT_INCOME_GL = THRIFT_INCOME_GL || productGL.income_account || productGL.income;
+          console.log('✅ Using GL accounts from product configuration');
+        } catch (e) {
+          console.log('⚠️ Could not parse product GL accounts:', e.message);
+        }
+      }
+    }
+
+    // Final fallback: Try database lookup by description
+    if (!CASH_GL || !THRIFT_INCOME_GL) {
+      console.log('🔍 GL accounts not configured, trying database lookup by description...');
+      CASH_GL = CASH_GL || await getCashGLAccount(sequelizeInstance, t);
+      THRIFT_INCOME_GL = THRIFT_INCOME_GL || await getThriftServiceIncomeGL(sequelizeInstance, t);
+    }
+
+    // Final validation with helpful error message
+    if (!CASH_GL || !THRIFT_INCOME_GL) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        error: 'Thrift GL accounts not configured',
+        details: 'Please configure thrift GL accounts in the system settings',
+        setup: {
+          message: 'Run the following API endpoint to set up thrift GL accounts:',
+          endpoint: 'POST /api/thrift/settings/init/default',
+          or: 'POST /api/thrift/settings/batch with:',
+          settings: {
+            thrift_cash_gl: { value: '0110120001', description: 'Cash GL for thrift collections' },
+            thrift_income_gl: { value: '4040010001', description: 'Income GL for thrift service fees' }
+          }
+        }
+      });
+    }
+    
+    console.log('✅ Using GL accounts:', {
+      cashGL: CASH_GL,
+      thriftIncomeGL: THRIFT_INCOME_GL
+    });
 
     // ─── Generate identifiers ───────────────────────────────
     const { CUST_ID, CUST_NO } = await generateCustomerNumber();
@@ -607,7 +683,15 @@ static async createThriftAccount(req, res) {
     
     // ─── Create thrift account ──────────────────────────────
     console.log('Creating thrift account...');
-    
+
+    // Declare now once at the beginning of this section
+    const now = new Date();
+
+    // The initial deposit is a SERVICE FEE (income for the company)
+    // Customer's actual savings start from 0
+    const serviceFee = parseFloat(initialAmount);
+    const customerBalance = 0.00; // Customer's actual savings start at 0
+
     const thriftData = {
       CUST_ID: CUST_ID,
       ACCT_NO: ACCT_NO,
@@ -616,33 +700,32 @@ static async createThriftAccount(req, res) {
       LASTNAME: LASTNAME,
       FULL_NAME: fullName,
       RELATIONSHIP_MANAGER: RELATIONSHIP_MANAGER || null,
-      AMOUNT: parseFloat(initialAmount),
+      AMOUNT: customerBalance, // Customer's balance starts at 0
       ADDRESS: addressObj ? JSON.stringify(addressObj) : null,
       COLLECTION_TYPE: collectionType,
       STATUS: 'ACTIVE',
-      OPENING_DATE: openDate,
       OPENED_DT: openDate,
       TRANSACTION_DATE: txDate,
-      INITIAL_AMOUNT: parseFloat(initialAmount),
-      ACCOUNT_TYPE: 'THRIFT',
+      openingDate: openDate,
+      initialAmount: customerBalance, // Initial savings is 0
+      accountType: 'THRIFT',
       PRODUCT_ID: productId,
-      TOTAL_CONTRIBUTIONS: parseFloat(initialAmount),
-      TOTAL_WITHDRAWALS: 0,
+      totalContributions: 0, // No contributions yet (fee is separate)
+      totalWithdrawals: 0,
       GL_ACCOUNTS: JSON.stringify({
         cash_account: CASH_GL,
         income_account: THRIFT_INCOME_GL
       }),
-      NOTES: `Thrift account opened for ${fullName} with initial deposit of ${initialAmount} (Product: ${savingsProduct.productName})`,
-      CREATED_AT: new Date(),
-      UPDATED_AT: new Date(),
-      created_at: new Date(),
-      updated_at: new Date()
+      NOTES: `Thrift account opened for ${fullName} with service fee of ${serviceFee} (Product: ${savingsProduct.productName}). Customer savings balance: 0.00`,
+      createdAt: now,
+      updatedAt: now,
+      isActive: true
     };
-    
+
     console.log('⚠️ DEBUG: Thrift data being created:', thriftData);
-    
+
     const thriftAccount = await Thrift.create(thriftData, { transaction: t });
-    
+
     if (!thriftAccount) {
       await t.rollback();
       return res.status(500).json({ 
@@ -650,60 +733,62 @@ static async createThriftAccount(req, res) {
         error: 'Failed to create thrift account' 
       });
     }
-    
-    console.log(`✅ Thrift account created: ${thriftAccount.ACCT_NO}`);
-    
-    // ─── Create opening transaction ─────────────────────────
-    console.log('Creating transaction record...');
-    
+
+    console.log(`✅ Thrift account created: ${thriftAccount.ACCT_NO} with 0 balance`);
+
+    // ─── Create opening transaction record ─────────────────────────
+    console.log('Creating transaction record for service fee...');
+
     // Prepare metadata for transaction
     const metadata = {
       direction: 'DEBIT',
-      amountToBank: parseFloat(initialAmount),
+      amountToBank: serviceFee,
       amountToCustomer: 0,
       reference: REFERENCE,
       customerName: fullName,
       collectionType: collectionType,
       relationshipManager: RELATIONSHIP_MANAGER,
-      transactionType: 'OPENING_DEPOSIT',
+      transactionType: 'SERVICE_FEE',
       productId: productId,
       productName: savingsProduct.productName,
       glAccounts: {
         cash: CASH_GL,
         income: THRIFT_INCOME_GL
-      }
+      },
+      isServiceFee: true,
+      customerSavingsBalance: 0
     };
-    
-    // IMPORTANT: No manual timestamp fields - Sequelize will add them automatically
+
     const transactionData = {
       ACCT_NO: thriftAccount.ACCT_NO,
       ACCT_ID: thriftAccount.ACCT_ID,
       BU_ID: 1,
       CUST_ID: CUST_ID,
       ACCT_NM: `${fullName} Thrift Account`,
-      AMOUNT: parseFloat(initialAmount),
+      AMOUNT: serviceFee,
       transactionDirection: 'DEBIT',
       TRANSACTIONDATE: txDate,
-      TRANSACTION_TYPE: 'THRIFT_OPENING',
+      TRANSACTION_TYPE: 'SERVICE_FEE', // Changed from THRIFT_OPENING to SERVICE_FEE
       TRANSACTION_IDENTIFIER: TRANSACTION_IDENTIFIER,
       TRANSACTION_ID: TRANSACTION_ID,
       EVENT_ID: EVENT_ID,
       TRAN_JOURNAL_ID: TRAN_JOURNAL_ID,
       REFERENCE: REFERENCE,
-      description: `Thrift account opening – initial deposit for ${fullName} (Product: ${savingsProduct.productName})`,
+      description: `Thrift account opening service fee for ${fullName} (Product: ${savingsProduct.productName}) - Customer savings balance: 0.00`,
       currency: 'NGN',
       createdBy: 'SYSTEM',
       status: 'COMPLETED',
       FLAGGED_FOR_AML: false,
       AML_THRESHOLD_USED: 0,
-      metadata: JSON.stringify(metadata)
-      // NO timestamp fields here - Sequelize will add them automatically
+      metadata: JSON.stringify(metadata),
+      created_at: now,
+      updated_at: now
     };
-    
+
     console.log('Transaction data to create:', JSON.stringify(transactionData, null, 2));
-    
+
     const transactionRecord = await Transaction.create(transactionData, { transaction: t });
-    
+
     if (!transactionRecord) {
       await t.rollback();
       return res.status(500).json({ 
@@ -711,16 +796,15 @@ static async createThriftAccount(req, res) {
         error: 'Failed to create transaction record' 
       });
     }
-    
-    console.log(`✅ Transaction created: ${REFERENCE}`);
-    
-    // ─── Create GL Accounting Entries ──────────────────────
-    console.log('Creating GL accounting entries...');
+
+    console.log(`✅ Service fee transaction created: ${REFERENCE}`);
+
+    // ─── Create GL Accounting Entries (if available) ───────
     let glTransactionInfo = null;
-    
+
     if (GLAccountTransaction) {
       try {
-        // Verify all GL accounts exist before proceeding
+        // Verify GL accounts exist
         const [cashAccountExists, incomeAccountExists] = await Promise.all([
           sequelizeInstance.query(
             `SELECT g_l__a_c_c_t__n_o, a_c_c_t__d_e_s_c FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`,
@@ -740,178 +824,85 @@ static async createThriftAccount(req, res) {
           )
         ]);
         
-        if (!cashAccountExists.length) {
-          throw new Error(`Cash GL account ${CASH_GL} does not exist in gl_accounts table`);
-        }
-        
-        if (!incomeAccountExists.length) {
-          throw new Error(`Thrift Service Income GL account ${THRIFT_INCOME_GL} does not exist in gl_accounts table`);
-        }
-        
-        console.log('✅ GL accounts verified:', {
-          cashAccount: `${CASH_GL} - ${cashAccountExists[0]?.a_c_c_t__d_e_s_c}`,
-          incomeAccount: `${THRIFT_INCOME_GL} - ${incomeAccountExists[0]?.a_c_c_t__d_e_s_c}`
-        });
-        
-        // Create unique journal ID for GL entries
-        const glJournalId = `THRIFT-${ACCT_NO}-${timestamp}`;
-        const glTransactionId = `GL-${TRANSACTION_ID}`;
-        
-        // Get current balances before update
-        const [cashCurrent, incomeCurrent] = await Promise.all([
-          sequelizeInstance.query(
-            `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e, l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e 
-             FROM gl_accounts 
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [CASH_GL],
-              type: sequelizeInstance.QueryTypes.SELECT,
-              transaction: t
-            }
-          ),
-          sequelizeInstance.query(
-            `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e, l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e 
-             FROM gl_accounts 
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [THRIFT_INCOME_GL],
-              type: sequelizeInstance.QueryTypes.SELECT,
-              transaction: t
-            }
-          )
-        ]);
-
-        const cashPreviousBalance = cashCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
-        const incomePreviousBalance = incomeCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
-        
-        // Create GL transaction record
-        await GLAccountTransaction.create({
-          JOURNAL_ID: glJournalId,
-          TRANSACTION_ID: glTransactionId,
-          TransactionId: Date.now(),
-          DR_ACCT_NO: CASH_GL,
-          CR_ACCT_NO: THRIFT_INCOME_GL,
-          AMOUNT: parseFloat(initialAmount),
-          NARRATION: `Thrift account opening fee for ${fullName} (Account: ${ACCT_NO}, Product: ${savingsProduct.productName})`,
-          CREATED_BY: 'SYSTEM',
-          UPDATED_BY: 'SYSTEM',
-          TRANSACTION_TYPE: 'THRIFT_OPENING_FEE',
-          PRODUCT_ID: productId,
-          CURRENCY_CODE: 'NGN',
-          STATUS: 'POSTED',
-          ACCOUNTING_IMPACT: 'DEBIT_CASH_CREDIT_INCOME',
-          createdAt: new Date(),
-          updatedAt: new Date()
-        }, { transaction: t });
-        
-        console.log(`✅ GL double-entry transaction created: ${glJournalId}`);
-        console.log(`📊 Journal Entry: DEBIT Cash ${CASH_GL}, CREDIT Income ${THRIFT_INCOME_GL} for ₦${initialAmount}`);
-        
-        // Update GL account balances if GLAccount model exists
-        if (GLAccount) {
-          // Update Cash Account (DEBIT - increase balance - Asset Account)
-          await sequelizeInstance.query(
-            `UPDATE gl_accounts 
-             SET 
-               c_u_r_r_e_n_t__b_a_l_a_n_c_e = c_u_r_r_e_n_t__b_a_l_a_n_c_e + ?,
-               l_e_d_g_e_r__b_a_l_a_n_c_e = l_e_d_g_e_r__b_a_l_a_n_c_e + ?,
-               a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e + ?,
-               updated_at = NOW()
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [
-                parseFloat(initialAmount),
-                parseFloat(initialAmount),
-                parseFloat(initialAmount),
-                CASH_GL
-              ],
-              transaction: t
-            }
-          );
+        if (cashAccountExists.length && incomeAccountExists.length) {
+          console.log('✅ GL accounts verified, creating GL entries for service fee...');
           
-          // Update Thrift Service Income Account (CREDIT - increase balance - Revenue Account)
-          await sequelizeInstance.query(
-            `UPDATE gl_accounts 
-             SET 
-               c_u_r_r_e_n_t__b_a_l_a_n_c_e = c_u_r_r_e_n_t__b_a_l_a_n_c_e + ?,
-               l_e_d_g_e_r__b_a_l_a_n_c_e = l_e_d_g_e_r__b_a_l_a_n_c_e + ?,
-               a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e = a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e + ?,
-               updated_at = NOW()
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [
-                parseFloat(initialAmount),
-                parseFloat(initialAmount),
-                parseFloat(initialAmount),
-                THRIFT_INCOME_GL
-              ],
-              transaction: t
-            }
-          );
+          // Create GL transaction record
+          const glJournalId = `THRIFT-FEE-${ACCT_NO}-${timestamp}`;
+          const glTransactionId = `GL-FEE-${TRANSACTION_ID}`;
           
-          console.log('✅ GL account balances updated');
-        }
-        
-        // Get updated balances for response
-        const [cashUpdated, incomeUpdated] = await Promise.all([
-          sequelizeInstance.query(
-            `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e, l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e 
-             FROM gl_accounts 
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [CASH_GL],
-              type: sequelizeInstance.QueryTypes.SELECT,
-              transaction: t
-            }
-          ),
-          sequelizeInstance.query(
-            `SELECT c_u_r_r_e_n_t__b_a_l_a_n_c_e, l_e_d_g_e_r__b_a_l_a_n_c_e, a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e 
-             FROM gl_accounts 
-             WHERE g_l__a_c_c_t__n_o = ?`,
-            {
-              replacements: [THRIFT_INCOME_GL],
-              type: sequelizeInstance.QueryTypes.SELECT,
-              transaction: t
-            }
-          )
-        ]);
-
-        glTransactionInfo = {
-          transactionId: glTransactionId,
-          journalId: glJournalId,
-          debitAccount: CASH_GL,
-          creditAccount: THRIFT_INCOME_GL,
-          amount: parseFloat(initialAmount),
-          productId: productId,
-          status: 'POSTED',
-          accountingImpact: {
-            debitAccount: 'Cash Account (Asset Increase)',
-            creditAccount: 'Thrift Service Income (Revenue Increase)',
-            description: 'Double-entry accounting for thrift opening fee income',
-            productName: savingsProduct.productName
-          },
-          balances: {
-            cashAccount: {
-              previous: cashPreviousBalance,
-              new: cashUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0,
-              change: parseFloat(initialAmount)
-            },
-            incomeAccount: {
-              previous: incomePreviousBalance,
-              new: incomeUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0,
-              change: parseFloat(initialAmount)
-            }
+          await GLAccountTransaction.create({
+            JOURNAL_ID: glJournalId,
+            TRANSACTION_ID: glTransactionId,
+            TransactionId: Date.now(),
+            DR_ACCT_NO: CASH_GL,
+            CR_ACCT_NO: THRIFT_INCOME_GL,
+            AMOUNT: serviceFee,
+            NARRATION: `Thrift account opening service fee for ${fullName} (Account: ${ACCT_NO})`,
+            CREATED_BY: 'SYSTEM',
+            UPDATED_BY: 'SYSTEM',
+            TRANSACTION_TYPE: 'SERVICE_FEE',
+            CURRENCY_CODE: 'NGN',
+            STATUS: 'POSTED',
+            ACCOUNTING_IMPACT: 'DEBIT_CASH_CREDIT_INCOME',
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }, { transaction: t });
+          
+          console.log(`✅ GL double-entry transaction created: ${glJournalId}`);
+          console.log(`📊 Journal Entry: DEBIT Cash ${CASH_GL}, CREDIT Income ${THRIFT_INCOME_GL} for ₦${serviceFee}`);
+          
+          // Update GL account balances if GLAccount model exists
+          if (GLAccount) {
+            // Update Cash Account (DEBIT - increase balance - Asset Account)
+            await sequelizeInstance.query(
+              `UPDATE gl_accounts 
+               SET 
+                 c_u_r_r_e_n_t__b_a_l_a_n_c_e = c_u_r_r_e_n_t__b_a_l_a_n_c_e + ?,
+                 updated_at = NOW()
+               WHERE g_l__a_c_c_t__n_o = ?`,
+              {
+                replacements: [serviceFee, CASH_GL],
+                transaction: t
+              }
+            );
+            
+            // Update Thrift Service Income Account (CREDIT - increase balance - Revenue Account)
+            await sequelizeInstance.query(
+              `UPDATE gl_accounts 
+               SET 
+                 c_u_r_r_e_n_t__b_a_l_a_n_c_e = c_u_r_r_e_n_t__b_a_l_a_n_c_e + ?,
+                 updated_at = NOW()
+               WHERE g_l__a_c_c_t__n_o = ?`,
+              {
+                replacements: [serviceFee, THRIFT_INCOME_GL],
+                transaction: t
+              }
+            );
+            
+            console.log('✅ GL account balances updated');
           }
-        };
-        
+          
+          glTransactionInfo = {
+            transactionId: glTransactionId,
+            journalId: glJournalId,
+            debitAccount: CASH_GL,
+            creditAccount: THRIFT_INCOME_GL,
+            amount: serviceFee,
+            type: 'SERVICE_FEE',
+            status: 'POSTED',
+            accountingImpact: {
+              debitAccount: 'Cash Account (Asset Increase)',
+              creditAccount: 'Thrift Service Income (Revenue Increase)',
+              description: 'Service fee for thrift account opening'
+            }
+          };
+        } else {
+          console.log('⚠️ GL accounts not found in database, skipping GL entries');
+        }
       } catch (glError) {
-        console.error('❌ GL accounting error:', glError.message);
-        await t.rollback();
-        return res.status(500).json({
-          success: false,
-          error: 'GL Accounting failed',
-          details: glError.message
-        });
+        console.error('❌ GL accounting error (non-fatal):', glError.message);
+        // Don't rollback - continue without GL entries
       }
     } else {
       console.log('⚠️ GLAccountTransaction model not available, skipping GL entries');
@@ -971,23 +962,6 @@ static async createThriftAccount(req, res) {
       }
     };
     
-    // ─── Log success ────────────────────────────────────────
-    console.log('Thrift account created successfully', {
-      CUST_ID,
-      ACCT_NO,
-      ACCT_ID,
-      customerName: fullName,
-      initialAmount,
-      collectionType,
-      productId,
-      productName: savingsProduct.productName,
-      transactionDate: txDate,
-      nextCollectionDate,
-      transactionId: TRANSACTION_IDENTIFIER,
-      reference: REFERENCE,
-      glTransactionId: glTransactionInfo?.transactionId || null
-    });
-    
     // ─── Prepare response data ──────────────────────────────
     const responseData = {
       success: true,
@@ -1002,7 +976,8 @@ static async createThriftAccount(req, res) {
           lastName: LASTNAME,
           fullName: fullName,
           relationshipManager: RELATIONSHIP_MANAGER || null,
-          amount: parseFloat(initialAmount),
+          amount: customerBalance, // Customer's savings balance is 0
+          serviceFee: serviceFee, // Fee paid to company
           address: addressObj,
           collectionType: collectionType,
           status: 'ACTIVE',
@@ -1010,9 +985,9 @@ static async createThriftAccount(req, res) {
           productName: savingsProduct.productName,
           openingDate: safeToISOString(openDate),
           transactionDate: safeToISOString(txDate),
-          initialAmount: parseFloat(initialAmount),
+          initialAmount: customerBalance,
           accountType: 'THRIFT',
-          totalContributions: parseFloat(initialAmount),
+          totalContributions: 0,
           totalWithdrawals: 0,
           nextCollectionDate: safeToISOString(nextCollectionDate),
           isActive: true,
@@ -1020,7 +995,7 @@ static async createThriftAccount(req, res) {
             cash: CASH_GL,
             income: THRIFT_INCOME_GL
           },
-          notes: `Thrift account opened for ${fullName} with initial deposit of ${initialAmount}`
+          notes: `Thrift account opened with service fee of ${serviceFee}. Customer savings balance: 0.00`
         },
         transaction: {
           transactionIdentifier: TRANSACTION_IDENTIFIER,
@@ -1028,13 +1003,14 @@ static async createThriftAccount(req, res) {
           eventId: EVENT_ID,
           journalId: TRAN_JOURNAL_ID,
           reference: REFERENCE,
-          amount: parseFloat(initialAmount),
-          type: 'DEPOSIT',
+          amount: serviceFee,
+          type: 'SERVICE_FEE',
           status: 'COMPLETED',
           date: safeToISOString(txDate),
-          description: `Thrift account opening – initial deposit for ${fullName}`,
+          description: `Thrift account opening service fee for ${fullName}`,
           direction: 'DEBIT',
-          productId: productId
+          productId: productId,
+          isServiceFee: true
         },
         product: {
           productId: savingsProduct.PROD_ID,
@@ -1043,14 +1019,15 @@ static async createThriftAccount(req, res) {
           description: savingsProduct.productDescription || savingsProduct.PROD_DESC
         },
         summary: {
-          initialDeposit: parseFloat(initialAmount),
-          thriftAccountBalance: parseFloat(initialAmount),
-          netTransfer: parseFloat(initialAmount),
+          serviceFee: serviceFee,
+          customerSavingsBalance: customerBalance,
           nextCollectionDate: safeToISOString(nextCollectionDate),
           collectionFrequency: collectionType,
           transactionIdentifier: TRANSACTION_IDENTIFIER,
           reference: REFERENCE,
-          productId: productId
+          productId: productId,
+          isActive: true,
+          note: 'Initial deposit treated as service fee. Customer savings balance is 0.'
         }
       }
     };
@@ -1104,15 +1081,9 @@ static async createThriftAccount(req, res) {
       errorMessage = 'Invalid customer reference';
     } else if (err.message.includes('ACCT_NO') || err.message.includes('acct_no')) {
       errorMessage = 'Database column issue. Please sync database schema.';
-    } else if (err.message.includes('toISOString')) {
-      errorMessage = 'Date conversion error';
-    } else if (err.message.includes('Product configuration error')) {
-      errorMessage = err.message;
-    } else if (err.message.includes('GL Accounting failed')) {
+    } else if (err.message.includes('Thrift GL accounts not configured')) {
       errorMessage = err.message;
     } else if (err.message.includes('No savings product found')) {
-      errorMessage = err.message;
-    } else if (err.message.includes('GL accounts not configured')) {
       errorMessage = err.message;
     }
     
@@ -1124,149 +1095,253 @@ static async createThriftAccount(req, res) {
   }
 }
 
-  // ─────────────────────────────────────────────
-  //  Get thrift account by account number
-  // ─────────────────────────────────────────────
-  static async getThriftAccount(req, res) {
-    try {
-      const { accountNo } = req.params;
-      
-      if (!accountNo) {
-        return res.status(400).json({
-          success: false,
-          error: 'Account number is required'
-        });
-      }
-      
-      await ensureModelsInitialized();
-      
-      const thrift = await Thrift.findOne({
-        where: { ACCT_NO: accountNo }
-      });
-      
-      if (!thrift) {
-        return res.status(404).json({
-          success: false,
-          error: 'Thrift account not found'
-        });
-      }
-      
-      res.json({
-        success: true,
-        data: thrift
-      });
-      
-    } catch (error) {
-      console.error('Error getting thrift account:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get thrift account',
-        details: error.message
-      });
-    }
-  }
+// ─────────────────────────────────────────────
+//  Additional methods for Thrift account management
+// ─────────────────────────────────────────────
 
-  // ─────────────────────────────────────────────
-  //  Get all thrift accounts for a customer
-  // ─────────────────────────────────────────────
-  static async getCustomerThriftAccounts(req, res) {
-    try {
-      const { customerId } = req.params;
-      
-      if (!customerId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Customer ID is required'
-        });
-      }
-      
-      await ensureModelsInitialized();
-      
-      const thrifts = await Thrift.findAll({
-        where: { CUST_ID: customerId },
-        order: [['created_at', 'DESC']]
-      });
-      
-      res.json({
-        success: true,
-        count: thrifts.length,
-        data: thrifts
-      });
-      
-    } catch (error) {
-      console.error('Error getting customer thrift accounts:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get customer thrift accounts',
-        details: error.message
-      });
+/**
+ * Get all thrift accounts with optional filtering
+ */
+static async getThriftAccounts(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      collectionType,
+      search,
+      isActive
+    } = req.query;
+    
+    const offset = (page - 1) * limit;
+    const whereClause = {};
+    
+    // Apply filters
+    if (status) {
+      whereClause.STATUS = status;
     }
+    
+    if (collectionType) {
+      whereClause.COLLECTION_TYPE = collectionType;
+    }
+    
+    // Filter by active status
+    if (isActive !== undefined) {
+      whereClause.isActive = isActive === 'true';
+    }
+    
+    if (search) {
+      whereClause[Op.or] = [
+        { ACCT_NO: { [Op.like]: `%${search}%` } },
+        { FULL_NAME: { [Op.like]: `%${search}%` } },
+        { FIRST_NAME: { [Op.like]: `%${search}%` } },
+        { LASTNAME: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    
+    const { count, rows } = await Thrift.findAndCountAll({
+      where: whereClause,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['created_at', 'DESC']]
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: rows.map(account => account.getAccountInfo()),
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching thrift accounts:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch thrift accounts',
+      details: error.message
+    });
   }
+}
 
-  // ─────────────────────────────────────────────
-  //  Update thrift account status
-  // ─────────────────────────────────────────────
-  static async updateThriftStatus(req, res) {
-    try {
-      const { accountNo } = req.params;
-      const { status, reason } = req.body;
-      
-      if (!accountNo) {
-        return res.status(400).json({
-          success: false,
-          error: 'Account number is required'
-        });
-      }
-      
-      if (!status) {
-        return res.status(400).json({
-          success: false,
-          error: 'Status is required'
-        });
-      }
-      
-      const validStatuses = ['ACTIVE', 'SUSPENDED', 'CLOSED', 'INACTIVE'];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          error: `Invalid status. Allowed values: ${validStatuses.join(', ')}`
-        });
-      }
-      
-      await ensureModelsInitialized();
-      
-      const thrift = await Thrift.findOne({
-        where: { ACCT_NO: accountNo }
-      });
-      
-      if (!thrift) {
-        return res.status(404).json({
-          success: false,
-          error: 'Thrift account not found'
-        });
-      }
-      
-      await thrift.update({
-        STATUS: status,
-        statusReason: reason || null,
-        updated_at: new Date()
-      });
-      
-      res.json({
-        success: true,
-        message: `Thrift account status updated to ${status}`,
-        data: thrift
-      });
-      
-    } catch (error) {
-      console.error('Error updating thrift status:', error);
-      res.status(500).json({
+/**
+ * Get thrift account by account number
+ */
+static async getThriftAccountByNumber(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const { accountNumber } = req.params;
+    
+    const account = await Thrift.findOne({
+      where: { ACCT_NO: accountNumber }
+    });
+    
+    if (!account) {
+      return res.status(404).json({
         success: false,
-        error: 'Failed to update thrift status',
-        details: error.message
+        error: 'Thrift account not found'
       });
     }
+    
+    return res.status(200).json({
+      success: true,
+      data: account.getAccountInfo()
+    });
+    
+  } catch (error) {
+    console.error('Error fetching thrift account:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch thrift account',
+      details: error.message
+    });
   }
+}
+
+/**
+ * Update thrift account status
+ */
+static async updateThriftStatus(req, res) {
+  let t = null;
+  
+  try {
+    await ensureModelsInitialized();
+    
+    const { accountNumber } = req.params;
+    const { status, reason } = req.body;
+    
+    const validStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'CLOSED'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+    
+    t = await sequelizeInstance.transaction();
+    
+    const account = await Thrift.findOne({
+      where: { ACCT_NO: accountNumber },
+      transaction: t
+    });
+    
+    if (!account) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        error: 'Thrift account not found'
+      });
+    }
+    
+    // Update status and isActive based on status
+    const updateData = {
+      STATUS: status,
+      notes: account.notes 
+        ? `${account.notes}\n${new Date().toISOString()}: Status changed to ${status}${reason ? ` - ${reason}` : ''}`
+        : `${new Date().toISOString()}: Status changed to ${status}${reason ? ` - ${reason}` : ''}`
+    };
+    
+    // Automatically update isActive based on status
+    updateData.isActive = status === 'ACTIVE';
+    
+    await account.update(updateData, { transaction: t });
+    
+    await t.commit();
+    
+    return res.status(200).json({
+      success: true,
+      message: `Thrift account status updated to ${status}`,
+      data: {
+        accountNumber: account.ACCT_NO,
+        status: account.STATUS,
+        isActive: account.isActive,
+        notes: account.notes
+      }
+    });
+    
+  } catch (error) {
+    if (t) await t.rollback();
+    console.error('Error updating thrift account status:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update thrift account status',
+      details: error.message
+    });
+  }
+}
+
+/**
+ * Toggle thrift account active status
+ */
+static async toggleActiveStatus(req, res) {
+  let t = null;
+  
+  try {
+    await ensureModelsInitialized();
+    
+    const { accountNumber } = req.params;
+    const { active, reason } = req.body;
+    
+    if (active === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'active flag is required (true/false)'
+      });
+    }
+    
+    t = await sequelizeInstance.transaction();
+    
+    const account = await Thrift.findOne({
+      where: { ACCT_NO: accountNumber },
+      transaction: t
+    });
+    
+    if (!account) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        error: 'Thrift account not found'
+      });
+    }
+    
+    const isActive = active === true || active === 'true';
+    
+    await account.update({
+      isActive: isActive,
+      notes: account.notes 
+        ? `${account.notes}\n${new Date().toISOString()}: Account ${isActive ? 'activated' : 'deactivated'}${reason ? ` - ${reason}` : ''}`
+        : `${new Date().toISOString()}: Account ${isActive ? 'activated' : 'deactivated'}${reason ? ` - ${reason}` : ''}`
+    }, { transaction: t });
+    
+    await t.commit();
+    
+    return res.status(200).json({
+      success: true,
+      message: `Thrift account ${isActive ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        accountNumber: account.ACCT_NO,
+        isActive: account.isActive,
+        status: account.STATUS,
+        notes: account.notes
+      }
+    });
+    
+  } catch (error) {
+    if (t) await t.rollback();
+    console.error('Error toggling thrift account active status:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to toggle thrift account active status',
+      details: error.message
+    });
+  }
+}
 
   // ─────────────────────────────────────────────
   //  Get thrift account transactions
@@ -1355,6 +1430,96 @@ static async createThriftAccount(req, res) {
     }
   }
 
+  // ─────────────────────────────────────────────
+//  Get thrift accounts by customer ID
+// ─────────────────────────────────────────────
+static async getThriftAccountsByCustomerId(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const { customerId } = req.params;
+    
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID is required'
+      });
+    }
+
+    console.log(`🔍 Fetching thrift accounts for customer: ${customerId}`);
+
+    // Find all thrift accounts for this customer
+    const thriftAccounts = await Thrift.findAll({
+      where: { 
+        CUST_ID: customerId 
+      },
+      order: [['created_at', 'DESC']]
+    });
+
+    if (!thriftAccounts || thriftAccounts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `No thrift accounts found for customer ID: ${customerId}`
+      });
+    }
+
+    // Format the response
+    const formattedAccounts = thriftAccounts.map(account => ({
+      accountNumber: account.ACCT_NO,
+      accountId: account.ACCT_ID,
+      customerId: account.CUST_ID,
+      firstName: account.FIRST_NAME,
+      lastName: account.LASTNAME,
+      fullName: account.FULL_NAME,
+      balance: parseFloat(account.AMOUNT || 0),
+      collectionType: account.COLLECTION_TYPE,
+      status: account.status,
+      isActive: account.isActive,
+      openedDate: account.OPENED_DT,
+      lastCollectionDate: account.lastCollectionDate,
+      nextCollectionDate: account.nextCollectionDate,
+      totalContributions: parseFloat(account.totalContributions || 0),
+      totalWithdrawals: parseFloat(account.totalWithdrawals || 0),
+      relationshipManager: account.RELATIONSHIP_MANAGER || null,
+      notes: account.notes
+    }));
+
+    // Calculate summary
+    const summary = {
+      totalAccounts: formattedAccounts.length,
+      totalBalance: formattedAccounts.reduce((sum, acc) => sum + acc.balance, 0),
+      activeAccounts: formattedAccounts.filter(acc => acc.status === 'ACTIVE').length,
+      totalContributions: formattedAccounts.reduce((sum, acc) => sum + acc.totalContributions, 0),
+      totalWithdrawals: formattedAccounts.reduce((sum, acc) => sum + acc.totalWithdrawals, 0),
+      netBalance: formattedAccounts.reduce((sum, acc) => sum + (acc.totalContributions - acc.totalWithdrawals), 0)
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: `Found ${formattedAccounts.length} thrift account(s) for customer`,
+      data: {
+        customerId: customerId,
+        accounts: formattedAccounts,
+        summary: summary
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching thrift accounts by customer ID:', error);
+    logger.error('getThriftAccountsByCustomerId failed', { 
+      error: error.message, 
+      stack: error.stack,
+      customerId: req.params.customerId,
+      timestamp: new Date().toISOString()
+    });
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch thrift accounts',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+}
   // ─────────────────────────────────────────────
   //  Create thrift account for existing customer (SINGLE VERSION)
   // ─────────────────────────────────────────────
@@ -1668,226 +1833,212 @@ static async createThriftAccount(req, res) {
     }
   }
 
-  // ─────────────────────────────────────────────
-  //  Process daily collection
-  // ─────────────────────────────────────────────
-  static async processDailyCollection(req, res) {
-    let t;
+ // ─────────────────────────────────────────────
+//  Process daily collection (IMPROVED VERSION)
+// ─────────────────────────────────────────────
+static async processDailyCollection(req, res) {
+  let t;
+  
+  try {
+    await ensureModelsInitialized();
     
-    try {
-      await ensureModelsInitialized();
-      
-      t = await sequelizeInstance.transaction();
-      
-      const { CUST_ID, ACCT_NO, amount, debitGLAccount, creditGLAccount } = req.body;
-      
-      // Validate required fields
-      if (!CUST_ID || !ACCT_NO || !amount) {
-        await t.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'CUST_ID, ACCT_NO, and amount are required'
-        });
-      }
+    t = await sequelizeInstance.transaction();
+    
+    const { CUST_ID, ACCT_NO, amount, debitGLAccount, creditGLAccount } = req.body;
+    
+    // Validate required fields
+    if (!CUST_ID || !ACCT_NO || !amount) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'CUST_ID, ACCT_NO, and amount are required'
+      });
+    }
 
-      // Find thrift account
-      const thriftAccount = await Thrift.findOne({
-        where: { 
-          acct_no: ACCT_NO
-        },
+    // Find thrift account
+    const thriftAccount = await Thrift.findOne({
+      where: { 
+        acct_no: ACCT_NO
+      },
+      transaction: t
+    });
+
+    if (!thriftAccount) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: `Thrift account not found for ACCT_NO: ${ACCT_NO}`
+      });
+    }
+
+    // Verify customer ID matches
+    const accountCustomerId = thriftAccount.cust_id || thriftAccount.CUST_ID;
+    if (accountCustomerId !== CUST_ID) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Customer ID mismatch. Account belongs to customer: ${accountCustomerId}`
+      });
+    }
+
+    // Get current balance
+    const currentBalance = parseFloat(thriftAccount.AMOUNT || thriftAccount.amount || 0);
+    const collectionAmount = parseFloat(amount);
+    
+    if (isNaN(collectionAmount) || collectionAmount <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be a positive number'
+      });
+    }
+    
+    const newBalance = currentBalance + collectionAmount;
+    const currentContributions = parseFloat(thriftAccount.total_contributions || 0);
+    const newContributions = currentContributions + collectionAmount;
+    
+    console.log('🔍 Thrift account update details:', {
+      ACCT_NO,
+      currentBalance,
+      collectionAmount,
+      newBalance,
+      currentContributions,
+      newContributions
+    });
+    
+    // 1. Update thrift account balance using raw SQL
+    await sequelizeInstance.query(
+      `UPDATE THRIFT_ACCOUNTS 
+       SET 
+         AMOUNT = ?,
+         total_contributions = ?,
+         last_collection_date = ?,
+         next_collection_date = ?,
+         last_transaction_date = ?,
+         updated_at = ?
+       WHERE acct_no = ?`,
+      {
+        replacements: [
+          newBalance,
+          newContributions,
+          new Date(),
+          new Date(Date.now() + 24 * 60 * 60 * 1000),
+          new Date(),
+          new Date(),
+          ACCT_NO
+        ],
         transaction: t
-      });
-
-      if (!thriftAccount) {
-        await t.rollback();
-        return res.status(404).json({
-          success: false,
-          message: `Thrift account not found for ACCT_NO: ${ACCT_NO}`
-        });
       }
+    );
 
-      // Verify customer ID matches
-      const accountCustomerId = thriftAccount.cust_id || thriftAccount.CUST_ID;
-      if (accountCustomerId !== CUST_ID) {
-        await t.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `Customer ID mismatch. Account belongs to customer: ${accountCustomerId}`
-        });
-      }
+    // Verify the update
+    const updatedThriftAccount = await Thrift.findOne({
+      where: { acct_no: ACCT_NO },
+      transaction: t
+    });
+    
+    console.log('✅ Thrift account updated:', {
+      ACCT_NO,
+      previousBalance: currentBalance,
+      newBalanceInDB: updatedThriftAccount?.AMOUNT || updatedThriftAccount?.amount,
+      previousContributions: currentContributions,
+      newContributionsInDB: updatedThriftAccount?.total_contributions
+    });
 
-      // Get current balance - use uppercase column name
-      const currentBalance = parseFloat(thriftAccount.AMOUNT || thriftAccount.amount || 0);
-      const collectionAmount = parseFloat(amount);
-      
-      if (isNaN(collectionAmount) || collectionAmount <= 0) {
-        await t.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'Amount must be a positive number'
-        });
-      }
-      
-      const newBalance = currentBalance + collectionAmount;
-      const currentContributions = parseFloat(thriftAccount.total_contributions || 0);
-      const newContributions = currentContributions + collectionAmount;
-      
-      console.log('🔍 Thrift account update details:', {
-        ACCT_NO,
-        currentBalance,
-        collectionAmount,
-        newBalance,
-        currentContributions,
-        newContributions
-      });
-      
-      // 1. Update thrift account balance using raw SQL to ensure column names match
-      await sequelizeInstance.query(
-        `UPDATE THRIFT_ACCOUNTS 
-         SET 
-           AMOUNT = ?,
-           total_contributions = ?,
-           last_collection_date = ?,
-           next_collection_date = ?,
-           last_transaction_date = ?,
-           updated_at = ?
-         WHERE acct_no = ?`,
-        {
-          replacements: [
-            newBalance,                    // AMOUNT
-            newContributions,              // total_contributions
-            new Date(),                    // last_collection_date
-            new Date(Date.now() + 24 * 60 * 60 * 1000), // next_collection_date
-            new Date(),                    // last_transaction_date
-            new Date(),                    // updated_at
-            ACCT_NO                       // acct_no
-          ],
-          transaction: t
-        }
-      );
+    // Generate transaction identifiers
+    const generateSmallIntId = () => {
+      return Math.floor(Math.random() * 900000) + 100000;
+    };
+    
+    const baseId = generateSmallIntId();
+    const transactionIdentifier = baseId;
+    const eventId = baseId + 1;
+    const journalId = baseId + 2;
+    const reference = baseId + 3;
 
-      // Verify the update
-      const updatedThriftAccount = await Thrift.findOne({
-        where: { acct_no: ACCT_NO },
-        transaction: t
-      });
+    // 2. Create thrift transaction record
+    const transactionData = {
+      TRANSACTION_IDENTIFIER: transactionIdentifier,
+      EVENT_ID: eventId,
+      TRAN_JOURNAL_ID: journalId,
+      REFERENCE: reference,
       
-      console.log('✅ Thrift account updated:', {
-        ACCT_NO,
+      CUST_ID,
+      ACCT_NO,
+      ACCT_ID: thriftAccount.acct_id || thriftAccount.ACCT_ID || ACCT_NO,
+      BU_ID: thriftAccount.BU_ID || 1,
+      ACCT_NM: thriftAccount.acct_nm || thriftAccount.ACCT_NM || 'Thrift Account',
+      AMOUNT: collectionAmount,
+      TRANSACTION_TYPE: 'DEPOSIT',
+      description: 'Daily thrift collection',
+      status: 'COMPLETED',
+      createdBy: req.user?.id || 'SYSTEM',
+      TRANSACTIONDATE: new Date(),
+      
+      metadata: JSON.stringify({
+        collectionType: 'DAILY',
+        amount: collectionAmount,
         previousBalance: currentBalance,
-        newBalanceInDB: updatedThriftAccount?.AMOUNT || updatedThriftAccount?.amount,
-        previousContributions: currentContributions,
-        newContributionsInDB: updatedThriftAccount?.total_contributions
-      });
-
-      // Generate small integer identifiers
-      const generateSmallIntId = () => {
-        const counter = Math.floor(Math.random() * 900000) + 100000;
-        return counter;
-      };
+        newBalance: newBalance,
+        accountNo: ACCT_NO,
+        customerId: CUST_ID,
+        timestamp: new Date().toISOString(),
+        debitGLAccount: debitGLAccount || null,
+        creditGLAccount: creditGLAccount || null
+      }),
       
-      const baseId = generateSmallIntId();
-      const transactionIdentifier = baseId;
-      const eventId = baseId + 1;
-      const journalId = baseId + 2;
-      const reference = baseId + 3;
+      created_at: new Date(),
+      updated_at: new Date()
+    };
 
-      // 2. Create thrift transaction record
-      const transactionData = {
-        TRANSACTION_IDENTIFIER: transactionIdentifier,
-        EVENT_ID: eventId,
-        TRAN_JOURNAL_ID: journalId,
-        REFERENCE: reference,
-        
-        CUST_ID,
-        ACCT_NO,
-        ACCT_ID: thriftAccount.acct_id || thriftAccount.ACCT_ID || ACCT_NO,
-        BU_ID: thriftAccount.BU_ID || 1,
-        ACCT_NM: thriftAccount.acct_nm || thriftAccount.ACCT_NM || 'Thrift Account',
-        AMOUNT: collectionAmount,
-        TRANSACTION_TYPE: 'DEPOSIT',
-        description: 'Daily thrift collection',
-        status: 'COMPLETED',
-        createdBy: req.user?.id || 'SYSTEM',
-        TRANSACTIONDATE: new Date(),
-        
-        metadata: JSON.stringify({
-          collectionType: 'DAILY',
-          amount: collectionAmount,
-          previousBalance: currentBalance,
-          newBalance: newBalance,
-          accountNo: ACCT_NO,
-          customerId: CUST_ID,
-          timestamp: new Date().toISOString(),
-          debitGLAccount,
-          creditGLAccount
-        }),
-        
-        created_at: new Date(),
-        updated_at: new Date()
-      };
+    await Transaction.create(transactionData, { transaction: t });
 
-      await Transaction.create(transactionData, { transaction: t });
+    // 3. Process GL transactions (if GL accounts are provided)
+    let glTransactionInfo = null;
+    let glAccountBalances = null;
+    
+    if (debitGLAccount && creditGLAccount) {
+      try {
+        // Get GL models
+        const models = sequelizeInstance.models;
+        const GLAccountTransaction = models.GLAccountTransaction || models.gl_account_transactions;
+        const GLAccount = models.GLAccount || models.gl_accounts;
+        
+        if (!GLAccountTransaction) {
+          console.log('⚠️ GLAccountTransaction model not available, skipping GL entries');
+        } else {
+          // Verify GL accounts exist
+          const [debitAccountExists, creditAccountExists] = await Promise.all([
+            sequelizeInstance.query(
+              `SELECT g_l__a_c_c_t__n_o FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`,
+              {
+                replacements: [debitGLAccount],
+                type: sequelizeInstance.QueryTypes.SELECT,
+                transaction: t
+              }
+            ),
+            sequelizeInstance.query(
+              `SELECT g_l__a_c_c_t__n_o FROM gl_accounts WHERE g_l__a_c_c_t__n_o = ?`,
+              {
+                replacements: [creditGLAccount],
+                type: sequelizeInstance.QueryTypes.SELECT,
+                transaction: t
+              }
+            )
+          ]);
 
-      // 3. Process GL transactions
-      let glTransactionInfo = null;
-      let glAccountBalances = null;
-      
-      if (debitGLAccount && creditGLAccount) {
-        try {
+          if (!debitAccountExists.length) {
+            throw new Error(`Debit GL account ${debitGLAccount} does not exist`);
+          }
+          
+          if (!creditAccountExists.length) {
+            throw new Error(`Credit GL account ${creditGLAccount} does not exist`);
+          }
+
           // Generate GL identifiers
           const glTransactionId = `THRFT-${Date.now()}`;
           const glJournalId = `JRN-${Date.now()}`;
           
-          // Get GL models
-          const models = sequelizeInstance.models;
-          const GLAccountTransaction = models.GLAccountTransaction || models.gl_account_transactions;
-          
-          if (GLAccountTransaction) {
-            await GLAccountTransaction.create({
-              JOURNAL_ID: glJournalId,
-              TRANSACTION_ID: glTransactionId,
-              TransactionId: Date.now(),
-              DR_ACCT_NO: debitGLAccount,
-              CR_ACCT_NO: creditGLAccount,
-              AMOUNT: collectionAmount,
-              NARRATION: `Thrift collection from ${CUST_ID} (Account: ${ACCT_NO})`,
-              CREATED_BY: req.user?.id || 'SYSTEM',
-              UPDATED_BY: req.user?.id || 'SYSTEM',
-              TRANSACTION_TYPE: 'THRIFT_COLLECTION',
-              CURRENCY_CODE: 'NGN',
-              STATUS: 'POSTED',
-              createdAt: new Date(),
-              updatedAt: new Date()
-            }, { transaction: t });
-          } else {
-            // Fallback: Use raw SQL if model not available
-            await sequelizeInstance.query(
-              `INSERT INTO gl_account_transactions 
-               (JOURNAL_ID, TRANSACTION_ID, TransactionId, DR_ACCT_NO, CR_ACCT_NO, AMOUNT, 
-                NARRATION, CREATED_BY, UPDATED_BY, TRANSACTION_TYPE, CURRENCY_CODE, STATUS,
-                createdAt, updatedAt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-              {
-                replacements: [
-                  glJournalId,
-                  glTransactionId,
-                  Date.now(),
-                  debitGLAccount,
-                  creditGLAccount,
-                  collectionAmount,
-                  `Thrift collection from ${CUST_ID} (Account: ${ACCT_NO})`,
-                  req.user?.id || 'SYSTEM',
-                  req.user?.id || 'SYSTEM',
-                  'THRIFT_COLLECTION',
-                  'NGN',
-                  'POSTED'
-                ],
-                transaction: t
-              }
-            );
-          }
-
           // Get current balances before update
           const [debitCurrent, creditCurrent] = await Promise.all([
             sequelizeInstance.query(
@@ -1912,10 +2063,29 @@ static async createThriftAccount(req, res) {
             )
           ]);
 
-          const debitPreviousBalance = debitCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
-          const creditPreviousBalance = creditCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0;
+          const debitPreviousBalance = parseFloat(debitCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0);
+          const creditPreviousBalance = parseFloat(creditCurrent[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0);
           
-          // Update Debit Account (Bank Cash) - ASSET increases with DEBIT
+          // Create GL transaction record
+          await GLAccountTransaction.create({
+            JOURNAL_ID: glJournalId,
+            TRANSACTION_ID: glTransactionId,
+            TransactionId: Date.now(),
+            DR_ACCT_NO: debitGLAccount,
+            CR_ACCT_NO: creditGLAccount,
+            AMOUNT: collectionAmount,
+            NARRATION: `Thrift collection from ${CUST_ID} (Account: ${ACCT_NO})`,
+            CREATED_BY: req.user?.id || 'SYSTEM',
+            UPDATED_BY: req.user?.id || 'SYSTEM',
+            TRANSACTION_TYPE: 'THRIFT_COLLECTION',
+            CURRENCY_CODE: 'NGN',
+            STATUS: 'POSTED',
+            ACCOUNTING_IMPACT: 'DEBIT_CASH_CREDIT_LIABILITY',
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }, { transaction: t });
+
+          // Update GL account balances
           await sequelizeInstance.query(
             `UPDATE gl_accounts 
              SET 
@@ -1935,7 +2105,6 @@ static async createThriftAccount(req, res) {
             }
           );
 
-          // Update Credit Account (Customer Deposit) - LIABILITY increases with CREDIT
           await sequelizeInstance.query(
             `UPDATE gl_accounts 
              SET 
@@ -1980,16 +2149,16 @@ static async createThriftAccount(req, res) {
           ]);
 
           console.log('✅ GL Account Updates Verified:');
-          console.log('Debit Account (Bank Cash):', {
+          console.log('Debit Account:', {
             account: debitGLAccount,
             previous: debitPreviousBalance,
-            new: debitUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e,
+            new: parseFloat(debitUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
             change: collectionAmount
           });
-          console.log('Credit Account (Customer Deposit):', {
+          console.log('Credit Account:', {
             account: creditGLAccount,
             previous: creditPreviousBalance,
-            new: creditUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e,
+            new: parseFloat(creditUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
             change: collectionAmount
           });
 
@@ -2005,7 +2174,7 @@ static async createThriftAccount(req, res) {
           glAccountBalances = {
             debit: {
               account: debitGLAccount,
-              previousBalance: parseFloat(debitPreviousBalance),
+              previousBalance: debitPreviousBalance,
               newBalance: parseFloat(debitUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
               ledgerBalance: parseFloat(debitUpdated[0]?.l_e_d_g_e_r__b_a_l_a_n_c_e || 0),
               availableBalance: parseFloat(debitUpdated[0]?.a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e || 0),
@@ -2013,80 +2182,82 @@ static async createThriftAccount(req, res) {
             },
             credit: {
               account: creditGLAccount,
-              previousBalance: parseFloat(creditPreviousBalance),
+              previousBalance: creditPreviousBalance,
               newBalance: parseFloat(creditUpdated[0]?.c_u_r_r_e_n_t__b_a_l_a_n_c_e || 0),
               ledgerBalance: parseFloat(creditUpdated[0]?.l_e_d_g_e_r__b_a_l_a_n_c_e || 0),
               availableBalance: parseFloat(creditUpdated[0]?.a_v_a_i_l_a_b_l_e__b_a_l_a_n_c_e || 0),
               change: collectionAmount
             }
           };
-          
-        } catch (glError) {
-          console.error('❌ GL processing error:', glError);
-          console.error('GL error stack:', glError.stack);
-          glTransactionInfo = {
-            success: false,
-            error: glError.message
-          };
         }
+      } catch (glError) {
+        console.error('❌ GL processing error:', glError);
+        console.error('GL error stack:', glError.stack);
+        glTransactionInfo = {
+          success: false,
+          error: glError.message
+        };
       }
-
-      await t.commit();
-
-      // Prepare response
-      const response = {
-        success: true,
-        message: 'Daily collection processed successfully',
-        data: {
-          thriftAccount: {
-            accountNo: ACCT_NO,
-            customerId: CUST_ID,
-            customerName: thriftAccount.FULL_NAME || `${thriftAccount.FIRST_NAME} ${thriftAccount.LASTNAME}`,
-            previousBalance: currentBalance,
-            newBalance: newBalance,
-            amountCollected: collectionAmount,
-            totalContributions: newContributions
-          },
-          transaction: {
-            id: transactionIdentifier,
-            reference: reference,
-            amount: collectionAmount
-          },
-          timestamp: new Date().toISOString(),
-          totalContributions: newContributions,
-          AMOUNT: newBalance
-        }
-      };
-      
-      // Add GL info if available
-      if (glTransactionInfo) {
-        response.data.glTransaction = glTransactionInfo;
-        if (!glTransactionInfo.error) {
-          response.message += ' with GL posting';
-        } else {
-          response.message += ' (GL posting failed but thrift transaction completed)';
-        }
-      }
-      
-      if (glAccountBalances) {
-        response.data.glAccountBalances = glAccountBalances;
-      }
-
-      res.status(200).json(response);
-
-    } catch (error) {
-      if (t && !t.finished) await t.rollback();
-      console.error('❌ Error in processDailyCollection:', error);
-      console.error('Error stack:', error.stack);
-      
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error',
-        error: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      });
+    } else {
+      console.log('⚠️ No GL accounts provided, skipping GL posting');
     }
+
+    await t.commit();
+
+    // Prepare response
+    const response = {
+      success: true,
+      message: 'Daily collection processed successfully',
+      data: {
+        thriftAccount: {
+          accountNo: ACCT_NO,
+          customerId: CUST_ID,
+          customerName: thriftAccount.FULL_NAME || `${thriftAccount.FIRST_NAME} ${thriftAccount.LASTNAME}`,
+          previousBalance: currentBalance,
+          newBalance: newBalance,
+          amountCollected: collectionAmount,
+          totalContributions: newContributions
+        },
+        transaction: {
+          identifier: transactionIdentifier,
+          reference: reference,
+          amount: collectionAmount,
+          type: 'DEPOSIT',
+          status: 'COMPLETED'
+        },
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    // Add GL info if available
+    if (glTransactionInfo) {
+      response.data.glTransaction = glTransactionInfo;
+      if (!glTransactionInfo.error) {
+        response.message += ' with GL posting';
+      } else {
+        response.message += ' (GL posting failed but thrift transaction completed)';
+      }
+    }
+    
+    if (glAccountBalances) {
+      response.data.glAccountBalances = glAccountBalances;
+    }
+
+    res.status(200).json(response);
+
+  } catch (error) {
+    if (t && !t.finished) await t.rollback();
+    console.error('❌ Error in processDailyCollection:', error);
+    console.error('Error stack:', error.stack);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
+}
 
   // ─────────────────────────────────────────────
   //  Process withdrawal (PENDING APPROVAL)
@@ -3208,6 +3379,9 @@ static async createThriftAccount(req, res) {
 // ─────────────────────────────────────────────
 //  Search customers by name in thrift accounts
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  Search customers by name in thrift accounts
+// ─────────────────────────────────────────────
 static async searchCustomersByName(req, res) {
   try {
     await ensureModelsInitialized();
@@ -3224,8 +3398,8 @@ static async searchCustomersByName(req, res) {
     const searchQuery = searchTerm.trim();
     const offset = (page - 1) * limit;
     
-    // Search for customers in thrift accounts
-    const { count, rows: customers } = await Thrift.findAndCountAll({
+    // Get total count of distinct customers matching the search
+    const countResult = await Thrift.findAll({
       where: {
         [Op.or]: [
           { FIRST_NAME: { [Op.like]: `%${searchQuery}%` } },
@@ -3235,21 +3409,70 @@ static async searchCustomersByName(req, res) {
         ]
       },
       attributes: [
+        [sequelizeInstance.fn('DISTINCT', sequelizeInstance.col('CUST_ID')), 'CUST_ID']
+      ]
+    });
+
+    const totalCount = countResult.length;
+
+    if (totalCount === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No customers found',
+        data: {
+          customers: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            pages: 0,
+            hasMore: false
+          },
+          search: {
+            term: searchQuery,
+            totalResults: 0,
+            resultsInPage: 0
+          }
+        }
+      });
+    }
+
+    // Get paginated distinct customer IDs
+    const distinctCustomerIds = await Thrift.findAll({
+      where: {
+        [Op.or]: [
+          { FIRST_NAME: { [Op.like]: `%${searchQuery}%` } },
+          { LASTNAME: { [Op.like]: `%${searchQuery}%` } },
+          { FULL_NAME: { [Op.like]: `%${searchQuery}%` } },
+          { CUST_ID: { [Op.like]: `%${searchQuery}%` } }
+        ]
+      },
+      attributes: ['CUST_ID'],
+      group: ['CUST_ID'],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    const customerIdList = distinctCustomerIds.map(item => item.CUST_ID);
+
+    // Get customer details for the paginated IDs - REMOVED PHONE_NO and other problematic columns
+    const customers = await Thrift.findAll({
+      where: {
+        CUST_ID: {
+          [Op.in]: customerIdList
+        }
+      },
+      attributes: [
         'CUST_ID',
-        'CUST_NO',
         'FIRST_NAME',
         'LASTNAME',
         'FULL_NAME',
-        'PHONE_NO',
-        'ADDRESS',
+        // 'PHONE_NO', // REMOVED - column doesn't exist
+        // 'ADDRESS',  // REMOVED - might be JSON field
         'status',
         'OPENED_DT',
         'created_at'
-      ],
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      order: [['FULL_NAME', 'ASC']],
-      group: ['CUST_ID'] // Get unique customers
+      ]
     });
     
     // Get thrift accounts for each customer
@@ -3271,16 +3494,26 @@ static async searchCustomersByName(req, res) {
           order: [['OPENED_DT', 'DESC']]
         });
         
+        // Safely parse address if it exists
+        let address = null;
+        if (customer.ADDRESS) {
+          try {
+            address = typeof customer.ADDRESS === 'string' 
+              ? JSON.parse(customer.ADDRESS) 
+              : customer.ADDRESS;
+          } catch (e) {
+            address = customer.ADDRESS;
+          }
+        }
+        
         return {
           customer: {
             CUST_ID: customer.CUST_ID,
-            CUST_NO: customer.CUST_NO,
             firstName: customer.FIRST_NAME,
             lastName: customer.LASTNAME,
             fullName: customer.FULL_NAME,
-            phone: customer.PHONE_NO || null,
-            address: customer.ADDRESS ? 
-              (typeof customer.ADDRESS === 'string' ? JSON.parse(customer.ADDRESS) : customer.ADDRESS) : null,
+            // phone: null, // REMOVED - column doesn't exist
+            // address: address, // REMOVED - might not exist
             status: customer.status,
             openedDate: customer.OPENED_DT ? 
               (typeof customer.OPENED_DT.toISOString === 'function' 
@@ -3325,13 +3558,13 @@ static async searchCustomersByName(req, res) {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count.length || count, // Handle when count is array from group by
-          pages: Math.ceil((count.length || count) / limit),
-          hasMore: (offset + customers.length) < (count.length || count)
+          total: totalCount,
+          pages: Math.ceil(totalCount / limit),
+          hasMore: (offset + customers.length) < totalCount
         },
         search: {
           term: searchQuery,
-          totalResults: count.length || count,
+          totalResults: totalCount,
           resultsInPage: customers.length
         }
       }
@@ -3351,6 +3584,51 @@ static async searchCustomersByName(req, res) {
       message: 'Error searching customers',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+}
+
+static async getDashboardStats(req, res) {
+  try {
+    await ensureModelsInitialized();
+    
+    const totalAccounts = await Thrift.count();
+    const activeAccounts = await Thrift.count({ where: { status: 'ACTIVE' } });
+    const totalBalance = await Thrift.sum('AMOUNT');
+    const pendingWithdrawals = await Transaction.count({
+      where: { 
+        TRANSACTION_TYPE: 'THRIFT_WITHDRAWAL',
+        status: 'PENDING_APPROVAL'
+      }
+    });
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const todayCollections = await Transaction.sum('AMOUNT', {
+      where: {
+        TRANSACTION_TYPE: 'DEPOSIT',
+        description: 'Daily thrift collection',
+        TRANSACTIONDATE: {
+          [Op.between]: [today, tomorrow]
+        }
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        totalAccounts,
+        activeAccounts,
+        totalBalance: parseFloat(totalBalance || 0),
+        pendingWithdrawals,
+        todayCollections: parseFloat(todayCollections || 0)
+      }
+    });
+  } catch (error) {
+    console.error('Error getting dashboard stats:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 }
 

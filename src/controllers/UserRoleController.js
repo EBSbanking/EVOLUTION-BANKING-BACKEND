@@ -2346,231 +2346,121 @@ export const getUsersByRoleName = asyncHandler(async (req, res) => {
 
 
 // Alternative version without JSON_CONTAINS
+// Fixed version of getUsersByRoleId with better parsing
 export const getUsersByRoleId = asyncHandler(async (req, res) => {
   const { roleId } = req.params;
   
   try {
     console.log(`🔍 SEARCHING FOR USERS WITH ROLE ID: ${roleId}`);
     
-    // Parse roleId as integer
     const roleIdNum = parseInt(roleId);
     
-    if (!ROLE_MAPPING) {
-      console.error('❌ ROLE_MAPPING is not defined');
-      return res.status(500).json({
-        success: false,
-        message: 'Role mapping configuration missing'
-      });
-    }
-    
-    const roleName = ROLE_MAPPING[roleId]?.ROLE_NM || `Role ${roleId}`;
-    
-    // Parse JSON arrays safely
-    const parseJsonSafely = (jsonString) => {
-      if (!jsonString) return [];
-      try {
-        if (typeof jsonString === 'string') {
-          let cleaned = jsonString.trim();
-          // Remove surrounding quotes if present
-          if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-            cleaned = cleaned.slice(1, -1);
-          }
-          // Handle escaped quotes
-          cleaned = cleaned.replace(/\\"/g, '"');
-          
-          // Check if it's already an array string
-          if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
-            const parsed = JSON.parse(cleaned);
-            return Array.isArray(parsed) ? parsed : [];
-          }
-          
-          // Try to parse as JSON
-          try {
-            const parsed = JSON.parse(cleaned);
-            return Array.isArray(parsed) ? parsed : [parsed];
-          } catch {
-            // If not valid JSON, split by comma and clean up
-            return cleaned.split(',').map(item => {
-              const trimmed = item.trim();
-              // Remove brackets and quotes
-              return trimmed.replace(/[\[\]"]/g, '');
-            }).filter(item => item !== '');
-          }
+    // Deep parsing function for corrupted JSON
+    const deepParse = (input) => {
+      if (!input) return [];
+      if (Array.isArray(input)) return input;
+      
+      let result = input;
+      // Keep parsing until it's no longer a string
+      while (typeof result === 'string') {
+        try {
+          result = JSON.parse(result);
+        } catch {
+          break;
         }
-        // If it's already an array, return it
-        return Array.isArray(jsonString) ? jsonString : [jsonString];
-      } catch (e) {
-        console.error('Error parsing JSON:', e.message);
-        return [];
       }
+      
+      // If we ended up with an array, great
+      if (Array.isArray(result)) {
+        return result.map(item => {
+          // Clean up each item
+          if (typeof item === 'string') {
+            return item.replace(/[\[\]"]/g, '').trim();
+          }
+          return item;
+        });
+      }
+      
+      // If it's an object, extract values
+      if (result && typeof result === 'object') {
+        return Object.values(result).map(item => {
+          if (typeof item === 'string') {
+            return item.replace(/[\[\]"]/g, '').trim();
+          }
+          return item;
+        });
+      }
+      
+      // If it's a string, split by commas
+      if (typeof result === 'string') {
+        return result.split(',').map(item => 
+          item.replace(/[\[\]"]/g, '').trim()
+        ).filter(Boolean);
+      }
+      
+      return [];
     };
     
-    // Get ALL user roles first
+    // Get ALL user roles
     const allUserRoles = await UserRole.findAll({
-      attributes: ['user_id', 'role_id', 'ROLE_NM', 'SYSUSER_ID', 'BU_ID', 'Business_Unit', 'USER_ROLE_IDS', 'ROLE_NMS']
+      raw: true
     });
     
     console.log(`📊 TOTAL USER ROLES FOUND: ${allUserRoles.length}`);
     
     // Filter user roles that contain the requested roleId
     const filteredUserRoles = allUserRoles.filter(userRole => {
-      // Check direct role_id match
-      if (userRole.role_id === roleIdNum) {
-        return true;
+      // Check direct role_id
+      if (userRole.role_id !== null && userRole.role_id !== undefined) {
+        const userRoleId = parseInt(userRole.role_id);
+        if (userRoleId === roleIdNum) return true;
       }
       
-      // Check USER_ROLE_IDS array for the roleId
-      const userRoleIds = parseJsonSafely(userRole.USER_ROLE_IDS);
-      
-      // Convert all to numbers for comparison
-      const numericRoleIds = userRoleIds.map(id => {
-        const num = parseInt(id);
-        return isNaN(num) ? id : num;
-      });
-      
-      // Check if roleIdNum exists in the array
-      if (numericRoleIds.includes(roleIdNum)) {
-        return true;
+      // Deep parse USER_ROLE_IDS
+      if (userRole.USER_ROLE_IDS) {
+        const parsedIds = deepParse(userRole.USER_ROLE_IDS);
+        
+        // Check each parsed ID
+        for (const id of parsedIds) {
+          // Remove any remaining brackets or quotes
+          const cleanId = String(id).replace(/[\[\]"]/g, '').trim();
+          const numId = parseInt(cleanId);
+          if (!isNaN(numId) && numId === roleIdNum) return true;
+          if (cleanId === String(roleIdNum)) return true;
+        }
       }
       
       return false;
     });
     
-    console.log(`✅ FOUND ${filteredUserRoles.length} USER ROLES FOR ROLE ID ${roleId}`);
+    console.log(`✅ FOUND ${filteredUserRoles.length} USER ROLES FOR ROLE ID ${roleIdNum}`);
     
-    if (filteredUserRoles.length === 0) {
-      return res.status(200).json({
-        success: true,
-        count: 0,
-        roleId: roleIdNum,
-        roleName,
-        message: `No users found with role ID ${roleId} (${roleName})`,
-        users: []
-      });
-    }
-
-    // Extract user IDs from filtered results
-    const userIds = filteredUserRoles
-      .map(userRole => {
-        // Try different possible user ID fields
-        return userRole.user_id || userRole.SYSUSER_ID || userRole.BU_ID;
-      })
-      .filter(userId => userId && userId.toString().trim() !== '' && userId.toString().trim() !== 'SYSTEM');
-    
-    console.log(`👥 EXTRACTED USER IDs:`, userIds);
-
-    // Process the filtered user roles data
-    const userRolesData = filteredUserRoles.map(userRole => {
-      const allRoleIds = parseJsonSafely(userRole.USER_ROLE_IDS);
-      const roleNames = parseJsonSafely(userRole.ROLE_NMS);
-      
-      // Find the actual role name from ROLE_NMS array
-      let actualRoleName = roleName;
-      const roleIndex = allRoleIds.findIndex(id => {
-        const numId = parseInt(id);
-        return !isNaN(numId) && numId === roleIdNum;
-      });
-      
-      if (roleIndex >= 0 && roleNames[roleIndex]) {
-        actualRoleName = roleNames[roleIndex];
+    // Prepare response
+    const usersWithRoles = filteredUserRoles.map(userRole => ({
+      user_id: userRole.user_id,
+      SYSUSER_ID: userRole.SYSUSER_ID,
+      role_id: userRole.role_id,
+      BU_ID: userRole.BU_ID,
+      Business_Unit: userRole.Business_Unit,
+      ROLE_NM: userRole.ROLE_NM,
+      // Include parsed data for debugging
+      _debug: {
+        raw_USER_ROLE_IDS: userRole.USER_ROLE_IDS,
+        parsed_USER_ROLE_IDS: userRole.USER_ROLE_IDS ? deepParse(userRole.USER_ROLE_IDS) : []
       }
-      
-      return {
-        user_id: userRole.user_id,
-        role_id: userRole.role_id,
-        actual_role_id: roleIdNum, // The role we're searching for
-        role_name: actualRoleName,
-        SYSUSER_ID: userRole.SYSUSER_ID,
-        BU_ID: userRole.BU_ID,
-        Business_Unit: userRole.Business_Unit,
-        all_role_ids: allRoleIds,
-        all_role_names: roleNames,
-        has_role_in_array: allRoleIds.includes(roleIdNum.toString()) || allRoleIds.includes(roleIdNum),
-        is_direct_role: userRole.role_id === roleIdNum
-      };
+    }));
+    
+    return res.status(200).json({
+      success: true,
+      count: filteredUserRoles.length,
+      roleId: roleIdNum,
+      roleName: ROLE_MAPPING[roleId]?.ROLE_NM || `Role ${roleId}`,
+      message: `Found ${filteredUserRoles.length} user(s) with role ID ${roleId}`,
+      users: usersWithRoles
     });
-
-    // Get user details if available
-    let users = [];
-    if (userIds.length > 0) {
-      try {
-        if (User && typeof User.findAll === 'function') {
-          users = await User.findAll({
-            where: {
-              [Op.or]: [
-                { user_name: { [Op.in]: userIds } },
-                { username: { [Op.in]: userIds } },
-                { email: { [Op.in]: userIds } },
-                { SYSUSER_ID: { [Op.in]: userIds } }
-              ]
-            },
-            attributes: ['user_name', 'username', 'email', 'first_name', 'last_name', 'status', 'primary_business_role', 'SYSUSER_ID']
-          });
-        }
-      } catch (userError) {
-        console.log('⚠️  Could not fetch users from Users table:', userError.message);
-      }
-    }
-
-    // Combine data if users found
-    let usersWithRoles = [];
-    if (users.length > 0) {
-      usersWithRoles = users.map(user => {
-        const userRole = filteredUserRoles.find(ur => {
-          const userId = ur.user_id || ur.SYSUSER_ID;
-          return userId === user.user_name || 
-                 userId === user.username ||
-                 userId === user.email ||
-                 userId === user.SYSUSER_ID;
-        });
-        
-        if (!userRole) return null;
-        
-        return {
-          user_name: user.user_name || user.username,
-          username: user.username,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          full_name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-          status: user.status,
-          primary_business_role: user.primary_business_role,
-          SYSUSER_ID: user.SYSUSER_ID,
-          BU_ID: userRole.BU_ID,
-          Business_Unit: userRole.Business_Unit,
-          role_name: userRole.ROLE_NM,
-          user_id: userRole.user_id,
-          role_id: roleIdNum, // Use the searched role ID
-          has_role_in_array: true
-        };
-      }).filter(user => user !== null);
-    }
-
-    // Prepare final response
-    if (usersWithRoles.length > 0) {
-      return res.status(200).json({
-        success: true,
-        count: usersWithRoles.length,
-        roleId: roleIdNum,
-        roleName,
-        message: `Found ${usersWithRoles.length} user(s) with role ${roleName}`,
-        users: usersWithRoles,
-        user_roles: userRolesData // Include raw role data for reference
-      });
-    } else {
-      return res.status(200).json({
-        success: true,
-        count: userRolesData.length,
-        roleId: roleIdNum,
-        roleName,
-        message: `Found ${userRolesData.length} user role(s) with role ID ${roleId} but no matching users in Users table`,
-        users: [],
-        user_roles: userRolesData
-      });
-    }
-
+    
   } catch (error) {
-    console.error(`❌ ERROR GETTING USERS BY ROLE ID ${roleId}:`, error);
+    console.error(`❌ ERROR:`, error);
     return res.status(500).json({
       success: false,
       message: "Error fetching users by role ID",

@@ -4,7 +4,7 @@ import TermDeposit from '../models/TermDeposit.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import AuditTrail from '../models/AuditTrail.js';
 import GLAccount from '../models/GLAccount.js';
-import { createGLTransaction } from './GLAccountTransactionSingle.js';
+import  createGLTransaction from '../controllers/GLAccountTransactionController.js'; // ✅ FIXED: Correct import path
 import { generateAccountNumber } from '../utils/generateAccountNumber.js';
 import { generateTermDepositContractLetter } from '../utils/pdfGenerator.js';
 import { generateWorkflowIdentifiers } from '../utils/generateWorkflowIdentifiers.js';
