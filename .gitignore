@@ -1,11 +1,9 @@
-# Create/update .gitignore
-echo "# Backup files
-*.backup
-*.bak
-*.tmp
-*.old
-" >> .gitignore
-
-git add .gitignore
-git commit -m "chore: Add .gitignore for backup files"
-git push origin main
+echo "node_modules/
+logs/
+*.log
+*.log.gz
+EvolutionLog/
+uploads/
+admin-ui/build/
+.env
+.DS_Store" > .gitignore
