@@ -850,10 +850,76 @@ export const bulkRepaymentProcessing = async (req, res) => {
   }
 };
 
+export const getRepaymentReport = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      startDate,
+      endDate,
+      status
+    } = req.query;
+
+    const offset = (page - 1) * limit;
+
+    // Build where clause for repayments
+    const where = {};
+    if (status) where.status = status;
+    if (startDate && endDate) {
+      where.repaymentDate = {
+        [Op.between]: [new Date(startDate), new Date(endDate)]
+      };
+    } else if (startDate) {
+      where.repaymentDate = { [Op.gte]: new Date(startDate) };
+    } else if (endDate) {
+      where.repaymentDate = { [Op.lte]: new Date(endDate) };
+    }
+
+    // Get repayments with pagination, including the associated loan account
+    const { count, rows: repayments } = await LoanRepayment.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset,
+      order: [['repaymentDate', 'DESC']],
+      include: [
+        {
+          model: LoanAccount,
+          as: 'LoanAccount',          // if you have an association defined
+          attributes: ['id', 'last_repayment_date', 'maturity_dt', 'loan_status',
+                       'disbursement_date', 'outstanding_principal', 'total_repaid_amount',
+                       'loan_account_number']
+        }
+      ]
+    });
+
+    // If you don't have an association, keep the manual join as before
+    // (the current code is fine too)
+
+    res.json({
+      success: true,
+      data: repayments,   // each item will have a `LoanAccount` property with the details
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: count,
+        pages: Math.ceil(count / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error generating repayment report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate report',
+      error: error.message
+    });
+  }
+};
+
 // ========== EXPORT HELPER FUNCTIONS ==========
 
 export {
   generateReceiptNumber,
   generateTransactionIds,
+  
   createRepaymentTransactionRecord
 };

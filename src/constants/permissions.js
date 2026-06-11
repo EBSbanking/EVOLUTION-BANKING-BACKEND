@@ -566,6 +566,15 @@ export const PERMISSIONS = {
     DASHBOARD: 'VIEW_GROUP_DASHBOARD',
     BULK_ACTIONS: 'PERFORM_GROUP_BULK_ACTIONS'
   },
+    // Debit Card Permissions
+  DEBIT_CARD: {
+    VIEW: 'debit_card.view',
+    ISSUE: 'debit_card.issue',
+    UPDATE_LIMITS: 'debit_card.update_limits',
+    BLOCK: 'debit_card.block',
+    UNBLOCK: 'debit_card.unblock',
+    VIEW_TRANSACTIONS: 'debit_card.view_transactions',
+  },
 
   // Fixed Assets
   FIXED_ASSET: {

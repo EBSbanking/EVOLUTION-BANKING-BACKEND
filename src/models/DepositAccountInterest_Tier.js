@@ -346,23 +346,7 @@ DepositAccountInterest_Tier.init({
       }
     }
   },
-  indexes: [
-    // Primary indexes
-    { fields: ['DEPOSIT_ACCT_INT_TIER_ID'], unique: true },
-    { fields: ['DEPOSIT_ACCT_INT_ID'] },
-    { fields: ['PROD_ID'] },
-    { fields: ['REC_ST'] },
-    
-    // Composite indexes for common queries
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'REC_ST'] },
-    { fields: ['PROD_ID', 'REC_ST'] },
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'FROM_AMT', 'TO_AMT'] },
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'FROM_AMT'] },
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'TO_AMT'] },
-    
-    // Range query optimization
-    { fields: ['FROM_AMT', 'TO_AMT', 'DEPOSIT_ACCT_INT_ID'] }
-  ],
+  
   scopes: {
     active: {
       where: { REC_ST: 'A' }

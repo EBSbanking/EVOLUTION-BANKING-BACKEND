@@ -1,196 +1,116 @@
-﻿// models/ProductTypeMapping.js - COMPLETE UPDATED VERSION WITH ALL METHODS
+﻿// models/ProductTypeMapping.js - CLEAN COMPLETE VERSION (normal column names, all methods)
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class ProductTypeMapping extends Model {
-  // Static method: Find mapping by PROD_ID
+  // ---------- Static Methods ----------
   static async findByProdId(prodId, options = {}) {
-    return this.findOne({
-      where: { PROD_ID: prodId },
-      ...options
+    return this.findOne({ where: { prod_id: prodId }, ...options });
+  }
+
+  static async findByProductType(productType, options = {}) {
+    return this.findAll({
+      where: { product_type: productType },
+      order: [['product_name', 'ASC']],
+      ...options,
     });
   }
 
-  // Static method: Find mappings by product type
-  static async findByProductType(productType, options = {}) {
-    const defaultOptions = {
-      where: { productType: productType },
-      order: [['productName', 'ASC']]
-    };
-    
-    return this.findAll({ ...defaultOptions, ...options });
-  }
-
-  // Static method: Find mappings by account prefix
   static async findByAccountPrefix(prefix, options = {}) {
-    const defaultOptions = {
-      where: { accountPrefix: prefix },
-      order: [['PROD_ID', 'ASC']]
-    };
-    
-    return this.findAll({ ...defaultOptions, ...options });
+    return this.findAll({
+      where: { account_prefix: prefix },
+      order: [['prod_id', 'ASC']],
+      ...options,
+    });
   }
 
-  // Static method: Get product type summary
   static async getProductTypeSummary() {
     const results = await this.findAll({
-      attributes: [
-        'productType',
-        [sequelize.fn('COUNT', sequelize.col('PROD_ID')), 'count']
-      ],
-      group: ['productType'],
-      order: [['productType', 'ASC']],
-      raw: true
+      attributes: ['product_type', [sequelize.fn('COUNT', sequelize.col('prod_id')), 'count']],
+      group: ['product_type'],
+      order: [['product_type', 'ASC']],
+      raw: true,
     });
-
-    return results.map(result => ({
-      productType: result.productType,
-      count: parseInt(result.count) || 0
-    }));
+    return results.map((r) => ({ productType: r.product_type, count: parseInt(r.count) || 0 }));
   }
 
-  // Static method: Validate GL account number - UPDATED TO ACCEPT BOTH FORMATS
-  static async validateGLAccount(glAccountNo) {
-    if (!glAccountNo || glAccountNo === '') {
-      return { isValid: true };
-    }
-    
-    // Accept BOTH formats:
-    // 1. With hyphens: xx-xx-xx-xx-xx-xx (like 01-10-21-10-00-001)
-    // 2. Without hyphens: xxxxxxxxxxxx (like 011021100001)
-    
+  static validateGLAccount(glAccountNo) {
+    if (!glAccountNo || glAccountNo === '') return { isValid: true };
     const hasHyphens = glAccountNo.includes('-');
-    
     if (hasHyphens) {
-      // Format with hyphens: xx-xx-xx-xx-xx-xx or xx-xx-xx-xx-xx-xxx
       const glAccountPattern = /^(\d{2}-){5}\d{2,3}$/;
-      const isValidFormat = glAccountPattern.test(glAccountNo);
-      
-      if (!isValidFormat) {
+      if (!glAccountPattern.test(glAccountNo)) {
         return {
           isValid: false,
-          error: `Invalid GL account format: ${glAccountNo}. With hyphens format: xx-xx-xx-xx-xx-xx or xx-xx-xx-xx-xx-xxx`
+          error: `Invalid GL account format: ${glAccountNo}. Expected xx-xx-xx-xx-xx-xx or xx-xx-xx-xx-xx-xxx`,
         };
       }
     } else {
-      // Format without hyphens: 12-13 digits
       const glAccountPattern = /^\d{12,13}$/;
-      const isValidFormat = glAccountPattern.test(glAccountNo);
-      
-      if (!isValidFormat) {
+      if (!glAccountPattern.test(glAccountNo)) {
         return {
           isValid: false,
-          error: `Invalid GL account format: ${glAccountNo}. Without hyphens format: 12-13 digits`
+          error: `Invalid GL account format: ${glAccountNo}. Expected 12-13 digits without hyphens.`,
         };
       }
     }
-    
     return { isValid: true };
   }
 
-  // Static method: Format GL account to hyphenated format
   static formatGLAccount(glAccountNo) {
     if (!glAccountNo) return null;
-    
-    // If already has hyphens, return as is
     if (glAccountNo.includes('-')) return glAccountNo;
-    
-    // Format without hyphens to hyphenated format
-    const cleanAccount = glAccountNo.replace(/\D/g, ''); // Remove non-digits
-    
-    if (cleanAccount.length === 12) {
-      return `${cleanAccount.substring(0, 2)}-${cleanAccount.substring(2, 4)}-${cleanAccount.substring(4, 6)}-${cleanAccount.substring(6, 8)}-${cleanAccount.substring(8, 10)}-${cleanAccount.substring(10, 12)}`;
-    } else if (cleanAccount.length === 13) {
-      return `${cleanAccount.substring(0, 2)}-${cleanAccount.substring(2, 4)}-${cleanAccount.substring(4, 6)}-${cleanAccount.substring(6, 8)}-${cleanAccount.substring(8, 10)}-${cleanAccount.substring(10, 13)}`;
-    }
-    
-    // Return original if can't format
+    const clean = glAccountNo.replace(/\D/g, '');
+    if (clean.length === 12)
+      return `${clean.substring(0, 2)}-${clean.substring(2, 4)}-${clean.substring(4, 6)}-${clean.substring(6, 8)}-${clean.substring(8, 10)}-${clean.substring(10, 12)}`;
+    if (clean.length === 13)
+      return `${clean.substring(0, 2)}-${clean.substring(2, 4)}-${clean.substring(4, 6)}-${clean.substring(6, 8)}-${clean.substring(8, 10)}-${clean.substring(10, 13)}`;
     return glAccountNo;
   }
 
-  // Static method: Remove hyphens from GL account
   static normalizeGLAccount(glAccountNo) {
     if (!glAccountNo) return null;
-    return glAccountNo.replace(/-/g, ''); // Remove all hyphens
+    return glAccountNo.replace(/-/g, '');
   }
 
-  // Static method: Create product type mapping with validation
   static async createMapping(mappingData, options = {}) {
-    // Validate the mapping data
     const validation = await this.validateMapping(mappingData);
-    
-    if (!validation.isValid) {
-      throw new Error(validation.errors.join(', '));
-    }
-    
-    // Create the mapping
+    if (!validation.isValid) throw new Error(validation.errors.join(', '));
     return this.create(mappingData, options);
   }
 
-  // Static method: Validate product type mapping - UPDATED WITH BETTER ERROR HANDLING
   static async validateMapping(mappingData) {
     const errors = [];
-    
-    // Validate PROD_ID
-    if (!mappingData.PROD_ID || mappingData.PROD_ID <= 0) {
-      errors.push('PROD_ID must be a positive number');
-    }
-    
-    // Check for duplicate PROD_ID
-    const existingMapping = await this.findOne({
-      where: { PROD_ID: mappingData.PROD_ID }
-    });
-    
-    if (existingMapping && existingMapping.id !== mappingData.id) {
-      errors.push(`PROD_ID ${mappingData.PROD_ID} already exists`);
-    }
-    
-    // Validate product type
+    if (!mappingData.prod_id || mappingData.prod_id <= 0) errors.push('prod_id must be a positive number');
+    const existing = await this.findOne({ where: { prod_id: mappingData.prod_id } });
+    if (existing && existing.id !== mappingData.id) errors.push(`prod_id ${mappingData.prod_id} already exists`);
+
     const validProductTypes = [
-      'PERSONAL_LOAN', 'BUSINESS_LOAN', 'MORTGAGE_LOAN', 'AUTO_LOAN',
-      'EDUCATION_LOAN', 'CONSUMER_LOAN', 'SME_LOAN', 'AGRICULTURAL_LOAN',
-      'DAILY_LOAN', 'WEEKLY_LOAN', 'GROUP_LOAN', 'MONTHLY_LOAN',
-      'GROUP_MONTHLY_LOAN', 'ASSET_LOAN', 'SOLAR_LOAN', 'RAPID_CASH_LOAN',
-      'STAFF_SALARY_ADVANCE', 'STAFF_LOAN', 'INDIVIDUAL_LOAN', 'CORPORATE_LOAN',
-      'OVERDRAFT', 'HOME_IMPROVEMENT_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN',
-      'SCHOOL_IMPROVEMENT_LOAN', 'AGRICULTURE_LOAN',
-      'SAVINGS', 'TERM_DEPOSIT', 'GENERAL_LOAN', 'MORTGAGE', 'CREDIT_CARD',
-      'LINE_OF_CREDIT', 'HOME_LOAN'
+      'PERSONAL_LOAN', 'BUSINESS_LOAN', 'MORTGAGE_LOAN', 'AUTO_LOAN', 'EDUCATION_LOAN',
+      'CONSUMER_LOAN', 'SME_LOAN', 'AGRICULTURAL_LOAN', 'DAILY_LOAN', 'WEEKLY_LOAN',
+      'GROUP_LOAN', 'MONTHLY_LOAN', 'GROUP_MONTHLY_LOAN', 'ASSET_LOAN', 'SOLAR_LOAN',
+      'RAPID_CASH_LOAN', 'STAFF_SALARY_ADVANCE', 'STAFF_LOAN', 'INDIVIDUAL_LOAN',
+      'CORPORATE_LOAN', 'OVERDRAFT', 'HOME_IMPROVEMENT_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN',
+      'SCHOOL_IMPROVEMENT_LOAN', 'AGRICULTURE_LOAN', 'SAVINGS', 'TERM_DEPOSIT',
+      'GENERAL_LOAN', 'MORTGAGE', 'CREDIT_CARD', 'LINE_OF_CREDIT', 'HOME_LOAN',
     ];
-    
-    if (!mappingData.productType || !validProductTypes.includes(mappingData.productType.toUpperCase())) {
-      errors.push(`Invalid product type: ${mappingData.productType || 'undefined'}. Must be one of: ${validProductTypes.join(', ')}`);
+    if (!mappingData.product_type || !validProductTypes.includes(mappingData.product_type.toUpperCase())) {
+      errors.push(`Invalid product_type: ${mappingData.product_type}. Must be one of: ${validProductTypes.join(', ')}`);
     }
-    
-    // Validate account prefix
-    if (!mappingData.accountPrefix || mappingData.accountPrefix.length < 2) {
-      errors.push('Account prefix must be at least 2 characters');
-    }
-    
-    // Validate GL accounts based on product type
-    if (mappingData.glAccounts) {
-      // Check if it's a loan product
-      const productType = mappingData.productType ? mappingData.productType.toUpperCase() : '';
-      const isLoanProduct = productType && 
-        (productType.includes('LOAN') || 
-         productType === 'MORTGAGE' || 
-         productType === 'OVERDRAFT' ||
-         productType === 'CREDIT_CARD');
-      
-      if (isLoanProduct && !mappingData.glAccounts.loanGLAccount) {
+
+    if (!mappingData.account_prefix || mappingData.account_prefix.length < 2)
+      errors.push('account_prefix must be at least 2 characters');
+
+    if (mappingData.gl_accounts) {
+      const productType = mappingData.product_type?.toUpperCase() || '';
+      const isLoan = productType.includes('LOAN') || ['MORTGAGE', 'OVERDRAFT', 'CREDIT_CARD'].includes(productType);
+      if (isLoan && !mappingData.gl_accounts.loanGLAccount)
         errors.push('loanGLAccount is required for loan products');
-      }
-      
-      // Check if it's a deposit/savings product
-      const isDepositProduct = productType && 
-        (productType === 'SAVINGS' || 
-         productType === 'TERM_DEPOSIT');
-      
-      if (isDepositProduct && !mappingData.glAccounts.principalBalanceGLAccountNo) {
-        errors.push('principalBalanceGLAccountNo is required for deposit/savings products');
-      }
-      
-      // Validate individual GL account formats
+
+      const isDeposit = productType === 'SAVINGS' || productType === 'TERM_DEPOSIT';
+      if (isDeposit && !mappingData.gl_accounts.principalBalanceGLAccountNo)
+        errors.push('principalBalanceGLAccountNo is required for deposit products');
+
       const glFields = [
         'loanGLAccount', 'interestGLAccountNo', 'interestPayableGLAccountNo',
         'withholdingTaxGLAccountNo', 'suspenseGLAccountNo', 'principalGLAccountNo',
@@ -203,579 +123,323 @@ class ProductTypeMapping extends Model {
         'unclearedBalanceGLAccountNo', 'unearnedInterestGLAccountNo', 'interestCreditGLAccountNo',
         'interestDebitGLAccountNo', 'principalBalanceGLAccountNo', 'interestExpenseGLAccountNo',
         'depositChargeReceivableGLAccountNo', 'SETTLEMENT_GL_ACCT_NO',
-        'processingFeeGLCode', 'interestPayableGLAccountNo', 'withholdingTaxGLAccountNo',
-        'suspenseGLAccountNo'
+        'processingFeeGLCode',
       ];
-      
       for (const field of glFields) {
-        const value = mappingData.glAccounts[field];
-        if (value) {
-          const validation = await this.validateGLAccount(value);
-          if (!validation.isValid) {
-            errors.push(`${field}: ${validation.error}`);
-          }
+        const val = mappingData.gl_accounts[field];
+        if (val) {
+          const v = await this.validateGLAccount(val);
+          if (!v.isValid) errors.push(`${field}: ${v.error}`);
         }
       }
     }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors
-    };
+    return { isValid: errors.length === 0, errors };
   }
 
-  // Static method: Get GL accounts by product type
   static async getGLAccountsByProductType(productType) {
-    const mapping = await this.findOne({
-      where: { productType: productType }
-    });
-    
-    if (!mapping) {
-      throw new Error(`No mapping found for product type: ${productType}`);
-    }
-    
-    return mapping.glAccounts;
+    const mapping = await this.findOne({ where: { product_type: productType } });
+    if (!mapping) throw new Error(`No mapping found for product type: ${productType}`);
+    return mapping.gl_accounts;
   }
 
-  // Instance method: Get product mapping details
+  // ---------- Instance Methods ----------
   getProductMappingDetails() {
     return {
       id: this.id,
-      PROD_ID: this.PROD_ID,
-      productType: this.productType,
-      productName: this.productName,
-      PROD_DESC: this.PROD_DESC,
-      PROD_CD: this.PROD_CD,
-      accountPrefix: this.accountPrefix,
-      glAccounts: this.glAccounts || {},
-      metadata: {
-        createdAt: this.createdAt,
-        updatedAt: this.updatedAt
-      }
+      prod_id: this.prod_id,
+      product_type: this.product_type,
+      product_name: this.product_name,
+      product_description: this.product_description,
+      product_code: this.product_code,
+      account_prefix: this.account_prefix,
+      gl_accounts: this.gl_accounts || {},
+      loan_interest_rate_id: this.loan_interest_rate_id,
+      loan_proud_int_id: this.loan_proud_int_id,
+      product_short_name: this.product_short_name,
+      created_at: this.created_at,
+      updated_at: this.updated_at,
     };
   }
 
-  // Instance method: Check if product is loan type
   isLoanProduct() {
-    return this.productType && 
-      (this.productType.toUpperCase().includes('LOAN') || 
-       this.productType.toUpperCase() === 'MORTGAGE' || 
-       this.productType.toUpperCase() === 'OVERDRAFT' ||
-       this.productType.toUpperCase() === 'CREDIT_CARD');
+    const t = this.product_type?.toUpperCase() || '';
+    return t.includes('LOAN') || ['MORTGAGE', 'OVERDRAFT', 'CREDIT_CARD'].includes(t);
   }
 
-  // Instance method: Check if product is deposit type
   isDepositProduct() {
-    return this.productType && 
-      (this.productType.toUpperCase() === 'SAVINGS' || 
-       this.productType.toUpperCase() === 'TERM_DEPOSIT');
+    const t = this.product_type?.toUpperCase() || '';
+    return t === 'SAVINGS' || t === 'TERM_DEPOSIT';
   }
 
-  // Instance method: Get required GL accounts for this product type
   getRequiredGLAccounts() {
-    const requiredAccounts = [];
-    
-    if (this.isLoanProduct()) {
-      requiredAccounts.push('loanGLAccount');
-      requiredAccounts.push('interestIncomeGLAccountNo');
-      requiredAccounts.push('interestReceivableGLAccountNo');
-    }
-    
-    if (this.isDepositProduct()) {
-      requiredAccounts.push('principalBalanceGLAccountNo');
-      requiredAccounts.push('interestExpenseGLAccountNo');
-    }
-    
-    // Common required accounts
-    requiredAccounts.push('SETTLEMENT_GL_ACCT_NO');
-    
-    return requiredAccounts.filter(account => 
-      this.glAccounts && this.glAccounts[account]
-    );
+    const required = [];
+    if (this.isLoanProduct()) required.push('loanGLAccount', 'interestIncomeGLAccountNo', 'interestReceivableGLAccountNo');
+    if (this.isDepositProduct()) required.push('principalBalanceGLAccountNo', 'interestExpenseGLAccountNo');
+    required.push('SETTLEMENT_GL_ACCT_NO');
+    return required.filter((acc) => this.gl_accounts && this.gl_accounts[acc]);
   }
 
-  // Instance method: Get missing required GL accounts
   getMissingGLAccounts() {
-    const requiredAccounts = [];
-    
-    if (this.isLoanProduct()) {
-      requiredAccounts.push('loanGLAccount');
-    }
-    
-    if (this.isDepositProduct()) {
-      requiredAccounts.push('principalBalanceGLAccountNo');
-    }
-    
-    return requiredAccounts.filter(account => 
-      !this.glAccounts || !this.glAccounts[account]
-    );
+    const required = [];
+    if (this.isLoanProduct()) required.push('loanGLAccount');
+    if (this.isDepositProduct()) required.push('principalBalanceGLAccountNo');
+    return required.filter((acc) => !this.gl_accounts || !this.gl_accounts[acc]);
   }
 
-  // Instance method: Validate GL account for field
   async validateGLAccountField(fieldName) {
-    if (!this.glAccounts || !this.glAccounts[fieldName]) {
-      return { isValid: true };
-    }
-    
-    return await ProductTypeMapping.validateGLAccount(this.glAccounts[fieldName]);
+    if (!this.gl_accounts || !this.gl_accounts[fieldName]) return { isValid: true };
+    return ProductTypeMapping.validateGLAccount(this.gl_accounts[fieldName]);
   }
 
-  // Instance method: Update GL account
   updateGLAccount(fieldName, glAccountNo) {
-    if (!this.glAccounts) {
-      this.glAccounts = {};
-    }
-    
-    this.glAccounts[fieldName] = glAccountNo;
+    if (!this.gl_accounts) this.gl_accounts = {};
+    this.gl_accounts[fieldName] = glAccountNo;
     return this;
   }
 
-  // Instance method: Remove GL account
   removeGLAccount(fieldName) {
-    if (this.glAccounts && this.glAccounts[fieldName]) {
-      delete this.glAccounts[fieldName];
-    }
+    if (this.gl_accounts && this.gl_accounts[fieldName]) delete this.gl_accounts[fieldName];
     return this;
   }
 
-  // Instance method: Get GL account summary
   getGLAccountSummary() {
-    if (!this.glAccounts) {
-      return {
-        totalAccounts: 0,
-        byCategory: {},
-        missingAccounts: this.getMissingGLAccounts()
-      };
+    if (!this.gl_accounts) {
+      return { totalAccounts: 0, byCategory: {}, missingAccounts: this.getMissingGLAccounts() };
     }
-    
     const categories = {
-      loanAccounts: [
-        'loanGLAccount', 'principalGLAccountNo', 'interestIncomeGLAccountNo',
-        'interestReceivableGLAccountNo', 'interestPayableGLAccountNo'
-      ],
-      provisionAccounts: [
-        'provisionReserveGLAccountNo', 'provisionExpenseGLAccountNo',
-        'chargeOffGLAccountNo', 'recoveriesGLAccountNo'
-      ],
-      suspenseAccounts: [
-        'suspenseGLAccountNo', 'loanSuspenseGLAccountNo', 'interestSuspenseGLAccountNo',
-        'lateFeeSuspenseGLAccountNo', 'unappliedFundsGLAccountNo'
-      ],
-      depositAccounts: [
-        'principalBalanceGLAccountNo', 'interestExpenseGLAccountNo',
-        'depositChargeReceivableGLAccountNo'
-      ],
-      taxAccounts: [
-        'withholdingTaxGLAccountNo'
-      ],
-      settlementAccounts: [
-        'SETTLEMENT_GL_ACCT_NO'
-      ]
+      loanAccounts: ['loanGLAccount', 'principalGLAccountNo', 'interestIncomeGLAccountNo', 'interestReceivableGLAccountNo', 'interestPayableGLAccountNo'],
+      provisionAccounts: ['provisionReserveGLAccountNo', 'provisionExpenseGLAccountNo', 'chargeOffGLAccountNo', 'recoveriesGLAccountNo'],
+      suspenseAccounts: ['suspenseGLAccountNo', 'loanSuspenseGLAccountNo', 'interestSuspenseGLAccountNo', 'lateFeeSuspenseGLAccountNo', 'unappliedFundsGLAccountNo'],
+      depositAccounts: ['principalBalanceGLAccountNo', 'interestExpenseGLAccountNo', 'depositChargeReceivableGLAccountNo'],
+      taxAccounts: ['withholdingTaxGLAccountNo'],
+      settlementAccounts: ['SETTLEMENT_GL_ACCT_NO'],
     };
-    
-    const summary = {
-      totalAccounts: 0,
-      byCategory: {},
-      missingAccounts: this.getMissingGLAccounts()
-    };
-    
-    Object.entries(categories).forEach(([category, fields]) => {
+    const summary = { totalAccounts: 0, byCategory: {}, missingAccounts: this.getMissingGLAccounts() };
+    Object.entries(categories).forEach(([cat, fields]) => {
       const accounts = {};
       let count = 0;
-      
-      fields.forEach(field => {
-        if (this.glAccounts[field]) {
-          accounts[field] = this.glAccounts[field];
+      fields.forEach((f) => {
+        if (this.gl_accounts[f]) {
+          accounts[f] = this.gl_accounts[f];
           count++;
           summary.totalAccounts++;
         }
       });
-      
-      summary.byCategory[category] = {
-        count: count,
-        accounts: accounts
-      };
+      summary.byCategory[cat] = { count, accounts };
     });
-    
     return summary;
   }
 
-  // Instance method: Validate the entire mapping
   async validate() {
-    return await ProductTypeMapping.validateMapping(this.getProductMappingDetails());
+    return ProductTypeMapping.validateMapping(this.getProductMappingDetails());
   }
 
-  // Instance method: Format all GL accounts to hyphenated format
   formatAllGLAccountsToHyphenated() {
-    if (!this.glAccounts) return this;
-    
-    Object.keys(this.glAccounts).forEach(key => {
-      if (this.glAccounts[key]) {
-        this.glAccounts[key] = ProductTypeMapping.formatGLAccount(this.glAccounts[key]);
-      }
+    if (!this.gl_accounts) return this;
+    Object.keys(this.gl_accounts).forEach((k) => {
+      if (this.gl_accounts[k]) this.gl_accounts[k] = ProductTypeMapping.formatGLAccount(this.gl_accounts[k]);
     });
-    
     return this;
   }
 
-  // Instance method: Normalize all GL accounts (remove hyphens)
   normalizeAllGLAccounts() {
-    if (!this.glAccounts) return this;
-    
-    Object.keys(this.glAccounts).forEach(key => {
-      if (this.glAccounts[key]) {
-        this.glAccounts[key] = ProductTypeMapping.normalizeGLAccount(this.glAccounts[key]);
-      }
+    if (!this.gl_accounts) return this;
+    Object.keys(this.gl_accounts).forEach((k) => {
+      if (this.gl_accounts[k]) this.gl_accounts[k] = ProductTypeMapping.normalizeGLAccount(this.gl_accounts[k]);
     });
-    
     return this;
   }
 
-  // Virtual getter: Product display name
   get productDisplay() {
-    return `${this.PROD_ID} - ${this.productName} (${this.productType})`;
+    return `${this.prod_id} - ${this.product_name} (${this.product_type})`;
   }
 
-  // Virtual getter: Has complete GL account setup?
   get hasCompleteGLSetup() {
     return this.getMissingGLAccounts().length === 0;
   }
 
-  // Virtual getter: Is active product?
   get isActive() {
-    // This could be expanded based on your business logic
-    return true;
+    return true; // adjust if you have an active flag
   }
 
-  // Virtual getter: Loan product category
   get loanCategory() {
     if (!this.isLoanProduct()) return null;
-    
-    const productTypeUpper = this.productType.toUpperCase();
-    
-    if (productTypeUpper.includes('PERSONAL')) return 'personal';
-    if (productTypeUpper.includes('BUSINESS')) return 'business';
-    if (productTypeUpper.includes('MORTGAGE') || productTypeUpper.includes('HOME')) return 'mortgage';
-    if (productTypeUpper.includes('AUTO')) return 'auto';
-    if (productTypeUpper.includes('EDUCATION')) return 'education';
-    if (productTypeUpper.includes('SME') || productTypeUpper.includes('SMALL_MEDIUM')) return 'sme';
-    if (productTypeUpper.includes('AGRICULTURE')) return 'agriculture';
-    if (productTypeUpper.includes('STAFF')) return 'staff';
-    if (productTypeUpper.includes('CORPORATE')) return 'corporate';
-    
+    const t = this.product_type.toUpperCase();
+    if (t.includes('PERSONAL')) return 'personal';
+    if (t.includes('BUSINESS')) return 'business';
+    if (t.includes('MORTGAGE') || t.includes('HOME')) return 'mortgage';
+    if (t.includes('AUTO')) return 'auto';
+    if (t.includes('EDUCATION')) return 'education';
+    if (t.includes('SME') || t.includes('SMALL_MEDIUM')) return 'sme';
+    if (t.includes('AGRICULTURE')) return 'agriculture';
+    if (t.includes('STAFF')) return 'staff';
+    if (t.includes('CORPORATE')) return 'corporate';
     return 'other';
   }
 
-  // Virtual getter: Account number pattern
   get accountNumberPattern() {
-    return `${this.accountPrefix}XXXXXXX`; // Example pattern
+    return `${this.account_prefix}XXXXXXX`;
   }
 
-  // Virtual getter: Get GL account in hyphenated format
   getFormattedGLAccount(fieldName) {
-    if (!this.glAccounts || !this.glAccounts[fieldName]) return null;
-    return ProductTypeMapping.formatGLAccount(this.glAccounts[fieldName]);
+    if (!this.gl_accounts || !this.gl_accounts[fieldName]) return null;
+    return ProductTypeMapping.formatGLAccount(this.gl_accounts[fieldName]);
   }
 
-  // Virtual getter: Get GL account without hyphens
   getNormalizedGLAccount(fieldName) {
-    if (!this.glAccounts || !this.glAccounts[fieldName]) return null;
-    return ProductTypeMapping.normalizeGLAccount(this.glAccounts[fieldName]);
+    if (!this.gl_accounts || !this.gl_accounts[fieldName]) return null;
+    return ProductTypeMapping.normalizeGLAccount(this.gl_accounts[fieldName]);
   }
 }
 
-ProductTypeMapping.init({
-  id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
-    field: 'id',
-    comment: 'Internal ID for database relationships'
-  },
-
-  // IMPORTANT: This field maps to p_r_o_d__i_d in the database
-  PROD_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    unique: true,
-    field: 'p_r_o_d__i_d',
-    comment: 'Product identifier',
-    validate: {
-      isPositive(value) {
-        if (value <= 0) {
-          throw new Error('PROD_ID must be a positive number');
-        }
-      }
-    }
-  },
-
-  productType: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-    field: 'product_type',
-    comment: 'Product type',
-    validate: {
-      isIn: [[
-        'PERSONAL_LOAN', 'BUSINESS_LOAN', 'MORTGAGE_LOAN', 'AUTO_LOAN',
-        'EDUCATION_LOAN', 'CONSUMER_LOAN', 'SME_LOAN', 'AGRICULTURAL_LOAN',
-        'DAILY_LOAN', 'WEEKLY_LOAN', 'GROUP_LOAN', 'MONTHLY_LOAN',
-        'GROUP_MONTHLY_LOAN', 'ASSET_LOAN', 'SOLAR_LOAN', 'RAPID_CASH_LOAN',
-        'STAFF_SALARY_ADVANCE', 'STAFF_LOAN', 'INDIVIDUAL_LOAN', 'CORPORATE_LOAN',
-        'OVERDRAFT', 'HOME_IMPROVEMENT_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN',
-        'SCHOOL_IMPROVEMENT_LOAN', 'AGRICULTURE_LOAN',
-        'SAVINGS', 'TERM_DEPOSIT', 'GENERAL_LOAN', 'MORTGAGE', 'CREDIT_CARD',
-        'LINE_OF_CREDIT', 'HOME_LOAN'
-      ]]
-    }
-  },
-
-  productName: {
-    type: DataTypes.STRING(100),
-    allowNull: false,
-    field: 'product_name',
-    comment: 'Product name'
-  },
-
-  PROD_DESC: {
-    type: DataTypes.STRING(500),
-    allowNull: true,
-    field: 'p_r_o_d__d_e_s_c',
-    comment: 'Product description'
-  },
-
-  PROD_CD: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    field: 'p_r_o_d__c_d',
-    comment: 'Product code'
-  },
-
-  accountPrefix: {
-    type: DataTypes.STRING(10),
-    allowNull: false,
-    field: 'account_prefix',
-    comment: 'Account number prefix',
-    validate: {
-      len: {
-        args: [2, 10],
-        msg: 'Account prefix must be between 2 and 10 characters'
-      }
-    }
-  },
-
-  glAccounts: {
-    type: DataTypes.JSON,
-    allowNull: true,
-    defaultValue: {},
-    field: 'gl_accounts',
-    comment: 'GL account mappings'
-  },
-
-  LOAN_INTEREST_RATE_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    field: 'l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d',
-    comment: 'Reference to LoanInterestRate'
-  },
-
-  LOAN_PROUD_INT_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    field: 'l_o_a_n__p_r_o_u_d__i_n_t__i_d',
-    comment: 'Business key for interest rate'
-  },
-
-  PRODUCT_SHORT_NAME: {
-    type: DataTypes.STRING(20),
-    allowNull: true,
-    field: 'p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e',
-    comment: 'Product short name'
-  },
-
-  productCode: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    field: 'product_code',
-    comment: 'Product code (alternative to PROD_CD)'
-  },
-
-  createdAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW,
-    field: 'created_at'
-  },
-
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW,
-    field: 'updated_at'
-  }
-}, {
-  sequelize,
-  modelName: 'ProductTypeMapping',
-  tableName: 'product_type_mapping',
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
-  hooks: {
-    beforeValidate: (mapping) => {
-      // Trim string fields
-      if (mapping.productName) mapping.productName = mapping.productName.trim();
-      if (mapping.PROD_DESC) mapping.PROD_DESC = mapping.PROD_DESC.trim();
-      if (mapping.PROD_CD) mapping.PROD_CD = mapping.PROD_CD.trim();
-      if (mapping.accountPrefix) mapping.accountPrefix = mapping.accountPrefix.trim();
-      if (mapping.PRODUCT_SHORT_NAME) mapping.PRODUCT_SHORT_NAME = mapping.PRODUCT_SHORT_NAME.trim().toUpperCase();
-      if (mapping.productCode) mapping.productCode = mapping.productCode.trim();
-      
-      // Ensure productType is uppercase
-      if (mapping.productType) {
-        mapping.productType = mapping.productType.toUpperCase();
-      }
-      
-      // Ensure glAccounts is an object
-      if (mapping.glAccounts && typeof mapping.glAccounts === 'string') {
-        try {
-          mapping.glAccounts = JSON.parse(mapping.glAccounts);
-        } catch (error) {
-          mapping.glAccounts = {};
-        }
-      }
-      
-      if (!mapping.glAccounts || typeof mapping.glAccounts !== 'object') {
-        mapping.glAccounts = {};
-      }
-      
-      // Clean GL account numbers (remove whitespace)
-      Object.keys(mapping.glAccounts).forEach(key => {
-        if (typeof mapping.glAccounts[key] === 'string') {
-          mapping.glAccounts[key] = mapping.glAccounts[key].trim();
-        }
-      });
+// ---------- Model Initialization ----------
+ProductTypeMapping.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+      comment: 'Internal ID',
     },
+    prod_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      unique: true,
+      field: 'prod_id',
+      comment: 'Product identifier',
+    },
+    product_type: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      field: 'product_type',
+      comment: 'Product type (e.g., BUSINESS_LOAN, SAVINGS)',
+    },
+    product_name: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      field: 'product_name',
+      comment: 'Product name',
+    },
+    product_description: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      field: 'product_description',
+      comment: 'Product description',
+    },
+    product_code: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'product_code',
+      comment: 'Product code',
+    },
+    account_prefix: {
+      type: DataTypes.STRING(10),
+      allowNull: false,
+      field: 'account_prefix',
+      comment: 'Account number prefix',
+    },
+    gl_accounts: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: {},
+      field: 'gl_accounts',
+      comment: 'GL account mappings',
+    },
+    loan_interest_rate_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'loan_interest_rate_id',
+      comment: 'Reference to LoanInterestRate',
+    },
+    loan_proud_int_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'loan_proud_int_id',
+      comment: 'Business key for interest rate',
+    },
+    product_short_name: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'product_short_name',
+      comment: 'Product short name',
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      field: 'created_at',
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      field: 'updated_at',
+    },
+  },
+  {
+    sequelize,
+    modelName: 'ProductTypeMapping',
+    tableName: 'ProductTypeMapping',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
     
-    beforeCreate: async (mapping) => {
-      const validation = await ProductTypeMapping.validateMapping(mapping);
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join(', '));
-      }
-    },
-    
-    beforeUpdate: async (mapping) => {
-      const validation = await ProductTypeMapping.validateMapping({
-        ...mapping.getProductMappingDetails(),
-        id: mapping.id
-      });
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join(', '));
-      }
-    }
-  },
-  indexes: [
-    { fields: ['id'] },
-    { fields: ['p_r_o_d__i_d'], unique: true },
-    { fields: ['product_type'] },
-    { fields: ['product_name'] },
-    { fields: ['p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e'] },
-    { fields: ['account_prefix'] },
-    { fields: ['l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d'] },
-    { fields: ['l_o_a_n__p_r_o_u_d__i_n_t__i_d'] },
-    { fields: ['p_r_o_d__i_d', 'product_type'] },
-    { fields: ['product_type', 'product_name'] },
-    { fields: ['account_prefix', 'product_type'] },
-    { fields: ['p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e', 'product_type'] }
-  ],
-  scopes: {
-    byProdId: (prodId) => ({
-      where: { PROD_ID: prodId }
-    }),
-    byProductType: (productType) => ({
-      where: { productType: productType.toUpperCase() }
-    }),
-    byAccountPrefix: (prefix) => ({
-      where: { accountPrefix: prefix }
-    }),
-    byProductShortName: (shortName) => ({
-      where: { PRODUCT_SHORT_NAME: shortName.toUpperCase() }
-    }),
-    loanProducts: {
-      where: {
-        productType: {
-          [Op.or]: [
-            { [Op.like]: '%LOAN%' },
-            { [Op.eq]: 'MORTGAGE' },
-            { [Op.eq]: 'OVERDRAFT' },
-            { [Op.eq]: 'CREDIT_CARD' }
-          ]
+    hooks: {
+      beforeValidate: (mapping) => {
+        if (mapping.product_name) mapping.product_name = mapping.product_name.trim();
+        if (mapping.product_description) mapping.product_description = mapping.product_description.trim();
+        if (mapping.product_code) mapping.product_code = mapping.product_code.trim();
+        if (mapping.account_prefix) mapping.account_prefix = mapping.account_prefix.trim();
+        if (mapping.product_short_name) mapping.product_short_name = mapping.product_short_name.trim().toUpperCase();
+        if (mapping.product_type) mapping.product_type = mapping.product_type.toUpperCase();
+        if (mapping.gl_accounts && typeof mapping.gl_accounts === 'string') {
+          try {
+            mapping.gl_accounts = JSON.parse(mapping.gl_accounts);
+          } catch {
+            mapping.gl_accounts = {};
+          }
         }
-      }
+        if (!mapping.gl_accounts || typeof mapping.gl_accounts !== 'object') mapping.gl_accounts = {};
+        Object.keys(mapping.gl_accounts).forEach((key) => {
+          if (typeof mapping.gl_accounts[key] === 'string') mapping.gl_accounts[key] = mapping.gl_accounts[key].trim();
+        });
+      },
+      beforeCreate: async (mapping) => {
+        const validation = await ProductTypeMapping.validateMapping(mapping);
+        if (!validation.isValid) throw new Error(validation.errors.join(', '));
+      },
+      beforeUpdate: async (mapping) => {
+        const validation = await ProductTypeMapping.validateMapping({
+          ...mapping.getProductMappingDetails(),
+          id: mapping.id,
+        });
+        if (!validation.isValid) throw new Error(validation.errors.join(', '));
+      },
     },
-    depositProducts: {
-      where: {
-        productType: {
-          [Op.or]: [
-            { [Op.eq]: 'SAVINGS' },
-            { [Op.eq]: 'TERM_DEPOSIT' }
-          ]
-        }
-      }
+    scopes: {
+      byProdId: (id) => ({ where: { prod_id: id } }),
+      byProductType: (type) => ({ where: { product_type: type.toUpperCase() } }),
+      byAccountPrefix: (prefix) => ({ where: { account_prefix: prefix } }),
+      byProductShortName: (shortName) => ({ where: { product_short_name: shortName.toUpperCase() } }),
+      loanProducts: {
+        where: {
+          product_type: { [Op.or]: [{ [Op.like]: '%LOAN%' }, { [Op.eq]: 'MORTGAGE' }, { [Op.eq]: 'OVERDRAFT' }, { [Op.eq]: 'CREDIT_CARD' }] },
+        },
+      },
+      depositProducts: { where: { product_type: { [Op.or]: [{ [Op.eq]: 'SAVINGS' }, { [Op.eq]: 'TERM_DEPOSIT' }] } } },
+      personalLoans: { where: { product_type: { [Op.or]: ['PERSONAL_LOAN', 'CONSUMER_LOAN', 'INDIVIDUAL_LOAN'] } } },
+      businessLoans: { where: { product_type: { [Op.or]: ['BUSINESS_LOAN', 'SME_LOAN', 'CORPORATE_LOAN', 'SMALL_MEDIUM_ENTERPRISE_LOAN'] } } },
+      agriculturalLoans: { where: { product_type: { [Op.or]: ['AGRICULTURAL_LOAN', 'AGRICULTURE_LOAN'] } } },
+      withCompleteGLSetup: {
+        where: {
+          [Op.and]: [{ gl_accounts: { [Op.ne]: null } }, sequelize.where(sequelize.fn('JSON_LENGTH', sequelize.col('gl_accounts')), { [Op.gte]: 3 })],
+        },
+      },
+      sortedByName: { order: [['product_name', 'ASC']] },
+      sortedByProdId: { order: [['prod_id', 'ASC']] },
+      withPagination: (page, size) => ({ offset: (page - 1) * size, limit: size }),
     },
-    personalLoans: {
-      where: {
-        productType: {
-          [Op.or]: [
-            { [Op.eq]: 'PERSONAL_LOAN' },
-            { [Op.eq]: 'CONSUMER_LOAN' },
-            { [Op.eq]: 'INDIVIDUAL_LOAN' }
-          ]
-        }
-      }
-    },
-    businessLoans: {
-      where: {
-        productType: {
-          [Op.or]: [
-            { [Op.eq]: 'BUSINESS_LOAN' },
-            { [Op.eq]: 'SME_LOAN' },
-            { [Op.eq]: 'CORPORATE_LOAN' },
-            { [Op.eq]: 'SMALL_MEDIUM_ENTERPRISE_LOAN' }
-          ]
-        }
-      }
-    },
-    agriculturalLoans: {
-      where: {
-        productType: {
-          [Op.or]: [
-            { [Op.eq]: 'AGRICULTURAL_LOAN' },
-            { [Op.eq]: 'AGRICULTURE_LOAN' }
-          ]
-        }
-      }
-    },
-    withCompleteGLSetup: {
-      where: {
-        [Op.and]: [
-          { glAccounts: { [Op.ne]: null } },
-          sequelize.where(
-            sequelize.fn('JSON_LENGTH', sequelize.col('gl_accounts')),
-            { [Op.gte]: 3 }
-          )
-        ]
-      }
-    },
-    sortedByName: {
-      order: [['productName', 'ASC']]
-    },
-    sortedByProdId: {
-      order: [['PROD_ID', 'ASC']]
-    },
-    withPagination: (page, pageSize) => ({
-      offset: (page - 1) * pageSize,
-      limit: pageSize
-    })
   }
-});
+);
 
 export default ProductTypeMapping;

@@ -9,21 +9,24 @@ import {
   approveStandingOrder,
   rejectStandingOrder
 } from '../controllers/StandingOrderController.js';
+import { authenticate} from '../middlewares/auth.js';
 
 const router = express.Router();
 
-// Create and list
+// Create (no parameters)
 router.post('/create', createStandingOrder);
-router.get('/:customerAcctNo', getStandingOrders);
 
-// Specific operations
+// ✅ Protected routes – require authentication
+router.put('/:customerAcctNo/approve',  authenticate, approveStandingOrder); // no authenticate
+router.put('/:customerAcctNo/reject', authenticate, rejectStandingOrder);
+
+// Generic routes with ID parameter (place AFTER specific ones)
 router.put('/:customerAcctNo/:id', updateStandingOrder);
 router.delete('/:customerAcctNo/:id', deleteStandingOrder);
 router.post('/:customerAcctNo/:id/execute', processStandingOrderExecution);
 router.get('/:customerAcctNo/:id/executions', getStandingOrderExecutions);
 
-// FIXED: Consistent route structure - removed "standing-order" prefix
-router.put('/:customerAcctNo/approve', approveStandingOrder);
-router.put('/:customerAcctNo/reject', rejectStandingOrder);
+// List all standing orders for a customer (no ID)
+router.get('/:customerAcctNo', getStandingOrders);
 
 export default router;

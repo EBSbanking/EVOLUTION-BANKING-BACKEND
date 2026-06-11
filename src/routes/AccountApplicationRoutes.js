@@ -2,7 +2,7 @@ import express from 'express';
 import {
   createApplication,
   createSimpleApplication,
-  approveApplicationAndCreateAccount,
+  approveApplicationAndCreateAccount,   // ✅ full account creation
   handleMultipartForm,
   handleFormData,
   testUpload,
@@ -12,16 +12,10 @@ import {
   getApplicationById,
   getApplicationsByCustomer,
   getPendingCount,
-   approveByCustomer,
-  // updateApplication,
-  // approveApplication,
-  // rejectApplication,
-  // uploadApplicationDocuments,
-  // New functions for customer-based operations
+  approveByCustomer,                    // alias for status-only (kept for compatibility)
   updateApplicationByCustomer,
-  approveApplicationByCustomer,
+  approveApplicationByCustomer,         // status-only (kept for reference)
   rejectApplicationByCustomer,
-  // New document management endpoints
   addDocumentsToApplication,
   getApplicationDocuments,
   deleteApplicationDocument,
@@ -34,7 +28,6 @@ const router = express.Router();
 // HEALTH CHECK & DEBUG ENDPOINTS
 // ========================================
 
-// Health check endpoint
 router.get('/health', (req, res) => {
   res.json({
     success: true,
@@ -50,7 +43,7 @@ router.get('/health', (req, res) => {
       getById: 'GET /:id',
       getByCustomer: 'GET /customer/:customerId',
       updateByCustomer: 'PATCH /customer/:customerId/update',
-      approveByCustomer: 'POST /customer/:customerId/approve',
+      approveByCustomer: 'POST /customer/:customerId/approve',  // now creates full account
       rejectByCustomer: 'POST /customer/:customerId/reject',
       addDocuments: 'POST /customer/:customerId/documents',
       getDocuments: 'GET /customer/:customerId/documents',
@@ -59,7 +52,6 @@ router.get('/health', (req, res) => {
   });
 });
 
-// Test endpoint
 router.get('/test', (req, res) => {
   res.json({
     success: true,
@@ -70,17 +62,12 @@ router.get('/test', (req, res) => {
   });
 });
 
-// Debug endpoint for form data
 router.post('/debug', debugFormData);
-
-// Test endpoints
 router.post('/test-no-files', testNoFiles);
 router.post('/test-upload', handleMultipartForm, testUpload);
 
-// Route info endpoint
 router.get('/routes', (req, res) => {
   const routes = [];
-  
   router.stack.forEach((layer) => {
     if (layer.route) {
       routes.push({
@@ -90,7 +77,6 @@ router.get('/routes', (req, res) => {
       });
     }
   });
-  
   res.json({
     success: true,
     routes: routes,
@@ -99,50 +85,47 @@ router.get('/routes', (req, res) => {
   });
 });
 
-// Get applications by branch identifier (BU_ID, branch_id, branchCode, etc.)
+// Get applications by branch identifier
 router.get('/by-bu/:bu_id', getApplicationByBu);
-
 
 // ========================================
 // APPLICATION CREATION ENDPOINTS
 // ========================================
-
-// Simple create without files (uses JSON or form-urlencoded)
 router.post('/create-simple', createSimpleApplication);
-
-// Main create endpoint with files (uses multipart/form-data)
 router.post('/create', handleFormData, handleMultipartForm, createApplication);
 
 // ========================================
 // APPLICATION RETRIEVAL ENDPOINTS
 // ========================================
-
-// Get all applications with optional filters
 router.get('/all', getAllApplications);
-
-// Get application by ID
 router.get('/:id', getApplicationById);
-
-// Get applications by customer ID
 router.get('/customer/:customerId', getApplicationsByCustomer);
-
-// Get pending applications count
 router.get('/stats/pending-count', getPendingCount);
 
-// image approval routes
-router.post('/:id/approve', approveByCustomer);
+// ========================================
+// APPROVAL ENDPOINTS
+// ========================================
 
-// Alternative route
+// Full approval (creates customer_accounts & accounts) - this is the one the frontend calls
+router.post(
+  '/customer/:customerId/approve',
+  handleFormData,
+  handleMultipartForm,
+  approveApplicationAndCreateAccount   // ✅ changed from approveApplicationByCustomer
+);
+
+// Alternative full approval route (kept for compatibility)
 router.post(
   '/approve-by-customer/:customerId',
   approveApplicationAndCreateAccount
 );
 
-// ========================================
-// APPLICATION MANAGEMENT ENDPOINTS (CUSTOMER-BASED)
-// ========================================
+// Status-only approval (if needed elsewhere)
+router.post('/:id/approve', approveByCustomer);
 
-// Update application by customer ID with file upload support
+// ========================================
+// APPLICATION MANAGEMENT ENDPOINTS
+// ========================================
 router.patch(
   '/customer/:customerId/update',
   handleFormData,
@@ -150,15 +133,6 @@ router.patch(
   updateApplicationByCustomer
 );
 
-// Approve application by customer ID with optional documents
-router.post(
-  '/customer/:customerId/approve',
-  handleFormData,
-  handleMultipartForm,
-  approveApplicationByCustomer
-);
-
-// Reject application by customer ID with optional documents
 router.post(
   '/customer/:customerId/reject',
   handleFormData,
@@ -169,50 +143,18 @@ router.post(
 // ========================================
 // DOCUMENT MANAGEMENT ENDPOINTS
 // ========================================
-
-// Add documents to existing application (customer-based)
 router.post(
   '/customer/:customerId/documents',
   handleFormData,
   handleMultipartForm,
   addDocumentsToApplication
 );
-
-// Get documents for application (customer-based)
-router.get(
-  '/customer/:customerId/documents',
-  getApplicationDocuments
-);
-
-// Delete specific document (customer-based)
-router.delete(
-  '/customer/:customerId/documents/:documentId',
-  deleteApplicationDocument
-);
-
-// ========================================
-// ORIGINAL ENDPOINTS (for backward compatibility - commented out)
-// ========================================
-
-/*
-// Update application by application ID (PATCH - partial update)
-router.patch('/:id/update', updateApplication);
-
-// Approve application by application ID
-router.post('/:id/approve', approveApplication);
-
-// Reject application by application ID
-router.post('/:id/reject', rejectApplication);
-
-// Upload documents to existing application
-router.post('/:applicationId/documents', handleMultipartForm, uploadApplicationDocuments);
-*/
+router.get('/customer/:customerId/documents', getApplicationDocuments);
+router.delete('/customer/:customerId/documents/:documentId', deleteApplicationDocument);
 
 // ========================================
 // 404 HANDLER FOR THIS ROUTER
 // ========================================
-
-// Catch-all for this router (if no route matches)
 router.use('*', (req, res) => {
   res.status(404).json({
     success: false,

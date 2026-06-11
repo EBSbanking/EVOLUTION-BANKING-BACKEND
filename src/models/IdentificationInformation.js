@@ -14,10 +14,7 @@ const IdentificationInformation = sequelize.define('IdentificationInformation', 
     type: DataTypes.STRING(50),           // ← Must match customers.CUST_ID type (likely VARCHAR)
     allowNull: false,
     field: 'cust_id',
-    references: {
-      model: 'customers',
-      key: 'CUST_ID'
-    }
+   
   },
 
   cust_nm: {
@@ -149,14 +146,7 @@ const IdentificationInformation = sequelize.define('IdentificationInformation', 
   updatedAt: 'updated_at',
 
   // Only essential indexes to avoid "too many keys" error
-  indexes: [
-    { unique: true, fields: ['doc_id'], name: 'idx_doc_id_unique' },
-    { fields: ['cust_id'], name: 'idx_cust_id' },
-    { fields: ['document_number'], name: 'idx_document_number' },
-    { fields: ['status', 'verification_status'], name: 'idx_status_verification' },
-    { fields: ['expiry_date'], name: 'idx_expiry_date' },
-    { fields: ['is_primary'], name: 'idx_is_primary' }
-  ],
+ 
 
   hooks: {
     beforeCreate: (doc) => {

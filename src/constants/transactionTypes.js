@@ -4,7 +4,7 @@
 const CORE_TX_TYPES = [
   'DEPOSIT', 'WITHDRAWAL', 'TRANSFER', 'DEBIT', 'CREDIT',
   'ADJUSTMENT', 'REVERSAL', 'CHARGE', 'REFUND', 
-  'INTEREST_CREDIT', 'DIVIDEND', 'FEE'
+  'INTEREST_CREDIT', 'DIVIDEND', 'FEE', 'SMS_CHARGE'
 ];
 
 // Loan Transactions
@@ -42,22 +42,20 @@ const SPECIAL_TX_TYPES = [
 
 // Thrift Transactions - MAPPED TO EXISTING ENUM VALUES
 const THRIFT_TX_TYPES = {
-  // Map thrift transaction types to existing ENUM values
-  OPENING: 'DEPOSIT',           // Thrift opening = DEPOSIT
-  COLLECTION: 'DEPOSIT',        // Regular collection = DEPOSIT  
-  WITHDRAWAL: 'WITHDRAWAL',     // Thrift withdrawal = WITHDRAWAL
-  BANK_PAYMENT: 'TRANSFER',     // Bank payment = TRANSFER
-  
-  // Constants for code readability
+  OPENING: 'DEPOSIT',
+  COLLECTION: 'DEPOSIT',
+  WITHDRAWAL: 'WITHDRAWAL',
+  BANK_PAYMENT: 'TRANSFER',
   THRIFT_OPENING: 'DEPOSIT',
   THRIFT_COLLECTION: 'DEPOSIT',
   THRIFT_WITHDRAWAL: 'WITHDRAWAL'
 };
 
 // Processing Fee Transaction
-const PROCESSING_FEE_TYPES = [
-  'PROCESSING_FEE'
-];
+const PROCESSING_FEE_TYPES = ['PROCESSING_FEE'];
+
+// Service Fee Transaction
+const SERVICE_FEE_TYPES = ['SERVICE_FEE'];
 
 // General Transaction Types - ACTUAL DATABASE ENUM VALUES
 const GENERAL_TX_TYPES = [
@@ -67,13 +65,35 @@ const GENERAL_TX_TYPES = [
   'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER', 
   'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 
   'CHEQUE_DEPOSIT', 'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 
-  'REVERSAL', 'ADJUSTMENT', 'REFUND'
+  'REVERSAL', 'ADJUSTMENT', 'REFUND',
+  'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'THRIFT_BANK_PAYMENT',
+  'SERVICE_FEE', 'CARD_PURCHASE', 'SMS_CHARGE'
 ];
 
-// Get all available transaction types (actual database ENUM values)
+// ========== NEW: All charge/fee transaction types (unique) ==========
+const CHARGE_TX_TYPES = [
+  ...new Set([
+    // From core
+    'CHARGE', 'FEE', 'SMS_CHARGE',
+    // From loan
+    'LOAN_FEE', 'LOAN_PENALTY', 'LOAN_PROCESSING_FEE',
+    // From investment
+    'INVESTMENT_FEE',
+    // From card
+    'CARD_FEE',
+    // From special
+    'BANK_CHARGE',
+    // Dedicated arrays
+    ...PROCESSING_FEE_TYPES,
+    ...SERVICE_FEE_TYPES,
+    // From general
+    'FEE_CHARGE', 'INTEREST_CHARGE', 'PENALTY_CHARGE'
+  ])
+];
+
+// Helper functions (unchanged)
 const getAllTransactionTypes = () => [...GENERAL_TX_TYPES];
 
-// Get thrift-specific transaction type
 const getThriftTransactionType = (thriftType) => {
   const thriftTypeMap = {
     'THRIFT_OPENING': 'DEPOSIT',
@@ -81,11 +101,10 @@ const getThriftTransactionType = (thriftType) => {
     'THRIFT_WITHDRAWAL': 'WITHDRAWAL',
     'BANK_PAYMENT': 'TRANSFER'
   };
-  
-  return thriftTypeMap[thriftType] || 'DEPOSIT'; // Default to DEPOSIT
+  return thriftTypeMap[thriftType] || 'DEPOSIT';
 };
 
-// Investment Account Transactions
+// Investment & Loan specific (unchanged)
 const INVESTMENT_ACCOUNT_TX_TYPES = [
   ...INVESTMENT_TX_TYPES,
   ...GENERAL_TX_TYPES.filter(type =>
@@ -93,10 +112,9 @@ const INVESTMENT_ACCOUNT_TX_TYPES = [
   )
 ];
 
-// Loan Account Transactions
 const LOAN_ACCOUNT_TX_TYPES = [...LOAN_TX_TYPES];
 
-// Export everything
+// Export all
 export {
   CORE_TX_TYPES,
   LOAN_TX_TYPES,
@@ -106,14 +124,16 @@ export {
   SPECIAL_TX_TYPES,
   THRIFT_TX_TYPES,
   PROCESSING_FEE_TYPES,
+  SERVICE_FEE_TYPES,
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,
+  CHARGE_TX_TYPES,               // ✅ new export
   getAllTransactionTypes,
   getThriftTransactionType
 };
 
-// Export everything together for easy default import
+// Default export
 const allTransactionTypes = {
   CORE_TX_TYPES,
   LOAN_TX_TYPES,
@@ -123,9 +143,11 @@ const allTransactionTypes = {
   SPECIAL_TX_TYPES,
   THRIFT_TX_TYPES,
   PROCESSING_FEE_TYPES,
+  SERVICE_FEE_TYPES,
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,
+  CHARGE_TX_TYPES,
   getAllTransactionTypes,
   getThriftTransactionType
 };

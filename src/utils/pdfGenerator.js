@@ -1614,7 +1614,6 @@ export default {
   generateReport,
   generateTrialBalanceReport,
   generateExcelReport,
-  cleanupReportFiles,
   generateThriftAccountsReport,
   generateThriftAccountsExcelReport
 };

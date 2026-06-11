@@ -133,37 +133,7 @@ Approval.init({
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
-  indexes: [
-    {
-      name: 'idx_request_id',
-      fields: ['request_id'],
-      unique: true
-    },
-    {
-      name: 'idx_entity',
-      fields: ['entity_type', 'entity_id']
-    },
-    {
-      name: 'idx_status',
-      fields: ['overall_status']
-    },
-    {
-      name: 'idx_expiry',
-      fields: ['expiry_date']
-    },
-    {
-      name: 'idx_initiator',
-      fields: ['initiator_id']
-    },
-    {
-      name: 'idx_first_approver',
-      fields: ['first_approver_id']
-    },
-    {
-      name: 'idx_second_approver',
-      fields: ['second_approver_id']
-    }
-  ],
+  
   hooks: {
     beforeCreate: (approval) => {
       approval.created_at = new Date();

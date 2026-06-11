@@ -135,27 +135,7 @@ AutoReclassifyInformation.init(
     tableName: 'auto_reclassify_information',
     timestamps: true, // Adds createdAt and updatedAt
     underscored: true, // Use underscored field names
-    indexes: [
-      {
-        unique: true,
-        fields: ['prod_cd'],
-      },
-      {
-        fields: ['prod_id'],
-      },
-      {
-        fields: ['is_active'],
-      },
-      {
-        fields: ['enable_pre_dominant_classification'],
-      },
-      {
-        fields: ['enable_escheated_classification'],
-      },
-      {
-        fields: ['enable_bad_debt_classification'],
-      },
-    ],
+    
     hooks: {
       beforeValidate: (record) => {
         // Set default values for undefined fields

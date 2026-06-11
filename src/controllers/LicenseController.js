@@ -78,256 +78,191 @@ const validateLicenseData = (data) => {
 
 
 // ✅ Decrypt and validate license with validation tracking
+// controllers/licenseController.js - Updated validateLicense with auto-activation
+
 export const validateLicense = async (req, res) => {
   try {
     const { license_key, client_ip, user_agent, client_info } = req.body;
-    
+
     if (!license_key || license_key.trim().length === 0) {
       return res.status(400).json({
         success: false,
         message: 'License key is required'
       });
     }
-    
+
     console.log('🔍 Validating license key...');
     console.log('Key length:', license_key.length);
-    
-    // Get secret from environment
+
     const secret = process.env.LICENSE_SECRET || 'default-secret-key-change-me';
-    
-    // Variables for validation record
-    let validationResult = 'INVALID';
-    let validationDetails = {};
-    let licenseId = null;
-    
-    // Try to decrypt
     let decryptedData;
+    let licenseId = null;
+    let alreadyActivated = false;
+    let activationPerformed = false;
+
+    // 1. Decrypt the license key
     try {
       const bytes = CryptoJS.AES.decrypt(license_key, secret);
       const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
-      
       if (!decryptedText) {
-        validationResult = 'INVALID';
-        validationDetails = { reason: 'Decryption failed - empty result' };
-        
-        await LicenseValidation.create({
-          license_id: 0, // 0 indicates no license found
-          client_ip: client_ip || req.ip,
-          user_agent: user_agent || req.headers['user-agent'],
-          result: validationResult,
-          details: validationDetails
-        });
-        
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid license key or wrong secret'
-        });
+        throw new Error('Empty decryption result');
       }
-      
       decryptedData = JSON.parse(decryptedText);
       console.log('✅ Successfully decrypted license data:', decryptedData);
-      
-    } catch (decryptError) {
-      console.error('❌ Decryption error:', decryptError.message);
-      validationResult = 'INVALID';
-      validationDetails = { 
-        reason: 'Decryption/parsing failed', 
-        error: decryptError.message 
-      };
-      
+    } catch (err) {
+      console.error('❌ Decryption/parsing error:', err.message);
+      // Record failed validation attempt
       await LicenseValidation.create({
         license_id: 0,
         client_ip: client_ip || req.ip,
         user_agent: user_agent || req.headers['user-agent'],
-        result: validationResult,
-        details: validationDetails
-      });
-      
+        result: 'INVALID',
+        details: { reason: 'Decryption/parsing failed', error: err.message }
+      }).catch(e => console.error('Failed to create validation record:', e));
+
       return res.status(400).json({
         success: false,
-        message: 'Failed to decrypt license key',
-        error: 'Invalid encryption or wrong secret key'
+        message: 'Invalid license key or wrong secret'
       });
     }
-    
-    // Validate decrypted data
+
+    // 2. Validate decrypted data structure
     const validationErrors = validateLicenseData(decryptedData);
     if (validationErrors.length > 0) {
-      validationResult = 'INVALID';
-      validationDetails = { errors: validationErrors };
-      
       await LicenseValidation.create({
         license_id: 0,
         client_ip: client_ip || req.ip,
         user_agent: user_agent || req.headers['user-agent'],
-        result: validationResult,
-        details: validationDetails
-      });
-      
+        result: 'INVALID',
+        details: { errors: validationErrors }
+      }).catch(() => {});
+
       return res.status(400).json({
         success: false,
         message: 'License data validation failed',
         errors: validationErrors
       });
     }
-    
-    // Check if license exists in database
-    const existingLicense = await License.findOne({
+
+    // 3. Find license in database
+    const license = await License.findOne({
       where: { encrypted_key: license_key }
     });
-    
-    if (!existingLicense) {
-      validationResult = 'NOT_FOUND';
-      validationDetails = { 
-        decryptedData: decryptedData,
-        reason: 'License key not found in database' 
-      };
-      
+
+    if (!license) {
       await LicenseValidation.create({
         license_id: 0,
         client_ip: client_ip || req.ip,
         user_agent: user_agent || req.headers['user-agent'],
-        result: validationResult,
-        details: validationDetails
-      });
-      
+        result: 'NOT_FOUND',
+        details: { decryptedData }
+      }).catch(() => {});
+
       return res.status(404).json({
         success: false,
         message: 'License not found in database',
-        decryptedData: decryptedData,
+        decryptedData,
         note: 'License is valid but not registered in system'
       });
     }
-    
-    licenseId = existingLicense.id;
-    
-    // Check if license is expired
-    const expiryDate = new Date(existingLicense.expires);
+
+    licenseId = license.id;
+
+    // 4. Check expiration
+    const expiryDate = new Date(license.expires);
     const now = new Date();
-    
+
     if (expiryDate <= now) {
-      validationResult = 'EXPIRED';
-      validationDetails = {
-        expires: existingLicense.expires,
-        daysExpired: Math.ceil((now - expiryDate) / (1000 * 60 * 60 * 24)),
-        isUsed: existingLicense.is_used,
-        usedAt: existingLicense.used_at
-      };
-      
+      const daysExpired = Math.ceil((now - expiryDate) / (1000 * 60 * 60 * 24));
       await LicenseValidation.create({
         license_id: licenseId,
         client_ip: client_ip || req.ip,
         user_agent: user_agent || req.headers['user-agent'],
-        result: validationResult,
-        details: validationDetails
-      });
-      
+        result: 'EXPIRED',
+        details: { expires: license.expires, daysExpired, isUsed: license.is_used }
+      }).catch(() => {});
+
       return res.status(410).json({
         success: false,
         message: 'License has expired',
-        expires: existingLicense.expires,
-        daysExpired: Math.ceil((now - expiryDate) / (1000 * 60 * 60 * 24))
+        expires: license.expires,
+        daysExpired
       });
     }
-    
-    // Check if license is already used
-    if (existingLicense.is_used) {
-      validationResult = 'SUCCESS'; // Still a successful validation
-      validationDetails = {
-        status: 'ALREADY_ACTIVATED',
-        activatedAt: existingLicense.used_at,
-        expires: existingLicense.expires,
-        daysRemaining: Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24))
-      };
-      
-      await LicenseValidation.create({
-        license_id: licenseId,
-        client_ip: client_ip || req.ip,
-        user_agent: user_agent || req.headers['user-agent'],
-        result: validationResult,
-        details: validationDetails
+
+    // 5. If license is already used, we still consider it valid (for login)
+    if (license.is_used) {
+      alreadyActivated = true;
+      console.log('⚠️ License already activated (used)');
+    } else {
+      // Activate the license (set is_used = true)
+      await license.update({
+        is_used: true,
+        used_at: now,
+        client_ip: client_ip || null,
+        client_info: client_info ? JSON.stringify(client_info) : null,
+        updated_at: now
       });
-      
-      return res.status(409).json({
-        success: false,
-        message: 'License has already been activated',
-        licenseId: existingLicense.id,
-        usedAt: existingLicense.used_at,
-        issuedTo: existingLicense.issued_to,
-        expires: existingLicense.expires,
-        daysRemaining: Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24))
-      });
+      activationPerformed = true;
+      console.log('✅ License activated successfully');
     }
-    
-    // Calculate days remaining
+
+    // 6. Record validation attempt (SUCCESS)
     const daysRemaining = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
-    
-    // SUCCESS - License is valid and ready for activation
-    validationResult = 'SUCCESS';
-    validationDetails = {
-      status: 'VALID_READY_FOR_ACTIVATION',
-      expires: existingLicense.expires,
-      daysRemaining: daysRemaining,
-      maxUsers: existingLicense.max_users,
-      maxBranches: existingLicense.max_branches
-    };
-    
-    // ✅ CREATE VALIDATION RECORD
     await LicenseValidation.create({
       license_id: licenseId,
       client_ip: client_ip || req.ip,
       user_agent: user_agent || req.headers['user-agent'],
-      result: validationResult,
-      details: validationDetails
-    });
-    
-    console.log('📝 Created validation record for license:', licenseId);
-    
-    // Return success response
+      result: 'SUCCESS',
+      details: {
+        status: alreadyActivated ? 'ALREADY_ACTIVATED' : 'ACTIVATED',
+        expires: license.expires,
+        daysRemaining,
+        maxUsers: license.max_users,
+        maxBranches: license.max_branches,
+        activationPerformed
+      }
+    }).catch(() => {});
+
+    // 7. Return success response
     return res.status(200).json({
       success: true,
-      message: 'License is valid and ready for activation',
+      message: alreadyActivated ? 'License already activated' : 'License validated and activated successfully',
+      alreadyActivated,
+      activated: !alreadyActivated,
       data: {
-        licenseId: existingLicense.id,
-        issuedTo: existingLicense.issued_to,
-        licenseType: existingLicense.license_type,
-        expires: existingLicense.expires,
-        daysRemaining: daysRemaining,
-        maxUsers: existingLicense.max_users,
-        maxBranches: existingLicense.max_branches,
-        features: existingLicense.features ? 
-          (typeof existingLicense.features === 'string' 
-            ? JSON.parse(existingLicense.features) 
-            : existingLicense.features) 
+        licenseId: license.id,
+        issuedTo: license.issued_to,
+        licenseType: license.license_type,
+        expires: license.expires,
+        daysRemaining,
+        maxUsers: license.max_users,
+        maxBranches: license.max_branches,
+        features: license.features
+          ? (typeof license.features === 'string' ? JSON.parse(license.features) : license.features)
           : {},
-        isUsed: existingLicense.is_used,
-        createdAt: existingLicense.created_at
-      },
-      validation: {
-        recorded: true,
-        result: validationResult,
-        timestamp: new Date().toISOString(),
-        clientIp: client_ip || req.ip
-      },
-      decryptedInfo: decryptedData
+        isUsed: license.is_used,
+        usedAt: license.used_at,
+        createdAt: license.created_at
+      }
     });
-    
+
   } catch (error) {
     console.error('❌ License validation error:', error);
-    
-    // Even on error, try to create a validation record
+
+    // Record the error in validation table
     try {
       await LicenseValidation.create({
         license_id: 0,
         client_ip: req.ip,
         user_agent: req.headers['user-agent'],
-        result: 'INVALID',
+        result: 'ERROR',
         details: { error: error.message, stack: error.stack }
       });
-    } catch (validationError) {
-      console.error('Failed to create validation record:', validationError);
+    } catch (e) {
+      console.error('Failed to create error validation record:', e);
     }
-    
+
     return res.status(500).json({
       success: false,
       message: 'Error validating license',

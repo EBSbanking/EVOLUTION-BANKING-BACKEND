@@ -3,170 +3,137 @@ import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class DepositAccountInterestAudit extends Model {
-  // Static method: Find by deposit account interest ID
   static async findByInterestId(interestId) {
     return this.findAll({
-      where: { DEPOSIT_ACCT_INT_ID: interestId },
-      order: [['AUDIT_TS', 'DESC']]
+      where: { depositAcctIntId: interestId },
+      order: [['auditTimestamp', 'DESC']]
     });
   }
 
-  // Static method: Find by deposit account ID
   static async findByDepositAccountId(accountId) {
     return this.findAll({
-      where: { DEPOSIT_ACCT_ID: accountId },
-      order: [['AUDIT_TS', 'DESC']]
+      where: { depositAcctId: accountId },
+      order: [['auditTimestamp', 'DESC']]
     });
   }
 
-  // Static method: Find by audit action
   static async findByAuditAction(action) {
     return this.findAll({
-      where: { AUDIT_ACTION: action },
-      order: [['AUDIT_TS', 'DESC']]
+      where: { auditAction: action },
+      order: [['auditTimestamp', 'DESC']]
     });
   }
 
-  // Static method: Find by audit user
   static async findByAuditUser(user) {
     return this.findAll({
-      where: { AUDIT_USER: user },
-      order: [['AUDIT_TS', 'DESC']]
+      where: { auditUser: user },
+      order: [['auditTimestamp', 'DESC']]
     });
   }
 
-  // Static method: Find audits by date range
   static async findByDateRange(startDate, endDate) {
     return this.findAll({
       where: {
-        AUDIT_TS: {
-          [Op.between]: [startDate, endDate]
-        }
+        auditTimestamp: { [Op.between]: [startDate, endDate] }
       },
-      order: [['AUDIT_TS', 'DESC']]
+      order: [['auditTimestamp', 'DESC']]
     });
   }
 
-  // Static method: Get audit summary by action type
   static async getAuditSummaryByAction() {
     const result = await this.findAll({
       attributes: [
-        'AUDIT_ACTION',
-        [sequelize.fn('COUNT', sequelize.col('AUDIT_ACTION')), 'count'],
-        [sequelize.fn('MIN', sequelize.col('AUDIT_TS')), 'firstAudit'],
-        [sequelize.fn('MAX', sequelize.col('AUDIT_TS')), 'lastAudit']
+        'auditAction',
+        [sequelize.fn('COUNT', sequelize.col('auditAction')), 'count'],
+        [sequelize.fn('MIN', sequelize.col('auditTimestamp')), 'firstAudit'],
+        [sequelize.fn('MAX', sequelize.col('auditTimestamp')), 'lastAudit']
       ],
-      group: ['AUDIT_ACTION'],
-      order: [[sequelize.fn('COUNT', sequelize.col('AUDIT_ACTION')), 'DESC']]
+      group: ['auditAction'],
+      order: [[sequelize.fn('COUNT', sequelize.col('auditAction')), 'DESC']]
     });
-
     return result.map(row => ({
-      action: row.AUDIT_ACTION,
+      action: row.auditAction,
       count: row.get('count'),
       firstAudit: row.get('firstAudit'),
       lastAudit: row.get('lastAudit')
     }));
   }
 
-  // Static method: Get rate change history for account
   static async getRateChangeHistory(accountId) {
     const audits = await this.findAll({
-      where: { 
-        DEPOSIT_ACCT_ID: accountId,
-        AUDIT_ACTION: 'RATE_CHANGE'
-      },
-      order: [['AUDIT_TS', 'DESC']]
+      where: { depositAcctId: accountId, auditAction: 'RATE_CHANGE' },
+      order: [['auditTimestamp', 'DESC']]
     });
-
     return audits.map(audit => ({
       auditId: audit.id,
-      auditDate: audit.AUDIT_TS,
-      auditUser: audit.AUDIT_USER,
-      previousRate: audit._previousDataValues?.ABSOLUTE_RATE || audit.ABSOLUTE_RATE,
-      newRate: audit.ABSOLUTE_RATE,
-      previousMargin: audit._previousDataValues?.MARGIN_RATE || audit.MARGIN_RATE,
-      newMargin: audit.MARGIN_RATE,
-      effectiveDate: audit.EFFECTIVE_DT,
-      rateType: audit.INT_RATE_TY
+      auditDate: audit.auditTimestamp,
+      auditUser: audit.auditUser,
+      previousRate: audit._previousDataValues?.absoluteRate || audit.absoluteRate,
+      newRate: audit.absoluteRate,
+      previousMargin: audit._previousDataValues?.marginRate || audit.marginRate,
+      newMargin: audit.marginRate,
+      effectiveDate: audit.effectiveDate,
+      rateType: audit.interestRateType
     }));
   }
 
-  // Instance method: Get audit details
   getAuditDetails() {
     return {
       auditId: this.id,
-      depositInterestId: this.DEPOSIT_ACCT_INT_ID,
-      depositAccountId: this.DEPOSIT_ACCT_ID,
-      depositProductInterestId: this.DEPOSIT_PROD_INT_ID,
-      interestRateType: this.INT_RATE_TY,
-      indexRateId: this.INDEX_RATE_ID,
-      rateStructure: this.RATE_STRUCT_CD,
-      marginRate: this.MARGIN_RATE,
-      minRate: this.MIN_RATE,
-      maxRate: this.MAX_RATE,
-      absoluteRate: this.ABSOLUTE_RATE,
-      fixedRate: this.FIXED_RATE,
-      penaltyMarginRate: this.PENAL_MARGIN_RATE,
-      penaltyMarginType: this.PENAL_MARGIN_TY_CD,
-      accrualBasis: this.ACCRUAL_BASIS_TY,
-      accrualBalanceBasis: this.ACCRUAL_BAL_BASIS_TY,
-      marginType: this.MARGIN_TY_CD,
-      marginBalanceBasis: this.MARGIN_BAL_BASIS_TY,
-      rateChangeFrequency: `${this.RATE_CHANGE_FREQ_CD} ${this.RATE_CHANGE_FREQ_VALUE}`,
-      maxRateChanges: this.MAX_NO_OF_RATE_CHANGES,
-      settlementFrequency: `${this.SETLMNT_FREQ_CD} ${this.SETLMNT_FREQ_VALUE}`,
-      waiverAmount: this.WAIVER_AMT,
-      minInterestAmount: this.MIN_INT_AMT,
-      overrideFlag: this.OVR_FG,
-      recordStatus: this.REC_ST,
-      version: this.VERSION_NO,
-      lastSettlement: this.LAST_SETLMNT_DT,
-      nextSettlement: this.NEXT_SETLMNT_DT,
-      effectiveDate: this.EFFECTIVE_DT,
-      auditAction: this.AUDIT_ACTION,
-      auditUser: this.AUDIT_USER,
-      auditTimestamp: this.AUDIT_TS,
-      createdBy: this.CREATED_BY,
-      userId: this.USER_ID,
-      createDate: this.CREATE_DT,
-      rowTimestamp: this.ROW_TS
+      depositInterestId: this.depositAcctIntId,
+      depositAccountId: this.depositAcctId,
+      depositProductInterestId: this.depositProdIntId,
+      interestRateType: this.interestRateType,
+      indexRateId: this.indexRateId,
+      rateStructure: this.rateStructureCode,
+      marginRate: this.marginRate,
+      minRate: this.minRate,
+      maxRate: this.maxRate,
+      absoluteRate: this.absoluteRate,
+      fixedRate: this.fixedRate,
+      penaltyMarginRate: this.penaltyMarginRate,
+      penaltyMarginType: this.penaltyMarginTypeCode,
+      accrualBasis: this.accrualBasisType,
+      accrualBalanceBasis: this.accrualBalanceBasisType,
+      marginType: this.marginTypeCode,
+      marginBalanceBasis: this.marginBalanceBasisType,
+      rateChangeFrequency: `${this.rateChangeFrequencyCode} ${this.rateChangeFrequencyValue}`,
+      maxRateChanges: this.maxRateChanges,
+      settlementFrequency: `${this.settlementFrequencyCode} ${this.settlementFrequencyValue}`,
+      waiverAmount: this.waiverAmount,
+      minInterestAmount: this.minInterestAmount,
+      overrideFlag: this.overrideFlag,
+      recordStatus: this.recordStatus,
+      version: this.versionNo,
+      lastSettlement: this.lastSettlementDate,
+      nextSettlement: this.nextSettlementDate,
+      effectiveDate: this.effectiveDate,
+      auditAction: this.auditAction,
+      auditUser: this.auditUser,
+      auditTimestamp: this.auditTimestamp,
+      createdBy: this.createdBy,
+      userId: this.userId,
+      createDate: this.createDate,
+      rowTimestamp: this.rowTimestamp
     };
   }
 
-  // Instance method: Check if INSERT action
-  isInsertAction() {
-    return this.AUDIT_ACTION === 'INSERT';
-  }
+  isInsertAction() { return this.auditAction === 'INSERT'; }
+  isUpdateAction() { return this.auditAction === 'UPDATE'; }
+  isDeleteAction() { return this.auditAction === 'DELETE'; }
+  isRateChangeAction() { return this.auditAction === 'RATE_CHANGE'; }
 
-  // Instance method: Check if UPDATE action
-  isUpdateAction() {
-    return this.AUDIT_ACTION === 'UPDATE';
-  }
-
-  // Instance method: Check if DELETE action
-  isDeleteAction() {
-    return this.AUDIT_ACTION === 'DELETE';
-  }
-
-  // Instance method: Check if RATE_CHANGE action
-  isRateChangeAction() {
-    return this.AUDIT_ACTION === 'RATE_CHANGE';
-  }
-
-  // Virtual getter: Rate change description
   get rateChangeDescription() {
-    if (this.INT_RATE_TY === 'FIXED') {
-      return `Fixed Rate: ${this.ABSOLUTE_RATE}%`;
-    } else if (this.INT_RATE_TY === 'FLOATING') {
-      return `Floating Rate: ${this.MARGIN_RATE}% margin (${this.MIN_RATE}%-${this.MAX_RATE}% range)`;
-    } else {
-      return `${this.INT_RATE_TY} Rate: ${this.ABSOLUTE_RATE}%`;
+    if (this.interestRateType === 'FIXED') {
+      return `Fixed Rate: ${this.absoluteRate}%`;
+    } else if (this.interestRateType === 'FLOATING') {
+      return `Floating Rate: ${this.marginRate}% margin (${this.minRate}%-${this.maxRate}% range)`;
     }
+    return `${this.interestRateType} Rate: ${this.absoluteRate}%`;
   }
 
-  // Virtual getter: Settlement schedule
   get settlementSchedule() {
-    return `Settle every ${this.SETLMNT_FREQ_VALUE} ${this.SETLMNT_FREQ_CD}(s), Next: ${this.NEXT_SETLMNT_DT ? this.NEXT_SETLMNT_DT.toLocaleDateString() : 'N/A'}`;
+    return `Settle every ${this.settlementFrequencyValue} ${this.settlementFrequencyCode}(s), Next: ${this.nextSettlementDate ? this.nextSettlementDate.toLocaleDateString() : 'N/A'}`;
   }
 }
 
@@ -176,218 +143,182 @@ DepositAccountInterestAudit.init({
     primaryKey: true,
     autoIncrement: true
   },
-  
-  DEPOSIT_ACCT_INT_ID: {
+  depositAcctIntId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Deposit account interest identifier'
   },
-  
-  DEPOSIT_ACCT_ID: {
+  depositAcctId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Deposit account identifier'
   },
-  
-  DEPOSIT_PROD_INT_ID: {
+  depositProdIntId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Deposit product interest identifier'
   },
-  
-  INT_RATE_TY: {
+  interestRateType: {
     type: DataTypes.STRING(20),
     allowNull: false,
     comment: 'Interest rate type'
   },
-  
-  INDEX_RATE_ID: {
+  indexRateId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Index rate identifier'
   },
-  
-  RATE_STRUCT_CD: {
+  rateStructureCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
     comment: 'Rate structure code'
   },
-  
-  MARGIN_RATE: {
+  marginRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Margin rate'
   },
-  
-  MIN_RATE: {
+  minRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Minimum rate'
   },
-  
-  MAX_RATE: {
+  maxRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Maximum rate'
   },
-  
-  ABSOLUTE_RATE: {
+  absoluteRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Absolute rate'
   },
-  
-  ACCRUAL_BASIS_TY: {
+  accrualBasisType: {
     type: DataTypes.STRING(20),
     allowNull: false,
     comment: 'Accrual basis type'
   },
-  
-  ACCRUAL_BAL_BASIS_TY: {
+  accrualBalanceBasisType: {
     type: DataTypes.STRING(20),
     allowNull: false,
     comment: 'Accrual balance basis type'
   },
-  
-  MARGIN_TY_CD: {
+  marginTypeCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
     comment: 'Margin type code'
   },
-  
-  MARGIN_BAL_BASIS_TY: {
+  marginBalanceBasisType: {
     type: DataTypes.STRING(20),
     allowNull: false,
     comment: 'Margin balance basis type'
   },
-  
-  RATE_CHANGE_FREQ_CD: {
+  rateChangeFrequencyCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
     comment: 'Rate change frequency code'
   },
-  
-  MAX_NO_OF_RATE_CHANGES: {
+  maxRateChanges: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Maximum number of rate changes'
   },
-  
-  RATE_CHANGE_FREQ_VALUE: {
+  rateChangeFrequencyValue: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Rate change frequency value'
   },
-  
-  SETLMNT_FREQ_CD: {
+  settlementFrequencyCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
     comment: 'Settlement frequency code'
   },
-  
-  SETLMNT_FREQ_VALUE: {
+  settlementFrequencyValue: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Settlement frequency value'
   },
-  
-  WAIVER_AMT: {
+  waiverAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     comment: 'Waiver amount'
   },
-  
-  MIN_INT_AMT: {
+  minInterestAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
     comment: 'Minimum interest amount'
   },
-  
-  OVR_FG: {
+  overrideFlag: {
     type: DataTypes.STRING(1),
     allowNull: false,
     comment: 'Override flag'
   },
-  
-  REC_ST: {
+  recordStatus: {
     type: DataTypes.STRING(1),
     allowNull: false,
     comment: 'Record status'
   },
-  
-  VERSION_NO: {
+  versionNo: {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: 'Version number'
   },
-  
-  ROW_TS: {
+  rowTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Row timestamp'
   },
-  
-  USER_ID: {
+  userId: {
     type: DataTypes.STRING(24),
     allowNull: false,
     comment: 'User identifier'
   },
-  
-  CREATE_DT: {
+  createDate: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Create date'
   },
-  
-  CREATED_BY: {
+  createdBy: {
     type: DataTypes.STRING(24),
     allowNull: false,
     comment: 'Created by user'
   },
-  
-  SYS_CREATE_TS: {
+  systemCreateTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'System create timestamp'
   },
-  
-  LAST_SETLMNT_DT: {
+  lastSettlementDate: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Last settlement date'
   },
-  
-  NEXT_SETLMNT_DT: {
+  nextSettlementDate: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Next settlement date'
   },
-  
-  FIXED_RATE: {
+  fixedRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Fixed rate'
   },
-  
-  EFFECTIVE_DT: {
+  effectiveDate: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Effective date'
   },
-  
-  PENAL_MARGIN_RATE: {
+  penaltyMarginRate: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: false,
     comment: 'Penalty margin rate'
   },
-  
-  PENAL_MARGIN_TY_CD: {
+  penaltyMarginTypeCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
     comment: 'Penalty margin type code'
   },
-  
-  AUDIT_ACTION: {
+  auditAction: {
     type: DataTypes.STRING(20),
     allowNull: false,
     validate: {
@@ -395,161 +326,62 @@ DepositAccountInterestAudit.init({
     },
     comment: 'Audit action'
   },
-  
-  AUDIT_USER: {
+  auditUser: {
     type: DataTypes.STRING(100),
     allowNull: false,
     comment: 'Audit user'
   },
-  
-  AUDIT_TS: {
+  auditTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
     comment: 'Audit timestamp'
-  },
-  
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
-  },
-  
-  createdAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
   }
 }, {
   sequelize,
   modelName: 'DepositAccountInterestAudit',
   tableName: 'deposit_account_interest_aud',
   timestamps: true,
+  
   hooks: {
     beforeCreate: (audit) => {
-      // Set audit timestamp if not provided
-      if (!audit.AUDIT_TS) {
-        audit.AUDIT_TS = new Date();
-      }
-      
-      // Set row timestamp if not provided
-      if (!audit.ROW_TS) {
-        audit.ROW_TS = new Date();
-      }
-      
-      // Set system timestamps if not provided
+      if (!audit.auditTimestamp) audit.auditTimestamp = new Date();
+      if (!audit.rowTimestamp) audit.rowTimestamp = new Date();
       const now = new Date();
-      if (!audit.CREATE_DT) audit.CREATE_DT = now;
-      if (!audit.SYS_CREATE_TS) audit.SYS_CREATE_TS = now;
-      
-      // Validate rate ranges
-      if (parseFloat(audit.MIN_RATE) > parseFloat(audit.MAX_RATE)) {
+      if (!audit.createDate) audit.createDate = now;
+      if (!audit.systemCreateTimestamp) audit.systemCreateTimestamp = now;
+
+      if (parseFloat(audit.minRate) > parseFloat(audit.maxRate)) {
         throw new Error('MIN_RATE cannot be greater than MAX_RATE');
       }
-      
-      if (parseFloat(audit.ABSOLUTE_RATE) < parseFloat(audit.MIN_RATE) || 
-          parseFloat(audit.ABSOLUTE_RATE) > parseFloat(audit.MAX_RATE)) {
+      if (parseFloat(audit.absoluteRate) < parseFloat(audit.minRate) ||
+          parseFloat(audit.absoluteRate) > parseFloat(audit.maxRate)) {
         throw new Error('ABSOLUTE_RATE must be between MIN_RATE and MAX_RATE');
       }
     },
-    
     beforeUpdate: (audit) => {
-      // Update row timestamp on every update
-      audit.ROW_TS = new Date();
-      
-      // Update audit timestamp if not already set
-      if (!audit.AUDIT_TS) {
-        audit.AUDIT_TS = new Date();
-      }
+      audit.rowTimestamp = new Date();
+      if (!audit.auditTimestamp) audit.auditTimestamp = new Date();
     }
   },
-  indexes: [
-    // Primary indexes
-    { fields: ['DEPOSIT_ACCT_INT_ID'] },
-    { fields: ['DEPOSIT_ACCT_ID'] },
-    { fields: ['DEPOSIT_PROD_INT_ID'] },
-    { fields: ['AUDIT_ACTION'] },
-    { fields: ['AUDIT_USER'] },
-    { fields: ['AUDIT_TS'] },
-    { fields: ['INDEX_RATE_ID'] },
-    
-    // Composite indexes for common queries
-    { fields: ['DEPOSIT_ACCT_ID', 'AUDIT_TS'] },
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'AUDIT_TS'] },
-    { fields: ['AUDIT_ACTION', 'AUDIT_TS'] },
-    { fields: ['AUDIT_USER', 'AUDIT_TS'] },
-    { fields: ['INT_RATE_TY', 'AUDIT_TS'] },
-    { fields: ['REC_ST', 'AUDIT_TS'] },
-    { fields: ['EFFECTIVE_DT', 'AUDIT_TS'] },
-    { fields: ['NEXT_SETLMNT_DT', 'AUDIT_TS'] }
-  ],
   scopes: {
-    recent: {
-      order: [['AUDIT_TS', 'DESC']],
-      limit: 100
-    },
-    byAccount: (accountId) => ({
-      where: { DEPOSIT_ACCT_ID: accountId }
-    }),
-    byInterestId: (interestId) => ({
-      where: { DEPOSIT_ACCT_INT_ID: interestId }
-    }),
-    byAuditAction: (action) => ({
-      where: { AUDIT_ACTION: action }
-    }),
-    byAuditUser: (user) => ({
-      where: { AUDIT_USER: user }
-    }),
-    byDateRange: (startDate, endDate) => ({
-      where: {
-        AUDIT_TS: {
-          [Op.between]: [startDate, endDate]
-        }
-      }
-    }),
-    insertActions: {
-      where: { AUDIT_ACTION: 'INSERT' }
-    },
-    updateActions: {
-      where: { AUDIT_ACTION: 'UPDATE' }
-    },
-    deleteActions: {
-      where: { AUDIT_ACTION: 'DELETE' }
-    },
-    rateChangeActions: {
-      where: { AUDIT_ACTION: 'RATE_CHANGE' }
-    },
-    settlementActions: {
-      where: { AUDIT_ACTION: 'SETTLEMENT' }
-    },
-    waiverActions: {
-      where: { AUDIT_ACTION: 'WAIVER' }
-    },
-    activeRecords: {
-      where: { REC_ST: 'A' }
-    },
-    byRateType: (rateType) => ({
-      where: { INT_RATE_TY: rateType }
-    }),
-    fixedRate: {
-      where: { INT_RATE_TY: 'FIXED' }
-    },
-    floatingRate: {
-      where: { INT_RATE_TY: 'FLOATING' }
-    },
-    thisMonth: {
-      where: {
-        AUDIT_TS: {
-          [Op.gte]: new Date(new Date().setDate(1))
-        }
-      }
-    },
-    pendingSettlement: {
-      where: {
-        NEXT_SETLMNT_DT: {
-          [Op.lte]: new Date()
-        }
-      }
-    }
+    recent: { order: [['auditTimestamp', 'DESC']], limit: 100 },
+    byAccount: (accountId) => ({ where: { depositAcctId: accountId } }),
+    byInterestId: (interestId) => ({ where: { depositAcctIntId: interestId } }),
+    byAuditAction: (action) => ({ where: { auditAction: action } }),
+    byAuditUser: (user) => ({ where: { auditUser: user } }),
+    byDateRange: (start, end) => ({ where: { auditTimestamp: { [Op.between]: [start, end] } } }),
+    insertActions: { where: { auditAction: 'INSERT' } },
+    updateActions: { where: { auditAction: 'UPDATE' } },
+    deleteActions: { where: { auditAction: 'DELETE' } },
+    rateChangeActions: { where: { auditAction: 'RATE_CHANGE' } },
+    settlementActions: { where: { auditAction: 'SETTLEMENT' } },
+    waiverActions: { where: { auditAction: 'WAIVER' } },
+    activeRecords: { where: { recordStatus: 'A' } },
+    byRateType: (rateType) => ({ where: { interestRateType: rateType } }),
+    fixedRate: { where: { interestRateType: 'FIXED' } },
+    floatingRate: { where: { interestRateType: 'FLOATING' } },
+    thisMonth: { where: { auditTimestamp: { [Op.gte]: new Date(new Date().setDate(1)) } } },
+    pendingSettlement: { where: { nextSettlementDate: { [Op.lte]: new Date() } } }
   }
 });
 

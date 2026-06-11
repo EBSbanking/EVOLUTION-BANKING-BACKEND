@@ -98,34 +98,7 @@ State.init({
   createdAt: 'CREATED_AT',
   updatedAt: 'UPDATED_AT',
   comment: 'States table',
-  indexes: [
-    {
-      name: 'idx_state_id',
-      fields: ['STATE_ID'],
-      unique: true
-    },
-    {
-      name: 'idx_state_nm',
-      fields: ['STATE_NM']
-    },
-    {
-      name: 'idx_country_id',
-      fields: ['COUNTRY_ID']
-    },
-    {
-      name: 'idx_state_country',
-      fields: ['STATE_NM', 'COUNTRY_ID'],
-      unique: true // Ensure state name is unique within a country
-    },
-    {
-      name: 'idx_created_at',
-      fields: ['CREATED_AT']
-    },
-    {
-      name: 'idx_updated_at',
-      fields: ['UPDATED_AT']
-    }
-  ],
+  
   hooks: {
     beforeValidate: (state, options) => {
       // Trim string fields

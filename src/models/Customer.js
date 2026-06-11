@@ -1,8 +1,7 @@
-﻿// src/models/Customer.js - COMPLETE UPDATED VERSION WITH STATIC METHODS
+﻿// src/models/Customer.js - CORRECTED (duplicate indexes removed)
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-// Define the Customer class that extends Model
 class Customer extends Model {}
 
 Customer.init(
@@ -65,7 +64,6 @@ Customer.init(
     EMAIL_ADDRESS: {
       type: DataTypes.STRING(255),
       allowNull: true,
-      validate: { isEmail: true },
       field: 'EMAIL_ADDRESS'
     },
 
@@ -133,9 +131,7 @@ Customer.init(
       type: DataTypes.STRING(11),
       allowNull: true,
       field: 'BVN',
-      validate: {
-        len: [0, 11]
-      }
+      validate: { len: [0, 11] }
     },
 
     BVN_VERIFIED: {
@@ -379,6 +375,20 @@ Customer.init(
       field: 'REJECTED_DT'
     },
 
+    groupId: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'group_id',
+      comment: 'Stores the group code/ID like GRP001, GRP002, etc.'
+    },
+
+    groupJoinedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'group_joined_at',
+      comment: 'Timestamp when customer joined the group'
+    },
+
     created_at: {
       type: DataTypes.DATE,
       allowNull: true,
@@ -402,28 +412,35 @@ Customer.init(
     updatedAt: 'updated_at',
     underscored: false,
     freezeTableName: true,
-    indexes: [
-      { fields: ['CUST_ID'] },
-      { fields: ['CUST_NO'] },
-      { fields: ['BVN'] },
-      { fields: ['NIN'] },
-      { fields: ['EMAIL_ADDRESS'] },
-      { fields: ['PHONE_NO'] },
-      { fields: ['FIRST_NAME'] },
-      { fields: ['LAST_NAME'] },
-      { fields: ['CUST_NM'] },
-      { fields: ['REC_ST'] },
-      { fields: ['status'] },
-      { fields: ['BU_ID'] },
-      { fields: ['REC_ST', 'CREATE_DT'] },
-      { fields: ['BU_ID', 'REC_ST'] },
-      { fields: ['KYC_LEVEL', 'REC_ST'] },
-      { fields: ['IS_PEP', 'REC_ST'] },
-      { fields: ['BVN_VERIFIED'] },
-      { fields: ['BVN_VERIFIED_AT'] },
-      { fields: ['created_at'] },
-      { fields: ['updated_at'] }
-    ]
+    hooks: {
+      afterCreate: async (customer, options) => {
+        if (customer.groupId) {
+          try {
+            await Customer.assignToGroup(customer.id, customer.groupId, { 
+              transaction: options.transaction 
+            });
+          } catch (error) {
+            console.error('Error in afterCreate hook for group assignment:', error.message);
+          }
+        }
+      },
+      afterBulkCreate: async (customers, options) => {
+        const customersWithGroups = customers.filter(c => c.groupId);
+        if (customersWithGroups.length > 0) {
+          for (const customer of customersWithGroups) {
+            try {
+              await Customer.assignToGroup(customer.id, customer.groupId, { 
+                transaction: options.transaction,
+                skipCustomerUpdate: true
+              });
+            } catch (error) {
+              console.error('Error in afterBulkCreate hook for group assignments:', error.message);
+            }
+          }
+        }
+      }
+    },
+    // ✅ REMOVED indexes array – no manual indexes to avoid duplicate key errors
   }
 );
 
@@ -440,9 +457,7 @@ Customer.prototype.getAge = function() {
   const birthDate = new Date(this.BIRTH_DT);
   let age = today.getFullYear() - birthDate.getFullYear();
   const monthDiff = today.getMonth() - birthDate.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
   return age;
 };
 
@@ -470,6 +485,26 @@ Customer.prototype.close = async function(closedBy) {
   return await this.save();
 };
 
+Customer.prototype.assignToGroup = async function(groupId, options = {}) {
+  return Customer.assignToGroup(this.id, groupId, options);
+};
+
+Customer.prototype.removeFromGroup = async function(options = {}) {
+  if (!this.groupId) return { success: false, message: 'Customer is not assigned to any group' };
+  return Customer.removeFromGroup(this.id, options);
+};
+
+Customer.prototype.getGroupDetails = async function() {
+  if (!this.groupId) return null;
+  try {
+    const Group = (await import('./Group.js')).default;
+    return await Group.findOne({ where: { groupCode: this.groupId } });
+  } catch (error) {
+    console.error('Error fetching group details:', error.message);
+    return null;
+  }
+};
+
 Customer.prototype.getSummary = function() {
   return {
     customerId: this.CUST_ID,
@@ -486,6 +521,8 @@ Customer.prototype.getSummary = function() {
     businessUnit: this.BU_ID,
     kycLevel: this.KYC_LEVEL,
     isPep: this.IS_PEP,
+    groupId: this.groupId,
+    groupJoinedAt: this.groupJoinedAt,
     createdDate: this.CREATE_DT,
     createdAt: this.created_at,
     updatedAt: this.updated_at
@@ -509,123 +546,181 @@ Customer.prototype.isBVNVerified = function() {
 };
 
 // ========== STATIC METHODS ==========
+Customer.assignToGroup = async function(customerId, groupCode, options = {}) {
+  const transaction = options.transaction;
+  const skipCustomerUpdate = options.skipCustomerUpdate || false;
+  try {
+    const Group = (await import('./Group.js')).default;
+    const customer = await Customer.findByPk(customerId, { transaction });
+    if (!customer) throw new Error(`Customer with ID ${customerId} not found`);
+    const group = await Group.findOne({ where: { groupCode: groupCode.toUpperCase() } }, { transaction });
+    if (!group) throw new Error(`Group with code ${groupCode} not found`);
+    if (group.status !== 'active') throw new Error(`Group is not active (current status: ${group.status})`);
+    if (!group.canAddMember()) throw new Error(`Group has reached maximum member limit (${group.maxMembers})`);
+    if (customer.groupId === groupCode) return { success: false, message: 'Customer is already assigned to this group', customer, group };
+    if (customer.groupId && customer.groupId !== groupCode) await Customer.removeFromGroup(customerId, { transaction, skipGroupUpdate: true });
+    if (!skipCustomerUpdate) {
+      customer.set('groupId', groupCode);
+      customer.set('groupJoinedAt', new Date());
+      await customer.save({ transaction });
+    }
+    await group.addMember(customer.CUST_ID);
+    return { success: true, message: 'Customer successfully assigned to group', customer: skipCustomerUpdate ? customerId : customer, group };
+  } catch (error) {
+    console.error('Error in assignToGroup:', error.message);
+    throw error;
+  }
+};
 
-/**
- * Get customer with BVN details by ID
- * @param {number|string} customerId - Customer ID or CUST_ID
- * @returns {Promise<Customer>}
- */
+Customer.removeFromGroup = async function(customerId, options = {}) {
+  const transaction = options.transaction;
+  const skipGroupUpdate = options.skipGroupUpdate || false;
+  try {
+    const Group = (await import('./Group.js')).default;
+    const customer = await Customer.findByPk(customerId, { transaction });
+    if (!customer) throw new Error(`Customer with ID ${customerId} not found`);
+    if (!customer.groupId) return { success: false, message: 'Customer is not assigned to any group', customer };
+    const oldGroupCode = customer.groupId;
+    if (!skipGroupUpdate) {
+      const group = await Group.findOne({ where: { groupCode: oldGroupCode } }, { transaction });
+      if (group) await group.removeMember(customer.CUST_ID);
+    }
+    customer.set('groupId', null);
+    customer.set('groupJoinedAt', null);
+    await customer.save({ transaction });
+    return { success: true, message: 'Customer successfully removed from group', customer, previousGroupId: oldGroupCode };
+  } catch (error) {
+    console.error('Error in removeFromGroup:', error.message);
+    throw error;
+  }
+};
+
+Customer.bulkAssignToGroup = async function(customerIds, groupCode, options = {}) {
+  const transaction = options.transaction || await sequelize.transaction();
+  const results = { success: [], failed: [], total: customerIds.length, successCount: 0, failedCount: 0 };
+  try {
+    const Group = (await import('./Group.js')).default;
+    const group = await Group.findOne({ where: { groupCode: groupCode.toUpperCase() } }, { transaction });
+    if (!group) throw new Error(`Group with code ${groupCode} not found`);
+    if (group.status !== 'active') throw new Error(`Group is not active (current status: ${group.status})`);
+    for (const customerId of customerIds) {
+      try {
+        const result = await Customer.assignToGroup(customerId, groupCode, { transaction, skipCustomerUpdate: false });
+        if (result.success) {
+          results.success.push(customerId);
+          results.successCount++;
+        } else {
+          results.failed.push({ id: customerId, reason: result.message });
+          results.failedCount++;
+        }
+      } catch (error) {
+        results.failed.push({ id: customerId, reason: error.message });
+        results.failedCount++;
+      }
+    }
+    if (!options.transaction) await transaction.commit();
+    return results;
+  } catch (error) {
+    if (!options.transaction) await transaction.rollback();
+    throw error;
+  }
+};
+
+Customer.getByGroupCode = async function(groupCode, options = {}) {
+  const { page = 1, limit = 50, status } = options;
+  const offset = (page - 1) * limit;
+  const where = { groupId: groupCode };
+  if (status) where.REC_ST = status;
+  const { count, rows } = await Customer.findAndCountAll({
+    where,
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'NIN', 'status', 'REC_ST', 'groupJoinedAt'],
+    offset,
+    limit: parseInt(limit),
+    order: [['groupJoinedAt', 'DESC']]
+  });
+  return { customers: rows, pagination: { page: parseInt(page), limit: parseInt(limit), total: count, pages: Math.ceil(count / limit) } };
+};
+
+Customer.createWithGroup = async function(customerData, options = {}) {
+  const transaction = options.transaction || await sequelize.transaction();
+  try {
+    const { groupId, ...customerFields } = customerData;
+    const customer = await Customer.create(customerFields, { transaction });
+    if (groupId) await Customer.assignToGroup(customer.id, groupId, { transaction });
+    if (!options.transaction) await transaction.commit();
+    return customer;
+  } catch (error) {
+    if (!options.transaction) await transaction.rollback();
+    throw error;
+  }
+};
+
+Customer.bulkCreateWithGroups = async function(customersData, options = {}) {
+  const transaction = options.transaction || await sequelize.transaction();
+  try {
+    const customersWithGroups = customersData.filter(data => data.groupId);
+    const customersWithoutGroups = customersData.filter(data => !data.groupId);
+    const createdCustomers = [];
+    if (customersWithoutGroups.length > 0) {
+      const simpleCustomers = await Customer.bulkCreate(customersWithoutGroups, { transaction, returning: true });
+      createdCustomers.push(...simpleCustomers);
+    }
+    for (const customerData of customersWithGroups) {
+      const { groupId, ...fields } = customerData;
+      const customer = await Customer.create(fields, { transaction });
+      try {
+        await Customer.assignToGroup(customer.id, groupId, { transaction, skipCustomerUpdate: false });
+        createdCustomers.push(customer);
+      } catch (groupError) {
+        console.error(`Failed to assign customer ${customer.id} to group ${groupId}:`, groupError.message);
+        createdCustomers.push(customer);
+      }
+    }
+    if (!options.transaction) await transaction.commit();
+    return createdCustomers;
+  } catch (error) {
+    if (!options.transaction) await transaction.rollback();
+    throw error;
+  }
+};
+
 Customer.getWithBVN = async function(customerId) {
   return this.findByPk(customerId, {
-    attributes: [
-      'id', 
-      'CUST_ID', 
-      'CUST_NO',
-      'FIRST_NAME', 
-      'LAST_NAME', 
-      'BVN', 
-      'BVN_VERIFIED',
-      'BVN_VERIFIED_AT',
-      'PHONE_NO',
-      'EMAIL_ADDRESS',
-      'status',
-      'REC_ST'
-    ]
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT', 'PHONE_NO', 'EMAIL_ADDRESS', 'status', 'REC_ST', 'groupId', 'groupJoinedAt']
   });
 };
 
-/**
- * Get customer with their active loan details
- * @param {number|string} customerId - Customer ID or CUST_ID
- * @returns {Promise<Customer>}
- */
 Customer.getLoanDetails = async function(customerId) {
   try {
-    // Dynamic import to avoid circular dependency
     const LoanAccount = (await import('./LoanAccount.js')).default;
-    
-    const customer = await this.findByPk(customerId, {
-      attributes: [
-        'id', 
-        'CUST_ID', 
-        'CUST_NO',
-        'FIRST_NAME', 
-        'LAST_NAME', 
-        'BVN',
-        'BVN_VERIFIED',
-        'PHONE_NO',
-        'EMAIL_ADDRESS'
-      ],
-      include: [{
-        model: LoanAccount,
-        as: 'loanAccounts',
-        required: false,
-        separate: true,
-        limit: 10,
-        order: [['created_at', 'DESC']]
-      }]
+    return await this.findByPk(customerId, {
+      attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'groupId', 'groupJoinedAt'],
+      include: [{ model: LoanAccount, as: 'loanAccounts', required: false, separate: true, limit: 10, order: [['created_at', 'DESC']] }]
     });
-    
-    return customer;
   } catch (error) {
     console.error('Error in Customer.getLoanDetails:', error.message);
     return null;
   }
 };
 
-/**
- * Find customer by BVN
- * @param {string} bvn - BVN number
- * @returns {Promise<Customer>}
- */
 Customer.findByBVN = async function(bvn) {
-  return this.findOne({
-    where: { BVN: bvn },
-    attributes: ['id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS']
-  });
+  return this.findOne({ where: { BVN: bvn }, attributes: ['id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'groupId'] });
 };
 
-/**
- * Update BVN verification status
- * @param {number|string} customerId - Customer ID
- * @param {boolean} verified - Verification status
- * @param {object} verificationData - Additional verification data
- * @returns {Promise<Customer>}
- */
 Customer.updateBVNVerification = async function(customerId, verified, verificationData = {}) {
   const customer = await this.findByPk(customerId);
-  
-  if (!customer) {
-    throw new Error('Customer not found');
-  }
-  
+  if (!customer) throw new Error('Customer not found');
   customer.BVN_VERIFIED = verified;
   customer.BVN_VERIFIED_AT = verified ? new Date() : null;
-  
-  if (verificationData.bvn) {
-    customer.BVN = verificationData.bvn;
-  }
-  
+  if (verificationData.bvn) customer.BVN = verificationData.bvn;
   await customer.save();
   return customer;
 };
 
-/**
- * Check if customer has any active loans
- * @param {number|string} customerId - Customer ID
- * @returns {Promise<boolean>}
- */
 Customer.hasActiveLoan = async function(customerId) {
   try {
     const LoanAccount = (await import('./LoanAccount.js')).default;
-    
-    const activeLoan = await LoanAccount.findOne({
-      where: {
-        customer_id: customerId,
-        status: 'ACTIVE'
-      }
-    });
-    
+    const activeLoan = await LoanAccount.findOne({ where: { customer_id: customerId, status: 'ACTIVE' } });
     return !!activeLoan;
   } catch (error) {
     console.error('Error checking active loan:', error.message);
@@ -633,32 +728,22 @@ Customer.hasActiveLoan = async function(customerId) {
   }
 };
 
-/**
- * Get customer summary with loan status
- * @param {number|string} customerId - Customer ID
- * @returns {Promise<object>}
- */
 Customer.getFullSummary = async function(customerId) {
   const customer = await this.findByPk(customerId);
-  
-  if (!customer) {
-    return null;
-  }
-  
+  if (!customer) return null;
   const hasActiveLoan = await this.hasActiveLoan(customerId);
   const loanDetails = await this.getLoanDetails(customerId);
-  
-  const activeLoans = loanDetails?.loanAccounts?.filter(
-    loan => loan.status === 'ACTIVE'
-  ) || [];
-  
-  const totalOutstanding = activeLoans.reduce(
-    (sum, loan) => sum + parseFloat(loan.outstanding_balance || 0), 
-    0
-  );
-  
+  const groupDetails = customer.groupId ? await customer.getGroupDetails() : null;
+  const activeLoans = loanDetails?.loanAccounts?.filter(loan => loan.status === 'ACTIVE') || [];
+  const totalOutstanding = activeLoans.reduce((sum, loan) => sum + parseFloat(loan.outstanding_balance || 0), 0);
   return {
     ...customer.getSummary(),
+    groupInfo: groupDetails ? {
+      groupId: groupDetails.id,
+      groupCode: groupDetails.groupCode,
+      groupName: groupDetails.groupName,
+      joinedAt: customer.groupJoinedAt
+    } : null,
     loanStatus: {
       hasActiveLoan,
       activeLoanCount: activeLoans.length,

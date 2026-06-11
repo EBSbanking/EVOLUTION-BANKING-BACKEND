@@ -426,35 +426,7 @@ DepositAccountInterestAudit.init({
       }
     }
   },
-  indexes: [
-    // Primary index
-    { fields: ['id'] },
-    
-    // Foreign key indexes
-    { fields: ['DEPOSIT_ACCT_INT_ID'] },
-    { fields: ['DEPOSIT_ACCT_ID'] },
-    { fields: ['DEPOSIT_PROD_INT_ID'] },
-    
-    // Audit-specific indexes
-    { fields: ['AUDIT_ACTION'] },
-    { fields: ['AUDIT_USER'] },
-    { fields: ['AUDIT_TS'] },
-    { fields: ['USER_ID'] },
-    { fields: ['CREATED_BY'] },
-    
-    // Composite indexes for common queries
-    { fields: ['DEPOSIT_ACCT_INT_ID', 'AUDIT_TS'] },
-    { fields: ['DEPOSIT_ACCT_ID', 'AUDIT_TS'] },
-    { fields: ['AUDIT_USER', 'AUDIT_TS'] },
-    { fields: ['AUDIT_ACTION', 'AUDIT_TS'] },
-    { fields: ['REC_ST', 'AUDIT_TS'] },
-    
-    // Date range queries
-    { fields: ['EFFECTIVE_DT'] },
-    { fields: ['CREATE_DT'] },
-    { fields: ['LAST_SETLMNT_DT'] },
-    { fields: ['NEXT_SETLMNT_DT'] }
-  ],
+ 
   scopes: {
     recent: {
       order: [['AUDIT_TS', 'DESC']],

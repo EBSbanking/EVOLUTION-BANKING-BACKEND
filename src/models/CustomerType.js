@@ -218,21 +218,7 @@ CustomerType.init({
       }
     }
   },
-  indexes: [
-    // Primary index
-    { fields: ['CUST_TY_ID'], unique: true },
-    
-    // Unique constraint on type name
-    { fields: ['CUST_TY'], unique: true },
-    
-    // Search indexes
-    { fields: ['CUST_CAT'] },
-    { fields: ['REC_ST'] },
-    
-    // Composite indexes
-    { fields: ['CUST_CAT', 'REC_ST'] },
-    { fields: ['REC_ST', 'CUST_TY'] }
-  ],
+  
   scopes: {
     active: {
       where: { REC_ST: 'ACTIVE' }

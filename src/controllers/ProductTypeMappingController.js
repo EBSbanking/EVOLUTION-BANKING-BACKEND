@@ -109,7 +109,6 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // If PRODUCT_TYPE not provided or needs determination, use PROD_CD and PROD_DESC
     if (!finalProductType || finalProductType === 'UNKNOWN') {
-      // Fix: Removed extra comma after the switch statement block
       switch (String(finalPROD_CD)) {
         case '200': finalProductType = 'SAVINGS'; break;
         case '201': finalProductType = 'TERM_DEPOSIT'; break;
@@ -123,7 +122,6 @@ export const createOrUpdateMapping = async (req, res) => {
         case '307': finalProductType = 'CREDIT_CARD'; break;
         case '308': finalProductType = 'LINE_OF_CREDIT'; break;
         case '309': finalProductType = 'SME_LOAN'; break;
-        // Add more cases for new product codes if needed
         case '310': finalProductType = 'GROUP_LOAN'; break;
         case '311': finalProductType = 'MONTHLY_LOAN'; break;
         case '312': finalProductType = 'ASSET_LOAN'; break;
@@ -200,7 +198,39 @@ export const createOrUpdateMapping = async (req, res) => {
       });
     }
 
-    // Validate GL accounts structure
+    // ======================
+    // NEW: Build updated GL accounts with interest accrual fields
+    // ======================
+    const updatedGLAccounts = {
+      ...(glAccounts || {}),
+      // Interest accrual GL fields (from request body)
+      gl_interest_accrued: req.body.gl_interest_accrued,
+      gl_interest_income: req.body.gl_interest_income,
+      gl_interest_expense: req.body.gl_interest_expense,
+      gl_interest_matured: req.body.gl_interest_matured,
+      gl_penalty_income: req.body.gl_penalty_income,
+    };
+
+    // ======================
+    // NEW: Validate required GL accounts based on product type
+    // ======================
+    if (finalProductType === 'LOAN') {
+      if (!updatedGLAccounts.gl_interest_accrued || !updatedGLAccounts.gl_interest_income) {
+        return res.status(400).json({
+          success: false,
+          message: 'LOAN product requires gl_interest_accrued (interest receivable) and gl_interest_income (interest income)'
+        });
+      }
+    } else if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
+      if (!updatedGLAccounts.gl_interest_accrued || !updatedGLAccounts.gl_interest_expense) {
+        return res.status(400).json({
+          success: false,
+          message: `${finalProductType} product requires gl_interest_accrued (interest payable) and gl_interest_expense (interest expense)`
+        });
+      }
+    }
+
+    // Existing GL accounts list (kept for backwards compatibility)
     const glFields = [
       'loanGLAccount',
       'interestGLAccountNo',
@@ -250,10 +280,7 @@ export const createOrUpdateMapping = async (req, res) => {
       'writeOffBalanceGLAccountNo'
     ];
 
-    // Initialize glAccounts if not provided
-    const updatedGLAccounts = glAccounts || {};
-
-    // Validate GL accounts based on product type
+    // Validate GL accounts based on product type (existing logic)
     if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT_CARD') {
       // Require loanGLAccount for loan products
       if (!updatedGLAccounts.loanGLAccount) {
@@ -311,13 +338,12 @@ export const createOrUpdateMapping = async (req, res) => {
         });
       }
 
-      // Add fallbacks for savings GL accounts if needed (similar pattern)
-      // Note: Extend as necessary for additional fields
+      // Add fallbacks for savings GL accounts if needed
       if (!updatedGLAccounts.interestPayableGLAccountNo) {
         updatedGLAccounts.interestPayableGLAccountNo = updatedGLAccounts.principalBalanceGLAccountNo;
         console.log(`interestPayableGLAccountNo not provided. Using principalBalanceGLAccountNo for savings.`);
       }
-      // Add more fallbacks as required for other savings fields
+      // Add more fallbacks as required
     }
 
     // Validate all provided GL accounts exist in the database
@@ -340,18 +366,17 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // ✅ SAFE PARSING FOR NUMERIC FIELDS
     const parsedProductCode = parseInt(String(finalPROD_CD).trim());
-    const finalProductCode = isNaN(parsedProductCode) ? 200 : parsedProductCode; // Default fallback
+    const finalProductCode = isNaN(parsedProductCode) ? 200 : parsedProductCode;
 
-    // Prepare mapping data - map to schema fields to satisfy required validation
+    // Prepare mapping data
     const mappingData = {
       productCode: finalProductCode,
-      PROD_ID: finalProdId, // ✅ Use the validated finalProdId
+      PROD_ID: finalProdId,
       name: productName,
       isActive: true,
       allowedCurrencies: [req.body.CRNCY_ID || 'NGN'],
       processingFeeRate: parseFloat(req.body.processingFeeRate) || 0,
       feeStructure: req.body.feeStructure || [],
-      // Additional custom fields
       PRODUCT_TYPE: finalProductType,
       accountPrefix,
       glAccounts: updatedGLAccounts,
@@ -361,7 +386,7 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // Save or update product type mapping
     const updatedMapping = await ProductTypeMapping.findOneAndUpdate(
-      { PROD_ID: finalProdId }, // ✅ Use validated ID
+      { PROD_ID: finalProdId },
       mappingData,
       { upsert: true, new: true, runValidators: true }
     );
@@ -374,13 +399,12 @@ export const createOrUpdateMapping = async (req, res) => {
 
     // Create or update specific product based on type
     const productData = {
-      PROD_ID: finalProdId, // ✅ Use validated ID
+      PROD_ID: finalProdId,
       PROD_CD: finalPROD_CD,
       PROD_DESC: finalPROD_DESC,
       PRODUCT_TYPE: finalProductType,
       productName: productName,
-      // Add other common fields
-      ...req.body.productData // Allow additional product data from request
+      ...req.body.productData
     };
 
     let specificProduct = null;
@@ -389,14 +413,13 @@ export const createOrUpdateMapping = async (req, res) => {
     if (finalProductType === 'SAVINGS' || finalProductType === 'TERM_DEPOSIT') {
       const savingsProductData = {
         ...productData,
-        productCode: String(finalProductCode), // ✅ Ensure string type for productCode
-        productType: finalProductType, // Map PRODUCT_TYPE to productType
+        productCode: String(finalProductCode),
+        productType: finalProductType,
         CRNCY_ID: req.body.CRNCY_ID || 'NGN',
         START_DT: req.body.START_DT ? new Date(req.body.START_DT) : new Date(),
         REC_ST: req.body.REC_ST || 'A',
         CREATED_BY: req.body.CREATED_BY || 'system',
-        BU_ID: req.body.BU_ID || '001', // Default BU_ID
-        // Add GL accounts to savings product
+        BU_ID: req.body.BU_ID || '001',
         principalBalanceGLAccountNo: updatedGLAccounts.principalBalanceGLAccountNo,
         interestGLAccountNo: updatedGLAccounts.interestGLAccountNo,
         interestPayableGLAccountNo: updatedGLAccounts.interestPayableGLAccountNo,
@@ -407,7 +430,7 @@ export const createOrUpdateMapping = async (req, res) => {
       };
 
       specificProduct = await SavingsProduct.findOneAndUpdate(
-        { PROD_ID: finalProdId }, // ✅ Use validated ID
+        { PROD_ID: finalProdId },
         savingsProductData,
         { upsert: true, new: true, runValidators: true }
       );
@@ -418,17 +441,15 @@ export const createOrUpdateMapping = async (req, res) => {
     else if (finalProductType.includes('LOAN') || finalProductType === 'MORTGAGE' || finalProductType === 'CREDIT_CARD') {
       const loanProductData = {
         ...productData,
-        productCode: String(finalProductCode), // ✅ Ensure string type for productCode
-        name: productName, // Map productName to name
-        description: PROD_DESC, // Map PROD_DESC to description
+        productCode: String(finalProductCode),
+        name: productName,
+        description: PROD_DESC,
         CRNCY_ID: req.body.CRNCY_ID || 'NGN',
-        // Add GL accounts to loan product
         loanGLAccount: updatedGLAccounts.loanGLAccount,
         interestGLAccountNo: updatedGLAccounts.interestGLAccountNo,
         interestPayableGLAccountNo: updatedGLAccounts.interestPayableGLAccountNo,
         withholdingTaxGLAccountNo: updatedGLAccounts.withholdingTaxGLAccountNo,
         principalGLAccountNo: updatedGLAccounts.principalGLAccountNo,
-        // Add other loan-specific fields with proper typing
         minAmount: parseFloat(req.body.minAmount) || 0.00,
         maxAmount: parseFloat(req.body.maxAmount) || 0.00,
         minTerm: parseInt(req.body.minTerm) || 1,
@@ -436,7 +457,6 @@ export const createOrUpdateMapping = async (req, res) => {
         TERM_CD: req.body.TERM_CD || 'M',
         PAYMENT_FREQUENCY: req.body.PAYMENT_FREQUENCY || 'MONTHLY',
         interestRate: parseFloat(req.body.interestRate) || 0.00,
-        // Additional defaults for common loan fields to prevent undefined in getters
         gracePeriod: parseInt(req.body.gracePeriod) || 0,
         lateFeeRate: parseFloat(req.body.lateFeeRate) || 0.00,
         prepaymentPenalty: parseFloat(req.body.prepaymentPenalty) || 0.00,
@@ -446,7 +466,7 @@ export const createOrUpdateMapping = async (req, res) => {
       };
 
       specificProduct = await LoanProduct.findOneAndUpdate(
-        { PROD_ID: finalProdId }, // ✅ Use validated ID
+        { PROD_ID: finalProdId },
         loanProductData,
         { upsert: true, new: true, runValidators: true }
       );
@@ -461,11 +481,10 @@ export const createOrUpdateMapping = async (req, res) => {
         console.log(`Generated loan account number for PROD_ID ${finalProdId}: ${generatedAccountNumber}`);
       } catch (accountError) {
         console.warn('Account number generation failed:', accountError.message);
-        // Don't fail the entire operation if account generation fails
       }
     }
 
-    // Serialize documents safely to avoid getter errors during JSON conversion
+    // Serialize documents safely
     const serializedMapping = updatedMapping.toObject({ getters: false });
     const serializedSpecificProduct = specificProduct ? specificProduct.toObject({ getters: false }) : null;
 
@@ -476,9 +495,9 @@ export const createOrUpdateMapping = async (req, res) => {
         mapping: {
           PROD_ID: serializedMapping.PROD_ID,
           PRODUCT_TYPE: serializedMapping.PRODUCT_TYPE,
-          productName: serializedMapping.productName || serializedMapping.name, // Fallback to name if productName not in schema
+          productName: serializedMapping.productName || serializedMapping.name,
           accountPrefix: serializedMapping.accountPrefix,
-          PROD_CD: serializedMapping.PROD_CD || serializedMapping.productCode, // Fallback to productCode
+          PROD_CD: serializedMapping.PROD_CD || serializedMapping.productCode,
           PROD_DESC: serializedMapping.PROD_DESC,
           glAccounts: serializedMapping.glAccounts,
           createdAt: serializedMapping.createdAt,
@@ -541,7 +560,6 @@ export const getMappingByProdId = async (req, res) => {
       });
     }
 
-    // ✅ SAFE PROD_ID PARSING
     const parsedProdId = parseInt(String(prodId).trim());
     if (isNaN(parsedProdId)) {
       return res.status(400).json({
@@ -602,7 +620,6 @@ export const getProductTypeByProdId = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
     
-    // ✅ SAFE PROD_ID PARSING
     const parsedProdId = parseInt(String(PROD_ID).trim());
     if (isNaN(parsedProdId)) {
       return res.status(400).json({
@@ -641,7 +658,6 @@ export const deleteMapping = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
     
-    // ✅ SAFE PROD_ID PARSING
     const parsedProdId = parseInt(String(PROD_ID).trim());
     if (isNaN(parsedProdId)) {
       return res.status(400).json({
@@ -680,7 +696,6 @@ export const getProductTypeOnly = async (req, res) => {
   try {
     const { PROD_ID } = req.params;
     
-    // ✅ SAFE PROD_ID PARSING
     const parsedProdId = parseInt(String(PROD_ID).trim());
     if (isNaN(parsedProdId)) {
       return res.status(400).json({
@@ -691,7 +706,7 @@ export const getProductTypeOnly = async (req, res) => {
 
     const mapping = await ProductTypeMapping.findOne(
       { PROD_ID: parsedProdId },
-      { PRODUCT_TYPE: 1, _id: 0 } // only return PRODUCT_TYPE
+      { PRODUCT_TYPE: 1, _id: 0 }
     ).lean();
 
     if (!mapping) {

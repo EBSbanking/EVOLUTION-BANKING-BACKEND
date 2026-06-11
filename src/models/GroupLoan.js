@@ -1,22 +1,19 @@
-// models/GroupLoan.js
-import { DataTypes, Model } from 'sequelize';
-import sequelize from '../../config/db.js';
+// models/GroupLoan.js - COMPLETE FIXED VERSION
+import { DataTypes } from 'sequelize';
 
-class GroupLoan extends Model {}
+export default (sequelize) => {
+  // Helper getter for decimal fields → float
+  const decimalGetter = (fieldName) => ({
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: false,
+    defaultValue: 0.00,
+    get: function() {
+      const val = this.getDataValue(fieldName);
+      return val ? parseFloat(val) : 0.0;
+    },
+  });
 
-// Helper getter for decimal fields → float
-const decimalGetter = () => ({
-  type: DataTypes.DECIMAL(20, 2),
-  allowNull: false,
-  defaultValue: 0.00,
-  get() {
-    const val = this.getDataValue(this.fieldName || arguments.callee.caller.name);
-    return val ? parseFloat(val) : 0.0;
-  },
-});
-
-GroupLoan.init(
-  {
+  const GroupLoan = sequelize.define('GroupLoan', {
     id: {
       type: DataTypes.BIGINT,
       autoIncrement: true,
@@ -30,9 +27,9 @@ GroupLoan.init(
     },
 
     groupId: {
-      type: DataTypes.BIGINT,
+      type: DataTypes.STRING(50),
       allowNull: false,
-      comment: 'References Group.id',
+      comment: 'References Group.groupCode or Group.id',
     },
 
     groupCode: {
@@ -46,15 +43,9 @@ GroupLoan.init(
       allowNull: false,
     },
 
-    totalAmount: {
-      ...decimalGetter(),
-      fieldName: 'totalAmount',
-    },
+    totalAmount: decimalGetter('totalAmount'),
 
-    individualShare: {
-      ...decimalGetter(),
-      fieldName: 'individualShare',
-    },
+    individualShare: decimalGetter('individualShare'),
 
     memberCount: {
       type: DataTypes.INTEGER,
@@ -150,10 +141,7 @@ GroupLoan.init(
     loanPurpose: DataTypes.STRING(255),
     savingsAccount: DataTypes.STRING(100),
 
-    interestRate: {
-      ...decimalGetter(),
-      fieldName: 'interestRate',
-    },
+    interestRate: decimalGetter('interestRate'),
 
     loanTerm: {
       type: DataTypes.ENUM('weekly', 'monthly', 'yearly'),
@@ -181,40 +169,22 @@ GroupLoan.init(
       allowNull: true,
     },
 
-    savingsCollateral: {
-      ...decimalGetter(),
-      fieldName: 'savingsCollateral',
-    },
+    savingsCollateral: decimalGetter('savingsCollateral'),
 
     individualLoanAccounts: {
       type: DataTypes.JSON,
       defaultValue: [],
     },
 
-    totalInterest: {
-      ...decimalGetter(),
-      fieldName: 'totalInterest',
-    },
+    totalInterest: decimalGetter('totalInterest'),
 
-    totalRepayable: {
-      ...decimalGetter(),
-      fieldName: 'totalRepayable',
-    },
+    totalRepayable: decimalGetter('totalRepayable'),
 
-    totalRepaid: {
-      ...decimalGetter(),
-      fieldName: 'totalRepaid',
-    },
+    totalRepaid: decimalGetter('totalRepaid'),
 
-    remainingBalance: {
-      ...decimalGetter(),
-      fieldName: 'remainingBalance',
-    },
+    remainingBalance: decimalGetter('remainingBalance'),
 
-    installmentAmount: {
-      ...decimalGetter(),
-      fieldName: 'installmentAmount',
-    },
+    installmentAmount: decimalGetter('installmentAmount'),
 
     numPeriods: {
       type: DataTypes.INTEGER,
@@ -226,25 +196,13 @@ GroupLoan.init(
       defaultValue: 0,
     },
 
-    netDisbursementAmount: {
-      ...decimalGetter(),
-      fieldName: 'netDisbursementAmount',
-    },
+    netDisbursementAmount: decimalGetter('netDisbursementAmount'),
 
-    totalFees: {
-      ...decimalGetter(),
-      fieldName: 'totalFees',
-    },
+    totalFees: decimalGetter('totalFees'),
 
-    upfrontInterestAmount: {
-      ...decimalGetter(),
-      fieldName: 'upfrontInterestAmount',
-    },
+    upfrontInterestAmount: decimalGetter('upfrontInterestAmount'),
 
-    remainingInterestAmount: {
-      ...decimalGetter(),
-      fieldName: 'remainingInterestAmount',
-    },
+    remainingInterestAmount: decimalGetter('remainingInterestAmount'),
 
     feesCollected: {
       type: DataTypes.BOOLEAN,
@@ -316,14 +274,8 @@ GroupLoan.init(
     rateChangeAllowed: { type: DataTypes.BOOLEAN, defaultValue: false },
     rateChangeNoticeDays: { type: DataTypes.INTEGER, defaultValue: 30 },
     upfrontInterest: { type: DataTypes.BOOLEAN, defaultValue: false },
-    upfrontInterestPercentage: {
-      ...decimalGetter(),
-      fieldName: 'upfrontInterestPercentage',
-    },
-  },
-  {
-    sequelize,
-    modelName: 'GroupLoan',
+    upfrontInterestPercentage: decimalGetter('upfrontInterestPercentage'),
+  }, {
     tableName: 'group_loans',
     timestamps: false,
     updatedAt: 'updatedAt',
@@ -341,18 +293,16 @@ GroupLoan.init(
       { unique: true, fields: ['loanId'] },
     ],
     hooks: {
-      beforeCreate: async (groupLoan) => {
-        // Auto-calculate individual share
+      beforeCreate: async function(groupLoan) {
         if (!groupLoan.individualShare && groupLoan.memberCount > 0 && groupLoan.totalAmount) {
           groupLoan.individualShare = (groupLoan.totalAmount / groupLoan.memberCount).toFixed(2);
         }
         groupLoan.applicationDate = new Date();
         groupLoan.updatedAt = new Date();
       },
-      beforeUpdate: async (groupLoan) => {
+      beforeUpdate: async function(groupLoan) {
         groupLoan.updatedAt = new Date();
 
-        // Recalculate totals
         const totalAmount = parseFloat(groupLoan.totalAmount || 0);
         const totalInterest = parseFloat(groupLoan.totalInterest || 0);
         const totalRepaid = parseFloat(groupLoan.totalRepaid || 0);
@@ -361,70 +311,70 @@ GroupLoan.init(
         groupLoan.remainingBalance = Math.max(0, totalAmount + totalInterest - totalRepaid).toFixed(2);
       },
     },
-  }
-);
-
-// Instance methods
-GroupLoan.prototype.updateCollectionTotals = async function (loanAmount, savingsAmount = 0) {
-  const currentRepaid = parseFloat(this.totalRepaid || 0);
-  const loanNum = parseFloat(loanAmount || 0);
-  this.totalRepaid = (currentRepaid + loanNum).toFixed(2);
-
-  const repayable = parseFloat(this.totalRepayable || 0);
-  this.remainingBalance = Math.max(0, repayable - (currentRepaid + loanNum)).toFixed(2);
-
-  this.lastCollectionDate = new Date();
-  await this.save();
-};
-
-GroupLoan.prototype.getCollectionSummary = function () {
-  const totalExpected = parseFloat(this.totalRepayable || 0);
-  const totalCollected = parseFloat(this.totalRepaid || 0);
-  const rate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
-
-  return {
-    totalExpected,
-    totalCollected,
-    remainingBalance: parseFloat(this.remainingBalance || 0),
-    collectionRate: Math.round(rate * 100) / 100,
-    installmentsPaid: this.installmentsPaid || 0,
-    lastCollectionDate: this.lastCollectionDate,
-  };
-};
-
-GroupLoan.prototype.addCollectionRecord = async function (collectionData) {
-  if (!this.collectionHistory) this.collectionHistory = [];
-
-  this.collectionHistory.push({
-    collectionDate: collectionData.collectionDate || new Date(),
-    collectedBy: collectionData.collectedBy,
-    loanCollections: collectionData.loanCollections || [],
-    savingsCollections: collectionData.savingsCollections || [],
-    successfulCollections: collectionData.successfulCollections || 0,
-    failedCollections: collectionData.failedCollections || 0,
-    savingsProcessed: collectionData.savingsProcessed || 0,
-    totalLoanCollected: parseFloat(collectionData.totalLoanCollected || 0).toFixed(2),
-    totalSavingsCollected: parseFloat(collectionData.totalSavingsCollected || 0).toFixed(2),
-    paymentMethod: collectionData.paymentMethod || 'CASH',
-    transactionReference: collectionData.transactionReference,
   });
 
-  this.lastCollectionDate = new Date();
-  await this.save();
-};
+  // Instance methods
+  GroupLoan.prototype.updateCollectionTotals = async function(loanAmount, savingsAmount = 0) {
+    const currentRepaid = parseFloat(this.totalRepaid || 0);
+    const loanNum = parseFloat(loanAmount || 0);
+    this.totalRepaid = (currentRepaid + loanNum).toFixed(2);
 
-GroupLoan.prototype.markMemberAsRepaid = async function (loanAccountId) {
-  if (!this.repaidToMembers) this.repaidToMembers = [];
-  if (!this.repaidToMembers.includes(loanAccountId)) {
-    this.repaidToMembers.push(loanAccountId);
-  }
-  await this.save();
-};
+    const repayable = parseFloat(this.totalRepayable || 0);
+    this.remainingBalance = Math.max(0, repayable - (currentRepaid + loanNum)).toFixed(2);
 
-GroupLoan.prototype.allMembersRepaid = function () {
-  const disbursed = this.disbursedToMembers?.length || 0;
-  const repaid = this.repaidToMembers?.length || 0;
-  return disbursed > 0 && disbursed === repaid;
-};
+    this.lastCollectionDate = new Date();
+    await this.save();
+  };
 
-export default GroupLoan;
+  GroupLoan.prototype.getCollectionSummary = function() {
+    const totalExpected = parseFloat(this.totalRepayable || 0);
+    const totalCollected = parseFloat(this.totalRepaid || 0);
+    const rate = totalExpected > 0 ? (totalCollected / totalExpected) * 100 : 0;
+
+    return {
+      totalExpected,
+      totalCollected,
+      remainingBalance: parseFloat(this.remainingBalance || 0),
+      collectionRate: Math.round(rate * 100) / 100,
+      installmentsPaid: this.installmentsPaid || 0,
+      lastCollectionDate: this.lastCollectionDate,
+    };
+  };
+
+  GroupLoan.prototype.addCollectionRecord = async function(collectionData) {
+    if (!this.collectionHistory) this.collectionHistory = [];
+
+    this.collectionHistory.push({
+      collectionDate: collectionData.collectionDate || new Date(),
+      collectedBy: collectionData.collectedBy,
+      loanCollections: collectionData.loanCollections || [],
+      savingsCollections: collectionData.savingsCollections || [],
+      successfulCollections: collectionData.successfulCollections || 0,
+      failedCollections: collectionData.failedCollections || 0,
+      savingsProcessed: collectionData.savingsProcessed || 0,
+      totalLoanCollected: parseFloat(collectionData.totalLoanCollected || 0).toFixed(2),
+      totalSavingsCollected: parseFloat(collectionData.totalSavingsCollected || 0).toFixed(2),
+      paymentMethod: collectionData.paymentMethod || 'CASH',
+      transactionReference: collectionData.transactionReference,
+    });
+
+    this.lastCollectionDate = new Date();
+    await this.save();
+  };
+
+  GroupLoan.prototype.markMemberAsRepaid = async function(loanAccountId) {
+    if (!this.repaidToMembers) this.repaidToMembers = [];
+    if (!this.repaidToMembers.includes(loanAccountId)) {
+      this.repaidToMembers.push(loanAccountId);
+    }
+    await this.save();
+  };
+
+  GroupLoan.prototype.allMembersRepaid = function() {
+    const disbursed = this.disbursedToMembers?.length || 0;
+    const repaid = this.repaidToMembers?.length || 0;
+    return disbursed > 0 && disbursed === repaid;
+  };
+
+  return GroupLoan;
+};

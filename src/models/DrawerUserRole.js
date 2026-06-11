@@ -191,10 +191,7 @@ DrawerUserRole.init({
     type: DataTypes.INTEGER,
     allowNull: false,
     field: 'drawerId',
-    references: {
-      model: 'Drawers',
-      key: 'DRAWER_ID'
-    }
+    
   },
   REC_ST: {
     type: DataTypes.CHAR(1),
@@ -243,10 +240,7 @@ DrawerUserRole.init({
     type: DataTypes.INTEGER,
     allowNull: true,
     field: 'userRoleId',
-    references: {
-      model: 'UserRoles',
-      key: 'USER_ROLE_ID'
-    }
+   
   }
 }, {
   sequelize,

@@ -320,45 +320,6 @@ AccountApplication.init({
   underscored: true,
   freezeTableName: true,
   
-  indexes: [
-    {
-      fields: ['customer_id'],
-      name: 'idx_customer_id'
-    },
-    {
-      fields: ['account_number'],
-      unique: true,
-      name: 'idx_account_number'
-    },
-    {
-      fields: ['status'],
-      name: 'idx_status'
-    },
-    {
-      fields: ['created_at'],
-      name: 'idx_created_at'
-    },
-    {
-      fields: ['customer_id', 'status'],
-      name: 'idx_customer_status'
-    },
-    {
-      fields: ['document_type'],
-      name: 'idx_document_type'
-    },
-    {
-      fields: ['branch_id'],
-      name: 'idx_branch_id'
-    },
-    {
-      fields: ['user_id'],
-      name: 'idx_user_id'
-    },
-    {
-      fields: ['branch_name'],
-      name: 'idx_branch_name'
-    }
-  ],
   
   hooks: {
     beforeValidate: (application) => {

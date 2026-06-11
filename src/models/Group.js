@@ -1,4 +1,5 @@
-// models/Group.js - Updated Sequelize Model for Group
+// models/Group.js - Updated Sequelize Model for Group with default scope to exclude group_id
+
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js'; // Adjust path as needed
 
@@ -33,7 +34,7 @@ const Group = sequelize.define('Group', {
     }
   },
   members: {
-    type: DataTypes.JSON, // Store as JSON array
+    type: DataTypes.JSON, // Store as JSON array of customer CUST_IDs
     defaultValue: [],
     validate: {
       isArray(value) {
@@ -41,7 +42,8 @@ const Group = sequelize.define('Group', {
           throw new Error('Members must be an array');
         }
       }
-    }
+    },
+    comment: 'Array of customer CUST_IDs belonging to this group'
   },
   memberCount: {
     type: DataTypes.INTEGER,
@@ -67,38 +69,41 @@ const Group = sequelize.define('Group', {
     }
   },
   relationshipManager: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: {
-      notNull: true,
-      isInt: true
-    }
+    type: DataTypes.STRING,  // Changed to STRING to accept values like "PCO04"
+    allowNull: true,
+    field: 'relationship_manager' // Explicitly map to snake_case column
   },
+  
   regDate: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'reg_date' // Explicitly map to snake_case column
   },
   minMembers: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
     validate: {
       min: 0
-    }
+    },
+    field: 'min_members' // Explicitly map to snake_case column
   },
   maxMembers: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
     validate: {
       min: 0
-    }
+    },
+    field: 'max_members' // Explicitly map to snake_case column
   },
   meetingDay: {
     type: DataTypes.ENUM('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'),
-    allowNull: true
+    allowNull: true,
+    field: 'meeting_day' // Explicitly map to snake_case column
   },
   meetingFrequency: {
     type: DataTypes.ENUM('Once Every Week', 'Once Every Two Weeks', 'Once Every Month'),
-    allowNull: true
+    allowNull: true,
+    field: 'meeting_frequency' // Explicitly map to snake_case column
   },
   unionAddress: {
     type: DataTypes.STRING,
@@ -106,6 +111,7 @@ const Group = sequelize.define('Group', {
     validate: {
       len: [0, 500]
     },
+    field: 'union_address', // Explicitly map to snake_case column
     set(value) {
       if (value) {
         this.setDataValue('unionAddress', value.trim());
@@ -118,55 +124,88 @@ const Group = sequelize.define('Group', {
     validate: {
       notNull: true,
       isInt: true
-    }
+    },
+    field: 'created_by' // Explicitly map to snake_case column
   },
   offlineId: {
     type: DataTypes.STRING,
     allowNull: true,
-    defaultValue: null
+    defaultValue: null,
+    field: 'offline_id' // Explicitly map to snake_case column
   },
   groupType: {
     type: DataTypes.ENUM('Union', 'Association', 'Cooperative', 'Other'),
-    defaultValue: 'Union'
+    defaultValue: 'Union',
+    field: 'group_type' // Explicitly map to snake_case column
   },
+  // CHANGED: from INTEGER to BIGINT to support 10-digit account numbers
   unionPurseAccount: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.BIGINT,  // Changed from INTEGER to BIGINT
     defaultValue: 0,
     validate: {
-      min: 0
-    }
+      min: 0,
+      // Custom validator to ensure 10 digits
+      isTenDigits(value) {
+        if (value && value.toString().length > 10) {
+          throw new Error('Union purse account must be at most 10 digits');
+        }
+      }
+    },
+    field: 'union_purse_account', // Explicitly map to snake_case column
+    comment: '10-digit account number for union purse funds (Format: YYDDD + 5-digit sequence)'
   },
   migrationId: {
     type: DataTypes.STRING,
     allowNull: true,
-    defaultValue: null
+    defaultValue: null,
+    field: 'migration_id' // Explicitly map to snake_case column
   },
   
   // Migration reference fields
   mysqlId: {
     type: DataTypes.INTEGER,
-    allowNull: true
+    allowNull: true,
+    field: 'mysql_id' // Explicitly map to snake_case column
   },
   originalData: {
     type: DataTypes.JSON, // Store original data as JSON
     allowNull: true,
-    defaultValue: null
+    defaultValue: null,
+    field: 'original_data' // Explicitly map to snake_case column
   },
   
   // Timestamps
   createdAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'created_at' // Explicitly map to snake_case column
   },
   updatedAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at' // Explicitly map to snake_case column
   }
 }, {
   tableName: 'Groups',
-  timestamps: true, // Use Sequelize's automatic timestamps
+  timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
+   
+  // ========== ADDED DEFAULT SCOPE TO EXCLUDE group_id ==========
+  defaultScope: {
+    attributes: {
+      exclude: ['group_id'] // Ensure we never try to select non-existent group_id column
+    }
+  },
+  // =============================================================
+  
+  // Optional: Add a scope that includes all fields if needed
+  scopes: {
+    withAllFields: {
+      attributes: {}
+    }
+  },
+  
   hooks: {
     beforeSave: (group, options) => {
       // Update memberCount based on members array length
@@ -187,46 +226,14 @@ const Group = sequelize.define('Group', {
           group.members = [];
         }
       }
+    },
+    afterCreate: async (group, options) => {
+      // Note: This hook doesn't update customer records
+      // Customer records are updated in the GroupController
+      console.log(`✅ Group created: ${group.groupCode} with ${group.memberCount} members`);
     }
   },
-  indexes: [
-    {
-      name: 'idx_group_code',
-      fields: ['groupCode'],
-      unique: true
-    },
-    {
-      name: 'idx_group_name',
-      fields: ['groupName']
-    },
-    {
-      name: 'idx_branch',
-      fields: ['branch']
-    },
-    {
-      name: 'idx_relationship_manager',
-      fields: ['relationshipManager']
-    },
-    {
-      name: 'idx_status',
-      fields: ['status']
-    },
-    {
-      name: 'idx_legacy_id',
-      fields: ['legacyId'],
-      unique: true
-    },
-    {
-      name: 'idx_mysql_id',
-      fields: ['mysqlId']
-    },
-    // Full-text index equivalent (if needed, depends on database)
-    {
-      name: 'idx_group_name_text',
-      fields: ['groupName'],
-      using: 'BTREE' // Use GIN/GIST for full-text in PostgreSQL
-    }
-  ]
+ 
 });
 
 // Instance methods

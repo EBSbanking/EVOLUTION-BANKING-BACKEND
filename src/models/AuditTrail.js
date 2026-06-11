@@ -16,7 +16,7 @@ class AuditTrail extends Model {
     return moment(this.updated_at).tz('Africa/Lagos').format();
   }
 
-  // Static method to ensure table exists (for your server.js loading)
+  // Static method to ensure table exists (for server.js loading)
   static async ensureTableExists() {
     try {
       await this.sync({ alter: process.env.NODE_ENV === 'development' });
@@ -27,18 +27,71 @@ class AuditTrail extends Model {
       return false;
     }
   }
+
+  // Ensure required columns exist (adds missing columns)
+  static async ensureColumns() {
+    try {
+      const tableName = this.tableName;
+      const [results] = await sequelize.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = ?
+      `, { replacements: [tableName] });
+      
+      const existingColumns = results.map(row => row.COLUMN_NAME);
+      let columnsAdded = 0;
+      
+      // Add description if missing
+      if (!existingColumns.includes('description')) {
+        await sequelize.query(`
+          ALTER TABLE \`${tableName}\` 
+          ADD COLUMN description TEXT
+        `);
+        console.log(`✅ Added description column to ${tableName}`);
+        columnsAdded++;
+      }
+      
+      // Add branch_id if missing
+      if (!existingColumns.includes('branch_id')) {
+        await sequelize.query(`
+          ALTER TABLE \`${tableName}\` 
+          ADD COLUMN branch_id VARCHAR(10) DEFAULT NULL
+        `);
+        console.log(`✅ Added branch_id column to ${tableName}`);
+        columnsAdded++;
+      }
+      
+      // Add account_no if missing
+      if (!existingColumns.includes('account_no')) {
+        await sequelize.query(`
+          ALTER TABLE \`${tableName}\` 
+          ADD COLUMN account_no VARCHAR(50) DEFAULT NULL
+        `);
+        console.log(`✅ Added account_no column to ${tableName}`);
+        columnsAdded++;
+      }
+      
+      if (columnsAdded > 0) {
+        console.log(`✅ Added ${columnsAdded} column(s) to ${tableName}`);
+      } else {
+        console.log(`✅ All required columns already exist in ${tableName}`);
+      }
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to ensure audit_trail columns:', error.message);
+      return false;
+    }
+  }
 }
 
 AuditTrail.init(
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
+    // ✅ ONLY ONE PRIMARY KEY: event_id (auto-increment)
     event_id: {
       type: DataTypes.BIGINT,
-      allowNull: false,
+      primaryKey: true,
+      autoIncrement: true,
       field: 'event_id',
     },
     user_id: {
@@ -56,7 +109,7 @@ AuditTrail.init(
       field: 'event_type',
     },
     action: {
-      type: DataTypes.STRING(200), // Increased from 100 to 200
+      type: DataTypes.STRING(200),
       allowNull: false,
       field: 'action',
     },
@@ -66,16 +119,16 @@ AuditTrail.init(
     },
     new_value: {
       type: DataTypes.JSON,
-      allowNull: true, // Changed from false to true for some events
+      allowNull: true,
       field: 'new_value',
     },
     entity_type: {
-      type: DataTypes.STRING(50), // Reduced from 100 to 50 for consistency
+      type: DataTypes.STRING(50),
       allowNull: false,
       field: 'entity_type',
     },
     entity_id: {
-      type: DataTypes.INTEGER, // Changed from STRING to INTEGER for drawer system
+      type: DataTypes.INTEGER,
       allowNull: false,
       field: 'entity_id',
     },
@@ -92,7 +145,7 @@ AuditTrail.init(
       field: 'additional_info',
     },
     ip_address: {
-      type: DataTypes.STRING(45), // IPv6 support
+      type: DataTypes.STRING(45),
       allowNull: false,
       field: 'ip_address',
     },
@@ -101,8 +154,9 @@ AuditTrail.init(
       field: 'user_agent',
     },
     status: {
-      type: DataTypes.ENUM('SUCCESS', 'FAILED', 'PENDING'),
-      defaultValue: 'SUCCESS',
+      type: DataTypes.ENUM('SUCCESS', 'FAILED', 'PARTIAL_SUCCESS', 'PENDING', 'PROCESSING'),
+      defaultValue: 'PENDING',
+      field: 'status',
     },
     account_no: {
       type: DataTypes.STRING(50),
@@ -124,101 +178,45 @@ AuditTrail.init(
       type: DataTypes.STRING(10),
       field: 'method',
     },
-    // Timestamps
     timestamp: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
       allowNull: false,
+      field: 'timestamp',
     },
     created_at: {
       type: DataTypes.DATE,
       allowNull: false,
       defaultValue: DataTypes.NOW,
-      field: 'created_at'
+      field: 'created_at',
     },
     updated_at: {
       type: DataTypes.DATE,
       allowNull: false,
       defaultValue: DataTypes.NOW,
-      field: 'updated_at'
-    }
+      field: 'updated_at',
+    },
   },
   {
     sequelize,
     modelName: 'AuditTrail',
-    tableName: 'audit_trails', // Changed from 'audit_trail' to match your table creation
-    timestamps: false, // Set to false since we're managing timestamps manually
+    tableName: 'audit_trail',           // matches your actual table name
+    timestamps: false,                  // we manage created_at/updated_at manually
     underscored: false,
-    indexes: [
-      {
-        fields: ['event_id'],
-        unique: true,
-      },
-      {
-        fields: ['user_id'],
-      },
-      {
-        fields: ['event_type'],
-      },
-      {
-        fields: ['action'],
-      },
-      {
-        fields: ['entity_type', 'entity_id'],
-      },
-      {
-        fields: ['timestamp'],
-      },
-      {
-        fields: ['status'],
-      },
-      {
-        fields: ['reference_no'],
-      },
-      {
-        fields: ['account_no'],
-      },
-      {
-        fields: ['created_at'],
-      },
-      {
-        fields: ['updated_at'],
-      }
-    ],
     hooks: {
       beforeCreate: async (audit, options) => {
-        // Generate event_id if not provided
-        if (!audit.event_id) {
-          try {
-            const lastAudit = await AuditTrail.findOne({
-              order: [['event_id', 'DESC']],
-              attributes: ['event_id'],
-            });
-            audit.event_id = (lastAudit?.event_id || 0) + 1;
-          } catch (error) {
-            audit.event_id = Math.floor(Date.now() / 1000);
-          }
-        }
-        
-        // Set created_at if not provided
-        if (!audit.created_at) {
-          audit.created_at = new Date();
-        }
-        
-        // Set updated_at if not provided
-        if (!audit.updated_at) {
-          audit.updated_at = new Date();
-        }
+        // Set created_at/updated_at if not provided
+        if (!audit.created_at) audit.created_at = new Date();
+        if (!audit.updated_at) audit.updated_at = new Date();
       },
       beforeUpdate: async (audit, options) => {
-        // Update updated_at on record update
         audit.updated_at = new Date();
-      }
+      },
     },
   }
 );
 
-// Update the addAuditTrail function for drawer system compatibility
+// ========== HELPER FUNCTIONS (unchanged) ==========
 export const addAuditTrail = async (auditData, transaction = null) => {
   try {
     const {
@@ -244,7 +242,6 @@ export const addAuditTrail = async (auditData, transaction = null) => {
       timestamp = new Date(),
     } = auditData;
 
-    // Validate required fields
     if (!EVENT_TYPE || !USER_ID || !ACTION || !ENTITY_ID || !ENTITY_TYPE) {
       console.warn('Skipping audit trail: missing required fields', {
         EVENT_TYPE, USER_ID, ACTION, ENTITY_ID, ENTITY_TYPE
@@ -253,8 +250,6 @@ export const addAuditTrail = async (auditData, transaction = null) => {
     }
 
     const now = new Date();
-    
-    // Create audit trail with transaction if provided
     const auditTrail = await AuditTrail.create(
       {
         event_type: EVENT_TYPE,
@@ -307,151 +302,79 @@ export const addAuditTrail = async (auditData, transaction = null) => {
   }
 };
 
-// Specialized functions for drawer system
 export const drawerAuditHelper = {
-  // Drawer events
   drawerOpened: (userId, drawerId, drawerNo, openingCurrency, ipAddress, additionalData = {}) =>
     addAuditTrail({
       EVENT_TYPE: 'DRAWER_OPENED',
       USER_ID: userId,
       ACTION: 'Drawer Opened',
-      NEW_VALUE: {
-        status: 'OPEN',
-        balance: additionalData.openingBalance || 0,
-        currency: openingCurrency
-      },
-      OLD_VALUE: {
-        status: 'CLOSED'
-      },
+      NEW_VALUE: { status: 'OPEN', balance: additionalData.openingBalance || 0, currency: openingCurrency },
+      OLD_VALUE: { status: 'CLOSED' },
       IP_ADDRESS: ipAddress,
       ENTITY_TYPE: 'Drawer',
       ENTITY_ID: drawerId,
       REFERENCE_NO: `DRAWER-OPEN-${Date.now()}`,
       DESCRIPTION: `Drawer ${drawerNo} opened by ${userId}`,
-      ADDITIONAL_INFO: {
-        drawer_no: drawerNo,
-        opening_currency: openingCurrency,
-        verified_by: additionalData.verifiedBy,
-        opening_balance: additionalData.openingBalance
-      }
+      ADDITIONAL_INFO: { drawer_no: drawerNo, opening_currency: openingCurrency, verified_by: additionalData.verifiedBy, opening_balance: additionalData.openingBalance }
     }),
-
   drawerClosed: (userId, drawerId, drawerNo, closingCurrency, finalBalance, ipAddress, additionalData = {}) =>
     addAuditTrail({
       EVENT_TYPE: 'DRAWER_CLOSED_WITH_CURRENCY',
       USER_ID: userId,
       ACTION: 'Drawer Closed',
-      NEW_VALUE: {
-        status: 'CLOSED',
-        balance: finalBalance,
-        currency: closingCurrency
-      },
-      OLD_VALUE: {
-        status: 'OPEN',
-        balance: additionalData.openingBalance
-      },
+      NEW_VALUE: { status: 'CLOSED', balance: finalBalance, currency: closingCurrency },
+      OLD_VALUE: { status: 'OPEN', balance: additionalData.openingBalance },
       IP_ADDRESS: ipAddress,
       ENTITY_TYPE: 'Drawer',
       ENTITY_ID: drawerId,
       REFERENCE_NO: `DRAWER-CLOSE-${Date.now()}`,
       DESCRIPTION: `Drawer ${drawerNo} closed by ${userId}`,
-      ADDITIONAL_INFO: {
-        drawer_no: drawerNo,
-        closing_currency: closingCurrency,
-        expected_balance: additionalData.expectedBalance,
-        difference: additionalData.difference,
-        overage: additionalData.overage,
-        shortage: additionalData.shortage,
-        counted_by: additionalData.countedBy,
-        verified_by: additionalData.verifiedBy
-      }
+      ADDITIONAL_INFO: { drawer_no: drawerNo, closing_currency: closingCurrency, expected_balance: additionalData.expectedBalance, difference: additionalData.difference, overage: additionalData.overage, shortage: additionalData.shortage, counted_by: additionalData.countedBy, verified_by: additionalData.verifiedBy }
     }),
-
   drawerTransaction: (userId, drawerId, drawerNo, transactionType, amount, previousBalance, newBalance, ipAddress, additionalData = {}) =>
     addAuditTrail({
       EVENT_TYPE: 'TRANSACTION_PROCESSED',
       USER_ID: userId,
       ACTION: `Drawer Transaction - ${transactionType}`,
-      NEW_VALUE: {
-        balance: newBalance
-      },
-      OLD_VALUE: {
-        balance: previousBalance
-      },
+      NEW_VALUE: { balance: newBalance },
+      OLD_VALUE: { balance: previousBalance },
       IP_ADDRESS: ipAddress,
       ENTITY_TYPE: 'Drawer',
       ENTITY_ID: drawerId,
       REFERENCE_NO: additionalData.referenceNo || `TXN${Date.now()}`,
       DESCRIPTION: `${transactionType} transaction on drawer ${drawerNo}`,
-      ADDITIONAL_INFO: {
-        drawer_no: drawerNo,
-        transaction_type: transactionType,
-        amount: amount,
-        effect: additionalData.effect,
-        previous_balance: previousBalance,
-        new_balance: newBalance,
-        customer_account: additionalData.customerAccount,
-        reference_no: additionalData.referenceNo
-      }
+      ADDITIONAL_INFO: { drawer_no: drawerNo, transaction_type: transactionType, amount: amount, effect: additionalData.effect, previous_balance: previousBalance, new_balance: newBalance, customer_account: additionalData.customerAccount, reference_no: additionalData.referenceNo }
     }),
-
   drawerToDrawerTransfer: (userId, sourceDrawerId, targetDrawerId, amount, transactionEffect, ipAddress, additionalData = {}) =>
     addAuditTrail({
       EVENT_TYPE: 'DRAWER_TO_DRAWER_TRANSFER',
       USER_ID: userId,
       ACTION: `Drawer to Drawer Transfer - ${transactionEffect}`,
-      NEW_VALUE: {
-        balance: additionalData.newBalance
-      },
-      OLD_VALUE: {
-        balance: additionalData.previousBalance
-      },
+      NEW_VALUE: { balance: additionalData.newBalance },
+      OLD_VALUE: { balance: additionalData.previousBalance },
       IP_ADDRESS: ipAddress,
       ENTITY_TYPE: 'Drawer',
       ENTITY_ID: transactionEffect === 'DEBIT' ? sourceDrawerId : targetDrawerId,
       REFERENCE_NO: additionalData.referenceNo || `D2D-${Date.now()}`,
       DESCRIPTION: additionalData.description || 'Drawer to drawer transfer',
-      ADDITIONAL_INFO: {
-        source_drawer_no: additionalData.sourceDrawerNo,
-        target_drawer_no: additionalData.targetDrawerNo,
-        amount: amount,
-        transfer_type: transactionEffect,
-        currency_breakdown: additionalData.currencyBreakdown,
-        verified_by: additionalData.verifiedBy,
-        previous_balance: additionalData.previousBalance,
-        new_balance: additionalData.newBalance,
-        net_change: transactionEffect === 'CREDIT' ? amount : -amount
-      }
+      ADDITIONAL_INFO: { source_drawer_no: additionalData.sourceDrawerNo, target_drawer_no: additionalData.targetDrawerNo, amount: amount, transfer_type: transactionEffect, currency_breakdown: additionalData.currencyBreakdown, verified_by: additionalData.verifiedBy, previous_balance: additionalData.previousBalance, new_balance: additionalData.newBalance, net_change: transactionEffect === 'CREDIT' ? amount : -amount }
     }),
-
   drawerCurrencyAdjustment: (userId, drawerId, drawerNo, previousBalance, newBalance, reason, ipAddress, additionalData = {}) =>
     addAuditTrail({
       EVENT_TYPE: 'DRAWER_CURRENCY_ADJUSTMENT',
       USER_ID: userId,
       ACTION: 'Drawer Currency Adjustment',
-      NEW_VALUE: {
-        balance: newBalance
-      },
-      OLD_VALUE: {
-        balance: previousBalance
-      },
+      NEW_VALUE: { balance: newBalance },
+      OLD_VALUE: { balance: previousBalance },
       IP_ADDRESS: ipAddress,
       ENTITY_TYPE: 'Drawer',
       ENTITY_ID: drawerId,
       REFERENCE_NO: `DRAWER-ADJUST-${Date.now()}`,
       DESCRIPTION: `Drawer currency adjusted: ${reason}`,
-      ADDITIONAL_INFO: {
-        drawer_no: drawerNo,
-        previous_balance: previousBalance,
-        new_balance: newBalance,
-        adjustment_amount: newBalance - previousBalance,
-        currency_update: additionalData.currencyUpdate,
-        reason: reason
-      }
+      ADDITIONAL_INFO: { drawer_no: drawerNo, previous_balance: previousBalance, new_balance: newBalance, adjustment_amount: newBalance - previousBalance, currency_update: additionalData.currencyUpdate, reason: reason }
     })
 };
 
-// Alternative function with different parameter order for backward compatibility
 export const logAuditTrail = async (
   entity_type,
   entity_id,

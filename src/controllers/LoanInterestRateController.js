@@ -154,7 +154,8 @@ const LoanInterestController = {
  
 createInterestRate: asyncHandler(async (req, res) => {
     const transaction = await sequelize.transaction();
-    
+    let committed = false;
+
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -165,7 +166,8 @@ createInterestRate: asyncHandler(async (req, res) => {
                 errors: errors.array()
             });
         }
-        
+
+        // Destructure request body (frontend sends uppercase names)
         const {
             name,
             description,
@@ -208,7 +210,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             VERSION = '1.0'
         } = req.body;
 
-        // FLAT RATE VALIDATION
+        // ========== VALIDATION (unchanged but ensure values exist) ==========
         if (INTEREST_TYPE.toUpperCase() !== 'SIMPLE') {
             await transaction.rollback();
             return res.status(400).json({
@@ -224,15 +226,22 @@ createInterestRate: asyncHandler(async (req, res) => {
                 message: 'For flat rate calculation, CAPITALIZE_INTEREST must be false'
             });
         }
-        
-        // Validate rate values
+
+        // Validate rate values – they must be provided
+        if (MIN_RATE_PER_MONTH === undefined || MAX_RATE_PER_MONTH === undefined || DEFAULT_RATE_PER_MONTH === undefined) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'MIN_RATE_PER_MONTH, MAX_RATE_PER_MONTH, and DEFAULT_RATE_PER_MONTH are required'
+            });
+        }
+
         const rateValidation = validateFlatRateValues(
             MIN_RATE_PER_MONTH,
             MAX_RATE_PER_MONTH,
             DEFAULT_RATE_PER_MONTH,
             TERM_TYPE
         );
-        
         if (!rateValidation.valid) {
             await transaction.rollback();
             return res.status(400).json({
@@ -241,9 +250,17 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // LOAN_PROUD_INT_ID HANDLING
+        // Variables (declare before use)
         let finalLoanProudIntId;
-        
+        let finalCode;
+        let minRate, maxRate, defaultRate;
+        let minTerm, maxTerm;
+        let minTermMonths, maxTermMonths;
+        let minLoanAmount, maxLoanAmount;
+        let calculatedAPR;
+        let compoundingFrequencyValue;
+
+        // LOAN_PROUD_INT_ID generation
         if (LOAN_PROUD_INT_ID) {
             const providedId = parseInt(LOAN_PROUD_INT_ID);
             if (isNaN(providedId)) {
@@ -253,26 +270,23 @@ createInterestRate: asyncHandler(async (req, res) => {
                     message: 'LOAN_PROUD_INT_ID must be a valid number'
                 });
             }
-            
             const existingWithId = await LoanInterestRate.findOne({ 
                 where: { LOAN_PROUD_INT_ID: providedId },
                 transaction 
             });
-            
             if (existingWithId) {
                 await transaction.rollback();
                 return res.status(400).json({
                     success: false,
-                    message: `LOAN_PROUD_INT_ID ${providedId} already exists. Please use a different value.`
+                    message: `LOAN_PROUD_INT_ID ${providedId} already exists.`
                 });
             }
-            
             finalLoanProudIntId = providedId;
         } else {
             finalLoanProudIntId = await generateUniqueLoanProudIntId(transaction);
         }
 
-        // Enhanced validation
+        // Name validation
         if (!name?.trim()) {
             await transaction.rollback();
             return res.status(400).json({
@@ -281,10 +295,9 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Validate term values
-        const minTerm = parseInt(MIN_TERM_VALUE);
-        const maxTerm = parseInt(MAX_TERM_VALUE);
-        
+        // Term values
+        minTerm = parseInt(MIN_TERM_VALUE);
+        maxTerm = parseInt(MAX_TERM_VALUE);
         if (minTerm > maxTerm) {
             await transaction.rollback();
             return res.status(400).json({
@@ -292,7 +305,6 @@ createInterestRate: asyncHandler(async (req, res) => {
                 message: 'Minimum term cannot be greater than maximum term'
             });
         }
-
         if (minTerm < 1) {
             await transaction.rollback();
             return res.status(400).json({
@@ -301,9 +313,10 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        const minTermMonths = convertTermToMonths(minTerm, TERM_TYPE);
-        const maxTermMonths = convertTermToMonths(maxTerm, TERM_TYPE);
+        minTermMonths = convertTermToMonths(minTerm, TERM_TYPE);
+        maxTermMonths = convertTermToMonths(maxTerm, TERM_TYPE);
 
+        // Term type validation
         const validTermTypes = ['DAYS', 'WEEKS', 'MONTHS', 'QUARTERS', 'YEARS'];
         if (!validTermTypes.includes(TERM_TYPE.toUpperCase())) {
             await transaction.rollback();
@@ -313,6 +326,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
+        // Rate type validation
         const validRateTypes = ['FIXED', 'VARIABLE', 'TIERED', 'PROMOTIONAL', 'INTRODUCTORY'];
         if (!validRateTypes.includes(RATE_TYPE.toUpperCase())) {
             await transaction.rollback();
@@ -322,15 +336,14 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Check for duplicate name
+        // Check duplicate name
         const existingByName = await LoanInterestRate.findOne({ 
             where: { 
                 name: name.trim(),
-                STATUS: { [Op.ne]: 'DELETED' }
+                status: { [Op.ne]: 'DELETED' }
             },
             transaction 
         });
-        
         if (existingByName) {
             await transaction.rollback();
             return res.status(400).json({
@@ -340,18 +353,17 @@ createInterestRate: asyncHandler(async (req, res) => {
         }
 
         // Generate or validate code
-        let finalCode = code?.toUpperCase();
+        finalCode = code?.toUpperCase();
         if (!finalCode) {
             finalCode = generateInterestRateCode(RATE_TYPE);
         } else {
             const existingWithCode = await LoanInterestRate.findOne({ 
                 where: { 
                     code: finalCode,
-                    STATUS: { [Op.ne]: 'DELETED' }
+                    status: { [Op.ne]: 'DELETED' }
                 },
                 transaction 
             });
-            
             if (existingWithCode) {
                 await transaction.rollback();
                 return res.status(400).json({
@@ -361,10 +373,10 @@ createInterestRate: asyncHandler(async (req, res) => {
             }
         }
 
-        // Validate rate values
-        const minRate = parseFloat(MIN_RATE_PER_MONTH);
-        const maxRate = parseFloat(MAX_RATE_PER_MONTH);
-        const defaultRate = parseFloat(DEFAULT_RATE_PER_MONTH);
+        // Parse rate values
+        minRate = parseFloat(MIN_RATE_PER_MONTH);
+        maxRate = parseFloat(MAX_RATE_PER_MONTH);
+        defaultRate = parseFloat(DEFAULT_RATE_PER_MONTH);
         
         if (isNaN(minRate) || isNaN(maxRate) || isNaN(defaultRate)) {
             await transaction.rollback();
@@ -374,50 +386,9 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        if (minRate < 0 || minRate > 999.9999) {
-            await transaction.rollback();
-            return res.status(400).json({
-                success: false,
-                message: 'MIN_RATE_PER_MONTH must be between 0 and 999.9999%'
-            });
-        }
-
-        if (maxRate < 0 || maxRate > 999.9999) {
-            await transaction.rollback();
-            return res.status(400).json({
-                success: false,
-                message: 'MAX_RATE_PER_MONTH must be between 0 and 999.9999%'
-            });
-        }
-
-        if (defaultRate < 0 || defaultRate > 999.9999) {
-            await transaction.rollback();
-            return res.status(400).json({
-                success: false,
-                message: 'DEFAULT_RATE_PER_MONTH must be between 0 and 999.9999%'
-            });
-        }
-
-        if (minRate > maxRate) {
-            await transaction.rollback();
-            return res.status(400).json({
-                success: false,
-                message: 'MIN_RATE_PER_MONTH cannot be greater than MAX_RATE_PER_MONTH'
-            });
-        }
-
-        if (defaultRate < minRate || defaultRate > maxRate) {
-            await transaction.rollback();
-            return res.status(400).json({
-                success: false,
-                message: `DEFAULT_RATE_PER_MONTH (${defaultRate}%) must be between MIN_RATE_PER_MONTH (${minRate}%) and MAX_RATE_PER_MONTH (${maxRate}%)`
-            });
-        }
-
-        // Validate loan amounts
-        const minLoanAmount = parseFloat(MIN_LOAN_AMOUNT);
-        const maxLoanAmount = parseFloat(MAX_LOAN_AMOUNT);
-        
+        // Loan amount validation
+        minLoanAmount = parseFloat(MIN_LOAN_AMOUNT);
+        maxLoanAmount = parseFloat(MAX_LOAN_AMOUNT);
         if (minLoanAmount < 0) {
             await transaction.rollback();
             return res.status(400).json({
@@ -425,7 +396,6 @@ createInterestRate: asyncHandler(async (req, res) => {
                 message: 'MIN_LOAN_AMOUNT must be non-negative'
             });
         }
-
         if (minLoanAmount > maxLoanAmount) {
             await transaction.rollback();
             return res.status(400).json({
@@ -434,29 +404,21 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // For flat rate, ignore index rate even if provided
-        if (INDEX_RATE_ID) {
-            console.warn('INDEX_RATE_ID provided for flat rate. Ignoring.');
-        }
-
-        // Calculate flat rate APR
-        const calculatedAPR = ANNUAL_PERCENTAGE_RATE 
+        // APR calculation
+        calculatedAPR = ANNUAL_PERCENTAGE_RATE 
             ? parseFloat(ANNUAL_PERCENTAGE_RATE)
             : defaultRate * 12;
 
-        // For flat rate, compounding frequency should be appropriate
-        let compoundingFrequencyValue;
-        
+        // Compounding frequency
         if (COMPOUNDING_FREQUENCY && [
             'DAILY', 'WEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY', 'AT_MATURITY', 'NONE'
         ].includes(COMPOUNDING_FREQUENCY.toUpperCase())) {
             compoundingFrequencyValue = COMPOUNDING_FREQUENCY.toUpperCase();
         } else {
-            // For flat rate with simple interest, use 'AT_MATURITY' (most appropriate)
             compoundingFrequencyValue = 'AT_MATURITY';
         }
 
-        // Validate required CREATED_BY
+        // Ensure CREATED_BY is provided
         if (!CREATED_BY) {
             await transaction.rollback();
             return res.status(400).json({
@@ -465,71 +427,73 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Create interest rate data
+        // ✅ CRITICAL: Use snake_case keys matching the model columns
         const interestRateData = {
-            LOAN_PROUD_INT_ID: finalLoanProudIntId,
+            loan_proud_int_id: finalLoanProudIntId,
             name: name.trim(),
             code: finalCode,
             description: description?.trim(),
-            RATE_TYPE: RATE_TYPE.toUpperCase(),
-            INTEREST_TYPE: 'SIMPLE',
-            CALCULATION_METHOD: 'FLAT',
-            ACCRUAL_BASIS: ACCRUAL_BASIS.toUpperCase(),
-            ACCRUAL_FREQUENCY: ACCRUAL_FREQUENCY.toUpperCase(),
-            MIN_RATE_PER_MONTH: minRate,
-            MAX_RATE_PER_MONTH: maxRate,
-            DEFAULT_RATE_PER_MONTH: defaultRate,
-            ANNUAL_PERCENTAGE_RATE: calculatedAPR,
-            MIN_TERM_VALUE: minTerm,
-            MAX_TERM_VALUE: maxTerm,
-            MIN_TERM_MONTHS: minTermMonths,
-            MAX_TERM_MONTHS: maxTermMonths,
-            TERM_TYPE: TERM_TYPE.toUpperCase(),
-            INDEX_RATE_ID: null,
-            MARGIN_RATE: 0,
-            SPREAD_RATE: 0,
-            MIN_LOAN_AMOUNT: minLoanAmount,
-            MAX_LOAN_AMOUNT: maxLoanAmount,
-            CAPITALIZE_INTEREST: false,
-            COMPOUNDING_FREQUENCY: compoundingFrequencyValue,
-            AMORTIZED: Boolean(AMORTIZED),
-            REPAYMENT_FREQUENCY: REPAYMENT_FREQUENCY.toUpperCase(),
-            RATE_CHANGE_ALLOWED: false,
-            RATE_CHANGE_NOTICE_DAYS: 0,
-            MAX_RATE_CHANGES: 0,
-            ORIGINATION_FEE_RATE: parseFloat(ORIGINATION_FEE_RATE),
-            PROCESSING_FEE_FIXED: parseFloat(PROCESSING_FEE_FIXED),
-            LATE_PAYMENT_PENALTY_RATE: parseFloat(LATE_PAYMENT_PENALTY_RATE),
-            EARLY_REPAYMENT_PENALTY_RATE: parseFloat(EARLY_REPAYMENT_PENALTY_RATE),
-            STATUS: STATUS.toUpperCase(),
-            CREATED_BY: CREATED_BY,
-            EFFECTIVE_DATE: new Date(EFFECTIVE_DATE),
-            EXPIRY_DATE: EXPIRY_DATE ? new Date(EXPIRY_DATE) : null,
-            TAGS: Array.isArray(TAGS) ? JSON.stringify(TAGS.map(tag => tag.trim())) : JSON.stringify([]),
-            NOTES: NOTES?.trim(),
-            VERSION,
-            CREATED_AT: new Date(),
-            UPDATED_AT: new Date(),
-            LAST_UPDATED_BY: CREATED_BY,
-            IS_ACTIVE: STATUS.toUpperCase() === 'ACTIVE',
-            IS_FLAT_RATE: true
+            rate_type: RATE_TYPE.toUpperCase(),
+            interest_type: 'SIMPLE',
+            calculation_method: 'FLAT',
+            accrual_basis: ACCRUAL_BASIS.toUpperCase(),
+            accrual_frequency: ACCRUAL_FREQUENCY.toUpperCase(),
+            min_rate_per_month: minRate,
+            max_rate_per_month: maxRate,
+            default_rate_per_month: defaultRate,
+            annual_percentage_rate: calculatedAPR,
+            min_term_value: minTerm,
+            max_term_value: maxTerm,
+            min_term_months: minTermMonths,
+            max_term_months: maxTermMonths,
+            term_type: TERM_TYPE.toUpperCase(),
+            index_rate_id: null,
+            margin_rate: 0,
+            spread_rate: 0,
+            min_loan_amount: minLoanAmount,
+            max_loan_amount: maxLoanAmount,
+            capitalize_interest: false,
+            compounding_frequency: compoundingFrequencyValue,
+            amortized: Boolean(AMORTIZED),
+            repayment_frequency: REPAYMENT_FREQUENCY.toUpperCase(),
+            rate_change_allowed: false,
+            rate_change_notice_days: 0,
+            max_rate_changes: 0,
+            origination_fee_rate: parseFloat(ORIGINATION_FEE_RATE),
+            processing_fee_fixed: parseFloat(PROCESSING_FEE_FIXED),
+            late_payment_penalty_rate: parseFloat(LATE_PAYMENT_PENALTY_RATE),
+            early_repayment_penalty_rate: parseFloat(EARLY_REPAYMENT_PENALTY_RATE),
+            status: STATUS.toUpperCase(),
+            created_by: CREATED_BY,
+            effective_date: new Date(EFFECTIVE_DATE),
+            expiry_date: EXPIRY_DATE ? new Date(EXPIRY_DATE) : null,
+            tags: Array.isArray(TAGS) ? JSON.stringify(TAGS.map(tag => tag.trim())) : JSON.stringify([]),
+            notes: NOTES?.trim(),
+            version: VERSION,
+            created_at: new Date(),
+            updated_at: new Date(),
+            last_updated_by: CREATED_BY,
+            is_active: STATUS.toUpperCase() === 'ACTIVE',
+            is_flat_rate: true
         };
 
-        // Calculate total interest rate
-        if (!req.body.TOTAL_INTEREST_RATE) {
-            interestRateData.TOTAL_INTEREST_RATE = defaultRate * maxTerm;
+        // TOTAL_INTEREST_RATE (optional)
+        if (!req.body.total_interest_rate) {
+            interestRateData.total_interest_rate = defaultRate * maxTerm;
         } else {
-            interestRateData.TOTAL_INTEREST_RATE = parseFloat(req.body.TOTAL_INTEREST_RATE);
+            interestRateData.total_interest_rate = parseFloat(req.body.total_interest_rate);
         }
 
-        // Create new interest rate
         const newInterestRate = await LoanInterestRate.create(interestRateData, { transaction });
 
-        // AUDIT TRAIL - Temporarily disabled to fix the event_id issue
-        // Remove or comment out this section until you fix your AuditTrail model
-        /*
+        // Commit transaction before audit trail
+        await transaction.commit();
+        committed = true;
+
+        // Audit trail (optional, keep as before)
         try {
             const auditTrailData = {
+                event_id: generateEventId(),
                 user_id: CREATED_BY,
                 user_name: req.user?.name || 'SYSTEM',
                 event_type: 'CREATE',
@@ -539,150 +503,65 @@ createInterestRate: asyncHandler(async (req, res) => {
                     id: newInterestRate.id,
                     name: newInterestRate.name,
                     code: newInterestRate.code,
-                    LOAN_PROUD_INT_ID: newInterestRate.LOAN_PROUD_INT_ID,
-                    RATE_TYPE: newInterestRate.RATE_TYPE,
-                    DEFAULT_RATE_PER_MONTH: newInterestRate.DEFAULT_RATE_PER_MONTH,
-                    ANNUAL_PERCENTAGE_RATE: newInterestRate.ANNUAL_PERCENTAGE_RATE,
-                    MIN_RATE_PER_MONTH: newInterestRate.MIN_RATE_PER_MONTH,
-                    MAX_RATE_PER_MONTH: newInterestRate.MAX_RATE_PER_MONTH,
-                    TERM_TYPE: newInterestRate.TERM_TYPE,
-                    STATUS: newInterestRate.STATUS,
-                    VERSION: newInterestRate.VERSION,
-                    IS_FLAT_RATE: newInterestRate.IS_FLAT_RATE
+                    loan_proud_int_id: newInterestRate.loan_proud_int_id,
+                    rate_type: newInterestRate.rate_type,
+                    default_rate_per_month: newInterestRate.default_rate_per_month,
+                    annual_percentage_rate: newInterestRate.annual_percentage_rate,
+                    min_rate_per_month: newInterestRate.min_rate_per_month,
+                    max_rate_per_month: newInterestRate.max_rate_per_month,
+                    term_type: newInterestRate.term_type,
+                    status: newInterestRate.status,
+                    version: newInterestRate.version,
+                    is_flat_rate: newInterestRate.is_flat_rate
                 },
                 ip_address: getClientIp(req),
-                user_agent: req.headers['user-agent'],
                 entity_id: newInterestRate.id,
                 entity_type: 'LoanInterestRate',
                 status: 'SUCCESS',
-                description: `Created flat rate loan interest: ${newInterestRate.name} (${newInterestRate.code}) with LOAN_PROUD_INT_ID: ${newInterestRate.LOAN_PROUD_INT_ID}`,
+                description: `Created flat rate loan interest: ${newInterestRate.name} (${newInterestRate.code})`,
                 timestamp: new Date(),
                 metadata: {
                     route: req.originalUrl,
                     method: req.method,
-                    params: req.params,
-                    query: req.query
+                    user_agent: req.headers['user-agent']
                 }
             };
-
-            await AuditTrail.create(auditTrailData, { transaction });
+            await AuditTrail.create(auditTrailData);
         } catch (auditError) {
             console.warn('Audit trail creation failed, continuing without audit:', auditError.message);
         }
-        */
 
-        await transaction.commit();
-
+        // Success response
         res.status(201).json({
             success: true,
             message: 'Flat rate interest rate created successfully',
             data: newInterestRate.toJSON(),
             metadata: {
-                code: newInterestRate.code,
-                loan_proud_int_id: newInterestRate.LOAN_PROUD_INT_ID,
-                version: newInterestRate.VERSION,
-                created_at: newInterestRate.CREATED_AT,
-                effective_date: newInterestRate.EFFECTIVE_DATE,
-                expiry_date: newInterestRate.EXPIRY_DATE,
-                is_flat_rate: newInterestRate.IS_FLAT_RATE,
-                is_active: newInterestRate.IS_ACTIVE,
-                term_range: `${newInterestRate.MIN_TERM_VALUE} - ${newInterestRate.MAX_TERM_VALUE} ${newInterestRate.TERM_TYPE.toLowerCase()}`,
-                term_months: `${newInterestRate.MIN_TERM_MONTHS} - ${newInterestRate.MAX_TERM_MONTHS} months`,
-                rate_range: `${newInterestRate.MIN_RATE_PER_MONTH} - ${newInterestRate.MAX_RATE_PER_MONTH}% per month`,
-                annual_rate: `${(parseFloat(newInterestRate.DEFAULT_RATE_PER_MONTH) * 12).toFixed(2)}% per year`
+                code: finalCode,
+                loan_proud_int_id: finalLoanProudIntId,
+                version: VERSION,
+                effective_date: EFFECTIVE_DATE,
+                expiry_date: EXPIRY_DATE,
+                is_flat_rate: true,
+                is_active: STATUS.toUpperCase() === 'ACTIVE',
+                term_range: `${MIN_TERM_VALUE} - ${MAX_TERM_VALUE} ${TERM_TYPE.toLowerCase()}`,
+                term_months: `${minTermMonths} - ${maxTermMonths} months`,
+                rate_range: `${minRate} - ${maxRate}% per month`,
+                annual_rate: `${(defaultRate * 12).toFixed(2)}% per year`
             }
         });
 
     } catch (error) {
-        // Rollback transaction
-        try {
-            await transaction.rollback();
-        } catch (rollbackError) {
-            console.error('Transaction rollback failed:', rollbackError);
-        }
-
+        if (!committed) await transaction.rollback();
         console.error('Error creating Interest Rate:', error);
-        
-        // Handle specific error types
-        if (error.name === 'SequelizeValidationError') {
-            const errorMessages = error.errors.map(err => ({
-                field: err.path,
-                message: err.message,
-                type: err.type
-            }));
-            
-            return res.status(400).json({
-                success: false,
-                message: 'Validation failed',
-                errors: errorMessages,
-                error_code: 'VALIDATION_ERROR'
-            });
-        }
-        
-        if (error.name === 'SequelizeUniqueConstraintError') {
-            const field = error.errors[0]?.path;
-            let message = `Duplicate value for ${field}`;
-            
-            if (field === 'code') {
-                message = `Interest rate code '${req.body.code}' already exists`;
-            } else if (field === 'LOAN_PROUD_INT_ID') {
-                message = `LOAN_PROUD_INT_ID ${req.body.LOAN_PROUD_INT_ID} already exists`;
-            }
-            
-            return res.status(409).json({
-                success: false,
-                message: message,
-                error: 'DUPLICATE_ENTRY',
-                field: field,
-                error_code: 'DUPLICATE_KEY_ERROR'
-            });
-        }
-        
-        if (error.name === 'SequelizeDatabaseError') {
-            let message = 'Database error occurred';
-            let field = null;
-            
-            // Check for specific database errors
-            if (error.parent?.code === 'ER_NO_DEFAULT_FOR_FIELD') {
-                const fieldMatch = error.parent.sqlMessage.match(/Field '([^']+)'/);
-                if (fieldMatch) {
-                    field = fieldMatch[1];
-                    message = `Required field '${field}' is missing or has no default value`;
-                }
-            } else if (error.parent?.code === 'ER_DATA_TOO_LONG') {
-                const fieldMatch = error.parent.sqlMessage.match(/column '([^']+)'/);
-                if (fieldMatch) {
-                    field = fieldMatch[1];
-                    message = `Value too long for field '${field}'`;
-                }
-            } else if (error.parent?.code === 'ER_TRUNCATED_WRONG_VALUE') {
-                const fieldMatch = error.parent.sqlMessage.match(/column '([^']+)'/);
-                if (fieldMatch) {
-                    field = fieldMatch[1];
-                    message = `Invalid value for field '${field}'`;
-                }
-            }
-            
-            return res.status(400).json({
-                success: false,
-                message: message,
-                error: 'DATABASE_ERROR',
-                field: field,
-                error_code: 'DATABASE_ERROR',
-                details: process.env.NODE_ENV === 'development' ? error.parent?.sqlMessage : undefined
-            });
-        }
-
-        // Generic error
         res.status(500).json({
             success: false,
             message: 'Internal server error',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred',
-            error_code: 'INTERNAL_SERVER_ERROR',
-            request_id: Date.now().toString()
+            error: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
         });
     }
 }),
+
 
     // GET ALL LOAN INTEREST RATES with Sequelize
     getAllInterestRates: asyncHandler(async (req, res) => {

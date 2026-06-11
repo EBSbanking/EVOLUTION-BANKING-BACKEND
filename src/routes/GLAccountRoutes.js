@@ -46,6 +46,13 @@ router.post('/get-coa-balance-type', (req, res) => {
   }
 });
 
+// ==================== COA-ALIGNED ACCOUNT RETRIEVAL ROUTES ====================
+// Get a COA-aligned GL account by GL code (param)
+router.get('/coa-accounts/:glcode', asyncHandler(GLAccountController.getCOAAlignedAccount));
+
+// Get by query parameter (supports ?glcode=... or ?accountId=...)
+router.get('/coa-accounts', asyncHandler(GLAccountController.getCOAAlignedAccount));
+
 // ==================== HEALTH CHECK ROUTES ====================
 router.get('/health', (req, res) => {
   res.json({
@@ -55,6 +62,8 @@ router.get('/health', (req, res) => {
       { method: 'POST', path: '/api/gl-accounts/create', description: 'Create GL Account' },
       { method: 'POST', path: '/api/gl-accounts/coa-aligned/create', description: 'Create COA-aligned GL Account' },
       { method: 'POST', path: '/api/gl-accounts/ledger-entry', description: 'Create Ledger Entry' },
+      { method: 'GET', path: '/api/gl-accounts/coa-accounts/:glcode', description: 'Get COA-aligned account by GL code' },
+      { method: 'GET', path: '/api/gl-accounts/coa-accounts?glcode=...', description: 'Get COA-aligned account via query' },
       { method: 'GET', path: '/api/gl-accounts/diagnose', description: 'Diagnose Database' }
     ]
   });

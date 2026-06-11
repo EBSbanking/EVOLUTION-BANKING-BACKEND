@@ -1,187 +1,93 @@
-﻿// models/LoanDisbursement.js
+﻿// src/models/LoanDisbursement.js – Corrected for camelCase columns
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
-import logger from '../utils/logger.js';
 
 class LoanDisbursement extends Model {
-  // Static methods
+  // Static methods (unchanged)
   static findByApplicationId(applicationId) {
-    return LoanDisbursement.findOne({
-      where: { APPL_ID: applicationId }
-    });
+    return this.findOne({ where: { applicationId } });
   }
-
   static findByAccountNumber(accountNumber) {
-    return LoanDisbursement.findAll({
-      where: { ACCT_NO: accountNumber },
-      order: [['DISBURSEMENT_DATE', 'DESC']]
-    });
+    return this.findAll({ where: { accountNumber }, order: [['disbursementDate', 'DESC']] });
   }
-
   static findByCustomerId(customerId) {
-    return LoanDisbursement.findAll({
-      where: { CUST_ID: customerId },
-      order: [['DISBURSEMENT_DATE', 'DESC']]
-    });
+    return this.findAll({ where: { customerId }, order: [['disbursementDate', 'DESC']] });
   }
-
   static findByStatus(status) {
-    return LoanDisbursement.findAll({
-      where: { STATUS: status },
-      order: [['DISBURSEMENT_DATE', 'DESC']]
-    });
+    return this.findAll({ where: { status }, order: [['disbursementDate', 'DESC']] });
   }
-
   static findPendingDisbursements() {
-    return LoanDisbursement.findAll({
-      where: { STATUS: 'PENDING' },
-      order: [['createdAt', 'ASC']]
-    });
+    return this.findAll({ where: { status: 'PENDING' }, order: [['createdAt', 'ASC']] });
   }
-
   static findByDateRange(startDate, endDate) {
-    return LoanDisbursement.findAll({
-      where: {
-        DISBURSEMENT_DATE: {
-          [Op.between]: [startDate, endDate]
-        }
-      },
-      order: [['DISBURSEMENT_DATE', 'DESC']]
+    return this.findAll({
+      where: { disbursementDate: { [Op.between]: [startDate, endDate] } },
+      order: [['disbursementDate', 'DESC']]
     });
   }
 
-  // Instance methods
   async approve(approvedBy) {
-    return this.update({
-      STATUS: 'APPROVED',
-      APPROVED_BY: approvedBy,
-      APPROVAL_DATE: new Date()
-    });
+    return this.update({ status: 'APPROVED', approvedBy, approvalDate: new Date() });
   }
-
   async reject(reason, rejectedBy) {
-    return this.update({
-      STATUS: 'REJECTED',
-      FAILURE_REASON: reason,
-      APPROVED_BY: rejectedBy,
-      APPROVAL_DATE: new Date()
-    });
+    return this.update({ status: 'REJECTED', failureReason: reason, approvedBy: rejectedBy, approvalDate: new Date() });
   }
-
   async execute(executedBy) {
-    return this.update({
-      STATUS: 'EXECUTED',
-      EXECUTED_BY: executedBy,
-      EXECUTION_DATE: new Date(),
-      DISBURSEMENT_DATE: new Date()
-    });
+    return this.update({ status: 'EXECUTED', executedBy, executionDate: new Date(), disbursementDate: new Date() });
   }
-
   async disburse(disbursedBy, transactionReference = null) {
-    const updateData = {
-      STATUS: 'DISBURSED',
-      DISBURSED_BY: disbursedBy,
-      EXECUTION_DATE: new Date(),
-      DISBURSEMENT_DATE: new Date()
-    };
-
-    if (transactionReference) {
-      updateData.TRANSACTION_REFERENCE = transactionReference;
-    }
-
+    const updateData = { status: 'DISBURSED', disbursedBy, executionDate: new Date(), disbursementDate: new Date() };
+    if (transactionReference) updateData.transactionReference = transactionReference;
     return this.update(updateData);
   }
-
   async cancel(reason, cancelledBy) {
-    return this.update({
-      STATUS: 'CANCELLED',
-      CANCELLATION_REASON: reason,
-      APPROVED_BY: cancelledBy,
-      APPROVAL_DATE: new Date()
-    });
+    return this.update({ status: 'CANCELLED', cancellationReason: reason, approvedBy: cancelledBy, approvalDate: new Date() });
   }
-
   async fail(reason) {
-    return this.update({
-      STATUS: 'FAILED',
-      FAILURE_REASON: reason
-    });
+    return this.update({ status: 'FAILED', failureReason: reason });
   }
-
   async updateEMI(newEMI) {
-    return this.update({ EMI_AMOUNT: newEMI });
+    return this.update({ emiAmount: newEMI });
   }
-
   async updateInterestRate(newRate) {
-    return this.update({ INTEREST_RATE: newRate });
+    return this.update({ interestRate: newRate });
   }
+  isPending() { return this.status === 'PENDING'; }
+  isApproved() { return this.status === 'APPROVED'; }
+  isExecuted() { return this.status === 'EXECUTED'; }
+  isDisbursed() { return this.status === 'DISBURSED'; }
+  isRejected() { return this.status === 'REJECTED'; }
+  isFailed() { return this.status === 'FAILED'; }
+  isCancelled() { return this.status === 'CANCELLED'; }
 
-  // Status check methods
-  isPending() {
-    return this.STATUS === 'PENDING';
-  }
-
-  isApproved() {
-    return this.STATUS === 'APPROVED';
-  }
-
-  isExecuted() {
-    return this.STATUS === 'EXECUTED';
-  }
-
-  isDisbursed() {
-    return this.STATUS === 'DISBURSED';
-  }
-
-  isRejected() {
-    return this.STATUS === 'REJECTED';
-  }
-
-  isFailed() {
-    return this.STATUS === 'FAILED';
-  }
-
-  isCancelled() {
-    return this.STATUS === 'CANCELLED';
-  }
-
-  // Calculation methods
   calculateEMI() {
-    const principal = parseFloat(this.AMOUNT) || 0;
-    const annualRate = parseFloat(this.INTEREST_RATE) || 0;
-    const term = this.TERM_VALUE || 1;
-    const method = this.CALCULATION_METHOD || 'REDUCING_BALANCE';
-
+    const principal = parseFloat(this.amount) || 0;
+    const annualRate = parseFloat(this.interestRate) || 0;
+    const term = this.termValue || 1;
+    const method = this.calculationMethod || 'REDUCING_BALANCE';
     let emi;
     if (method === 'FLAT_RATE' || method === 'FIXED_RATE') {
       const totalInterest = principal * (annualRate / 100);
       emi = (principal + totalInterest) / term;
     } else {
       const monthlyRate = annualRate / 100 / 12;
-      if (monthlyRate === 0) {
-        emi = principal / term;
-      } else {
-        emi = principal * monthlyRate * Math.pow(1 + monthlyRate, term) /
-              (Math.pow(1 + monthlyRate, term) - 1);
-      }
+      if (monthlyRate === 0) emi = principal / term;
+      else emi = principal * monthlyRate * Math.pow(1 + monthlyRate, term) / (Math.pow(1 + monthlyRate, term) - 1);
     }
     return isFinite(emi) ? emi.toFixed(2) : '0.00';
   }
-
   calculateNetDisbursement() {
-    const amount = parseFloat(this.AMOUNT) || 0;
-    const fees = parseFloat(this.FEES_AMOUNT) || 0;
-    const upfront = parseFloat(this.UPFRONT_INTEREST_AMOUNT) || 0;
+    const amount = parseFloat(this.amount) || 0;
+    const fees = parseFloat(this.feesAmount) || 0;
+    const upfront = parseFloat(this.upfrontInterestAmount) || 0;
     const net = amount - fees - upfront;
     return net > 0 ? net.toFixed(2) : '0.00';
   }
-
   calculateTotalInterest() {
-    const principal = parseFloat(this.AMOUNT) || 0;
-    const annualRate = parseFloat(this.INTEREST_RATE) || 0;
-    const term = this.TERM_VALUE || 1;
-    const method = this.CALCULATION_METHOD || 'REDUCING_BALANCE';
-
+    const principal = parseFloat(this.amount) || 0;
+    const annualRate = parseFloat(this.interestRate) || 0;
+    const term = this.termValue || 1;
+    const method = this.calculationMethod || 'REDUCING_BALANCE';
     if (method === 'FLAT_RATE' || method === 'FIXED_RATE') {
       return (principal * (annualRate / 100)).toFixed(2);
     } else {
@@ -190,587 +96,129 @@ class LoanDisbursement extends Model {
       return (totalRepayment - principal).toFixed(2);
     }
   }
-
   calculateTotalRepayment() {
-    const principal = parseFloat(this.AMOUNT) || 0;
+    const principal = parseFloat(this.amount) || 0;
     const totalInterest = parseFloat(this.calculateTotalInterest());
     return (principal + totalInterest).toFixed(2);
   }
-
   getDisbursementDetails() {
     return {
       id: this.id,
-      ACCT_NO: this.ACCT_NO,
-      APPL_ID: this.APPL_ID,
-      CUST_ID: this.CUST_ID,
-      AMOUNT: parseFloat(this.AMOUNT) || 0,
-      INTEREST_RATE: parseFloat(this.INTEREST_RATE) || 0,
-      TERM_VALUE: this.TERM_VALUE,
-      TERM_CD: this.TERM_CD,
-      EMI_AMOUNT: parseFloat(this.EMI_AMOUNT) || 0,
-      NET_DISBURSEMENT_AMOUNT: parseFloat(this.NET_DISBURSEMENT_AMOUNT) || 0,
-      STATUS: this.STATUS,
-      DISBURSEMENT_DATE: this.DISBURSEMENT_DATE,
-      START_DT: this.START_DT,
-      MATURITY_DT: this.MATURITY_DT,
-      TRANSACTION_REFERENCE: this.TRANSACTION_REFERENCE,
-      CREATED_BY: this.CREATED_BY,
-      APPROVED_BY: this.APPROVED_BY,
-      APPROVAL_DATE: this.APPROVAL_DATE
+      accountNumber: this.accountNumber,
+      applicationId: this.applicationId,
+      customerId: this.customerId,
+      amount: parseFloat(this.amount) || 0,
+      interestRate: parseFloat(this.interestRate) || 0,
+      termValue: this.termValue,
+      termCode: this.termCode,
+      emiAmount: parseFloat(this.emiAmount) || 0,
+      netDisbursementAmount: parseFloat(this.netDisbursementAmount) || 0,
+      status: this.status,
+      disbursementDate: this.disbursementDate,
+      startDate: this.startDate,
+      maturityDate: this.maturityDate,
+      transactionReference: this.transactionReference,
+      createdBy: this.createdBy,
+      approvedBy: this.approvedBy,
+      approvalDate: this.approvalDate
     };
   }
-
-  // Getters
-  get principalAmount() {
-    return parseFloat(this.AMOUNT) || 0;
-  }
-
-  get emiAmountNumeric() {
-    return parseFloat(this.EMI_AMOUNT) || 0;
-  }
-
-  get netAmountNumeric() {
-    return parseFloat(this.NET_DISBURSEMENT_AMOUNT) || 0;
-  }
-
-  get totalInterestNumeric() {
-    return parseFloat(this.TOTAL_INTEREST) || 0;
-  }
-
-  get totalRepaymentNumeric() {
-    return parseFloat(this.TOTAL_REPAYMENT) || 0;
-  }
-
+  get principalAmount() { return parseFloat(this.amount) || 0; }
+  get emiAmountNumeric() { return parseFloat(this.emiAmount) || 0; }
+  get netAmountNumeric() { return parseFloat(this.netDisbursementAmount) || 0; }
+  get totalInterestNumeric() { return parseFloat(this.totalInterest) || 0; }
+  get totalRepaymentNumeric() { return parseFloat(this.totalRepayment) || 0; }
   get daysSinceDisbursement() {
-    if (!this.DISBURSEMENT_DATE) return null;
-    const today = new Date();
-    const disbursementDate = new Date(this.DISBURSEMENT_DATE);
-    const diffTime = today - disbursementDate;
-    return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    if (!this.disbursementDate) return null;
+    const diff = new Date() - new Date(this.disbursementDate);
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
   }
-
   get loanDurationDays() {
-    if (!this.START_DT || !this.MATURITY_DT) return null;
-    const start = new Date(this.START_DT);
-    const maturity = new Date(this.MATURITY_DT);
-    const diffTime = maturity - start;
-    return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    if (!this.startDate || !this.maturityDate) return null;
+    const diff = new Date(this.maturityDate) - new Date(this.startDate);
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
   }
-
-  get isActiveLoan() {
-    return this.isDisbursed() && (!this.MATURITY_DT || new Date(this.MATURITY_DT) > new Date());
-  }
+  get isActiveLoan() { return this.isDisbursed() && (!this.maturityDate || new Date(this.maturityDate) > new Date()); }
 }
 
-LoanDisbursement.init({
-  id: {
-    type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true
+LoanDisbursement.init(
+  {
+    // No `field` mappings – Sequelize will use attribute names as column names (camelCase)
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    accountNumber: { type: DataTypes.STRING(20), allowNull: false },
+    interestRate: { type: DataTypes.DECIMAL(6,4), allowNull: false },
+    termValue: { type: DataTypes.INTEGER, allowNull: false },
+    termCode: { type: DataTypes.STRING(10), allowNull: false },
+    amount: { type: DataTypes.DECIMAL(15,2), allowNull: false },
+    customerId: { type: DataTypes.STRING(20), allowNull: false },
+    applicationId: { type: DataTypes.STRING(50), allowNull: false, unique: true },
+    calculationMethod: { type: DataTypes.STRING(20), defaultValue: 'REDUCING_BALANCE' },
+    paymentFrequency: { type: DataTypes.STRING(20), defaultValue: 'MONTHLY' },
+    emiAmount: { type: DataTypes.DECIMAL(15,2) },
+    totalInterest: { type: DataTypes.DECIMAL(15,2) },
+    totalRepayment: { type: DataTypes.DECIMAL(15,2) },
+    interestConfiguration: { type: DataTypes.JSON, defaultValue: {} },
+    loanAccountId: { type: DataTypes.INTEGER, allowNull: false },
+    creditApplicationId: { type: DataTypes.INTEGER },
+    guarantorId: { type: DataTypes.INTEGER, allowNull: false },
+    repaymentScheduleId: { type: DataTypes.INTEGER },
+    productId: { type: DataTypes.INTEGER, allowNull: false },
+    productType: { type: DataTypes.STRING(20), allowNull: false },
+    accountName: { type: DataTypes.STRING(100), allowNull: false },
+    currencyId: { type: DataTypes.STRING(3), defaultValue: 'NGN' },
+    businessUnitId: { type: DataTypes.STRING(10), allowNull: false },
+    primaryOfficerId: { type: DataTypes.STRING(20), allowNull: false },
+    repaymentSourceAccount: { type: DataTypes.STRING(20), allowNull: false },
+    startDate: { type: DataTypes.DATE, allowNull: false },
+    maturityDate: { type: DataTypes.DATE, allowNull: false },
+    loanCycle: { type: DataTypes.INTEGER, defaultValue: 1 },
+    disbursementDate: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    feesAmount: { type: DataTypes.DECIMAL(15,2), defaultValue: 0 },
+    upfrontInterestAmount: { type: DataTypes.DECIMAL(15,2), defaultValue: 0 },
+    netDisbursementAmount: { type: DataTypes.DECIMAL(15,2) },
+    status: { type: DataTypes.STRING(20), defaultValue: 'PENDING' },
+    disbursementType: { type: DataTypes.STRING(20), defaultValue: 'CUSTOMER_ACCOUNT' },
+    transactionId: { type: DataTypes.STRING(50), allowNull: false },
+    eventId: { type: DataTypes.STRING(50), allowNull: false },
+    journalId: { type: DataTypes.STRING(50) },
+    transactionReference: { type: DataTypes.STRING(50), unique: true },
+    createdBy: { type: DataTypes.STRING(50), allowNull: false },
+    approvedBy: { type: DataTypes.STRING(50) },
+    approvalDate: { type: DataTypes.DATE },
+    executedBy: { type: DataTypes.STRING(50) },
+    executionDate: { type: DataTypes.DATE },
+    disbursedBy: { type: DataTypes.STRING(50) },
+    remarks: { type: DataTypes.STRING(500) },
+    failureReason: { type: DataTypes.TEXT },
+    cancellationReason: { type: DataTypes.TEXT },
+    transactionNotes: { type: DataTypes.STRING(1000) },
+    borrowerAddress: { type: DataTypes.JSON, defaultValue: { street: '', city: '', state: '', zipCode: '', country: 'Nigeria' } },
+    repaymentScheduleJson: { type: DataTypes.JSON, defaultValue: [] },
+    createdAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
   },
-  
-  // ==================== CORE REQUIRED FIELDS ====================
-  ACCT_NO: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    validate: {
-      notEmpty: true,
-      len: [10, 20]
-    }
-  },
-  INTEREST_RATE: {
-    type: DataTypes.DECIMAL(6, 4), // Supports up to 9999.9999%
-    allowNull: false,
-    validate: {
-      isDecimal: true,
-      min: 0,
-      max: 100
-    }
-  },
-  TERM_VALUE: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: {
-      isInt: true,
-      min: 1
-    }
-  },
-  TERM_CD: {
-    type: DataTypes.STRING(10),
-    allowNull: false,
-    validate: {
-      isIn: [['D', 'W', 'BW', 'M', 'Q', 'Y', 'DAILY', 'WEEKLY', 'BI_WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY']]
-    },
-    set(value) {
-      if (value) {
-        this.setDataValue('TERM_CD', value.toUpperCase());
-      }
-    }
-  },
-  AMOUNT: {
-    type: DataTypes.DECIMAL(15, 2),
-    allowNull: false,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  CUST_ID: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  APPL_ID: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-    unique: true,
-    validate: {
-      notEmpty: true
-    },
-    set(value) {
-      if (value) {
-        this.setDataValue('APPL_ID', value.trim());
-      }
-    }
-  },
-
-  // ==================== CALCULATION FIELDS ====================
-  CALCULATION_METHOD: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    defaultValue: 'REDUCING_BALANCE',
-    validate: {
-      isIn: [['FLAT_RATE', 'REDUCING_BALANCE', 'FIXED_RATE', 'EMI']]
-    }
-  },
-  PAYMENT_FREQUENCY: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    defaultValue: 'MONTHLY',
-    validate: {
-      isIn: [['DAILY', 'WEEKLY', 'BI_WEEKLY', 'MONTHLY', 'QUARTERLY', 'SEMI_ANNUALLY', 'ANNUALLY']]
-    }
-  },
-  EMI_AMOUNT: {
-    type: DataTypes.DECIMAL(15, 2),
-    allowNull: true,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  TOTAL_INTEREST: {
-    type: DataTypes.DECIMAL(15, 2),
-    allowNull: true,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  TOTAL_REPAYMENT: {
-    type: DataTypes.DECIMAL(15, 2),
-    allowNull: true,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-
-  // ==================== INTEREST CONFIGURATION ====================
-  INTEREST_CONFIGURATION: {
-    type: DataTypes.JSON,
-    defaultValue: {
-      INTEREST_TYPE: 'COMPOUND',
-      CALCULATION_METHOD: 'REDUCING_BALANCE',
-      INTEREST_RATE: 0,
-      RATE_TYPE: 'REDUCING',
-      IS_TERM_BASED_RATE: false
-    },
-    validate: {
-      isValidConfiguration(value) {
-        if (!value || typeof value !== 'object') {
-          throw new Error('Interest configuration must be an object');
-        }
-        
-        const validInterestTypes = ['FIXED', 'VARIABLE', 'TIERED', 'FIXED_RATE', 'VARIABLE_RATE', 'SIMPLE', 'COMPOUND'];
-        if (value.INTEREST_TYPE && !validInterestTypes.includes(value.INTEREST_TYPE)) {
-          throw new Error('Invalid INTEREST_TYPE in interest configuration');
-        }
-        
-        const validCalculationMethods = ['DECLINING_BALANCE', 'REDUCING_BALANCE', 'FLAT_RATE', 'COMPOUND', 'DAILY', 'MONTHLY', 'QUARTERLY', 'ANNUALLY'];
-        if (value.CALCULATION_METHOD && !validCalculationMethods.includes(value.CALCULATION_METHOD)) {
-          throw new Error('Invalid CALCULATION_METHOD in interest configuration');
-        }
-        
-        const validRateTypes = ['FIXED', 'FLOATING', 'TIERED', 'REDUCING'];
-        if (value.RATE_TYPE && !validRateTypes.includes(value.RATE_TYPE)) {
-          throw new Error('Invalid RATE_TYPE in interest configuration');
-        }
-      }
-    }
-  },
-
-  // ==================== REFERENCES ====================
-  LOAN_ACCOUNT_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'LoanAccounts',
-      key: 'id'
-    }
-  },
-  CREDIT_APPLICATION_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    references: {
-      model: 'CreditApplications',
-      key: 'id'
-    }
-  },
-  GUARANTOR_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    references: {
-      model: 'Guarantors',
-      key: 'id'
-    }
-  },
-  REPAYMENT_SCHEDULE_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    references: {
-      model: 'RepaymentSchedules',
-      key: 'id'
-    }
-  },
-
-  // ==================== LOAN DETAILS (with safe defaults in controller) ====================
-  PROD_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: {
-      isInt: true,
-      min: 1
-    }
-  },
-  PRODUCT_TYPE: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    validate: {
-      isIn: [['INDIVIDUAL_LOAN', 'BUSINESS_LOAN', 'MORTGAGE', 'PERSONAL_LOAN', 'AUTO_LOAN', 'EDUCATION_LOAN']]
-    }
-  },
-  ACCT_NM: {
-    type: DataTypes.STRING(100),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  CRNCY_ID: {
-    type: DataTypes.STRING(3),
-    defaultValue: 'NGN',
-    validate: {
-      len: [3, 3]
-    }
-  },
-  BU_ID: {
-    type: DataTypes.STRING(10),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  PRIMARY_OFFICER_ID: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  REPAY_SRC_ACCT_NO: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  START_DT: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    validate: {
-      isDate: true
-    }
-  },
-  MATURITY_DT: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    validate: {
-      isDate: true,
-      isAfterStartDate(value) {
-        if (new Date(value) <= new Date(this.START_DT)) {
-          throw new Error('Maturity date must be after start date');
-        }
-      }
-    }
-  },
-  LOAN_CYCLE: {
-    type: DataTypes.INTEGER,
-    defaultValue: 1,
-    validate: {
-      isInt: true,
-      min: 1
-    }
-  },
-
-  // ==================== DISBURSEMENT DETAILS ====================
-  DISBURSEMENT_DATE: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
-  },
-  FEES_AMOUNT: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  UPFRONT_INTEREST_AMOUNT: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  NET_DISBURSEMENT_AMOUNT: {
-    type: DataTypes.DECIMAL(15, 2),
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
-  },
-  STATUS: {
-    type: DataTypes.STRING(20),
-    defaultValue: 'PENDING',
-    validate: {
-      isIn: [['PENDING', 'APPROVED', 'EXECUTED', 'DISBURSED', 'REJECTED', 'FAILED', 'CANCELLED']]
-    },
-    set(value) {
-      if (value) {
-        this.setDataValue('STATUS', value.toUpperCase());
-      }
-    }
-  },
-  DISBURSEMENT_TYPE: {
-    type: DataTypes.STRING(20),
-    defaultValue: 'CUSTOMER_ACCOUNT',
-    validate: {
-      isIn: [['CUSTOMER_ACCOUNT', 'CASH', 'CHEQUE', 'BANK_TRANSFER', 'MOBILE_MONEY']]
-    }
-  },
-
-  // ==================== WORKFLOW & IDs ====================
-  TRANSACTION_ID: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  EVENT_ID: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  JOURNAL_ID: {
-    type: DataTypes.STRING(50),
-    allowNull: true
-  },
-  TRANSACTION_REFERENCE: {
-    type: DataTypes.STRING(50),
-    unique: true,
-    allowNull: true
-  },
-
-  // ==================== USER FIELDS ====================
-  CREATED_BY: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-    validate: {
-      notEmpty: true
-    }
-  },
-  APPROVED_BY: {
-    type: DataTypes.STRING(50),
-    allowNull: true
-  },
-  APPROVAL_DATE: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  EXECUTED_BY: {
-    type: DataTypes.STRING(50),
-    allowNull: true
-  },
-  EXECUTION_DATE: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  DISBURSED_BY: {
-    type: DataTypes.STRING(50),
-    allowNull: true
-  },
-
-  // Optional notes
-  REMARKS: {
-    type: DataTypes.STRING(500),
-    allowNull: true
-  },
-  FAILURE_REASON: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  CANCELLATION_REASON: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  TRANSACTION_NOTES: {
-    type: DataTypes.STRING(1000),
-    allowNull: true
-  },
-
-  // Optional extra info
-  Borrower_address: {
-    type: DataTypes.JSON,
-    defaultValue: {
-      street: '',
-      city: '',
-      state: '',
-      zipCode: '',
-      country: 'Nigeria'
-    }
-  },
-  REPAYMENT_SCHEDULE: {
-    type: DataTypes.JSON,
-    defaultValue: []
+  {
+    sequelize,
+    modelName: 'LoanDisbursement',
+    tableName: 'loan_disbursements',
+    timestamps: true,
+    createdAt: 'createdAt',    // column name is 'createdAt' (camelCase)
+    updatedAt: 'updatedAt',    // column name is 'updatedAt'
+    underscored: false,
+    indexes: [
+      { fields: ['applicationId'], unique: true },
+      { fields: ['accountNumber'] },
+      { fields: ['customerId'] },
+      { fields: ['loanAccountId'] },
+      { fields: ['guarantorId'] },
+      { fields: ['status', 'disbursementDate'] },
+      { fields: ['transactionId'] },
+      { fields: ['productId'] },
+      { fields: ['startDate'] },
+      { fields: ['maturityDate'] },
+      { fields: ['transactionReference'], unique: true }
+    ]
   }
-}, {
-  sequelize,
-  modelName: 'LoanDisbursement',
-  tableName: 'LoanDisbursements',
-  timestamps: true,
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
-  hooks: {
-    beforeSave: async (disbursement, options) => {
-      try {
-        // EMI calculation fallback
-        if (!disbursement.EMI_AMOUNT && disbursement.AMOUNT && disbursement.INTEREST_RATE && disbursement.TERM_VALUE) {
-          disbursement.EMI_AMOUNT = disbursement.calculateEMI();
-        }
-
-        // Net amount recalculation
-        disbursement.NET_DISBURSEMENT_AMOUNT = disbursement.calculateNetDisbursement();
-
-        // Calculate total interest and repayment
-        if (!disbursement.TOTAL_INTEREST) {
-          disbursement.TOTAL_INTEREST = disbursement.calculateTotalInterest();
-        }
-        
-        if (!disbursement.TOTAL_REPAYMENT) {
-          disbursement.TOTAL_REPAYMENT = disbursement.calculateTotalRepayment();
-        }
-
-        // Auto-set dates on status change
-        if (disbursement.changed('STATUS')) {
-          const now = new Date();
-          if (disbursement.STATUS === 'APPROVED' && !disbursement.APPROVAL_DATE) {
-            disbursement.APPROVAL_DATE = now;
-          }
-          
-          if ((disbursement.STATUS === 'EXECUTED' || disbursement.STATUS === 'DISBURSED') && 
-              !disbursement.EXECUTION_DATE) {
-            disbursement.EXECUTION_DATE = now;
-            disbursement.DISBURSEMENT_DATE = now;
-          }
-        }
-
-        // Generate transaction reference if missing
-        if (!disbursement.TRANSACTION_REFERENCE && disbursement.isNewRecord) {
-          disbursement.TRANSACTION_REFERENCE = `DISB-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        }
-
-        // Set interest configuration default values
-        if (!disbursement.INTEREST_CONFIGURATION) {
-          disbursement.INTEREST_CONFIGURATION = {
-            INTEREST_TYPE: 'COMPOUND',
-            CALCULATION_METHOD: 'REDUCING_BALANCE',
-            INTEREST_RATE: parseFloat(disbursement.INTEREST_RATE) || 0,
-            RATE_TYPE: 'REDUCING',
-            IS_TERM_BASED_RATE: false
-          };
-        }
-
-      } catch (err) {
-        logger.error('LoanDisbursement beforeSave hook error:', err);
-        throw err;
-      }
-    }
-  },
-  indexes: [
-    {
-      name: 'idx_loan_disbursement_appl_id',
-      fields: ['APPL_ID'],
-      unique: true
-    },
-    {
-      name: 'idx_loan_disbursement_acct_no',
-      fields: ['ACCT_NO']
-    },
-    {
-      name: 'idx_loan_disbursement_cust_id',
-      fields: ['CUST_ID']
-    },
-    {
-      name: 'idx_loan_disbursement_loan_account_id',
-      fields: ['LOAN_ACCOUNT_ID']
-    },
-    {
-      name: 'idx_loan_disbursement_guarantor_id',
-      fields: ['GUARANTOR_ID']
-    },
-    {
-      name: 'idx_loan_disbursement_status_date',
-      fields: ['STATUS', 'DISBURSEMENT_DATE']
-    },
-    {
-      name: 'idx_loan_disbursement_transaction_id',
-      fields: ['TRANSACTION_ID']
-    },
-    {
-      name: 'idx_loan_disbursement_prod_id',
-      fields: ['PROD_ID']
-    },
-    {
-      name: 'idx_loan_disbursement_start_dt',
-      fields: ['START_DT']
-    },
-    {
-      name: 'idx_loan_disbursement_maturity_dt',
-      fields: ['MATURITY_DT']
-    },
-    {
-      name: 'idx_loan_disbursement_transaction_reference',
-      fields: ['TRANSACTION_REFERENCE'],
-      unique: true
-    }
-  ]
-});
+);
 
 export default LoanDisbursement;

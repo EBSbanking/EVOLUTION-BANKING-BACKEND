@@ -1,5 +1,5 @@
-// src/services/ConfigurationService.js - UPDATED WITH SQL SYNTAX FIX
-import { getSequelize } from '../models/index.js';
+// src/services/ConfigurationService.js - COMPLETE FIXED VERSION
+import { getSequelize } from '../../config/db.js';  // Changed from '../models/index.js' to '../../config/db.js'
 
 class ConfigurationService {
   constructor() {
@@ -21,7 +21,8 @@ class ConfigurationService {
     try {
       console.log('🔄 Initializing ConfigurationService...');
       
-      this.sequelize = getSequelize();
+      // FIXED: getSequelize returns a promise, need to await it
+      this.sequelize = await getSequelize();
       if (!this.sequelize) {
         console.warn('❌ Sequelize instance not available');
         return;
@@ -157,14 +158,12 @@ class ConfigurationService {
     }
 
     try {
-      // FIXED: Use backticks around 'key' column (reserved word in MySQL)
       const [results] = await this.sequelize.query(
         'SELECT `value`, `type` FROM `configurations` WHERE `key` = ? LIMIT 1',
         { replacements: [key] }
       );
       
       if (results.length === 0) {
-        // Return default value from defaults if available
         const finalDefault = this.defaultValues[key] !== undefined ? this.defaultValues[key] : defaultValue;
         this.configCache.set(key, finalDefault);
         return finalDefault;
@@ -177,7 +176,6 @@ class ConfigurationService {
       return parsedValue;
     } catch (error) {
       console.error(`❌ Error getting config ${key}:`, error.message);
-      // Return default value from defaults if available
       return this.defaultValues[key] !== undefined ? this.defaultValues[key] : defaultValue;
     }
   }
@@ -188,7 +186,6 @@ class ConfigurationService {
         return null;
       }
       
-      // FIXED: Use backticks around 'key' column
       const [results] = await this.sequelize.query(
         'SELECT `value`, `type` FROM `configurations` WHERE `key` = ? LIMIT 1',
         { replacements: [key] }
@@ -210,7 +207,6 @@ class ConfigurationService {
       const type = options.type || this.determineType(value);
       const stringValue = this.stringifyValue(value, type);
       
-      // FIXED: Use backticks around 'key' column in INSERT statement
       await this.sequelize.query(`
         INSERT INTO configurations (\`key\`, value, type, category, description, is_editable, requires_restart, created_by, updated_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -237,7 +233,6 @@ class ConfigurationService {
         ]
       });
       
-      // Update cache
       const parsedValue = this.parseValue(stringValue, type);
       this.configCache.set(key, parsedValue);
       
@@ -288,7 +283,6 @@ class ConfigurationService {
         }
         return value;
       case 'time':
-        // Ensure time format
         if (typeof value === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(value)) {
           return value.length === 5 ? `${value}:00` : value;
         }
@@ -361,7 +355,24 @@ class ConfigurationService {
     }
   }
 
-  // Convenience methods for login configuration
+  async getCategories() {
+    if (!this.sequelize) {
+      return [];
+    }
+
+    try {
+      const [results] = await this.sequelize.query(
+        'SELECT DISTINCT category FROM `configurations` ORDER BY category'
+      );
+      return results.map(row => row.category);
+    } catch (error) {
+      console.error('❌ Error getting categories:', error);
+      return [];
+    }
+  }
+
+  // ==================== CONVENIENCE METHODS ====================
+
   async isLoginHoursRestrictionEnabled() {
     return await this.get('login.enable_hours_restriction', false);
   }
@@ -386,20 +397,41 @@ class ConfigurationService {
     return roles.some(role => overrideRoles.includes(role));
   }
 
-  async getCategories() {
+  async getValue(key, defaultValue = null) {
+    return await this.get(key, defaultValue);
+  }
+
+  async setValue(key, value, options = {}) {
+    return await this.set(key, value, options);
+  }
+
+  async delete(key) {
     if (!this.sequelize) {
-      return [];
+      throw new Error('Database connection not available');
     }
 
     try {
-      const [results] = await this.sequelize.query(
-        'SELECT DISTINCT category FROM `configurations` ORDER BY category'
+      await this.sequelize.query(
+        'DELETE FROM `configurations` WHERE `key` = ?',
+        { replacements: [key] }
       );
-      return results.map(row => row.category);
+      this.configCache.delete(key);
+      console.log(`🗑️ Config deleted: ${key}`);
+      return true;
     } catch (error) {
-      console.error('❌ Error getting categories:', error);
-      return [];
+      console.error(`❌ Error deleting config ${key}:`, error);
+      return false;
     }
+  }
+
+  async isInitialized() {
+    return this.initialized;
+  }
+
+  async refreshCache() {
+    await this.clearCache();
+    await this.preloadConfigurations();
+    console.log('🔄 Configuration cache refreshed');
   }
 }
 

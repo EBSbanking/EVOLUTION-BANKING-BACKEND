@@ -6,22 +6,22 @@ import {
   getHolidayById,
   updateHolidayByDate,
   deleteHoliday,
-  isDateHoliday
+  isDateHoliday,
+  getSkipRepaymentConfig,
+  updateSkipRepaymentConfig
 } from '../controllers/holidayController.js';
 
 const router = express.Router();
 
-// ✅ Specific routes first
+// ========== SPECIFIC ROUTES FIRST (no parameters) ==========
 router.post('/create', createHoliday);
 router.get('/all', getAllHolidays);
-
-// check holiday by query param ?date=YYYY-MM-DD
 router.get('/check', isDateHoliday);
-
-// alternative endpoint for checking holidays
 router.get('/is-holiday', isDateHoliday);
+router.get('/skip-repayment-config', getSkipRepaymentConfig);
+router.put('/skip-repayment-config', updateSkipRepaymentConfig);
 
-// ✅ Dynamic routes last
+// ========== DYNAMIC ROUTES LAST (catch-all for IDs) ==========
 router.get('/:id', getHolidayById);
 router.put('/:id', updateHolidayByDate);
 router.delete('/:id', deleteHoliday);

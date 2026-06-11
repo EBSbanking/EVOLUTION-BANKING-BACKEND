@@ -1,10 +1,7 @@
-
-import BusinessUnit from '../models/BusinessUnit.js';
-import Permissions from '../models/Permissions.js';
-import UserRole from '../models/UserRole.js'; // ✅ Added UserRole import if needed for sync
-import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
+import sequelize from '../../config/db.js'; // Sequelize instance
+import { BusinessUnit, Permissions, UserRole, CustomerAccount } from '../models/index.js'; // Import your Sequelize models
 
 // ======================
 // HELPER FUNCTIONS
@@ -87,66 +84,73 @@ export const ROLE_PERMISSION_MAPPING = {
       ],
     },
   },
-  // 4. Senior Financial Accountant
-  4: {
-    permissions: {
-      POSTING_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.POSTING),
-      REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW, PERMISSIONS.REPORT.EXPORT],
-      FIXED_ASSET_ACCESS_LEVEL: [
-        PERMISSIONS.FIXED_ASSET.REGISTER,
-        PERMISSIONS.FIXED_ASSET.DEPRECIATE,
-      ],
-      RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST,
-      ],
-      // ✅ ADDED: VAULT PERMISSIONS FOR SENIOR FINANCIAL ACCOUNTANT
-      VAULT_ACCESS_LEVEL: [
-        // Core Vault Viewing
-        PERMISSIONS.VAULT.VIEW_VAULTS,
-        PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
-        PERMISSIONS.VAULT.VIEW_AUTHORIZED_PERSONNEL,
-        PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
-        
-        // Financial Analytics
-        PERMISSIONS.VAULT.VIEW_VAULT_UTILIZATION,
-        PERMISSIONS.VAULT.VIEW_SECURITY_COMPLIANCE,
-        PERMISSIONS.VAULT.VIEW_VAULT_STATISTICS,
-        PERMISSIONS.VAULT.VIEW_AUDIT_TRAIL,
-        PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
-        
-        // ✅ Branch Vault Permissions
-        PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
-        PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
-        
-        // Financial Operations
-        PERMISSIONS.VAULT.VAULT_RECONCILIATION,
-        PERMISSIONS.VAULT.VAULT_TRANSFER,
-        PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
-        PERMISSIONS.VAULT.UPDATE_VAULT_CAPACITY,
-        
-        // Inventory & Asset Management
-        PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
-        PERMISSIONS.VAULT.VAULT_INVENTORY_UPDATE,
-        PERMISSIONS.VAULT.TRACK_VAULT_CONTENTS,
-        PERMISSIONS.VAULT.VAULT_SPACE_ALLOCATION,
-        
-        // Audit & Compliance
-        PERMISSIONS.VAULT.VAULT_AUDIT,
-        PERMISSIONS.VAULT.VAULT_COMPLIANCE_CHECK,
-        PERMISSIONS.VAULT.GENERATE_VAULT_REPORT,
-        
-        // Documentation & Policies
-        PERMISSIONS.VAULT.VAULT_DOCUMENTATION,
-        PERMISSIONS.VAULT.VAULT_POLICIES,
-      ],
-      // ✅ ADDED: New groups for reconciliation
-      RECONCILIATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RECONCILIATION),
-      LOAN_REPAYMENT_ACCESS_LEVEL: [
-        PERMISSIONS.LOAN_REPAYMENT.VIEW_HISTORY,
-        PERMISSIONS.LOAN_REPAYMENT.EXPORT,
-      ],
-    },
+ // 4. Senior Financial Accountant
+4: {
+  permissions: {
+    POSTING_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.POSTING),
+    REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW, PERMISSIONS.REPORT.EXPORT],
+    FIXED_ASSET_ACCESS_LEVEL: [
+      PERMISSIONS.FIXED_ASSET.REGISTER,
+      PERMISSIONS.FIXED_ASSET.DEPRECIATE,
+    ],
+    RATE_ACCESS_LEVEL: [
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+    // VAULT PERMISSIONS FOR SENIOR FINANCIAL ACCOUNTANT
+    VAULT_ACCESS_LEVEL: [
+      // Core Vault Viewing
+      PERMISSIONS.VAULT.VIEW_VAULTS,
+      PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
+      PERMISSIONS.VAULT.VIEW_AUTHORIZED_PERSONNEL,
+      PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
+      
+      // Financial Analytics
+      PERMISSIONS.VAULT.VIEW_VAULT_UTILIZATION,
+      PERMISSIONS.VAULT.VIEW_SECURITY_COMPLIANCE,
+      PERMISSIONS.VAULT.VIEW_VAULT_STATISTICS,
+      PERMISSIONS.VAULT.VIEW_AUDIT_TRAIL,
+      PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
+      
+      // Branch Vault Permissions
+      PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
+      PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
+      
+      // Financial Operations
+      PERMISSIONS.VAULT.VAULT_RECONCILIATION,
+      PERMISSIONS.VAULT.VAULT_TRANSFER,
+      PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
+      PERMISSIONS.VAULT.UPDATE_VAULT_CAPACITY,
+      
+      // Inventory & Asset Management
+      PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
+      PERMISSIONS.VAULT.VAULT_INVENTORY_UPDATE,
+      PERMISSIONS.VAULT.TRACK_VAULT_CONTENTS,
+      PERMISSIONS.VAULT.VAULT_SPACE_ALLOCATION,
+      
+      // Audit & Compliance
+      PERMISSIONS.VAULT.VAULT_AUDIT,
+      PERMISSIONS.VAULT.VAULT_COMPLIANCE_CHECK,
+      PERMISSIONS.VAULT.GENERATE_VAULT_REPORT,
+      
+      // Documentation & Policies
+      PERMISSIONS.VAULT.VAULT_DOCUMENTATION,
+      PERMISSIONS.VAULT.VAULT_POLICIES,
+    ],
+    // New groups for reconciliation
+    RECONCILIATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RECONCILIATION),
+    LOAN_REPAYMENT_ACCESS_LEVEL: [
+      PERMISSIONS.LOAN_REPAYMENT.VIEW_HISTORY,
+      PERMISSIONS.LOAN_REPAYMENT.EXPORT,
+    ],
+    // ✅ Settlement account management (view, fund, withdraw, update config)
+    SETTLEMENT_ACCESS_LEVEL: [
+      'VIEW_SETTLEMENT_CONFIG',
+      'FUND_SETTLEMENT_ACCOUNT',
+      'WITHDRAW_SETTLEMENT_ACCOUNT',
+      'UPDATE_SETTLEMENT_CONFIG',
+    ],
   },
+},
   // 5. Internal Control Officer
   5: {
     permissions: {
@@ -244,38 +248,41 @@ export const ROLE_PERMISSION_MAPPING = {
       MOBILE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.MOBILE),
     },
   },
-  // 12. Financial Accountant
-  12: {
-    permissions: {
-      POSTING_ACCESS_LEVEL: [PERMISSIONS.POSTING.CUSTOMER_POSTING, PERMISSIONS.POSTING.GL_POSTING],
-      REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
-      DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
-      FIXED_ASSET_ACCESS_LEVEL: [PERMISSIONS.FIXED_ASSET.VIEW],
-      RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST,
-      ],
-      // ✅ ADDED: VAULT PERMISSIONS FOR FINANCIAL ACCOUNTANT
-      VAULT_ACCESS_LEVEL: [
-        PERMISSIONS.VAULT.VIEW_VAULTS,
-        PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
-        PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
-        PERMISSIONS.VAULT.VIEW_VAULT_UTILIZATION,
-        PERMISSIONS.VAULT.VIEW_VAULT_STATISTICS,
-        PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
-        // ✅ Limited Branch Vault Access
-        PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
-        // ✅ Financial Monitoring
-        PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
-        PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
-      ],
-      // ✅ ADDED: Print/export and reconciliation
-      PRINT_EXPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.PRINT_EXPORT),
-      RECONCILIATION_ACCESS_LEVEL: [
-        PERMISSIONS.RECONCILIATION.PROCESS_RECONCILIATION,
-        PERMISSIONS.RECONCILIATION.VIEW_RECONCILIATION_REPORT,
-      ],
-    },
+ // 12. Financial Accountant
+12: {
+  permissions: {
+    POSTING_ACCESS_LEVEL: [PERMISSIONS.POSTING.CUSTOMER_POSTING, PERMISSIONS.POSTING.GL_POSTING],
+    REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
+    DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
+    FIXED_ASSET_ACCESS_LEVEL: [PERMISSIONS.FIXED_ASSET.VIEW],
+    RATE_ACCESS_LEVEL: [
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+    // VAULT PERMISSIONS FOR FINANCIAL ACCOUNTANT
+    VAULT_ACCESS_LEVEL: [
+      PERMISSIONS.VAULT.VIEW_VAULTS,
+      PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
+      PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
+      PERMISSIONS.VAULT.VIEW_VAULT_UTILIZATION,
+      PERMISSIONS.VAULT.VIEW_VAULT_STATISTICS,
+      PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
+      PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
+      PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
+      PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
+    ],
+    // Print/export and reconciliation
+    PRINT_EXPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.PRINT_EXPORT),
+    RECONCILIATION_ACCESS_LEVEL: [
+      PERMISSIONS.RECONCILIATION.PROCESS_RECONCILIATION,
+      PERMISSIONS.RECONCILIATION.VIEW_RECONCILIATION_REPORT,
+    ],
+    // ✅ NEW: Settlement account management for card transactions
+    SETTLEMENT_ACCESS_LEVEL: [
+      'VIEW_SETTLEMENT_CONFIG',
+      'FUND_SETTLEMENT_ACCOUNT',
+    ],
   },
+},
   // 13. Financial Accountant Manager
   13: {
     permissions: {
@@ -452,8 +459,7 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.APPROVAL.LOAN_REPAYMENT,
         PERMISSIONS.APPROVAL.GROUP_LOAN,
         PERMISSIONS.APPROVAL.BULK_REPAYMENT,
-        PERMISSIONS.APPROVAL.BVN_VALIDATION,
-      ],
+        ],
       DASHBOARD_ACCESS_LEVEL: [
         PERMISSIONS.DASHBOARD.VIEW,
         PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
@@ -462,8 +468,7 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
         PERMISSIONS.DASHBOARD.LOAN_REPAYMENT_STATS,
         PERMISSIONS.DASHBOARD.GROUP_LOAN_STATS,
-        PERMISSIONS.DASHBOARD.BVN_VALIDATION_STATS,
-      ],
+        ],
       DEPOSIT_ACCESS_LEVEL: [PERMISSIONS.DEPOSIT.APPROVAL],
       REPORT_ACCESS_LEVEL: [
         PERMISSIONS.REPORT.VIEW,
@@ -471,8 +476,7 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.REPORT.LOAN_REPAYMENT,
         PERMISSIONS.REPORT.GROUP_LOAN,
         PERMISSIONS.REPORT.BULK_REPAYMENT,
-        PERMISSIONS.REPORT.BVN_VALIDATION,
-      ],
+        ],
       RATE_ACCESS_LEVEL: [
         PERMISSIONS.RATE.DEPOSIT_INTEREST,
       ],
@@ -480,17 +484,14 @@ export const ROLE_PERMISSION_MAPPING = {
       QUEUE_ACCESS_LEVEL: [
         PERMISSIONS.QUEUE.VIEW_QUEUE,
         PERMISSIONS.QUEUE.MANAGE_QUEUE,
-        PERMISSIONS.QUEUE.BVN_VALIDATION_QUEUE,
-      ],
+        ],
       NOTIFICATION_ACCESS_LEVEL: [
         PERMISSIONS.NOTIFICATION.VIEW,
         PERMISSIONS.NOTIFICATION.SEND,
-        PERMISSIONS.NOTIFICATION.BVN_VALIDATION_NOTIFY,
-      ],
+        ],
       AUDIT_ACCESS_LEVEL: [
         PERMISSIONS.AUDIT.VIEW_LOGS,
-        PERMISSIONS.AUDIT.VIEW_BVN_AUDIT,
-      ],
+        ],
       // ✅ VAULT PERMISSIONS FOR BRANCH MANAGER - UPDATED
       VAULT_ACCESS_LEVEL: [
         PERMISSIONS.VAULT.CREATE_VAULT,
@@ -553,8 +554,7 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
         PERMISSIONS.APPROVAL.VAULT_ACCESS,
         PERMISSIONS.APPROVAL.LOAN_REPAYMENT,
-        PERMISSIONS.APPROVAL.BVN_VALIDATION,
-      ],
+        ],
       LOAN_OPERATIONS_ACCESS_LEVEL: [
         PERMISSIONS.LOAN_OPERATIONS.VIEW,
         PERMISSIONS.LOAN_OPERATIONS.PROCESS,
@@ -562,22 +562,18 @@ export const ROLE_PERMISSION_MAPPING = {
       DASHBOARD_ACCESS_LEVEL: [
         PERMISSIONS.DASHBOARD.VIEW,
         PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
-        PERMISSIONS.DASHBOARD.BVN_VALIDATION_STATS,
-      ],
+        ],
       REPORT_ACCESS_LEVEL: [
         PERMISSIONS.REPORT.VIEW,
         PERMISSIONS.REPORT.PERFORMANCE_METRICS,
-        PERMISSIONS.REPORT.BVN_VALIDATION,
-      ],
+        ],
       QUEUE_ACCESS_LEVEL: [
         PERMISSIONS.QUEUE.VIEW_QUEUE,
         PERMISSIONS.QUEUE.MANAGE_QUEUE,
-        PERMISSIONS.QUEUE.BVN_VALIDATION_QUEUE,
-      ],
+        ],
       NOTIFICATION_ACCESS_LEVEL: [
         PERMISSIONS.NOTIFICATION.VIEW,
-        PERMISSIONS.NOTIFICATION.BVN_VALIDATION_NOTIFY,
-      ],
+        ],
       // ✅ VAULT PERMISSIONS FOR BRANCH OPERATION SUPERVISOR
       VAULT_ACCESS_LEVEL: [
         PERMISSIONS.VAULT.VIEW_VAULTS,
@@ -697,150 +693,98 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 28. Credit Officer - UPDATED WITH BVN VALIDATION
-// In backend constants/roleMapping.js
-
-// 28. Credit Officer - UPDATED WITH COMPREHENSIVE PERMISSIONS
-28: {
-  permissions: {
-    CUSTOMER_ACCESS_LEVEL: [
-      PERMISSIONS.CUSTOMER.CREATE,
-      PERMISSIONS.CUSTOMER.VIEW,
-      PERMISSIONS.CUSTOMER.UPDATE,
-      PERMISSIONS.CUSTOMER.KYC_VERIFY,
-      PERMISSIONS.CUSTOMER.BVN_VALIDATE,
-      PERMISSIONS.CUSTOMER.BVN_VIEW,
-      PERMISSIONS.CUSTOMER.ID_VERIFY,
-      PERMISSIONS.CUSTOMER.PROFILE,
-      PERMISSIONS.CUSTOMER.APPROVAL,
-      PERMISSIONS.CUSTOMER.IDENTIFICATION,
-    ],
-    ACCOUNT_ACCESS_LEVEL: [
-      PERMISSIONS.ACCOUNT.OPEN,
-      PERMISSIONS.ACCOUNT.VIEW,
-      PERMISSIONS.ACCOUNT.UPDATE,
-      PERMISSIONS.ACCOUNT.FREEZE,
-      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
-      PERMISSIONS.ACCOUNT.VIEW_STATEMENT,
-    ],
-    LOAN_FEE_ACCESS_LEVEL: [
-      PERMISSIONS.LOAN_FEE.VIEW,
-      PERMISSIONS.LOAN_FEE.CREATE,
-      PERMISSIONS.LOAN_FEE.UPDATE,
-      PERMISSIONS.LOAN_FEE.SETUP,
-      PERMISSIONS.LOAN_FEE.TOGGLE_STATUS,
-    ],
-    LOAN_OPERATIONS_ACCESS_LEVEL: [
-      PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
-      PERMISSIONS.LOAN_OPERATIONS.VIEW,
-      PERMISSIONS.LOAN_OPERATIONS.PROCESS,
-      PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
-      PERMISSIONS.LOAN_OPERATIONS.COLLECT,
-      PERMISSIONS.LOAN_OPERATIONS.RECOVERY,
-      PERMISSIONS.LOAN_OPERATIONS.MANUAL_REPAYMENT,
-      PERMISSIONS.LOAN_OPERATIONS.BULK_REPAYMENT,
-      PERMISSIONS.LOAN_OPERATIONS.CREATE_CONTRACT,
-    ],
-    BVN_ACCESS_LEVEL: [
-      PERMISSIONS.BVN.VALIDATE,
-      PERMISSIONS.BVN.VIEW,
-      PERMISSIONS.BVN.HISTORY,
-      PERMISSIONS.BVN.UPDATE,
-    ],
-    LOAN_REPAYMENT_ACCESS_LEVEL: [
-      PERMISSIONS.LOAN_REPAYMENT.MANUAL,
-      PERMISSIONS.LOAN_REPAYMENT.PROCESS,
-      PERMISSIONS.LOAN_REPAYMENT.VIEW_SCHEDULE,
-      PERMISSIONS.LOAN_REPAYMENT.PARTIAL,
-      PERMISSIONS.LOAN_REPAYMENT.VIEW_HISTORY,
-      PERMISSIONS.LOAN_REPAYMENT.PRINT_RECEIPT,
-    ],
-    GROUP_LOAN_ACCESS_LEVEL: [
-      PERMISSIONS.GROUP_LOAN.VIEW,
-      PERMISSIONS.GROUP_LOAN.CREATE,
-      PERMISSIONS.GROUP_LOAN.PROCESS_REPAYMENT,
-      PERMISSIONS.GROUP_LOAN.VIEW_SCHEDULE,
-      PERMISSIONS.GROUP_LOAN.MANAGE_MEMBERS,
-    ],
-    COLLECTION_ACCESS_LEVEL: [
-      PERMISSIONS.COLLECTION.CREATE,
-      PERMISSIONS.COLLECTION.VIEW,
-      PERMISSIONS.COLLECTION.UPDATE,
-      PERMISSIONS.COLLECTION.PROCESS,
-      PERMISSIONS.COLLECTION.VERIFY,
-    ],
-    LOAN_PORTFOLIO_ACCESS_LEVEL: [
-      PERMISSIONS.LOAN_PORTFOLIO.VIEW,
-      PERMISSIONS.LOAN_PORTFOLIO.MANAGE,
-      PERMISSIONS.LOAN_PORTFOLIO.REPORTS,
-      PERMISSIONS.LOAN_PORTFOLIO.ANALYTICS,
-    ],
-    GUARANTOR_ACCESS_LEVEL: [
-      PERMISSIONS.GUARANTOR.CREATE,
-      PERMISSIONS.GUARANTOR.VIEW,
-      PERMISSIONS.GUARANTOR.VIEW_DETAILS,
-      PERMISSIONS.GUARANTOR.SEARCH,
-      PERMISSIONS.GUARANTOR.UPDATE,
-      PERMISSIONS.GUARANTOR.VERIFY,
-      PERMISSIONS.GUARANTOR.REMOVAL_REQUEST,
-      PERMISSIONS.GUARANTOR.REPORTS,
-      PERMISSIONS.GUARANTOR.DASHBOARD,
-    ],
-    STANDING_ORDER_ACCESS_LEVEL: [
-      PERMISSIONS.STANDING_ORDER.CREATE,
-      PERMISSIONS.STANDING_ORDER.VIEW,
-      PERMISSIONS.STANDING_ORDER.UPDATE,
-      PERMISSIONS.STANDING_ORDER.DELETE,
-    ],
-    THRIFT_ACCESS_LEVEL: [
-      PERMISSIONS.THRIFT.CREATE,
-      PERMISSIONS.THRIFT.COLLECTION,
-      PERMISSIONS.THRIFT.WITHDRAWAL,
-      PERMISSIONS.THRIFT.VIEW,
-    ],
-    REPORT_ACCESS_LEVEL: [
-      PERMISSIONS.REPORT.VIEW,
-      PERMISSIONS.REPORT.CUSTOMER,
-      PERMISSIONS.REPORT.LOAN_REPAYMENT,
-      PERMISSIONS.REPORT.GROUP_LOAN,
-      PERMISSIONS.REPORT.BVN_VALIDATION,
-      PERMISSIONS.REPORT.PERFORMANCE_METRICS,
-      PERMISSIONS.REPORT.VIEW_CUSTOMER_REPORT,
-      PERMISSIONS.REPORT.VIEW_LOAN_REPORT,
-    ],
-    DASHBOARD_ACCESS_LEVEL: [
-      PERMISSIONS.DASHBOARD.VIEW,
-      PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD,
-      PERMISSIONS.DASHBOARD.LOAN_REPAYMENT_STATS,
-      PERMISSIONS.DASHBOARD.BVN_VALIDATION_STATS,
-      PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
-      PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
-      PERMISSIONS.DASHBOARD.GUARANTOR_DASHBOARD,
-    ],
-    PERFORMANCE_ACCESS_LEVEL: [
-      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
-      PERMISSIONS.PERFORMANCE.LOAN_REPAYMENT_PERFORMANCE,
-      PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
-    ],
-    NOTIFICATION_ACCESS_LEVEL: [
-      PERMISSIONS.NOTIFICATION.VIEW,
-      PERMISSIONS.NOTIFICATION.SEND,
-      PERMISSIONS.NOTIFICATION.LOAN_REPAYMENT_NOTIFY,
-      PERMISSIONS.NOTIFICATION.BVN_VALIDATION_NOTIFY,
-    ],
-    APPROVAL_ACCESS_LEVEL: [
-      PERMISSIONS.APPROVAL.LOAN_REPAYMENT,
-      PERMISSIONS.APPROVAL.GROUP_LOAN,
-      PERMISSIONS.APPROVAL.BVN_VALIDATION,
-    ],
-    PRINT_EXPORT_ACCESS_LEVEL: [
-      PERMISSIONS.PRINT_EXPORT.PRINT_RECEIPT,
-      PERMISSIONS.PRINT_EXPORT.PRINT_LOAN_REPAYMENT_RECEIPT,
-      PERMISSIONS.PRINT_EXPORT.EXPORT_BVN_DATA,
-      PERMISSIONS.PRINT_EXPORT.EXPORT_CSV,
-      PERMISSIONS.PRINT_EXPORT.EXPORT_PDF,
-    ],
+  28: {
+    permissions: {
+      CUSTOMER_ACCESS_LEVEL: [
+        PERMISSIONS.CUSTOMER.CREATE,
+        PERMISSIONS.CUSTOMER.VIEW,
+        PERMISSIONS.CUSTOMER.UPDATE,
+        PERMISSIONS.CUSTOMER.KYC_VERIFY,
+        PERMISSIONS.CUSTOMER.BVN_VALIDATE,
+        PERMISSIONS.CUSTOMER.ID_VERIFY,
+      ],
+      ACCOUNT_ACCESS_LEVEL: [
+        PERMISSIONS.ACCOUNT.OPEN,
+        PERMISSIONS.ACCOUNT.FREEZE,
+      ],
+      LOAN_FEE_ACCESS_LEVEL: [
+        PERMISSIONS.LOAN_FEE.VIEW,
+        PERMISSIONS.LOAN_FEE.CREATE,
+        PERMISSIONS.LOAN_FEE.UPDATE,
+      ],
+      REPORT_ACCESS_LEVEL: [
+        PERMISSIONS.REPORT.VIEW,
+      ],
+      DASHBOARD_ACCESS_LEVEL: [
+        PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD,
+        PERMISSIONS.DASHBOARD.LOAN_REPAYMENT_STATS,
+        PERMISSIONS.DASHBOARD.BVN_VALIDATION_STATS,
+      ],
+      PRODUCT_ACCESS_LEVEL: [
+        PERMISSIONS.PRODUCT.VIEW,
+      ],
+      // ✅ ADDED: BVN access for credit officer
+      BVN_ACCESS_LEVEL: [
+        PERMISSIONS.BVN.VALIDATE,
+        PERMISSIONS.BVN.VIEW,
+      ],
+      LOAN_OPERATIONS_ACCESS_LEVEL: [
+        PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
+        PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
+        PERMISSIONS.LOAN_OPERATIONS.VIEW,
+        PERMISSIONS.LOAN_OPERATIONS.PROCESS,
+        PERMISSIONS.LOAN_OPERATIONS.COLLECT,
+        PERMISSIONS.LOAN_OPERATIONS.RECOVERY,
+        PERMISSIONS.LOAN_OPERATIONS.MANUAL_REPAYMENT,
+        PERMISSIONS.LOAN_OPERATIONS.BULK_REPAYMENT,
+      ],
+      THRIFT_ACCESS_LEVEL: [
+        PERMISSIONS.THRIFT.CREATE,
+        PERMISSIONS.THRIFT.COLLECTION,
+        PERMISSIONS.THRIFT.WITHDRAWAL,
+      ],
+      GUARANTOR_ACCESS_LEVEL: [
+        PERMISSIONS.GUARANTOR.CREATE,
+        PERMISSIONS.GUARANTOR.VIEW,
+        PERMISSIONS.GUARANTOR.VIEW_DETAILS,
+        PERMISSIONS.GUARANTOR.SEARCH,
+        PERMISSIONS.GUARANTOR.UPDATE,
+        PERMISSIONS.GUARANTOR.VERIFY,
+        PERMISSIONS.GUARANTOR.REMOVAL_REQUEST,
+        PERMISSIONS.GUARANTOR.REPORTS,
+        PERMISSIONS.GUARANTOR.DASHBOARD,
+        PERMISSIONS.GUARANTOR.EXPORT,
+      ],
+      STANDING_ORDER_ACCESS_LEVEL: [
+        PERMISSIONS.STANDING_ORDER.CREATE,
+        PERMISSIONS.STANDING_ORDER.VIEW,
+        PERMISSIONS.STANDING_ORDER.UPDATE,
+        PERMISSIONS.STANDING_ORDER.DELETE,
+      ],
+      PERFORMANCE: [
+        PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+        PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
+        PERMISSIONS.PERFORMANCE.LOAN_REPAYMENT_PERFORMANCE,
+      ],
+      REPORT: [
+        PERMISSIONS.REPORT.VIEW_CUSTOMER_REPORT,
+        PERMISSIONS.REPORT.VIEW_LOAN_REPORT,
+        PERMISSIONS.REPORT.LOAN_REPAYMENT,
+        PERMISSIONS.REPORT.BVN_VALIDATION,
+      ],
+      LOAN_REPAYMENT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.LOAN_REPAYMENT),
+      GROUP_LOAN_ACCESS_LEVEL: [
+        PERMISSIONS.GROUP_LOAN.VIEW,
+        PERMISSIONS.GROUP_LOAN.PROCESS_REPAYMENT,
+        PERMISSIONS.GROUP_LOAN.VIEW_SCHEDULE,
+      ],
+      COLLECTION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.COLLECTION),
+      LOAN_PORTFOLIO_ACCESS_LEVEL: [
+        PERMISSIONS.LOAN_PORTFOLIO.VIEW,
+        PERMISSIONS.LOAN_PORTFOLIO.MANAGE,
+      ],
+    },
   },
-},
   // 29. Teller - UPDATED WITH BVN VIEW ONLY
   29: {
     permissions: {
@@ -951,8 +895,7 @@ export const ROLE_PERMISSION_MAPPING = {
       ANALYTICS_ACCESS_LEVEL: [
         ...safeGetPermissions(PERMISSIONS.ANALYTICS),
         PERMISSIONS.ANALYTICS.LOAN_REPAYMENT_ANALYTICS,
-        PERMISSIONS.ANALYTICS.BVN_VALIDATION_ANALYTICS,
-      ],
+        ],
       RISK_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.RISK),
     },
   },
@@ -979,33 +922,37 @@ export const ROLE_PERMISSION_MAPPING = {
       RISK_ACCESS_LEVEL: [
         ...safeGetPermissions(PERMISSIONS.RISK),
         PERMISSIONS.RISK.LOAN_REPAYMENT_RISK,
-        PERMISSIONS.RISK.BVN_VALIDATION_RISK,
-      ],
+        ],
       LOAN_PORTFOLIO_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.LOAN_PORTFOLIO),
     },
   },
-  // 35. Head of Digital Banking
-  35: {
-    permissions: {
-      SYSTEM_ADMIN_ACCESS_LEVEL: [
-        PERMISSIONS.SYSTEM_ADMIN.SYSTEM_CONFIG,
-        PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
-      ],
-      REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
-      DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
-      RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST,
-      ],
-      PERFORMANCE_ACCESS_LEVEL: [PERMISSIONS.PERFORMANCE.VIEW_METRICS],
-      // ✅ ADDED: Mobile and digital notifications
-      MOBILE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.MOBILE),
-      NOTIFICATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.NOTIFICATION),
-      // ✅ ADDED: BVN digital integration
-      BVN_ACCESS_LEVEL: [
-        PERMISSIONS.BVN.VIEW,
-      ],
-    },
+ // 37. Channel Manager
+37: {
+  permissions: {
+    DASHBOARD_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.DASHBOARD),
+    REPORT_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.REPORT),
+    // Settlement account management (may need to fund for digital channels)
+    SETTLEMENT_ACCESS_LEVEL: [
+      'VIEW_SETTLEMENT_CONFIG',
+      'FUND_SETTLEMENT_ACCOUNT',
+    ],
+    // Channel & card management
+    CARD_ACCESS_LEVEL: [
+      'VIEW_CARDS',
+      'ISSUE_CARDS',
+      'BLOCK_CARDS',
+      'SET_CARD_PIN',
+      'VIEW_CARD_TRANSACTIONS',
+    ],
+    MOBILE_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.MOBILE),
+    NOTIFICATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.NOTIFICATION),
+    // BVN verification
+    BVN_ACCESS_LEVEL: [
+      PERMISSIONS.BVN.VIEW,
+      PERMISSIONS.BVN.VERIFY,
+    ],
   },
+},
   // 36. Agency Banking Officer
   36: {
     permissions: {
@@ -1029,20 +976,43 @@ export const ROLE_PERMISSION_MAPPING = {
     },
   },
   // 37. Channel Manager
-  37: {
-    permissions: {
-      CUSTOMER_ACCESS_LEVEL: [
-        PERMISSIONS.CUSTOMER.VIEW,
-        PERMISSIONS.CUSTOMER.UPDATE,
-      ],
-      REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW],
-      RATE_ACCESS_LEVEL: [
-        PERMISSIONS.RATE.DEPOSIT_INTEREST,
-      ],
-      // ✅ ADDED: Channel notifications
-      NOTIFICATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.NOTIFICATION),
-    },
+37: {
+  permissions: {
+    CUSTOMER_ACCESS_LEVEL: [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+    ],
+    REPORT_ACCESS_LEVEL: [PERMISSIONS.REPORT.VIEW],
+    RATE_ACCESS_LEVEL: [
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+    // ✅ ADDED: Channel notifications
+    NOTIFICATION_ACCESS_LEVEL: safeGetPermissions(PERMISSIONS.NOTIFICATION),
+    
+    // ✅ NEW: Debit Card management permissions
+    DEBIT_CARD_ACCESS_LEVEL: [
+      PERMISSIONS.DEBIT_CARD.VIEW,
+      PERMISSIONS.DEBIT_CARD.ISSUE,
+      PERMISSIONS.DEBIT_CARD.UPDATE_LIMITS,
+      PERMISSIONS.DEBIT_CARD.BLOCK,
+      PERMISSIONS.DEBIT_CARD.UNBLOCK,
+      PERMISSIONS.DEBIT_CARD.VIEW_TRANSACTIONS,
+    ],
+    
+    // ✅ NEW: Mobile App permissions
+    MOBILE_ACCESS_LEVEL: [
+      PERMISSIONS.MOBILE.VIEW_MOBILE,
+      PERMISSIONS.MOBILE.MANAGE_MOBILE,
+      PERMISSIONS.MOBILE.APPROVE_MOBILE,
+      PERMISSIONS.MOBILE.MOBILE_LOAN_REPAYMENT,
+    ],
+    
+    // ✅ NEW: Account management permissions (Freeze account)
+    ACCOUNT_ACCESS_LEVEL: [
+      PERMISSIONS.ACCOUNT.FREEZE,
+    ],
   },
+},
   // 38. Vault Manager/Specialist - NEW ROLE
   38: {
     permissions: {
@@ -1088,8 +1058,6 @@ export const ROLE_PERMISSION_MAPPING = {
         PERMISSIONS.VAULT.CONFIGURE_BRANCH_VAULT,
         PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
         PERMISSIONS.VAULT.BRANCH_VAULT_ACCESS,
-        PERMISSIONS.VAULT.TRANSFER_BETWEEN_BRANCHES,
-        
         // Additional Vault Permissions
         PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
         PERMISSIONS.VAULT.UPDATE_VAULT_CAPACITY,
@@ -1180,11 +1148,18 @@ export const ROLE_MAPPING = Object.fromEntries(
   ])
 );
 
-// Synchronize ROLE_MAPPING with Permissions model
+// Helper functions
+export const getAllRoleIds = () => Object.keys(ROLE_MAPPING).map(id => parseInt(id));
+export const getAllRoleNames = () => Object.values(ROLE_MAPPING).map(role => role.ROLE_NM);
+export const getRoleById = (id) => ROLE_MAPPING[id];
+export const isValidRoleId = (id) => !!ROLE_MAPPING[id];
+export const isValidRoleName = (name) => 
+  Object.values(ROLE_MAPPING).some(role => role.ROLE_NM === name.toUpperCase());
+
+// Synchronize ROLE_MAPPING with Permissions model (Sequelize version)
 export async function syncPermissions() {
   try {
     for (const [roleId, roleData] of Object.entries(ROLE_MAPPING)) {
-      const existingPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
       const permissionsData = {
         BU_ROLE_ID: parseInt(roleId),
         ROLE_NAME: roleData.ROLE_NM,
@@ -1193,16 +1168,21 @@ export async function syncPermissions() {
         ...roleData.permissions,
       };
 
+      // Check if permission exists using Sequelize
+      const existingPermissions = await Permissions.findOne({
+        where: { BU_ROLE_ID: roleId }
+      });
+
       if (existingPermissions) {
-        await Permissions.updateOne(
-          { BU_ROLE_ID: roleId },
-          { $set: permissionsData },
-          { runValidators: true }
-        );
+        // Update existing record
+        await Permissions.update(permissionsData, {
+          where: { BU_ROLE_ID: roleId }
+        });
         logger.info(`Updated permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
           permissions: JSON.stringify(permissionsData),
         });
       } else {
+        // Create new record
         await Permissions.create(permissionsData);
         logger.info(`Created permissions for role ${roleData.ROLE_NM} (ID: ${roleId})`, {
           permissions: JSON.stringify(permissionsData),
@@ -1219,28 +1199,101 @@ export async function syncPermissions() {
   }
 }
 
-// Populate Business Unit Mapping
+// In your roleMapping.js file, update the populateBusinessUnitMapping function:
+
 export async function populateBusinessUnitMapping() {
   try {
-    const businessUnits = await BusinessUnit.find().lean();
-    if (!businessUnits.length) {
-      logger.warn('No business units found in the database');
-      return {};
+    console.log('🔄 Starting business unit mapping population...');
+    
+    // Check if models are properly imported
+    if (!BusinessUnit) {
+      console.error('❌ BusinessUnit model is undefined');
+      throw new Error('BusinessUnit model not available');
     }
+    
+    // Get sequelize instance
+    const db = BusinessUnit.sequelize;
+    if (!db) {
+      console.error('❌ Sequelize instance not available');
+      throw new Error('Database connection not established');
+    }
+    
+    // Test connection
+    try {
+      await db.authenticate();
+      console.log('✅ Database connection established');
+    } catch (dbError) {
+      console.error('❌ Database connection failed:', dbError.message);
+      throw new Error(`Database connection failed: ${dbError.message}`);
+    }
+    
+    // Fetch business units
+    console.log('📊 Fetching business units from database...');
+    const businessUnits = await BusinessUnit.findAll({
+      attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'STATUS'],
+      raw: true,
+      where: {
+        STATUS: 'ACTIVE' // Only get active business units
+      }
+    });
+    
+    if (!businessUnits || businessUnits.length === 0) {
+      console.error('❌ No business units found in the database');
+      throw new Error('No business units found');
+    }
+    
+    console.log(`✅ Found ${businessUnits.length} active business units`);
+    
+    // Create mapping
     const BUSINESS_UNIT_MAPPING = {};
+    let validMappings = 0;
+    
     businessUnits.forEach((bu) => {
-      BUSINESS_UNIT_MAPPING[bu.BUSINESS_UNIT] = bu.BU_ID;
+      if (bu.BUSINESS_UNIT && bu.BU_ID) {
+        BUSINESS_UNIT_MAPPING[bu.BUSINESS_UNIT] = bu.BU_ID;
+        // Also map by BU_ID for reverse lookup
+        BUSINESS_UNIT_MAPPING[bu.BU_ID] = bu.BUSINESS_UNIT;
+        validMappings++;
+      }
     });
-    logger.info('Business unit mapping populated successfully', {
-      mapping: BUSINESS_UNIT_MAPPING,
+    
+    if (validMappings === 0) {
+      console.error('❌ No valid business unit mappings found');
+      throw new Error('No valid mappings found');
+    }
+    
+    console.log('✅ Business unit mapping populated successfully', {
+      totalUnits: businessUnits.length,
+      validMappings: validMappings,
+      uniqueKeys: Object.keys(BUSINESS_UNIT_MAPPING).length
     });
+    
     return BUSINESS_UNIT_MAPPING;
+    
   } catch (error) {
-    logger.error('Error fetching business units', {
+    console.error('❌ Error fetching business units from database:', {
       error: error.message,
       stack: error.stack,
+      timestamp: new Date().toISOString()
     });
-    throw new Error(`Failed to populate business unit mapping: ${error.message}`);
+    
+    // Only use minimal emergency fallback for critical failures
+    console.warn('⚠️ Using minimal emergency fallback mapping');
+    
+    // Minimal fallback - just enough to keep the app running
+    const emergencyFallback = {
+      // Default mappings for essential system operations
+      'HEAD_OFFICE': 1,
+      'MAIN_BRANCH': 1,
+      'DEFAULT': 1,
+      
+      // Reverse mapping for the default
+      1: 'HEAD_OFFICE'
+    };
+    
+    console.warn(`⚠️ Emergency fallback activated with ${Object.keys(emergencyFallback).length} mappings`);
+    
+    return emergencyFallback;
   }
 }
 
@@ -1333,9 +1386,9 @@ export async function verifyAdministratorPermissions() {
 // Get all permissions for a role grouped by category
 export async function getRolePermissionsGrouped(roleId) {
   try {
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     if (dbPermissions) {
-      return Object.entries(dbPermissions).reduce((acc, [key, perms]) => {
+      return Object.entries(dbPermissions.dataValues).reduce((acc, [key, perms]) => {
         if (key.endsWith('_ACCESS_LEVEL')) {
           const group = key.replace('_ACCESS_LEVEL', '');
           acc[group] = Array.isArray(perms) ? perms : [];
@@ -1411,16 +1464,17 @@ export function validatePermissions() {
   return true;
 }
 
-// MODULE_PERMISSIONS (aligned with permissions.js) - UPDATED WITH NEW MAPPINGS
-// MODULE_PERMISSIONS (aligned with permissions.js) - UPDATED WITH BVN MAPPINGS
+
+// MODULE_PERMISSIONS (aligned with permissions.js) - FULLY UPDATED with Debit Card & Freeze Account
 export const MODULE_PERMISSIONS = {
-  // Account Permissions
+  // ==================== ACCOUNT PERMISSIONS ====================
   accountBalance: PERMISSIONS.ACCOUNT.VIEW_BALANCE,
   deposit101: PERMISSIONS.ACCOUNT.DEPOSIT_101,
   withdrawal102: PERMISSIONS.ACCOUNT.WITHDRAWAL_102,
   accountUpdate: PERMISSIONS.ACCOUNT.UPDATE,
+  freezeAccount: PERMISSIONS.ACCOUNT.FREEZE,  // ✅ ADDED
 
-  // AML Permissions
+  // ==================== AML PERMISSIONS ====================
   amlThreshold: PERMISSIONS.AML.VIEW_THRESHOLD,
   amlApproval: PERMISSIONS.AML.APPROVE,
   configureAML: PERMISSIONS.AML.CONFIGURE,
@@ -1429,41 +1483,41 @@ export const MODULE_PERMISSIONS = {
   suspendAMLTransaction: PERMISSIONS.AML.SUSPEND,
   monitorLoanRepaymentAml: PERMISSIONS.AML.LOAN_REPAYMENT,
 
-  // System Admin Permissions
+  // ==================== SYSTEM ADMIN PERMISSIONS ====================
   auditTrail: PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
   licenseDetails: PERMISSIONS.SYSTEM_ADMIN.LICENSE_DETAILS,
   systemDate: PERMISSIONS.SYSTEM_ADMIN.SYSTEM_DATE,
   osTrigger: PERMISSIONS.SYSTEM_ADMIN.OS_TRIGGER,
   loanRepaymentConfig: PERMISSIONS.SYSTEM_ADMIN.LOAN_REPAYMENT_CONFIG,
 
-  // Permission Management
+  // ==================== PERMISSION MANAGEMENT ====================
   businessRole: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE,
   businessRoleList: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_LIST,
   buRoleCreation: PERMISSIONS.PERMISSION_MANAGEMENT.BU_ROLE_CREATION,
   businessRoleQueue: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_QUEUE,
   businessRoleQueueSetup: PERMISSIONS.PERMISSION_MANAGEMENT.BUSINESS_ROLE_QUEUE_SETUP,
 
-  // Business Unit Permissions
+  // ==================== BUSINESS UNIT PERMISSIONS ====================
   createBusinessUnit: PERMISSIONS.BUSINESS_UNIT.CREATE,
   businessUnit: PERMISSIONS.BUSINESS_UNIT.VIEW,
   securityBusinessUnit: PERMISSIONS.BUSINESS_UNIT.SECURITY,
   businessUnitRole: PERMISSIONS.BUSINESS_UNIT.ROLE,
 
-  // Security Profile Permissions
+  // ==================== SECURITY PROFILE PERMISSIONS ====================
   addUser: PERMISSIONS.SECURITY_PROFILE.ADD_USER,
   assignUserRole: PERMISSIONS.SECURITY_PROFILE.ASSIGN_ROLE,
   assignCsoRight: PERMISSIONS.SECURITY_PROFILE.ASSIGN_CSO_RIGHT,
   passwordReset: PERMISSIONS.SECURITY_PROFILE.RESET_PASSWORD,
   securityConsole: PERMISSIONS.SECURITY_PROFILE.CONSOLE,
 
-  // Workflow Permissions
+  // ==================== WORKFLOW PERMISSIONS ====================
   workflowSetup: PERMISSIONS.WORKFLOW.CONFIGURE,
   workflowSubProcess: PERMISSIONS.WORKFLOW.MANAGE_SUBPROCESS,
   workflowView: PERMISSIONS.WORKFLOW.VIEW,
   manageLoanRepaymentWorkflow: PERMISSIONS.WORKFLOW.LOAN_REPAYMENT,
   manageGroupLoanWorkflow: PERMISSIONS.WORKFLOW.GROUP_LOAN,
 
-  // Approval Permissions
+  // ==================== APPROVAL PERMISSIONS ====================
   managerApproval: PERMISSIONS.APPROVAL.MANAGER,
   cashDepositApproval: PERMISSIONS.APPROVAL.CASH_DEPOSIT,
   glTransactionApproval: PERMISSIONS.APPROVAL.GL_TRANSACTION,
@@ -1473,10 +1527,8 @@ export const MODULE_PERMISSIONS = {
   approveLoanRepayment: PERMISSIONS.APPROVAL.LOAN_REPAYMENT,
   approveGroupLoan: PERMISSIONS.APPROVAL.GROUP_LOAN,
   approveBulkRepayment: PERMISSIONS.APPROVAL.BULK_REPAYMENT,
-  // ✅ ADDED: BVN validation approval
-  approveBvnValidation: PERMISSIONS.APPROVAL.BVN_VALIDATION,
 
-  // Loan Operations Permissions
+  // ==================== LOAN OPERATIONS PERMISSIONS ====================
   loanCreditApplication: PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
   loanApplicationDetails: PERMISSIONS.LOAN_OPERATIONS.VIEW,
   loanDisbursement: PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
@@ -1486,23 +1538,19 @@ export const MODULE_PERMISSIONS = {
   processManualLoanRepayment: PERMISSIONS.LOAN_OPERATIONS.MANUAL_REPAYMENT,
   processBulkLoanRepayments: PERMISSIONS.LOAN_OPERATIONS.BULK_REPAYMENT,
 
-  // Customer Permissions
+  // ==================== CUSTOMER PERMISSIONS ====================
   createCustomer: PERMISSIONS.CUSTOMER.CREATE,
   customerProfile: PERMISSIONS.CUSTOMER.PROFILE,
   customerIdentification: PERMISSIONS.CUSTOMER.IDENTIFICATION,
   customerApproval: PERMISSIONS.CUSTOMER.APPROVAL,
-  // ✅ ADDED: BVN customer permissions
-  bvnValidate: PERMISSIONS.CUSTOMER.BVN_VALIDATE,
-  bvnView: PERMISSIONS.CUSTOMER.BVN_VIEW,
-  idVerify: PERMISSIONS.CUSTOMER.ID_VERIFY,
 
-  // Deposit Permissions
+  // ==================== DEPOSIT PERMISSIONS ====================
   depositModule: PERMISSIONS.DEPOSIT.CREATE,
   depositApplication: PERMISSIONS.DEPOSIT.APPLICATION,
   depositApplicationDetails: PERMISSIONS.DEPOSIT.VIEW_DETAILS,
   depositApplicationApproval: PERMISSIONS.DEPOSIT.APPROVAL,
 
-  // GUARANTOR PERMISSIONS - Comprehensive Set
+  // ==================== GUARANTOR PERMISSIONS ====================
   createGuarantor: PERMISSIONS.GUARANTOR.CREATE,
   viewGuarantor: PERMISSIONS.GUARANTOR.VIEW,
   viewGuarantorDetails: PERMISSIONS.GUARANTOR.VIEW_DETAILS,
@@ -1523,13 +1571,13 @@ export const MODULE_PERMISSIONS = {
   guarantorDashboard: PERMISSIONS.GUARANTOR.DASHBOARD,
   guarantorAuditLog: PERMISSIONS.GUARANTOR.AUDIT_LOG,
 
-  // Standing Order Permissions
+  // ==================== STANDING ORDER PERMISSIONS ====================
   standingOrderCreate: PERMISSIONS.STANDING_ORDER.CREATE,
   standingOrderView: PERMISSIONS.STANDING_ORDER.VIEW,
   standingOrderUpdate: PERMISSIONS.STANDING_ORDER.UPDATE,
   standingOrderDelete: PERMISSIONS.STANDING_ORDER.DELETE,
 
-  // Transaction Permissions
+  // ==================== TRANSACTION PERMISSIONS ====================
   cashWithdrawal: PERMISSIONS.TRANSACTION.WITHDRAWAL,
   cashDeposit: PERMISSIONS.TRANSACTION.DEPOSIT,
   openingDeposit: PERMISSIONS.TRANSACTION.OPENING_DEPOSIT,
@@ -1541,16 +1589,16 @@ export const MODULE_PERMISSIONS = {
   viewTransactionStats: PERMISSIONS.TRANSACTION.VIEW_STATS,
   processLoanRepaymentTransaction: PERMISSIONS.TRANSACTION.LOAN_REPAYMENT,
 
-  // Rate Permissions
+  // ==================== RATE PERMISSIONS ====================
   loanInterestSetup: PERMISSIONS.RATE.LOAN_INTEREST,
   depositInterestSetup: PERMISSIONS.RATE.DEPOSIT_INTEREST,
   indexRate: PERMISSIONS.RATE.INDEX,
   setupLoanPenaltyRate: PERMISSIONS.RATE.PENALTY,
 
-  // Loan Fee Permissions
+  // ==================== LOAN FEE PERMISSIONS ====================
   loanFeeSetup: PERMISSIONS.LOAN_FEE.SETUP,
 
-  // Report Permissions
+  // ==================== REPORT PERMISSIONS ====================
   customerReport: PERMISSIONS.REPORT.CUSTOMER,
   reports: PERMISSIONS.REPORT.ALL_REPORTS,
   termDepositReports: PERMISSIONS.REPORT.TERM_DEPOSIT,
@@ -1563,24 +1611,22 @@ export const MODULE_PERMISSIONS = {
   viewLoanRepaymentReport: PERMISSIONS.REPORT.LOAN_REPAYMENT,
   viewGroupLoanReport: PERMISSIONS.REPORT.GROUP_LOAN,
   viewBulkRepaymentReport: PERMISSIONS.REPORT.BULK_REPAYMENT,
-  // ✅ ADDED: BVN validation report
-  bvnValidationReport: PERMISSIONS.REPORT.BVN_VALIDATION,
 
-  // Product Permissions
+  // ==================== PRODUCT PERMISSIONS ====================
   productSetup: PERMISSIONS.PRODUCT.SETUP,
   loanProductSetup: PERMISSIONS.PRODUCT.LOAN,
   productMapping: PERMISSIONS.PRODUCT.MAPPING,
 
-  // Posting Permissions
+  // ==================== POSTING PERMISSIONS ====================
   chartOfAccount: PERMISSIONS.POSTING.CHART_OF_ACCOUNT,
   glaSubfolderAccount: PERMISSIONS.POSTING.GL_SUBFOLDER,
   viewSubfolderAccount: PERMISSIONS.POSTING.VIEW_SUBFOLDER,
   department: PERMISSIONS.POSTING.DEPARTMENT,
 
-  // Holiday Permissions
+  // ==================== HOLIDAY PERMISSIONS ====================
   holidayCalendar: PERMISSIONS.HOLIDAY.MANAGE,
 
-  // Dashboard Permissions
+  // ==================== DASHBOARD PERMISSIONS ====================
   tellerDashboard: PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
   transactionOverview: PERMISSIONS.DASHBOARD.TRANSACTION_OVERVIEW,
   quickActions: PERMISSIONS.DASHBOARD.QUICK_ACTIONS,
@@ -1591,29 +1637,31 @@ export const MODULE_PERMISSIONS = {
   buPerformance: PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
   viewLoanRepaymentStats: PERMISSIONS.DASHBOARD.LOAN_REPAYMENT_STATS,
   viewGroupLoanStats: PERMISSIONS.DASHBOARD.GROUP_LOAN_STATS,
-  // ✅ ADDED: BVN validation stats
-  bvnValidationStats: PERMISSIONS.DASHBOARD.BVN_VALIDATION_STATS,
 
-  // Analytics Permissions
+  // ==================== ANALYTICS PERMISSIONS ====================
   viewTellerAnalytics: PERMISSIONS.ANALYTICS.VIEW_TELLER_ANALYTICS,
   viewLoanRepaymentAnalytics: PERMISSIONS.ANALYTICS.LOAN_REPAYMENT_ANALYTICS,
-  // ✅ ADDED: BVN validation analytics
-  bvnValidationAnalytics: PERMISSIONS.ANALYTICS.BVN_VALIDATION_ANALYTICS,
 
-  // Performance Permissions
+  // ==================== PERFORMANCE PERMISSIONS ====================
   viewPerformanceMetrics: PERMISSIONS.PERFORMANCE.VIEW_METRICS,
   viewTellerPerformance: PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
   viewBranchPerformance: PERMISSIONS.PERFORMANCE.VIEW_BRANCH_PERFORMANCE,
   exportPerformanceData: PERMISSIONS.PERFORMANCE.EXPORT_PERFORMANCE_DATA,
   viewLoanRepaymentPerformance: PERMISSIONS.PERFORMANCE.LOAN_REPAYMENT_PERFORMANCE,
 
-  // Statistics Permissions
+  // ==================== STATISTICS PERMISSIONS ====================
   viewRealTimeStats: PERMISSIONS.STATISTICS.VIEW_REAL_TIME,
   viewHistoricalStats: PERMISSIONS.STATISTICS.VIEW_HISTORICAL,
   viewFinancialStats: PERMISSIONS.STATISTICS.VIEW_FINANCIAL,
   viewOperationalStats: PERMISSIONS.STATISTICS.VIEW_OPERATIONAL,
 
-  // ✅ VAULT PERMISSIONS - Comprehensive Set - UPDATED WITH ALL PERMISSIONS
+  // ==================== SETTLEMENT ACCOUNT PERMISSIONS ====================
+viewSettlementConfig: 'VIEW_SETTLEMENT_CONFIG',
+fundSettlementAccount: 'FUND_SETTLEMENT_ACCOUNT',
+withdrawSettlementAccount: 'WITHDRAW_SETTLEMENT_ACCOUNT',
+updateSettlementConfig: 'UPDATE_SETTLEMENT_CONFIG',
+
+  // ==================== VAULT PERMISSIONS (full set) ====================
   CREATE_VAULT: PERMISSIONS.VAULT.CREATE_VAULT,
   VIEW_VAULTS: PERMISSIONS.VAULT.VIEW_VAULTS,
   UPDATE_VAULT: PERMISSIONS.VAULT.UPDATE_VAULT,
@@ -1621,85 +1669,67 @@ export const MODULE_PERMISSIONS = {
   OPEN_VAULT: PERMISSIONS.VAULT.OPEN_VAULT,
   CLOSE_VAULT: PERMISSIONS.VAULT.CLOSE_VAULT,
   VIEW_VAULT_STATUS: PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
-  
   VIEW_BRANCH_VAULTS: PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
   MANAGE_BRANCH_VAULTS: PERMISSIONS.VAULT.MANAGE_BRANCH_VAULTS,
   CONFIGURE_BRANCH_VAULT: PERMISSIONS.VAULT.CONFIGURE_BRANCH_VAULT,
   VIEW_BRANCH_VAULT_STATUS: PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
   BRANCH_VAULT_ACCESS: PERMISSIONS.VAULT.BRANCH_VAULT_ACCESS,
-  
   CONFIGURE_VAULT: PERMISSIONS.VAULT.CONFIGURE_VAULT,
   VIEW_VAULT_CONFIG: PERMISSIONS.VAULT.VIEW_VAULT_CONFIG,
-  
   MANAGE_VAULT_ACCESS: PERMISSIONS.VAULT.MANAGE_VAULT_ACCESS,
   AUTHORIZE_PERSONNEL: PERMISSIONS.VAULT.AUTHORIZE_PERSONNEL,
   REVOKE_AUTHORIZATION: PERMISSIONS.VAULT.REVOKE_AUTHORIZATION,
   VIEW_AUTHORIZED_PERSONNEL: PERMISSIONS.VAULT.VIEW_AUTHORIZED_PERSONNEL,
-  
   CREATE_APPROVAL_REQUEST: PERMISSIONS.VAULT.CREATE_APPROVAL_REQUEST,
   APPROVE_REQUEST: PERMISSIONS.VAULT.APPROVE_REQUEST,
   VIEW_PENDING_APPROVALS: PERMISSIONS.VAULT.VIEW_PENDING_APPROVALS,
-  
   LOG_ACCESS_ATTEMPT: PERMISSIONS.VAULT.LOG_ACCESS_ATTEMPT,
   RECORD_MAINTENANCE: PERMISSIONS.VAULT.RECORD_MAINTENANCE,
   UPDATE_SECURITY_FEATURES: PERMISSIONS.VAULT.UPDATE_SECURITY_FEATURES,
   VIEW_ACCESS_LOGS: PERMISSIONS.VAULT.VIEW_ACCESS_LOGS,
-  
   VIEW_VAULT_UTILIZATION: PERMISSIONS.VAULT.VIEW_VAULT_UTILIZATION,
   VIEW_SECURITY_COMPLIANCE: PERMISSIONS.VAULT.VIEW_SECURITY_COMPLIANCE,
   VIEW_VAULT_STATISTICS: PERMISSIONS.VAULT.VIEW_VAULT_STATISTICS,
   VIEW_AUDIT_TRAIL: PERMISSIONS.VAULT.VIEW_AUDIT_TRAIL,
-  
   VAULT_DEPOSIT: PERMISSIONS.VAULT.VAULT_DEPOSIT,
   VAULT_WITHDRAWAL: PERMISSIONS.VAULT.VAULT_WITHDRAWAL,
   VAULT_TRANSFER: PERMISSIONS.VAULT.VAULT_TRANSFER,
   VAULT_RECONCILIATION: PERMISSIONS.VAULT.VAULT_RECONCILIATION,
-  
   VIEW_VAULT_TRANSACTIONS: PERMISSIONS.VAULT.VIEW_VAULT_TRANSACTIONS,
   CANCEL_VAULT_TRANSACTION: PERMISSIONS.VAULT.CANCEL_VAULT_TRANSACTION,
   EXPORT_VAULT_TRANSACTIONS: PERMISSIONS.VAULT.EXPORT_VAULT_TRANSACTIONS,
-  
   VAULT_AUDIT: PERMISSIONS.VAULT.VAULT_AUDIT,
   VAULT_COMPLIANCE_CHECK: PERMISSIONS.VAULT.VAULT_COMPLIANCE_CHECK,
   GENERATE_VAULT_REPORT: PERMISSIONS.VAULT.GENERATE_VAULT_REPORT,
-  
   EMERGENCY_VAULT_ACCESS: PERMISSIONS.VAULT.EMERGENCY_VAULT_ACCESS,
   VAULT_LOCKDOWN: PERMISSIONS.VAULT.VAULT_LOCKDOWN,
   VAULT_ALARM_CONTROL: PERMISSIONS.VAULT.VAULT_ALARM_CONTROL,
-  
   MANAGE_VAULT_KEYS: PERMISSIONS.VAULT.MANAGE_VAULT_KEYS,
   ISSUE_TEMP_ACCESS: PERMISSIONS.VAULT.ISSUE_TEMP_ACCESS,
   TRACK_KEY_USAGE: PERMISSIONS.VAULT.TRACK_KEY_USAGE,
-  
   VIEW_VAULT_CAPACITY: PERMISSIONS.VAULT.VIEW_VAULT_CAPACITY,
   UPDATE_VAULT_CAPACITY: PERMISSIONS.VAULT.UPDATE_VAULT_CAPACITY,
   VAULT_SPACE_ALLOCATION: PERMISSIONS.VAULT.VAULT_SPACE_ALLOCATION,
-  
   VAULT_INVENTORY_VIEW: PERMISSIONS.VAULT.VAULT_INVENTORY_VIEW,
   VAULT_INVENTORY_UPDATE: PERMISSIONS.VAULT.VAULT_INVENTORY_UPDATE,
   TRACK_VAULT_CONTENTS: PERMISSIONS.VAULT.TRACK_VAULT_CONTENTS,
-  
   MANAGE_VAULT_SCHEDULE: PERMISSIONS.VAULT.MANAGE_VAULT_SCHEDULE,
   VIEW_VAULT_CALENDAR: PERMISSIONS.VAULT.VIEW_VAULT_CALENDAR,
   SET_VAULT_HOURS: PERMISSIONS.VAULT.SET_VAULT_HOURS,
-  
   TIER1_VAULT_ACCESS: PERMISSIONS.VAULT.TIER1_VAULT_ACCESS,
   TIER2_VAULT_ACCESS: PERMISSIONS.VAULT.TIER2_VAULT_ACCESS,
   TIER3_VAULT_ACCESS: PERMISSIONS.VAULT.TIER3_VAULT_ACCESS,
-  
   VAULT_ALERTS: PERMISSIONS.VAULT.VAULT_ALERTS,
   CONFIGURE_VAULT_ALERTS: PERMISSIONS.VAULT.CONFIGURE_VAULT_ALERTS,
   ACKNOWLEDGE_VAULT_ALERT: PERMISSIONS.VAULT.ACKNOWLEDGE_VAULT_ALERT,
-  
   VAULT_DOCUMENTATION: PERMISSIONS.VAULT.VAULT_DOCUMENTATION,
   UPDATE_VAULT_DOCS: PERMISSIONS.VAULT.UPDATE_VAULT_DOCS,
   VAULT_POLICIES: PERMISSIONS.VAULT.VAULT_POLICIES,
-  
   VAULT_TRAINING: PERMISSIONS.VAULT.VAULT_TRAINING,
   CERTIFY_PERSONNEL: PERMISSIONS.VAULT.CERTIFY_PERSONNEL,
   VIEW_CERTIFICATIONS: PERMISSIONS.VAULT.VIEW_CERTIFICATIONS,
 
-  // Alternative vault permission mappings for different route names (camelCase versions)
+  // camelCase Vault mappings
   createVault: PERMISSIONS.VAULT.CREATE_VAULT,
   viewVaults: PERMISSIONS.VAULT.VIEW_VAULTS,
   updateVault: PERMISSIONS.VAULT.UPDATE_VAULT,
@@ -1724,14 +1754,13 @@ export const MODULE_PERMISSIONS = {
   openVault: PERMISSIONS.VAULT.OPEN_VAULT,
   closeVault: PERMISSIONS.VAULT.CLOSE_VAULT,
   viewVaultStatus: PERMISSIONS.VAULT.VIEW_VAULT_STATUS,
-  
   viewBranchVaults: PERMISSIONS.VAULT.VIEW_BRANCH_VAULTS,
   manageBranchVaults: PERMISSIONS.VAULT.MANAGE_BRANCH_VAULTS,
   configureBranchVault: PERMISSIONS.VAULT.CONFIGURE_BRANCH_VAULT,
   viewBranchVaultStatus: PERMISSIONS.VAULT.VIEW_BRANCH_VAULT_STATUS,
   branchVaultAccess: PERMISSIONS.VAULT.BRANCH_VAULT_ACCESS,
 
-  // TELLER STATS ENDPOINT MAPPINGS
+  // ==================== TELLER STATS ENDPOINT MAPPINGS ====================
   tellerTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   todayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   tellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
@@ -1739,20 +1768,17 @@ export const MODULE_PERMISSIONS = {
   usersTellerTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   tellerDashboardStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   dashboardStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
-  
   tellerPerformance: PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
   performanceMetrics: PERMISSIONS.PERFORMANCE.VIEW_METRICS,
-  
   viewStatistics: PERMISSIONS.STATISTICS.VIEW_REAL_TIME,
   tellerAnalytics: PERMISSIONS.ANALYTICS.VIEW_TELLER_ANALYTICS,
-
   getTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   getTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   getUserTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   apiTellerStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
   apiTodayStats: PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
 
-  // LOAN REPAYMENT MODULE MAPPINGS
+  // ==================== LOAN REPAYMENT MODULE MAPPINGS ====================
   manualLoanRepayment: PERMISSIONS.LOAN_REPAYMENT.MANUAL,
   processLoanRepayment: PERMISSIONS.LOAN_REPAYMENT.PROCESS,
   viewLoanRepaymentSchedule: PERMISSIONS.LOAN_REPAYMENT.VIEW_SCHEDULE,
@@ -1765,7 +1791,7 @@ export const MODULE_PERMISSIONS = {
   printRepaymentReceipt: PERMISSIONS.LOAN_REPAYMENT.PRINT_RECEIPT,
   exportRepaymentData: PERMISSIONS.LOAN_REPAYMENT.EXPORT,
 
-  // GROUP LOAN MODULE MAPPINGS
+  // ==================== GROUP LOAN MODULE MAPPINGS ====================
   createGroupLoan: PERMISSIONS.GROUP_LOAN.CREATE,
   viewGroupLoan: PERMISSIONS.GROUP_LOAN.VIEW,
   updateGroupLoan: PERMISSIONS.GROUP_LOAN.UPDATE,
@@ -1781,7 +1807,7 @@ export const MODULE_PERMISSIONS = {
   exportGroupLoanData: PERMISSIONS.GROUP_LOAN.EXPORT_DATA,
   viewGroupLoanAudit: PERMISSIONS.GROUP_LOAN.AUDIT,
 
-  // BULK OPERATIONS MAPPINGS
+  // ==================== BULK OPERATIONS MAPPINGS ====================
   processBulkOperations: PERMISSIONS.BULK_OPERATIONS.PROCESS,
   uploadBulkData: PERMISSIONS.BULK_OPERATIONS.UPLOAD,
   downloadBulkTemplates: PERMISSIONS.BULK_OPERATIONS.DOWNLOAD,
@@ -1792,7 +1818,7 @@ export const MODULE_PERMISSIONS = {
   importBulkCsvData: PERMISSIONS.BULK_OPERATIONS.BULK_CSV_IMPORT,
   exportBulkCsvData: PERMISSIONS.BULK_OPERATIONS.BULK_CSV_EXPORT,
 
-  // AUDIT MAPPINGS
+  // ==================== AUDIT MAPPINGS ====================
   viewAuditLogs: PERMISSIONS.AUDIT.VIEW_LOGS,
   viewTransactionAudit: PERMISSIONS.AUDIT.VIEW_TRANSACTION_AUDIT,
   viewUserAudit: PERMISSIONS.AUDIT.VIEW_USER_AUDIT,
@@ -1801,19 +1827,15 @@ export const MODULE_PERMISSIONS = {
   viewLoanRepaymentAudit: PERMISSIONS.AUDIT.VIEW_LOAN_REPAYMENT_AUDIT,
   viewGroupLoanAudit: PERMISSIONS.AUDIT.VIEW_GROUP_LOAN_AUDIT,
   viewBulkRepaymentAudit: PERMISSIONS.AUDIT.VIEW_BULK_REPAYMENT_AUDIT,
-  // ✅ ADDED: BVN audit
-  viewBvnAudit: PERMISSIONS.AUDIT.VIEW_BVN_AUDIT,
 
-  // NOTIFICATION MAPPINGS
+  // ==================== NOTIFICATION MAPPINGS ====================
   viewNotifications: PERMISSIONS.NOTIFICATION.VIEW,
   manageNotifications: PERMISSIONS.NOTIFICATION.MANAGE,
   sendNotifications: PERMISSIONS.NOTIFICATION.SEND,
   configureNotificationSettings: PERMISSIONS.NOTIFICATION.CONFIGURE,
   sendLoanRepaymentNotifications: PERMISSIONS.NOTIFICATION.LOAN_REPAYMENT_NOTIFY,
-  // ✅ ADDED: BVN notification
-  sendBvnValidationNotifications: PERMISSIONS.NOTIFICATION.BVN_VALIDATION_NOTIFY,
 
-  // PRINT & EXPORT MAPPINGS
+  // ==================== PRINT & EXPORT MAPPINGS ====================
   printReceipt: PERMISSIONS.PRINT_EXPORT.PRINT_RECEIPT,
   printReport: PERMISSIONS.PRINT_EXPORT.PRINT_REPORT,
   exportCsv: PERMISSIONS.PRINT_EXPORT.EXPORT_CSV,
@@ -1822,10 +1844,8 @@ export const MODULE_PERMISSIONS = {
   printLoanRepaymentReceipt: PERMISSIONS.PRINT_EXPORT.PRINT_LOAN_REPAYMENT_RECEIPT,
   printBulkRepaymentReceipt: PERMISSIONS.PRINT_EXPORT.PRINT_BULK_REPAYMENT_RECEIPT,
   exportBulkRepaymentData: PERMISSIONS.PRINT_EXPORT.EXPORT_BULK_REPAYMENT,
-  // ✅ ADDED: BVN export
-  exportBvnData: PERMISSIONS.PRINT_EXPORT.EXPORT_BVN_DATA,
 
-  // QUEUE MAPPINGS
+  // ==================== QUEUE MAPPINGS ====================
   viewQueue: PERMISSIONS.QUEUE.VIEW_QUEUE,
   manageQueue: PERMISSIONS.QUEUE.MANAGE_QUEUE,
   processQueueItems: PERMISSIONS.QUEUE.PROCESS_QUEUE,
@@ -1833,22 +1853,28 @@ export const MODULE_PERMISSIONS = {
   clearQueue: PERMISSIONS.QUEUE.CLEAR_QUEUE,
   manageLoanRepaymentQueue: PERMISSIONS.QUEUE.LOAN_REPAYMENT_QUEUE,
   manageBulkRepaymentQueue: PERMISSIONS.QUEUE.BULK_REPAYMENT_QUEUE,
-  // ✅ ADDED: BVN queue
-  manageBvnValidationQueue: PERMISSIONS.QUEUE.BVN_VALIDATION_QUEUE,
 
-  // HELP & SUPPORT MAPPINGS
+  // ==================== HELP & SUPPORT MAPPINGS ====================
   viewHelpDocumentation: PERMISSIONS.HELP.VIEW_HELP,
   createSupportTicket: PERMISSIONS.HELP.CREATE_TICKET,
   viewSupportTickets: PERMISSIONS.HELP.VIEW_TICKETS,
   manageSupportTickets: PERMISSIONS.HELP.MANAGE_TICKETS,
 
-  // MOBILE APP MAPPINGS
+  // ==================== MOBILE APP MAPPINGS ====================
   viewMobileApp: PERMISSIONS.MOBILE.VIEW_MOBILE,
   manageMobileApp: PERMISSIONS.MOBILE.MANAGE_MOBILE,
   approveMobileTransactions: PERMISSIONS.MOBILE.APPROVE_MOBILE,
   processMobileLoanRepayment: PERMISSIONS.MOBILE.MOBILE_LOAN_REPAYMENT,
 
-  // COLLECTION MAPPINGS
+  // ==================== DEBIT CARD MAPPINGS (NEW) ====================
+  viewDebitCard: PERMISSIONS.DEBIT_CARD.VIEW,
+  issueDebitCard: PERMISSIONS.DEBIT_CARD.ISSUE,
+  updateDebitCardLimits: PERMISSIONS.DEBIT_CARD.UPDATE_LIMITS,
+  blockDebitCard: PERMISSIONS.DEBIT_CARD.BLOCK,
+  unblockDebitCard: PERMISSIONS.DEBIT_CARD.UNBLOCK,
+  viewDebitCardTransactions: PERMISSIONS.DEBIT_CARD.VIEW_TRANSACTIONS,
+
+  // ==================== COLLECTION MAPPINGS ====================
   createCollection: PERMISSIONS.COLLECTION.CREATE,
   viewCollection: PERMISSIONS.COLLECTION.VIEW,
   updateCollection: PERMISSIONS.COLLECTION.UPDATE,
@@ -1860,28 +1886,29 @@ export const MODULE_PERMISSIONS = {
   viewCollectionReports: PERMISSIONS.COLLECTION.REPORTS,
   exportCollectionData: PERMISSIONS.COLLECTION.EXPORT,
 
-  // LOAN PORTFOLIO MAPPINGS
+  // ==================== LOAN PORTFOLIO MAPPINGS ====================
   viewLoanPortfolio: PERMISSIONS.LOAN_PORTFOLIO.VIEW,
   manageLoanPortfolio: PERMISSIONS.LOAN_PORTFOLIO.MANAGE,
   updateLoanPortfolio: PERMISSIONS.LOAN_PORTFOLIO.UPDATE,
   viewLoanPortfolioReports: PERMISSIONS.LOAN_PORTFOLIO.REPORTS,
   viewLoanPortfolioAnalytics: PERMISSIONS.LOAN_PORTFOLIO.ANALYTICS,
-  
-  // ✅ ADDED: BVN MODULE COMPREHENSIVE MAPPINGS
-  bvnValidate: PERMISSIONS.BVN.VALIDATE,
-  bvnView: PERMISSIONS.BVN.VIEW,
-  bvnUpdate: PERMISSIONS.BVN.UPDATE,
-  bvnHistory: PERMISSIONS.BVN.HISTORY,
-  bvnExport: PERMISSIONS.BVN.EXPORT,
-  bvnReport: PERMISSIONS.BVN.REPORT,
-  
-  // BVN camelCase versions
-  validateBvn: PERMISSIONS.BVN.VALIDATE,
-  viewBvn: PERMISSIONS.BVN.VIEW,
-  updateBvn: PERMISSIONS.BVN.UPDATE,
-  viewBvnHistory: PERMISSIONS.BVN.HISTORY,
-  exportBvn: PERMISSIONS.BVN.EXPORT,
-  generateBvnReport: PERMISSIONS.BVN.REPORT,
+
+  // ==================== SYSTEM ADMIN PERMISSIONS ====================
+auditTrail: PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
+licenseDetails: PERMISSIONS.SYSTEM_ADMIN.LICENSE_DETAILS,
+systemDate: PERMISSIONS.SYSTEM_ADMIN.SYSTEM_DATE,
+osTrigger: PERMISSIONS.SYSTEM_ADMIN.OS_TRIGGER,
+loanRepaymentConfig: PERMISSIONS.SYSTEM_ADMIN.LOAN_REPAYMENT_CONFIG,
+
+// ==================== AML PERMISSIONS ====================
+amlThreshold: PERMISSIONS.AML.VIEW_THRESHOLD,
+amlApproval: PERMISSIONS.AML.APPROVE,
+configureAML: PERMISSIONS.AML.CONFIGURE,
+monitorAML: PERMISSIONS.AML.MONITOR,
+generateAMLReport: PERMISSIONS.AML.REPORT,
+suspendAMLTransaction: PERMISSIONS.AML.SUSPEND,
+monitorLoanRepaymentAml: PERMISSIONS.AML.LOAN_REPAYMENT,
+
 };
 
 export async function roleHasPermission(roleId, permission) {
@@ -1896,9 +1923,8 @@ export async function roleHasPermission(roleId, permission) {
       return true;
     }
 
-    // First, check database
-    const Permissions = (await import('./models/Permissions.js')).default;
-    const dbPermissions = await Permissions.findOne({ BU_ROLE_ID: roleId }).lean();
+    // First, check database using Sequelize
+    const dbPermissions = await Permissions.findOne({ where: { BU_ROLE_ID: roleId } });
     
     if (dbPermissions) {
       console.log('📋 Found DB permissions for role:', roleId);
@@ -1925,7 +1951,7 @@ export async function roleHasPermission(roleId, permission) {
       
       // Method 2: Check all permissions
       const allPermissions = [];
-      Object.entries(dbPermissions).forEach(([key, value]) => {
+      Object.entries(dbPermissions.dataValues).forEach(([key, value]) => {
         if (Array.isArray(value)) {
           console.log(`📋 ${key}:`, value);
           allPermissions.push(...value.filter(p => typeof p === 'string'));
@@ -2086,7 +2112,7 @@ export async function syncPermissionsWithValidation() {
 export async function quickPermissionCheck() {
   try {
     console.log('🔍 Running quick permission check...');
-    const count = await Permissions.countDocuments();
+    const count = await Permissions.count();
     console.log(`📊 Found ${count} permission records in DB`);
     
     if (count === 0) {

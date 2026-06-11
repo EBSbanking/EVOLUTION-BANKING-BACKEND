@@ -233,8 +233,8 @@ export const ProductsController = {
       } else {
         productData.rateInformation = JSON.stringify({
           rateType: 'FIXED',
-          fixedRate: '0.500000',
-          effectiveRate: '0.500000',
+          fixedRate: '0.000000',
+          effectiveRate: '0.000000',
           effectiveDate: new Date().toISOString(),
           rateStructure: 'FLAT'
         });
@@ -854,57 +854,33 @@ export const getProductByCriteria = async (req, res) => {
 // ✅ GET ALL SAVINGS PRODUCTS
 export const getAllSavingsProducts = async (req, res) => {
   try {
-    const { page = 1, limit = 10, productType, BU_ID, REC_ST = 'A', sortBy = 'created_at', sortOrder = 'DESC' } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const parsedLimit = parseInt(limit);
-    
-    const whereConditions = {
-      REC_ST: REC_ST
-    };
-    
-    if (productType) whereConditions.productType = productType;
-    if (BU_ID) whereConditions.BU_ID = { [Op.like]: `%${BU_ID}%` };
-    
-    const { count, rows: products } = await SavingsProduct.findAndCountAll({
-      where: whereConditions,
-      limit: parsedLimit,
-      offset: offset,
-      order: [[sortBy, sortOrder.toUpperCase()]]
+    const { page = 1, limit = 10 } = req.query;
+    const where = { REC_ST: 'Active' };
+
+    const { count, rows } = await SavingsProduct.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: (parseInt(page) - 1) * parseInt(limit),
+      order: [['created_at', 'DESC']]   // ← use snake_case column name
     });
-    
-    const totalPages = Math.ceil(count / parsedLimit);
-    
+
     return res.status(200).json({
       success: true,
       message: 'Savings products retrieved successfully',
-      data: products,
+      data: rows,
       pagination: {
         total: count,
         page: parseInt(page),
-        limit: parsedLimit,
-        totalPages,
-        hasNextPage: parseInt(page) < totalPages,
-        hasPrevPage: parseInt(page) > 1
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit),
+        hasNextPage: page * limit < count,
+        hasPrevPage: page > 1
       },
-      filters: {
-        productType,
-        BU_ID,
-        REC_ST
-      }
+      filters: { REC_ST: 'Active' }
     });
   } catch (error) {
-    logger.error('Error retrieving all savings products:', {
-      error: error.message,
-      stack: error.stack,
-      query: req.query,
-      timestamp: new Date(),
-    });
-
-    return res.status(500).json({
-      success: false,
-      message: 'An error occurred while retrieving savings products',
-      error: error.message,
-    });
+    logger.error('Error fetching savings products:', error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 

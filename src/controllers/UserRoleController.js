@@ -951,7 +951,6 @@ export const checkSchema = asyncHandler(async (req, res) => {
 });
 
 // Add Roles to Existing User Role
-// Add Roles to Existing User Role
 export const addRolesToUser = asyncHandler(async (req, res) => {
   const transaction = await sequelize.transaction();
  
@@ -997,11 +996,11 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
       validatedRoleNames = ROLE_NMS;
     }
 
-    // **FIX: Check if userId is a username and convert to numeric ID**
+    // Get user record and convert to numeric ID
     let numericUserId = userId;
     let userRecord = null;
+    let userName = userId;
     
-    // If userId is not numeric, look up the user
     if (userId && isNaN(parseInt(userId))) {
       userRecord = await User.findOne({
         where: { 
@@ -1010,29 +1009,29 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
             { username: userId }
           ]
         },
-        attributes: ['id', 'user_name'],
+        attributes: ['id', 'user_name', 'main_business_unit'],
         transaction
       });
       
       if (userRecord) {
         numericUserId = userRecord.id;
+        userName = userRecord.user_name;
         console.log('🔢 Converted username to numeric ID:', {
           username: userId,
-          numericId: numericUserId
+          numericId: numericUserId,
+          userName: userName
         });
       } else {
         await transaction.rollback();
         return res.status(400).json({
           success: false,
-          message: `User with username '${userId}' does not exist in Users table.`,
-          suggestion: 'Please use a valid username or numeric user ID.'
+          message: `User with username '${userId}' does not exist.`
         });
       }
     } else {
-      // userId is numeric, verify it exists
       userRecord = await User.findOne({
         where: { id: parseInt(userId) },
-        attributes: ['id', 'user_name'],
+        attributes: ['id', 'user_name', 'main_business_unit'],
         transaction
       });
       
@@ -1040,93 +1039,241 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
         await transaction.rollback();
         return res.status(400).json({
           success: false,
-          message: `User with ID ${userId} does not exist in Users table.`,
-          suggestion: 'Please use a valid numeric user ID.'
+          message: `User with ID ${userId} does not exist.`
         });
       }
+      numericUserId = parseInt(userId);
+      userName = userRecord.user_name;
     }
 
-    // **FIX: Look for user role using user_id (lowercase) and numeric ID**
-    const existingUserRole = await UserRole.findOne({
+    // Try to find existing user role
+    let existingUserRole = await UserRole.findOne({
       where: {
-        user_id: numericUserId, // Use lowercase user_id with numeric ID
+        user_id: numericUserId,
         BU_ID: BU_ID
       },
       transaction
     });
     
+    // If no existing user role, create one with required fields
     if (!existingUserRole) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        message: "User role not found for this user and business unit",
-        details: {
-          user_id: numericUserId,
-          user_name: userRecord?.user_name,
-          BU_ID: BU_ID
-        }
+      console.log('📝 No existing user role found, creating new record...');
+      
+      // Generate SYSUSER_ID
+      const sysUserId = `SYS_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      
+      // Get the primary role from USER_ROLE_IDS (first role)
+      const primaryRoleId = USER_ROLE_IDS[0];
+      const primaryRoleName = ROLE_MAPPING[primaryRoleId]?.ROLE_NM || 'Unknown Role';
+      
+      // ✅ FIX: Use the actual numeric role ID from USER_ROLE_IDS (not a generated string)
+      // This ensures the foreign key constraint is satisfied
+      const roleIdForForeignKey = primaryRoleId;
+      
+      console.log('📋 Creating user role with primary role:', {
+        roleIdForForeignKey,
+        primaryRoleName,
+        USER_ROLE_IDS
       });
+      
+      // Use raw query to insert with the correct role_id from USER_ROLE_IDS
+      const insertResult = await sequelize.query(`
+        INSERT INTO user_roles (
+          role_id,
+          user_id,
+          USER_ID,
+          ROLE_NM,
+          SYSUSER_ID,
+          Business_Unit,
+          BU_ID,
+          USER_ROLE_IDS,
+          ROLE_NMS,
+          EFF_FROM_DT,
+          DEF_ROLE_FG,
+          SUPERVISOR_FG,
+          MULTI_CRNCY_FG,
+          WF_ITEM_ACCESS_LEVEL,
+          REC_ST,
+          VERSION_NO,
+          ROW_TS,
+          CREATE_DT,
+          CREATED_BY,
+          VAULT_ACCESS_LEVEL,
+          DRAWER_ACCESS_LEVEL,
+          TXN_ENQUIRY_ACCESS_LVL,
+          CREDIT_APPL_ACCESS_LEVEL,
+          CUSTOMER_ACCESS_LEVEL,
+          ACCOUNT_ACCESS_LEVEL,
+          REPORT_ACCESS_LEVEL,
+          CUST_POSTING_ACCESS_LEVEL,
+          GL_POSTING_ACCESS_LEVEL,
+          FIXED_ASSET_ACCESS_LEVEL,
+          LOAN_FEE_ACCESS_LEVEL,
+          LOAN_OPERATIONS_ACCESS_LEVEL,
+          PERMISSION_MANAGEMENT_ACCESS_LEVEL,
+          SYSTEM_ADMIN_ACCESS_LEVEL,
+          DASHBOARD_ACCESS_LEVEL
+        ) VALUES (
+          :role_id,
+          :user_id,
+          :USER_ID,
+          :ROLE_NM,
+          :SYSUSER_ID,
+          :Business_Unit,
+          :BU_ID,
+          :USER_ROLE_IDS,
+          :ROLE_NMS,
+          :EFF_FROM_DT,
+          :DEF_ROLE_FG,
+          :SUPERVISOR_FG,
+          :MULTI_CRNCY_FG,
+          :WF_ITEM_ACCESS_LEVEL,
+          :REC_ST,
+          :VERSION_NO,
+          :ROW_TS,
+          :CREATE_DT,
+          :CREATED_BY,
+          :VAULT_ACCESS_LEVEL,
+          :DRAWER_ACCESS_LEVEL,
+          :TXN_ENQUIRY_ACCESS_LVL,
+          :CREDIT_APPL_ACCESS_LEVEL,
+          :CUSTOMER_ACCESS_LEVEL,
+          :ACCOUNT_ACCESS_LEVEL,
+          :REPORT_ACCESS_LEVEL,
+          :CUST_POSTING_ACCESS_LEVEL,
+          :GL_POSTING_ACCESS_LEVEL,
+          :FIXED_ASSET_ACCESS_LEVEL,
+          :LOAN_FEE_ACCESS_LEVEL,
+          :LOAN_OPERATIONS_ACCESS_LEVEL,
+          :PERMISSION_MANAGEMENT_ACCESS_LEVEL,
+          :SYSTEM_ADMIN_ACCESS_LEVEL,
+          :DASHBOARD_ACCESS_LEVEL
+        )
+      `, {
+        replacements: {
+          role_id: roleIdForForeignKey,  // ✅ Use the actual numeric role ID (e.g., 15)
+          user_id: numericUserId,
+          USER_ID: userName,
+          ROLE_NM: primaryRoleName,
+          SYSUSER_ID: sysUserId,
+          Business_Unit: userRecord.main_business_unit || 'Unknown',
+          BU_ID: BU_ID,
+          USER_ROLE_IDS: JSON.stringify(USER_ROLE_IDS),  // Store the array of role IDs
+          ROLE_NMS: JSON.stringify(validatedRoleNames || USER_ROLE_IDS.map(id => ROLE_MAPPING[id]?.ROLE_NM)),
+          EFF_FROM_DT: new Date().toISOString().split('T')[0],
+          DEF_ROLE_FG: 'Y',  // Set as default since it's the primary role
+          SUPERVISOR_FG: 'N',
+          MULTI_CRNCY_FG: 'N',
+          WF_ITEM_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          REC_ST: 'A',
+          VERSION_NO: 1,
+          ROW_TS: new Date(),
+          CREATE_DT: new Date(),
+          CREATED_BY: CREATED_BY || 'System',
+          VAULT_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          DRAWER_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          TXN_ENQUIRY_ACCESS_LVL: '["ALL BUSINESS UNIT"]',
+          CREDIT_APPL_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          CUSTOMER_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          ACCOUNT_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          REPORT_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          CUST_POSTING_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          GL_POSTING_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          FIXED_ASSET_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          LOAN_FEE_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          LOAN_OPERATIONS_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          PERMISSION_MANAGEMENT_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          SYSTEM_ADMIN_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]',
+          DASHBOARD_ACCESS_LEVEL: '["ALL BUSINESS UNIT"]'
+        },
+        transaction,
+        type: sequelize.QueryTypes.INSERT
+      });
+      
+      // Fetch the created record
+      existingUserRole = await UserRole.findOne({
+        where: {
+          user_id: numericUserId,
+          BU_ID: BU_ID
+        },
+        transaction
+      });
+      
+      console.log('✅ Created new user role record:', {
+        role_id: roleIdForForeignKey,
+        user_id: numericUserId,
+        USER_ID: userName,
+        BU_ID: BU_ID,
+        USER_ROLE_IDS: USER_ROLE_IDS
+      });
+    } else {
+      // Existing user role found - just update the role arrays
+      console.log('📝 Existing user role found, updating roles...');
+      
+      const currentRoleIds = JSON.parse(existingUserRole.USER_ROLE_IDS || '[]');
+      const currentRoleNames = JSON.parse(existingUserRole.ROLE_NMS || '[]');
+      
+      const newNormalizedRoleIds = [];
+      const newRoleNames = [];
+     
+      for (const USER_ROLE_ID of USER_ROLE_IDS) {
+        const normalizedRoleId = normalizeRoleId(USER_ROLE_ID);
+        if (!normalizedRoleId) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `Invalid USER_ROLE_ID provided: ${USER_ROLE_ID}`,
+          });
+        }
+
+        const roleData = ROLE_MAPPING[normalizedRoleId];
+        if (!roleData) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `Role ID ${USER_ROLE_ID} not found in ROLE_MAPPING.`,
+          });
+        }
+
+        if (currentRoleIds.includes(normalizedRoleId)) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `User already has role: ${roleData.ROLE_NM}`,
+          });
+        }
+
+        newNormalizedRoleIds.push(normalizedRoleId);
+        const roleName = validatedRoleNames ? validatedRoleNames[USER_ROLE_IDS.indexOf(USER_ROLE_ID)] : roleData.ROLE_NM;
+        newRoleNames.push(roleName);
+      }
+
+      // Update user role
+      const updatedRoleIds = [...currentRoleIds, ...newNormalizedRoleIds];
+      const updatedRoleNames = [...currentRoleNames, ...newRoleNames];
+      
+      // Update the ROLE_NM field to the primary role (first role in the list)
+      const primaryRoleId = updatedRoleIds[0];
+      const primaryRoleName = ROLE_MAPPING[primaryRoleId]?.ROLE_NM || 'Unknown Role';
+      
+      await existingUserRole.update({
+        USER_ROLE_IDS: JSON.stringify(updatedRoleIds),
+        ROLE_NMS: JSON.stringify(updatedRoleNames),
+        ROLE_NM: primaryRoleName,
+        CREATED_BY: CREATED_BY || existingUserRole.CREATED_BY
+      }, { transaction });
     }
 
-    const currentRoleIds = JSON.parse(existingUserRole.USER_ROLE_IDS || '[]');
-    const currentRoleNames = JSON.parse(existingUserRole.ROLE_NMS || '[]');
-    
-    const newNormalizedRoleIds = [];
-    const newRoleNames = [];
-   
-    for (const USER_ROLE_ID of USER_ROLE_IDS) {
-      const normalizedRoleId = normalizeRoleId(USER_ROLE_ID);
-      if (!normalizedRoleId) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `Invalid USER_ROLE_ID provided: ${USER_ROLE_ID}`,
-        });
-      }
-
-      const roleData = ROLE_MAPPING[normalizedRoleId];
-      if (!roleData) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `Role ID ${USER_ROLE_ID} not found in ROLE_MAPPING.`,
-        });
-      }
-
-      if (currentRoleIds.includes(normalizedRoleId)) {
-        await transaction.rollback();
-        return res.status(400).json({
-          success: false,
-          message: `User already has role: ${roleData.ROLE_NM}`,
-        });
-      }
-
-      newNormalizedRoleIds.push(normalizedRoleId);
-      const roleName = validatedRoleNames ? validatedRoleNames[USER_ROLE_IDS.indexOf(USER_ROLE_ID)] : roleData.ROLE_NM;
-      newRoleNames.push(roleName);
-    }
-
-    // Update user role
-    const updatedRoleIds = [...currentRoleIds, ...newNormalizedRoleIds];
-    const updatedRoleNames = [...currentRoleNames, ...newRoleNames];
-    
-    await existingUserRole.update({
-      USER_ROLE_IDS: JSON.stringify(updatedRoleIds),
-      ROLE_NMS: JSON.stringify(updatedRoleNames),
-      CREATED_BY: CREATED_BY || existingUserRole.CREATED_BY
-    }, { transaction });
-
-    // **FIX: Also update BusinessRole entries if they exist**
+    // Create BusinessRole entries
     try {
       const BusinessRole = (await import('../models/BusinessRole.js')).default;
       
-      for (const roleId of newNormalizedRoleIds) {
+      for (const roleId of USER_ROLE_IDS) {
         const roleData = ROLE_MAPPING[roleId.toString()];
         if (roleData) {
-          // Check if BusinessRole already exists for this user and role
           const existingBusinessRole = await BusinessRole.findOne({
             where: {
-              USER_ID: userRecord.user_name || userId,
+              USER_ID: userName,
               ROLE_ID: roleId,
               BU_ID: BU_ID
             },
@@ -1134,11 +1281,10 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
           });
 
           if (!existingBusinessRole) {
-            // Create new BusinessRole entry
             await BusinessRole.create({
               ROLE_NM: roleData.ROLE_NM,
               ROLE_ID: roleId,
-              USER_ID: userRecord.user_name || userId,
+              USER_ID: userName,
               BUSINESS_UNIT: existingUserRole.Business_Unit || 'Unknown',
               BU_ID: BU_ID,
               CREATED_BY: CREATED_BY || existingUserRole.CREATED_BY,
@@ -1149,13 +1295,12 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
               WF_ITEM_ACCESS_LEVEL: ''
             }, { transaction });
             
-            console.log(`✅ Created BusinessRole: ${roleData.ROLE_NM} for user ${userRecord.user_name || userId}`);
+            console.log(`✅ Created BusinessRole: ${roleData.ROLE_NM} for user ${userName}`);
           }
         }
       }
     } catch (businessRoleError) {
       console.error('⚠️ Error creating BusinessRole entries:', businessRoleError.message);
-      // Don't fail the entire operation if BusinessRole creation fails
     }
 
     await transaction.commit();
@@ -1166,45 +1311,16 @@ export const addRolesToUser = asyncHandler(async (req, res) => {
       data: {
         role_id: existingUserRole.role_id,
         user_id: numericUserId,
-        user_name: userRecord.user_name,
+        user_name: userName,
         BU_ID: BU_ID,
-        addedRoles: newRoleNames,
-        addedRoleIds: newNormalizedRoleIds,
-        totalRoles: updatedRoleIds.length,
-        currentRoles: updatedRoleNames,
-        currentRoleIds: updatedRoleIds
+        addedRoles: USER_ROLE_IDS.map(id => ROLE_MAPPING[id]?.ROLE_NM),
+        addedRoleIds: USER_ROLE_IDS,
+        totalRoles: USER_ROLE_IDS.length
       },
     });
   } catch (error) {
     await transaction.rollback();
     console.error("Error adding roles to user:", error);
-    
-    // Enhanced error logging
-    console.error("Error details:", {
-      message: error.message,
-      sql: error.sql,
-      parameters: error.parameters,
-      stack: error.stack
-    });
-    
-    // Provide helpful error messages
-    if (error.message.includes('Unknown column') || error.message.includes('ER_BAD_FIELD_ERROR')) {
-      return res.status(500).json({
-        success: false,
-        message: "Database schema mismatch detected.",
-        error: `Column not found: ${error.message}`,
-        suggestion: "Check if the user_roles table has the 'user_id' column (lowercase)."
-      });
-    }
-    
-    if (error.message.includes('Incorrect integer value')) {
-      return res.status(500).json({
-        success: false,
-        message: "Data type mismatch.",
-        error: "The user_id field expects a numeric value.",
-        suggestion: "Ensure the userId parameter is a valid numeric user ID or username that can be converted to numeric ID."
-      });
-    }
     
     return res.status(500).json({
       success: false,
@@ -1220,7 +1336,7 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
 
   try {
     const { userId } = req.params;
-    const { USER_ROLE_IDS, ROLE_NMS, BU_ID } = req.body;
+    const { USER_ROLE_IDS, ROLE_NMS, BU_ID, CREATED_BY, ADD_ROLE_IDS, ADD_ROLE_NMS } = req.body;
     
     if (!USER_ROLE_IDS || !Array.isArray(USER_ROLE_IDS) || USER_ROLE_IDS.length === 0) {
       await transaction.rollback();
@@ -1258,11 +1374,11 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
       }
     }
 
-    // **FIX: Convert username to numeric ID if needed**
+    // Get user record and convert to numeric ID
     let numericUserId = userId;
     let userRecord = null;
+    let userName = userId;
     
-    // If userId is not numeric, look up the user
     if (userId && isNaN(parseInt(userId))) {
       userRecord = await User.findOne({
         where: { 
@@ -1271,29 +1387,29 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
             { username: userId }
           ]
         },
-        attributes: ['id', 'user_name'],
+        attributes: ['id', 'user_name', 'main_business_unit'],
         transaction
       });
       
       if (userRecord) {
         numericUserId = userRecord.id;
+        userName = userRecord.user_name;
         console.log('🔢 Converted username to numeric ID:', {
           username: userId,
-          numericId: numericUserId
+          numericId: numericUserId,
+          userName: userName
         });
       } else {
         await transaction.rollback();
         return res.status(400).json({
           success: false,
-          message: `User with username '${userId}' does not exist in Users table.`,
-          suggestion: 'Please use a valid username or numeric user ID.'
+          message: `User with username '${userId}' does not exist.`
         });
       }
     } else {
-      // userId is numeric, verify it exists
       userRecord = await User.findOne({
         where: { id: parseInt(userId) },
-        attributes: ['id', 'user_name'],
+        attributes: ['id', 'user_name', 'main_business_unit'],
         transaction
       });
       
@@ -1301,16 +1417,17 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
         await transaction.rollback();
         return res.status(400).json({
           success: false,
-          message: `User with ID ${userId} does not exist in Users table.`,
-          suggestion: 'Please use a valid numeric user ID.'
+          message: `User with ID ${userId} does not exist.`
         });
       }
+      numericUserId = parseInt(userId);
+      userName = userRecord.user_name;
     }
 
-    // **FIX: Use lowercase user_id in the query**
+    // Find existing user role
     const existingUserRole = await UserRole.findOne({
       where: {
-        user_id: numericUserId, // Use lowercase user_id
+        user_id: numericUserId,
         BU_ID: BU_ID
       },
       transaction
@@ -1323,87 +1440,44 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
         message: "User role not found for this user and business unit",
         details: {
           user_id: numericUserId,
-          user_name: userRecord?.user_name,
+          user_name: userName,
           BU_ID: BU_ID
         }
       });
     }
 
-    // ============================================
-    // **FIXED SECTION: Safe JSON parsing with error handling**
-    // ============================================
-    
-    // Helper function to safely parse JSON or handle other formats
+    // Safe parse current data
     const safeParseJSON = (data, defaultValue = []) => {
-      if (data === null || data === undefined || data === '') {
-        return defaultValue;
-      }
-      
-      // If it's already an array, return it
-      if (Array.isArray(data)) {
-        return data;
-      }
-      
-      // If it's a string, try to parse it
+      if (data === null || data === undefined || data === '') return defaultValue;
+      if (Array.isArray(data)) return data;
       if (typeof data === 'string') {
-        // First, try to parse as JSON
         try {
           const parsed = JSON.parse(data);
           return Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
         } catch (jsonError) {
-          console.log(`JSON parse failed for value: "${data}". Trying alternative formats...`);
-          
-          // Try to handle comma-separated strings
           if (data.includes(',')) {
-            const items = data.split(',')
-              .map(item => item.trim())
-              .filter(item => item !== '');
-            
-            // Try to convert to numbers if possible
-            return items.map(item => {
-              const num = Number(item);
-              return isNaN(num) ? item : num;
+            return data.split(',').map(item => {
+              const num = Number(item.trim());
+              return isNaN(num) ? item.trim() : num;
             });
           }
-          
-          // If it's a single value, wrap it in an array
           const trimmed = data.trim();
           if (trimmed !== '') {
             const num = Number(trimmed);
             return [isNaN(num) ? trimmed : num];
           }
-          
           return defaultValue;
         }
       }
-      
-      // If it's a number or other type, wrap in array
       return [data];
     };
 
-    // Debug logging
-    console.log('Database USER_ROLE_IDS raw value:', existingUserRole.USER_ROLE_IDS);
-    console.log('Type of USER_ROLE_IDS:', typeof existingUserRole.USER_ROLE_IDS);
-    
-    // Parse current data safely
     let currentUserRoleIds = safeParseJSON(existingUserRole.USER_ROLE_IDS);
     let currentRoleNms = safeParseJSON(existingUserRole.ROLE_NMS);
-    
-    // Double-check they are arrays
-    if (!Array.isArray(currentUserRoleIds)) {
-      console.warn('USER_ROLE_IDS is not an array after parsing, converting:', currentUserRoleIds);
-      currentUserRoleIds = currentUserRoleIds ? [currentUserRoleIds] : [];
-    }
-    
-    if (!Array.isArray(currentRoleNms)) {
-      console.warn('ROLE_NMS is not an array after parsing, converting:', currentRoleNms);
-      currentRoleNms = currentRoleNms ? [currentRoleNms] : [];
-    }
-    
-    // Debug: Log parsed values
-    console.log('Parsed currentUserRoleIds:', currentUserRoleIds, 'Length:', currentUserRoleIds.length);
-    console.log('Parsed currentRoleNms:', currentRoleNms, 'Length:', currentRoleNms.length);
-    
+
+    if (!Array.isArray(currentUserRoleIds)) currentUserRoleIds = currentUserRoleIds ? [currentUserRoleIds] : [];
+    if (!Array.isArray(currentRoleNms)) currentRoleNms = currentRoleNms ? [currentRoleNms] : [];
+
     // Normalize roles to remove
     const rolesToRemove = USER_ROLE_IDS.map(roleId => Number(normalizeRoleId(roleId))).filter(id => !isNaN(id));
     
@@ -1415,130 +1489,140 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // ============================================
-    // **FIXED: Ensure we have valid arrays before filtering**
-    // ============================================
-    
-    // Additional safety check before filter
-    if (!Array.isArray(currentUserRoleIds)) {
-      console.error('CRITICAL: currentUserRoleIds is not an array! Value:', currentUserRoleIds);
-      await transaction.rollback();
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error: Invalid data format",
-        error: "USER_ROLE_IDS data is corrupted",
-        suggestion: "Check the database for invalid USER_ROLE_IDS values"
-      });
-    }
-
     // Filter out roles to remove
-    const remainingRoles = currentUserRoleIds.filter(
+    let remainingRoles = currentUserRoleIds.filter(
       roleId => !rolesToRemove.includes(Number(roleId))
     );
 
-    if (remainingRoles.length === 0) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Cannot remove all roles from user. User must have at least one role.",
-      });
+    // Handle adding new roles if provided
+    let rolesToAdd = [];
+    let rolesToAddNames = [];
+    
+    if (ADD_ROLE_IDS && Array.isArray(ADD_ROLE_IDS) && ADD_ROLE_IDS.length > 0) {
+      for (const roleId of ADD_ROLE_IDS) {
+        const normalizedRoleId = normalizeRoleId(roleId);
+        const roleData = ROLE_MAPPING[normalizedRoleId];
+        if (roleData && !remainingRoles.includes(normalizedRoleId)) {
+          rolesToAdd.push(normalizedRoleId);
+          const roleName = ADD_ROLE_NMS && ADD_ROLE_NMS[ADD_ROLE_IDS.indexOf(roleId)] 
+            ? ADD_ROLE_NMS[ADD_ROLE_IDS.indexOf(roleId)] 
+            : roleData.ROLE_NM;
+          rolesToAddNames.push(roleName);
+        }
+      }
+      
+      // Add new roles to remaining roles
+      remainingRoles = [...remainingRoles, ...rolesToAdd];
     }
 
-    // Filter role names - with additional safety
-    const remainingRoleNames = currentUserRoleIds
-      .map((roleId, index) => {
-        try {
-          const numRoleId = Number(roleId);
-          if (!rolesToRemove.includes(numRoleId)) {
-            return currentRoleNms[index] || null;
-          }
-          return null;
-        } catch (error) {
-          console.error(`Error processing role at index ${index}:`, error);
-          return null;
-        }
-      })
-      .filter(name => name !== null && name !== undefined);
+    // Check if user would have no roles after removal
+    if (remainingRoles.length === 0) {
+      // If no roles remaining and no new roles to add, prevent removal
+      if (rolesToAdd.length === 0) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Cannot remove all roles from user. User must have at least one role.",
+          suggestion: "Provide ADD_ROLE_IDS to add new roles while removing existing ones"
+        });
+      }
+    }
+
+    // Filter role names for remaining roles
+    const remainingRoleNames = remainingRoles.map(roleId => {
+      const roleData = ROLE_MAPPING[roleId];
+      return roleData?.ROLE_NM || 'Unknown Role';
+    });
 
     // Get removed role names
     const removedRoleNames = ROLE_NMS && Array.isArray(ROLE_NMS) 
       ? rolesToRemove.map((roleId, index) => ROLE_NMS[USER_ROLE_IDS.indexOf(roleId)])
       : rolesToRemove.map(roleId => ROLE_MAPPING[roleId]?.ROLE_NM || 'Unknown Role');
 
-    // ============================================
-    // **FIX: Handle ROLE_NM field properly**
-    // ============================================
-    
-    // Check database column length for ROLE_NM
-    // Common column lengths: VARCHAR(50), VARCHAR(100), VARCHAR(255)
-    // Get the first remaining role name (truncate if necessary)
-    let newRoleNm = null;
-    if (remainingRoleNames.length > 0) {
-      // Get the first role name
-      const firstRoleName = remainingRoleNames[0];
-      
-      // If ROLE_NM column is limited (e.g., VARCHAR(50)), truncate it
-      // Check your database schema for the actual length
-      const MAX_ROLE_NM_LENGTH = 50; // Adjust based on your schema
-      
-      if (firstRoleName && firstRoleName.length > MAX_ROLE_NM_LENGTH) {
-        console.warn(`Role name "${firstRoleName}" exceeds ${MAX_ROLE_NM_LENGTH} characters, truncating...`);
-        newRoleNm = firstRoleName.substring(0, MAX_ROLE_NM_LENGTH);
-      } else {
-        newRoleNm = firstRoleName;
-      }
-    }
-    
-    // Alternative: If ROLE_NM should store all remaining roles concatenated
-    // const newRoleNm = remainingRoleNames.length > 0 
-    //   ? remainingRoleNames.join(', ').substring(0, 50) // Truncate to 50 chars
-    //   : null;
+    // Update the primary role name (first role in the list)
+    const newRoleNm = remainingRoles.length > 0 
+      ? (ROLE_MAPPING[remainingRoles[0]]?.ROLE_NM || 'Unknown Role')
+      : null;
 
     // Update user role
     await existingUserRole.update({
       USER_ROLE_IDS: JSON.stringify(remainingRoles),
       ROLE_NMS: JSON.stringify(remainingRoleNames),
-      ROLE_NM: newRoleNm, // This might be causing the "data too long" error
+      ROLE_NM: newRoleNm,
+      CREATED_BY: CREATED_BY || existingUserRole.CREATED_BY,
       ROW_TS: new Date()
     }, { transaction });
 
-    // **FIX: Also remove BusinessRole entries if they exist**
+    // Handle BusinessRole entries
     try {
       const BusinessRole = (await import('../models/BusinessRole.js')).default;
       
+      // Remove BusinessRole entries for removed roles
       for (const roleId of rolesToRemove) {
         const roleData = ROLE_MAPPING[roleId.toString()];
         if (roleData) {
-          // Delete BusinessRole entry for this user and role
           await BusinessRole.destroy({
             where: {
-              USER_ID: userRecord.user_name || userId,
+              USER_ID: userName,
               ROLE_ID: roleId,
               BU_ID: BU_ID
             },
             transaction
           });
-          
-          console.log(`🗑️ Removed BusinessRole: ${roleData.ROLE_NM} for user ${userRecord.user_name || userId}`);
+          console.log(`🗑️ Removed BusinessRole: ${roleData.ROLE_NM} for user ${userName}`);
+        }
+      }
+      
+      // Add BusinessRole entries for new roles
+      for (const roleId of rolesToAdd) {
+        const roleData = ROLE_MAPPING[roleId.toString()];
+        if (roleData) {
+          const existingBusinessRole = await BusinessRole.findOne({
+            where: {
+              USER_ID: userName,
+              ROLE_ID: roleId,
+              BU_ID: BU_ID
+            },
+            transaction
+          });
+
+          if (!existingBusinessRole) {
+            await BusinessRole.create({
+              ROLE_NM: roleData.ROLE_NM,
+              ROLE_ID: roleId,
+              USER_ID: userName,
+              BUSINESS_UNIT: existingUserRole.Business_Unit || 'Unknown',
+              BU_ID: BU_ID,
+              CREATED_BY: CREATED_BY || existingUserRole.CREATED_BY,
+              CREATED_BY_ROLE: CREATED_BY || existingUserRole.CREATED_BY,
+              SUPERVISOR_FG: existingUserRole.SUPERVISOR_FG || 'N',
+              ALLOW_TXN_POSTING_FG: 'N',
+              REC_ST: existingUserRole.REC_ST === 'A' ? 'Active' : 'Deactivated',
+              WF_ITEM_ACCESS_LEVEL: ''
+            }, { transaction });
+            
+            console.log(`✅ Created BusinessRole: ${roleData.ROLE_NM} for user ${userName}`);
+          }
         }
       }
     } catch (businessRoleError) {
-      console.error('⚠️ Error removing BusinessRole entries:', businessRoleError.message);
-      // Don't fail the entire operation if BusinessRole deletion fails
+      console.error('⚠️ Error managing BusinessRole entries:', businessRoleError.message);
     }
 
     await transaction.commit();
 
     return res.status(200).json({
       success: true,
-      message: "Roles removed successfully from user.",
+      message: rolesToAdd.length > 0 ? "Roles updated successfully (removed and added)." : "Roles removed successfully from user.",
       data: {
         role_id: existingUserRole.role_id,
         user_id: numericUserId,
-        user_name: userRecord.user_name,
+        user_name: userName,
         BU_ID: BU_ID,
         removedRoles: removedRoleNames,
         removedRoleIds: rolesToRemove,
+        addedRoles: rolesToAddNames,
+        addedRoleIds: rolesToAdd,
         remainingRoles: remainingRoleNames,
         remainingRoleIds: remainingRoles,
         newPrimaryRole: newRoleNm
@@ -1547,63 +1631,6 @@ export const removeRolesFromUser = asyncHandler(async (req, res) => {
   } catch (error) {
     await transaction.rollback();
     console.error("Error removing roles from user:", error);
-    
-    // Enhanced error logging
-    console.error("Error details:", {
-      message: error.message,
-      sql: error.sql,
-      parameters: error.parameters,
-      stack: error.stack
-    });
-    
-    // Provide helpful error messages
-    if (error.message.includes('Unknown column') || error.message.includes('ER_BAD_FIELD_ERROR')) {
-      return res.status(500).json({
-        success: false,
-        message: "Database schema mismatch detected.",
-        error: `Column not found: ${error.message}`,
-        suggestion: "Check if the user_roles table has the 'user_id' column (lowercase)."
-      });
-    }
-    
-    if (error.message.includes('Incorrect integer value')) {
-      return res.status(500).json({
-        success: false,
-        message: "Data type mismatch.",
-        error: "The user_id field expects a numeric value.",
-        suggestion: "Ensure the userId parameter is a valid numeric user ID or username that can be converted to numeric ID."
-      });
-    }
-    
-    // Handle the specific "data too long" error
-    if (error.message.includes('Data too long for column') && error.message.includes('ROLE_NM')) {
-      return res.status(500).json({
-        success: false,
-        message: "Database column length exceeded",
-        error: "The ROLE_NM value is too long for the database column",
-        suggestion: "Check the database schema for ROLE_NM column length and adjust accordingly"
-      });
-    }
-    
-    // Handle JSON parse errors specifically
-    if (error.message.includes('JSON.parse') || error.message.includes('Unexpected token')) {
-      return res.status(500).json({
-        success: false,
-        message: "Data format error",
-        error: "Invalid JSON data in database",
-        suggestion: "Check USER_ROLE_IDS and ROLE_NMS fields for valid JSON arrays"
-      });
-    }
-    
-    // Handle the specific filter error
-    if (error.message.includes('currentUserRoleIds.filter') || error.message.includes('filter is not a function')) {
-      return res.status(500).json({
-        success: false,
-        message: "Data processing error",
-        error: "Invalid role data format",
-        suggestion: "The USER_ROLE_IDS field contains invalid data. Contact administrator."
-      });
-    }
     
     return res.status(500).json({
       success: false,

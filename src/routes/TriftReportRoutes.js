@@ -15,5 +15,6 @@ router.get('/reports/summary', ThriftReportController.getThriftSummaryStatistics
 
 // Report Generation & Download
 router.get('/reports/generate', ThriftReportController.generateThriftAccountsReport);
+router.get('/reports/generate', ThriftReportController.generateReport);
 
 export default router;

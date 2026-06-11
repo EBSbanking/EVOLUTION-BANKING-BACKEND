@@ -3,586 +3,335 @@ import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class DepositAccountInterestOption extends Model {
-  // Static method: Find options by deposit account ID
   static async findByDepositAccountId(depositAccountId) {
     return this.findAll({
-      where: { DEPOSIT_ACCT_ID: depositAccountId },
-      order: [['CREATE_DT', 'DESC']]
+      where: { depositAcctId: depositAccountId },
+      order: [['createDate', 'DESC']]
     });
   }
 
-  // Static method: Find active options by deposit account ID
   static async findActiveByDepositAccountId(depositAccountId) {
     return this.findAll({
-      where: { 
-        DEPOSIT_ACCT_ID: depositAccountId,
-        REC_ST: 'A'
-      },
-      order: [['CREATE_DT', 'DESC']]
+      where: { depositAcctId: depositAccountId, recStatus: 'A' },
+      order: [['createDate', 'DESC']]
     });
   }
 
-  // Static method: Find by settlement account IDs
   static async findBySettlementAccounts(crAccountId, drAccountId) {
     return this.findAll({
       where: {
-        CR_SETLMNT_ACCT_ID: crAccountId,
-        DR_SETLMNT_ACCT_ID: drAccountId,
-        REC_ST: 'A'
+        crSettlementAcctId: crAccountId,
+        drSettlementAcctId: drAccountId,
+        recStatus: 'A'
       }
     });
   }
 
-  // Static method: Find by created user
   static async findByCreatedBy(createdBy) {
     return this.findAll({
-      where: { CREATED_BY: createdBy },
-      order: [['CREATE_DT', 'DESC']]
+      where: { createdBy: createdBy },
+      order: [['createDate', 'DESC']]
     });
   }
 
-  // Static method: Get options summary
   static async getOptionsSummary(depositAccountId = null) {
-    const whereClause = depositAccountId ? { DEPOSIT_ACCT_ID: depositAccountId } : {};
-    
+    const whereClause = depositAccountId ? { depositAcctId: depositAccountId } : {};
     const options = await this.findAll({
       where: whereClause,
-      order: [['DEPOSIT_ACCT_ID', 'ASC'], ['CREATE_DT', 'DESC']]
+      order: [['depositAcctId', 'ASC'], ['createDate', 'DESC']]
     });
 
     const summary = {
       totalOptions: options.length,
-      activeOptions: options.filter(o => o.REC_ST === 'A').length,
-      inactiveOptions: options.filter(o => o.REC_ST === 'I').length,
+      activeOptions: options.filter(o => o.recStatus === 'A').length,
+      inactiveOptions: options.filter(o => o.recStatus === 'I').length,
       bySettlementType: {
-        credit: options.filter(o => o.CR_SETLMNT_OPTION_CD).length,
-        debit: options.filter(o => o.DR_SETLMNT_OPTION_CD).length,
-        charge: options.filter(o => o.CHRG_SETLMNT_OPTN_CD).length
+        credit: options.filter(o => o.crSettlementOptionCode).length,
+        debit: options.filter(o => o.drSettlementOptionCode).length,
+        charge: options.filter(o => o.chargeSettlementOptionCode).length
       },
       byDepositAccount: {}
     };
 
-    // Group by deposit account
     options.forEach(option => {
-      const accountId = option.DEPOSIT_ACCT_ID;
+      const accountId = option.depositAcctId;
       if (!summary.byDepositAccount[accountId]) {
         summary.byDepositAccount[accountId] = {
-          total: 0,
-          active: 0,
-          creditOptions: 0,
-          debitOptions: 0,
-          chargeOptions: 0
+          total: 0, active: 0,
+          creditOptions: 0, debitOptions: 0, chargeOptions: 0
         };
       }
-      
       summary.byDepositAccount[accountId].total++;
-      if (option.REC_ST === 'A') summary.byDepositAccount[accountId].active++;
-      if (option.CR_SETLMNT_OPTION_CD) summary.byDepositAccount[accountId].creditOptions++;
-      if (option.DR_SETLMNT_OPTION_CD) summary.byDepositAccount[accountId].debitOptions++;
-      if (option.CHRG_SETLMNT_OPTN_CD) summary.byDepositAccount[accountId].chargeOptions++;
+      if (option.recStatus === 'A') summary.byDepositAccount[accountId].active++;
+      if (option.crSettlementOptionCode) summary.byDepositAccount[accountId].creditOptions++;
+      if (option.drSettlementOptionCode) summary.byDepositAccount[accountId].debitOptions++;
+      if (option.chargeSettlementOptionCode) summary.byDepositAccount[accountId].chargeOptions++;
     });
-
     return summary;
   }
 
-  // Static method: Validate settlement options
   static async validateSettlementOptions(depositAccountId, options) {
     const errors = [];
-    
-    // Check if account already has active options
     const existingOptions = await this.findActiveByDepositAccountId(depositAccountId);
-    
-    if (existingOptions.length > 0 && options.REC_ST === 'A') {
-      // Check for duplicate active options
-      const duplicate = existingOptions.find(opt => 
-        opt.CR_SETLMNT_ACCT_ID === options.CR_SETLMNT_ACCT_ID &&
-        opt.DR_SETLMNT_ACCT_ID === options.DR_SETLMNT_ACCT_ID &&
-        opt.CHRG_SETLMNT_ACCT_ID === options.CHRG_SETLMNT_ACCT_ID
+    if (existingOptions.length > 0 && options.recStatus === 'A') {
+      const duplicate = existingOptions.find(opt =>
+        opt.crSettlementAcctId === options.crSettlementAcctId &&
+        opt.drSettlementAcctId === options.drSettlementAcctId &&
+        opt.chargeSettlementAcctId === options.chargeSettlementAcctId
       );
-      
-      if (duplicate) {
-        errors.push('Duplicate active settlement options already exist for this account');
-      }
+      if (duplicate) errors.push('Duplicate active settlement options already exist for this account');
     }
-
-    // Validate required fields based on option codes
-    if (options.CR_SETLMNT_OPTION_CD && !options.CR_SETLMNT_ACCT_ID) {
+    if (options.crSettlementOptionCode && !options.crSettlementAcctId)
       errors.push('Credit settlement account ID is required when credit settlement option is provided');
-    }
-
-    if (options.DR_SETLMNT_OPTION_CD && !options.DR_SETLMNT_ACCT_ID) {
+    if (options.drSettlementOptionCode && !options.drSettlementAcctId)
       errors.push('Debit settlement account ID is required when debit settlement option is provided');
-    }
-
-    if (options.CHRG_SETLMNT_OPTN_CD && !options.CHRG_SETLMNT_ACCT_ID) {
+    if (options.chargeSettlementOptionCode && !options.chargeSettlementAcctId)
       errors.push('Charge settlement account ID is required when charge settlement option is provided');
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors: errors
-    };
+    return { isValid: errors.length === 0, errors };
   }
 
-  // Instance method: Get option details
   getOptionDetails() {
     return {
       optionId: this.id,
-      depositAccountId: this.DEPOSIT_ACCT_ID,
+      depositAccountId: this.depositAcctId,
       creditSettlement: {
-        accountId: this.CR_SETLMNT_ACCT_ID,
-        optionCode: this.CR_SETLMNT_OPTION_CD,
-        accountNumber: this.CR_SETLMNT_ACCT_NO,
-        customerName: this.CR_SETLMNT_CUST_NM,
-        bicId: this.CR_SETLMNT_BIC_ID
+        accountId: this.crSettlementAcctId,
+        optionCode: this.crSettlementOptionCode,
+        accountNumber: this.crSettlementAccountNumber,
+        customerName: this.crSettlementCustomerName,
+        bicId: this.crSettlementBicId
       },
       debitSettlement: {
-        accountId: this.DR_SETLMNT_ACCT_ID,
-        optionCode: this.DR_SETLMNT_OPTION_CD,
-        accountNumber: this.DR_SETLMNT_ACCT_NO,
-        customerName: this.DR_SETLMNT_CUST_NM,
-        bicId: this.DR_SETLMNT_BIC_ID
+        accountId: this.drSettlementAcctId,
+        optionCode: this.drSettlementOptionCode,
+        accountNumber: this.drSettlementAccountNumber,
+        customerName: this.drSettlementCustomerName,
+        bicId: this.drSettlementBicId
       },
       chargeSettlement: {
-        accountId: this.CHRG_SETLMNT_ACCT_ID,
-        optionCode: this.CHRG_SETLMNT_OPTN_CD,
-        accountNumber: this.CHRG_SETLMNT_ACCT_NO,
-        customerName: this.CHRG_SETLMNT_CUST_NM,
-        bicId: this.CHRG_SETLMNT_BIC_ID
+        accountId: this.chargeSettlementAcctId,
+        optionCode: this.chargeSettlementOptionCode,
+        accountNumber: this.chargeSettlementAccountNumber,
+        customerName: this.chargeSettlementCustomerName,
+        bicId: this.chargeSettlementBicId
       },
-      status: this.REC_ST,
-      version: this.VERSION_NO,
-      createdBy: this.CREATED_BY,
-      createdDate: this.CREATE_DT,
-      userId: this.USER_ID,
-      systemCreateTimestamp: this.SYS_CREATE_TS,
-      rowTimestamp: this.ROW_TS
+      status: this.recStatus,
+      version: this.versionNo,
+      createdBy: this.createdBy,
+      createdDate: this.createDate,
+      userId: this.userId,
+      systemCreateTimestamp: this.systemCreateTimestamp,
+      rowTimestamp: this.rowTimestamp
     };
   }
 
-  // Instance method: Check if option is active
-  isActive() {
-    return this.REC_ST === 'A';
-  }
+  isActive() { return this.recStatus === 'A'; }
+  hasCreditSettlement() { return !!this.crSettlementOptionCode; }
+  hasDebitSettlement() { return !!this.drSettlementOptionCode; }
+  hasChargeSettlement() { return !!this.chargeSettlementOptionCode; }
 
-  // Instance method: Check if has credit settlement
-  hasCreditSettlement() {
-    return !!this.CR_SETLMNT_OPTION_CD;
-  }
-
-  // Instance method: Check if has debit settlement
-  hasDebitSettlement() {
-    return !!this.DR_SETLMNT_OPTION_CD;
-  }
-
-  // Instance method: Check if has charge settlement
-  hasChargeSettlement() {
-    return !!this.CHRG_SETLMNT_OPTN_CD;
-  }
-
-  // Virtual getter: Settlement summary
   get settlementSummary() {
     const settlements = [];
-    
     if (this.hasCreditSettlement()) {
       settlements.push({
         type: 'Credit',
-        account: this.CR_SETLMNT_ACCT_NO,
-        customer: this.CR_SETLMNT_CUST_NM,
-        option: this.CR_SETLMNT_OPTION_CD
+        account: this.crSettlementAccountNumber,
+        customer: this.crSettlementCustomerName,
+        option: this.crSettlementOptionCode
       });
     }
-    
     if (this.hasDebitSettlement()) {
       settlements.push({
         type: 'Debit',
-        account: this.DR_SETLMNT_ACCT_NO,
-        customer: this.DR_SETLMNT_CUST_NM,
-        option: this.DR_SETLMNT_OPTION_CD
+        account: this.drSettlementAccountNumber,
+        customer: this.drSettlementCustomerName,
+        option: this.drSettlementOptionCode
       });
     }
-    
     if (this.hasChargeSettlement()) {
       settlements.push({
         type: 'Charge',
-        account: this.CHRG_SETLMNT_ACCT_NO,
-        customer: this.CHRG_SETLMNT_CUST_NM,
-        option: this.CHRG_SETLMNT_OPTN_CD
+        account: this.chargeSettlementAccountNumber,
+        customer: this.chargeSettlementCustomerName,
+        option: this.chargeSettlementOptionCode
       });
     }
-    
     return settlements;
   }
 
-  // Virtual getter: Formatted creation date
-  get formattedCreateDate() {
-    return this.CREATE_DT.toLocaleDateString();
-  }
-
-  // Virtual getter: Is complete setup?
-  get isCompleteSetup() {
-    return this.hasCreditSettlement() && this.hasDebitSettlement();
-  }
+  get formattedCreateDate() { return this.createDate.toLocaleDateString(); }
+  get isCompleteSetup() { return this.hasCreditSettlement() && this.hasDebitSettlement(); }
 }
 
 DepositAccountInterestOption.init({
-  // Primary key
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
-    autoIncrement: true,
-    field: 'id' // Explicit field name
+    autoIncrement: true
   },
-
-  // Foreign key - FIXED: Added field mapping
-  DEPOSIT_ACCT_ID: {
+  depositAcctId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Deposit account identifier',
-    field: 'd_e_p_o_s_i_t__a_c_c_t__i_d' // Map to actual column name
+    comment: 'Deposit account identifier'
   },
-
-  // Credit settlement fields - FIXED: Added field mappings
-  DR_SETLMNT_ACCT_ID: {
+  drSettlementAcctId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Debit settlement account identifier',
-    field: 'd_r__s_e_t_l_m_n_t__a_c_c_t__i_d'
+    comment: 'Debit settlement account identifier'
   },
-
-  CR_SETLMNT_ACCT_ID: {
+  crSettlementAcctId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Credit settlement account identifier',
-    field: 'c_r__s_e_t_l_m_n_t__a_c_c_t__i_d'
+    comment: 'Credit settlement account identifier'
   },
-
-  CR_SETLMNT_OPTION_CD: {
+  crSettlementOptionCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    comment: 'Credit settlement option code',
-    field: 'c_r__s_e_t_l_m_n_t__o_p_t_i_o_n__c_d'
+    comment: 'Credit settlement option code'
   },
-
-  DR_SETLMNT_OPTION_CD: {
+  drSettlementOptionCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    comment: 'Debit settlement option code',
-    field: 'd_r__s_e_t_l_m_n_t__o_p_t_i_o_n__c_d'
+    comment: 'Debit settlement option code'
   },
-
-  CR_SETLMNT_ACCT_NO: {
+  crSettlementAccountNumber: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Credit settlement account number',
-    field: 'c_r__s_e_t_l_m_n_t__a_c_c_t__n_o'
+    comment: 'Credit settlement account number'
   },
-
-  DR_SETLMNT_ACCT_NO: {
+  drSettlementAccountNumber: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Debit settlement account number',
-    field: 'd_r__s_e_t_l_m_n_t__a_c_c_t__n_o'
+    comment: 'Debit settlement account number'
   },
-
-  CR_SETLMNT_CUST_NM: {
+  crSettlementCustomerName: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    comment: 'Credit settlement customer name',
-    field: 'c_r__s_e_t_l_m_n_t__c_u_s_t__n_m'
+    comment: 'Credit settlement customer name'
   },
-
-  DR_SETLMNT_CUST_NM: {
+  drSettlementCustomerName: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    comment: 'Debit settlement customer name',
-    field: 'd_r__s_e_t_l_m_n_t__c_u_s_t__n_m'
+    comment: 'Debit settlement customer name'
   },
-
-  CR_SETLMNT_BIC_ID: {
+  crSettlementBicId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Credit settlement BIC identifier',
-    field: 'c_r__s_e_t_l_m_n_t__b_i_c__i_d'
+    comment: 'Credit settlement BIC identifier'
   },
-
-  DR_SETLMNT_BIC_ID: {
+  drSettlementBicId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Debit settlement BIC identifier',
-    field: 'd_r__s_e_t_l_m_n_t__b_i_c__i_d'
+    comment: 'Debit settlement BIC identifier'
   },
-
-  // Metadata fields - FIXED: Added field mappings
-  CREATED_BY: {
+  createdBy: {
     type: DataTypes.STRING(24),
     allowNull: false,
-    comment: 'Created by user',
-    field: 'c_r_e_a_t_e_d__b_y'
+    comment: 'Created by user'
   },
-
-  CREATE_DT: {
+  createDate: {
     type: DataTypes.DATE,
     allowNull: false,
-    comment: 'Create date',
-    field: 'c_r_e_a_t_e__d_t'
+    comment: 'Create date'
   },
-
-  REC_ST: {
+  recStatus: {
     type: DataTypes.STRING(1),
     allowNull: false,
     defaultValue: 'A',
-    validate: {
-      isIn: [['A', 'I']] // A=Active, I=Inactive
-    },
-    comment: 'Record status',
-    field: 'r_e_c__s_t'
+    validate: { isIn: [['A', 'I']] },
+    comment: 'Record status (A=Active, I=Inactive)'
   },
-
-  ROW_TS: {
+  rowTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
-    comment: 'Row timestamp',
-    field: 'r_o_w__t_s'
+    comment: 'Row timestamp'
   },
-
-  USER_ID: {
+  userId: {
     type: DataTypes.STRING(24),
     allowNull: false,
-    comment: 'User identifier',
-    field: 'u_s_e_r__i_d'
+    comment: 'User identifier'
   },
-
-  VERSION_NO: {
+  versionNo: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 1,
-    comment: 'Version number',
-    field: 'v_e_r_s_i_o_n__n_o'
+    comment: 'Version number'
   },
-
-  SYS_CREATE_TS: {
+  systemCreateTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
-    comment: 'System create timestamp',
-    field: 's_y_s__c_r_e_a_t_e__t_s'
+    comment: 'System create timestamp'
   },
-
-  // Charge settlement fields - FIXED: Added field mappings
-  CHRG_SETLMNT_ACCT_ID: {
+  chargeSettlementAcctId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Charge settlement account identifier',
-    field: 'c_h_r_g__s_e_t_l_m_n_t__a_c_c_t__i_d'
+    comment: 'Charge settlement account identifier'
   },
-
-  CHRG_SETLMNT_OPTN_CD: {
+  chargeSettlementOptionCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    comment: 'Charge settlement option code',
-    field: 'c_h_r_g__s_e_t_l_m_n_t__o_p_t_n__c_d'
+    comment: 'Charge settlement option code'
   },
-
-  CHRG_SETLMNT_ACCT_NO: {
+  chargeSettlementAccountNumber: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Charge settlement account number',
-    field: 'c_h_r_g__s_e_t_l_m_n_t__a_c_c_t__n_o'
+    comment: 'Charge settlement account number'
   },
-
-  CHRG_SETLMNT_CUST_NM: {
+  chargeSettlementCustomerName: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    comment: 'Charge settlement customer name',
-    field: 'c_h_r_g__s_e_t_l_m_n_t__c_u_s_t__n_m'
+    comment: 'Charge settlement customer name'
   },
-
-  CHRG_SETLMNT_BIC_ID: {
+  chargeSettlementBicId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Charge settlement BIC identifier',
-    field: 'c_h_r_g__s_e_t_l_m_n_t__b_i_c__i_d'
-  },
-
-  // Sequelize timestamps
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW,
-    field: 'updated_at'
-  },
-
-  createdAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW,
-    field: 'created_at'
+    comment: 'Charge settlement BIC identifier'
   }
 }, {
   sequelize,
   modelName: 'DepositAccountInterestOption',
   tableName: 'deposit_account_interest_option',
   timestamps: true,
-  underscored: false, // Disable automatic underscore transformation
-  freezeTableName: true, // Prevent table name pluralization
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+ 
   hooks: {
     beforeValidate: (option) => {
-      // Ensure uppercase for status
-      if (option.REC_ST) {
-        option.REC_ST = option.REC_ST.toUpperCase();
-      }
-      
-      // Trim string fields
-      if (option.CR_SETLMNT_CUST_NM) option.CR_SETLMNT_CUST_NM = option.CR_SETLMNT_CUST_NM.trim();
-      if (option.DR_SETLMNT_CUST_NM) option.DR_SETLMNT_CUST_NM = option.DR_SETLMNT_CUST_NM.trim();
-      if (option.CHRG_SETLMNT_CUST_NM) option.CHRG_SETLMNT_CUST_NM = option.CHRG_SETLMNT_CUST_NM.trim();
-      if (option.CR_SETLMNT_ACCT_NO) option.CR_SETLMNT_ACCT_NO = option.CR_SETLMNT_ACCT_NO.trim();
-      if (option.DR_SETLMNT_ACCT_NO) option.DR_SETLMNT_ACCT_NO = option.DR_SETLMNT_ACCT_NO.trim();
-      if (option.CHRG_SETLMNT_ACCT_NO) option.CHRG_SETLMNT_ACCT_NO = option.CHRG_SETLMNT_ACCT_NO.trim();
+      if (option.recStatus) option.recStatus = option.recStatus.toUpperCase();
+      if (option.crSettlementCustomerName) option.crSettlementCustomerName = option.crSettlementCustomerName.trim();
+      if (option.drSettlementCustomerName) option.drSettlementCustomerName = option.drSettlementCustomerName.trim();
+      if (option.chargeSettlementCustomerName) option.chargeSettlementCustomerName = option.chargeSettlementCustomerName.trim();
+      if (option.crSettlementAccountNumber) option.crSettlementAccountNumber = option.crSettlementAccountNumber.trim();
+      if (option.drSettlementAccountNumber) option.drSettlementAccountNumber = option.drSettlementAccountNumber.trim();
+      if (option.chargeSettlementAccountNumber) option.chargeSettlementAccountNumber = option.chargeSettlementAccountNumber.trim();
     },
-    
     beforeCreate: async (option) => {
-      // Set timestamps if not provided
       const now = new Date();
-      if (!option.CREATE_DT) option.CREATE_DT = now;
-      if (!option.SYS_CREATE_TS) option.SYS_CREATE_TS = now;
-      if (!option.ROW_TS) option.ROW_TS = now;
-      
-      // Validate settlement options
-      const validation = await DepositAccountInterestOption.validateSettlementOptions(
-        option.DEPOSIT_ACCT_ID,
-        option
-      );
-      
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join(', '));
-      }
+      if (!option.createDate) option.createDate = now;
+      if (!option.systemCreateTimestamp) option.systemCreateTimestamp = now;
+      if (!option.rowTimestamp) option.rowTimestamp = now;
+      const validation = await DepositAccountInterestOption.validateSettlementOptions(option.depositAcctId, option);
+      if (!validation.isValid) throw new Error(validation.errors.join(', '));
     },
-    
     beforeUpdate: (option) => {
-      // Update row timestamp
-      option.ROW_TS = new Date();
-      
-      // Increment version number on update
-      if (option.changed() && !option.changed('VERSION_NO')) {
-        option.VERSION_NO = (option.VERSION_NO || 0) + 1;
+      option.rowTimestamp = new Date();
+      if (option.changed() && !option.changed('versionNo')) {
+        option.versionNo = (option.versionNo || 0) + 1;
       }
     }
   },
-  indexes: [
-    // Primary index
-    { 
-      fields: ['id'],
-      name: 'deposit_acct_int_opt_pk' // Shorter index name
-    },
-    
-    // Foreign key indexes - FIXED: Shorter index names
-    { 
-      fields: ['DEPOSIT_ACCT_ID'],
-      name: 'idx_dep_acct_id'
-    },
-    { 
-      fields: ['CR_SETLMNT_ACCT_ID'],
-      name: 'idx_cr_settle_acct'
-    },
-    { 
-      fields: ['DR_SETLMNT_ACCT_ID'],
-      name: 'idx_dr_settle_acct'
-    },
-    { 
-      fields: ['CHRG_SETLMNT_ACCT_ID'],
-      name: 'idx_chrg_settle_acct'
-    },
-    
-    // Status and date indexes
-    { 
-      fields: ['REC_ST'],
-      name: 'idx_rec_status'
-    },
-    { 
-      fields: ['CREATE_DT'],
-      name: 'idx_create_date'
-    },
-    { 
-      fields: ['CREATED_BY'],
-      name: 'idx_created_by'
-    },
-    { 
-      fields: ['USER_ID'],
-      name: 'idx_user_id'
-    },
-    
-    // Composite indexes for common queries
-    { 
-      fields: ['DEPOSIT_ACCT_ID', 'REC_ST'],
-      name: 'idx_acct_status'
-    },
-    { 
-      fields: ['DEPOSIT_ACCT_ID', 'CREATE_DT'],
-      name: 'idx_acct_create_date'
-    },
-    { 
-      fields: ['CR_SETLMNT_OPTION_CD', 'DR_SETLMNT_OPTION_CD'],
-      name: 'idx_settle_options'
-    },
-    { 
-      fields: ['DEPOSIT_ACCT_ID', 'CR_SETLMNT_ACCT_ID', 'DR_SETLMNT_ACCT_ID'],
-      name: 'idx_acct_settle_ids'
-    },
-    
-    // Unique constraint to prevent duplicate active options
-    {
-      fields: [
-        'DEPOSIT_ACCT_ID',
-        'CR_SETLMNT_ACCT_ID', 
-        'DR_SETLMNT_ACCT_ID',
-        'CHRG_SETLMNT_ACCT_ID',
-        'REC_ST'
-      ],
-      name: 'uniq_active_settle', // Shorter unique constraint name
-      unique: true,
-      where: { REC_ST: 'A' }
-    }
-  ],
+  
   scopes: {
-    active: {
-      where: { REC_ST: 'A' }
-    },
-    inactive: {
-      where: { REC_ST: 'I' }
-    },
-    byDepositAccount: (depositAccountId) => ({
-      where: { DEPOSIT_ACCT_ID: depositAccountId }
-    }),
-    byCreatedBy: (createdBy) => ({
-      where: { CREATED_BY: createdBy }
-    }),
-    withCreditSettlement: {
-      where: { CR_SETLMNT_OPTION_CD: { [Op.ne]: null } }
-    },
-    withDebitSettlement: {
-      where: { DR_SETLMNT_OPTION_CD: { [Op.ne]: null } }
-    },
-    withChargeSettlement: {
-      where: { CHRG_SETLMNT_OPTN_CD: { [Op.ne]: null } }
-    },
-    completeSetup: {
-      where: {
-        CR_SETLMNT_OPTION_CD: { [Op.ne]: null },
-        DR_SETLMNT_OPTION_CD: { [Op.ne]: null }
-      }
-    },
-    recent: {
-      order: [['CREATE_DT', 'DESC']],
-      limit: 50
-    },
-    dateRange: (startDate, endDate) => ({
-      where: {
-        CREATE_DT: {
-          [Op.between]: [startDate, endDate]
-        }
-      }
-    })
+    active: { where: { recStatus: 'A' } },
+    inactive: { where: { recStatus: 'I' } },
+    byDepositAccount: (depositAcctId) => ({ where: { depositAcctId } }),
+    byCreatedBy: (createdBy) => ({ where: { createdBy } }),
+    withCreditSettlement: { where: { crSettlementOptionCode: { [Op.ne]: null } } },
+    withDebitSettlement: { where: { drSettlementOptionCode: { [Op.ne]: null } } },
+    withChargeSettlement: { where: { chargeSettlementOptionCode: { [Op.ne]: null } } },
+    completeSetup: { where: { crSettlementOptionCode: { [Op.ne]: null }, drSettlementOptionCode: { [Op.ne]: null } } },
+    recent: { order: [['createDate', 'DESC']], limit: 50 },
+    dateRange: (startDate, endDate) => ({ where: { createDate: { [Op.between]: [startDate, endDate] } } })
   }
 });
 

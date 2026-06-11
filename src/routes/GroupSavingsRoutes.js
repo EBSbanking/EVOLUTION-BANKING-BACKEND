@@ -19,7 +19,9 @@ import {
   getGroupSavingsBalanceByAccountNumber,
   getGroupSavingsBalanceByGroupCode,
   searchGroupSavingsByGroupName,
-  searchGroupSavings
+  searchGroupSavings,
+    getAllGroupSavings,
+  getAllGroupSavingsSimple
 } from '../controllers/GroupSavingsController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
@@ -70,6 +72,22 @@ router.get('/search/name/:groupName', searchGroupSavingsByGroupName);
 
 router.get('/group/:groupCode', getGroupSavingsByGroupCode); // Get detailed info by group code
 router.get('/group/:groupCode/all', getGroupSavingsByGroup); // Get all savings for a group
+
+
+/**
+ * @route   GET /api/group-savings/all
+ * @desc    Get all group savings accounts with pagination and filters
+ * @access  Private
+ */
+router.get('/all', authenticate, getAllGroupSavings);
+
+/**
+ * @route   GET /api/group-savings/all/simple
+ * @desc    Get simplified list of all group savings accounts (for dropdowns)
+ * @access  Private
+ */
+router.get('/all/simple', authenticate, getAllGroupSavingsSimple);
+
 
 
 export default router;

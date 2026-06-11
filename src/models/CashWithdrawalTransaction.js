@@ -378,53 +378,7 @@ CashWithdrawalTransaction.init(
         }
       },
     },
-    indexes: [
-      {
-        unique: true,
-        fields: ['TRANSACTION_REF_NO'],
-        name: 'unique_transaction_ref',
-      },
-      {
-        fields: ['CUST_ID'],
-        name: 'idx_cust_id',
-      },
-      {
-        fields: ['ACCT_NO'],
-        name: 'idx_acct_no',
-      },
-      {
-        fields: ['ACCT_ID'],
-        name: 'idx_acct_id',
-      },
-      {
-        fields: ['transactionStatus'],
-        name: 'idx_transaction_status',
-      },
-      {
-        fields: ['VALUE_DATE'],
-        name: 'idx_value_date',
-      },
-      {
-        fields: ['BUSINESS_UNIT'],
-        name: 'idx_business_unit',
-      },
-      {
-        fields: ['WORK_ITEM_ID'],
-        name: 'idx_work_item_id',
-      },
-      {
-        fields: ['createdAt'],
-        name: 'idx_created_at',
-      },
-      {
-        fields: ['CUST_ID', 'transactionStatus'],
-        name: 'idx_cust_status',
-      },
-      {
-        fields: ['ACCT_NO', 'VALUE_DATE'],
-        name: 'idx_acct_date',
-      },
-    ],
+   
   }
 );
 

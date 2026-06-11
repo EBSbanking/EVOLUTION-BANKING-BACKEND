@@ -12,7 +12,8 @@ import Permissions from '../models/Permissions.js';
 import PERMISSIONS from '../constants/permissions.js';
 import { roleHasPermission } from '../constants/roleMapping.js';
 import sequelize from '../../config/db.js';
-import { Op } from 'sequelize';
+import { Op } from 'sequelize';                  // Sequelize operators
+import { getUser } from '../models/index.js'; 
 
 // Simple IP validation function
 const validateIpAddress = (ip) => {
@@ -27,13 +28,13 @@ const getClientIp = (req) => {
 };
 
 
-// ✅ Force lock a user due to fraud - UPDATED FOR SEQUELIZE
+// ✅ Force lock a user due to fraud - FIXED for integer force_locked_by
 export const forceLockUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
   const { reason } = req.body;
 
   try {
-    console.log('🔒 Force lock user request:', { identifier, reason, lockedBy: req.user.user_name });
+    console.log('🔒 Force lock user request:', { identifier, reason, lockedBy: req.user?.id });
 
     // Find user by multiple identifiers
     const user = await User.findOne({
@@ -59,7 +60,7 @@ export const forceLockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Check if user is already force-locked
+    // Check if already force-locked
     if (user.status === 'ForceLocked') {
       return res.status(400).json({
         success: false,
@@ -74,19 +75,20 @@ export const forceLockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Force lock the user
+    // Force lock the user - store the ADMIN's ID (integer)
     await user.update({
       status: 'ForceLocked',
       force_lock_reason: reason || 'Suspicious activity detected',
       force_locked_at: new Date(),
-      force_locked_by: req.user.user_name,
+      force_locked_by: req.user.id,          // ✅ FIX: use integer ID, not username
       internal_employee_enabled: false
     });
 
     console.log('✅ User force-locked successfully:', {
       user_name: user.user_name,
       status: user.status,
-      force_lock_reason: user.force_lock_reason
+      force_lock_reason: user.force_lock_reason,
+      locked_by_admin_id: req.user.id
     });
 
     res.status(200).json({
@@ -99,12 +101,12 @@ export const forceLockUser = asyncHandler(async (req, res) => {
         status: user.status,
         force_lock_reason: user.force_lock_reason,
         force_locked_at: user.force_locked_at,
-        force_locked_by: user.force_locked_by
+        force_locked_by: user.force_locked_by   // returns integer ID
       },
       lockDetails: {
         reason: reason || 'Suspicious activity detected',
         timestamp: user.force_locked_at,
-        performedBy: req.user.user_name
+        performedBy: req.user.user_name        // still show username in response
       }
     });
 
@@ -121,13 +123,13 @@ export const forceLockUser = asyncHandler(async (req, res) => {
 // ✅ Force Reset Password
 export const forceResetPassword = asyncHandler(async (req, res) => {
   const { user_name, username, new_password } = req.body;
-
   try {
     console.log('🔄 FORCE PASSWORD RESET:', { user_name, username });
-
-    // Use login identifier for legacy compatibility
     const loginIdentifier = username || user_name;
-
+    const User = getUser(); // use dynamic getter
+    if (!User || typeof User.findOne !== 'function') {
+      return res.status(503).json({ success: false, message: 'User model not ready' });
+    }
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -136,55 +138,33 @@ export const forceResetPassword = asyncHandler(async (req, res) => {
         ]
       }
     });
-
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-
-    // Hash the new password
     const hashedPassword = await bcrypt.hash(new_password, 10);
-    
-    // Update user password
     await user.update({
       password: hashedPassword,
       passwordChangedAt: new Date()
     });
-
     console.log('✅ PASSWORD RESET SUCCESSFUL:', {
       user_name: user.user_name,
-      new_password_length: new_password.length,
-      new_hash: hashedPassword.substring(0, 20) + '...'
+      new_password_length: new_password.length
     });
-
-    res.json({
-      success: true,
-      message: 'Password reset successfully',
-      user: {
-        user_name: user.user_name,
-        email: user.email
-      }
-    });
-
+    res.json({ success: true, message: 'Password reset successfully', user: { user_name: user.user_name, email: user.email } });
   } catch (error) {
     console.error('💥 Password reset error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Password reset failed',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Password reset failed', error: error.message });
   }
 });
 
 // ✅ Unlock a force-locked user - UPDATED FOR SEQUELIZE
+// ✅ Unlock a force-locked user - FIXED for consistency
 export const unlockForceLockedUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
-  const { reason, unlockedBy } = req.body;
+  const { reason } = req.body; // optional reason
 
   try {
-    console.log('🔓 Unlock force-locked user request:', { identifier, reason, unlockedBy });
+    console.log('🔓 Unlock force-locked user request:', { identifier, reason, unlockedBy: req.user?.user_name });
 
     // Find user by multiple identifiers
     const user = await User.findOne({
@@ -222,13 +202,16 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Unlock the user
+    // Unlock the user: clear force-lock fields and set status to Active
     await user.update({
       status: 'Active',
       force_lock_reason: null,
       force_locked_at: null,
       force_locked_by: null,
-      internal_employee_enabled: true
+      internal_employee_enabled: true,
+      // Also clear normal lock fields if any
+      lock_until: null,
+      failed_attempts: 0
     });
 
     console.log('✅ User unlocked from force-lock successfully:', {
@@ -248,7 +231,7 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
       unlockDetails: {
         reason: reason || 'Manual unlock by administrator',
         timestamp: new Date(),
-        performedBy: unlockedBy || req.user.user_name
+        performedBy: req.user?.user_name || 'System'
       }
     });
 
@@ -1585,22 +1568,27 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 
 // Clean reset password function
 // Clean reset password function
+// ✅ Clean reset password function – using dynamic model getter
 export const simpleResetPassword = asyncHandler(async (req, res) => {
   try {
-    const { user_name, username, newPassword, confirmPassword } = req.body;
+    const { user_name, username, newPassword, new_password, newpassword, confirmPassword, confirm_password, confirmpassword } = req.body;
     const currentUser = req.user;
+
+    // Normalise field names – accept multiple conventions
+    const finalNewPassword = newPassword || new_password || newpassword;
+    const finalConfirmPassword = confirmPassword || confirm_password || confirmpassword;
 
     console.log('🔄 SIMPLE Reset password request:', { 
       user_name, 
       username, 
       current_user: currentUser?.user_name,
       current_user_id: currentUser?.userId,
-      isAdmin: currentUser?.isAdmin 
+      isAdmin: currentUser?.isAdmin,
+      newPasswordProvided: !!finalNewPassword,
+      confirmProvided: !!finalConfirmPassword
     });
 
-    // Use login identifier
     const loginIdentifier = username || user_name;
-
     if (!loginIdentifier) {
       return res.status(400).json({
         success: false,
@@ -1608,24 +1596,31 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       });
     }
 
-    if (!newPassword || newPassword.length < 8) {
+    if (!finalNewPassword || finalNewPassword.length < 8) {
       return res.status(400).json({
         success: false,
         message: 'New password is required and should be at least 8 characters long'
       });
     }
 
-    if (newPassword !== confirmPassword) {
+    if (finalNewPassword !== finalConfirmPassword) {
       return res.status(400).json({ 
         success: false,
         message: 'Passwords do not match' 
       });
     }
 
+    // 🔥 Use dynamic model getter
+    const UserModel = getUser();
+    if (!UserModel || typeof UserModel.findOne !== 'function') {
+      return res.status(503).json({
+        success: false,
+        message: 'User model not ready. Please try again.'
+      });
+    }
+
     // Find user
-    console.log('🔍 Searching for user:', loginIdentifier);
-    
-    const user = await User.findOne({
+    const user = await UserModel.findOne({
       where: {
         [Op.or]: [
           { user_name: loginIdentifier },
@@ -1635,59 +1630,15 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
     });
     
     if (!user) {
-      console.log('❌ User not found:', loginIdentifier);
       return res.status(404).json({ 
         success: false,
         message: 'User not found' 
       });
     }
 
-    // ✅ ADDED: Enhanced debugging for user record
-    console.log('🔍 USER RECORD FOUND:', {
-      id: user.id,
-      user_name: user.user_name,
-      username: user.username,
-      email: user.email,
-      BU_ROLE_ID: user.BU_ROLE_ID,
-      status: user.status,
-      found_by_user_name: user.user_name === loginIdentifier,
-      found_by_username: user.username === loginIdentifier
-    });
-
-    console.log('🔍 DATABASE FIELD VALUES:');
-    console.log('  user.user_name:', `"${user.user_name}"`, '(type:', typeof user.user_name, ')');
-    console.log('  user.username:', `"${user.username}"`, '(type:', typeof user.username, ')');
-    console.log('  Search identifier:', `"${loginIdentifier}"`);
-    console.log('  Comparison results:');
-    console.log('    user.user_name === loginIdentifier:', user.user_name === loginIdentifier);
-    console.log('    user.username === loginIdentifier:', user.username === loginIdentifier);
-    console.log('    user.user_name == loginIdentifier:', user.user_name == loginIdentifier);
-    console.log('    user.username == loginIdentifier:', user.username == loginIdentifier);
-
-    // ✅ ADDED: Also check case-insensitive match
-    if (user.user_name && user.username) {
-      console.log('🔍 CASE INSENSITIVE COMPARISON:');
-      console.log('  user.user_name.toLowerCase():', user.user_name?.toLowerCase());
-      console.log('  user.username.toLowerCase():', user.username?.toLowerCase());
-      console.log('  loginIdentifier.toLowerCase():', loginIdentifier.toLowerCase());
-      console.log('  user.user_name match (case-insensitive):', 
-        user.user_name?.toLowerCase() === loginIdentifier.toLowerCase());
-      console.log('  user.username match (case-insensitive):', 
-        user.username?.toLowerCase() === loginIdentifier.toLowerCase());
-    }
-
-    console.log('✅ User found details:', {
-      id: user.id,
-      user_name: user.user_name,
-      username: user.username,
-      email: user.email,
-      status: user.status
-    });
-
-    // Check permissions - user can reset their own password or admin can reset any
+    // Check permissions – user can reset their own password or admin can reset any
     const isAdmin = currentUser?.isAdmin || currentUser?.role === 'Administrator' || 
                    parseInt(currentUser?.roleId || currentUser?.BU_ROLE_ID) === 1;
-    
     const canReset = loginIdentifier === currentUser?.user_name || isAdmin;
     
     if (!canReset) {
@@ -1697,11 +1648,7 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       });
     }
 
-    // Hash the new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
-    // Update user password WITHOUT triggers/hooks
-    console.log('🔑 Updating password for user:', user.user_name || user.username);
+    const hashedPassword = await bcrypt.hash(finalNewPassword, 10);
     
     // Direct SQL update to avoid hooks
     await sequelize.query(
@@ -1714,27 +1661,15 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
 
     console.log('✅ Password reset successfully for user:', user.user_name || user.username);
 
-    // ✅ IMPROVED: Return both user_name and username if available
-    const displayName = user.user_name || user.username || loginIdentifier;
-    
     res.json({ 
       success: true,
       message: 'Password reset successfully',
       user: {
         user_name: user.user_name,
         username: user.username,
-        display_name: displayName,  // Added for clarity
         email: user.email,
         status: user.status
       },
-      debug: process.env.NODE_ENV === 'development' ? {
-        user_id: user.id,
-        actual_user_name: user.user_name,
-        actual_username: user.username,
-        found_by: user.user_name === loginIdentifier ? 'user_name' : 
-                 user.username === loginIdentifier ? 'username' : 'other',
-        search_identifier: loginIdentifier
-      } : undefined,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1743,7 +1678,6 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       stack: error.stack,
       body: req.body
     });
-    
     res.status(500).json({ 
       success: false,
       message: 'Error resetting password', 
@@ -1753,12 +1687,26 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
 });
 
 // ✅ Unlock a specific user - UPDATED FOR SEQUELIZE
+// ============================================
+// UNLOCK USER CONTROLLER
+// ============================================
 export const unlockUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
   const { reason, unlockedBy } = req.body;
 
   try {
     console.log('🔓 Unlock user request:', { identifier, reason, unlockedBy });
+
+    // 🔥 Get the User model dynamically (ensures it's initialized)
+    const User = getUser();
+    if (!User || typeof User.findOne !== 'function') {
+      console.error('❌ User model not ready');
+      return res.status(503).json({
+        success: false,
+        message: 'Service temporarily unavailable. User model not initialized.',
+        retryAfter: 5
+      });
+    }
 
     // Find user by multiple identifiers
     const user = await User.findOne({

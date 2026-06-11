@@ -39,17 +39,7 @@ const ActiveSession = sequelize.define('ActiveSession', {
 }, {
   tableName: 'active_sessions',
   timestamps: false,
-  indexes: [
-    {
-      fields: ['user_id']
-    },
-    {
-      fields: ['session_token']
-    },
-    {
-      fields: ['expires_at']
-    }
-  ]
+ 
 });
 
 export default ActiveSession;

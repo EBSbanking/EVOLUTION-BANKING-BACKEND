@@ -1,9 +1,10 @@
 // src/controllers/GLAccountEOYController.js
-import { sequelize } from '../models/index.js';
+
 import { Op } from 'sequelize';
 import logger from '../utils/logger.js';
 import auditLogger from '../utils/AuditLogger.js';
 import { sendEOYNotification } from '../Services/NotificationService.js';
+import sequelize from '../../config/db.js';
 
 export class GLAccountEOYController {
   /**

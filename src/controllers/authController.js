@@ -210,6 +210,7 @@ const generateSessionToken = () => {
 // ============================================
 
 // Updated Login Function with license validation
+// Updated loginUser function in authController.js
 const loginUser = async (req, res) => {
   const { user_name, password } = req.body;
 
@@ -265,10 +266,9 @@ const loginUser = async (req, res) => {
                          (user.passwordChangedAt === null && user.is_first_login === true);
 
     if (!isMatch && !isDefaultPassword) {
-      // Regular failed login attempt
       user.failed_attempts = (user.failed_attempts || 0) + 1;
       if (user.failed_attempts >= 5) {
-        user.lock_until = new Date(Date.now() + 30 * 60 * 1000);  // Lock for 30 min
+        user.lock_until = new Date(Date.now() + 30 * 60 * 1000);
       }
       await user.save();
       
@@ -311,13 +311,11 @@ const loginUser = async (req, res) => {
 
     // ✅ 8. CHECK FOR PASSWORD CHANGE REQUIRED
     if (isFirstLogin) {
-      // Generate temporary token for password change flow
       const tempToken = await generateTempToken(user.id);
       
       await logLoginAttempt(user.id, user.user_name, ip_address, user_agent, 
         'Success', 'First login - password change required', 'FIRST_LOGIN_REQUIRED', session_id, false);
       
-      // Enhanced user data response with license info
       const userData = {
         userId: user.id,
         user_name: user.user_name,
@@ -373,7 +371,7 @@ const loginUser = async (req, res) => {
 
     // ✅ 10. CREATE ACTIVE SESSION WITH LICENSE TRACKING
     const sessionToken = generateSessionToken();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await ActiveSession.create({
       user_id: user.id,
@@ -387,16 +385,24 @@ const loginUser = async (req, res) => {
     // ✅ 11. INCREMENT LICENSE SESSION COUNT
     await updateLicenseSessionCount(true);
 
-    // ✅ 12. GENERATE JWT TOKEN
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        username: user.user_name,
-        roles: user.getAllRoles ? await user.getAllRoles() : []
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
+    // ✅ 12. GENERATE JWT TOKEN - FIXED TO USE CORRECT SECRET
+    const JWT_SECRET = process.env.JWT_SECRET || process.env.JWT_SECRET_KEY;
+    
+    // Create payload that matches what authMiddleware expects
+    const tokenPayload = {
+      id: user.id,
+      userId: user.id,
+      username: user.user_name,
+      user_name: user.user_name,
+      email: user.email || '',
+      role: user.primary_business_role || user.role || 'cashier',
+      BU_ROLE_ID: user.BU_ROLE_ID || '5',
+      bu_id: user.businessUnit || user.bu_id || '001',
+      staff_id: user.staff_id || user.user_name,
+      isAdmin: user.isAdmin || false
+    };
+
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
 
     // ✅ 13. TRACK SESSION IN USER MODEL
     user.current_sessions = [...(user.current_sessions || []), {
@@ -405,7 +411,7 @@ const loginUser = async (req, res) => {
       userAgent: user_agent,
       loginTime: new Date(),
       expires: expiresAt
-    }].slice(-10); // Keep last 10 sessions
+    }].slice(-10);
 
     // ✅ 14. ADD TO LOGIN HISTORY
     user.login_history = [...(user.login_history || []), {
@@ -413,7 +419,7 @@ const loginUser = async (req, res) => {
       userAgent: user_agent,
       loginTime: new Date(),
       success: true
-    }].slice(-50); // Keep last 50 logins
+    }].slice(-50);
 
     await user.save();
 

@@ -1,15 +1,13 @@
-// models/Charge.js
+// models/Charge.js (updated)
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 import Decimal from 'decimal.js';
 
 class Charge extends Model {
-  // Instance method to check if charge is active
   isActive() {
     return this.REC_ST === 'A';
   }
 
-  // Instance method to get simplified format
   toSimplified() {
     return {
       chargeId: this.CHRG_ID,
@@ -30,17 +28,14 @@ class Charge extends Model {
     };
   }
 
-  // Virtual getter for formatted charge amount
   get formattedChargeAmount() {
     return this.CHRG_AMT ? new Decimal(this.CHRG_AMT.toString()).toFixed(2) : '0.00';
   }
 
-  // Static method to find active charges
   static findActive() {
     return this.findAll({ where: { REC_ST: 'A' } });
   }
 
-  // Static method to find by charge type
   static findByType(type) {
     return this.findAll({ 
       where: { 
@@ -53,110 +48,130 @@ class Charge extends Model {
 
 Charge.init({
   CHRG_ID: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.BIGINT,          // ✅ changed to BIGINT
     primaryKey: true,
-    autoIncrement: false,
+    autoIncrement: true,             // ✅ enable auto increment
     allowNull: false,
-    unique: true
+    field: 'CHRG_ID'
   },
   CHRG_CD: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    unique: true
+    unique: true,
+    field: 'CHRG_CD'
   },
   CHRG_TY: {
-    type: DataTypes.STRING(10),
-    allowNull: false
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    field: 'CHRG_TY'
   },
   CHRG_NM: {
     type: DataTypes.STRING(100),
-    allowNull: true
+    allowNull: true,
+    field: 'CHRG_NM'
   },
   TIER_TY: {
     type: DataTypes.STRING(10),
-    allowNull: false
+    allowNull: false,
+    field: 'TIER_TY'
   },
   CHRG_AMT: {
     type: DataTypes.DECIMAL(20, 6),
-    allowNull: true
+    allowNull: true,
+    field: 'CHRG_AMT'
   },
   CHRG_PCT: {
     type: DataTypes.DECIMAL(10, 6),
-    allowNull: true
+    allowNull: true,
+    field: 'CHRG_PCT'
   },
   REC_ST: {
     type: DataTypes.CHAR(1),
     allowNull: false,
-    defaultValue: 'A'
+    defaultValue: 'A',
+    field: 'REC_ST'
   },
   EFFECTIVE_DT: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'EFFECTIVE_DT'
   },
   CREATE_DT: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'CREATE_DT'
   },
   ROW_TS: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'ROW_TS'
   },
   USER_ID: {
     type: DataTypes.STRING(24),
     allowNull: false,
-    defaultValue: 'system'
+    defaultValue: 'system',
+    field: 'USER_ID'
   },
   CREATED_BY: {
     type: DataTypes.STRING(24),
     allowNull: false,
-    defaultValue: 'system'
+    defaultValue: 'system',
+    field: 'CREATED_BY'
   },
   VERSION_NO: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    defaultValue: 1
+    defaultValue: 1,
+    field: 'VERSION_NO'
   },
   CRNCY_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    defaultValue: 3
+    defaultValue: 3,
+    field: 'CRNCY_ID'
   },
   INCOME_GL_ACCT_NO: {
     type: DataTypes.STRING(60),
-    defaultValue: 'NONE'
+    defaultValue: 'NONE',
+    field: 'INCOME_GL_ACCT_NO'
   },
   BAL_ACTION_CD: {
     type: DataTypes.STRING(10),
-    allowNull: false
+    allowNull: false,
+    field: 'BAL_ACTION_CD'
   },
   CHRG_DESC: {
     type: DataTypes.STRING(100),
-    defaultValue: 'description'
+    defaultValue: 'description',
+    field: 'CHRG_DESC'
   },
   chargeType: {
-    type: DataTypes.STRING(10),
-    allowNull: true
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'chargeType'
   },
   chargeAmount: {
     type: DataTypes.DECIMAL(20, 6),
-    allowNull: true
+    allowNull: true,
+    field: 'chargeAmount'
   },
   chargeGLAccountNo: {
     type: DataTypes.STRING(60),
-    allowNull: true
+    allowNull: true,
+    field: 'chargeGLAccountNo'
   }
 }, {
   sequelize,
   modelName: 'Charge',
   tableName: 'charges',
-  timestamps: false, // Since we have our own timestamp fields
+  timestamps: false,
+  underscored: false,
   hooks: {
     beforeCreate: (charge) => {
       const now = new Date();
-      
       if (!charge.CREATE_DT) charge.CREATE_DT = now;
       if (!charge.ROW_TS) charge.ROW_TS = now;
       if (!charge.EFFECTIVE_DT) charge.EFFECTIVE_DT = now;
@@ -164,56 +179,39 @@ Charge.init({
       if (!charge.CREATED_BY) charge.CREATED_BY = 'system';
       if (!charge.VERSION_NO) charge.VERSION_NO = 1;
 
-      // Synchronize simplified fields
-      if (charge.chargeType && !charge.CHRG_TY) {
-        charge.CHRG_TY = charge.chargeType;
-      } else if (charge.CHRG_TY && !charge.chargeType) {
-        charge.chargeType = charge.CHRG_TY;
-      }
+      if (charge.chargeType && !charge.CHRG_TY) charge.CHRG_TY = charge.chargeType;
+      else if (charge.CHRG_TY && !charge.chargeType) charge.chargeType = charge.CHRG_TY;
 
-      if (charge.chargeAmount !== undefined && charge.chargeAmount !== null && !charge.CHRG_AMT) {
+      if (charge.chargeAmount !== undefined && charge.chargeAmount !== null && !charge.CHRG_AMT)
         charge.CHRG_AMT = charge.chargeAmount;
-      } else if (charge.CHRG_AMT !== undefined && charge.CHRG_AMT !== null && !charge.chargeAmount) {
+      else if (charge.CHRG_AMT !== undefined && charge.CHRG_AMT !== null && !charge.chargeAmount)
         charge.chargeAmount = charge.CHRG_AMT;
-      }
 
-      if (charge.chargeGLAccountNo && !charge.INCOME_GL_ACCT_NO) {
+      if (charge.chargeGLAccountNo && !charge.INCOME_GL_ACCT_NO)
         charge.INCOME_GL_ACCT_NO = charge.chargeGLAccountNo;
-      } else if (charge.INCOME_GL_ACCT_NO && !charge.chargeGLAccountNo) {
+      else if (charge.INCOME_GL_ACCT_NO && !charge.chargeGLAccountNo)
         charge.chargeGLAccountNo = charge.INCOME_GL_ACCT_NO;
-      }
     },
     beforeUpdate: (charge) => {
       charge.ROW_TS = new Date();
-      
-      // Synchronize simplified fields
-      if (charge.changed('chargeType') && charge.chargeType && !charge.changed('CHRG_TY')) {
+      if (charge.changed('chargeType') && charge.chargeType && !charge.changed('CHRG_TY'))
         charge.CHRG_TY = charge.chargeType;
-      } else if (charge.changed('CHRG_TY') && charge.CHRG_TY && !charge.changed('chargeType')) {
+      else if (charge.changed('CHRG_TY') && charge.CHRG_TY && !charge.changed('chargeType'))
         charge.chargeType = charge.CHRG_TY;
-      }
 
-      if (charge.changed('chargeAmount') && charge.chargeAmount !== undefined && 
-          charge.chargeAmount !== null && !charge.changed('CHRG_AMT')) {
+      if (charge.changed('chargeAmount') && charge.chargeAmount !== undefined && charge.chargeAmount !== null && !charge.changed('CHRG_AMT'))
         charge.CHRG_AMT = charge.chargeAmount;
-      } else if (charge.changed('CHRG_AMT') && charge.CHRG_AMT !== undefined && 
-                 charge.CHRG_AMT !== null && !charge.changed('chargeAmount')) {
+      else if (charge.changed('CHRG_AMT') && charge.CHRG_AMT !== undefined && charge.CHRG_AMT !== null && !charge.changed('chargeAmount'))
         charge.chargeAmount = charge.CHRG_AMT;
-      }
 
-      if (charge.changed('chargeGLAccountNo') && charge.chargeGLAccountNo && 
-          !charge.changed('INCOME_GL_ACCT_NO')) {
+      if (charge.changed('chargeGLAccountNo') && charge.chargeGLAccountNo && !charge.changed('INCOME_GL_ACCT_NO'))
         charge.INCOME_GL_ACCT_NO = charge.chargeGLAccountNo;
-      } else if (charge.changed('INCOME_GL_ACCT_NO') && charge.INCOME_GL_ACCT_NO && 
-                 !charge.changed('chargeGLAccountNo')) {
+      else if (charge.changed('INCOME_GL_ACCT_NO') && charge.INCOME_GL_ACCT_NO && !charge.changed('chargeGLAccountNo'))
         charge.chargeGLAccountNo = charge.INCOME_GL_ACCT_NO;
-      }
     }
   },
   defaultScope: {
-    attributes: {
-      exclude: []
-    }
+    attributes: { exclude: [] }
   },
   scopes: {
     simplified: {

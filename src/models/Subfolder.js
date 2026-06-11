@@ -168,45 +168,7 @@ Subfolder.init({
   updatedAt: 'updatedAt',
   createdAt: 'createdAt',
   comment: 'Subfolders table for organizing documents',
-  indexes: [
-    {
-      name: 'idx_subfolder_id',
-      fields: ['subfolderId'],
-      unique: true
-    },
-    {
-      name: 'idx_parent_id',
-      fields: ['parentId']
-    },
-    {
-      name: 'idx_created_by',
-      fields: ['createdBy']
-    },
-    {
-      name: 'idx_ledger_no',
-      fields: ['ledgerNo']
-    },
-    {
-      name: 'idx_is_root',
-      fields: ['isRoot']
-    },
-    {
-      name: 'idx_name',
-      fields: ['name']
-    },
-    {
-      name: 'idx_created_at',
-      fields: ['createdAt']
-    },
-    {
-      name: 'idx_parent_ledger',
-      fields: ['parentId', 'ledgerNo']
-    },
-    {
-      name: 'idx_creator_ledger',
-      fields: ['createdBy', 'ledgerNo']
-    }
-  ],
+  
   hooks: {
     beforeValidate: (subfolder, options) => {
       // Ensure createdBy is uppercase

@@ -105,18 +105,12 @@ DrawerCurrency.init({
   DRAWER_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'Drawers',
-      key: 'DRAWER_ID'
-    }
+    
   },
   CRNCY_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'Currencies',
-      key: 'CRNCY_ID'
-    }
+   
   },
   CUR_BAL: {
     type: DataTypes.DECIMAL(15, 2),

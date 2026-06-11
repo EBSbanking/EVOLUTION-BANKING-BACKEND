@@ -1,6 +1,9 @@
 ﻿// models/Collection.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
+import Group from './Group.js';
+import GroupLoan from './GroupLoan.js';
+import LoanAccount from './LoanAccount.js';   // ✅ added – needed to update loan balances
 
 class Collection extends Model {
   // Static method: Find by group loan
@@ -85,9 +88,10 @@ class Collection extends Model {
     });
   }
 
-  // Instance method: Process repayments
+  // Instance method: Process repayments (now updates LoanAccount)
   async processRepayments() {
     const GroupLoan = sequelize.models.GroupLoan;
+    const LoanAccountModel = sequelize.models.LoanAccount;
     
     let successfulRepayments = 0;
     let totalLoanCollected = 0;
@@ -97,15 +101,30 @@ class Collection extends Model {
     for (let repayment of loanRepayments) {
       if (repayment.status === 'pending') {
         try {
-          // Update GroupLoan collection history
+          // 1. Update the loan account directly
+          if (repayment.loanAccountId) {
+            const loanAccount = await LoanAccountModel.findByPk(repayment.loanAccountId);
+            if (loanAccount) {
+              // Reduce outstanding principal by the principal portion of the repayment
+              const newPrincipal = (loanAccount.OUTSTANDING_PRINCIPAL || 0) - (repayment.principalAmount || 0);
+              await loanAccount.update({
+                OUTSTANDING_PRINCIPAL: newPrincipal < 0 ? 0 : newPrincipal,
+                LAST_REPAYMENT_DATE: new Date(),
+                LAST_REPAYMENT_AMOUNT: repayment.totalAmount,
+                // If fully repaid, update status
+                LOAN_STATUS: newPrincipal <= 0 ? 'CLOSED' : loanAccount.LOAN_STATUS
+              });
+            }
+          }
+          
+          // 2. Update GroupLoan collection history (if group loan exists)
           if (this.groupLoanId) {
             const groupLoan = await GroupLoan.findByPk(this.groupLoanId);
             if (groupLoan) {
-              // Assuming GroupLoan has these methods
+              // Example: update totals – adjust to your actual model methods
               await groupLoan.updateCollectionTotals(repayment.totalAmount || 0);
               await groupLoan.markMemberAsRepaid(repayment.loanAccountId);
               
-              // Add to collection history
               await groupLoan.addCollectionRecord({
                 collectedBy: this.createdBy,
                 loanCollections: [{
@@ -232,7 +251,7 @@ Collection.init({
   // Relationships
   groupId: {
     type: DataTypes.INTEGER,
-    allowNull: false
+    allowNull: false,
   },
   groupCode: {
     type: DataTypes.STRING(50),
@@ -274,7 +293,7 @@ Collection.init({
     }
   },
   
-  // NEW: Loan repayment tracking
+  // Loan repayment tracking
   repaymentType: {
     type: DataTypes.STRING(20),
     defaultValue: 'loan_repayment',
@@ -372,13 +391,11 @@ Collection.init({
   sequelize,
   modelName: 'Collection',
   tableName: 'collections',
-  timestamps: true, // createdAt and updatedAt
+  timestamps: true,
   hooks: {
     beforeSave: async (collection) => {
-      // Auto-calculate processing summary
       if (collection.changed()) {
         const processingSummary = await collection.getProcessingSummary();
-        
         const loanRepayments = await collection.getLoanRepayments();
         const savingsCollections = await collection.getSavingsCollections();
         
@@ -394,53 +411,18 @@ Collection.init({
       }
     }
   },
-  indexes: [
-    { fields: ['groupId'] },
-    { fields: ['groupCode'] },
-    { fields: ['groupLoanId'] },
-    { fields: ['loanId'] },
-    { fields: ['currency'] },
-    { fields: ['collectionDate'] },
-    { fields: ['status'] },
-    { fields: ['repaymentType'] },
-    { fields: ['branch'] },
-    { fields: ['relationshipManager'] },
-    { fields: ['channel'] },
-    { fields: ['paymentMethod'] },
-    { fields: ['transactionReference'] },
-    { fields: ['groupId', 'collectionDate'] },
-    { fields: ['groupLoanId', 'collectionDate'] },
-    { fields: ['branch', 'status'] },
-    { fields: ['collectionDate', 'status'] },
-    { fields: ['relationshipManager', 'collectionDate'] },
-    { fields: ['repaymentType', 'status'] }
-  ],
   scopes: {
-    pending: {
-      where: { status: 'pending' }
-    },
-    processed: {
-      where: { status: ['processed', 'partially_processed'] }
-    },
-    byGroup: (groupId) => ({
-      where: { groupId }
-    }),
-    byGroupLoan: (groupLoanId) => ({
-      where: { groupLoanId }
-    }),
+    pending: { where: { status: 'pending' } },
+    processed: { where: { status: ['processed', 'partially_processed'] } },
+    byGroup: (groupId) => ({ where: { groupId } }),
+    byGroupLoan: (groupLoanId) => ({ where: { groupLoanId } }),
     byDateRange: (startDate, endDate) => ({
       where: {
-        collectionDate: {
-          [Op.between]: [startDate, endDate]
-        }
+        collectionDate: { [Op.between]: [startDate, endDate] }
       }
     }),
-    byBranch: (branch) => ({
-      where: { branch }
-    }),
-    byRelationshipManager: (managerId) => ({
-      where: { relationshipManager: managerId }
-    })
+    byBranch: (branch) => ({ where: { branch } }),
+    byRelationshipManager: (managerId) => ({ where: { relationshipManager: managerId } })
   }
 });
 
@@ -452,10 +434,7 @@ LoanRepayment.init({
   collectionId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'collections',
-      key: 'id'
-    }
+    references: { model: 'collections', key: 'id' }
   },
   loanAccountId: {
     type: DataTypes.INTEGER,
@@ -504,9 +483,7 @@ LoanRepayment.init({
   status: {
     type: DataTypes.STRING(20),
     defaultValue: 'pending',
-    validate: {
-      isIn: [['pending', 'processed', 'failed', 'reversed']]
-    }
+    validate: { isIn: [['pending', 'processed', 'failed', 'reversed']] }
   }
 }, {
   sequelize,
@@ -521,10 +498,7 @@ SavingsCollection.init({
   collectionId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'collections',
-      key: 'id'
-    }
+    references: { model: 'collections', key: 'id' }
   },
   accountNumber: {
     type: DataTypes.STRING(50),
@@ -545,9 +519,7 @@ SavingsCollection.init({
   savingsType: {
     type: DataTypes.STRING(20),
     defaultValue: 'GROUP_SAVINGS',
-    validate: {
-      isIn: [['GROUP_SAVINGS', 'INDIVIDUAL_SAVINGS', 'SPECIAL_SAVINGS']]
-    }
+    validate: { isIn: [['GROUP_SAVINGS', 'INDIVIDUAL_SAVINGS', 'SPECIAL_SAVINGS']] }
   },
   transactionReference: {
     type: DataTypes.STRING(100),
@@ -556,9 +528,7 @@ SavingsCollection.init({
   status: {
     type: DataTypes.STRING(20),
     defaultValue: 'pending',
-    validate: {
-      isIn: [['pending', 'processed', 'failed']]
-    }
+    validate: { isIn: [['pending', 'processed', 'failed']] }
   }
 }, {
   sequelize,
@@ -574,47 +544,17 @@ ProcessingSummary.init({
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
-    references: {
-      model: 'collections',
-      key: 'id'
-    }
+    references: { model: 'collections', key: 'id' }
   },
-  totalLoanAmount: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0
-  },
-  totalSavingsAmount: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0
-  },
-  totalFeesAmount: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0
-  },
-  successfulLoanRepayments: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0
-  },
-  failedLoanRepayments: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0
-  },
-  successfulSavings: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0
-  },
-  failedSavings: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0
-  },
-  repaymentSchedulesUpdated: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0
-  },
-  totalProcessedAmount: {
-    type: DataTypes.DECIMAL(15, 2),
-    defaultValue: 0
-  }
+  totalLoanAmount: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  totalSavingsAmount: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  totalFeesAmount: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  successfulLoanRepayments: { type: DataTypes.INTEGER, defaultValue: 0 },
+  failedLoanRepayments: { type: DataTypes.INTEGER, defaultValue: 0 },
+  successfulSavings: { type: DataTypes.INTEGER, defaultValue: 0 },
+  failedSavings: { type: DataTypes.INTEGER, defaultValue: 0 },
+  repaymentSchedulesUpdated: { type: DataTypes.INTEGER, defaultValue: 0 },
+  totalProcessedAmount: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 }
 }, {
   sequelize,
   modelName: 'ProcessingSummary',
@@ -623,38 +563,24 @@ ProcessingSummary.init({
 });
 
 // ==================== ASSOCIATIONS ====================
+Collection.hasMany(LoanRepayment, { foreignKey: 'collectionId', as: 'loanRepayments' });
+Collection.hasMany(SavingsCollection, { foreignKey: 'collectionId', as: 'savingsCollections' });
+Collection.hasOne(ProcessingSummary, { foreignKey: 'collectionId', as: 'processingSummary' });
 
-// Collection associations
-Collection.hasMany(LoanRepayment, {
-  foreignKey: 'collectionId',
-  as: 'loanRepayments'
-});
+LoanRepayment.belongsTo(Collection, { foreignKey: 'collectionId', as: 'collection' });
+SavingsCollection.belongsTo(Collection, { foreignKey: 'collectionId', as: 'collection' });
+ProcessingSummary.belongsTo(Collection, { foreignKey: 'collectionId', as: 'collection' });
 
-Collection.hasMany(SavingsCollection, {
-  foreignKey: 'collectionId',
-  as: 'savingsCollections'
-});
+// Instead of:
+// Collection.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
+// Collection.belongsTo(GroupLoan, { foreignKey: 'groupLoanId', as: 'groupLoan' });
 
-Collection.hasOne(ProcessingSummary, {
-  foreignKey: 'collectionId',
-  as: 'processingSummary'
-});
-
-// Reverse associations
-LoanRepayment.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
-SavingsCollection.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
-ProcessingSummary.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
+// ✅ Correct – use already attached models
+if (sequelize.models.Group) {
+  Collection.belongsTo(sequelize.models.Group, { foreignKey: 'groupId', as: 'group' });
+}
+if (sequelize.models.GroupLoan) {
+  Collection.belongsTo(sequelize.models.GroupLoan, { foreignKey: 'groupLoanId', as: 'groupLoan' });
+}
 export default Collection;
 export { LoanRepayment, SavingsCollection, ProcessingSummary };

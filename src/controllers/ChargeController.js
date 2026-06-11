@@ -48,10 +48,10 @@ const ChargeController = {
       delete transformed.status;
     }
 
-    // Auto-generate CHRG_ID if missing
-    if (!transformed.CHRG_ID) {
-      transformed.CHRG_ID = Date.now(); // Replace with proper sequence if needed
-    }
+    // ❌ REMOVED auto-generation of CHRG_ID – now handled by database auto-increment
+    // if (!transformed.CHRG_ID) {
+    //   transformed.CHRG_ID = Date.now(); 
+    // }
 
     return transformed;
   },
@@ -83,9 +83,12 @@ const ChargeController = {
       // Transform body
       const transformedBody = ChargeController.transformChargeRequest(req.body);
 
-      // Validate required fields
+      // ✅ NEW: Remove CHRG_ID if present – let DB auto-increment handle it
+      delete transformedBody.CHRG_ID;
+
+      // Validate required fields (CHRG_ID is no longer required)
       const requiredFields = [
-        'CHRG_ID', 'CHRG_CD', 'CHRG_TY', 'TIER_TY',
+        'CHRG_CD', 'CHRG_TY', 'TIER_TY',
         'VERSION_NO', 'USER_ID', 'CREATED_BY', 'BAL_ACTION_CD'
       ];
       const missingFields = requiredFields.filter(field => !transformedBody[field]);
@@ -97,24 +100,21 @@ const ChargeController = {
         });
       }
 
-      // Check duplicates
+      // Check duplicate by CHRG_CD only (CHRG_ID will be unique via auto-inc)
       const existingCharge = await Charge.findOne({
         where: {
-          [Op.or]: [
-            { CHRG_ID: transformedBody.CHRG_ID },
-            { CHRG_CD: transformedBody.CHRG_CD }
-          ]
+          CHRG_CD: transformedBody.CHRG_CD
         }
       });
 
       if (existingCharge) {
         return res.status(400).json({
           success: false,
-          message: 'Charge with this CHRG_ID or CHRG_CD already exists'
+          message: 'Charge with this CHRG_CD already exists'
         });
       }
 
-      // ✅ Save charge
+      // ✅ Save charge (no CHRG_ID provided)
       const charge = await Charge.create(transformedBody);
 
       // ✅ Always return simplified format to API response
@@ -127,7 +127,6 @@ const ChargeController = {
     } catch (error) {
       console.error('Create Charge Error:', error);
 
-      // Handle Sequelize validation errors
       if (error.name === 'SequelizeValidationError') {
         const errors = error.errors.map(err => err.message);
         return res.status(400).json({
@@ -140,7 +139,7 @@ const ChargeController = {
       if (error.name === 'SequelizeUniqueConstraintError') {
         return res.status(400).json({
           success: false,
-          message: 'Duplicate charge ID or code'
+          message: 'Duplicate charge code'
         });
       }
 
@@ -164,12 +163,10 @@ const ChargeController = {
         recSt,
         chrgTy,
         tierTy,
-        format = 'oracle' // 'oracle' or 'simplified'
+        format = 'oracle'
       } = req.query;
 
-      // Build filter object
       const where = {};
-      
       if (recSt) where.REC_ST = recSt;
       if (chrgTy) where.CHRG_TY = chrgTy;
       if (tierTy) where.TIER_TY = tierTy;
@@ -183,7 +180,6 @@ const ChargeController = {
       }
 
       const order = [[sortBy, sortOrder.toUpperCase()]];
-      
       const offset = (page - 1) * limit;
 
       const { count, rows: charges } = await Charge.findAndCountAll({
@@ -193,7 +189,6 @@ const ChargeController = {
         offset: parseInt(offset)
       });
 
-      // Transform response based on format parameter
       let data = charges;
       if (format === 'simplified') {
         data = charges.map(charge => ChargeController.transformToSimplifiedFormat(charge));
@@ -261,10 +256,8 @@ const ChargeController = {
       const { id } = req.params;
       const { format = 'oracle' } = req.query;
       
-      // Transform request body if needed
       const transformedBody = ChargeController.transformChargeRequest(req.body);
 
-      // Check if charge exists
       const existingCharge = await Charge.findOne({ 
         where: { CHRG_ID: parseInt(id) }
       });
@@ -276,14 +269,7 @@ const ChargeController = {
         });
       }
 
-      // Prevent changing CHRG_ID and CHRG_CD
-      if (transformedBody.CHRG_ID && transformedBody.CHRG_ID !== parseInt(id)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot change CHRG_ID'
-        });
-      }
-
+      // Prevent changing CHRG_CD
       if (transformedBody.CHRG_CD && transformedBody.CHRG_CD !== existingCharge.CHRG_CD) {
         return res.status(400).json({
           success: false,
@@ -291,16 +277,14 @@ const ChargeController = {
         });
       }
 
-      // Update the charge
+      // ✅ Do not allow updating CHRG_ID (auto-increment primary key)
+      delete transformedBody.CHRG_ID;
+
       await Charge.update(
         { ...transformedBody, ROW_TS: new Date() },
-        { 
-          where: { CHRG_ID: parseInt(id) },
-          returning: true
-        }
+        { where: { CHRG_ID: parseInt(id) } }
       );
 
-      // Fetch the updated charge
       const updatedCharge = await Charge.findOne({ 
         where: { CHRG_ID: parseInt(id) }
       });
@@ -318,7 +302,6 @@ const ChargeController = {
 
     } catch (error) {
       console.error('Update Charge Error:', error);
-
       if (error.name === 'SequelizeValidationError') {
         const errors = error.errors.map(err => err.message);
         return res.status(400).json({
@@ -327,7 +310,6 @@ const ChargeController = {
           errors
         });
       }
-
       res.status(500).json({
         success: false,
         message: 'Error updating charge',
@@ -336,25 +318,21 @@ const ChargeController = {
     }
   },
 
-  // Get charge by code
   getChargeByCode: async (req, res) => {
     try {
       const charge = await Charge.findOne({ 
         where: { CHRG_CD: req.params.code }
       });
-      
       if (!charge) {
         return res.status(404).json({
           success: false,
           message: 'Charge not found'
         });
       }
-
       res.status(200).json({
         success: true,
         data: charge
       });
-
     } catch (error) {
       console.error('Get Charge By Code Error:', error);
       res.status(500).json({
@@ -365,28 +343,23 @@ const ChargeController = {
     }
   },
 
-  // Delete charge by ID
   deleteCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ 
         where: { CHRG_ID: parseInt(req.params.id) }
       });
-      
       if (!charge) {
         return res.status(404).json({
           success: false,
           message: 'Charge not found'
         });
       }
-
       await charge.destroy();
-
       res.status(200).json({
         success: true,
         message: 'Charge deleted successfully',
         data: charge
       });
-
     } catch (error) {
       console.error('Delete Charge Error:', error);
       res.status(500).json({
@@ -397,31 +370,23 @@ const ChargeController = {
     }
   },
 
-  // Soft delete (deactivate) charge
   deactivateCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ 
         where: { CHRG_ID: parseInt(req.params.id) }
       });
-
       if (!charge) {
         return res.status(404).json({
           success: false,
           message: 'Charge not found'
         });
       }
-
-      await charge.update({ 
-        REC_ST: 'I', 
-        ROW_TS: new Date() 
-      });
-
+      await charge.update({ REC_ST: 'I', ROW_TS: new Date() });
       res.status(200).json({
         success: true,
         message: 'Charge deactivated successfully',
         data: charge
       });
-
     } catch (error) {
       console.error('Deactivate Charge Error:', error);
       res.status(500).json({
@@ -432,31 +397,23 @@ const ChargeController = {
     }
   },
 
-  // Activate charge
   activateCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ 
         where: { CHRG_ID: parseInt(req.params.id) }
       });
-
       if (!charge) {
         return res.status(404).json({
           success: false,
           message: 'Charge not found'
         });
       }
-
-      await charge.update({ 
-        REC_ST: 'A', 
-        ROW_TS: new Date() 
-      });
-
+      await charge.update({ REC_ST: 'A', ROW_TS: new Date() });
       res.status(200).json({
         success: true,
         message: 'Charge activated successfully',
         data: charge
       });
-
     } catch (error) {
       console.error('Activate Charge Error:', error);
       res.status(500).json({
@@ -467,7 +424,6 @@ const ChargeController = {
     }
   },
 
-  // Get charges by type
   getChargesByType: async (req, res) => {
     try {
       const { type } = req.params;
@@ -477,13 +433,11 @@ const ChargeController = {
           REC_ST: 'A'
         }
       });
-
       res.status(200).json({
         success: true,
         data: charges,
         count: charges.length
       });
-
     } catch (error) {
       console.error('Get Charges By Type Error:', error);
       res.status(500).json({
@@ -494,21 +448,16 @@ const ChargeController = {
     }
   },
 
-  // Get active charges only
   getActiveCharges: async (req, res) => {
     try {
       const charges = await Charge.findAll({
-        where: {
-          REC_ST: 'A'
-        }
+        where: { REC_ST: 'A' }
       });
-      
       res.status(200).json({
         success: true,
         data: charges,
         count: charges.length
       });
-
     } catch (error) {
       console.error('Get Active Charges Error:', error);
       res.status(500).json({
@@ -519,11 +468,9 @@ const ChargeController = {
     }
   },
 
-  // Bulk create charges
   bulkCreateCharges: async (req, res) => {
     try {
       const { charges } = req.body;
-
       if (!Array.isArray(charges) || charges.length === 0) {
         return res.status(400).json({
           success: false,
@@ -531,25 +478,19 @@ const ChargeController = {
         });
       }
 
-      // Validate each charge
       const validatedCharges = [];
       const errors = [];
 
       for (const [index, chargeData] of charges.entries()) {
         try {
-          // Transform the charge data
           const transformedCharge = ChargeController.transformChargeRequest(chargeData);
-          
-          // Validate using model
+          // ✅ Remove CHRG_ID to let auto-increment work
+          delete transformedCharge.CHRG_ID;
           const charge = Charge.build(transformedCharge);
           await charge.validate();
           validatedCharges.push(transformedCharge);
         } catch (error) {
-          errors.push({
-            index,
-            error: error.message,
-            data: chargeData
-          });
+          errors.push({ index, error: error.message, data: chargeData });
         }
       }
 
@@ -562,7 +503,6 @@ const ChargeController = {
         });
       }
 
-      // Create all charges in bulk
       const result = await Charge.bulkCreate(validatedCharges, {
         validate: true,
         returning: true
@@ -573,10 +513,8 @@ const ChargeController = {
         message: `${result.length} charges created successfully`,
         data: result
       });
-
     } catch (error) {
       console.error('Bulk Create Charges Error:', error);
-      
       if (error.name === 'SequelizeValidationError') {
         const errors = error.errors.map(err => err.message);
         return res.status(400).json({
@@ -585,14 +523,12 @@ const ChargeController = {
           errors
         });
       }
-
       if (error.name === 'SequelizeUniqueConstraintError') {
         return res.status(400).json({
           success: false,
-          message: 'Duplicate charge IDs or codes in bulk data'
+          message: 'Duplicate charge codes in bulk data'
         });
       }
-
       res.status(500).json({
         success: false,
         message: 'Error creating charges in bulk',

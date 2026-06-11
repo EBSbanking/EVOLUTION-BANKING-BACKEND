@@ -106,10 +106,7 @@ DrawerCloseOut.init({
   DRAWER_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'Drawers',
-      key: 'DRAWER_ID'
-    }
+    
   },
   DRAWER_NO: {
     type: DataTypes.STRING(20),

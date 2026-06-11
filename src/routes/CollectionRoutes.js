@@ -1,62 +1,25 @@
-import express from 'express';
-import {
-  createCollection,
-  getCollections,
-  getCollectionById,
-  updateCollection,
-  deleteCollection,
-  approveCollection,
-  rejectCollection,
-  getCollectionsByGroup,
-  getCollectionStats,
-  processCollection,
-  addLoanRepayment,
-  addSavingsCollection,
-  getCollectionBreakdown,
-  getCollectionsByGroupLoan,
-  getRepaymentStats
-} from '../controllers/CollectionController.js';
+import * as collectionController from '../controllers/CollectionController.js';  // use lowercase 'c' to match usage
 
-const router = express.Router();
+// OR import individually:
+// import { 
+//   createCollection, getCollections, getCollectionById, updateCollection,
+//   deleteCollection, approveCollection, rejectCollection, getCollectionsByGroup,
+//   getCollectionStats, processCollection, addLoanRepayment, addSavingsCollection,
+//   getCollectionBreakdown, getCollectionsByGroupLoan, getRepaymentStats
+// } from '../controllers/CollectionController.js';
 
-router.route('/')
-  .post(createCollection)
-  .get(getCollections);
-
-router.route('/stats/overview')
-  .get(getCollectionStats);
-
-router.route('/stats/repayments')
-  .get(getRepaymentStats);
-
-router.route('/group/:groupId')
-  .get(getCollectionsByGroup);
-
-router.route('/loan/:groupLoanId')
-  .get(getCollectionsByGroupLoan);
-
-router.route('/:id')
-  .get(getCollectionById)
-  .put(updateCollection)
-  .delete(deleteCollection);
-
-router.route('/:id/approve')
-  .patch(approveCollection);
-
-router.route('/:id/reject')
-  .patch(rejectCollection);
-
-// NEW ROUTES FOR LOAN REPAYMENT INTEGRATION:
-router.route('/:id/process')
-  .patch(processCollection);
-
-router.route('/:id/repayments')
-  .patch(addLoanRepayment);
-
-router.route('/:id/savings')
-  .patch(addSavingsCollection);
-
-router.route('/:id/breakdown')
-  .get(getCollectionBreakdown);
-
-export default router;
+router.post('/collections', collectionController.createCollection);
+router.get('/collections', collectionController.getCollections);
+router.get('/collections/:id', collectionController.getCollectionById);
+router.put('/collections/:id', collectionController.updateCollection);
+router.delete('/collections/:id', collectionController.deleteCollection);
+router.patch('/collections/:id/approve', collectionController.approveCollection);
+router.patch('/collections/:id/reject', collectionController.rejectCollection);
+router.get('/collections/group/:groupId', collectionController.getCollectionsByGroup);
+router.get('/collections/stats/overview', collectionController.getCollectionStats);
+router.patch('/collections/:id/process', collectionController.processCollection);
+router.patch('/collections/:id/repayments', collectionController.addLoanRepayment);
+router.patch('/collections/:id/savings', collectionController.addSavingsCollection);
+router.get('/collections/:id/breakdown', collectionController.getCollectionBreakdown);
+router.get('/collections/loan/:groupLoanId', collectionController.getCollectionsByGroupLoan);
+router.get('/collections/stats/repayments', collectionController.getRepaymentStats);

@@ -1,39 +1,34 @@
+// routes/BranchRoutes.js
 import express from 'express';
+
 import {
   createBranch,
   getAllBranches,
   getBranchById,
-  getBranchByCode,
   updateBranch,
   deleteBranch,
   getBranchBusinessUnits,
-  getBranchesByOrganization
+  getBranchesByOrganization,
+  getUserBranches,
+  getBusinessUnitById,
+  getBusinessUnitByBU_ID
 } from '../controllers/BranchController.js';
 
 const router = express.Router();
 
-// OPTION A: If you want /api/branches
-router.route('/')
-  .get(getAllBranches)
-  .post(createBranch);
 
-// OPTION B: If you want /api/branch/branch (duplicate path)
-router.route('/branch')
-  .post(createBranch); // Add this line
+// Branch endpoints
+router.post('/branch', createBranch);
+router.get('/branches', getAllBranches);
+router.get('/branch/:id', getBranchById);
+router.put('/branch/:id', updateBranch);
+router.delete('/branch/:id', deleteBranch);
+router.get('/branch/:id/business-units', getBranchBusinessUnits);
+router.get('/branches/organization/:organizationName', getBranchesByOrganization);
+router.get('/user-branches', getUserBranches);
 
-// Rest of your routes
-router.route('/code/:branchCode')
-  .get(getBranchByCode);
-
-router.route('/organization/:organizationName')
-  .get(getBranchesByOrganization);
-
-router.route('/:id')
-  .get(getBranchById)
-  .put(updateBranch)
-  .delete(deleteBranch);
-
-router.route('/:id/business-units')
-  .get(getBranchBusinessUnits);
+// Business unit endpoints (if needed)
+router.get('/business-units/:id', getBusinessUnitById);
+router.get('/business-units/business-unit/:bu_id', getBusinessUnitByBU_ID);
 
 export default router;

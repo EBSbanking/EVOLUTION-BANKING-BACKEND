@@ -8,16 +8,17 @@ import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import GLAccountTransaction from '../models/GLAccountTransaction.js';
 import NotificationService from '../Services/NotificationService.js';
 import { createGLAccountTransaction } from '../controllers/GLAccountTransactionController.js';
+import AuditTrail from '../models/AuditTrail.js'; // Add this import
 
 // Helper functions
 const generateTransactionRefNo = () => `TRX${Date.now()}${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 const generateNumber = (len) => Math.random().toString().slice(2, 2 + len).padStart(len, '0');
 
-// // Validate GL account number format: 6 groups of 1-3 digits separated by '-'
-// const isValidGLAcctNo = (glAcctNo) => {
-//   const regex = /^(\d{1,3}-){5}\d{1,3}$/;
-//   return regex.test(glAcctNo);
-// };
+// Validate GL account number format: 6 groups of 1-3 digits separated by '-'
+const isValidGLAcctNo = (glAcctNo) => {
+  const regex = /^(\d{1,3}-){5}\d{1,3}$/;
+  return regex.test(glAcctNo);
+};
 
 const GL_ACCOUNT_DEFAULTS = {
   GL_ACCT_CAT: 'ASSET',
@@ -46,9 +47,41 @@ async function updateCustomerAccountAndLedger(deposit, userId, description) {
   };
 }
 
+// Helper function to create Audit Trail entry
+const createAuditTrailEntry = async (deposit, action, details) => {
+  try {
+    await AuditTrail.create({
+      account_no: deposit.ACCT_NO,
+      reference_no: deposit.TRANSACTION_REF_NO,
+      event_type: action === 'CREATE' ? 'TRANSACTION_CR' : 'TRANSACTION_UPDATE',
+      event_id: deposit._id.toString(),
+      transaction_type: 'CREDIT',
+      amount: deposit.AMOUNT,
+      description: details.description || `Transaction ${action}`,
+      timestamp: new Date(),
+      status: deposit.STATUS === 'Approved' ? 'SUCCESS' : 'PENDING',
+      user_id: details.userId || 'SYSTEM',
+      user_role: details.userRole || 'TELLER',
+      entity_type: 'DepositTransaction',
+      entity_id: deposit._id.toString(),
+      additional_info: JSON.stringify({
+        amount: deposit.AMOUNT,
+        depositor_name: deposit.DEPOSITOR_NAME,
+        currency_count: deposit.CURRENCY_COUNT,
+        transaction_mode: 'CASH',
+        action: action,
+        ...details
+      })
+    });
+    console.log(`✅ Audit trail created for transaction ${deposit.TRANSACTION_REF_NO}`);
+  } catch (auditErr) {
+    console.error('Failed to create audit trail:', auditErr);
+  }
+};
+
 export const createDepositTransaction = async (req, res) => {
   const {
-    ACCT_ID, // Make this optional
+    ACCT_ID,
     ACCT_NO,
     GL_ACCT_NO,
     ACCT_NM,
@@ -65,7 +98,6 @@ export const createDepositTransaction = async (req, res) => {
     CUST_ID,
   } = req.body;
 
-  // Updated: ACCT_ID is no longer required
   const requiredFields = ['ACCT_NO', 'DEPOSITOR_NAME', 'VALUE_DATE', 'USER_ID', 'ROLE_NM', 'CUST_ID', 'GL_ACCT_NO'];
   const missingFields = requiredFields.filter((field) => !req.body[field]);
   if (missingFields.length > 0) {
@@ -91,9 +123,7 @@ export const createDepositTransaction = async (req, res) => {
 
   // Validate CURRENCY_COUNT structure - SUPPORT BOTH OLD AND NEW KEY NAMES
   if (CURRENCY_COUNT) {
-    // Support both old keys (OneThousandNaira, FiveHundredNaira) and new keys (NGN1000, NGN500)
     const {
-      // Old key names
       OneThousandNaira = 0,
       FiveHundredNaira = 0,
       TwoHundredNaira = 0,
@@ -102,7 +132,6 @@ export const createDepositTransaction = async (req, res) => {
       TwentyNaira = 0,
       TenNaira = 0,
       FiveNaira = 0,
-      // New key names
       NGN1000 = 0,
       NGN500 = 0,
       NGN200 = 0,
@@ -113,7 +142,6 @@ export const createDepositTransaction = async (req, res) => {
       NGN5 = 0,
     } = CURRENCY_COUNT;
 
-    // Use new keys if provided, otherwise use old keys
     const calculatedAmount =
       ((OneThousandNaira || NGN1000) * 1000) +
       ((FiveHundredNaira || NGN500) * 500) +
@@ -143,7 +171,6 @@ export const createDepositTransaction = async (req, res) => {
       });
     }
 
-    // Calculate total count for both key naming conventions
     CURRENCY_COUNT.TOTAL_CURRENCY_COUNT =
       (OneThousandNaira || NGN1000) +
       (FiveHundredNaira || NGN500) +
@@ -154,7 +181,6 @@ export const createDepositTransaction = async (req, res) => {
       (TenNaira || NGN10) +
       (FiveNaira || NGN5);
 
-    // Ensure all keys are present for backward compatibility
     CURRENCY_COUNT.OneThousandNaira = OneThousandNaira || NGN1000;
     CURRENCY_COUNT.FiveHundredNaira = FiveHundredNaira || NGN500;
     CURRENCY_COUNT.TwoHundredNaira = TwoHundredNaira || NGN200;
@@ -166,7 +192,6 @@ export const createDepositTransaction = async (req, res) => {
   }
 
   try {
-    // Fetch customer account and validate CUST_ID presence
     const customer = await CustomerAccount.findOne({ ACCT_NO: String(ACCT_NO) });
     if (!customer) {
       return res.status(404).json({
@@ -175,7 +200,6 @@ export const createDepositTransaction = async (req, res) => {
       });
     }
     
-    // Use customer.CUST_ID if CUST_ID not provided in request
     const finalCustId = CUST_ID || customer.CUST_ID;
     if (!finalCustId) {
       return res.status(500).json({ 
@@ -185,7 +209,6 @@ export const createDepositTransaction = async (req, res) => {
       });
     }
 
-    // Find or create Ledger and GL Account if missing
     let glAccount = await GLAccount.findOne({ GL_ACCT_NO });
     if (!glAccount) {
       glAccount = new GLAccount({
@@ -237,9 +260,8 @@ export const createDepositTransaction = async (req, res) => {
       await ledger.save();
     }
 
-    // Create deposit transaction doc - ACCT_ID is now optional
     const deposit = new DepositTransaction({
-      ACCT_ID: ACCT_ID || null, // Optional field
+      ACCT_ID: ACCT_ID || null,
       ACCT_NO: String(ACCT_NO),
       ACCT_NM,
       GL_ACCT_NO,
@@ -265,12 +287,20 @@ export const createDepositTransaction = async (req, res) => {
       REC_ST: 'Pending',
       STATUS: 'Pending',
       DESCRIPTION,
-      CUST_ID: String(finalCustId), // Use the final CUST_ID
+      CUST_ID: String(finalCustId),
       USER_ID,
     });
     await deposit.save();
 
-    // Load transaction policy for the role
+    // ✅ Create Audit Trail entry for the deposit
+    await createAuditTrailEntry(deposit, 'CREATE', {
+      description: DESCRIPTION || `Cash Deposit by ${DEPOSITOR_NAME}`,
+      userId: USER_ID,
+      userRole: ROLE_NM,
+      depositorName: DEPOSITOR_NAME,
+      businessUnit: BUSINESS_UNIT
+    });
+
     const policy = await TransactionPolicy.findOne({ ROLE_NM: new RegExp(`^${ROLE_NM}$`, 'i') });
     if (!policy || !Array.isArray(policy.RANGES) || policy.RANGES.length === 0) {
       return res.status(403).json({ message: `No transaction policy found for role: ${ROLE_NM}` });
@@ -282,13 +312,12 @@ export const createDepositTransaction = async (req, res) => {
     }
 
     if (range.requiresApproval === true) {
-      // Send to workflow for approval
       const workflowPayload = {
         ITEM_VALUE: finalAmount,
         ITEM_DESC: `Deposit of ₦${finalAmount} for Account ${ACCT_NO}`,
         ITEM_CLASS_NM: 'Transaction',
         ITEM_TYPE: 'DepositTransaction',
-        CUST_ID: Number(finalCustId), // Use the final CUST_ID
+        CUST_ID: Number(finalCustId),
         USER_ID,
         BU_ID: String(BUSINESS_UNIT),
         ORIGINATOR_USER_ROLE_ID: ROLE_NM,
@@ -296,15 +325,12 @@ export const createDepositTransaction = async (req, res) => {
         depositPayload: { _id: deposit._id },
       };
 
-      // Submit to workflow
       const workflowResult = await WF_WORK_ITEMController.submitTransaction({ body: workflowPayload }, res);
 
-      // If WF_WORK_ITEMController sent a response, return it
       if (res.headersSent) {
         return;
       }
 
-      // Send notification to target role for approval
       try {
         await NotificationService.send({
           ROLE_ID: workflowPayload.TARGET_USER_ROLE_ID,
@@ -315,7 +341,6 @@ export const createDepositTransaction = async (req, res) => {
         });
       } catch (notificationErr) {
         console.error('Notification error:', notificationErr);
-        // Optionally, don't fail the transaction due to notification error
       }
 
       return res.status(200).json({
@@ -327,15 +352,19 @@ export const createDepositTransaction = async (req, res) => {
       });
     }
 
-    // If approval not required, finalize transaction immediately & post GL transaction
     deposit.REC_ST = 'Completed';
     deposit.STATUS = 'Approved';
     await deposit.save();
 
-    // Post the GL transaction using createGLAccountTransaction
+    // Update audit trail for approved status
+    await createAuditTrailEntry(deposit, 'APPROVE', {
+      description: `Deposit approved for ${DEPOSITOR_NAME}`,
+      userId: USER_ID,
+      userRole: ROLE_NM
+    });
+
     let glTransaction;
     try {
-      // Create a mock response object to capture the GL transaction result
       const mockRes = {
         statusCode: null,
         responseData: null,
@@ -371,12 +400,10 @@ export const createDepositTransaction = async (req, res) => {
       );
 
       if (mockRes.statusCode === 201 && mockRes.responseData?.transaction) {
-        // Queued transaction
         glTransaction = mockRes.responseData.transaction;
         deposit.GL_TransactionId = glTransaction.TransactionId || glTransaction._id;
-        deposit.QueueTransactionId = glTransaction._id; // Store ObjectId from GLTransactionQueue
+        deposit.QueueTransactionId = glTransaction._id;
       } else if (mockRes.statusCode === 200 && mockRes.responseData?.transaction) {
-        // Immediate transaction
         glTransaction = mockRes.responseData.transaction;
         deposit.GL_TransactionId = glTransaction.TransactionId;
         deposit.QueueTransactionId = glTransaction.QueueTransactionId;
@@ -394,10 +421,8 @@ export const createDepositTransaction = async (req, res) => {
       });
     }
 
-    // Update customer account and ledger balances
     const updateResult = await updateCustomerAccountAndLedger(deposit, USER_ID, DESCRIPTION);
 
-    // Send notification for completed transaction
     try {
       await NotificationService.send({
         ROLE_ID: ROLE_NM,
@@ -407,7 +432,6 @@ export const createDepositTransaction = async (req, res) => {
       });
     } catch (notificationErr) {
       console.error('Notification error:', notificationErr);
-      // Optionally, don't fail the transaction due to notification error
     }
 
     return res.status(201).json({
@@ -440,7 +464,6 @@ export const approveDepositTransaction = async (req, res) => {
   }
 
   try {
-    // Find work item
     const workItem = await WF_WORK_ITEM.findOne({
       WORK_ITEM_ID: Number(WORK_ITEM_ID),
       CUST_ID: Number(CUST_ID),
@@ -455,7 +478,6 @@ export const approveDepositTransaction = async (req, res) => {
       });
     }
 
-    // Find associated deposit
     const deposit = await DepositTransaction.findOne({
       _id: workItem.ITEM_ID,
       CUST_ID: CUST_ID.toString(),
@@ -469,7 +491,6 @@ export const approveDepositTransaction = async (req, res) => {
       });
     }
 
-    // Verify customer account
     const customer = await CustomerAccount.findOne({ ACCT_NO: deposit.ACCT_NO });
     if (!customer) {
       return res.status(404).json({
@@ -478,11 +499,9 @@ export const approveDepositTransaction = async (req, res) => {
       });
     }
 
-    // Update balances
     const balanceBefore = parseFloat(customer.LEDGER_BAL) || 0;
     const newBalance = balanceBefore + deposit.AMOUNT;
 
-    // Update deposit status
     deposit.STATUS = 'Approved';
     deposit.REC_ST = 'Active';
     deposit.APPROVED_BY = APPROVED_BY;
@@ -490,13 +509,18 @@ export const approveDepositTransaction = async (req, res) => {
     deposit.BALANCE_AFTER_TRANSACTION = newBalance;
     await deposit.save();
 
-    // Update customer balance
+    // Update audit trail for approval
+    await createAuditTrailEntry(deposit, 'APPROVE', {
+      description: `Deposit approved by ${APPROVED_BY}`,
+      userId: APPROVED_BY,
+      userRole: 'APPROVER'
+    });
+
     customer.LEDGER_BAL = customer.CLEARED_BAL = customer.AVAILABLE_BALANCE = newBalance;
     customer.lastActivityDate = new Date();
     customer.UPDATED_AT = new Date();
     await customer.save();
 
-    // Update workflow item
     workItem.REC_ST = 'Active';
     workItem.APPROVED_BY = APPROVED_BY;
     workItem.APPROVED_DATE = new Date();
@@ -504,7 +528,6 @@ export const approveDepositTransaction = async (req, res) => {
     workItem.COMMENTS = comments;
     await workItem.save();
 
-    // Post GL transaction
     let glTransaction;
     try {
       const mockRes = {
@@ -542,12 +565,10 @@ export const approveDepositTransaction = async (req, res) => {
       );
 
       if (mockRes.statusCode === 201 && mockRes.responseData?.transaction) {
-        // Queued transaction
         glTransaction = mockRes.responseData.transaction;
         deposit.GL_TransactionId = glTransaction.TransactionId || glTransaction._id;
-        deposit.QueueTransactionId = glTransaction._id; // Store ObjectId from GLTransactionQueue
+        deposit.QueueTransactionId = glTransaction._id;
       } else if (mockRes.statusCode === 200 && mockRes.responseData?.transaction) {
-        // Immediate transaction
         glTransaction = mockRes.responseData.transaction;
         deposit.GL_TransactionId = glTransaction.TransactionId;
         deposit.QueueTransactionId = glTransaction.QueueTransactionId;
@@ -561,7 +582,6 @@ export const approveDepositTransaction = async (req, res) => {
       return res.status(500).json({ message: 'Failed to post GL transaction', error: glErr.message });
     }
 
-    // Send notification for approved transaction
     try {
       await NotificationService.send({
         ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
@@ -572,7 +592,6 @@ export const approveDepositTransaction = async (req, res) => {
       });
     } catch (notificationErr) {
       console.error('Notification error:', notificationErr);
-      // Optionally, don't fail the transaction due to notification error
     }
 
     return res.status(200).json({
@@ -610,7 +629,6 @@ export const rejectDepositTransaction = async (req, res) => {
   }
 
   try {
-    // Find the workflow item
     const workItem = await WF_WORK_ITEM.findOne({
       WORK_ITEM_ID: Number(WORK_ITEM_ID),
       CUST_ID: Number(CUST_ID),
@@ -625,7 +643,6 @@ export const rejectDepositTransaction = async (req, res) => {
       });
     }
 
-    // Find the associated deposit transaction
     const deposit = await DepositTransaction.findOne({
       _id: workItem.ITEM_ID,
       CUST_ID: CUST_ID.toString(),
@@ -639,14 +656,19 @@ export const rejectDepositTransaction = async (req, res) => {
       });
     }
 
-    // Update the deposit transaction to reflect rejection
     deposit.STATUS = 'Rejected';
     deposit.REC_ST = 'Inactive';
     deposit.REJECTED_BY = REJECTED_BY;
     deposit.REJECTED_DATE = new Date();
     await deposit.save();
 
-    // Update the work item
+    // Update audit trail for rejection
+    await createAuditTrailEntry(deposit, 'REJECT', {
+      description: `Deposit rejected by ${REJECTED_BY}: ${comments || 'No comments'}`,
+      userId: REJECTED_BY,
+      userRole: 'APPROVER'
+    });
+
     workItem.REC_ST = 'Rejected';
     workItem.REJECTED_BY = REJECTED_BY;
     workItem.REJECTED_DATE = new Date();
@@ -654,7 +676,6 @@ export const rejectDepositTransaction = async (req, res) => {
     workItem.COMMENTS = comments;
     await workItem.save();
 
-    // Send notification
     await NotificationService.send({
       ROLE_ID: workItem.ORIGINATOR_USER_ROLE_ID,
       message: `Your deposit of ₦${deposit.AMOUNT} for Account ${deposit.ACCT_NO} was rejected`,
@@ -684,7 +705,6 @@ export const getPendingApprovalsByCustId = async (req, res) => {
   try {
     const { custId } = req.params;
 
-    // Get all pending workflow items for DepositTransaction and customer
     const pendingItems = await WF_WORK_ITEM.find({
       ITEM_TYPE: 'DepositTransaction',
       CUST_ID: Number(custId),
@@ -697,7 +717,6 @@ export const getPendingApprovalsByCustId = async (req, res) => {
       });
     }
 
-    // Fetch DepositTransaction details for each pending work item
     const pendingTransactions = await Promise.all(
       pendingItems.map(async (item) => {
         const transaction = await DepositTransaction.findOne({
@@ -738,7 +757,6 @@ export const getTransactionRefNosByAcctNo = async (req, res) => {
   try {
     const { acctNo } = req.params;
 
-    // Fetch only the transaction reference numbers for the specified account number
     const transactions = await DepositTransaction.find({ ACCT_NO: acctNo }).select('TRANSACTION_REF_NO');
 
     if (transactions.length > 0) {
@@ -757,7 +775,6 @@ export const getTransactionsByAcctNo = async (req, res) => {
   try {
     const { acctNo } = req.params;
 
-    // Fetch transactions by Account Number
     const transactions = await DepositTransaction.find({ ACCT_NO: acctNo });
 
     if (transactions.length > 0) {

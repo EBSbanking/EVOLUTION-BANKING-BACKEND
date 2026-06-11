@@ -1,7 +1,13 @@
 // routes/accountStatementRoutes.js
 import express from 'express';
-// In your routes file
-import { generateAccountStatement, exportCustomerAccounts, debugAccount } from '../controllers/AccountStatementController.js';
+import { 
+  generateAccountStatement, 
+  exportCustomerAccounts, 
+  debugAccount,
+  getAccountStatementJSON,
+  debugAccountTransactions
+  // Remove checkRealTransactions if not needed
+} from '../controllers/AccountStatementController.js';
 
 const router = express.Router();
 
@@ -16,11 +22,12 @@ const router = express.Router();
  */
 router.get('/:acctNo/statement', generateAccountStatement);
 router.get('/export', exportCustomerAccounts);
-router.get('/debug/:acctNo', debugAccount); // Add this new route
+router.get('/debug/:acctNo', debugAccount);
+
+// Get account statement as JSON (for frontend display)
+router.get('/:acctNo/statement-json', getAccountStatementJSON);
+
+// Debug endpoint to check transactions
+router.get('/debug-transactions/:acctNo', debugAccountTransactions);
 
 export default router;
-
-
-
-
-

@@ -1,7 +1,7 @@
 // services/accountService.js
 import Counter from '../models/Counter.js';
 import { getProductTypeByProdIdInternal } from '../controllers/ProductTypeMappingController.js';
-import { sequelize } from '../models/index.js';
+import sequelize from '../../config/db.js';
 import Account from '../models/Accounts.js'; // Your Account model
 import CustomerAccount from '../models/CustomerAccount.js'; // Import CustomerAccount model
 

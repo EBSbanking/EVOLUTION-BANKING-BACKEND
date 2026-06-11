@@ -1,147 +1,253 @@
-// models/LoanAccount.js - FIXED VERSION (NO FIELD MAPPINGS)
-import { DataTypes, Model, QueryTypes } from 'sequelize';
+// src/models/LoanAccount.js – Corrected (single accrued_interest column)
+import { DataTypes, Op, QueryTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-class LoanAccount extends Model {}
+class LoanAccount extends Model {
+  static async findOverdueLoans(currentDate = new Date()) {
+    await this.ensureTableExists();
+    return await this.findAll({
+      where: {
+        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },
+        NEXT_PAYMENT_DATE: { [Op.lt]: currentDate },
+        OUTSTANDING_PRINCIPAL: { [Op.gt]: 0 }
+      }
+    });
+  }
+
+  static async markLoansAsOverdue(currentDate = new Date()) {
+    await this.ensureTableExists();
+    const overdueLoans = await this.findOverdueLoans(currentDate);
+    let modifiedCount = 0;
+    for (const loan of overdueLoans) {
+      try {
+        await loan.update({ LOAN_STATUS: 'OVERDUE', updatedAt: new Date() });
+        modifiedCount++;
+      } catch (error) {
+        console.error(`Failed to mark loan ${loan.ACCT_NO} as overdue:`, error.message);
+      }
+    }
+    return { modifiedCount };
+  }
+
+  static async findByAccountNumber(accountNumber) {
+    await this.ensureTableExists();
+    return await this.findOne({ where: { ACCT_NO: accountNumber } });
+  }
+
+  static async findByCustomerId(customerId) {
+    await this.ensureTableExists();
+    return await this.findAll({ where: { CUST_ID: customerId } });
+  }
+
+  static async findByCreatedBy(userId) {
+    await this.ensureTableExists();
+    return await this.findAll({ 
+      where: { CREATED_BY: userId },
+      order: [['created_at', 'DESC']]
+    });
+  }
+
+  static async ensureTableExists() {
+    try {
+      const [result] = await sequelize.query(
+        `SELECT COUNT(*) as tableExists FROM information_schema.tables 
+         WHERE table_schema = DATABASE() AND table_name = 'loan_accounts'`,
+        { type: QueryTypes.SELECT }
+      );
+      if (result.tableExists === 0) {
+        console.log('📝 Creating loan_accounts table...');
+        await this.sync({ force: false });
+        console.log('✅ loan_accounts table created');
+      }
+      return true;
+    } catch (error) {
+      console.error('❌ Error ensuring loan_accounts table:', error.message);
+      return false;
+    }
+  }
+
+  getAccountNumber() { return this.ACCT_NO; }
+  getCustomerId() { return this.CUST_ID; }
+  getLoanStatus() { return this.LOAN_STATUS; }
+  getOutstandingPrincipal() { return parseFloat(this.OUTSTANDING_PRINCIPAL) || 0; }
+  isActive() { return ['ACTIVE', 'DISBURSED', 'APPROVED'].includes(this.LOAN_STATUS); }
+}
 
 LoanAccount.init(
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true
-    },
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+
+    // Basic loan account info
     ACCT_NO: {
-      type: DataTypes.STRING,
+      type: DataTypes.STRING(255),
       allowNull: false,
       unique: true,
-      comment: 'Account number'
+      field: 'ACCT_NO'
     },
     ACCT_NM: {
-      type: DataTypes.STRING,
+      type: DataTypes.STRING(255),
       allowNull: false,
-      comment: 'Account name'
+      field: 'ACCT_NM'
     },
     CUST_ID: {
-      type: DataTypes.STRING,
-      allowNull: false,
-      comment: 'Customer identifier'
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'CUST_ID'
     },
     LOAN_PRODUCT_ID: {
       type: DataTypes.INTEGER,
-      comment: 'Loan product identifier'
+      field: 'LOAN_PRODUCT_ID'
     },
+
+    // Amounts
     AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       allowNull: false,
-      comment: 'Loan amount'
+      field: 'AMOUNT'
     },
     DISBURSED_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Amount disbursed'
+      field: 'DISBURSED_AMOUNT'
     },
     OUTSTANDING_PRINCIPAL: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Outstanding principal balance'
+      field: 'OUTSTANDING_PRINCIPAL'
     },
+    // ✅ FIXED: Single column for accrued interest – maps to `accrued_interest`
     ACCRUED_INTEREST: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Accrued interest'
+      field: 'accrued_interest'        // actual column name (lowercase)
     },
     PENALTY_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Penalty amount'
+      field: 'PENALTY_AMOUNT'
     },
+
+    // Interest and status
     INTEREST_RATE: {
       type: DataTypes.DECIMAL(10, 4),
       defaultValue: 0,
-      comment: 'Interest rate'
+      field: 'INTEREST_RATE'
     },
     LOAN_STATUS: {
       type: DataTypes.STRING(50),
       defaultValue: 'PENDING',
-      comment: 'Loan status'
+      field: 'LOAN_STATUS'
     },
     SERVICING_STATUS: {
       type: DataTypes.STRING(50),
       defaultValue: 'SERVICED',
-      comment: 'Servicing status'
+      field: 'SERVICING_STATUS'
     },
+
+    // Dates
     APPLICATION_DATE: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
-      comment: 'Application date'
+      field: 'APPLICATION_DATE'
     },
     APPROVAL_DATE: {
       type: DataTypes.DATE,
-      comment: 'Approval date'
+      field: 'APPROVAL_DATE'
     },
     DISBURSEMENT_DATE: {
       type: DataTypes.DATE,
-      comment: 'Disbursement date'
+      field: 'DISBURSEMENT_DATE'
     },
     CLOSURE_DATE: {
       type: DataTypes.DATE,
-      comment: 'Closure date'
+      field: 'CLOSURE_DATE'
     },
     LAST_REPAYMENT_DATE: {
       type: DataTypes.DATE,
-      comment: 'Last repayment date'
+      field: 'LAST_REPAYMENT_DATE'
     },
     LAST_REPAYMENT_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Last repayment amount'
+      field: 'LAST_REPAYMENT_AMOUNT'
     },
     NEXT_PAYMENT_DATE: {
       type: DataTypes.DATE,
-      comment: 'Next payment date'
+      field: 'NEXT_PAYMENT_DATE'
     },
     MATURITY_DT: {
       type: DataTypes.DATE,
-      comment: 'Maturity date'
+      field: 'MATURITY_DT'
     },
+
+    // Repayment tracking
     TOTAL_REPAID_AMOUNT: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0,
-      comment: 'Total repaid amount'
+      field: 'TOTAL_REPAID_AMOUNT'
     },
     TERM_CD: {
       type: DataTypes.STRING(20),
       defaultValue: 'MONTHLY',
-      comment: 'Term code (M=Monthly, Y=Yearly)'
+      field: 'TERM_CD'
     },
     TERM_VALUE: {
       type: DataTypes.INTEGER,
       defaultValue: 12,
-      comment: 'Term value (number of months/years)'
+      field: 'TERM_VALUE'
     },
     CUSTOMER_ACCOUNT_ID: {
       type: DataTypes.BIGINT,
-      comment: 'Customer account identifier'
+      field: 'CUSTOMER_ACCOUNT_ID'
     },
+
+    // Guarantor info
+    GUARANTOR_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'GUARANTOR_ID'
+    },
+    GUARANTEED_AMOUNT: {
+      type: DataTypes.DECIMAL(20, 2),
+      allowNull: true,
+      field: 'GUARANTEED_AMOUNT'
+    },
+
+    // Portfolio
+    LOAN_PORTFOLIO_ID: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: 'LOAN_PORTFOLIO_ID'
+    },
+
+    // Audit fields
+    CREATED_BY: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'CREATED_BY'
+    },
+
+    // Schedule flags
     hasRepaymentSchedule: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-      comment: 'Has repayment schedule'
+      field: 'has_repayment_schedule'
     },
     repaymentScheduleId: {
       type: DataTypes.INTEGER,
-      comment: 'Repayment schedule identifier'
+      field: 'repayment_schedule_id'
     },
+
+    // Timestamps
     createdAt: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
-      comment: 'Created at'
+      field: 'created_at'
     },
     updatedAt: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
-      comment: 'Updated at'
+      field: 'updated_at'
     }
   },
   {
@@ -149,286 +255,10 @@ LoanAccount.init(
     modelName: 'LoanAccount',
     tableName: 'loan_accounts',
     timestamps: true,
-    freezeTableName: true,
-    // Add hooks for auto-initialization
-    hooks: {
-      beforeValidate: async (instance, options) => {
-        if (!LoanAccount._tableChecked) {
-          await LoanAccount.ensureTableExists();
-          LoanAccount._tableChecked = true;
-        }
-      }
-    }
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    underscored: false      // disable automatic underscore conversion
   }
 );
-
-// ==================== SIMPLIFIED TABLE INITIALIZATION ====================
-
-/**
- * Simple table initialization - creates only if doesn't exist
- */
-LoanAccount.ensureTableExists = async function() {
-  try {
-    // Check if table exists
-    const [result] = await sequelize.query(
-      `SELECT COUNT(*) as tableExists FROM information_schema.tables 
-       WHERE table_schema = DATABASE() AND table_name = 'loan_accounts'`,
-      { type: QueryTypes.SELECT }
-    );
-    
-    if (result.tableExists === 0) {
-      console.log('📝 Creating loan_accounts table (first time)...');
-      
-      // Use Sequelize sync to create table (won't alter existing tables)
-      await LoanAccount.sync({ force: false });
-      console.log('✅ loan_accounts table created');
-      
-      return true;
-    }
-    
-    console.log('✅ loan_accounts table already exists');
-    return true;
-    
-  } catch (error) {
-    console.error('❌ Error ensuring loan_accounts table:', error.message);
-    
-    // Try a simple sync as fallback
-    try {
-      await LoanAccount.sync({ force: false });
-      console.log('✅ Table created via fallback sync');
-      return true;
-    } catch (syncError) {
-      console.error('❌ Fallback sync also failed:', syncError.message);
-      throw error;
-    }
-  }
-};
-
-/**
- * Safe sync with options
- */
-LoanAccount.syncTable = async function(options = {}) {
-  try {
-    console.log('🔄 Syncing LoanAccount table...');
-    
-    if (options.force) {
-      console.warn('⚠️ FORCE SYNC: This will drop and recreate the table (data loss!)');
-      await LoanAccount.sync({ force: true });
-      console.log('✅ Table force-synced');
-    } else if (options.alter) {
-      console.log('⚠️ ALTER SYNC: This will modify table structure');
-      await LoanAccount.sync({ alter: true });
-      console.log('✅ Table altered');
-    } else {
-      // Safe sync: create if doesn't exist, no modifications
-      await LoanAccount.ensureTableExists();
-      console.log('✅ Table ensured (safe)');
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Error syncing table:', error.message);
-    throw error;
-  }
-};
-
-// ==================== INSTANCE METHODS ====================
-
-LoanAccount.prototype.getAccountNumber = function() {
-  return this.ACCT_NO;
-};
-
-LoanAccount.prototype.getCustomerId = function() {
-  return this.CUST_ID;
-};
-
-LoanAccount.prototype.getLoanStatus = function() {
-  return this.LOAN_STATUS;
-};
-
-LoanAccount.prototype.getOutstandingPrincipal = function() {
-  const value = parseFloat(this.OUTSTANDING_PRINCIPAL) || 0;
-  return Math.abs(value);
-};
-
-LoanAccount.prototype.isActive = function() {
-  return ['ACTIVE', 'DISBURSED', 'ONGOING'].includes(this.LOAN_STATUS);
-};
-
-LoanAccount.prototype.getFormattedOutstanding = function() {
-  return this.getOutstandingPrincipal();
-};
-
-// ==================== STATIC METHODS ====================
-
-LoanAccount.findByAccountNumber = async function(accountNumber) {
-  // Auto-create table if needed
-  if (!this._tableChecked) {
-    await this.ensureTableExists();
-    this._tableChecked = true;
-  }
-  return await this.findOne({
-    where: { ACCT_NO: accountNumber }
-  });
-};
-
-LoanAccount.findByCustomerId = async function(customerId) {
-  if (!this._tableChecked) {
-    await this.ensureTableExists();
-    this._tableChecked = true;
-  }
-  return await this.findAll({
-    where: { CUST_ID: customerId }
-  });
-};
-
-// ==================== ADDITIONAL HELPER METHODS ====================
-
-/**
- * Find loan account with fallback search
- */
-LoanAccount.findByAccountNumberFlexible = async function(accountNumber) {
-  try {
-    // Try direct search first
-    const account = await this.findByAccountNumber(accountNumber);
-    if (account) return account;
-    
-    // If not found, try raw SQL with different column names
-    const results = await sequelize.query(
-      `SELECT * FROM loan_accounts 
-       WHERE ACCT_NO = ? 
-          OR a_c_c_t__n_o = ? 
-          OR acc_t__n_o = ? 
-       LIMIT 1`,
-      {
-        replacements: [accountNumber, accountNumber, accountNumber],
-        type: QueryTypes.SELECT
-      }
-    );
-    
-    if (results && results.length > 0) {
-      // Convert raw result to model instance
-      return this.build(results[0], { isNewRecord: false });
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error in findByAccountNumberFlexible:', error);
-    return null;
-  }
-};
-
-/**
- * Check and fix table structure
- */
-LoanAccount.checkAndFixTableStructure = async function() {
-  try {
-    // Check if ACCT_NO column exists
-    const columnCheck = await sequelize.query(
-      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-       WHERE TABLE_SCHEMA = DATABASE() 
-       AND TABLE_NAME = 'loan_accounts' 
-       AND COLUMN_NAME = 'ACCT_NO'`,
-      { type: QueryTypes.SELECT }
-    );
-    
-    if (columnCheck.length === 0) {
-      console.log('⚠️ ACCT_NO column missing, checking for old column names...');
-      
-      // Check for old column names
-      const oldColumns = await sequelize.query(
-        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = 'loan_accounts' 
-         AND (COLUMN_NAME LIKE '%acc%' OR COLUMN_NAME LIKE '%no%')`,
-        { type: QueryTypes.SELECT }
-      );
-      
-      console.log('Old account columns found:', oldColumns);
-      
-      // If we have an old column, rename it
-      if (oldColumns.length > 0) {
-        const oldColumn = oldColumns[0].COLUMN_NAME;
-        console.log(`🔄 Renaming ${oldColumn} to ACCT_NO`);
-        
-        await sequelize.query(
-          `ALTER TABLE loan_accounts CHANGE ${oldColumn} ACCT_NO VARCHAR(255)`
-        );
-        
-        console.log('✅ Column renamed successfully');
-      }
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('Error checking table structure:', error);
-    return false;
-  }
-};
-
-// ==================== AUTO-INITIALIZATION ====================
-
-// Auto-initialize on app startup (development only)
-if (process.env.NODE_ENV === 'development' || process.env.AUTO_INIT_TABLES === 'true') {
-  // Delay initialization to let app start
-  setTimeout(async () => {
-    try {
-      console.log('🚀 Auto-initializing LoanAccount table...');
-      await LoanAccount.ensureTableExists();
-      
-      // Check and fix table structure
-      await LoanAccount.checkAndFixTableStructure();
-      
-      console.log('✅ LoanAccount table ready');
-    } catch (error) {
-      console.warn('⚠️ Auto-initialization failed (will retry on first use):', error.message);
-    }
-  }, 2000);
-}
-
-
-// Add to LoanAccount.js static methods section
-
-/**
- * Find overdue loans (static method for service use)
- */
-LoanAccount.findOverdueLoans = async function(currentDate = new Date()) {
-  await this.ensureTableExists();
-  return await this.findAll({
-    where: {
-      LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },
-      NEXT_PAYMENT_DATE: {
-        [Op.lt]: currentDate
-      },
-      OUTSTANDING_PRINCIPAL: {
-        [Op.gt]: 0
-      }
-    }
-  });
-};
-
-/**
- * Mark loans as overdue in bulk (static method for service use)
- */
-LoanAccount.markLoansAsOverdue = async function(currentDate = new Date()) {
-  await this.ensureTableExists();
-  
-  const overdueLoans = await this.findOverdueLoans(currentDate);
-  let modifiedCount = 0;
-  
-  for (const loan of overdueLoans) {
-    try {
-      await loan.update({
-        LOAN_STATUS: 'OVERDUE',
-        updatedAt: new Date()
-      });
-      modifiedCount++;
-    } catch (error) {
-      console.error(`Failed to mark loan ${loan.ACCT_NO} as overdue:`, error.message);
-    }
-  }
-  
-  return { modifiedCount };
-};
 
 export default LoanAccount;

@@ -1,9 +1,7 @@
-// config/db.js - COMPLETE CORRECTED VERSION
+// config/db.js - COMPLETE FIXED VERSION (Returns REAL Sequelize instance with backward compatibility)
 import { Sequelize } from 'sequelize';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-import path from 'path';
-import fs from 'fs';
 
 dotenv.config();
 
@@ -14,7 +12,7 @@ const dbConfig = {
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || process.env.DB_PASS || '',
   database: process.env.DB_NAME || 'core_banking',
-  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 10,
+  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 20, // increased
 };
 
 console.log('🔧 Database Configuration:', {
@@ -27,7 +25,118 @@ console.log('🔧 Database Configuration:', {
 });
 
 // ============================================
-// MYSQL2 POOL
+// ENSURE DATABASE EXISTS (with retry)
+// ============================================
+
+const ensureDatabaseExists = async (retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    let tempConnection;
+    try {
+      tempConnection = await mysql.createConnection({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        charset: 'utf8mb4',
+        connectTimeout: 10000,
+      });
+      
+      const [rows] = await tempConnection.execute(
+        'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+        [dbConfig.database]
+      );
+      
+      if (rows.length === 0) {
+        console.log(`📦 Database '${dbConfig.database}' does not exist. Creating...`);
+        await tempConnection.execute(
+          `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` 
+           DEFAULT CHARACTER SET utf8mb4 
+           DEFAULT COLLATE utf8mb4_unicode_ci`
+        );
+        console.log(`✅ Database '${dbConfig.database}' created successfully`);
+      } else {
+        console.log(`✅ Database '${dbConfig.database}' already exists`);
+      }
+      return; // success
+    } catch (error) {
+      console.error(`❌ Error ensuring database exists (attempt ${i+1}/${retries}):`, error.message);
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1))); // exponential backoff
+    } finally {
+      if (tempConnection) await tempConnection.end();
+    }
+  }
+};
+
+// ============================================
+// CREATE REAL SEQUELIZE INSTANCE
+// ============================================
+
+// Ensure database exists before creating Sequelize instance
+await ensureDatabaseExists();
+
+// Create the REAL Sequelize instance
+const sequelize = new Sequelize(dbConfig.database, dbConfig.user, dbConfig.password, {
+  host: dbConfig.host,
+  port: dbConfig.port,
+  dialect: 'mysql',
+  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  pool: {
+    max: dbConfig.connectionLimit,      // maximum connections in pool
+    min: 2,                              // keep at least 2 connections alive
+    acquire: 60000,                      // increase acquire timeout
+    idle: 60000,                         // keep idle connections for 60 seconds
+    evict: 1000,                         // check for idle connections every second
+  },
+  dialectOptions: {
+    connectTimeout: 30000,
+    decimalNumbers: true,
+    charset: 'utf8mb4',
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    // Enable keep-alive to prevent ECONNRESET
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+  },
+  define: {
+    timestamps: true,
+    underscored: true,
+    freezeTableName: true,
+  },
+  timezone: '+00:00',
+  retry: {
+    max: 5,
+    match: [
+      /SequelizeConnectionError/,
+      /SequelizeConnectionAcquireTimeoutError/,
+      /ECONNRESET/,
+      /Connection lost/
+    ],
+    backoffBase: 1000,
+    backoffExponent: 1.5,
+  },
+});
+
+// Test the connection with retry
+let connected = false;
+for (let i = 0; i < 3; i++) {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Database connection established successfully');
+    connected = true;
+    break;
+  } catch (error) {
+    console.error(`❌ Unable to connect to the database (attempt ${i+1}/3):`, error.message);
+    if (i === 2) process.exit(1);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+if (!connected) process.exit(1);
+
+console.log('✅ Sequelize instance created');
+
+// ============================================
+// MYSQL2 POOL (with keep-alive)
 // ============================================
 
 let mysqlPoolInstance = null;
@@ -50,15 +159,7 @@ const createMySQLPool = () => {
       supportBigNumbers: true,
       bigNumberStrings: true,
       decimalNumbers: true,
-      connectTimeout: 10000,
-      debug: process.env.NODE_ENV === 'development',
-      multipleStatements: false,
-      typeCast: function (field, next) {
-        if (field.type === 'TINY' && field.length === 1) {
-          return field.string() === '1';
-        }
-        return next();
-      }
+      connectTimeout: 30000,
     });
     console.log('✅ MySQL2 pool created');
   }
@@ -66,54 +167,8 @@ const createMySQLPool = () => {
 };
 
 // ============================================
-// SEQUELIZE INSTANCE
+// EXPORT FUNCTIONS
 // ============================================
-
-let sequelizeInstance = null;
-
-const createSequelize = () => {
-  if (!sequelizeInstance) {
-    sequelizeInstance = new Sequelize(dbConfig.database, dbConfig.user, dbConfig.password, {
-      host: dbConfig.host,
-      port: dbConfig.port,
-      dialect: 'mysql',
-      logging: process.env.NODE_ENV === 'development' ? console.log : false,
-      pool: {
-        max: dbConfig.connectionLimit,
-        min: 0,
-        acquire: 30000,
-        idle: 10000,
-      },
-      dialectOptions: {
-        connectTimeout: 10000,
-        decimalNumbers: true,
-        charset: 'utf8mb4',
-        supportBigNumbers: true,
-        bigNumberStrings: true,
-      },
-      define: {
-        timestamps: true,
-        underscored: true,
-        freezeTableName: true,
-      },
-      timezone: '+00:00',
-    });
-    console.log('✅ Sequelize instance created');
-  }
-  return sequelizeInstance;
-};
-
-// ============================================
-// EXPORT FUNCTIONS (individual exports)
-// ============================================
-
-// Each function is exported individually
-export const getSequelize = () => {
-  if (!sequelizeInstance) {
-    return createSequelize();
-  }
-  return sequelizeInstance;
-};
 
 export const getPool = () => {
   if (!mysqlPoolInstance) {
@@ -121,8 +176,6 @@ export const getPool = () => {
   }
   return mysqlPoolInstance;
 };
-
-export const initializePool = () => getPool();
 
 export const getConnection = async () => {
   const pool = getPool();
@@ -189,7 +242,7 @@ export const checkDatabaseHealth = async () => {
 
 export const closeConnections = async () => {
   try {
-    if (sequelizeInstance) await sequelizeInstance.close();
+    await sequelize.close();
     await closePool();
     console.log('✅ All database connections closed');
   } catch (error) {
@@ -197,51 +250,50 @@ export const closeConnections = async () => {
   }
 };
 
-// ============================================
-// CREATE INSTANCES AND ALIASES
-// ============================================
-
-// Create instances
-const sequelize = getSequelize();
-const mysqlPool = getPool();
-
-// Create alias for backward compatibility
-const checkConnection = checkDatabaseHealth;
-
-// ============================================
-// EXPORTS - SIMPLE AND CORRECT
-// ============================================
-
-// Export only the instances and aliases (functions are already exported individually above)
-export { sequelize, mysqlPool, checkConnection };
-
-// Create a comprehensive db object
-const db = {
-  // Instances
-  sequelize,
-  mysqlPool,
-  
-  // Functions (already exported individually above)
-  getSequelize,
-  getPool,
-  initializePool,
-  getConnection,
-  executeQuery,
-  executeTransaction,
-  closePool,
-  checkDatabaseHealth,
-  closeConnections,
-  
-  // Aliases
-  checkConnection,
-  
-  // For backward compatibility
-  pool: mysqlPool,
-  connection: sequelize
+export const initializeDatabase = async () => {
+  return { sequelize, mysqlPool: mysqlPoolInstance };
 };
 
-// Export sequelize as default for models that use: import sequelize from './config/db.js'
-export default sequelize;
+// ============================================
+// EXPORT THE REAL SEQUELIZE INSTANCE (DEFAULT)
+// ============================================
 
-// Attach utilities to sequelize instance for convenience
-Object.assign(sequelize, db);
+export default sequelize;
+export { sequelize };
+
+// ============================================
+// BACKWARD COMPATIBILITY EXPORTS
+// ============================================
+
+export const getSequelize = async () => {
+  if (!sequelize) {
+    throw new Error('Sequelize not initialized. Call initializeDatabase() first.');
+  }
+  return sequelize;
+};
+
+export const getSequelizeInstance = async () => {
+  if (!sequelize) {
+    throw new Error('Sequelize not initialized. Call initializeDatabase() first.');
+  }
+  return sequelize;
+};
+
+export const sequelizeInstance = sequelize;
+
+export const query = async (sql, options = {}) => {
+  return sequelize.query(sql, options);
+};
+
+export const authenticate = async () => {
+  return sequelize.authenticate();
+};
+
+export const sync = async (options = {}) => {
+  return sequelize.sync(options);
+};
+
+export const models = () => sequelize.models;
+
+console.log('✅ db.js exports configured with backward compatibility');
+console.log('   Available exports: default, sequelize, getSequelize, getSequelizeInstance, query, authenticate, sync, models');

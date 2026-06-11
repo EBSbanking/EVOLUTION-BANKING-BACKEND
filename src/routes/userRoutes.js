@@ -45,11 +45,15 @@ import DepositTransaction from '../models/DepositTransaction.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
+import { getTransaction } from '../models/index.js';
 // In authRoutes.js and userRoutes.js, change imports to:
 import { 
   checkLicenseForUserCreation,
   checkLicenseForRoute 
 } from '../middlewares/licenseMiddleware.js';
+
+import { protect, isAdmin } from '../middlewares/authMiddleware.js';
+import { getLoginPolicy, updateLoginPolicy } from '../controllers/LoginPolicyController.js';
 const router = express.Router();
 
 // Permission groups derived from TellerDashboard.jsx MODULES
@@ -209,8 +213,7 @@ router.put(
 );
 
 // CHANGED: Added license check
-router.get(
-  '/users/by-employer/:employer_number',
+  router.get('/by-employer/:employer_number',
   verifyToken,
   checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
   checkLicenseForRoute,
@@ -498,57 +501,53 @@ router.get(
   })
 );
 
-// Get user's current login hours
-// CHANGED: Added license check
-router.get('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    
-    res.json({
-      success: true,
-      data: {
-        earliest_login_time: user.earliest_login_time,
-        latest_login_time: user.latest_login_time
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-}));
+
+// GET current policy (any authenticated user)
+router.get('/login-policy', protect, getLoginPolicy);
+
+// PUT update policy (admin only)
+router.put('/login-policy', protect, isAdmin, updateLoginPolicy);
+
 
 // Update user's login hours (user can update their own)
-// CHANGED: Added license check
 router.patch('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     const { earliest_login_time, latest_login_time } = req.body;
     
-    // Validate time format
     const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
     if (earliest_login_time && !timeRegex.test(earliest_login_time)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Earliest login time must be in HH:MM format (24-hour)'
-      });
+      return res.status(400).json({ success: false, message: 'Earliest login time must be in HH:MM format (24-hour)' });
     }
-    
     if (latest_login_time && !timeRegex.test(latest_login_time)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Latest login time must be in HH:MM format (24-hour)'
+      return res.status(400).json({ success: false, message: 'Latest login time must be in HH:MM format (24-hour)' });
+    }
+
+    const updateData = {};
+    if (earliest_login_time) updateData.earliest_login_time = earliest_login_time;
+    if (latest_login_time) updateData.latest_login_time = latest_login_time;
+
+    // Find user by ID or username from token
+    let user;
+    if (req.user.id) {
+      user = await User.findByPk(req.user.id);
+    }
+    if (!user && req.user.name) {
+      user = await User.findOne({
+        where: {
+          [Op.or]: [
+            { user_name: req.user.name },
+            { username: req.user.name },
+            { employer_number: req.user.name }
+          ]
+        }
       });
     }
     
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      { 
-        earliest_login_time: earliest_login_time || "00:00",
-        latest_login_time: latest_login_time || "23:59"
-      },
-      { new: true, runValidators: true }
-    );
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    
+    await user.update(updateData);
     
     res.json({
       success: true,
@@ -560,10 +559,8 @@ router.patch('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandl
     });
     
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    console.error('Error updating login hours:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 }));
 
@@ -791,7 +788,6 @@ router.post(
 );
 
 // 🔐 Credit Officer statistics route
-// CHANGED: Added license check
 router.get(
   '/users/credit-officer/today-stats',
   verifyToken,
@@ -799,64 +795,64 @@ router.get(
   checkLicenseForRoute,
   asyncHandler(async (req, res) => {
     try {
-      logger.info('Credit Officer stats endpoint hit', {
-        userId: req.user.userId,
-        user_name: req.user.user_name,
-        BU_ROLE_ID: req.user.BU_ROLE_ID,
-      });
-
       let responsibilityCentre = req.user.main_business_unit || req.user.businessUnit || 'Wethral';
+      
       if (!responsibilityCentre) {
-        logger.warn('No responsibility centre found', {
-          userId: req.user.userId,
-          user_name: req.user.user_name,
-          availableFields: Object.keys(req.user),
-        });
         return res.status(400).json({
           success: false,
           error: 'Responsibility centre not found for user',
-          debug: {
-            userId: req.user.userId,
-            user_name: req.user.user_name,
-            BU_ROLE_ID: req.user.BU_ROLE_ID,
-            role: req.user.role,
-            isAdmin: req.user.isAdmin,
-            availableFields: Object.keys(req.user),
-          },
         });
       }
 
-      logger.info('Using responsibility centre', { responsibilityCentre });
-
+      const Transaction = db.Transaction;
+      const { Op } = db.Sequelize;
+      
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      const stats = {
-        customers: 12,
-        accountsOpened: 4,
-        kycVerifications: 7,
-        loanFees: 45000,
+      // Get today's stats using Sequelize
+      const stats = await Transaction.findOne({
+        where: {
+          BU_ID: responsibilityCentre,
+          TRANSACTIONDATE: {
+            [Op.gte]: today,
+            [Op.lt]: tomorrow
+          },
+          status: 'COMPLETED'
+        },
+        attributes: [
+          [db.Sequelize.fn('COUNT', db.Sequelize.col('id')), 'totalTransactions'],
+          [db.Sequelize.fn('COUNT', db.Sequelize.fn('DISTINCT', db.Sequelize.col('customer_id'))), 'uniqueCustomers'],
+          [db.Sequelize.fn('SUM', db.Sequelize.col('amount')), 'totalVolume'],
+          [db.Sequelize.fn('SUM', 
+            db.Sequelize.literal(`CASE WHEN transaction_type = 'LOAN_DISBURSEMENT' THEN amount ELSE 0 END`)
+          ), 'loanDisbursements'],
+        ]
+      });
+
+      const result = {
+        customers: parseInt(stats.dataValues.uniqueCustomers) || 0,
+        accountsOpened: 0, // This might come from a different model
+        kycVerifications: 0, // This might come from a different model
+        loanFees: parseFloat(stats.dataValues.loanDisbursements) || 0,
+        totalTransactions: parseInt(stats.dataValues.totalTransactions) || 0,
+        totalVolume: parseFloat(stats.dataValues.totalVolume) || 0
       };
 
       res.status(200).json({
         success: true,
-        data: stats,
-        message: 'Credit Officer statistics retrieved successfully',
-        debug: {
-          user: req.user.user_name,
-          responsibility_centre: responsibilityCentre,
-          fieldSource: 'main_business_unit',
-        },
+        data: result,
+        message: 'Credit Officer statistics retrieved successfully'
       });
+
     } catch (error) {
       logger.error('Error in credit-officer stats endpoint', {
         message: error.message,
         stack: error.stack,
-        userId: req.user?.userId,
-        user_name: req.user?.user_name,
       });
+      
       res.status(500).json({
         success: false,
         error: 'Failed to fetch statistics',

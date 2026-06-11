@@ -7,3 +7,4 @@ uploads/
 admin-ui/build/
 .env
 .DS_Store" > .gitignore
+node_modules

@@ -20,6 +20,7 @@ import {
   getPendingDeactivationRequests,
   getDeactivationRequestDetails,
   checkApprovalStatus,
+  getAccountTransactionHistory,
   // These functions don't exist in your controller - removing them:
   // rejectDeactivationRequest,
   // getPendingApprovals,
@@ -55,6 +56,8 @@ router.get('/accounts', getAllCustomerAccounts);
 router.put('/accounts/:accountNumber', updateCustomerAccount);
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount);
 router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
+
+router.get('/transactions/:accountNumber', getAccountTransactionHistory);
 
 // ============================================
 // DEPRECATED: Direct activation/deactivation routes (keep for backward compatibility)

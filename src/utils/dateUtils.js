@@ -1,4 +1,4 @@
-// src/utils/dateUtils.js
+// src/utils/dateUtils.js - COMPLETE FIXED VERSION
 import { Op } from 'sequelize';
 import Holiday from '../models/Holiday.js';
 import logger from './logger.js';
@@ -16,11 +16,8 @@ export async function isHoliday(date) {
     const checkDate = new Date(date);
     checkDate.setHours(0, 0, 0, 0);
     
-    const holiday = await Holiday.findOne({
-      where: {
-        holidayDate: checkDate  // Use holidayDate field name
-      }
-    });
+    // Use the model's static method for better recurring holiday handling
+    const holiday = await Holiday.isHoliday(checkDate);
     
     return !!holiday;
   } catch (error) {
@@ -63,15 +60,7 @@ export async function getHolidaysForYear(year) {
  */
 export async function getHolidaysBetween(startDate, endDate) {
   try {
-    const holidays = await Holiday.findAll({
-      where: {
-        holidayDate: {
-          [Op.between]: [startDate, endDate]
-        }
-      },
-      order: [['holidayDate', 'ASC']]
-    });
-    
+    const holidays = await Holiday.getHolidaysInRange(startDate, endDate);
     return holidays;
   } catch (error) {
     logger.error('Error getting holidays between dates:', error);
@@ -81,29 +70,15 @@ export async function getHolidaysBetween(startDate, endDate) {
 
 // ==================== DATE UTILITY FUNCTIONS ====================
 
-/**
- * Calculate next business date considering weekends and holidays
- */
 export async function calculateNextBusinessDate(currentDate) {
-  try {
-    const nextDate = new Date(currentDate);
+  const nextDate = new Date(currentDate);
+  nextDate.setDate(nextDate.getDate() + 1);   // ✅ move forward at least one day
+  nextDate.setHours(0, 0, 0, 0);
+
+  while (await shouldSkipDate(nextDate)) {
     nextDate.setDate(nextDate.getDate() + 1);
-    nextDate.setHours(0, 0, 0, 0);
-    
-    // Skip weekends and holidays
-    while (await shouldSkipDate(nextDate)) {
-      nextDate.setDate(nextDate.getDate() + 1);
-    }
-    
-    return nextDate;
-  } catch (error) {
-    logger.error('Error calculating next business date:', error);
-    // Fallback: simple date + 1 day
-    const fallbackDate = new Date(currentDate);
-    fallbackDate.setDate(fallbackDate.getDate() + 1);
-    fallbackDate.setHours(0, 0, 0, 0);
-    return fallbackDate;
   }
+  return nextDate;
 }
 
 /**
@@ -117,8 +92,8 @@ export async function shouldSkipDate(date) {
     }
     
     // Check holiday using the model's static method
-    const isHolidayResult = await Holiday.isHoliday(date);
-    return !!isHolidayResult;
+    const holiday = await Holiday.isHoliday(date);
+    return !!holiday;
   } catch (error) {
     logger.error('Error checking if date should be skipped:', error);
     // If we can't check holiday, only check weekend
@@ -146,17 +121,10 @@ export function formatDate(date) {
  */
 export async function isBusinessDay(date) {
   try {
-    // Check weekend
-    if (date.getDay() === 0 || date.getDay() === 6) {
-      return false;
-    }
-    
-    // Check holiday using the model's static method
-    const isHolidayResult = await Holiday.isHoliday(date);
-    return !isHolidayResult;
+    return !(await shouldSkipDate(date));
   } catch (error) {
     logger.error('Error checking if date is business day:', error);
-    // Assume it's a business day if we can't check holiday
+    // Assume it's a business day if we can't check
     return date.getDay() !== 0 && date.getDay() !== 6;
   }
 }
@@ -194,9 +162,12 @@ export async function addBusinessDays(date, days) {
     const result = new Date(date);
     result.setHours(0, 0, 0, 0);
     let businessDaysAdded = 0;
+    let attempts = 0;
+    const maxAttempts = 365; // Prevent infinite loop
     
-    while (businessDaysAdded < days) {
+    while (businessDaysAdded < days && attempts < maxAttempts) {
       result.setDate(result.getDate() + 1);
+      attempts++;
       if (await isBusinessDay(result)) {
         businessDaysAdded++;
       }
@@ -340,8 +311,6 @@ export function getMonthDateRange(year, month) {
   };
 }
 
-// Add these to your dateUtils.js after the imports
-
 /**
  * Checks if a date is in the future
  * @param {Date|string} date - The date to check
@@ -351,7 +320,10 @@ export function isFutureDate(date) {
   try {
     const d = new Date(date);
     if (isNaN(d.getTime())) return false;
-    return d > new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    return d > today;
   } catch (error) {
     logger.error('Error checking if date is future:', error);
     return false;
@@ -367,9 +339,31 @@ export function isPastDate(date) {
   try {
     const d = new Date(date);
     if (isNaN(d.getTime())) return false;
-    return d < new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    return d < today;
   } catch (error) {
     logger.error('Error checking if date is past:', error);
+    return false;
+  }
+}
+
+/**
+ * Checks if a date is today
+ * @param {Date|string} date - The date to check
+ * @returns {boolean} True if today
+ */
+export function isToday(date) {
+  try {
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() === today.getTime();
+  } catch (error) {
+    logger.error('Error checking if date is today:', error);
     return false;
   }
 }
@@ -391,15 +385,89 @@ export function isDateBetween(date, startDate, endDate) {
       return false;
     }
     
+    d.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+    
     return d >= start && d <= end;
   } catch (error) {
     logger.error('Error checking if date is between range:', error);
     return false;
   }
 }
+
+/**
+ * Get the next occurrence of a specific day of week
+ * @param {Date} fromDate - Starting date
+ * @param {number} targetDayOfWeek - 0 (Sunday) to 6 (Saturday)
+ * @returns {Date} Next occurrence of the target day
+ */
+export function getNextDayOfWeek(fromDate, targetDayOfWeek) {
+  try {
+    const result = new Date(fromDate);
+    result.setHours(0, 0, 0, 0);
+    
+    const currentDay = result.getDay();
+    let daysToAdd = targetDayOfWeek - currentDay;
+    
+    if (daysToAdd <= 0) {
+      daysToAdd += 7;
+    }
+    
+    result.setDate(result.getDate() + daysToAdd);
+    return result;
+  } catch (error) {
+    logger.error('Error getting next day of week:', error);
+    return new Date(fromDate);
+  }
+}
+
+/**
+ * Get the first business day of the month
+ * @param {number} year - Year
+ * @param {number} month - Month (0-11)
+ * @returns {Promise<Date>} First business day
+ */
+export async function getFirstBusinessDayOfMonth(year, month) {
+  try {
+    let date = new Date(year, month, 1);
+    date.setHours(0, 0, 0, 0);
+    
+    while (await shouldSkipDate(date)) {
+      date.setDate(date.getDate() + 1);
+    }
+    
+    return date;
+  } catch (error) {
+    logger.error('Error getting first business day of month:', error);
+    return new Date(year, month, 1);
+  }
+}
+
+/**
+ * Get the last business day of the month
+ * @param {number} year - Year
+ * @param {number} month - Month (0-11)
+ * @returns {Promise<Date>} Last business day
+ */
+export async function getLastBusinessDayOfMonth(year, month) {
+  try {
+    let date = new Date(year, month + 1, 0); // Last day of month
+    date.setHours(0, 0, 0, 0);
+    
+    while (await shouldSkipDate(date)) {
+      date.setDate(date.getDate() - 1);
+    }
+    
+    return date;
+  } catch (error) {
+    logger.error('Error getting last business day of month:', error);
+    return new Date(year, month + 1, 0);
+  }
+}
+
 // ==================== DEFAULT EXPORT ====================
 
-// At the bottom of src/utils/dateUtils.js
 export default {
   // Holiday functions
   isHoliday,
@@ -412,11 +480,14 @@ export default {
   isBusinessDay,
   getBusinessDaysCount,
   addBusinessDays,
+  getFirstBusinessDayOfMonth,
+  getLastBusinessDayOfMonth,
   
   // Date validation functions
   isValidDate,
   isFutureDate,
   isPastDate,
+  isToday,
   isDateBetween,
   
   // Loan calculation functions
@@ -429,7 +500,5 @@ export default {
   
   // Other utility functions
   getMonthDateRange,
-  
-  // Optional: Add the HolidayUtils class if you have it
-  // HolidayUtils
+  getNextDayOfWeek
 };

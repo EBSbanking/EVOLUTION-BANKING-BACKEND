@@ -1,4 +1,4 @@
-// src/models/BusinessRole.js - FIXED VERSION
+// src/models/BusinessRole.js - COMPLETE FIXED VERSION with sync: false
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -271,6 +271,7 @@ BusinessRole.init(
     tableName: 'business_roles',
     timestamps: true,
     underscored: false,
+    sync: false, // ✅ ADDED - Prevents auto-sync errors (fixes BU_ROLE_ID error)
     hooks: {
       beforeValidate: (businessRole) => {
         // Uppercase ROLE_NM
@@ -331,53 +332,7 @@ BusinessRole.init(
         }
       },
     },
-    indexes: [
-      {
-        unique: false,
-        fields: ['ROLE_ID', 'BUSINESS_UNIT'],
-        name: 'idx_role_business_unit',
-      },
-      {
-        unique: false,
-        fields: ['USER_ID'],
-        name: 'idx_user_id',
-      },
-      {
-        unique: false,
-        fields: ['BU_ID'],
-        name: 'idx_bu_id',
-      },
-      {
-        unique: false,
-        fields: ['ALLOW_TXN_POSTING_FG'],
-        name: 'idx_txn_posting',
-      },
-      {
-        unique: false,
-        fields: ['ROLE_ID'],
-        name: 'idx_role_id',
-      },
-      {
-        unique: false,
-        fields: ['REC_ST'],
-        name: 'idx_rec_status',
-      },
-      {
-        unique: false,
-        fields: ['CREATED_BY'],
-        name: 'idx_created_by',
-      },
-      {
-        unique: false,
-        fields: ['BUSINESS_UNIT', 'REC_ST'],
-        name: 'idx_business_unit_status',
-      },
-      {
-        unique: false,
-        fields: ['USER_ID', 'ROLE_ID', 'BUSINESS_UNIT'],
-        name: 'idx_user_role_business',
-      },
-    ],
+   
   }
 );
 

@@ -1,202 +1,124 @@
-import Collection from '../models/Collection.js';
+import { Op } from 'sequelize';
+import asyncHandler from 'express-async-handler';
+import sequelize from '../../config/db.js';          // ← add this
+import Collection, { LoanRepayment, SavingsCollection, ProcessingSummary } from '../models/Collection.js';
 import Group from '../models/Group.js';
 import GroupLoan from '../models/GroupLoan.js';
-import asyncHandler from 'express-async-handler';
 
-// @desc    Create a new collection with loan repayments
+
+// Helper to get include options for Group and GroupLoan
+const getIncludes = (includeGroup = true, includeGroupLoan = true) => {
+  const includes = [];
+  if (includeGroup) includes.push({ model: Group, as: 'group', attributes: ['id', 'groupName', 'groupCode', 'branch', 'unionAddress'] });
+  if (includeGroupLoan) includes.push({ model: GroupLoan, as: 'groupLoan', attributes: ['id', 'loanId', 'totalAmount', 'memberCount', 'status'] });
+  return includes;
+};
+
+// @desc    Create a new collection
 // @route   POST /api/collections
-// @access  Private
-const createCollection = asyncHandler(async (req, res) => {
+export const createCollection = asyncHandler(async (req, res) => {
   const {
-    groupId,
-    groupLoanId,
-    amount,
-    currency,
-    collectionDate,
-    branch,
-    relationshipManager,
-    channel,
-    createdBy,
-    paymentMethod,
-    transactionReference,
-    repaymentType,
-    loanRepayments,
-    savingsCollections
+    groupId, groupLoanId, amount, currency, collectionDate, branch, relationshipManager,
+    channel, createdBy, paymentMethod, transactionReference, repaymentType,
+    loanRepayments = [], savingsCollections = []
   } = req.body;
 
-  // Validate required fields
   if (!groupId || !amount || !collectionDate || !branch || !relationshipManager || !createdBy) {
-    return res.status(400).json({
-      success: false,
-      message: 'Please provide groupId, amount, collectionDate, branch, relationshipManager, and createdBy'
-    });
+    return res.status(400).json({ success: false, message: 'Missing required fields' });
   }
 
-  // Verify group exists
-  const group = await Group.findById(groupId);
-  if (!group) {
-    return res.status(404).json({
-      success: false,
-      message: 'Group not found'
-    });
-  }
+  const group = await Group.findByPk(groupId);
+  if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
 
-  // Verify group loan exists if provided
   let groupLoan = null;
   if (groupLoanId) {
-    groupLoan = await GroupLoan.findById(groupLoanId);
-    if (!groupLoan) {
-      return res.status(404).json({
-        success: false,
-        message: 'Group loan not found'
-      });
-    }
+    groupLoan = await GroupLoan.findByPk(groupLoanId);
+    if (!groupLoan) return res.status(404).json({ success: false, message: 'Group loan not found' });
   }
 
-  // Create collection
   const collection = await Collection.create({
-    groupId,
-    groupLoanId,
-    loanId: groupLoan?.loanId,
-    groupCode: group.groupCode,
-    amount: Number(amount),
-    currency: currency || 'NGN',
-    collectionDate: new Date(collectionDate),
-    branch: Number(branch),
-    relationshipManager: Number(relationshipManager),
-    channel: Number(channel) || 6,
-    createdBy,
-    paymentMethod: paymentMethod || 'CASH',
-    transactionReference,
-    repaymentType: repaymentType || 'loan_repayment',
-    loanRepayments: loanRepayments || [],
-    savingsCollections: savingsCollections || [],
-    status: 'pending'
+    groupId, groupLoanId, loanId: groupLoan?.loanId, groupCode: group.groupCode,
+    amount: Number(amount), currency: currency || 'NGN', collectionDate: new Date(collectionDate),
+    branch: Number(branch), relationshipManager: Number(relationshipManager),
+    channel: Number(channel) || 6, createdBy, paymentMethod: paymentMethod || 'CASH',
+    transactionReference, repaymentType: repaymentType || 'loan_repayment', status: 'pending'
   });
 
-  // Populate with related data
-  await collection.populate('groupId', 'groupName groupCode branch');
-  if (groupLoanId) {
-    await collection.populate('groupLoanId', 'loanId totalAmount memberCount');
+  // Create associated loan repayments and savings collections if any
+  for (const rep of loanRepayments) {
+    await LoanRepayment.create({ ...rep, collectionId: collection.id, status: 'pending' });
+  }
+  for (const sav of savingsCollections) {
+    await SavingsCollection.create({ ...sav, collectionId: collection.id, status: 'pending' });
   }
 
-  res.status(201).json({
-    success: true,
-    message: 'Collection created successfully',
-    data: collection
-  });
+  const fullCollection = await Collection.findByPk(collection.id, { include: getIncludes(true, !!groupLoanId) });
+  res.status(201).json({ success: true, data: fullCollection });
 });
 
-// @desc    Get all collections with filtering and pagination
-// @route   GET /api/collections
-// @access  Private
-const getCollections = asyncHandler(async (req, res) => {
+// @desc    Get all collections with filtering & pagination
+export const getCollections = asyncHandler(async (req, res) => {
   const {
-    page = 1,
-    limit = 10,
-    groupId,
-    groupCode,
-    branch,
-    status,
-    relationshipManager,
-    startDate,
-    endDate,
-    channel,
-    search
+    page = 1, limit = 10, groupId, groupCode, branch, status, relationshipManager,
+    startDate, endDate, channel, search
   } = req.query;
 
-  // Build filter object
-  const filter = {};
-
-  if (groupId) filter.groupId = groupId;
-  if (groupCode) filter.groupCode = { $regex: groupCode, $options: 'i' };
-  if (branch) filter.branch = Number(branch);
-  if (status) filter.status = status;
-  if (relationshipManager) filter.relationshipManager = Number(relationshipManager);
-  if (channel) filter.channel = Number(channel);
-
-  // Date range filter
+  const where = {};
+  if (groupId) where.groupId = groupId;
+  if (branch) where.branch = Number(branch);
+  if (status) where.status = status;
+  if (relationshipManager) where.relationshipManager = Number(relationshipManager);
+  if (channel) where.channel = Number(channel);
+  if (groupCode) where.groupCode = { [Op.like]: `%${groupCode}%` };
   if (startDate || endDate) {
-    filter.collectionDate = {};
-    if (startDate) filter.collectionDate.$gte = new Date(startDate);
-    if (endDate) filter.collectionDate.$lte = new Date(endDate);
+    where.collectionDate = {};
+    if (startDate) where.collectionDate[Op.gte] = new Date(startDate);
+    if (endDate) where.collectionDate[Op.lte] = new Date(endDate);
   }
-
-  // Search filter (by group name via population or collection ID)
   if (search) {
-    filter.$or = [
-      { collectionId: { $regex: search, $options: 'i' } },
-      { groupCode: { $regex: search, $options: 'i' } }
+    where[Op.or] = [
+      { collectionId: { [Op.like]: `%${search}%` } },
+      { groupCode: { [Op.like]: `%${search}%` } }
     ];
   }
 
-  // Execute query with pagination
-  const collections = await Collection.find(filter)
-    .populate('groupId', 'groupName groupCode branch unionAddress')
-    .sort({ collectionDate: -1, createdAt: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit)
-    .lean();
-
-  // Get total count for pagination
-  const total = await Collection.countDocuments(filter);
+  const offset = (Number(page) - 1) * Number(limit);
+  const { count, rows: collections } = await Collection.findAndCountAll({
+    where,
+    include: getIncludes(true, false),
+    order: [['collectionDate', 'DESC'], ['createdAt', 'DESC']],
+    limit: Number(limit),
+    offset,
+    distinct: true
+  });
 
   res.json({
     success: true,
     data: collections,
     pagination: {
       current: Number(page),
-      total: Math.ceil(total / limit),
+      total: Math.ceil(count / limit),
       count: collections.length,
-      totalRecords: total
+      totalRecords: count
     }
   });
 });
 
 // @desc    Get collection by ID
-// @route   GET /api/collections/:id
-// @access  Private
-const getCollectionById = asyncHandler(async (req, res) => {
-  const collection = await Collection.findById(req.params.id)
-    .populate('groupId', 'groupName groupCode branch relationshipManager unionAddress');
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  res.json({
-    success: true,
-    data: collection
+export const getCollectionById = asyncHandler(async (req, res) => {
+  const collection = await Collection.findByPk(req.params.id, {
+    include: getIncludes(true, true)
   });
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  res.json({ success: true, data: collection });
 });
 
 // @desc    Update collection
-// @route   PUT /api/collections/:id
-// @access  Private
-const updateCollection = asyncHandler(async (req, res) => {
-  const {
-    amount,
-    currency,
-    collectionDate,
-    status,
-    branch,
-    relationshipManager,
-    channel
-  } = req.body;
+export const updateCollection = asyncHandler(async (req, res) => {
+  const { amount, currency, collectionDate, status, branch, relationshipManager, channel } = req.body;
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
 
-  const collection = await Collection.findById(req.params.id);
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  // Update fields
   if (amount !== undefined) collection.amount = Number(amount);
   if (currency) collection.currency = currency;
   if (collectionDate) collection.collectionDate = new Date(collectionDate);
@@ -205,554 +127,310 @@ const updateCollection = asyncHandler(async (req, res) => {
   if (relationshipManager !== undefined) collection.relationshipManager = Number(relationshipManager);
   if (channel !== undefined) collection.channel = Number(channel);
 
-  const updatedCollection = await collection.save();
-  await updatedCollection.populate('groupId', 'groupName groupCode branch');
-
-  res.json({
-    success: true,
-    message: 'Collection updated successfully',
-    data: updatedCollection
-  });
+  await collection.save();
+  const updated = await Collection.findByPk(collection.id, { include: getIncludes(true, false) });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Delete collection
-// @route   DELETE /api/collections/:id
-// @access  Private
-const deleteCollection = asyncHandler(async (req, res) => {
-  const collection = await Collection.findById(req.params.id);
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  await Collection.findByIdAndDelete(req.params.id);
-
-  res.json({
-    success: true,
-    message: 'Collection deleted successfully'
-  });
+export const deleteCollection = asyncHandler(async (req, res) => {
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  await Collection.destroy({ where: { id: req.params.id } });
+  res.json({ success: true, message: 'Collection deleted' });
 });
 
 // @desc    Approve collection
-// @route   PATCH /api/collections/:id/approve
-// @access  Private
-const approveCollection = asyncHandler(async (req, res) => {
-  const collection = await Collection.findById(req.params.id);
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  if (collection.status === 'approved') {
-    return res.status(400).json({
-      success: false,
-      message: 'Collection is already approved'
-    });
-  }
-
+export const approveCollection = asyncHandler(async (req, res) => {
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  if (collection.status === 'approved') return res.status(400).json({ success: false, message: 'Already approved' });
   collection.status = 'approved';
-  const approvedCollection = await collection.save();
-  await approvedCollection.populate('groupId', 'groupName groupCode branch');
-
-  res.json({
-    success: true,
-    message: 'Collection approved successfully',
-    data: approvedCollection
-  });
+  await collection.save();
+  const updated = await Collection.findByPk(collection.id, { include: getIncludes(true, false) });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Reject collection
-// @route   PATCH /api/collections/:id/reject
-// @access  Private
-const rejectCollection = asyncHandler(async (req, res) => {
+export const rejectCollection = asyncHandler(async (req, res) => {
   const { reason } = req.body;
-
-  const collection = await Collection.findById(req.params.id);
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  if (collection.status === 'rejected') {
-    return res.status(400).json({
-      success: false,
-      message: 'Collection is already rejected'
-    });
-  }
-
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  if (collection.status === 'rejected') return res.status(400).json({ success: false, message: 'Already rejected' });
   collection.status = 'rejected';
-  collection.rejectionReason = reason;
-  const rejectedCollection = await collection.save();
-  await rejectedCollection.populate('groupId', 'groupName groupCode branch');
-
-  res.json({
-    success: true,
-    message: 'Collection rejected successfully',
-    data: rejectedCollection
-  });
+  collection.rejectionReason = reason || null;
+  await collection.save();
+  const updated = await Collection.findByPk(collection.id, { include: getIncludes(true, false) });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Get collections by group
-// @route   GET /api/collections/group/:groupId
-// @access  Private
-const getCollectionsByGroup = asyncHandler(async (req, res) => {
+export const getCollectionsByGroup = asyncHandler(async (req, res) => {
   const { groupId } = req.params;
   const { page = 1, limit = 10, status, startDate, endDate } = req.query;
-
-  const filter = { groupId };
-
-  if (status) filter.status = status;
+  const where = { groupId };
+  if (status) where.status = status;
   if (startDate || endDate) {
-    filter.collectionDate = {};
-    if (startDate) filter.collectionDate.$gte = new Date(startDate);
-    if (endDate) filter.collectionDate.$lte = new Date(endDate);
+    where.collectionDate = {};
+    if (startDate) where.collectionDate[Op.gte] = new Date(startDate);
+    if (endDate) where.collectionDate[Op.lte] = new Date(endDate);
   }
+  const offset = (Number(page) - 1) * Number(limit);
+  const { count, rows: collections } = await Collection.findAndCountAll({
+    where,
+    include: getIncludes(true, false),
+    order: [['collectionDate', 'DESC']],
+    limit: Number(limit),
+    offset,
+    distinct: true
+  });
 
-  const collections = await Collection.find(filter)
-    .populate('groupId', 'groupName groupCode branch')
-    .sort({ collectionDate: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit)
-    .lean();
-
-  const total = await Collection.countDocuments(filter);
-
-  // Get summary statistics
-  const stats = await Collection.aggregate([
-    { $match: filter },
-    {
-      $group: {
-        _id: null,
-        totalAmount: { $sum: '$amount' },
-        approvedAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'approved'] }, '$amount', 0]
-          }
-        },
-        pendingAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'pending'] }, '$amount', 0]
-          }
-        },
-        totalCount: { $sum: 1 },
-        approvedCount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'approved'] }, 1, 0]
-          }
-        },
-        pendingCount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'pending'] }, 1, 0]
-          }
-        }
-      }
-    }
-  ]);
+  // Summary statistics using sequelize aggregation
+  const stats = await Collection.findOne({
+    where,
+    attributes: [
+      [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'approved' THEN amount ELSE 0 END`)), 'approvedAmount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'pending' THEN amount ELSE 0 END`)), 'pendingAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalCount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'approved' THEN 1 ELSE 0 END`)), 'approvedCount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'pending' THEN 1 ELSE 0 END`)), 'pendingCount']
+    ],
+    raw: true
+  });
 
   res.json({
     success: true,
     data: collections,
-    summary: stats[0] || {
-      totalAmount: 0,
-      approvedAmount: 0,
-      pendingAmount: 0,
-      totalCount: 0,
-      approvedCount: 0,
-      pendingCount: 0
-    },
-    pagination: {
-      current: Number(page),
-      total: Math.ceil(total / limit),
-      count: collections.length,
-      totalRecords: total
-    }
+    summary: stats || { totalAmount:0, approvedAmount:0, pendingAmount:0, totalCount:0, approvedCount:0, pendingCount:0 },
+    pagination: { current: Number(page), total: Math.ceil(count / limit), count: collections.length, totalRecords: count }
   });
 });
 
-// @desc    Get collection statistics
-// @route   GET /api/collections/stats/overview
-// @access  Private
-const getCollectionStats = asyncHandler(async (req, res) => {
+// @desc    Get collection statistics (overview)
+export const getCollectionStats = asyncHandler(async (req, res) => {
   const { branch, startDate, endDate, groupId } = req.query;
-
-  const matchStage = {};
-  
-  if (branch) matchStage.branch = Number(branch);
-  if (groupId) matchStage.groupId = groupId;
+  const where = {};
+  if (branch) where.branch = Number(branch);
+  if (groupId) where.groupId = groupId;
   if (startDate || endDate) {
-    matchStage.collectionDate = {};
-    if (startDate) matchStage.collectionDate.$gte = new Date(startDate);
-    if (endDate) matchStage.collectionDate.$lte = new Date(endDate);
+    where.collectionDate = {};
+    if (startDate) where.collectionDate[Op.gte] = new Date(startDate);
+    if (endDate) where.collectionDate[Op.lte] = new Date(endDate);
   }
 
-  const stats = await Collection.aggregate([
-    { $match: matchStage },
-    {
-      $group: {
-        _id: null,
-        totalCollections: { $sum: 1 },
-        totalAmount: { $sum: '$amount' },
-        approvedAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'approved'] }, '$amount', 0]
-          }
-        },
-        pendingAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'pending'] }, '$amount', 0]
-          }
-        },
-        rejectedAmount: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'rejected'] }, '$amount', 0]
-          }
-        },
-        averageCollection: { $avg: '$amount' }
-      }
-    },
-    {
-      $project: {
-        _id: 0,
-        totalCollections: 1,
-        totalAmount: 1,
-        approvedAmount: 1,
-        pendingAmount: 1,
-        rejectedAmount: 1,
-        averageCollection: { $round: ['$averageCollection', 2] }
-      }
-    }
-  ]);
+  // Overview stats
+  const overview = await Collection.findOne({
+    where,
+    attributes: [
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalCollections'],
+      [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'approved' THEN amount ELSE 0 END`)), 'approvedAmount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'pending' THEN amount ELSE 0 END`)), 'pendingAmount'],
+      [sequelize.fn('SUM', sequelize.literal(`CASE WHEN status = 'rejected' THEN amount ELSE 0 END`)), 'rejectedAmount'],
+      [sequelize.fn('AVG', sequelize.col('amount')), 'averageCollection']
+    ],
+    raw: true
+  });
 
-  // Get collections by status
-  const statusStats = await Collection.aggregate([
-    { $match: matchStage },
-    {
-      $group: {
-        _id: '$status',
-        count: { $sum: 1 },
-        amount: { $sum: '$amount' }
-      }
-    }
-  ]);
+  // Status breakdown
+  const statusStats = await Collection.findAll({
+    where,
+    attributes: [
+      'status',
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+      [sequelize.fn('SUM', sequelize.col('amount')), 'amount']
+    ],
+    group: ['status'],
+    raw: true
+  });
 
-  // Get top groups by collection amount
-  const topGroups = await Collection.aggregate([
-    { $match: { ...matchStage, status: 'approved' } },
-    {
-      $group: {
-        _id: '$groupId',
-        totalAmount: { $sum: '$amount' },
-        collectionCount: { $sum: 1 }
-      }
-    },
-    { $sort: { totalAmount: -1 } },
-    { $limit: 5 },
-    {
-      $lookup: {
-        from: 'groups',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'group'
-      }
-    },
-    { $unwind: '$group' },
-    {
-      $project: {
-        groupName: '$group.groupName',
-        groupCode: '$group.groupCode',
-        totalAmount: 1,
-        collectionCount: 1
-      }
-    }
-  ]);
+  // Top groups by collection amount (approved only)
+  const topGroups = await Collection.findAll({
+    where: { ...where, status: 'approved' },
+    attributes: [
+      'groupId',
+      [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'collectionCount']
+    ],
+    group: ['groupId'],
+    order: [[sequelize.literal('totalAmount'), 'DESC']],
+    limit: 5,
+    raw: true
+  });
+  // Manually fetch group names
+  const groupIds = topGroups.map(g => g.groupId);
+  const groups = await Group.findAll({ where: { id: groupIds }, attributes: ['id', 'groupName', 'groupCode'], raw: true });
+  const groupMap = Object.fromEntries(groups.map(g => [g.id, g]));
+  const enrichedTopGroups = topGroups.map(g => ({
+    groupName: groupMap[g.groupId]?.groupName,
+    groupCode: groupMap[g.groupId]?.groupCode,
+    totalAmount: parseFloat(g.totalAmount),
+    collectionCount: parseInt(g.collectionCount)
+  }));
 
   res.json({
     success: true,
     data: {
-      overview: stats[0] || {
-        totalCollections: 0,
-        totalAmount: 0,
-        approvedAmount: 0,
-        pendingAmount: 0,
-        rejectedAmount: 0,
-        averageCollection: 0
+      overview: {
+        totalCollections: parseInt(overview.totalCollections) || 0,
+        totalAmount: parseFloat(overview.totalAmount) || 0,
+        approvedAmount: parseFloat(overview.approvedAmount) || 0,
+        pendingAmount: parseFloat(overview.pendingAmount) || 0,
+        rejectedAmount: parseFloat(overview.rejectedAmount) || 0,
+        averageCollection: parseFloat(overview.averageCollection) || 0
       },
-      byStatus: statusStats,
-      topGroups: topGroups
+      byStatus: statusStats.map(s => ({ _id: s.status, count: parseInt(s.count), amount: parseFloat(s.amount) })),
+      topGroups: enrichedTopGroups
     }
   });
 });
 
-// @desc    Process collection (update GroupLoan and mark repayments)
-// @route   PATCH /api/collections/:id/process
-// @access  Private
-const processCollection = asyncHandler(async (req, res) => {
-  const collection = await Collection.findById(req.params.id)
-    .populate('groupLoanId')
-    .populate('loanRepayments.loanAccountId');
+// @desc    Process collection (run repayments)
+export const processCollection = asyncHandler(async (req, res) => {
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  if (collection.status === 'processed') return res.status(400).json({ success: false, message: 'Already processed' });
 
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  if (collection.status === 'processed') {
-    return res.status(400).json({
-      success: false,
-      message: 'Collection is already processed'
-    });
-  }
-
-  // Process repayments and update GroupLoan
   await collection.processRepayments();
-
-  const updatedCollection = await Collection.findById(req.params.id)
-    .populate('groupId', 'groupName groupCode branch')
-    .populate('groupLoanId', 'loanId totalAmount memberCount status')
-    .populate('loanRepayments.loanAccountId');
-
-  res.json({
-    success: true,
-    message: 'Collection processed successfully',
-    data: updatedCollection
+  const updated = await Collection.findByPk(collection.id, {
+    include: getIncludes(true, true).concat([{ model: LoanRepayment, as: 'loanRepayments' }])
   });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Add loan repayment to collection
-// @route   PATCH /api/collections/:id/repayments
-// @access  Private
-const addLoanRepayment = asyncHandler(async (req, res) => {
+export const addLoanRepayment = asyncHandler(async (req, res) => {
   const { repayment } = req.body;
-
-  if (!repayment) {
-    return res.status(400).json({
-      success: false,
-      message: 'Repayment data is required'
-    });
-  }
-
-  const collection = await Collection.findById(req.params.id);
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
+  if (!repayment) return res.status(400).json({ success: false, message: 'Repayment data required' });
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
   await collection.addLoanRepayment(repayment);
-  await collection.populate('loanRepayments.loanAccountId');
-
-  res.json({
-    success: true,
-    message: 'Loan repayment added to collection',
-    data: collection
-  });
+  const updated = await Collection.findByPk(collection.id, { include: [{ model: LoanRepayment, as: 'loanRepayments' }] });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Add savings collection
-// @route   PATCH /api/collections/:id/savings
-// @access  Private
-const addSavingsCollection = asyncHandler(async (req, res) => {
+export const addSavingsCollection = asyncHandler(async (req, res) => {
   const { savings } = req.body;
-
-  if (!savings) {
-    return res.status(400).json({
-      success: false,
-      message: 'Savings data is required'
-    });
-  }
-
-  const collection = await Collection.findById(req.params.id);
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
+  if (!savings) return res.status(400).json({ success: false, message: 'Savings data required' });
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
   await collection.addSavingsCollection(savings);
-
-  res.json({
-    success: true,
-    message: 'Savings collection added',
-    data: collection
-  });
+  const updated = await Collection.findByPk(collection.id, { include: [{ model: SavingsCollection, as: 'savingsCollections' }] });
+  res.json({ success: true, data: updated });
 });
 
 // @desc    Get collection repayment breakdown
-// @route   GET /api/collections/:id/breakdown
-// @access  Private
-const getCollectionBreakdown = asyncHandler(async (req, res) => {
-  const collection = await Collection.findById(req.params.id)
-    .populate('loanRepayments.loanAccountId')
-    .populate('groupLoanId', 'loanId totalAmount memberCount');
-
-  if (!collection) {
-    return res.status(404).json({
-      success: false,
-      message: 'Collection not found'
-    });
-  }
-
-  const breakdown = collection.getRepaymentBreakdown();
-
-  res.json({
-    success: true,
-    data: {
-      collection: collection,
-      breakdown: breakdown
-    }
-  });
+export const getCollectionBreakdown = asyncHandler(async (req, res) => {
+  const collection = await Collection.findByPk(req.params.id);
+  if (!collection) return res.status(404).json({ success: false, message: 'Collection not found' });
+  const breakdown = await collection.getRepaymentBreakdown();
+  res.json({ success: true, data: { collection, breakdown } });
 });
 
 // @desc    Get collections by group loan
-// @route   GET /api/collections/loan/:groupLoanId
-// @access  Private
-const getCollectionsByGroupLoan = asyncHandler(async (req, res) => {
+export const getCollectionsByGroupLoan = asyncHandler(async (req, res) => {
   const { groupLoanId } = req.params;
   const { page = 1, limit = 10 } = req.query;
-
-  const collections = await Collection.find({ groupLoanId })
-    .populate('groupId', 'groupName groupCode branch')
-    .populate('loanRepayments.loanAccountId')
-    .sort({ collectionDate: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit)
-    .lean();
-
-  const total = await Collection.countDocuments({ groupLoanId });
-
-  // Get repayment summary for this group loan
+  const where = { groupLoanId };
+  const offset = (Number(page) - 1) * Number(limit);
+  const { count, rows: collections } = await Collection.findAndCountAll({
+    where,
+    include: getIncludes(true, false).concat([{ model: LoanRepayment, as: 'loanRepayments' }]),
+    order: [['collectionDate', 'DESC']],
+    limit: Number(limit),
+    offset,
+    distinct: true
+  });
   const repaymentSummary = await Collection.getLoanRepaymentSummary(groupLoanId);
-
   res.json({
     success: true,
     data: collections,
     repaymentSummary: repaymentSummary[0] || null,
-    pagination: {
-      current: Number(page),
-      total: Math.ceil(total / limit),
-      count: collections.length,
-      totalRecords: total
-    }
+    pagination: { current: Number(page), total: Math.ceil(count / limit), count: collections.length, totalRecords: count }
   });
 });
 
 // @desc    Get loan repayment statistics
-// @route   GET /api/collections/stats/repayments
-// @access  Private
-const getRepaymentStats = asyncHandler(async (req, res) => {
+// @desc    Get loan repayment statistics
+export const getRepaymentStats = asyncHandler(async (req, res) => {
   const { branch, startDate, endDate, groupLoanId } = req.query;
 
-  const matchStage = { 
-    status: { $in: ['processed', 'partially_processed'] } 
-  };
-  
-  if (branch) matchStage.branch = Number(branch);
-  if (groupLoanId) matchStage.groupLoanId = groupLoanId;
-  if (startDate || endDate) {
-    matchStage.collectionDate = {};
-    if (startDate) matchStage.collectionDate.$gte = new Date(startDate);
-    if (endDate) matchStage.collectionDate.$lte = new Date(endDate);
-  }
+  // Build WHERE clause for collections
+  const collectionWhere = { status: { [Op.in]: ['processed', 'partially_processed'] } };
+  if (branch) collectionWhere.branch = Number(branch);
+  if (groupLoanId) collectionWhere.groupLoanId = groupLoanId;
+  if (startDate) collectionWhere.collectionDate = { [Op.gte]: new Date(startDate) };
+  if (endDate) collectionWhere.collectionDate = { ...collectionWhere.collectionDate, [Op.lte]: new Date(endDate) };
 
-  const stats = await Collection.aggregate([
-    { $match: matchStage },
-    { $unwind: '$loanRepayments' },
-    { $match: { 'loanRepayments.status': 'processed' } },
-    {
-      $group: {
-        _id: null,
-        totalCollections: { $sum: 1 },
-        totalPrincipal: { $sum: '$loanRepayments.principalAmount' },
-        totalInterest: { $sum: '$loanRepayments.interestAmount' },
-        totalPenalty: { $sum: '$loanRepayments.penaltyAmount' },
-        totalRepaid: { $sum: '$loanRepayments.totalAmount' },
-        uniqueLoanAccounts: { $addToSet: '$loanRepayments.loanAccountId' },
-        uniqueGroups: { $addToSet: '$groupId' },
-        uniqueGroupLoans: { $addToSet: '$groupLoanId' }
-      }
+  // Use a simple parameterized query
+  const [overview] = await sequelize.query(`
+    SELECT
+      COUNT(DISTINCT c.id) AS totalCollections,
+      SUM(lr.principalAmount) AS totalPrincipal,
+      SUM(lr.interestAmount) AS totalInterest,
+      SUM(lr.penaltyAmount) AS totalPenalty,
+      SUM(lr.totalAmount) AS totalRepaid,
+      COUNT(DISTINCT lr.loanAccountId) AS uniqueLoanAccountsCount,
+      COUNT(DISTINCT c.groupId) AS uniqueGroupsCount,
+      COUNT(DISTINCT c.groupLoanId) AS uniqueGroupLoansCount,
+      AVG(lr.totalAmount) AS averageRepayment
+    FROM collections c
+    JOIN loan_repayments lr ON lr.collectionId = c.id
+    WHERE lr.status = 'processed'
+      AND c.status IN ('processed', 'partially_processed')
+      ${branch ? 'AND c.branch = :branch' : ''}
+      ${groupLoanId ? 'AND c.groupLoanId = :groupLoanId' : ''}
+      ${startDate ? 'AND c.collectionDate >= :startDate' : ''}
+      ${endDate ? 'AND c.collectionDate <= :endDate' : ''}
+  `, {
+    replacements: {
+      branch: branch ? Number(branch) : undefined,
+      groupLoanId: groupLoanId ? Number(groupLoanId) : undefined,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
     },
-    {
-      $project: {
-        _id: 0,
-        totalCollections: 1,
-        totalPrincipal: 1,
-        totalInterest: 1,
-        totalPenalty: 1,
-        totalRepaid: 1,
-        uniqueLoanAccountsCount: { $size: '$uniqueLoanAccounts' },
-        uniqueGroupsCount: { $size: '$uniqueGroups' },
-        uniqueGroupLoansCount: { $size: '$uniqueGroupLoans' },
-        averageRepayment: { $divide: ['$totalRepaid', '$totalCollections'] }
-      }
-    }
-  ]);
+    type: sequelize.QueryTypes.SELECT,
+  });
 
-  // Get repayment trends by date
-  const trends = await Collection.aggregate([
-    { $match: matchStage },
-    { $unwind: '$loanRepayments' },
-    { $match: { 'loanRepayments.status': 'processed' } },
-    {
-      $group: {
-        _id: { $dateToString: { format: '%Y-%m-%d', date: '$collectionDate' } },
-        dailyPrincipal: { $sum: '$loanRepayments.principalAmount' },
-        dailyInterest: { $sum: '$loanRepayments.interestAmount' },
-        dailyPenalty: { $sum: '$loanRepayments.penaltyAmount' },
-        dailyTotal: { $sum: '$loanRepayments.totalAmount' },
-        collectionCount: { $sum: 1 }
-      }
+  // Trends query – same pattern
+  const trends = await sequelize.query(`
+    SELECT
+      DATE(c.collectionDate) AS _id,
+      SUM(lr.principalAmount) AS dailyPrincipal,
+      SUM(lr.interestAmount) AS dailyInterest,
+      SUM(lr.penaltyAmount) AS dailyPenalty,
+      SUM(lr.totalAmount) AS dailyTotal,
+      COUNT(DISTINCT c.id) AS collectionCount
+    FROM collections c
+    JOIN loan_repayments lr ON lr.collectionId = c.id
+    WHERE lr.status = 'processed'
+      AND c.status IN ('processed', 'partially_processed')
+      ${branch ? 'AND c.branch = :branch' : ''}
+      ${groupLoanId ? 'AND c.groupLoanId = :groupLoanId' : ''}
+      AND c.collectionDate BETWEEN COALESCE(:startDate, '1970-01-01') AND COALESCE(:endDate, NOW())
+    GROUP BY DATE(c.collectionDate)
+    ORDER BY _id DESC
+    LIMIT 30
+  `, {
+    replacements: {
+      branch: branch ? Number(branch) : undefined,
+      groupLoanId: groupLoanId ? Number(groupLoanId) : undefined,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
     },
-    { $sort: { _id: 1 } },
-    { $limit: 30 }
-  ]);
+    type: sequelize.QueryTypes.SELECT,
+  });
 
   res.json({
     success: true,
     data: {
-      overview: stats[0] || {
-        totalCollections: 0,
-        totalPrincipal: 0,
-        totalInterest: 0,
-        totalPenalty: 0,
-        totalRepaid: 0,
-        uniqueLoanAccountsCount: 0,
-        uniqueGroupsCount: 0,
-        uniqueGroupLoansCount: 0,
-        averageRepayment: 0
+      overview: overview || {
+        totalCollections: 0, totalPrincipal: 0, totalInterest: 0, totalPenalty: 0, totalRepaid: 0,
+        uniqueLoanAccountsCount: 0, uniqueGroupsCount: 0, uniqueGroupLoansCount: 0, averageRepayment: 0
       },
-      trends: trends
+      trends: trends.map(t => ({ ...t, _id: t._id }))
     }
   });
 });
-
-// Export ALL functions
-export {
-  createCollection,
-  getCollections,
-  getCollectionById,
-  updateCollection,
-  deleteCollection,
-  approveCollection,
-  rejectCollection,
-  getCollectionsByGroup,
-  getCollectionStats,
-  processCollection,
-  addLoanRepayment,
-  addSavingsCollection,
-  getCollectionBreakdown,
-  getCollectionsByGroupLoan,
-  getRepaymentStats
-};

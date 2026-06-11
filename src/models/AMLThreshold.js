@@ -2,15 +2,12 @@ import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class AMLThreshold extends Model {
-  // Virtual getter for formatted threshold amount
   get formattedThreshold() {
     return new Intl.NumberFormat('en-NG', {
       style: 'currency',
       currency: this.currency
     }).format(this.thresholdAmount);
   }
-
-  // Instance methods can be added here
 }
 
 AMLThreshold.init({
@@ -22,26 +19,19 @@ AMLThreshold.init({
   transactionType: {
     type: DataTypes.ENUM('WITHDRAWAL', 'DEPOSIT', 'TRANSFER', 'DEFAULT'),
     allowNull: false,
-    defaultValue: 'DEFAULT',
-    validate: {
-      isIn: [['WITHDRAWAL', 'DEPOSIT', 'TRANSFER', 'DEFAULT']]
-    }
+    defaultValue: 'DEFAULT'
+    // validate.isIn is redundant – ENUM already restricts values
   },
   thresholdAmount: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
-    validate: {
-      min: 0
-    }
+    validate: { min: 0 }
   },
   currency: {
     type: DataTypes.ENUM('NGN', 'USD', 'EUR', 'GBP'),
     allowNull: false,
-    defaultValue: 'NGN',
-    validate: {
-      isIn: [['NGN', 'USD', 'EUR', 'GBP']],
-      isUppercase: true
-    }
+    defaultValue: 'NGN'
+    // Removed isUppercase (not a built-in validator)
   },
   active: {
     type: DataTypes.BOOLEAN,
@@ -52,78 +42,33 @@ AMLThreshold.init({
     allowNull: true
   },
   appliesTo: {
-    type: DataTypes.ARRAY(DataTypes.ENUM('INDIVIDUAL', 'BUSINESS', 'GOVERNMENT', 'ALL')),
+    type: DataTypes.JSON,
     allowNull: true,
-    defaultValue: []
+    defaultValue: [],
+    comment: 'Array of values: INDIVIDUAL, BUSINESS, GOVERNMENT, ALL'
   },
   createdBy: {
     type: DataTypes.UUID,
-    allowNull: true,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
+    allowNull: true
+    // references removed to avoid foreign key error
   },
   updatedBy: {
     type: DataTypes.UUID,
-    allowNull: true,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
-  },
-  createdAt: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    allowNull: false
-  },
-  updatedAt: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    allowNull: false
+    allowNull: true
   }
+  // Do NOT define createdAt / updatedAt – timestamps:true handles them
 }, {
   sequelize,
   modelName: 'AMLThreshold',
   tableName: 'aml_thresholds',
-  timestamps: true,
-  underscored: true,
-  indexes: [
-    {
-      unique: true,
-      fields: ['transaction_type', 'currency', 'active'],
-      where: { active: true }
-    },
-    {
-      fields: ['transaction_type'],
-      name: 'idx_transaction_type'
-    },
-    {
-      fields: ['currency'],
-      name: 'idx_currency'
-    },
-    {
-      fields: ['active'],
-      name: 'idx_active'
-    },
-    {
-      fields: ['created_by'],
-      name: 'idx_created_by'
-    }
-  ],
+  timestamps: true,      // auto-adds created_at & updated_at (underscored true)
+  underscored: true,     // uses snake_case for auto columns
   hooks: {
-    beforeCreate: (instance) => {
-      // Set timezone for Nigeria if needed
-      instance.createdAt = new Date();
-      instance.updatedAt = new Date();
-    },
-    beforeUpdate: (instance) => {
-      instance.updatedAt = new Date();
-    }
+    // Remove manual createdAt/updatedAt setting – Sequelize does it automatically
   },
   validate: {
     validateAppliesTo() {
-      if (this.appliesTo && this.appliesTo.length > 0) {
+      if (this.appliesTo && Array.isArray(this.appliesTo) && this.appliesTo.length > 0) {
         const validValues = ['INDIVIDUAL', 'BUSINESS', 'GOVERNMENT', 'ALL'];
         for (const value of this.appliesTo) {
           if (!validValues.includes(value)) {

@@ -1,124 +1,169 @@
 // src/routes/osRoutes.js
 import express from 'express';
-import OsController from '../controllers/OsController.js';
-
-// Import processAutoCollections from the correct service file
-import { processAutoCollections } from '../Services/autoCollectionService.js';
 
 const router = express.Router();
 
+// Helper to load OsController dynamically
+const loadOsController = async () => {
+  const module = await import('../controllers/OsController.js');
+  return module.default;
+};
+
+// Helper to load processAutoCollections dynamically
+const loadProcessAutoCollections = async () => {
+  const module = await import('../Services/autoCollectionService.js');
+  return module.processAutoCollections;
+};
+
+// Helper to load SystemDate model dynamically
+const loadSystemDate = async () => {
+  const module = await import('../models/SystemDate.js');
+  return module.default;
+};
+
+// Helper to load Holiday model dynamically
+const loadHoliday = async () => {
+  const module = await import('../models/Holiday.js');
+  return module.default;
+};
+
+// Helper to load sequelize dynamically
+const loadSequelize = async () => {
+  const module = await import('../../config/db.js');
+  return module.sequelize;
+};
+
 // ============================================
-// EXISTING ROUTES
+// ROUTES (all use dynamic imports)
 // ============================================
 
-// Service management routes
-router.get('/dormant-accounts/count', OsController.getDormantAccountsCount);
-router.post('/trigger-services', OsController.triggerEndOfDayProcess);
-router.get('/status', OsController.getStatus);
-router.get('/processing-date', OsController.getCurrentBusinessDate);
-router.get('/error-service', OsController.getServiceErrors);
-
-// Debugging routes
-router.post('/initialize-dates', OsController.initializeSystemDates); // This is CORRECT
-router.get('/debug-dates', OsController.debugDates);
-router.get('/debug-date-issues', OsController.debugDateIssues);
-
-// System status routes
-router.get('/system-status', OsController.getSystemStatus);
-router.post('/update-business-date', OsController.updateBusinessDate);
-
-// ============================================
-// EOD MANAGEMENT ROUTES
-// ============================================
-
-// EOD Processing
-router.post('/eod/start', async (req, res) => {
-  try {
-    const { userId = 'system' } = req.body;
-    // Fixed: Call processEndOfDay correctly
-    const mockRes = {
-      statusCode: 200,
-      data: null,
-      status: function(code) { 
-        this.statusCode = code; 
-        return this; 
-      }, 
-      json: function(data) { 
-        this.data = data; 
-        return data; 
-      }
-    };
-    
-    await OsController.processEndOfDay({ body: { userId, force: false } }, mockRes);
-    res.json(mockRes.data || { success: true, message: 'EOD process completed' });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to start EOD process',
-      error: error.message
-    });
-  }
+router.get('/dormant-accounts/count', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.getDormantAccountsCount(req, res);
 });
 
-// Manual date adjustment (admin only)
-router.post('/date/manual-set', OsController.setBusinessDateManually);
+router.post('/trigger-services', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.triggerEndOfDayProcess(req, res);
+});
 
-// Service-specific routes
-router.post('/services/reconciliation', OsController.processReconciliation);
+router.get('/status', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.getStatus(req, res);
+});
+
+router.get('/processing-date', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.getCurrentBusinessDate(req, res);
+});
+
+router.get('/error-service', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.getServiceErrors(req, res);
+});
+
+router.post('/initialize-dates', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.initializeSystemDates(req, res);
+});
+
+router.get('/debug-dates', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.debugDates(req, res);
+});
+
+router.get('/debug-date-issues', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.debugDateIssues(req, res);
+});
+
+router.get('/system-status', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.getSystemStatus(req, res);
+});
+
+router.post('/update-business-date', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.updateBusinessDate(req, res);
+});
+
+router.post('/eod/start', async (req, res) => {
+  const controller = await loadOsController();
+  const { userId = 'system' } = req.body;
+  const mockRes = {
+    statusCode: 200,
+    data: null,
+    status(code) { this.statusCode = code; return this; },
+    json(data) { this.data = data; return data; }
+  };
+  await controller.processEndOfDay({ body: { userId, force: false } }, mockRes);
+  res.json(mockRes.data || { success: true, message: 'EOD process completed' });
+});
+
+router.post('/date/manual-set', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.setBusinessDateManually(req, res);
+});
+
+router.post('/services/reconciliation', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.processReconciliation(req, res);
+});
+
 router.post('/services/auto-collections', async (req, res) => {
+  const processAutoCollections = await loadProcessAutoCollections();
   try {
     const result = await processAutoCollections();
     res.json(result);
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Auto collections processing failed',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Auto collections processing failed', error: error.message });
   }
 });
 
-router.post('/services/loan-overdue-status', OsController.processLoanOverdueAndStatus);
-router.post('/services/gl-transactions', OsController.processEODGLTransactions);
+router.post('/services/loan-overdue-status', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.processLoanOverdueAndStatus(req, res);
+});
 
-// Business date calculation routes
-router.post('/date/calculate-next', (req, res) => {
+router.post('/services/gl-transactions', async (req, res) => {
+  const controller = await loadOsController();
+  return controller.processEODGLTransactions(req, res);
+});
+
+router.post('/date/calculate-next', async (req, res) => {
+  const controller = await loadOsController();
   try {
     const { currentDate } = req.body;
-    const nextDate = OsController.calculateNextBusinessDate(new Date(currentDate || Date.now()));
+    const nextDate = controller.calculateNextBusinessDate(new Date(currentDate || Date.now()));
     res.json({
       success: true,
       currentDate: currentDate || new Date().toISOString().split('T')[0],
       nextBusinessDate: nextDate.toISOString().split('T')[0]
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 router.post('/date/calculate-next-with-holidays', async (req, res) => {
+  const controller = await loadOsController();
   try {
     const { currentDate } = req.body;
-    const nextDate = await OsController.calculateNextBusinessDateWithHolidays(new Date(currentDate || Date.now()));
+    const nextDate = await controller.calculateNextBusinessDateWithHolidays(new Date(currentDate || Date.now()));
     res.json({
       success: true,
       currentDate: currentDate || new Date().toISOString().split('T')[0],
       nextBusinessDate: nextDate.toISOString().split('T')[0]
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-router.post('/date/set-next', (req, res) => {
+router.post('/date/set-next', async (req, res) => {
+  const controller = await loadOsController();
   try {
-    const nextDate = OsController.setNextBusinessDate();
+    const nextDate = controller.setNextBusinessDate();
     res.json({
       success: true,
       message: 'Next business date set successfully',
@@ -126,29 +171,17 @@ router.post('/date/set-next', (req, res) => {
       currentBusinessDate: new Date().toISOString().split('T')[0]
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// REMOVED DUPLICATE: router.post('/system/initialize', OsController.initializeSystemDates);
-// This route is duplicated with line 23 above
-
-// EOD Status
 router.get('/eod/status', async (req, res) => {
   try {
-    const SystemDate = (await import('../models/SystemDate.js')).default;
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-    
+    const SystemDate = await loadSystemDate();
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     if (!systemDate) {
-      return res.status(404).json({
-        success: false,
-        message: 'System date not found'
-      });
+      return res.status(404).json({ success: false, message: 'System date not found' });
     }
-    
     res.json({
       success: true,
       data: {
@@ -160,30 +193,21 @@ router.get('/eod/status', async (req, res) => {
         lastEODDate: systemDate.lastEODDate,
         lastEODProcessedBy: systemDate.lastEODProcessedBy,
         lastUpdated: systemDate.updatedAt,
-        eodHistory: systemDate.eodHistory?.slice(-5) || [] // Last 5 EOD operations
+        eodHistory: systemDate.eodHistory?.slice(-5) || []
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// System Date Information
 router.get('/date/info', async (req, res) => {
   try {
-    const SystemDate = (await import('../models/SystemDate.js')).default;
-    const systemDate = await SystemDate.findOne().sort({ createdAt: -1 });
-    
+    const SystemDate = await loadSystemDate();
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     if (!systemDate) {
-      return res.status(404).json({
-        success: false,
-        message: 'System date not found'
-      });
+      return res.status(404).json({ success: false, message: 'System date not found' });
     }
-    
     res.json({
       success: true,
       data: {
@@ -197,59 +221,45 @@ router.get('/date/info', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Service health check
 router.get('/services/health', async (req, res) => {
   try {
-    // Import systemStatus from OsController or create a simple health check
-    const systemDate = await (await import('../models/SystemDate.js')).default.findOne().sort({ createdAt: -1 });
-    
-    const healthStatus = {
-      systemDate: {
-        exists: !!systemDate,
-        currentDate: systemDate?.currentBusinessDate,
-        eodStatus: systemDate?.eodStatus,
-        isEODProcessing: systemDate?.isEODProcessing || false
-      },
-      database: {
-        connected: true,
-        connectionState: (await import('mongoose')).connection.readyState
-      },
-      timestamp: new Date().toISOString()
-    };
-    
+    const SystemDate = await loadSystemDate();
+    const sequelize = await loadSequelize();
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+    let dbConnected = false;
+    try {
+      await sequelize.authenticate();
+      dbConnected = true;
+    } catch (e) { /* ignore */ }
     res.json({
       success: true,
-      data: healthStatus
+      data: {
+        systemDate: {
+          exists: !!systemDate,
+          currentDate: systemDate?.currentBusinessDate,
+          eodStatus: systemDate?.eodStatus,
+          isEODProcessing: systemDate?.isEODProcessing || false
+        },
+        database: { connected: dbConnected },
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get current business date (simple version)
 router.get('/current-date', async (req, res) => {
   try {
-    const systemDate = await (await import('../models/SystemDate.js')).default.findOne().sort({ createdAt: -1 });
-    
+    const SystemDate = await loadSystemDate();
+    const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     if (!systemDate) {
-      return res.json({
-        success: true,
-        message: 'System date not initialized',
-        currentBusinessDate: null,
-        systemDateExists: false
-      });
+      return res.json({ success: true, message: 'System date not initialized', currentBusinessDate: null, systemDateExists: false });
     }
-    
     res.json({
       success: true,
       currentBusinessDate: systemDate.currentBusinessDate,
@@ -258,68 +268,41 @@ router.get('/current-date', async (req, res) => {
       systemDateExists: true
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Force set business date (admin only) - FIXED
 router.post('/force-set-date', async (req, res) => {
   try {
     const { newDate, userId, reason } = req.body;
-    
     if (!newDate || !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'newDate and userId are required'
-      });
+      return res.status(400).json({ success: false, message: 'newDate and userId are required' });
     }
-    
-    // Create mock response object
+    const controller = await loadOsController();
     const mockRes = {
       statusCode: 200,
       data: null,
-      status: function(code) { 
-        this.statusCode = code; 
-        return this; 
-      }, 
-      json: function(data) { 
-        this.data = data; 
-        return data; 
-      }
+      status(code) { this.statusCode = code; return this; },
+      json(data) { this.data = data; return data; }
     };
-    
-    // Call the OsController function with proper parameters
-    await OsController.setBusinessDateManually({
-      body: { newDate, updatedBy: userId, reason }
-    }, mockRes);
-    
+    await controller.setBusinessDateManually({ body: { newDate, updatedBy: userId, reason } }, mockRes);
     res.json(mockRes.data || { success: true, message: 'Date set successfully' });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to force set date',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to force set date', error: error.message });
   }
 });
 
-// Holiday system check
 router.get('/holiday-check', async (req, res) => {
   try {
-    const Holiday = (await import('../models/Holiday.js')).default;
+    const Holiday = await loadHoliday();
+    const { Op } = await import('sequelize');
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     const isHoliday = await Holiday.findOne({
-      date: {
-        $gte: today,
-        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
-      }
+      where: { date: { [Op.gte]: today, [Op.lt]: tomorrow } }
     });
-    
     res.json({
       success: true,
       date: today.toISOString().split('T')[0],
@@ -327,68 +310,44 @@ router.get('/holiday-check', async (req, res) => {
       holidayDetails: isHoliday || null
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Batch process EOD services
 router.post('/batch-process', async (req, res) => {
   try {
     const { services = [], userId = 'system' } = req.body;
-    
-    const validServices = [
-      'loanOverdueStatus',
-      'autoCollections',
-      'glTransactions',
-      'reconciliation',
-      'dormantAccounts'
-    ];
-    
-    const servicesToRun = services.filter(service => validServices.includes(service));
-    
+    const validServices = ['loanOverdueStatus', 'autoCollections', 'glTransactions', 'reconciliation', 'dormantAccounts'];
+    const servicesToRun = services.filter(s => validServices.includes(s));
     if (servicesToRun.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No valid services specified'
-      });
+      return res.status(400).json({ success: false, message: 'No valid services specified' });
     }
-    
+    const controller = await loadOsController();
+    const processAutoCollections = await loadProcessAutoCollections();
     const results = {};
-    
-    // Process each service
     for (const service of servicesToRun) {
       try {
         switch (service) {
           case 'loanOverdueStatus':
-            results.loanOverdueStatus = await OsController.processLoanOverdueAndStatus();
+            results.loanOverdueStatus = await controller.processLoanOverdueAndStatus();
             break;
           case 'autoCollections':
             results.autoCollections = await processAutoCollections();
             break;
           case 'glTransactions':
-            results.glTransactions = await OsController.processEODGLTransactions();
+            results.glTransactions = await controller.processEODGLTransactions();
             break;
           case 'reconciliation':
-            results.reconciliation = await OsController.processReconciliation();
+            results.reconciliation = await controller.processReconciliation();
             break;
           case 'dormantAccounts':
-            results.dormantAccounts = {
-              success: true,
-              message: 'Dormant accounts would be processed here'
-            };
+            results.dormantAccounts = { success: true, message: 'Dormant accounts would be processed here' };
             break;
         }
       } catch (serviceError) {
-        results[service] = {
-          success: false,
-          error: serviceError.message
-        };
+        results[service] = { success: false, error: serviceError.message };
       }
     }
-    
     res.json({
       success: true,
       message: 'Batch processing completed',
@@ -398,11 +357,7 @@ router.post('/batch-process', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Batch processing failed',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Batch processing failed', error: error.message });
   }
 });
 

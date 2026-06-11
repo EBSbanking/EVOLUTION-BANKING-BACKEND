@@ -1,5 +1,4 @@
 ﻿// models/SystemDate.js - UPDATED TO MATCH DATABASE SCHEMA
-
 import sequelize from '../../config/db.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
 import logger from '../utils/logger.js';
@@ -11,38 +10,38 @@ const SystemDate = sequelize.define('SystemDate', {
     primaryKey: true,
     autoIncrement: true
   },
-  current_business_date: {  // ✅ FIXED: Use snake_case to match database
-    type: DataTypes.DATE,
+  current_business_date: {
+    type: DataTypes.DATEONLY, // Changed from DATE to DATEONLY to match DATE column type
     allowNull: false,
-    field: 'current_business_date'  // Explicit field mapping
+    field: 'current_business_date'
   },
-  next_business_date: {  // ✅ FIXED: Use snake_case
-    type: DataTypes.DATE,
-    allowNull: true,
+  next_business_date: {
+    type: DataTypes.DATEONLY, // Changed from DATE to DATEONLY
+    allowNull: false,
     field: 'next_business_date'
   },
-  last_e_o_d_date: {  // ✅ FIXED: Use snake_case
-    type: DataTypes.DATE,
+  last_e_o_d_date: {
+    type: DataTypes.DATEONLY, // Changed from DATE to DATEONLY
     allowNull: true,
     field: 'last_e_o_d_date'
   },
-  last_e_o_d_processed_by: {  // ✅ FIXED: Use snake_case
-    type: DataTypes.STRING(100),  // Changed from INTEGER to STRING to match VARCHAR(100)
+  last_e_o_d_processed_by: {
+    type: DataTypes.STRING(100),
     allowNull: true,
     field: 'last_e_o_d_processed_by'
   },
-  is_e_o_d_processing: {  // ✅ FIXED: Use snake_case
+  is_e_o_d_processing: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
     field: 'is_e_o_d_processing'
   },
-  eod_status: {  // ✅ FIXED: Use snake_case
-    type: DataTypes.STRING(50),  // Changed from ENUM to STRING
+  eod_status: {
+    type: DataTypes.STRING(50),
     defaultValue: 'IDLE',
     field: 'eod_status'
   },
-  eod_history: {  // ✅ FIXED: Use snake_case
-    type: DataTypes.TEXT,  // Changed from JSON to TEXT
+  eod_history: {
+    type: DataTypes.TEXT,
     allowNull: true,
     field: 'eod_history',
     get() {
@@ -60,42 +59,49 @@ const SystemDate = sequelize.define('SystemDate', {
         this.setDataValue('eod_history', JSON.stringify(value));
       } else if (typeof value === 'string') {
         this.setDataValue('eod_history', value);
+      } else if (value && typeof value === 'object') {
+        this.setDataValue('eod_history', JSON.stringify(value));
       } else {
         this.setDataValue('eod_history', '[]');
       }
     }
   },
-  createdAt: {
+  created_at: {
     type: DataTypes.DATE,
-    field: 'created_at',
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
   },
-  updatedAt: {
+  updated_at: {
     type: DataTypes.DATE,
-    field: 'updated_at',
     allowNull: false,
-    defaultValue: DataTypes.NOW
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
   tableName: 'system_dates',
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
-  underscored: true, // ✅ Important: This tells Sequelize to use snake_case
+  underscored: true,
   hooks: {
-    // Equivalent to pre-save hook
     beforeSave: async (systemDate, options) => {
       if (systemDate.changed('current_business_date')) {
         try {
-          systemDate.next_business_date = await calculateNextBusinessDate(systemDate.current_business_date);
+          const currentDate = new Date(systemDate.current_business_date);
+          const nextDate = await calculateNextBusinessDate(currentDate);
+          // Format as YYYY-MM-DD string for DATEONLY
+          systemDate.next_business_date = nextDate.toISOString().split('T')[0];
         } catch (error) {
           logger.error(`Failed to calculate next business date: ${error.message}`);
-          throw new Error(`Failed to calculate next business date: ${error.message}`);
+          // Fallback: add 1 day
+          const currentDate = new Date(systemDate.current_business_date);
+          const nextDate = new Date(currentDate);
+          nextDate.setDate(nextDate.getDate() + 1);
+          systemDate.next_business_date = nextDate.toISOString().split('T')[0];
         }
       }
     },
-    // Equivalent to post-save hook
     afterSave: (systemDate, options) => {
       logger.info('System date updated:', { 
         current_business_date: systemDate.current_business_date, 
@@ -116,7 +122,7 @@ const SystemDate = sequelize.define('SystemDate', {
   ]
 });
 
-// Add getters for camelCase access (optional, for backward compatibility)
+// Add getters for camelCase access
 SystemDate.prototype.getCurrentBusinessDate = function() {
   return this.current_business_date;
 };
@@ -158,10 +164,9 @@ SystemDate.cleanupInvalidData = async function() {
           const parsed = JSON.parse(eodHistory);
           if (Array.isArray(parsed)) {
             const cleanedHistory = parsed.map(history => {
-              // Ensure processedBy is proper type
-              if (history.processedBy && typeof history.processedBy === 'string') {
+              // Ensure dates are proper
+              if (history.timestamp) {
                 needsUpdate = true;
-                return { ...history, processedBy: history.processedBy };
               }
               return history;
             });
@@ -207,24 +212,34 @@ SystemDate.getCurrentSystemDate = async function() {
       // Initialize if not exists
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
       
       let nextBusinessDate;
       try {
         nextBusinessDate = await calculateNextBusinessDate(today);
+        const nextDateStr = nextBusinessDate.toISOString().split('T')[0];
+        
+        return await this.create({
+          current_business_date: todayStr,
+          next_business_date: nextDateStr,
+          eod_status: 'IDLE',
+          is_e_o_d_processing: false,
+          eod_history: []
+        });
       } catch (error) {
         console.warn('Error calculating next business date:', error.message);
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
-        nextBusinessDate = tomorrow;
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        
+        return await this.create({
+          current_business_date: todayStr,
+          next_business_date: tomorrowStr,
+          eod_status: 'IDLE',
+          is_e_o_d_processing: false,
+          eod_history: []
+        });
       }
-      
-      return await this.create({
-        current_business_date: today,
-        next_business_date: nextBusinessDate,
-        eod_status: 'IDLE',
-        is_e_o_d_processing: false,
-        eod_history: []
-      });
     }
     
     return systemDate;
@@ -235,9 +250,21 @@ SystemDate.getCurrentSystemDate = async function() {
 };
 
 // Instance method to add to eod_history
-SystemDate.prototype.addToEodHistory = function(historyEntry) {
+SystemDate.prototype.addToEodHistory = async function(historyEntry) {
   const eodHistory = Array.isArray(this.eod_history) ? this.eod_history : [];
+  
+  // Add timestamp if not present
+  if (!historyEntry.timestamp) {
+    historyEntry.timestamp = new Date();
+  }
+  
   eodHistory.push(historyEntry);
+  
+  // Keep only last 100 entries to prevent excessive growth
+  if (eodHistory.length > 100) {
+    eodHistory.splice(0, eodHistory.length - 100);
+  }
+  
   return this.update({ eod_history: eodHistory });
 };
 
@@ -264,11 +291,11 @@ SystemDate.ensureTableExists = async function() {
         CREATE TABLE system_dates (
           id INT PRIMARY KEY AUTO_INCREMENT,
           current_business_date DATE NOT NULL,
-          next_business_date DATE,
+          next_business_date DATE NOT NULL,
           last_e_o_d_date DATE,
           last_e_o_d_processed_by VARCHAR(100),
           is_e_o_d_processing BOOLEAN DEFAULT FALSE,
-          eod_status VARCHAR(50),
+          eod_status VARCHAR(50) DEFAULT 'IDLE',
           eod_history TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -278,20 +305,44 @@ SystemDate.ensureTableExists = async function() {
       
       // Insert default record
       const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const todayStr = today.toISOString().split('T')[0];
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
       
       await sequelize.query(`
         INSERT INTO system_dates 
         (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
         VALUES (?, ?, 'IDLE', FALSE, '[]')
       `, {
-        replacements: [today, tomorrow]
+        replacements: [todayStr, tomorrowStr]
       });
       console.log('✅ Default system date record created');
     } else {
       console.log('✅ system_dates table already exists');
+      
+      // Check if we have any records
+      const [records] = await sequelize.query(`
+        SELECT COUNT(*) as count FROM system_dates
+      `);
+      
+      if (records[0].count === 0) {
+        console.log('📝 No records found, inserting default...');
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+        
+        await sequelize.query(`
+          INSERT INTO system_dates 
+          (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
+          VALUES (?, ?, 'IDLE', FALSE, '[]')
+        `, {
+          replacements: [todayStr, tomorrowStr]
+        });
+        console.log('✅ Default system date record created');
+      }
     }
   } catch (error) {
     console.error('❌ Error ensuring system_dates table exists:', error);

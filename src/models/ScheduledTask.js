@@ -1,6 +1,6 @@
 // src/models/ScheduledTask.js
 import { DataTypes } from 'sequelize';
-import sequelize from '../config/database.js';
+import sequelize from '../../config/db.js';
 
 const ScheduledTask = sequelize.define('ScheduledTask', {
   id: {
@@ -76,14 +76,7 @@ const ScheduledTask = sequelize.define('ScheduledTask', {
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
-  indexes: [
-    { fields: ['task_id'] },
-    { fields: ['task_type'] },
-    { fields: ['status'] },
-    { fields: ['user_id'] },
-    { fields: ['branch_id'] },
-    { fields: ['created_at'] }
-  ]
+ 
 });
 
 export default ScheduledTask;

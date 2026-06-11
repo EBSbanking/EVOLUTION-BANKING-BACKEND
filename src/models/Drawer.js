@@ -1,5 +1,6 @@
-// models/Drawer.js
+// models/Drawer.js - Converted to direct initialization pattern
 import { Model, DataTypes } from 'sequelize';
+import sequelize from '../../config/db.js'; // adjust path as needed
 
 class Drawer extends Model {
   static associate(models) {
@@ -20,9 +21,8 @@ class Drawer extends Model {
   }
 }
 
-// Factory function for initialization
-export function initializeDrawerModel(sequelize) {
-  Drawer.init({
+Drawer.init(
+  {
     id: { 
       type: DataTypes.INTEGER, 
       autoIncrement: true, 
@@ -126,8 +126,8 @@ export function initializeDrawerModel(sequelize) {
       defaultValue: 'A' 
     },
     CURRENT_ASSIGNEE_ID: { 
-      type: DataTypes.STRING(50), // CHANGED FROM INTEGER TO STRING
-      defaultValue: '0' // CHANGED FROM 0 TO '0'
+      type: DataTypes.STRING(50),
+      defaultValue: '0'
     },
     CURRENT_ASSIGNEE_NAME: { 
       type: DataTypes.STRING(100),
@@ -195,30 +195,14 @@ export function initializeDrawerModel(sequelize) {
       field: 'updated_at',
       defaultValue: DataTypes.NOW
     }
-  }, {
+  },
+  {
     sequelize,
     modelName: 'Drawer',
     tableName: 'drawers',
     timestamps: true,
     underscored: false,
-    indexes: [
-      { fields: ['DRAWER_ID'] },
-      { fields: ['DRAWER_NO'] },
-      { fields: ['WF_STATUS'] },
-      { fields: ['REC_ST'] },
-      { fields: ['BU_ID'] },
-      { fields: ['BRANCH_CODE'] },
-      { fields: ['USER_ID'] }
-    ]
-  });
+  }
+);
 
-  return Drawer;
-}
-
-// Also keep the traditional init method for backward compatibility
-Drawer.initModel = function(sequelize) {
-  return initializeDrawerModel(sequelize);
-};
-
-// Export both the class and initialization function
 export default Drawer;

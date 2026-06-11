@@ -719,39 +719,7 @@ DepositAccountMonthlyStat.init({
       });
     }
   },
-  indexes: [
-    // Primary index
-    { fields: ['MONTHLY_STAT_ID'], unique: true },
-    
-    // Foreign key and account number indexes
-    { fields: ['DEPOSIT_ACCT_ID'] },
-    { fields: ['ACCT_NO'] },
-    
-    // Date range indexes for queries
-    { fields: ['START_DT'] },
-    { fields: ['END_DT'] },
-    { fields: ['START_DT', 'END_DT'] },
-    { fields: ['DEPOSIT_ACCT_ID', 'START_DT'] },
-    { fields: ['DEPOSIT_ACCT_ID', 'END_DT'] },
-    
-    // Status and date composites
-    { fields: ['REC_ST', 'START_DT'] },
-    { fields: ['REC_ST', 'END_DT'] },
-    { fields: ['DEPOSIT_ACCT_ID', 'REC_ST', 'START_DT'] },
-    
-    // Performance indexes
-    { fields: ['AVG_LEDGER_BAL'] },
-    { fields: ['AVG_DR_INT_RATE'] },
-    { fields: ['DR_TURNOVER'] },
-    { fields: ['CR_TURNOVER'] },
-    
-    // Unique constraint: one stat per account per month
-    {
-      fields: ['DEPOSIT_ACCT_ID', 'START_DT', 'END_DT'],
-      unique: true,
-      name: 'unique_account_month'
-    }
-  ],
+  
   scopes: {
     active: {
       where: { REC_ST: 'A' }

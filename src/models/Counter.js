@@ -299,12 +299,7 @@ Counter.init({
       }
     }
   },
-  indexes: [
-    {
-      fields: ['name'],
-      unique: true
-    }
-  ],
+ 
   // Add scopes for common queries - FIXED: Use Op.gt properly
   scopes: {
     active: {

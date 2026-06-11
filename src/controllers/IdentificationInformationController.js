@@ -1,11 +1,9 @@
-// controllers/identificationController.js
+// controllers/IdentificationInformationController.js
 import { v2 as cloudinaryV2 } from 'cloudinary';
-import IdentificationInformation from '../models/IdentificationInformation.js';
-import Customer from '../models/Customer.js'; // Assuming you have a Customer model
-import sequelize from '../../config/db.js';
 import fs from 'fs';
-import path from 'path';
 import { Op } from 'sequelize';
+import sequelize from '../../config/db.js';
+import { getCustomer, getIdentificationInformation, initializeModels } from '../models/index.js';
 
 // Cloudinary configuration
 cloudinaryV2.config({
@@ -14,28 +12,44 @@ cloudinaryV2.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Async handler utility
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
+// Ensure association – use snake_case foreign key
+const ensureAssociations = async () => {
+  try {
+    await initializeModels();
+    const IdentificationInformation = getIdentificationInformation();
+    const Customer = getCustomer();
+    if (IdentificationInformation && Customer && !IdentificationInformation.associations.customer) {
+      IdentificationInformation.belongsTo(Customer, { foreignKey: 'cust_id', as: 'customer' });
+      Customer.hasMany(IdentificationInformation, { foreignKey: 'cust_id', as: 'identifications' });
+      console.log('✅ IdentificationInformation ↔ Customer association added dynamically');
+    }
+  } catch (err) {
+    console.warn('Could not set association:', err.message);
+  }
+};
+ensureAssociations();
+
+// ==================== UPLOAD IDENTIFICATION ====================
 export const uploadIdentification = asyncHandler(async (req, res) => {
   const transaction = await sequelize.transaction();
-  
   try {
-    const { 
-      CUST_ID, 
-      CUST_NM, 
-      docId, 
-      documentType, 
-      documentId, 
-      countryOfIssuer, 
-      expiryDate,
-      issueDate,
-      isPrimary = false 
+    // Destructure using the field names sent from client (we'll map them to model attributes)
+    const {
+      CUST_ID,            // from client – used to find Customer
+      CUST_NM,            // optional – will be stored as cust_nm
+      docId,              // from client – stored as doc_id
+      documentType,       // stored as document_type
+      documentId,         // from client – stored as document_number
+      countryOfIssuer,    // stored as country_of_issuer
+      expiryDate,         // stored as expiry_date
+      issueDate,          // stored as issue_date
+      isPrimary = false   // stored as is_primary
     } = req.body;
 
-    // Validate required fields
     if (!CUST_ID || !documentType || !documentId || !countryOfIssuer || !expiryDate) {
       await transaction.rollback();
       return res.status(400).json({
@@ -44,7 +58,6 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       });
     }
 
-    // Validate expiry date
     const expiry = new Date(expiryDate);
     if (expiry <= new Date()) {
       await transaction.rollback();
@@ -54,7 +67,6 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       });
     }
 
-    // Check if file exists
     if (!req.file) {
       await transaction.rollback();
       return res.status(400).json({
@@ -63,68 +75,57 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       });
     }
 
-    // Validate file type
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'];
     if (!allowedTypes.includes(req.file.mimetype)) {
       await transaction.rollback();
-      // Clean up uploaded file
-      if (req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(400).json({
         success: false,
         message: 'Invalid file type. Only JPEG, PNG, GIF, and PDF files are allowed.'
       });
     }
 
-    // Check if customer exists
-    const customer = await Customer.findByPk(CUST_ID, { transaction });
+    const Customer = getCustomer();
+    const IdentificationInformation = getIdentificationInformation();
+
+    // Find customer by the CUST_ID column (customers table has column `CUST_ID`)
+    const customer = await Customer.findOne({ where: { CUST_ID: CUST_ID }, transaction });
     if (!customer) {
       await transaction.rollback();
-      // Clean up uploaded file
-      if (req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(404).json({
         success: false,
         message: `Customer with ID ${CUST_ID} not found.`
       });
     }
 
-    // Check for duplicate document number for this customer
+    // Check duplicate document number (document_number) for this customer
     const existingDocument = await IdentificationInformation.findOne({
       where: {
-        CUST_ID,
-        documentId: documentId.trim().toUpperCase()
+        cust_id: CUST_ID,
+        document_number: documentId.trim().toUpperCase()
       },
       transaction
     });
 
     if (existingDocument) {
       await transaction.rollback();
-      // Clean up uploaded file
-      if (req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(400).json({
         success: false,
         message: `Document with number ${documentId} already exists for this customer.`
       });
     }
 
-    // Check for duplicate docId if provided
+    // Check duplicate doc_id if provided
     if (docId) {
       const existingDocId = await IdentificationInformation.findOne({
-        where: { docId },
+        where: { doc_id: docId },
         transaction
       });
-
       if (existingDocId) {
         await transaction.rollback();
-        // Clean up uploaded file
-        if (req.file.path && fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
+        if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         return res.status(400).json({
           success: false,
           message: `Document ID ${docId} already exists.`
@@ -145,10 +146,7 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       });
     } catch (cloudinaryError) {
       await transaction.rollback();
-      // Clean up uploaded file
-      if (req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       console.error('Cloudinary upload error:', cloudinaryError);
       return res.status(500).json({
         success: false,
@@ -157,12 +155,9 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       });
     }
 
-    // Clean up local file after successful upload
-    if (req.file.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    // Clean up local file
+    if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
 
-    // Generate thumbnail for images (not PDFs)
     let thumbnailUrl = null;
     if (req.file.mimetype !== 'application/pdf') {
       try {
@@ -178,37 +173,32 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
       }
     }
 
-    // If setting as primary, update other documents
-    if (isPrimary) {
+    // If this document should be primary, unset previous primary for this customer
+    if (isPrimary === true || isPrimary === 'true') {
       await IdentificationInformation.update(
-        { isPrimary: false },
-        {
-          where: { CUST_ID },
-          transaction
-        }
+        { is_primary: false },
+        { where: { cust_id: CUST_ID }, transaction }
       );
     }
 
-    // Create identification record
     const identificationData = {
-      CUST_ID,
-      CUST_NM: CUST_NM || customer.CUST_NM || customer.fullName,
-      docId: docId || `DOC-${CUST_ID}-${Date.now()}`,
-      documentType,
-      documentId: documentId.trim().toUpperCase(),
-      countryOfIssuer: countryOfIssuer.toUpperCase(),
-      expiryDate: expiry,
-      issueDate: issueDate ? new Date(issueDate) : null,
-      imagePath: cloudinaryResult.secure_url,
-      imageThumbnail: thumbnailUrl,
+      cust_id: CUST_ID,
+      cust_nm: CUST_NM || customer.CUST_NM || customer.cust_nm || customer.fullName,
+      doc_id: docId || `DOC-${CUST_ID}-${Date.now()}`,
+      document_type: documentType,
+      document_number: documentId.trim().toUpperCase(),
+      country_of_issuer: countryOfIssuer.toUpperCase(),
+      expiry_date: expiry,
+      issue_date: issueDate ? new Date(issueDate) : null,
+      image_path: cloudinaryResult.secure_url,
+      image_thumbnail: thumbnailUrl,
       status: 'active',
-      verificationStatus: 'pending',
-      isPrimary,
-      createdBy: req.user?.id || 'system'
+      verification_status: 'pending',
+      is_primary: isPrimary === true || isPrimary === 'true',
+      created_by: req.user?.id || 'system'
     };
 
     const identification = await IdentificationInformation.create(identificationData, { transaction });
-
     await transaction.commit();
 
     console.log(`✅ Identification document uploaded for customer ${CUST_ID}: ${documentId}`);
@@ -224,41 +214,20 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
 
   } catch (error) {
     await transaction.rollback();
-    
-    // Clean up uploaded file if exists
     if (req.file?.path && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        console.error('Failed to clean up file:', unlinkError);
-      }
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
     }
-    
     console.error('💥 Error uploading identification document:', error);
-    
-    // Handle specific errors
-    if (error.name === 'SequelizeUniqueConstraintError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Document ID or document number already exists.'
-      });
-    }
-    
-    if (error.name === 'SequelizeValidationError') {
-      const messages = error.errors.map(err => err.message).join(', ');
-      return res.status(400).json({
-        success: false,
-        message: `Validation error: ${messages}`
-      });
-    }
-    
-    if (error.name === 'SequelizeForeignKeyConstraintError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid customer reference.'
-      });
-    }
 
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({ success: false, message: 'Document ID or document number already exists.' });
+    }
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ success: false, message: `Validation error: ${error.errors.map(e => e.message).join(', ')}` });
+    }
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({ success: false, message: 'Invalid customer reference.' });
+    }
     res.status(500).json({
       success: false,
       message: 'Failed to upload identification document.',
@@ -267,7 +236,98 @@ export const uploadIdentification = asyncHandler(async (req, res) => {
   }
 });
 
-// Get all identification documents with filtering
+// ==================== BULK APPROVE PENDING IDENTIFICATIONS ====================
+// ==================== APPROVE SINGLE IDENTIFICATION ====================
+export const approveCustomerDocuments = asyncHandler(async (req, res) => {
+  const { custId } = req.params;
+  const { verificationNotes } = req.body || {};
+  const verifiedBy = req.user?.id || 'system';
+
+  const IdentificationInformation = getIdentificationInformation();
+  const Customer = getCustomer();
+  const transaction = await sequelize.transaction();
+
+  try {
+    // Verify customer exists (no business unit check)
+    const customer = await Customer.findOne({
+      where: { CUST_ID: custId },
+      transaction
+    });
+
+    if (!customer) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: `Customer with ID ${custId} not found.`
+      });
+    }
+
+    // Find all pending documents for this customer
+    const documents = await IdentificationInformation.findAll({
+      where: {
+        cust_id: custId,
+        verification_status: 'pending',
+        status: 'active'
+      },
+      transaction
+    });
+
+    if (documents.length === 0) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'No pending documents found for this customer.'
+      });
+    }
+
+    const results = [];
+    const errors = [];
+
+    for (const doc of documents) {
+      if (doc.isExpired && doc.isExpired()) {
+        errors.push({
+          id: doc.id,
+          document_number: doc.document_number,
+          message: 'Document is expired, cannot approve.'
+        });
+        continue;
+      }
+
+      await doc.update({
+        verification_status: 'verified',
+        verified_by: verifiedBy,
+        verification_date: new Date(),
+        verification_notes: verificationNotes || 'Approved by branch manager'
+      }, { transaction });
+
+      results.push({
+        id: doc.id,
+        document_number: doc.document_number,
+        customer_id: doc.cust_id,
+        status: 'approved'
+      });
+    }
+
+    await transaction.commit();
+
+    res.status(200).json({
+      success: true,
+      message: `${results.length} document(s) approved successfully.`,
+      data: { approved: results, failed: errors }
+    });
+
+  } catch (error) {
+    await transaction.rollback();
+    console.error('❌ Approval error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to approve documents.',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// ==================== GET ALL IDENTIFICATIONS ====================
 export const getIdentifications = asyncHandler(async (req, res) => {
   const {
     page = 1,
@@ -280,21 +340,21 @@ export const getIdentifications = asyncHandler(async (req, res) => {
     search
   } = req.query;
 
+  const IdentificationInformation = getIdentificationInformation();
+  const Customer = getCustomer();
+
   const whereClause = {};
-
-  // Build where clause
-  if (CUST_ID) whereClause.CUST_ID = CUST_ID;
-  if (documentType) whereClause.documentType = documentType;
+  if (CUST_ID) whereClause.cust_id = CUST_ID;
+  if (documentType) whereClause.document_type = documentType;
   if (status) whereClause.status = status;
-  if (verificationStatus) whereClause.verificationStatus = verificationStatus;
-  if (isPrimary !== undefined) whereClause.isPrimary = isPrimary === 'true';
+  if (verificationStatus) whereClause.verification_status = verificationStatus;
+  if (isPrimary !== undefined) whereClause.is_primary = isPrimary === 'true';
 
-  // Search across multiple fields
   if (search) {
     whereClause[Op.or] = [
-      { documentId: { [Op.like]: `%${search}%` } },
-      { docId: { [Op.like]: `%${search}%` } },
-      { CUST_NM: { [Op.like]: `%${search}%` } }
+      { document_number: { [Op.like]: `%${search}%` } },
+      { doc_id: { [Op.like]: `%${search}%` } },
+      { cust_nm: { [Op.like]: `%${search}%` } }
     ];
   }
 
@@ -307,7 +367,8 @@ export const getIdentifications = asyncHandler(async (req, res) => {
     order: [['created_at', 'DESC']],
     include: [{
       model: Customer,
-      attributes: ['CUST_NM', 'email', 'phone'] // Adjust based on your Customer model
+      as: 'customer',
+      attributes: ['CUST_NM', 'email', 'phone']
     }]
   });
 
@@ -329,13 +390,16 @@ export const getIdentifications = asyncHandler(async (req, res) => {
   });
 });
 
-// Get identification by ID
+// ==================== GET IDENTIFICATION BY ID ====================
 export const getIdentificationById = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const IdentificationInformation = getIdentificationInformation();
+  const Customer = getCustomer();
 
   const identification = await IdentificationInformation.findByPk(id, {
     include: [{
       model: Customer,
+      as: 'customer',
       attributes: ['CUST_NM', 'email', 'phone', 'address']
     }]
   });
@@ -347,7 +411,6 @@ export const getIdentificationById = asyncHandler(async (req, res) => {
     });
   }
 
-  // Calculate days until expiry
   const identificationData = identification.toJSON();
   identificationData.daysUntilExpiry = identification.daysUntilExpiry ? identification.daysUntilExpiry() : null;
   identificationData.isExpired = identification.isExpired ? identification.isExpired() : false;
@@ -359,70 +422,54 @@ export const getIdentificationById = asyncHandler(async (req, res) => {
   });
 });
 
-// Get identifications by customer ID
+// ==================== GET IDENTIFICATIONS BY CUSTOMER ID ====================
 export const getIdentificationsByCustomer = asyncHandler(async (req, res) => {
   const { customerId } = req.params;
   const { status = 'active', includeExpired = 'false' } = req.query;
 
-  const whereClause = { CUST_ID: customerId };
+  const IdentificationInformation = getIdentificationInformation();
 
-  if (status !== 'all') {
-    whereClause.status = status;
-  }
-
+  const whereClause = { cust_id: customerId };
+  if (status !== 'all') whereClause.status = status;
   if (includeExpired === 'false') {
-    whereClause.expiryDate = {
-      [Op.gte]: new Date()
-    };
+    whereClause.expiry_date = { [Op.gte]: new Date() };
   }
 
   const identifications = await IdentificationInformation.findAll({
     where: whereClause,
-    order: [
-      ['isPrimary', 'DESC'],
-      ['status', 'ASC'],
-      ['expiryDate', 'ASC']
-    ]
+    order: [['is_primary', 'DESC'], ['status', 'ASC'], ['expiry_date', 'ASC']]
   });
 
-  // Calculate stats
   const stats = {
     total: identifications.length,
     active: identifications.filter(doc => doc.status === 'active').length,
-    verified: identifications.filter(doc => doc.verificationStatus === 'verified').length,
-    primary: identifications.filter(doc => doc.isPrimary).length,
-    expired: identifications.filter(doc => {
-      if (!doc.isExpired) return false;
-      return doc.isExpired();
-    }).length
+    verified: identifications.filter(doc => doc.verification_status === 'verified').length,
+    primary: identifications.filter(doc => doc.is_primary).length,
+    expired: identifications.filter(doc => doc.isExpired && doc.isExpired()).length
   };
 
-  // Add expiry info to each document
   const documentsWithExpiry = identifications.map(doc => {
-    const docData = doc.toJSON();
-    docData.daysUntilExpiry = doc.daysUntilExpiry ? doc.daysUntilExpiry() : null;
-    docData.isExpired = doc.isExpired ? doc.isExpired() : false;
-    return docData;
+    const d = doc.toJSON();
+    d.daysUntilExpiry = doc.daysUntilExpiry ? doc.daysUntilExpiry() : null;
+    d.isExpired = doc.isExpired ? doc.isExpired() : false;
+    return d;
   });
 
   res.status(200).json({
     success: true,
     message: 'Customer identification documents retrieved successfully.',
-    data: {
-      customerId,
-      documents: documentsWithExpiry,
-      stats
-    }
+    data: { customerId, documents: documentsWithExpiry, stats }
   });
 });
 
-// Update identification status
+// ==================== UPDATE IDENTIFICATION STATUS ====================
 export const updateIdentificationStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { status, verificationStatus, verificationNotes, verifiedBy } = req.body;
 
-  const identification = await IdentificationInformation.findByPk(id);
+  const IdentificationInformation = getIdentificationInformation();
 
+  const identification = await IdentificationInformation.findByPk(id);
   if (!identification) {
     return res.status(404).json({
       success: false,
@@ -431,26 +478,16 @@ export const updateIdentificationStatus = asyncHandler(async (req, res) => {
   }
 
   const updateData = {};
-  const updateFields = [];
-
-  if (status) {
-    updateData.status = status;
-    updateFields.push('status');
-  }
-
+  if (status) updateData.status = status;
   if (verificationStatus) {
-    updateData.verificationStatus = verificationStatus;
-    updateFields.push('verificationStatus');
-    
+    updateData.verification_status = verificationStatus;
     if (verificationStatus === 'verified' || verificationStatus === 'rejected') {
-      updateData.verifiedBy = verifiedBy || req.user?.id || 'system';
-      updateData.verificationDate = new Date();
-      updateData.verificationNotes = verificationNotes;
-      updateFields.push('verifiedBy', 'verificationDate', 'verificationNotes');
+      updateData.verified_by = verifiedBy || req.user?.id || 'system';
+      updateData.verification_date = new Date();
+      updateData.verification_notes = verificationNotes;
     }
   }
 
-  // If setting as active and verified, check expiry
   if (status === 'active' && verificationStatus === 'verified') {
     if (identification.isExpired && identification.isExpired()) {
       return res.status(400).json({
@@ -461,8 +498,7 @@ export const updateIdentificationStatus = asyncHandler(async (req, res) => {
   }
 
   await identification.update(updateData);
-
-  console.log(`🔄 Identification ${id} updated: ${updateFields.join(', ')}`);
+  console.log(`🔄 Identification ${id} updated: ${Object.keys(updateData).join(', ')}`);
 
   res.status(200).json({
     success: true,
@@ -471,12 +507,12 @@ export const updateIdentificationStatus = asyncHandler(async (req, res) => {
   });
 });
 
-// Set document as primary
+// ==================== SET DOCUMENT AS PRIMARY ====================
 export const setAsPrimary = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const IdentificationInformation = getIdentificationInformation();
 
   const identification = await IdentificationInformation.findByPk(id);
-
   if (!identification) {
     return res.status(404).json({
       success: false,
@@ -484,15 +520,13 @@ export const setAsPrimary = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check if document is active and verified
-  if (identification.status !== 'active' || identification.verificationStatus !== 'verified') {
+  if (identification.status !== 'active' || identification.verification_status !== 'verified') {
     return res.status(400).json({
       success: false,
       message: 'Only active and verified documents can be set as primary.'
     });
   }
 
-  // Check if document is expired
   if (identification.isExpired && identification.isExpired()) {
     return res.status(400).json({
       success: false,
@@ -500,10 +534,8 @@ export const setAsPrimary = asyncHandler(async (req, res) => {
     });
   }
 
-  // Use the instance method
-  await identification.setAsPrimary();
-
-  console.log(`🏆 Identification ${id} set as primary for customer ${identification.CUST_ID}`);
+  await identification.setAsPrimary(); // uses the model's instance method
+  console.log(`🏆 Identification ${id} set as primary for customer ${identification.cust_id}`);
 
   res.status(200).json({
     success: true,
@@ -512,13 +544,13 @@ export const setAsPrimary = asyncHandler(async (req, res) => {
   });
 });
 
-// Delete identification (soft delete)
+// ==================== SOFT DELETE IDENTIFICATION ====================
 export const deleteIdentification = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { deleteReason } = req.body;
+  const IdentificationInformation = getIdentificationInformation();
 
   const identification = await IdentificationInformation.findByPk(id);
-
   if (!identification) {
     return res.status(404).json({
       success: false,
@@ -526,7 +558,6 @@ export const deleteIdentification = asyncHandler(async (req, res) => {
     });
   }
 
-  // Soft delete by updating status
   await identification.update({
     status: 'inactive',
     metadata: {
@@ -537,7 +568,7 @@ export const deleteIdentification = asyncHandler(async (req, res) => {
     }
   });
 
-  console.log(`🗑️ Identification ${id} marked as inactive. Reason: ${deleteReason}`);
+  console.log(`🗑️ Identification ${id} marked as inactive. Reason: ${deleteReason || 'Not specified'}`);
 
   res.status(200).json({
     success: true,
@@ -546,13 +577,14 @@ export const deleteIdentification = asyncHandler(async (req, res) => {
   });
 });
 
-// Get documents expiring soon
+// ==================== GET DOCUMENTS EXPIRING SOON ====================
 export const getExpiringDocuments = asyncHandler(async (req, res) => {
   const { days = 30, page = 1, limit = 20 } = req.query;
+  const IdentificationInformation = getIdentificationInformation();
+  const Customer = getCustomer();
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
   const warningDate = new Date(today);
   warningDate.setDate(warningDate.getDate() + parseInt(days));
 
@@ -560,26 +592,24 @@ export const getExpiringDocuments = asyncHandler(async (req, res) => {
 
   const { count, rows: documents } = await IdentificationInformation.findAndCountAll({
     where: {
-      expiryDate: {
-        [Op.between]: [today, warningDate]
-      },
+      expiry_date: { [Op.between]: [today, warningDate] },
       status: 'active',
-      verificationStatus: 'verified'
+      verification_status: 'verified'
     },
     limit: parseInt(limit),
     offset: offset,
-    order: [['expiryDate', 'ASC']],
+    order: [['expiry_date', 'ASC']],
     include: [{
       model: Customer,
+      as: 'customer',
       attributes: ['CUST_NM', 'email', 'phone']
     }]
   });
 
-  // Add expiry info
   const documentsWithExpiry = documents.map(doc => {
-    const docData = doc.toJSON();
-    docData.daysUntilExpiry = doc.daysUntilExpiry ? doc.daysUntilExpiry() : null;
-    return docData;
+    const d = doc.toJSON();
+    d.daysUntilExpiry = doc.daysUntilExpiry ? doc.daysUntilExpiry() : null;
+    return d;
   });
 
   const totalPages = Math.ceil(count / parseInt(limit));
@@ -600,6 +630,7 @@ export const getExpiringDocuments = asyncHandler(async (req, res) => {
   });
 });
 
+// Export all functions
 export default {
   uploadIdentification,
   getIdentifications,

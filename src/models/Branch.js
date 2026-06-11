@@ -201,13 +201,7 @@ Branch.init(
         ] 
       }
     },
-    indexes: [
-      {
-        unique: true,
-        fields: ['organizationCode', 'branchCode'],
-        name: 'unique_org_branch_code',
-      }
-    ],
+   
     hooks: {
       beforeValidate: async (branch) => {
         // Auto-uppercase

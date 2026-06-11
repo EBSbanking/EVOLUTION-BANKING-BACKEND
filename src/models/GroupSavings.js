@@ -1,6 +1,10 @@
-﻿// models/GroupSavings.js - FIXED VERSION (Sequelize)
+﻿// models/GroupSavings.js - UPDATED VERSION with improved members handling and associations
+
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
+
+// Import Group model for association
+import Group from './Group.js';
 
 // SAFE UTILITY FUNCTIONS FOR THE MODEL
 const safeParseFloat = (value, defaultValue = 0) => {
@@ -25,7 +29,7 @@ const safeString = (value, defaultValue = '') => {
 };
 
 class GroupSavings extends Model {
-  // âœ… STATIC METHODS
+  // STATIC METHODS
   static async initializeBalances() {
     try {
       const docs = await GroupSavings.findAll({
@@ -83,7 +87,7 @@ class GroupSavings extends Model {
     });
   }
 
-  // âœ… INSTANCE METHODS
+  // INSTANCE METHODS
   async updateBalance(amount, balanceType = 'AVAILABLE_BALANCE') {
     try {
       const currentBalance = safeParseFloat(this[balanceType], 0);
@@ -151,7 +155,7 @@ class GroupSavings extends Model {
     };
   }
 
-  // âœ… GETTERS (Virtual fields equivalent)
+  // GETTERS (Virtual fields equivalent)
   get ledgerBalanceVirtual() {
     try {
       if (!this.LEDGER_BAL) return '0.00';
@@ -215,7 +219,7 @@ GroupSavings.init({
     autoIncrement: true
   },
   
-  // âœ… GROUP IDENTIFICATION
+  // GROUP IDENTIFICATION
   groupId: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -248,14 +252,14 @@ GroupSavings.init({
     }
   },
   
-  // âœ… SAVINGS CONFIGURATION
+  // SAVINGS CONFIGURATION
   savingsType: {
     type: DataTypes.ENUM('union_purse', 'emergency_fund', 'project_fund', 'general_savings', 'project_savings'),
     defaultValue: 'union_purse',
     allowNull: false
   },
   
-  // âœ… ACCOUNT INFORMATION
+  // ACCOUNT INFORMATION
   accountNumber: {
     type: DataTypes.STRING(10),
     allowNull: false,
@@ -266,7 +270,7 @@ GroupSavings.init({
     }
   },
   
-  // âœ… FINANCIAL FIELDS - WITH SAFE DEFAULTS
+  // FINANCIAL FIELDS - WITH SAFE DEFAULTS
   targetAmount: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
@@ -286,7 +290,7 @@ GroupSavings.init({
     }
   },
   
-  // âœ… BALANCE FIELDS - COMPREHENSIVE WITH SAFE HANDLING
+  // BALANCE FIELDS - COMPREHENSIVE WITH SAFE HANDLING
   LEDGER_BAL: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
@@ -321,7 +325,7 @@ GroupSavings.init({
     }
   },
   
-  // âœ… CONTRIBUTION SETTINGS
+  // CONTRIBUTION SETTINGS
   contributionFrequency: {
     type: DataTypes.ENUM('daily', 'weekly', 'monthly', 'quarterly', 'custom'),
     allowNull: false,
@@ -332,39 +336,149 @@ GroupSavings.init({
     defaultValue: DataTypes.NOW
   },
   
-  // âœ… MANAGEMENT & ACCESS CONTROL
+  // MANAGEMENT & ACCESS CONTROL
   managedBy: {
-    type: DataTypes.JSON, // Store as JSON array
+    type: DataTypes.JSON,
     allowNull: false,
     defaultValue: [],
     validate: {
       isValidArray(value) {
-        if (!Array.isArray(value) || value.length < 1 || value.length > 50) {
+        let arrayValue = value;
+        
+        // Handle string input
+        if (typeof value === 'string') {
+          try {
+            arrayValue = JSON.parse(value);
+          } catch (e) {
+            arrayValue = [];
+          }
+        }
+        
+        if (!Array.isArray(arrayValue)) {
+          arrayValue = [];
+        }
+        
+        // Filter and validate
+        const validManagers = arrayValue
+          .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
+          .map(v => String(v).padStart(10, '0'));
+        
+        if (validManagers.length < 1 || validManagers.length > 50) {
           throw new Error('ManagedBy must have 1-50 managers');
         }
-        if (!value.every(id => /^\d{10}$/.test(id))) {
-          throw new Error('All manager IDs must be 10-digit numbers');
+      }
+    },
+    // Add getter to ensure array is returned
+    get() {
+      const rawValue = this.getDataValue('managedBy');
+      if (!rawValue) return [];
+      if (Array.isArray(rawValue)) return rawValue;
+      try {
+        const parsed = JSON.parse(rawValue);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    },
+    // Add setter to ensure proper storage
+    set(value) {
+      let arrayValue = [];
+      if (Array.isArray(value)) {
+        arrayValue = value;
+      } else if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          arrayValue = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          arrayValue = [];
         }
       }
+      this.setDataValue('managedBy', arrayValue);
     }
   },
+  
   members: {
-    type: DataTypes.JSON, // Store as JSON array
+    type: DataTypes.JSON,
     allowNull: false,
     defaultValue: [],
+    // Getter to ensure array is returned
+    get() {
+      const rawValue = this.getDataValue('members');
+      if (!rawValue) return [];
+      
+      // If it's already an array, return it
+      if (Array.isArray(rawValue)) return rawValue;
+      
+      // If it's a string, try to parse it
+      if (typeof rawValue === 'string') {
+        try {
+          const parsed = JSON.parse(rawValue);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          // If parsing fails, extract numbers
+          const numbers = rawValue.match(/\d+/g);
+          return numbers ? numbers.map(n => n.padStart(10, '0')) : [];
+        }
+      }
+      
+      return [];
+    },
+    // Setter to ensure proper storage
+    set(value) {
+      let arrayValue = [];
+      
+      if (Array.isArray(value)) {
+        arrayValue = value;
+      } else if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          arrayValue = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          // If parsing fails, extract numbers
+          const numbers = value.match(/\d+/g);
+          arrayValue = numbers ? numbers : [];
+        }
+      }
+      
+      // Filter, pad, and deduplicate values
+      arrayValue = arrayValue
+        .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
+        .map(v => String(v).padStart(10, '0'))
+        .filter((v, i, a) => a.indexOf(v) === i); // Remove duplicates
+      
+      this.setDataValue('members', arrayValue);
+    },
+    // Validation
     validate: {
       isValidArray(value) {
-        if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
-          throw new Error('Members must have 1-100 members');
+        // Get the actual array value (could be string or array)
+        let arrayValue = value;
+        
+        if (typeof value === 'string') {
+          try {
+            arrayValue = JSON.parse(value);
+          } catch (e) {
+            arrayValue = [];
+          }
         }
-        if (!value.every(id => /^\d{10}$/.test(id))) {
-          throw new Error('All member IDs must be 10-digit numbers');
+        
+        if (!Array.isArray(arrayValue)) {
+          arrayValue = [];
+        }
+        
+        // Filter valid members
+        const validMembers = arrayValue
+          .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
+          .map(v => String(v).padStart(10, '0'));
+        
+        if (validMembers.length < 1 || validMembers.length > 100) {
+          throw new Error('Members must have 1-100 members');
         }
       }
     }
   },
   
-  // âœ… WITHDRAWAL RULES
+  // WITHDRAWAL RULES
   withdrawalRules: {
     type: DataTypes.JSON,
     defaultValue: {
@@ -380,10 +494,23 @@ GroupSavings.init({
           throw new Error('Withdrawal rules must be an object');
         }
       }
+    },
+    get() {
+      const rawValue = this.getDataValue('withdrawalRules');
+      if (!rawValue) return {};
+      if (typeof rawValue === 'object') return rawValue;
+      try {
+        return JSON.parse(rawValue);
+      } catch {
+        return {};
+      }
+    },
+    set(value) {
+      this.setDataValue('withdrawalRules', value || {});
     }
   },
   
-  // âœ… PRODUCT LINKING (OPTIONAL)
+  // PRODUCT LINKING (OPTIONAL)
   linkedProductId: {
     type: DataTypes.INTEGER,
     allowNull: true,
@@ -402,7 +529,7 @@ GroupSavings.init({
     }
   },
   
-  // âœ… STATUS & AUDIT FIELDS
+  // STATUS & AUDIT FIELDS
   status: {
     type: DataTypes.ENUM('active', 'inactive', 'closed', 'suspended'),
     defaultValue: 'active',
@@ -413,7 +540,7 @@ GroupSavings.init({
     defaultValue: true
   },
   
-  // âœ… AUDIT FIELDS
+  // AUDIT FIELDS
   createdById: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -487,7 +614,7 @@ GroupSavings.init({
           groupSavings.closedAt = new Date();
         }
         
-        // Deduplicate arrays
+        // Deduplicate arrays (using getters to ensure we have arrays)
         if (groupSavings.managedBy && Array.isArray(groupSavings.managedBy)) {
           groupSavings.managedBy = [...new Set(groupSavings.managedBy)];
         }
@@ -533,33 +660,27 @@ GroupSavings.init({
       }
     }
   },
-  indexes: [
-    {
-      name: 'idx_group_savings_group_code',
-      fields: ['groupCode']
-    },
-    {
-      name: 'idx_group_savings_account_number',
-      fields: ['accountNumber'],
-      unique: true
-    },
-    {
-      name: 'idx_group_savings_status',
-      fields: ['status']
-    },
-    {
-      name: 'idx_group_savings_type',
-      fields: ['savingsType']
-    },
-    {
-      name: 'idx_group_savings_created_at',
-      fields: ['createdAt']
-    },
-    {
-      name: 'idx_group_savings_group_id_type',
-      fields: ['groupId', 'savingsType']
-    }
-  ]
+  
 });
+
+// ============================================
+// DEFINE ASSOCIATIONS
+// ============================================
+
+// GroupSavings belongs to Group
+GroupSavings.belongsTo(Group, {
+  foreignKey: 'groupId',
+  as: 'group',
+  onDelete: 'RESTRICT',
+  onUpdate: 'CASCADE'
+});
+
+// GroupSavings has many contributions
+GroupSavings.hasMany(Group, {
+  foreignKey: 'groupId',
+  as: 'savingsAccounts'
+});
+
+console.log('✅ GroupSavings model loaded with associations');
 
 export default GroupSavings;

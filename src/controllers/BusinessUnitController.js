@@ -1,10 +1,9 @@
 // controllers/BusinessUnitController.js
 import { Op } from 'sequelize';
 import sequelize from '../../config/db.js';
-import BusinessUnit from '../models/BusinessUnit.js';
-import Branch from '../models/Branch.js';
 import { logger } from '../utils/logger.js';
-import { addAuditTrail } from '../controllers/AudiTrailController.js';
+import { addAuditTrail } from './AudiTrailController.js';
+import { BusinessUnit, Branch } from '../models/index.js';   // ✅ import from central index
 
 // @desc    Get all business units
 // @route   GET /api/business-units

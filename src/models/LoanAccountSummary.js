@@ -11,13 +11,7 @@ const LoanAccountSummary = sequelize.define('LoanAccountSummary', {
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
-    references: {
-      model: 'LoanAccounts', // Assuming you have a LoanAccount model
-      key: 'id'
-    },
-    validate: {
-      notNull: { msg: 'Account ID is required' }
-    }
+   
   },
   ACCT_NO: {
     type: DataTypes.STRING,
@@ -287,33 +281,7 @@ const LoanAccountSummary = sequelize.define('LoanAccountSummary', {
       }
     }
   },
-  indexes: [
-    {
-      unique: true,
-      fields: ['ACCT_ID']
-    },
-    {
-      fields: ['ACCT_NO']
-    },
-    {
-      fields: ['CUST_ID']
-    },
-    {
-      fields: ['LOAN_STATUS']
-    },
-    {
-      fields: ['ACCT_NO', 'REC_ST']
-    },
-    {
-      fields: ['CUST_ID', 'REC_ST']
-    },
-    {
-      fields: ['NEXT_PAYMENT_DT', 'LOAN_STATUS']
-    },
-    {
-      fields: ['LOAN_STATUS', 'REC_ST']
-    }
-  ]
+ 
 });
 
 // Define associations

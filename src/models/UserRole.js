@@ -1,10 +1,10 @@
-// models/UserRole.js - COMPLETE UPDATED VERSION
+// models/UserRole.js - FULLY CORRECTED VERSION
 import { DataTypes, Op } from 'sequelize';
-import sequelize  from '../../config/db.js';
+import sequelize from '../../config/db.js';
 import { ROLE_MAPPING } from '../constants/roleMapping.js';
 
 const UserRole = sequelize.define('UserRole', {
-  // ✅ ADDED: role_id field to match database schema
+  // ✅ role_id field to match database schema
   role_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -108,10 +108,10 @@ const UserRole = sequelize.define('UserRole', {
     field: 'ROW_TS'
   },
 
-  // ✅ ADDED: Actual user_id database field (missing in your original)
+  // Actual user_id database field
   user_id: {
     type: DataTypes.INTEGER,
-    allowNull: true, // Changed to true since we're fixing the schema
+    allowNull: true,
     field: 'user_id',
     references: {
       model: 'users',
@@ -235,8 +235,8 @@ const UserRole = sequelize.define('UserRole', {
   },
 }, {
   tableName: 'user_roles',
-  timestamps: false, // You manage CREATE_DT and ROW_TS manually
-  underscored: true, // Use snake_case in DB, camelCase in models
+  timestamps: false,
+  underscored: true,
   indexes: [
     { 
       unique: true, 
@@ -264,13 +264,11 @@ const UserRole = sequelize.define('UserRole', {
       name: 'user_roles_role_id_idx'
     }
   ],
-  // ✅ ADDED: Hook to automatically check and fix schema on sync
   hooks: {
     beforeSync: async (options) => {
       try {
         console.log('🔄 Checking user_roles table schema before sync...');
         
-        // Check if user_id column exists and is nullable
         const [results] = await sequelize.query(`
           SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
           FROM INFORMATION_SCHEMA.COLUMNS 
@@ -285,7 +283,6 @@ const UserRole = sequelize.define('UserRole', {
           const columnInfo = results[0];
           console.log('📊 Current user_id column:', columnInfo);
           
-          // Auto-fix if column is NOT NULL without default
           if (columnInfo.IS_NULLABLE === 'NO' && !columnInfo.COLUMN_DEFAULT) {
             console.log('🔧 Auto-fixing: Making user_id nullable');
             try {
@@ -309,7 +306,6 @@ const UserRole = sequelize.define('UserRole', {
 // Instance Methods
 // ========================
 
-// Virtual: Combined role names with business unit
 UserRole.prototype.getUserRoleNames = function() {
   const roleNames = this.ROLE_NMS?.length > 0
     ? this.ROLE_NMS
@@ -318,15 +314,14 @@ UserRole.prototype.getUserRoleNames = function() {
   return roleNames.map(name => `${name}, ${this.Business_Unit}`).join(' | ');
 };
 
-// Get combined permissions from all assigned roles
+// ✅ FIXED: Changed BU_ROLE_ID to role_id
 UserRole.prototype.getCombinedPermissions = async function() {
   try {
-    // Import Permissions model dynamically to avoid circular dependency
     const { default: Permissions } = await import('./Permissions.js');
 
     const permissionDocs = await Permissions.findAll({
       where: {
-        BU_ROLE_ID: { [Op.in]: this.USER_ROLE_IDS || [] }
+        role_id: { [Op.in]: this.USER_ROLE_IDS || [] }  // Changed from BU_ROLE_ID to role_id
       },
       raw: true,
     });
@@ -349,7 +344,6 @@ UserRole.prototype.getCombinedPermissions = async function() {
   }
 };
 
-// Check if user has any of the given roles
 UserRole.prototype.hasAnyRole = function(roleNames) {
   const userRoles = this.ROLE_NMS?.length > 0
     ? this.ROLE_NMS
@@ -358,7 +352,6 @@ UserRole.prototype.hasAnyRole = function(roleNames) {
   return roleNames.some(name => userRoles.includes(name));
 };
 
-// Check if user has all given roles
 UserRole.prototype.hasAllRoles = function(roleNames) {
   const userRoles = this.ROLE_NMS?.length > 0
     ? this.ROLE_NMS
@@ -367,7 +360,6 @@ UserRole.prototype.hasAllRoles = function(roleNames) {
   return roleNames.every(name => userRoles.includes(name));
 };
 
-// Check if user ID matches (support both SYSUSER_ID and user_id)
 UserRole.prototype.isUser = function(userId) {
   return this.SYSUSER_ID === userId || this.user_id === userId;
 };
@@ -414,12 +406,10 @@ UserRole.findByBusinessUnitAndUserId = function(buId, userId) {
   });
 };
 
-// Find by SYSUSER_ID (the original field)
 UserRole.findBySysuserId = function(sysuserId) {
   return this.findAll({ where: { SYSUSER_ID: sysuserId } });
 };
 
-// Bulk create user roles
 UserRole.bulkCreateUserRoles = async function(userRolesArray) {
   return this.bulkCreate(userRolesArray, {
     validate: true,
@@ -427,7 +417,6 @@ UserRole.bulkCreateUserRoles = async function(userRolesArray) {
   });
 };
 
-// Update user role
 UserRole.updateUserRole = async function(userId, buId, updates) {
   const userRole = await this.findOne({
     where: {
@@ -446,7 +435,6 @@ UserRole.updateUserRole = async function(userId, buId, updates) {
   return userRole.update(updates);
 };
 
-// Delete user role
 UserRole.deleteUserRole = async function(userId, buId) {
   const result = await this.destroy({
     where: {
@@ -461,7 +449,6 @@ UserRole.deleteUserRole = async function(userId, buId) {
   return result > 0;
 };
 
-// Get all roles for a business unit
 UserRole.findByBusinessUnit = function(buId) {
   return this.findAll({ 
     where: { BU_ID: buId },
@@ -469,7 +456,6 @@ UserRole.findByBusinessUnit = function(buId) {
   });
 };
 
-// Get user's active roles (where EFF_TO_DT is null or in future)
 UserRole.findActiveRolesByUser = function(userId) {
   const now = new Date();
   
@@ -483,12 +469,11 @@ UserRole.findActiveRolesByUser = function(userId) {
         { EFF_TO_DT: null },
         { EFF_TO_DT: { [Op.gt]: now } }
       ],
-      REC_ST: 'A' // Active records
+      REC_ST: 'A'
     }
   });
 };
 
-// Generate next role_id
 UserRole.generateRoleId = async function() {
   const lastEntry = await this.findOne({
     order: [['role_id', 'DESC']],
@@ -506,23 +491,14 @@ UserRole.generateRoleId = async function() {
   return nextId;
 };
 
-// Sync helper method - call this after database is ready
 UserRole.syncModel = async function(options = {}) {
   try {
-    // First ensure the table exists
     await this.sync({ force: false, alter: false });
     
-    // Then manually add indexes if they don't exist
     const tableExists = await sequelize.queryInterface.showAllTables();
     
     if (tableExists.includes('user_roles')) {
       console.log('✅ user_roles table exists, checking indexes...');
-      
-      // You can add indexes manually here if needed
-      // await sequelize.queryInterface.addIndex('user_roles', ['BU_ID', 'user_id'], {
-      //   unique: true,
-      //   name: 'user_roles_bu_user_unique'
-      // });
     }
     
     return true;
@@ -532,12 +508,10 @@ UserRole.syncModel = async function(options = {}) {
   }
 };
 
-// ✅ ADDED: Method to manually check and fix schema
 UserRole.checkAndFixSchema = async function() {
   try {
     console.log('🔧 Manually checking and fixing user_roles schema...');
     
-    // Check if user_id column exists
     const [results] = await sequelize.query(`
       SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -556,7 +530,6 @@ UserRole.checkAndFixSchema = async function() {
     const columnInfo = results[0];
     console.log('📊 Current user_id column:', columnInfo);
     
-    // Fix if column is NOT NULL without default
     if (columnInfo.IS_NULLABLE === 'NO' && !columnInfo.COLUMN_DEFAULT) {
       console.log('🔧 Fixing: Making user_id nullable');
       try {
@@ -579,12 +552,10 @@ UserRole.checkAndFixSchema = async function() {
   }
 };
 
-// ✅ ADDED: Enhanced create method that handles schema issues
 UserRole.createWithSchemaCheck = async function(data, options = {}) {
   try {
     return await this.create(data, options);
   } catch (error) {
-    // If error is about user_id schema, try to fix it
     if (error.message.includes("Field 'user_id' doesn't have a default value") ||
         error.message.includes("Incorrect integer value")) {
       

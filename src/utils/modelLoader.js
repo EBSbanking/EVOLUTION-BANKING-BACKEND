@@ -1,4 +1,4 @@
-// src/utils/modelLoader.js
+// src/utils/modelLoader.js - UPDATED VERSION
 import logger from './logger.js';
 import sequelize from '../../config/db.js'; // Import the sequelize instance
 
@@ -94,7 +94,7 @@ class ModelLoader {
       'Drawer.js', 'DrawerCurrencyDenomination.js', 'DrawerReassignment.js',
       'DrawerUserRole.js',
       
-      // Direct Debit
+      // Direct Debit - IMPORTANT: These are already in your list
       'DirectDebit.js', 'DirectDebitRequest.js', 'DirectDebitScheduler.js',
       
       // Notifications
@@ -175,9 +175,11 @@ class ModelLoader {
         const modelModule = await import(`../models/${file}`);
         this.models[modelName] = modelModule.default || modelModule;
         
-        // Special logging for Thrift model
+        // Special logging for Thrift and DirectDebit models
         if (modelName === 'Thrift') {
           logger.info(`✅ SUCCESS: Thrift model loaded from ${file}`);
+        } else if (modelName === 'DirectDebit') {
+          logger.info(`✅ SUCCESS: DirectDebit model loaded from ${file}`);
         } else {
           logger.debug(`✅ Loaded ${modelName} individually`);
         }
@@ -218,7 +220,9 @@ class ModelLoader {
       'Transaction',
       'GLAccount',
       'AuditTrail',
-      'Thrift'  // FIXED: Capitalized 'Thrift' (was 'thrift' in lowercase)
+      'Thrift',
+      'DirectDebit',  // ADDED: DirectDebit to critical models
+      'DirectDebitRequest'  // ADDED: DirectDebitRequest to critical models
     ];
 
     for (const modelName of criticalModels) {
@@ -257,6 +261,33 @@ class ModelLoader {
               }
             } catch (altError) {
               logger.error('❌ All alternate paths failed for Thrift model');
+            }
+          }
+          
+          // Special handling for DirectDebit - try alternate paths
+          if (modelName === 'DirectDebit') {
+            try {
+              logger.info('🔄 Trying alternate path for DirectDebit model...');
+              const alternatePaths = [
+                '../models/directdebit.js',
+                '../models/DIRECTDEBIT.js',
+                '../models/DirectDebitRequest.js'  // Might be in request file
+              ];
+              
+              for (const altPath of alternatePaths) {
+                try {
+                  const altModule = await import(altPath);
+                  if (altModule.default || altModule) {
+                    this.models.DirectDebit = altModule.default || altModule;
+                    logger.info(`✅ Loaded DirectDebit from alternate path: ${altPath}`);
+                    break;
+                  }
+                } catch (e) {
+                  // Continue trying
+                }
+              }
+            } catch (altError) {
+              logger.error('❌ All alternate paths failed for DirectDebit model');
             }
           }
         }
@@ -306,7 +337,8 @@ class ModelLoader {
       workflow: ['WF_BUSINESS_PROCESS', 'WF_QUEUE', 'WF_WORK_ITEM'],
       audit: ['AuditTrail'],
       notification: ['NotificationService', 'SMS'],
-      thrift: ['Thrift', 'TriftReport', 'CreditOfficer']  // 'Thrift' is capitalized here
+      thrift: ['Thrift', 'TriftReport', 'CreditOfficer'],
+      directdebit: ['DirectDebit', 'DirectDebitRequest', 'DirectDebitScheduler']  // ADDED: New category
     };
 
     const result = {};
@@ -543,20 +575,35 @@ export const getInterestCalculationService = async () => {
   return modelLoader.getModel('InterestCalculationService');
 };
 
-// Direct Debit
+// ===== FIXED: Direct Debit getters - NOW PROPERLY EXPORTED =====
 export const getDirectDebit = async () => {
   await modelLoader.initialize();
-  return modelLoader.getModel('DirectDebit');
+  try {
+    return modelLoader.getModel('DirectDebit');
+  } catch (error) {
+    logger.error('❌ Failed to get DirectDebit model:', error.message);
+    throw error;
+  }
 };
 
 export const getDirectDebitRequest = async () => {
   await modelLoader.initialize();
-  return modelLoader.getModel('DirectDebitRequest');
+  try {
+    return modelLoader.getModel('DirectDebitRequest');
+  } catch (error) {
+    logger.error('❌ Failed to get DirectDebitRequest model:', error.message);
+    throw error;
+  }
 };
 
 export const getDirectDebitScheduler = async () => {
   await modelLoader.initialize();
-  return modelLoader.getModel('DirectDebitScheduler');
+  try {
+    return modelLoader.getModel('DirectDebitScheduler');
+  } catch (error) {
+    logger.debug('DirectDebitScheduler not found (optional)');
+    return null;
+  }
 };
 
 // Audit/Notification
@@ -597,7 +644,7 @@ export const getAMLThreshold = async () => {
   return modelLoader.getModel('AMLThreshold');
 };
 
-// Thrift Banking (NOW PROPERLY EXPORTED)
+// Thrift Banking
 export const getThrift = async () => {
   await modelLoader.initialize();
   return modelLoader.getModel('Thrift');
@@ -924,11 +971,17 @@ if (process.env.NODE_ENV === 'development') {
         }
       }
       
-      // Specifically check if Thrift was loaded
+      // Specifically check if Thrift and DirectDebit were loaded
       if (modelLoader.hasModel('Thrift')) {
         logger.info('✅ Thrift model successfully loaded and available');
       } else {
         logger.warn('⚠️ Thrift model was not loaded - check for errors above');
+      }
+      
+      if (modelLoader.hasModel('DirectDebit')) {
+        logger.info('✅ DirectDebit model successfully loaded and available');
+      } else {
+        logger.warn('⚠️ DirectDebit model was not loaded - check for errors above');
       }
       
     } catch (error) {

@@ -53,32 +53,7 @@ GuarantorAudit.init({
   modelName: 'GuarantorAudit',
   tableName: 'guarantor_audits',
   timestamps: true,
-  indexes: [
-    {
-      name: 'idx_guarantor_id',
-      fields: ['guarantorId']
-    },
-    {
-      name: 'idx_action',
-      fields: ['action']
-    },
-    {
-      name: 'idx_performed_by',
-      fields: ['performedBy']
-    },
-    {
-      name: 'idx_created_at',
-      fields: ['createdAt']
-    },
-    {
-      name: 'idx_guarantor_action',
-      fields: ['guarantorId', 'action']
-    },
-    {
-      name: 'idx_action_date',
-      fields: ['action', 'createdAt']
-    }
-  ],
+  
   comment: 'Audit trail for all guarantor-related activities'
 });
 

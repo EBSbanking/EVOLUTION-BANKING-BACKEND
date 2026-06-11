@@ -376,23 +376,7 @@ Deposit.init({
       }
     }
   },
-  indexes: [
-    // Primary search indexes
-    { fields: ['ACCT_NO'], unique: true },
-    { fields: ['CUST_ID'] },
-    { fields: ['ACCT_ID'] },
-    { fields: ['BU_ID'] },
-    { fields: ['RSM_ID'] },
-    { fields: ['PROD_ID'] },
-    { fields: ['REC_ST'] },
-    
-    // Composite indexes
-    { fields: ['CUST_ID', 'REC_ST'] },
-    { fields: ['BU_ID', 'REC_ST'] },
-    { fields: ['PROD_ID', 'REC_ST'] },
-    { fields: ['RSM_ID', 'REC_ST'] },
-    { fields: ['OPENED_DT', 'REC_ST'] }
-  ],
+  
   scopes: {
     active: {
       where: { REC_ST: 'ACTIVE' }

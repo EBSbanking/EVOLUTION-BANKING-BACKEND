@@ -1,11 +1,14 @@
-// routes/authRoutes.js
+// routes/authRoutes.js - COMPLETE FIXED VERSION
 import express from 'express';
 import asyncHandler from 'express-async-handler';
 import { 
   login, 
-  changePassword,           // ✅ ADDED - Missing from your current file!
+  changePassword,
   emergencyPasswordReset, 
-  testConfigService 
+  testConfigService,
+  clearUserSession,
+  clearAllUserSessions,
+  changeFirstLoginPassword
 } from '../controllers/LoginController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { restrictToPermission } from '../middlewares/rbac.js';
@@ -51,10 +54,26 @@ router.post('/login/login', login);             // Your frontend uses this! ✅
  * 🔑 PASSWORD MANAGEMENT
  */
 // Change password with current password verification
-router.post('/change-password', verifyToken, changePassword);
+router.post('/change-first-password', changeFirstLoginPassword);
 
 // Emergency password reset (admin only - should be protected!)
 router.post('/emergency-reset', emergencyPasswordReset);
+
+/**
+ * 🧹 SESSION MANAGEMENT - NEW ENDPOINTS
+ */
+// Clear a specific user's session (invalidate all their tokens)
+router.post('/clear-session', verifyToken, clearUserSession);
+
+// Clear all users' sessions (admin only)
+router.post('/clear-all-sessions', verifyToken, clearAllUserSessions);
+
+// Alternative: Clear session by user ID (can be called by admin)
+router.post('/clear-session/:userId', async (req, res) => {
+  // Forward to clearUserSession with user_id from params
+  req.body.user_id = req.params.userId;
+  return clearUserSession(req, res);
+});
 
 /**
  * 🚪 LOGOUT ENDPOINTS
@@ -335,6 +354,7 @@ router.get('/status', (req, res) => {
     endpoints: {
       login: ['/login', '/login/login'],
       password: ['/change-password', '/emergency-reset'],
+      session: ['/clear-session', '/clear-all-sessions', '/clear-session/:userId'],
       logout: ['/logout', '/logout-protected'],
       profile: ['/me'],
       businessRole: ['/business-role'],

@@ -1,16 +1,36 @@
-// src/controllers/businessRoleController.js - Complete fixed version
-
 import sequelize from '../../config/db.js';
-import { Op } from 'sequelize'; // ✅ IMPORTANT: Add this import for Op
+import { Op } from 'sequelize';
 import BusinessRole from '../models/BusinessRole.js';
 import User from '../models/User.js';
 import BusinessUnit from '../models/BusinessUnit.js';
 import Branch from '../models/Branch.js';
 import UserRole from '../models/UserRole.js';
-import { ROLE_MAPPING } from '../constants/roleMapping.js';
-import { isBUAccessible, getAccessibleBusinessUnits } from "../utils/businessUnitUtils.js";
+import { isBUAccessible, getAccessibleBusinessUnits } from '../utils/businessUnitUtils.js';
 
-// Create BusinessRole — full flow with branch integration
+// ============ FIX: Import ROLE_MAPPING from roleMapping.js ============
+import { ROLE_MAPPING, getRoleById, isValidRoleId, isValidRoleName } from '../constants/roleMapping.js';
+
+// Helper function for duplicate key messages
+export function getDuplicateKeyMessage(error) {
+  const fields = error.fields || {};
+  
+  if (fields.USER_ID && fields.BU_ID) {
+    return 'User already has a role assigned to this branch';
+  }
+  if (fields.USER_ID) {
+    return 'User already has a business role assigned';
+  }
+  if (fields.ROLE_ID) {
+    return 'Role ID already exists';
+  }
+  if (fields.BUSINESS_UNIT) {
+    return 'Business unit already assigned';
+  }
+  
+  return 'Duplicate key violation';
+}
+
+// ============ CREATE BUSINESS ROLE ============
 export const createBusinessRole = async (req, res) => {
   const transaction = await sequelize.transaction();
   
@@ -25,8 +45,8 @@ export const createBusinessRole = async (req, res) => {
       BU_ID,
       SUPERVISOR_FG,
       ALLOW_TXN_POSTING_FG = 'N',
-      ALLOW_EXCH_RATE_OVR_FG = 'N', // Added missing field
-      DEF_ROLE_FG = 'N', // Added missing field
+      ALLOW_EXCH_RATE_OVR_FG = 'N',
+      DEF_ROLE_FG = 'N',
       WF_ITEM_ACCESS_LEVEL = ''
     } = req.body;
 
@@ -47,14 +67,15 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 2. VERIFY ROLE_ID AND ROLE_NM MATCH
+    // 2. VERIFY ROLE_ID AND ROLE_NM MATCH (Using imported ROLE_MAPPING)
     const roleMapping = ROLE_MAPPING[ROLE_ID];
     if (!roleMapping || roleMapping.ROLE_NM.toUpperCase() !== ROLE_NM.toUpperCase()) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Role ID and Role Name mismatch',
-        expectedRoleName: roleMapping?.ROLE_NM || 'Unknown Role ID'
+        expectedRoleName: roleMapping?.ROLE_NM || 'Unknown Role ID',
+        validRoles: Object.values(ROLE_MAPPING).map(r => ({ id: r.id, name: r.ROLE_NM }))
       });
     }
 
@@ -92,7 +113,6 @@ export const createBusinessRole = async (req, res) => {
         finalBusinessUnit = businessUnit.BUSINESS_UNIT;
         finalBU_ID = businessUnit.BU_ID;
       } else {
-        // Use branch info if no business unit
         finalBusinessUnit = branch.branchName;
         finalBU_ID = parseInt(BU_ID);
       }
@@ -137,10 +157,10 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 4. CHECK FOR DUPLICATES - ✅ FIXED: Using Op.or correctly
+    // 4. CHECK FOR DUPLICATES
     const existingRole = await BusinessRole.findOne({
       where: {
-        [Op.or]: [ // ✅ Now Op is properly imported
+        [Op.or]: [
           { 
             ROLE_ID: ROLE_ID, 
             USER_ID: USER_ID, 
@@ -164,7 +184,7 @@ export const createBusinessRole = async (req, res) => {
       });
     }
 
-    // 5. CREATE NEW ROLE with all fields
+    // 5. CREATE NEW ROLE
     const newRole = await BusinessRole.create({
       ROLE_NM: roleMapping.ROLE_NM,
       ROLE_ID,
@@ -207,7 +227,6 @@ export const createBusinessRole = async (req, res) => {
 
     await transaction.commit();
 
-    // 7. SUCCESS RESPONSE
     return res.status(201).json({
       success: true,
       data: {
@@ -244,10 +263,9 @@ export const createBusinessRole = async (req, res) => {
     }
 
     if (error.name === 'SequelizeUniqueConstraintError') {
-      const duplicateMessage = getDuplicateKeyMessage(error);
       return res.status(409).json({
         success: false,
-        message: duplicateMessage,
+        message: getDuplicateKeyMessage(error),
         code: 'DUPLICATE_RECORD'
       });
     }
@@ -261,63 +279,53 @@ export const createBusinessRole = async (req, res) => {
   }
 };
 
-// Helper function for duplicate key messages
-export function getDuplicateKeyMessage(error) {
-  const fields = error.fields || {};
-  
-  if (fields.USER_ID && fields.BU_ID) {
-    return 'User already has a role assigned to this branch';
-  }
-  if (fields.USER_ID) {
-    return 'User already has a business role assigned';
-  }
-  if (fields.ROLE_ID) {
-    return 'Role ID already exists';
-  }
-  if (fields.BUSINESS_UNIT) {
-    return 'Business unit already assigned';
-  }
-  
-  return 'Duplicate key violation';
-}
-
-// Rest of your functions (getBusinessRoleByUserId, updateBusinessRole, etc.) remain the same...
-
+// ============ GET BUSINESS ROLE BY USER ID (FIXED) ============
 export const getBusinessRoleByUserId = async (req, res) => {
   try {
     const { USER_ID } = req.params;
 
     console.log('🔍 Fetching business role for USER_ID:', USER_ID);
 
-    // Check if BusinessRole model is available
     if (!BusinessRole) {
       throw new Error('BusinessRole model not properly initialized');
     }
 
-    // Find business roles without the Branch association
+    // Convert to string
+    const userIdStr = String(USER_ID);
+    
+    // Try both exact match and numeric conversion
+    let whereCondition = { USER_ID: userIdStr };
+    
+    const userIdNum = parseInt(userIdStr, 10);
+    if (!isNaN(userIdNum)) {
+      whereCondition = {
+        [Op.or]: [
+          { USER_ID: userIdStr },
+          { USER_ID: userIdNum }
+        ]
+      };
+    }
+
+    // Find business roles
     const businessRoles = await BusinessRole.findAll({ 
-      where: { USER_ID },
+      where: whereCondition,
       order: [['ROLE_ID', 'ASC']]
     });
 
-    if (!businessRoles || businessRoles.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'No business roles found for this USER_ID',
-        USER_ID 
-      });
-    }
-
-    res.status(200).json({ 
+    // Return response with data (could be empty array)
+    return res.status(200).json({ 
       success: true,
-      message: 'BusinessRole retrieved successfully', 
+      message: businessRoles.length ? 'Business roles retrieved successfully' : 'No business roles found for this user',
       data: businessRoles,
-      count: businessRoles.length
+      count: businessRoles.length,
+      // Include role mapping info for debugging (using imported ROLE_MAPPING)
+      availableRoles: Object.values(ROLE_MAPPING).map(r => ({ id: r.id, name: r.ROLE_NM }))
     });
+    
   } catch (error) {
     console.error('❌ Error fetching BusinessRole:', error);
     
-    res.status(500).json({ 
+    return res.status(500).json({ 
       success: false,
       message: 'Error fetching BusinessRole', 
       error: error.message,
@@ -329,8 +337,7 @@ export const getBusinessRoleByUserId = async (req, res) => {
   }
 };
 
-// Update a BusinessRole by USER_ID
-// Update a BusinessRole by USER_ID - FIXED VERSION
+// ============ UPDATE BUSINESS ROLE (FIXED) ============
 export const updateBusinessRole = async (req, res) => {
   const transaction = await sequelize.transaction();
   
@@ -340,7 +347,7 @@ export const updateBusinessRole = async (req, res) => {
 
     console.log('Updating business role for USER_ID:', USER_ID, 'with data:', updateData);
 
-    // Validate ROLE_ID if provided
+    // Validate ROLE_ID if provided (using imported ROLE_MAPPING)
     if (updateData.ROLE_ID && !ROLE_MAPPING[updateData.ROLE_ID]) {
       await transaction.rollback();
       return res.status(400).json({
@@ -374,13 +381,12 @@ export const updateBusinessRole = async (req, res) => {
       updateData.ROLE_ID = parseInt(matchingKey);
     }
 
-    // Handle BU_ID/BUSINESS_UNIT relationship - FIXED
+    // Handle BU_ID/BUSINESS_UNIT relationship
     let branchReference = null;
     let finalBusinessUnit = updateData.BUSINESS_UNIT;
     let finalBU_ID = updateData.BU_ID;
 
     if (updateData.BU_ID) {
-      // Find branch by branchCode
       const branch = await Branch.findOne({ 
         where: { branchCode: updateData.BU_ID.toString().padStart(3, '0') },
         attributes: ['id', 'branchName', 'branchCode', 'organizationName', 'organizationCode'],
@@ -395,7 +401,6 @@ export const updateBusinessRole = async (req, res) => {
         });
       }
 
-      // Find business unit - FIXED: Removed IS_ACTIVE and branchId condition
       const businessUnit = await BusinessUnit.findOne({ 
         where: { BU_ID: parseInt(updateData.BU_ID) },
         attributes: ['id', 'BU_ID', 'BUSINESS_UNIT', 'DESCRIPTION'],
@@ -407,13 +412,11 @@ export const updateBusinessRole = async (req, res) => {
         updateData.BU_ID = businessUnit.BU_ID;
         branchReference = branch.id;
       } else {
-        // Use branch info if no business unit
         updateData.BUSINESS_UNIT = branch.branchName;
         updateData.BU_ID = parseInt(updateData.BU_ID);
         branchReference = branch.id;
       }
     } else if (updateData.BUSINESS_UNIT) {
-      // Find business unit by name
       const businessUnit = await BusinessUnit.findOne({ 
         where: sequelize.where(
           sequelize.fn('LOWER', sequelize.col('BUSINESS_UNIT')),
@@ -431,7 +434,6 @@ export const updateBusinessRole = async (req, res) => {
         });
       }
 
-      // Find branch by BU_ID
       const branchCode = businessUnit.BU_ID.toString().padStart(3, '0');
       const branch = await Branch.findOne({ 
         where: { branchCode: branchCode },
@@ -459,7 +461,7 @@ export const updateBusinessRole = async (req, res) => {
       });
     }
 
-    // Prepare update data - only include fields that exist in the model
+    // Prepare update data
     const updatePayload = {
       ROLE_NM: updateData.ROLE_NM || existingRole.ROLE_NM,
       ROLE_ID: updateData.ROLE_ID || existingRole.ROLE_ID,
@@ -488,13 +490,13 @@ export const updateBusinessRole = async (req, res) => {
       }
     );
 
-    // Get updated role - FIXED: Manual fetch without include
+    // Get updated role
     const updatedRole = await BusinessRole.findOne({
       where: { USER_ID },
       transaction
     });
 
-    // Get branch info separately if needed
+    // Get branch info
     let branchInfo = null;
     if (updatedRole.BRANCH_REF) {
       const branch = await Branch.findOne({
@@ -552,10 +554,9 @@ export const updateBusinessRole = async (req, res) => {
     }
 
     if (error.name === 'SequelizeUniqueConstraintError') {
-      const duplicateMessage = getDuplicateKeyMessage(error);
       return res.status(409).json({
         success: false,
-        message: duplicateMessage,
+        message: getDuplicateKeyMessage(error),
         code: 'DUPLICATE_RECORD'
       });
     }
@@ -569,14 +570,13 @@ export const updateBusinessRole = async (req, res) => {
   }
 };
 
-// Delete a BusinessRole by id
+// ============ DELETE BUSINESS ROLE ============
 export const deleteBusinessRole = async (req, res) => {
   const transaction = await sequelize.transaction();
   
   try {
     const { id } = req.params;
 
-    // Find role first to include in response
     const roleToDelete = await BusinessRole.findByPk(id, { transaction });
 
     if (!roleToDelete) {
@@ -588,7 +588,6 @@ export const deleteBusinessRole = async (req, res) => {
       });
     }
 
-    // Delete the role
     await BusinessRole.destroy({
       where: { id },
       transaction
@@ -616,7 +615,7 @@ export const deleteBusinessRole = async (req, res) => {
   }
 };
 
-// Assign BusinessRole to User
+// ============ ASSIGN BUSINESS ROLE TO USER ============
 export const assignBusinessRoleToUser = async (req, res) => {
   const transaction = await sequelize.transaction();
   
@@ -646,7 +645,6 @@ export const assignBusinessRoleToUser = async (req, res) => {
       });
     }
 
-    // Check if role already assigned (assuming UserRole model or similar)
     const existingUserRole = await UserRole.findOne({
       where: { 
         userId: user.id,
@@ -659,13 +657,10 @@ export const assignBusinessRoleToUser = async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({ 
         success: false,
-        message: 'Role is already assigned to this user',
-        USER_ID,
-        ROLE_NM
+        message: 'Role is already assigned to this user'
       });
     }
 
-    // Create user-role association
     await UserRole.create({
       userId: user.id,
       businessRoleId: role.id,
@@ -696,7 +691,7 @@ export const assignBusinessRoleToUser = async (req, res) => {
   }
 };
 
-// Get all BusinessRoles with pagination and filtering
+// ============ GET ALL BUSINESS ROLES ============
 export const getAllBusinessRoles = async (req, res) => {
   try {
     const { 
@@ -708,18 +703,14 @@ export const getAllBusinessRoles = async (req, res) => {
       status 
     } = req.query;
     
-    const query = {};
-    
-    // Build query conditions
     const conditions = {};
-    if (businessUnit) conditions.BUSINESS_UNIT = { [sequelize.Op.iLike]: `%${businessUnit}%` };
+    if (businessUnit) conditions.BUSINESS_UNIT = { [Op.iLike]: `%${businessUnit}%` };
     if (branchCode) conditions.BU_ID = branchCode;
-    if (role) conditions.ROLE_NM = { [sequelize.Op.iLike]: `%${role}%` };
+    if (role) conditions.ROLE_NM = { [Op.iLike]: `%${role}%` };
     if (status) conditions.REC_ST = status;
 
     const offset = (page - 1) * limit;
 
-    // Get roles with pagination
     const { rows: businessRoles, count } = await BusinessRole.findAndCountAll({
       where: conditions,
       include: [{
@@ -753,14 +744,14 @@ export const getAllBusinessRoles = async (req, res) => {
   }
 };
 
-// Get BusinessRoles by Branch Code
+// ============ GET BUSINESS ROLES BY BRANCH ============
 export const getBusinessRolesByBranch = async (req, res) => {
   try {
     const { branchCode } = req.params;
     const { role, status, page = 1, limit = 10 } = req.query;
 
     const conditions = { BU_ID: branchCode };
-    if (role) conditions.ROLE_NM = { [sequelize.Op.iLike]: `%${role}%` };
+    if (role) conditions.ROLE_NM = { [Op.iLike]: `%${role}%` };
     if (status) conditions.REC_ST = status;
 
     const offset = (page - 1) * limit;
@@ -806,7 +797,7 @@ export const getBusinessRolesByBranch = async (req, res) => {
   }
 };
 
-// Get users by branch and role
+// ============ GET USERS BY BRANCH AND ROLE ============
 export const getUsersByBranchAndRole = async (req, res) => {
   try {
     const { branchCode, roleName } = req.params;
@@ -814,7 +805,7 @@ export const getUsersByBranchAndRole = async (req, res) => {
     const businessRoles = await BusinessRole.findAll({
       where: {
         BU_ID: branchCode,
-        ROLE_NM: { [sequelize.Op.iLike]: `%${roleName}%` },
+        ROLE_NM: { [Op.iLike]: `%${roleName}%` },
         REC_ST: 'Active'
       },
       include: [{
@@ -848,27 +839,7 @@ export const getUsersByBranchAndRole = async (req, res) => {
   }
 };
 
-// // Helper function for duplicate key messages (Sequelize version)
-// export function getDuplicateKeyMessage(error) {
-//   const fields = error.fields || {};
-  
-//   if (fields.USER_ID && fields.BU_ID) {
-//     return 'User already has a role assigned to this branch';
-//   }
-//   if (fields.USER_ID) {
-//     return 'User already has a business role assigned';
-//   }
-//   if (fields.ROLE_ID) {
-//     return 'Role ID already exists';
-//   }
-//   if (fields.BUSINESS_UNIT) {
-//     return 'Business unit already assigned';
-//   }
-  
-//   return 'Duplicate key violation';
-// }
-
-// Get role statistics
+// ============ GET ROLE STATISTICS ============
 export const getRoleStatistics = async (req, res) => {
   try {
     const statistics = await BusinessRole.findAll({

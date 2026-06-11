@@ -13,17 +13,21 @@ function isLeapYear(year) {
 /**
  * Calculates the maturity date based on disbursement date and loan term
  * @param {Date|string} startDate - The loan start date
+ * @param {string|number} termCode - Term code ('D', 'W', 'M', 'Q', 'Y') (will be converted to string)
  * @param {number} termValue - The term value (number of periods)
- * @param {string} termCode - Term code ('D', 'W', 'M', 'Q', 'Y')
  * @returns {Date} - The calculated maturity date
  */
-export const calculateMaturityDate = (startDate, termValue, termCode) => {
+export const calculateMaturityDate = (startDate, termCode, termValue) => {
   const date = new Date(startDate);
   if (isNaN(date.getTime())) {
     throw new Error('Invalid start date');
   }
 
-  const term = termCode.toUpperCase();
+  // ✅ Convert termCode to uppercase string safely
+  const term = String(termCode).toUpperCase();
+  const value = Number(termValue);
+  if (isNaN(value)) throw new Error('Invalid term value');
+
   const validTermCodes = ['D', 'W', 'M', 'Q', 'Y'];
   if (!validTermCodes.includes(term)) {
     throw new Error(`Invalid term code: ${term}. Valid codes are: ${validTermCodes.join(', ')}`);
@@ -31,23 +35,23 @@ export const calculateMaturityDate = (startDate, termValue, termCode) => {
 
   switch (term) {
     case 'D':
-      date.setDate(date.getDate() + termValue);
+      date.setDate(date.getDate() + value);
       break;
     case 'W':
-      date.setDate(date.getDate() + termValue * 7);
+      date.setDate(date.getDate() + value * 7);
       break;
     case 'M':
       const originalDate = date.getDate();
-      date.setMonth(date.getMonth() + termValue);
+      date.setMonth(date.getMonth() + value);
       if (date.getDate() !== originalDate) {
         date.setDate(0);
       }
       break;
     case 'Q':
-      date.setMonth(date.getMonth() + termValue * 3);
+      date.setMonth(date.getMonth() + value * 3);
       break;
     case 'Y':
-      date.setFullYear(date.getFullYear() + termValue);
+      date.setFullYear(date.getFullYear() + value);
       if (date.getMonth() === 1 && date.getDate() === 29 && !isLeapYear(date.getFullYear())) {
         date.setDate(28);
       }

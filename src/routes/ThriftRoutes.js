@@ -1,13 +1,7 @@
-// src/routes/thriftRoutes.js - UPDATED VERSION
+// src/routes/thriftRoutes.js - CORRECTED
 import express from 'express';
 import ThriftController from '../controllers/ThriftController.js';
-import { 
-  getThrift, 
-  getCustomer, 
-  getTransaction,
-  getSequelize,
-  initializeModels 
-} from '../models/index.js';
+import { initializeModels } from '../models/index.js';   // removed getSequelize, getThrift, etc.
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -27,14 +21,14 @@ router.use(async (req, res, next) => {
   }
 });
 
-// Debug middleware to log all requests
+// Debug middleware
 router.use((req, res, next) => {
   console.log(`📌 Thrift Route Hit: ${req.method} ${req.originalUrl}`);
   next();
 });
 
 // ============================================
-// HEALTH CHECK ROUTE
+// HEALTH CHECK
 // ============================================
 router.get('/health', (req, res) => {
   res.status(200).json({
@@ -50,176 +44,105 @@ router.get('/health', (req, res) => {
 // ============================================
 router.get('/search/customers', (req, res) => {
   console.log('📌 Search customers route hit');
-  if (typeof ThriftController.searchCustomersByName === 'function') {
-    ThriftController.searchCustomersByName(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'searchCustomersByName not implemented' });
-  }
+  ThriftController.searchCustomersByName(req, res);
 });
 
 router.get('/search/thrift-accounts', (req, res) => {
   console.log('📌 Search thrift accounts route hit');
-  if (typeof ThriftController.searchThriftAccountsByName === 'function') {
-    ThriftController.searchThriftAccountsByName(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'searchThriftAccountsByName not implemented' });
-  }
+  ThriftController.searchThriftAccountsByName(req, res);
 });
 
 router.get('/search/quick', (req, res) => {
   console.log('📌 Quick search route hit');
-  if (typeof ThriftController.quickSearchForCollection === 'function') {
-    ThriftController.quickSearchForCollection(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'quickSearchForCollection not implemented' });
-  }
+  ThriftController.quickSearchForCollection(req, res);
 });
 
 // ============================================
-// THRIFT ACCOUNT CREATION ROUTES
+// ACCOUNT CREATION
 // ============================================
 router.post('/accounts', (req, res) => {
   console.log('📌 Create thrift account route hit');
-  console.log('Request body:', req.body);
-  
-  if (typeof ThriftController.createThriftAccount === 'function') {
-    ThriftController.createThriftAccount(req, res);
-  } else {
-    console.error('❌ createThriftAccount is not a function!', ThriftController);
-    res.status(500).json({ 
-      success: false, 
-      message: 'createThriftAccount method not found in controller',
-      controllerKeys: Object.keys(ThriftController)
-    });
-  }
+  ThriftController.createThriftAccount(req, res);
 });
 
 router.post('/accounts/existing-customer', (req, res) => {
   console.log('📌 Create thrift account for existing customer route hit');
-  if (typeof ThriftController.createThriftAccountForExistingCustomer === 'function') {
-    ThriftController.createThriftAccountForExistingCustomer(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'createThriftAccountForExistingCustomer not implemented' });
-  }
+  ThriftController.createThriftAccountForExistingCustomer(req, res);
 });
 
 // ============================================
-// COLLECTION PROCESSING ROUTES
+// COLLECTIONS
 // ============================================
 router.post('/collections/daily', (req, res) => {
   console.log('📌 Process daily collection route hit');
-  if (typeof ThriftController.processDailyCollection === 'function') {
-    ThriftController.processDailyCollection(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'processDailyCollection not implemented' });
-  }
+  ThriftController.processDailyCollection(req, res);
 });
 
 // ============================================
-// WITHDRAWAL ROUTES
+// WITHDRAWALS
 // ============================================
 router.post('/withdrawals/request', (req, res) => {
   console.log('📌 Process withdrawal request route hit');
-  if (typeof ThriftController.processWithdrawal === 'function') {
-    ThriftController.processWithdrawal(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'processWithdrawal not implemented' });
-  }
+  ThriftController.processWithdrawal(req, res);
 });
 
 router.post('/withdrawals/approve', (req, res) => {
   console.log('📌 Approve withdrawal route hit');
-  if (typeof ThriftController.approveWithdrawal === 'function') {
-    ThriftController.approveWithdrawal(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'approveWithdrawal not implemented' });
-  }
+  ThriftController.approveWithdrawal(req, res);
 });
 
 router.get('/withdrawals/pending', (req, res) => {
   console.log('📌 Get pending withdrawals route hit');
-  if (typeof ThriftController.getPendingWithdrawals === 'function') {
-    ThriftController.getPendingWithdrawals(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getPendingWithdrawals not implemented' });
-  }
+  ThriftController.getPendingWithdrawals(req, res);
 });
 
 router.get('/withdrawals/details/:transactionId', (req, res) => {
   console.log('📌 Get withdrawal details route hit');
-  if (typeof ThriftController.getWithdrawalApprovalDetails === 'function') {
-    ThriftController.getWithdrawalApprovalDetails(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getWithdrawalApprovalDetails not implemented' });
-  }
+  ThriftController.getWithdrawalApprovalDetails(req, res);
 });
 
 // ============================================
-// ACCOUNT INFORMATION ROUTES
+// ACCOUNT INFO & TRANSACTIONS
 // ============================================
 router.get('/accounts/:CUST_ID/:ACCT_NO/summary', (req, res) => {
   console.log('📌 Get account summary route hit');
-  if (typeof ThriftController.getAccountSummary === 'function') {
-    ThriftController.getAccountSummary(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getAccountSummary not implemented' });
-  }
+  ThriftController.getAccountSummary(req, res);
 });
 
-// FIXED: Changed from getCustomerThriftAccounts to getThriftAccountsByCustomerId
 router.get('/accounts/customer/:customerId', (req, res) => {
   console.log('📌 Get customer thrift accounts route hit');
-  if (typeof ThriftController.getThriftAccountsByCustomerId === 'function') {
-    ThriftController.getThriftAccountsByCustomerId(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getThriftAccountsByCustomerId not implemented' });
-  }
+  ThriftController.getThriftAccountsByCustomerId(req, res);
 });
 
 router.get('/accounts', (req, res) => {
   console.log('📌 Get all thrift accounts route hit');
-  if (typeof ThriftController.getThriftAccounts === 'function') {
-    ThriftController.getThriftAccounts(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getThriftAccounts not implemented' });
-  }
+  ThriftController.getThriftAccounts(req, res);
 });
 
-// FIXED: Changed from getThriftAccount to getThriftAccountByNumber
 router.get('/accounts/:accountNo', (req, res) => {
   console.log('📌 Get thrift account by number route hit');
-  if (typeof ThriftController.getThriftAccountByNumber === 'function') {
-    ThriftController.getThriftAccountByNumber(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getThriftAccountByNumber not implemented' });
-  }
+  ThriftController.getThriftAccountByNumber(req, res);
 });
 
 router.patch('/accounts/:accountNo/status', (req, res) => {
   console.log('📌 Update thrift status route hit');
-  if (typeof ThriftController.updateThriftStatus === 'function') {
-    ThriftController.updateThriftStatus(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'updateThriftStatus not implemented' });
-  }
+  ThriftController.updateThriftStatus(req, res);
 });
 
 router.get('/accounts/:accountNo/transactions', (req, res) => {
   console.log('📌 Get thrift transactions route hit');
-  if (typeof ThriftController.getThriftTransactions === 'function') {
-    ThriftController.getThriftTransactions(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getThriftTransactions not implemented' });
-  }
+  ThriftController.getThriftTransactions(req, res);
 });
 
 router.get('/transactions/:CUST_ID?/:ACCT_NO?', (req, res) => {
   console.log('📌 Get transaction history route hit');
-  if (typeof ThriftController.getTransactionHistory === 'function') {
-    ThriftController.getTransactionHistory(req, res);
-  } else {
-    res.status(500).json({ success: false, message: 'getTransactionHistory not implemented' });
-  }
+  ThriftController.getTransactionHistory(req, res);
+});
+
+// NEW ROUTE: Payment history by account number only
+router.get('/accounts/:accountNo/payment-history', (req, res) => {
+  console.log('📌 Get payment history by account number route hit');
+  ThriftController.getPaymentHistoryByAccountNo(req, res);
 });
 
 export default router;

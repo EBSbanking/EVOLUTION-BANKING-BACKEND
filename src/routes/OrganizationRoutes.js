@@ -5,7 +5,11 @@ import {
   getOrganizationById, 
   getOrganizationByCode,
   updateOrganization, 
-  deleteOrganization 
+  deleteOrganization,
+  searchOrganizations,
+  getOrganizationStatistics,
+  deactivateOrganization,
+  reactivateOrganization
 } from '../controllers/organizationController.js';
 
 const router = express.Router();
@@ -16,6 +20,12 @@ router.post('/create-organization', createOrganization);
 // Get all organizations with pagination and search
 router.get('/', getOrganizations);
 
+// Search organizations with advanced filtering
+router.get('/search', searchOrganizations);
+
+// Get organization statistics
+router.get('/statistics', getOrganizationStatistics);
+
 // Get organization by ID
 router.get('/:id', getOrganizationById);
 
@@ -25,7 +35,13 @@ router.get('/code/:code', getOrganizationByCode);
 // Update organization
 router.put('/:id', updateOrganization);
 
-// Delete organization
+// Deactivate organization (soft delete)
+router.patch('/:id/deactivate', deactivateOrganization);
+
+// Reactivate organization
+router.patch('/:id/reactivate', reactivateOrganization);
+
+// Delete organization (hard delete)
 router.delete('/:id', deleteOrganization);
 
 export default router;

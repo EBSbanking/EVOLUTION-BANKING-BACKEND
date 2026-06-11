@@ -187,15 +187,12 @@ class DepositAccountSummary extends Model {
 
   // Static method: Recalculate account statistics
   static async recalculateStatistics(accountId) {
-    // This method would typically recalculate all statistics from transaction history
     const summary = await this.findByAccountId(accountId);
     
     if (!summary) {
       throw new Error('Account summary not found');
     }
 
-    // In a real implementation, you would fetch transactions and recalculate
-    // For now, we'll just update the timestamp
     return summary.update({
       STAT_UPD_FG: 'Y',
       ROW_TS: new Date(),
@@ -1093,25 +1090,17 @@ DepositAccountSummary.init({
     type: DataTypes.DATE,
     allowNull: true,
     comment: 'Last provision date'
-  },
-
-  // Sequelize timestamps
-  updatedAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
-  },
-
-  createdAt: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
   }
 }, {
   sequelize,
   modelName: 'DepositAccountSummary',
   tableName: 'deposit_account_summary',
-  timestamps: true,
+  timestamps: true,                       // Enables Sequelize to manage createdAt/updatedAt
+  createdAt: 'created_at',                // Maps Sequelize's createdAt to column `created_at`
+  updatedAt: 'updated_at',                // Maps Sequelize's updatedAt to column `updated_at`
+  // The updated_at column will be automatically updated on every save
+  // (equivalent to `ON UPDATE CURRENT_TIMESTAMP` in SQL)
+
   hooks: {
     beforeValidate: (summary) => {
       // Ensure uppercase for flags and statuses

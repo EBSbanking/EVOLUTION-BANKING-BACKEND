@@ -1,237 +1,196 @@
-import { DataTypes } from 'sequelize';
+// src/models/LoanEvent.js – final corrected version
+import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 const LoanEvent = sequelize.define('LoanEvent', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
-    autoIncrement: true
+    autoIncrement: true,
+    field: 'id'
   },
-  // Core References
-  ACCT_NO: { 
-    type: DataTypes.STRING, 
-    allowNull: false
+  ACCT_NO: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    field: 'ACCT_NO'
   },
   LOAN_ACCOUNT_ID: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'LoanAccounts',
-      key: 'id'
-    }
+    field: 'LOAN_ACCOUNT_ID',
+    references: { model: 'LoanAccounts', key: 'id' }
   },
   CUST_ID: {
-    type: DataTypes.STRING, // Changed to STRING to be consistent with other models
-    allowNull: false
+    type: DataTypes.STRING,
+    allowNull: false,
+    field: 'CUST_ID'
   },
-  
-  // Event Information
-  eventType: { 
+  eventType: {
     type: DataTypes.ENUM(
-      'SERVICING_UPDATE',
-      'INSTALLMENT_PAID',
-      'INSTALLMENT_DUE',
-      'INSTALLMENT_OVERDUE',
-      'LOAN_DISBURSEMENT',
-      'LOAN_CLOSURE',
-      'INTEREST_ACCRUAL',
-      'FEE_CHARGE',
-      'STATUS_CHANGE',
-      'GUARANTOR_UPDATE',
-      'GROUP_COLLECTION'
+      'SERVICING_UPDATE', 'INSTALLMENT_PAID', 'INSTALLMENT_DUE', 'INSTALLMENT_OVERDUE',
+      'LOAN_DISBURSEMENT', 'LOAN_CLOSURE', 'INTEREST_ACCRUAL', 'FEE_CHARGE',
+      'STATUS_CHANGE', 'GUARANTOR_UPDATE', 'GROUP_COLLECTION'
     ),
-    allowNull: false
+    allowNull: false,
+    field: 'eventType'
   },
-  
-  status: { 
+  status: {
     type: DataTypes.ENUM('SERVICED', 'UNSERVICED', 'PROCESSED', 'FAILED', 'PENDING'),
-    allowNull: false
+    allowNull: false,
+    field: 'status'
   },
-  
-  // Installment Details
-  installmentNumber: { 
+  installmentNumber: {
     type: DataTypes.INTEGER,
-    allowNull: true 
+    allowNull: true,
+    field: 'installmentNumber'
   },
-  dueDate: { 
+  dueDate: {
     type: DataTypes.DATE,
-    allowNull: true 
+    allowNull: true,
+    field: 'dueDate'
   },
-  paymentDate: { 
+  paymentDate: {
     type: DataTypes.DATE,
-    allowNull: true 
+    allowNull: true,
+    field: 'paymentDate'
   },
-  
-  // Financial Details
   amount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'amount'
   },
   principalAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'principalAmount'
   },
   interestAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: false,
-    defaultValue: 0.00
+    defaultValue: 0.00,
+    field: 'interestAmount'
   },
-  
-  // Transaction References
   transactionId: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    references: {
-      model: 'Transactions',
-      key: 'id'
-    }
+    field: 'transactionId',
+    references: { model: 'Transactions', key: 'id' }
   },
   repaymentScheduleId: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    references: {
-      model: 'RepaymentSchedules',
-      key: 'id'
-    }
+    field: 'repaymentScheduleId',
+    references: { model: 'RepaymentSchedules', key: 'id' }
   },
-  
-  // Enhanced Details
-  details: { 
+  details: {
     type: DataTypes.JSON,
     allowNull: false,
-    defaultValue: {}
+    defaultValue: {},
+    field: 'details'
   },
-  
-  // Metadata
-  timestamp: { 
-    type: DataTypes.DATE, 
-    allowNull: false,
-    defaultValue: DataTypes.NOW
-  },
-  effectiveDate: { 
-    type: DataTypes.DATE, 
-    allowNull: false,
-    defaultValue: DataTypes.NOW
-  },
-  createdBy: { 
-    type: DataTypes.STRING, 
-    allowNull: false 
-  },
-  branchId: { 
-    type: DataTypes.STRING,
-    allowNull: true 
-  },
-  
-  // Error Handling
-  errorMessage: { 
-    type: DataTypes.TEXT,
-    allowNull: true 
-  },
-  retryCount: { 
-    type: DataTypes.INTEGER, 
-    allowNull: false,
-    defaultValue: 0 
-  },
-  lastRetryAt: { 
+  timestamp: {
     type: DataTypes.DATE,
-    allowNull: true 
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'timestamp'
+  },
+  effectiveDate: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'effectiveDate'
+  },
+  createdBy: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    field: 'createdBy'
+  },
+  branchId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'branchId'
+  },
+  errorMessage: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'errorMessage'
+  },
+  retryCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'retryCount'
+  },
+  lastRetryAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'lastRetryAt'
   }
 }, {
   tableName: 'loan_events',
   timestamps: true,
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
+  createdAt: 'createdAt',      // matches column name in table
+  updatedAt: 'updatedAt',      // matches column name in table
+  underscored: false,          // ⬅️ prevents snake_case conversion
   getterMethods: {
     isSuccessful() {
       return this.status === 'PROCESSED' || this.status === 'SERVICED';
     },
-    
     canRetry() {
       return this.status === 'FAILED' && this.retryCount < 3;
     }
   },
   indexes: [
-    {
-      fields: ['ACCT_NO']
-    },
-    {
-      fields: ['timestamp']
-    },
-    {
-      fields: ['ACCT_NO', 'eventType', 'timestamp']
-    },
-    {
-      fields: ['LOAN_ACCOUNT_ID', 'status']
-    },
-    {
-      fields: ['CUST_ID', 'timestamp']
-    },
-    {
-      fields: ['timestamp', 'status']
-    },
-    {
-      fields: ['eventType']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['branchId']
-    },
-    {
-      fields: ['createdBy']
-    },
-    {
-      fields: ['effectiveDate']
-    }
+    { fields: ['ACCT_NO'] },
+    { fields: ['timestamp'] },
+    { fields: ['ACCT_NO', 'eventType', 'timestamp'] },
+    { fields: ['LOAN_ACCOUNT_ID', 'status'] },
+    { fields: ['CUST_ID', 'timestamp'] },
+    { fields: ['timestamp', 'status'] },
+    { fields: ['eventType'] },
+    { fields: ['status'] },
+    { fields: ['branchId'] },
+    { fields: ['createdBy'] },
+    { fields: ['effectiveDate'] }
   ]
 });
 
-// Define associations
+// Associations (unchanged)
 LoanEvent.associate = (models) => {
   LoanEvent.belongsTo(models.LoanAccount, {
     foreignKey: 'LOAN_ACCOUNT_ID',
     as: 'loanAccount'
   });
-  
   LoanEvent.belongsTo(models.Transaction, {
     foreignKey: 'transactionId',
     as: 'transaction'
   });
-  
   LoanEvent.belongsTo(models.RepaymentSchedule, {
     foreignKey: 'repaymentScheduleId',
     as: 'repaymentSchedule'
   });
-  
   LoanEvent.belongsTo(models.Customer, {
     foreignKey: 'CUST_ID',
-    targetKey: 'CUST_ID', // Adjust based on your Customer model
+    targetKey: 'CUST_ID',
     as: 'customer'
   });
-  
   LoanEvent.belongsTo(models.User, {
     foreignKey: 'createdBy',
-    targetKey: 'user_id', // Adjust based on your User model
     as: 'creator'
   });
-  
   LoanEvent.belongsTo(models.Branch, {
     foreignKey: 'branchId',
-    targetKey: 'branch_id', // Adjust based on your Branch model
     as: 'branch'
   });
 };
 
-// Static methods
+// Static methods (unchanged)
 LoanEvent.findByAccountNumber = async function(accountNo, options = {}) {
   const where = { ACCT_NO: accountNo };
-  
   if (options.eventType) where.eventType = options.eventType;
   if (options.status) where.status = options.status;
-  
   return this.findAll({
     where,
     order: [['timestamp', 'DESC']],
@@ -243,11 +202,8 @@ LoanEvent.findByAccountNumber = async function(accountNo, options = {}) {
 LoanEvent.findRecentEvents = async function(days = 7) {
   const date = new Date();
   date.setDate(date.getDate() - days);
-  
   return this.findAll({
-    where: {
-      timestamp: { [Op.gte]: date }
-    },
+    where: { timestamp: { [Op.gte]: date } },
     order: [['timestamp', 'DESC']]
   });
 };
@@ -275,7 +231,6 @@ LoanEvent.createServicingEvent = async function(data) {
   });
 };
 
-// Instance methods (added to prototype)
 LoanEvent.prototype.markAsProcessed = async function() {
   this.status = 'PROCESSED';
   this.timestamp = new Date();

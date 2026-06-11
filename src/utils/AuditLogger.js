@@ -1,7 +1,6 @@
-// src/utils/auditLogger.js (or wherever your logger file is)
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import sequelize from '../../config/db.js'; // Your working Sequelize instance
+import sequelize from '../../config/db.js';
 
 // Custom Transport for MySQL AuditTrail Integration
 class AuditTrailTransport extends winston.Transport {
@@ -11,7 +10,7 @@ class AuditTrailTransport extends winston.Transport {
     this.silent = opts.silent || false;
     this.dbInitialized = false;
 
-    // Initialize table asynchronously (non-blocking)
+    // Initialize table asynchronously
     this.initializeAuditTable().catch(() => {
       this.dbInitialized = false;
     });
@@ -19,6 +18,7 @@ class AuditTrailTransport extends winston.Transport {
 
   async initializeAuditTable() {
     try {
+      // FIXED: Change user_id from INT to VARCHAR to accept 'system'
       await sequelize.query(`
         CREATE TABLE IF NOT EXISTS audit_logs (
           id INT AUTO_INCREMENT PRIMARY KEY,
@@ -26,7 +26,7 @@ class AuditTrailTransport extends winston.Transport {
           entity_type VARCHAR(100) NOT NULL,
           entity_id VARCHAR(100),
           branch INT DEFAULT 1,
-          user_id INT NOT NULL,
+          user_id VARCHAR(100) DEFAULT 'system',
           action VARCHAR(100) NOT NULL,
           old_value JSON,
           new_value JSON,
@@ -38,7 +38,7 @@ class AuditTrailTransport extends winston.Transport {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_entity (entity_type, entity_id),
-          INDEX idx_user (user_id),
+          INDEX idx_user (user_id(100)),
           INDEX idx_action (action),
           INDEX idx_created (created_at),
           INDEX idx_event_type (event_type),
@@ -54,6 +54,21 @@ class AuditTrailTransport extends winston.Transport {
     }
   }
 
+  // Helper method to convert 'system' string to appropriate value
+  normalizeUserId(userId) {
+    if (userId === 'system' || userId === 'SYSTEM') {
+      return 'system';
+    }
+    
+    // If it's a number, keep as number
+    if (typeof userId === 'number' || !isNaN(parseInt(userId))) {
+      return parseInt(userId);
+    }
+    
+    // Default fallback
+    return 'system';
+  }
+
   async insertAuditLog(logData) {
     try {
       const event_id = `AUDIT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -61,6 +76,8 @@ class AuditTrailTransport extends winston.Transport {
       const oldValueJson = logData.old_value ? JSON.stringify(logData.old_value) : null;
       const newValueJson = logData.new_value ? JSON.stringify(logData.new_value) : null;
       const additionalInfoJson = logData.additional_info ? JSON.stringify(logData.additional_info) : null;
+      
+      const normalizedUserId = this.normalizeUserId(logData.user_id);
 
       const [result] = await sequelize.query(
         `INSERT INTO audit_logs (
@@ -74,7 +91,7 @@ class AuditTrailTransport extends winston.Transport {
             logData.entity_type,
             logData.entity_id || null,
             logData.branch || 1,
-            logData.user_id,
+            normalizedUserId,
             logData.action,
             oldValueJson,
             newValueJson,
@@ -97,75 +114,114 @@ class AuditTrailTransport extends winston.Transport {
     }
   }
 
+  // FIXED: log method with better validation
   log(info, callback) {
-    if (info.message !== 'Audit Event') {
-      return callback(null, info);
-    }
+    // Create a promise for the logging operation
+    const logPromise = new Promise((resolve, reject) => {
+      // ===== FIX: Better message validation =====
+      // Instead of requiring exact 'Audit Event' message, check if required fields exist
+      const hasRequiredFields = info && (
+        info.entity_type || 
+        info.action || 
+        info.user_id ||
+        // Also accept if it's a regular log message
+        (info.message && typeof info.message === 'string')
+      );
+      
+      // Skip validation for non-audit logs
+      const isNonAuditLog = info.message && 
+        (info.message !== 'Audit Event' && 
+         !info.entity_type && 
+         !info.action);
+      
+      if (!hasRequiredFields) {
+        // For regular winston logs, just resolve without error
+        if (callback) callback(null, info);
+        resolve(info);
+        return;
+      }
+      
+      // For non-audit logs, just pass through
+      if (isNonAuditLog) {
+        if (callback) callback(null, info);
+        resolve(info);
+        return;
+      }
 
-    if (!this.dbInitialized) {
-      console.warn('⚠️ Audit DB not ready — skipping log to MySQL');
-      info.audit_db_skipped = true;
-      info.audit_db_reason = 'Table not initialized';
-      return callback(null, info);
-    }
-
-    const {
-      entity_type,
-      entity_id,
-      branch = 1,
-      user_id,
-      action,
-      old_value,
-      new_value,
-      ip_address = '127.0.0.1',
-      event_type = 'GENERAL',
-      ...additional_info
-    } = info;
-
-    if (!entity_type || !user_id || !action) {
-      info.audit_validation_failed = true;
-      info.audit_error = 'Missing required fields: entity_type, user_id, action';
-      return callback(null, info);
-    }
-
-    // 5-second timeout for audit insert
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Audit log timeout')), 5000)
-    );
-
-    sequelize
-      .authenticate()
-      .then(() =>
-        Promise.race([
-          this.insertAuditLog({
-            entity_type,
-            entity_id,
-            branch,
-            user_id,
-            action,
-            old_value,
-            new_value,
-            ip_address,
-            event_type,
-            additional_info,
-          }),
-          timeout,
-        ])
-      )
-      .then((result) => {
-        if (result && result.success) {
-          info.audit_db_id = result.id;
-          info.event_id = result.event_id;
-          info.audit_db_success = true;
-        }
-        callback(null, info);
-      })
-      .catch((err) => {
-        console.error('❌ Audit logging failed:', err.message);
+      if (!this.dbInitialized) {
+        console.warn('⚠️ Audit DB not ready — skipping log to MySQL');
         info.audit_db_skipped = true;
-        info.audit_db_error = err.message;
-        callback(null, info);
-      });
+        info.audit_db_reason = 'Table not initialized';
+        if (callback) callback(null, info);
+        resolve(info);
+        return;
+      }
+
+      const {
+        entity_type,
+        entity_id,
+        branch = 1,
+        user_id,
+        action,
+        old_value,
+        new_value,
+        ip_address = '127.0.0.1',
+        event_type = 'GENERAL',
+        ...additional_info
+      } = info;
+
+      if (!entity_type || !user_id || !action) {
+        info.audit_validation_failed = true;
+        info.audit_error = 'Missing required fields: entity_type, user_id, action';
+        if (callback) callback(null, info);
+        resolve(info);
+        return;
+      }
+
+      // 5-second timeout for audit insert
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Audit log timeout')), 5000)
+      );
+
+      sequelize
+        .authenticate()
+        .then(() =>
+          Promise.race([
+            this.insertAuditLog({
+              entity_type,
+              entity_id,
+              branch,
+              user_id,
+              action,
+              old_value,
+              new_value,
+              ip_address,
+              event_type,
+              additional_info,
+            }),
+            timeout,
+          ])
+        )
+        .then((result) => {
+          if (result && result.success) {
+            info.audit_db_id = result.id;
+            info.event_id = result.event_id;
+            info.audit_db_success = true;
+          }
+          if (callback) callback(null, info);
+          resolve(info);
+        })
+        .catch((err) => {
+          console.error('❌ Audit logging failed:', err.message);
+          info.audit_db_skipped = true;
+          info.audit_db_error = err.message;
+          if (callback) callback(null, info);
+          resolve(info);
+        });
+    });
+
+    // Make sure we return a promise
+    return logPromise;
   }
 }
 
@@ -201,18 +257,29 @@ const auditLogger = winston.createLogger({
     winston.format.errors({ stack: true }),
     winston.format.json()
   ),
+  // Add this to handle errors without crashing
+  exitOnError: false,
 });
 
-// Manual insert helper
-export const insertAuditLog = async (auditData) => {
-  const transport = auditLogger.transports.find((t) => t instanceof AuditTrailTransport);
-  if (!transport || !transport.dbInitialized) {
-    throw new Error('AuditTrailTransport not ready');
-  }
-  return await transport.insertAuditLog(auditData);
+// Safe audit log wrapper
+export const safeAuditLog = async (auditData) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const result = auditLogger.info(auditData);
+      
+      // Check if result is a promise
+      if (result && typeof result.then === 'function') {
+        result.then(resolve).catch(reject);
+      } else {
+        resolve(result);
+      }
+    } catch (error) {
+      console.error('Safe audit log error:', error);
+      resolve(null); // Resolve instead of reject to prevent crashes
+    }
+  });
 };
 
-// Log functions
 export const logAuditTrail = async (
   entity_type,
   entity_id,
@@ -224,8 +291,9 @@ export const logAuditTrail = async (
   event_type = 'GENERAL',
   additional_info = {}
 ) => {
-  return new Promise((resolve) => {
-    auditLogger.info('Audit Event', {
+  try {
+    const result = await safeAuditLog({
+      message: 'Audit Event',
       entity_type,
       entity_id,
       user_id,
@@ -236,8 +304,12 @@ export const logAuditTrail = async (
       event_type,
       branch: additional_info.branch || 1,
       ...additional_info,
-    }, () => resolve());
-  });
+    });
+    return result;
+  } catch (error) {
+    console.error('Audit log failed:', error);
+    return null; // Return null instead of throwing
+  }
 };
 
 export const logAuditTrailWithBranch = async (
@@ -252,8 +324,9 @@ export const logAuditTrailWithBranch = async (
   branch = 1,
   additional_info = {}
 ) => {
-  return new Promise((resolve) => {
-    auditLogger.info('Audit Event', {
+  try {
+    const result = await safeAuditLog({
+      message: 'Audit Event',
       entity_type,
       entity_id,
       user_id,
@@ -264,11 +337,27 @@ export const logAuditTrailWithBranch = async (
       event_type,
       branch,
       ...additional_info,
-    }, () => resolve());
-  });
+    });
+    return result;
+  } catch (error) {
+    console.error('Audit log failed:', error);
+    return null;
+  }
 };
 
-// Query helpers
+export const isAuditReady = () => {
+  const transport = auditLogger.transports.find((t) => t instanceof AuditTrailTransport);
+  return transport && transport.dbInitialized;
+};
+
+export const insertAuditLog = async (auditData) => {
+  const transport = auditLogger.transports.find((t) => t instanceof AuditTrailTransport);
+  if (!transport || !transport.dbInitialized) {
+    throw new Error('AuditTrailTransport not ready');
+  }
+  return await transport.insertAuditLog(auditData);
+};
+
 export const queryAuditLogs = async (filters = {}, limit = 100, offset = 0) => {
   const where = [];
   const values = [];
@@ -353,6 +442,15 @@ export const countAuditLogsByEntity = async (startDate = null, endDate = null) =
   return counts;
 };
 
-// Exports
+// Add global error handler for unhandled rejections from this module
+process.on('unhandledRejection', (reason, promise) => {
+  if (reason && reason.message && reason.message.includes('Invalid audit message')) {
+    console.error('Audit logger unhandled rejection (ignored):', reason.message);
+    // Don't crash - just log and continue
+    return;
+  }
+  console.error('Unhandled Rejection:', reason);
+});
+
 export { auditLogger };
 export default auditLogger;

@@ -738,43 +738,7 @@ RateIndex.init({
       }
     }
   },
-  indexes: [
-    // Primary indexes
-    { fields: ['id'] },
-    { fields: ['INDEX_RATE_ID'], unique: true },
-    { fields: ['INDEX_CD'], unique: true },
-    
-    // Status and activity indexes
-    { fields: ['STATUS'] },
-    { fields: ['IS_ACTIVE'] },
-    { fields: ['STATUS', 'IS_ACTIVE'] },
-    
-    // Currency indexes
-    { fields: ['CRNCY_ID'] },
-    { fields: ['CRNCY_ID', 'STATUS'] },
-    { fields: ['CRNCY_ID', 'IS_ACTIVE'] },
-    
-    // Rate type indexes
-    { fields: ['RATE_TYPE'] },
-    { fields: ['RATE_TYPE', 'STATUS'] },
-    
-    // Date indexes
-    { fields: ['EFFECTIVE_DT'] },
-    { fields: ['EXPIRY_DT'] },
-    { fields: ['EFFECTIVE_DT', 'EXPIRY_DT'] },
-    
-    // Default rate index
-    { fields: ['IS_DEFAULT'] },
-    { fields: ['IS_DEFAULT', 'STATUS'] },
-    
-    // Composite indexes for common queries
-    { fields: ['CRNCY_ID', 'RATE_TYPE', 'STATUS'] },
-    { fields: ['INDEX_CD', 'EFFECTIVE_DT'] },
-    { fields: ['CRNCY_ID', 'EFFECTIVE_DT', 'STATUS'] },
-    
-    // Source index
-    { fields: ['SOURCE'] }
-  ],
+  
   scopes: {
     active: {
       where: { STATUS: 'ACTIVE', IS_ACTIVE: true }

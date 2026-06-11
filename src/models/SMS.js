@@ -289,57 +289,7 @@ SMS.init({
   tableName: 'SMS_RECORDS',
   timestamps: false, // Using custom timestamp fields instead
   comment: 'SMS notification records',
-  indexes: [
-    {
-      name: 'idx_external_sms_id',
-      fields: ['EXTERNAL_SMS_ID'],
-      unique: true
-    },
-    {
-      name: 'idx_recipient_phone',
-      fields: ['RECIPIENT_PHONE_NUMBER']
-    },
-    {
-      name: 'idx_account_no',
-      fields: ['ACCT_NO']
-    },
-    {
-      name: 'idx_txn_date',
-      fields: ['TXN_DATE']
-    },
-    {
-      name: 'idx_dr_cr_ind',
-      fields: ['DR_CR_IND']
-    },
-    {
-      name: 'idx_rec_st',
-      fields: ['REC_ST']
-    },
-    {
-      name: 'idx_created_by',
-      fields: ['CREATED_BY']
-    },
-    {
-      name: 'idx_create_dt',
-      fields: ['CREATE_DT']
-    },
-    {
-      name: 'idx_sys_create_ts',
-      fields: ['SYS_CREATE_TS']
-    },
-    {
-      name: 'idx_composite_phone_date',
-      fields: ['RECIPIENT_PHONE_NUMBER', 'TXN_DATE']
-    },
-    {
-      name: 'idx_composite_account_date',
-      fields: ['ACCT_NO', 'TXN_DATE']
-    },
-    {
-      name: 'idx_composite_ext_date',
-      fields: ['EXTERNAL_SMS_ID', 'TXN_DATE']
-    }
-  ],
+  
   hooks: {
     beforeValidate: (sms, options) => {
       // Trim string fields

@@ -1,33 +1,50 @@
-// models/ThriftSettings.js
-import { DataTypes } from 'sequelize';
+// src/models/ThriftSettings.js
+import { DataTypes, Model } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-const ThriftSettings = (sequelize) => {
-  const ThriftSettingsModel = sequelize.define('ThriftSettings', {
+class ThriftSettings extends Model {}
+
+ThriftSettings.init(
+  {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true
+      autoIncrement: true,
     },
-    setting_key: {
+    settingKey: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      unique: true
+      unique: true,
+      field: 'setting_key', // keep column name snake_case if existing
     },
-    setting_value: {
+    settingValue: {
       type: DataTypes.TEXT,
-      allowNull: true
+      allowNull: true,
+      field: 'setting_value',
     },
     description: {
       type: DataTypes.STRING(255),
-      allowNull: true
-    }
-  }, {
+      allowNull: true,
+    },
+    dataType: {
+      type: DataTypes.ENUM('string', 'number', 'boolean', 'json'),
+      defaultValue: 'string',
+      field: 'data_type',
+    },
+    isEncrypted: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      field: 'is_encrypted',
+    },
+  },
+  {
+    sequelize,
+    modelName: 'ThriftSettings',
     tableName: 'thrift_settings',
     timestamps: true,
-    underscored: true // Make sure there's a comma before this if there are more options
-  });
-
-  return ThriftSettingsModel;
-};
+    freezeTableName: true,
+    underscored: false, // use attribute names as is but we have field mapping for legacy
+  }
+);
 
 export default ThriftSettings;
