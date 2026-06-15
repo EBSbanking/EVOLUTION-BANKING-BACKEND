@@ -157,6 +157,10 @@ const ACCOUNT_TYPE_CODES = {
   'ESCROW_DEPOSITS': '2011',
   'SECURITY_DEPOSITS': '2012',
   'DORMANT_DEPOSITS': '2013',
+  // THRIFT ACCOUNTS (Liability)
+  'THRIFT_SAVINGS_DEPOSITS': '2014',
+  'THRIFT_COLLECTION_ACCOUNT': '2015',
+  'THRIFT_WITHDRAWAL_ACCOUNT': '2016',
   
   // Loans Payable (2100-2199)
   'LOAN_LIABILITY': '2100',
@@ -179,6 +183,8 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_PAYABLE_ON_BONDS': '2205',
   'INTEREST_PAYABLE_ON_OVERDRAFT': '2206',
   'ACCRUED_INTEREST_PAYABLE': '2207',
+  // Thrift interest payable (if applicable)
+  'THRIFT_INTEREST_PAYABLE': '2208',
   
   // Accounts Payable (2300-2399)
   'PAYABLE_ACCOUNT': '2300',
@@ -302,8 +308,11 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_INCOME_ON_INTERBANK': '4008',
   'INTEREST_INCOME_ON_CALL_MONEY': '4009',
   'INTEREST_INCOME_ACCRUED': '4010',
+  // Thrift interest income
+  'THRIFT_INTEREST_INCOME': '4011',
+  'THRIFT_CYCLE_INTEREST_INCOME': '4012',
   
-  // Fee Income (4100-4199) – updated with new charge types
+  // Fee Income (4100-4199) – updated with new charge types and thrift fees
   'FEE_INCOME': '4100',
   'LOAN_PROCESSING_FEE': '4101',
   'LOAN_DISBURSEMENT_FEE': '4102',
@@ -328,7 +337,7 @@ const ACCOUNT_TYPE_CODES = {
   'LOAN_INSURANCE_FEE': '4121',
   'LATE_PAYMENT_FEE_INCOME': '4122',
   'OTHER_FEE_INCOME': '4123',
-  // New fee/charge types added below
+  // New fee/charge types (aligned with GENERAL_TX_TYPES)
   'SMS_CHARGE': '4124',
   'PROCESSING_FEE': '4125',
   'SERVICE_FEE': '4126',
@@ -340,6 +349,11 @@ const ACCOUNT_TYPE_CODES = {
   'INVESTMENT_FEE': '4132',
   'BANK_CHARGE': '4133',
   'CHARGE': '4134',
+  // Thrift fee income
+  'THRIFT_CYCLE_FEE': '4135',
+  'THRIFT_SERVICE_FEE': '4136',
+  'THRIFT_PENALTY_FEE': '4137',
+  'THRIFT_WITHDRAWAL_FEE': '4138',
   
   // Service Income (4200-4299)
   'SERVICE_INCOME': '4200',
@@ -353,6 +367,8 @@ const ACCOUNT_TYPE_CODES = {
   'WIRE_TRANSFER_FEE': '4208',
   'FOREIGN_EXCHANGE_INCOME': '4209',
   'CURRENCY_EXCHANGE_INCOME': '4210',
+  // Thrift service income
+  'THRIFT_MANAGEMENT_FEE': '4211',
   
   // Operating Revenue (4300-4399)
   'OPERATING_REVENUE': '4300',
@@ -386,6 +402,8 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_EXPENSE_ON_LEASE': '5006',
   'INTEREST_EXPENSE_ON_OVERDRAFT': '5007',
   'INTEREST_EXPENSE_ACCRUED': '5008',
+  // Thrift interest expense (if paid to customers)
+  'THRIFT_INTEREST_EXPENSE': '5009',
   
   // Staff Expenses (5100-5199)
   'STAFF_EXPENSE': '5100',

@@ -1,4 +1,4 @@
-﻿// models/CustomerAccount.js – Matches actual customer_accounts table (with available_balance)
+﻿// models/CustomerAccount.js – Matches actual customer_accounts table (with available_balance, allow_debit, allow_credit)
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -68,7 +68,7 @@ CustomerAccount.init(
       defaultValue: 0.00,
       field: 'ledger_balance'
     },
-    available_balance: {                     // ✅ ADDED – matches new column in DB
+    available_balance: {
       type: DataTypes.DECIMAL(20, 2),
       defaultValue: 0.00,
       field: 'available_balance'
@@ -87,6 +87,17 @@ CustomerAccount.init(
       type: DataTypes.INTEGER,
       allowNull: true,
       field: 'prod_id'
+    },
+    // ✅ NEW: Debit / credit permission flags
+    allow_debit: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      field: 'allow_debit'
+    },
+    allow_credit: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      field: 'allow_credit'
     },
     created_at: {
       type: DataTypes.DATE,
@@ -125,10 +136,12 @@ CustomerAccount.prototype.getAccountSummary = function() {
     openingBalance: parseFloat(this.opening_balance) || 0,
     currentBalance: parseFloat(this.current_balance) || 0,
     ledgerBalance: parseFloat(this.ledger_balance) || 0,
-    availableBalance: parseFloat(this.available_balance) || 0,   // ✅ ADDED
+    availableBalance: parseFloat(this.available_balance) || 0,
     clearedBalance: parseFloat(this.cleared_balance) || 0,
     currency: this.currency,
     prodId: this.prod_id,
+    allowDebit: this.allow_debit,     // ✅ ADDED
+    allowCredit: this.allow_credit,   // ✅ ADDED
     createdAt: this.created_at,
     updatedAt: this.updated_at
   };

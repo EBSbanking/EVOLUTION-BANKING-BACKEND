@@ -1,4 +1,4 @@
-// src/models/Thrift.js - COMPLETE & CORRECT
+// src/models/Thrift.js - COMPLETE & CORRECT with cycle fields
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -13,6 +13,12 @@ const ACCOUNT_STATUS = {
   ACTIVE: 'ACTIVE',
   INACTIVE: 'INACTIVE',
   SUSPENDED: 'SUSPENDED',
+  CLOSED: 'CLOSED',
+};
+
+const CYCLE_STATUS = {
+  ACTIVE: 'ACTIVE',
+  WITHDRAWN: 'WITHDRAWN',
   CLOSED: 'CLOSED',
 };
 
@@ -102,11 +108,11 @@ Thrift.init(
       defaultValue: true,
       field: 'isActive',
     },
-    // ========== ADDED FIELDS (with correct column mappings) ==========
+    // ========== ADDED FIELDS ==========
     nextCollectionDate: {
       type: DataTypes.DATE,
       allowNull: true,
-      field: 'next_collection_date',      // maps to snake_case column
+      field: 'next_collection_date',
     },
     totalContributions: {
       type: DataTypes.DECIMAL(15, 2),
@@ -140,6 +146,23 @@ Thrift.init(
       allowNull: true,
       field: 'notes',
     },
+    // CYCLE FIELDS
+    cycle_status: {
+      type: DataTypes.ENUM(...Object.values(CYCLE_STATUS)),
+      allowNull: false,
+      defaultValue: 'ACTIVE',
+      field: 'cycle_status',
+    },
+    cycle_start_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      field: 'cycle_start_date',
+    },
+    last_cycle_end_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+      field: 'last_cycle_end_date',
+    },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: true,
@@ -155,7 +178,7 @@ Thrift.init(
     sequelize,
     modelName: 'Thrift',
     tableName: 'THRIFT_ACCOUNTS',
-    timestamps: false,      // we manually map CREATED_AT/UPDATED_AT
+    timestamps: false,
     freezeTableName: true,
   }
 );
@@ -181,6 +204,9 @@ Thrift.prototype.getAccountInfo = function () {
     nextCollectionDate: this.nextCollectionDate,
     totalContributions: this.totalContributions,
     totalWithdrawals: this.totalWithdrawals,
+    cycle_status: this.cycle_status,
+    cycle_start_date: this.cycle_start_date,
+    last_cycle_end_date: this.last_cycle_end_date,
   };
 };
 

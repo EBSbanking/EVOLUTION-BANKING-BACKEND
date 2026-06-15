@@ -7,7 +7,8 @@ import {
   processStandingOrderExecution, 
   getStandingOrderExecutions,
   approveStandingOrder,
-  rejectStandingOrder
+  rejectStandingOrder,
+  getAllPendingStandingOrders
 } from '../controllers/StandingOrderController.js';
 import { authenticate} from '../middlewares/auth.js';
 
@@ -25,6 +26,8 @@ router.put('/:customerAcctNo/:id', updateStandingOrder);
 router.delete('/:customerAcctNo/:id', deleteStandingOrder);
 router.post('/:customerAcctNo/:id/execute', processStandingOrderExecution);
 router.get('/:customerAcctNo/:id/executions', getStandingOrderExecutions);
+
+router.get('/pending/all', authenticate, getAllPendingStandingOrders);
 
 // List all standing orders for a customer (no ID)
 router.get('/:customerAcctNo', getStandingOrders);

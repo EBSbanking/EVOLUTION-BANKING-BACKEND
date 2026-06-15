@@ -1,7 +1,7 @@
-// src/routes/thriftRoutes.js - CORRECTED
+// src/routes/thriftRoutes.js - CORRECTED (withdrawal without decryption)
 import express from 'express';
 import ThriftController from '../controllers/ThriftController.js';
-import { initializeModels } from '../models/index.js';   // removed getSequelize, getThrift, etc.
+import { initializeModels } from '../models/index.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -71,7 +71,7 @@ router.post('/accounts/existing-customer', (req, res) => {
 });
 
 // ============================================
-// COLLECTIONS
+// COLLECTIONS (works without decryption)
 // ============================================
 router.post('/collections/daily', (req, res) => {
   console.log('📌 Process daily collection route hit');
@@ -79,7 +79,7 @@ router.post('/collections/daily', (req, res) => {
 });
 
 // ============================================
-// WITHDRAWALS
+// WITHDRAWALS – NO decryption (send plain JSON)
 // ============================================
 router.post('/withdrawals/request', (req, res) => {
   console.log('📌 Process withdrawal request route hit');
@@ -139,7 +139,7 @@ router.get('/transactions/:CUST_ID?/:ACCT_NO?', (req, res) => {
   ThriftController.getTransactionHistory(req, res);
 });
 
-// NEW ROUTE: Payment history by account number only
+// Payment history by account number only
 router.get('/accounts/:accountNo/payment-history', (req, res) => {
   console.log('📌 Get payment history by account number route hit');
   ThriftController.getPaymentHistoryByAccountNo(req, res);

@@ -1,4 +1,4 @@
-﻿// models/Transaction.js - Converted to Class + Direct Export
+﻿// models/Transaction.js - Updated with STRING(50) for IDs
 import { DataTypes, Op, QueryTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -21,16 +21,19 @@ class Transaction extends Model {
         { type: QueryTypes.SELECT }
       );
       
-      const nextTransactionId = (lastTransaction?.max_id || 0) + 1;
+      let nextTransactionId = 1;
+      if (lastTransaction?.max_id) {
+        nextTransactionId = parseInt(lastTransaction.max_id, 10) + 1;
+      }
       const timestamp = Date.now();
       const randomSuffix = Math.floor(Math.random() * 1000);
       
       return {
-        TRANSACTION_IDENTIFIER: nextTransactionId,
-        EVENT_ID: nextTransactionId,
+        TRANSACTION_IDENTIFIER: String(nextTransactionId),
+        EVENT_ID: String(nextTransactionId),
         JOURNAL_ID: `JRN${timestamp}${randomSuffix}`,
         TRAN_JOURNAL_ID: `TJ${timestamp}${randomSuffix}`,
-        TRANSACTION_ID: `TXN${nextTransactionId}`
+        TRANSACTION_ID: `TXN${String(nextTransactionId).padStart(10, '0')}`
       };
     } catch (error) {
       console.error('Error generating transaction IDs:', error.message);
@@ -162,7 +165,11 @@ class Transaction extends Model {
         'SELECT MAX(transaction_identifier) as max_id FROM transactions',
         { type: QueryTypes.SELECT }
       );
-      return (lastTransaction?.max_id || 0) + 1;
+      let nextId = 1;
+      if (lastTransaction?.max_id) {
+        nextId = parseInt(lastTransaction.max_id, 10) + 1;
+      }
+      return String(nextId);
     } catch (error) {
       console.error('Error getting next transaction ID:', error.message);
       throw error;
@@ -227,9 +234,9 @@ class Transaction extends Model {
             'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND',
             'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'THRIFT_BANK_PAYMENT'
           ) NOT NULL,
-          transaction_identifier BIGINT UNIQUE NOT NULL,
+          transaction_identifier VARCHAR(50) NOT NULL,
           transaction_id VARCHAR(50),
-          event_id BIGINT NOT NULL,
+          event_id VARCHAR(50) NOT NULL,
           journal_id VARCHAR(100) NOT NULL,
           reference VARCHAR(100) UNIQUE NOT NULL,
           description TEXT,
@@ -271,7 +278,7 @@ class Transaction extends Model {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         
         INSERT INTO transaction_sequence (last_value) 
-        SELECT COALESCE(MAX(transaction_identifier), 0) 
+        SELECT COALESCE(MAX(CAST(transaction_identifier AS UNSIGNED)), 0) 
         FROM transactions 
         WHERE NOT EXISTS (SELECT 1 FROM transaction_sequence LIMIT 1);
       `);
@@ -352,7 +359,7 @@ Transaction.init(
       field: 'transaction_type'
     },
     TRANSACTION_IDENTIFIER: {
-      type: DataTypes.BIGINT,          // Changed from INTEGER to BIGINT
+      type: DataTypes.STRING(50),
       allowNull: false,
       unique: true,
       field: 'transaction_identifier'
@@ -363,7 +370,7 @@ Transaction.init(
       field: 'transaction_id'
     },
     EVENT_ID: {
-      type: DataTypes.BIGINT,
+      type: DataTypes.STRING(50),
       allowNull: false,
       field: 'event_id'
     },
@@ -489,7 +496,7 @@ Transaction.beforeCreate(async (transaction, options) => {
     
     try {
       const [lastTransaction] = await sequelize.query(
-        'SELECT MAX(transaction_identifier) as max_id FROM transactions',
+        'SELECT MAX(CAST(transaction_identifier AS UNSIGNED)) as max_id FROM transactions',
         { type: QueryTypes.SELECT }
       );
       
@@ -502,19 +509,19 @@ Transaction.beforeCreate(async (transaction, options) => {
       const randomSuffix = Math.floor(Math.random() * 1000);
       
       if (!transaction.TRANSACTION_IDENTIFIER) {
-        transaction.TRANSACTION_IDENTIFIER = nextTransactionId;
+        transaction.TRANSACTION_IDENTIFIER = String(nextTransactionId);
       }
       if (!transaction.EVENT_ID) {
-        transaction.EVENT_ID = nextTransactionId;
+        transaction.EVENT_ID = String(nextTransactionId);
       }
       if (!transaction.TRAN_JOURNAL_ID) {
         transaction.TRAN_JOURNAL_ID = `JRN${timestamp}${randomSuffix}`;
       }
       if (!transaction.REFERENCE) {
-        transaction.REFERENCE = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+        transaction.REFERENCE = `TXN${String(nextTransactionId).padStart(10, '0')}`;
       }
       if (!transaction.TRANSACTION_ID) {
-        transaction.TRANSACTION_ID = `TXN${nextTransactionId.toString().padStart(10, '0')}`;
+        transaction.TRANSACTION_ID = `TXN${String(nextTransactionId).padStart(10, '0')}`;
       }
       
       console.log('Auto-generated IDs:', { 
@@ -525,7 +532,7 @@ Transaction.beforeCreate(async (transaction, options) => {
       });
     } catch (error) {
       console.error('Error generating transaction IDs:', error);
-      const fallbackId = Number(Date.now().toString().slice(-9));
+      const fallbackId = String(Math.floor(Math.random() * 1000000));
       
       if (!transaction.TRANSACTION_IDENTIFIER) transaction.TRANSACTION_IDENTIFIER = fallbackId;
       if (!transaction.EVENT_ID) transaction.EVENT_ID = fallbackId;

@@ -1,7 +1,7 @@
 // controllers/standingOrderController.js
 import { Op } from 'sequelize';
 import sequelize from '../../config/db.js';
-import { getModel } from '../models/index.js';   // ✅ central model getter
+import { getModel } from '../models/index.js';
 import logger from '../utils/logger.js';
 import StandingOrderExecution from '../models/StandingOrderExecution.js';
 import SystemDate from '../models/SystemDate.js';
@@ -32,9 +32,6 @@ function calculateNextExecutionDate(options) {
 
   const start = new Date(startDate);
   const now = new Date(currentDate);
-
-  if (isNaN(start.getTime())) throw new Error('Invalid startDate');
-
   start.setHours(0, 0, 0, 0);
   now.setHours(0, 0, 0, 0);
   if (start > now) return start;
@@ -42,46 +39,55 @@ function calculateNextExecutionDate(options) {
   let next;
 
   switch (frequency) {
-    case 'daily': {
-      const periodDays = interval;
-      const msPerDay = 1000 * 60 * 60 * 24;
-      const daysPassed = Math.floor((now - start) / msPerDay);
-      const numPeriods = Math.floor(daysPassed / periodDays);
-      next = new Date(start.getTime() + (numPeriods + 1) * periodDays * msPerDay);
+    case 'daily':
+      // ... unchanged ...
       break;
-    }
-    case 'weekly': {
-      const periodDays = 7 * interval;
-      const msPerDay = 1000 * 60 * 60 * 24;
-      const daysPassed = Math.floor((now - start) / msPerDay);
-      const numPeriods = Math.floor(daysPassed / periodDays);
-      next = new Date(start.getTime() + (numPeriods + 1) * periodDays * msPerDay);
-      if (dayOfWeek !== undefined && next.getDay() !== ((dayOfWeek % 7) || 7)) {
-        console.warn('Weekly alignment: startDate may not match intended dayOfWeek');
-      }
+    case 'weekly':
+      // ... unchanged ...
       break;
-    }
-    case 'monthly': {
+    case 'monthly':
+      // ✅ REPLACE THE EXISTING MONTHLY CODE WITH THIS:
       if (!dayOfMonth && !(weekOfMonth && dayOfWeek)) {
         throw new Error('Monthly frequency requires dayOfMonth or weekOfMonth + dayOfWeek');
       }
-      const monthsPassed = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-      const numPeriods = Math.floor(monthsPassed / interval);
-      let nextMonth = start.getMonth() + (numPeriods + 1) * interval;
-      let nextYear = start.getFullYear() + Math.floor(nextMonth / 12);
-      nextMonth %= 12;
-      const daysInNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-      const day = Math.min(dayOfMonth || start.getDate(), daysInNextMonth);
-      next = new Date(nextYear, nextMonth, day);
+
+      const startYear = start.getFullYear();
+      const startMonth = start.getMonth();
+      let targetDay = dayOfMonth || start.getDate();
+      let candidateYear = now.getFullYear();
+      let candidateMonth = now.getMonth();
+
+      // First candidate: same year and month, using targetDay
+      let candidate = new Date(candidateYear, candidateMonth, targetDay);
+
+      // If candidate is before now or invalid (e.g., targetDay > days in month), move to next month
+      if (candidate < now || candidate.getDate() !== targetDay) {
+        candidateMonth++;
+        if (candidateMonth > 11) {
+          candidateMonth = 0;
+          candidateYear++;
+        }
+        candidate = new Date(candidateYear, candidateMonth, targetDay);
+        if (candidate.getDate() !== targetDay) {
+          candidate = new Date(candidateYear, candidateMonth + 1, 0);
+        }
+      }
+
+      // Apply recurrence interval (monthly jump)
+      let monthsDiff = (candidate.getFullYear() - startYear) * 12 + (candidate.getMonth() - startMonth);
+      let periods = Math.ceil(monthsDiff / interval);
+      let resultMonth = startMonth + periods * interval;
+      let resultYear = startYear + Math.floor(resultMonth / 12);
+      resultMonth %= 12;
+      let resultDate = new Date(resultYear, resultMonth, targetDay);
+      if (resultDate.getDate() !== targetDay) {
+        resultDate = new Date(resultYear, resultMonth + 1, 0);
+      }
+      next = resultDate;
       break;
-    }
-    case 'yearly': {
-      const yearsPassed = now.getFullYear() - start.getFullYear();
-      const numPeriods = Math.floor(yearsPassed / interval);
-      const nextYear = start.getFullYear() + (numPeriods + 1) * interval;
-      next = new Date(nextYear, start.getMonth(), start.getDate());
+    case 'yearly':
+      // ... unchanged ...
       break;
-    }
     default:
       throw new Error('Invalid frequency specified');
   }
@@ -142,32 +148,79 @@ async function debitCustomerAccount(acctNo, amount, currency = 'NGN') {
 }
 
 // -----------------------------------------------------------------------------
-// CREATE: Create a new Standing Order
+// CREATE: Create a new Standing Order (reads customerAcctNo from body)
 // -----------------------------------------------------------------------------
 export const createStandingOrder = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { StandingOrder, CustomerAccount } = getModels();
-    const { customerAcctNo } = req.params;
-    let { 
-      beneficiaryAcctNo, amount, currency = 'NGN', frequency, interval = 1,
-      dayOfWeek, dayOfMonth, weekOfMonth, startDate, endDate, maxExecutions
+
+    let customerAcctNo = req.body.customerAcctNo;
+    if (!customerAcctNo) {
+      return res.status(400).json({ error: 'Customer account number is required' });
+    }
+    customerAcctNo = String(customerAcctNo).trim();
+
+    let {
+      beneficiaryAcctNo,
+      amount,
+      currency = 'NGN',
+      frequency,
+      interval = 1,
+      dayOfWeek,
+      dayOfMonth,
+      weekOfMonth,
+      startDate,
+      endDate,
+      maxExecutions
     } = req.body;
 
-    const finalCustomerAcctNo = String(req.body.customerAcctNo || customerAcctNo);
-    const beneficiaryAcctNoStr = String(beneficiaryAcctNo);
+    if (!beneficiaryAcctNo) {
+      return res.status(400).json({ error: 'Beneficiary account number is required' });
+    }
+    beneficiaryAcctNo = String(beneficiaryAcctNo).trim();
 
-    const customerAccount = await CustomerAccount.findOne({ 
-      where: { account_number: finalCustomerAcctNo },
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ error: 'Amount must be a positive number' });
+    }
+    const intervalNum = parseInt(interval, 10);
+    if (isNaN(intervalNum) || intervalNum < 1) {
+      return res.status(400).json({ error: 'Interval must be at least 1' });
+    }
+    const dayOfMonthNum = dayOfMonth ? parseInt(dayOfMonth, 10) : null;
+    const maxExecutionsNum = maxExecutions ? parseInt(maxExecutions, 10) : null;
+    if (maxExecutionsNum !== null && (isNaN(maxExecutionsNum) || maxExecutionsNum < 1)) {
+      return res.status(400).json({ error: 'Max executions must be a positive number' });
+    }
+
+    const customerAccount = await CustomerAccount.findOne({
+      where: { account_number: customerAcctNo },
       transaction
     });
     if (!customerAccount) {
       await transaction.rollback();
-      return res.status(404).json({ error: `Customer account ${finalCustomerAcctNo} not found` });
+      return res.status(404).json({ error: `Customer account ${customerAcctNo} not found` });
     }
     if (!customerAccount.allow_debit) {
       await transaction.rollback();
-      return res.status(400).json({ error: `Debits not allowed on account ${finalCustomerAcctNo}` });
+      return res.status(400).json({ error: `Debits not allowed on account ${customerAcctNo}` });
+    }
+
+    // Extract branch_id from customer account
+    const branchId = customerAccount.branch_id || null;
+
+    const beneficiaryAccount = await CustomerAccount.findOne({
+      where: { account_number: beneficiaryAcctNo },
+      transaction
+    });
+    if (!beneficiaryAccount) {
+      await transaction.rollback();
+      return res.status(404).json({ error: `Beneficiary account ${beneficiaryAcctNo} not found` });
+    }
+    if (!beneficiaryAccount.allow_credit) {
+      await transaction.rollback();
+      return res.status(400).json({ error: `Credits not allowed on beneficiary account ${beneficiaryAcctNo}` });
     }
 
     const startDateObj = new Date(startDate);
@@ -175,11 +228,27 @@ export const createStandingOrder = async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({ error: 'Invalid startDate' });
     }
+    let endDateObj = null;
+    if (endDate) {
+      endDateObj = new Date(endDate);
+      if (isNaN(endDateObj.getTime())) {
+        await transaction.rollback();
+        return res.status(400).json({ error: 'Invalid endDate' });
+      }
+      if (endDateObj < startDateObj) {
+        await transaction.rollback();
+        return res.status(400).json({ error: 'endDate cannot be before startDate' });
+      }
+    }
 
     let nextExecutionDate = null;
     try {
-      const computedDate = calculateNextExecutionDate({ 
-        frequency, interval, dayOfWeek, dayOfMonth, weekOfMonth, 
+      const computedDate = calculateNextExecutionDate({
+        frequency,
+        interval: intervalNum,
+        dayOfWeek,
+        dayOfMonth: dayOfMonthNum,
+        weekOfMonth,
         startDate: startDateObj,
         currentDate: new Date()
       });
@@ -191,21 +260,22 @@ export const createStandingOrder = async (req, res) => {
     }
 
     const standingOrder = await StandingOrder.create({
-      customerAcctNo: finalCustomerAcctNo,
-      beneficiaryAcctNo: beneficiaryAcctNoStr,
-      amount,
+      customerAcctNo,
+      beneficiaryAcctNo,
+      amount: amountNum,
       currency,
       frequency,
-      recurrence_interval: interval,
+      recurrence_interval: intervalNum,
       dayOfWeek,
-      dayOfMonth,
+      dayOfMonth: dayOfMonthNum,
       weekOfMonth,
       startDate: startDateObj,
-      endDate: endDate ? new Date(endDate) : null,
-      maxExecutions,
+      endDate: endDateObj,
+      maxExecutions: maxExecutionsNum,
       nextExecutionDate,
       isActive: false,
       status: 'PENDING_APPROVAL',
+      branch_id: branchId,          // ✅ Store branch_id from customer account
       createdAt: new Date(),
       updatedAt: new Date()
     }, { transaction });
@@ -213,7 +283,8 @@ export const createStandingOrder = async (req, res) => {
     await transaction.commit();
     logger.info('Standing order created and sent for approval', {
       standingOrderId: standingOrder.id,
-      customerAcctNo: finalCustomerAcctNo
+      customerAcctNo,
+      branch_id: branchId
     });
     res.status(201).json({
       success: true,
@@ -222,10 +293,10 @@ export const createStandingOrder = async (req, res) => {
     });
   } catch (error) {
     await transaction.rollback();
-    logger.error('Error creating standing order', { 
-      error: error.message, 
-      params: req.params, 
-      body: req.body 
+    logger.error('Error creating standing order', {
+      error: error.message,
+      body: req.body,
+      stack: error.stack
     });
     res.status(400).json({ error: error.message });
   }
@@ -368,29 +439,32 @@ export const rejectStandingOrder = async (req, res) => {
 };
 
 // -----------------------------------------------------------------------------
-// READ: Get standing orders for a customer (with association)
+// READ: Get standing orders for a customer (with association and optional filters)
 // -----------------------------------------------------------------------------
 export const getStandingOrders = async (req, res) => {
   try {
     const { StandingOrder, CustomerAccount } = getModels();
     const { customerAcctNo } = req.params;
-    const { page = 1, limit = 10, isActive } = req.query;
+    const { page = 1, limit = 10, isActive, status } = req.query;
 
+    // Build WHERE clause
     const where = { customerAcctNo: String(customerAcctNo) };
     if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (status) where.status = status;   // optional filter by status
 
-    const offset = (page - 1) * limit;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
     const { count, rows: standingOrders } = await StandingOrder.findAndCountAll({
       where,
       limit: parseInt(limit),
-      offset: parseInt(offset),
-      order: [['CREATED_AT', 'DESC']],
+      offset: offset,
+      order: [['id', 'DESC']],
       include: [{
         model: CustomerAccount,
-        as: 'customerAccount',
+        as: 'customerAccount',   // ✅ correct alias defined in the association
         attributes: ['account_number', 'account_name', 'ledger_balance', 'status']
       }]
+      // Beneficiary account can be fetched separately if needed
     });
 
     res.json({
@@ -408,7 +482,6 @@ export const getStandingOrders = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 // -----------------------------------------------------------------------------
 // UPDATE: Update a standing order
 // -----------------------------------------------------------------------------
@@ -428,10 +501,24 @@ export const updateStandingOrder = async (req, res) => {
       }
     }
 
-    if (updates.frequency || updates.interval || updates.dayOfWeek || updates.dayOfMonth || updates.weekOfMonth) {
+    if (updates.amount !== undefined) {
+      updates.amount = parseFloat(updates.amount);
+      if (isNaN(updates.amount) || updates.amount <= 0) {
+        await transaction.rollback();
+        return res.status(400).json({ error: 'Amount must be a positive number' });
+      }
+    }
+    if (updates.interval !== undefined) {
+      updates.recurrence_interval = parseInt(updates.interval, 10);
+      delete updates.interval;
+    }
+    if (updates.dayOfMonth !== undefined) updates.dayOfMonth = parseInt(updates.dayOfMonth, 10);
+    if (updates.maxExecutions !== undefined) updates.maxExecutions = parseInt(updates.maxExecutions, 10);
+
+    if (updates.frequency || updates.recurrence_interval || updates.dayOfWeek !== undefined || updates.dayOfMonth !== undefined || updates.weekOfMonth !== undefined) {
       const nextDate = calculateNextExecutionDate({
         frequency: updates.frequency || standingOrder.frequency,
-        interval: updates.interval || standingOrder.recurrence_interval,
+        interval: updates.recurrence_interval || standingOrder.recurrence_interval,
         dayOfWeek: updates.dayOfWeek !== undefined ? updates.dayOfWeek : standingOrder.dayOfWeek,
         dayOfMonth: updates.dayOfMonth !== undefined ? updates.dayOfMonth : standingOrder.dayOfMonth,
         weekOfMonth: updates.weekOfMonth !== undefined ? updates.weekOfMonth : standingOrder.weekOfMonth,
@@ -439,11 +526,6 @@ export const updateStandingOrder = async (req, res) => {
         currentDate: new Date()
       });
       updates.nextExecutionDate = nextDate;
-    }
-
-    if (updates.interval) {
-      updates.recurrence_interval = updates.interval;
-      delete updates.interval;
     }
 
     updates.updatedAt = new Date();
@@ -480,15 +562,20 @@ export const deleteStandingOrder = async (req, res) => {
 };
 
 // -----------------------------------------------------------------------------
-// PROCESS: Manually trigger execution
+// PROCESS: Manually trigger execution (debit customer + credit beneficiary)
+// -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// PROCESS: Manually trigger execution (debit customer + credit beneficiary)
 // -----------------------------------------------------------------------------
 export const processStandingOrderExecution = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const { StandingOrder } = getModels();
+    const { StandingOrder, CustomerAccount } = getModels();
     const { customerAcctNo, id } = req.params;
     const now = new Date();
     const standingOrder = await findByIdAndCheckOwner(id, customerAcctNo);
+
+    // Validation checks
     if (!standingOrder.isActive) {
       await transaction.rollback();
       return res.status(400).json({ error: 'Standing order is not active' });
@@ -512,14 +599,46 @@ export const processStandingOrderExecution = async (req, res) => {
     }
 
     try {
+      // STEP 1: Debit customer account
       await debitCustomerAccount(standingOrder.customerAcctNo, standingOrder.amount, standingOrder.currency);
+
+      // STEP 2: Credit beneficiary account
+      const beneficiaryAccount = await CustomerAccount.findOne({
+        where: { account_number: standingOrder.beneficiaryAcctNo },
+        lock: transaction.LOCK.UPDATE,
+        transaction
+      });
+      if (!beneficiaryAccount) {
+        throw new Error(`Beneficiary account ${standingOrder.beneficiaryAcctNo} not found`);
+      }
+      if (!beneficiaryAccount.allow_credit) {
+        throw new Error(`Credits not allowed on beneficiary account ${standingOrder.beneficiaryAcctNo}`);
+      }
+
+      const amountNum = parseFloat(standingOrder.amount);
+      const newBeneficiaryLedger = (parseFloat(beneficiaryAccount.ledger_balance) + amountNum).toFixed(2);
+      const newBeneficiaryCleared = (parseFloat(beneficiaryAccount.cleared_balance) + amountNum).toFixed(2);
+      const newBeneficiaryAvailable = (parseFloat(beneficiaryAccount.available_balance) + amountNum).toFixed(2);
+
+      await beneficiaryAccount.update({
+        ledger_balance: newBeneficiaryLedger,
+        cleared_balance: newBeneficiaryCleared,
+        available_balance: newBeneficiaryAvailable,
+        last_transaction_date: new Date()
+      }, { transaction });
+
+      // STEP 3: Record successful execution (with required fields)
       const execution = await StandingOrderExecution.create({
         standingOrderId: standingOrder.id,
         executionDate: now,
         amount: standingOrder.amount,
         currency: standingOrder.currency,
-        status: 'success'
+        status: 'SUCCESS',                         // ✅ uppercase enum value
+        standingOrderStatusAtExecution: standingOrder.status,  // ✅ required field
+        executionNotes: 'Manual execution successful'
       }, { transaction });
+
+      // STEP 4: Calculate next execution date
       const nextDate = calculateNextExecutionDate({
         frequency: standingOrder.frequency,
         interval: standingOrder.recurrence_interval,
@@ -530,17 +649,32 @@ export const processStandingOrderExecution = async (req, res) => {
         currentDate: now
       });
       await standingOrder.update({ nextExecutionDate: new Date(nextDate), updatedAt: new Date() }, { transaction });
+
       await transaction.commit();
-      logger.info('Standing order executed successfully', { standingOrderId: id, customerAcctNo, executionId: execution.id });
-      res.json({ success: true, data: { execution, updatedStandingOrder: standingOrder }, message: 'Standing order executed successfully' });
+      logger.info('Standing order executed successfully', {
+        standingOrderId: id,
+        customerAcctNo,
+        executionId: execution.id,
+        amount: standingOrder.amount,
+        beneficiary: standingOrder.beneficiaryAcctNo
+      });
+      res.json({
+        success: true,
+        data: { execution, updatedStandingOrder: standingOrder },
+        message: `Transferred ${standingOrder.amount} from ${customerAcctNo} to ${standingOrder.beneficiaryAcctNo}`
+      });
+
     } catch (debitError) {
+      // Record failed execution (with required fields)
       const execution = await StandingOrderExecution.create({
         standingOrderId: standingOrder.id,
         executionDate: now,
         amount: standingOrder.amount,
         currency: standingOrder.currency,
-        status: 'failed',
-        failureReason: debitError.message
+        status: 'FAILED',                         // ✅ uppercase enum value
+        failureReason: debitError.message,
+        standingOrderStatusAtExecution: standingOrder.status,  // ✅ required field
+        executionNotes: 'Manual execution failed'
       }, { transaction });
       await transaction.commit();
       logger.error('Standing order execution failed', { standingOrderId: id, customerAcctNo, error: debitError.message });
@@ -584,10 +718,8 @@ export const getStandingOrderExecutions = async (req, res) => {
 export const processDueStandingOrders = async () => {
   const transaction = await sequelize.transaction();
   try {
-    // ✅ Get StandingOrder model
-    const { StandingOrder } = getModels();
+    const { StandingOrder, CustomerAccount } = getModels();
 
-    // Get current business date from SystemDate table
     const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     if (!systemDate) {
       logger.error('SystemDate record not found – cannot process standing orders');
@@ -609,10 +741,12 @@ export const processDueStandingOrders = async () => {
     const results = { successful: 0, failed: 0, processed: [], errors: [] };
     for (const order of dueOrders) {
       try {
+        // Expiry check
         if (order.endDate && order.endDate < now) {
           await order.update({ isActive: false }, { transaction });
           continue;
         }
+        // Max executions check
         if (order.maxExecutions) {
           const executionCount = await StandingOrderExecution.count({ where: { standingOrderId: order.id }, transaction });
           if (executionCount >= order.maxExecutions) {
@@ -620,7 +754,36 @@ export const processDueStandingOrders = async () => {
             continue;
           }
         }
+
+        // STEP 1: Debit customer account
         await debitCustomerAccount(order.customerAcctNo, order.amount, order.currency);
+
+        // STEP 2: Credit beneficiary account
+        const beneficiaryAccount = await CustomerAccount.findOne({
+          where: { account_number: order.beneficiaryAcctNo },
+          lock: transaction.LOCK.UPDATE,
+          transaction
+        });
+        if (!beneficiaryAccount) {
+          throw new Error(`Beneficiary account ${order.beneficiaryAcctNo} not found`);
+        }
+        if (!beneficiaryAccount.allow_credit) {
+          throw new Error(`Credits not allowed on beneficiary account ${order.beneficiaryAcctNo}`);
+        }
+
+        const amountNum = parseFloat(order.amount);
+        const newBeneficiaryLedger = (parseFloat(beneficiaryAccount.ledger_balance) + amountNum).toFixed(2);
+        const newBeneficiaryCleared = (parseFloat(beneficiaryAccount.cleared_balance) + amountNum).toFixed(2);
+        const newBeneficiaryAvailable = (parseFloat(beneficiaryAccount.available_balance) + amountNum).toFixed(2);
+
+        await beneficiaryAccount.update({
+          ledger_balance: newBeneficiaryLedger,
+          cleared_balance: newBeneficiaryCleared,
+          available_balance: newBeneficiaryAvailable,
+          last_transaction_date: new Date()
+        }, { transaction });
+
+        // STEP 3: Record successful execution
         await StandingOrderExecution.create({
           standingOrderId: order.id,
           executionDate: now,
@@ -628,6 +791,8 @@ export const processDueStandingOrders = async () => {
           currency: order.currency,
           status: 'success'
         }, { transaction });
+
+        // STEP 4: Calculate next execution date
         const nextDate = calculateNextExecutionDate({
           frequency: order.frequency,
           interval: order.recurrence_interval,
@@ -638,9 +803,12 @@ export const processDueStandingOrders = async () => {
           currentDate: now
         });
         await order.update({ nextExecutionDate: new Date(nextDate), updatedAt: new Date() }, { transaction });
+
         results.successful++;
         results.processed.push(order.id);
+
       } catch (error) {
+        // Log failure and record execution failure
         await StandingOrderExecution.create({
           standingOrderId: order.id,
           executionDate: now,
@@ -661,5 +829,50 @@ export const processDueStandingOrders = async () => {
     await transaction.rollback();
     logger.error('Error processing due standing orders', { error: error.message });
     throw error;
+  }
+};
+
+// -----------------------------------------------------------------------------
+// GET ALL PENDING STANDING ORDERS (Manager view) – FILTERED BY BRANCH
+// -----------------------------------------------------------------------------
+export const getAllPendingStandingOrders = async (req, res) => {
+  try {
+    const { StandingOrder, CustomerAccount } = getModels();
+    const { page = 1, limit = 20, branchId } = req.query;
+
+    const where = { status: 'PENDING_APPROVAL' };
+    // Filter by branch if provided (e.g., branchId=100)
+    if (branchId) {
+      where.branch_id = branchId;
+    }
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const { count, rows: pendingOrders } = await StandingOrder.findAndCountAll({
+      where,
+      limit: parseInt(limit),
+      offset: offset,
+      order: [['id', 'DESC']],
+      include: [{
+        model: CustomerAccount,
+        as: 'customerAccount',
+        attributes: ['account_number', 'account_name', 'branch_id', 'status']
+      }]
+    });
+
+    res.json({
+      success: true,
+      data: pendingOrders,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: count,
+        pages: Math.ceil(count / limit)
+      },
+      filter: { branchId: branchId || null }
+    });
+  } catch (error) {
+    logger.error('Error fetching all pending standing orders', { error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };

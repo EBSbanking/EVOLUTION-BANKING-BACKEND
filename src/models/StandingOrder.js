@@ -34,18 +34,15 @@ export const DAYS_OF_WEEK = {
 };
 
 class StandingOrder extends Model {
-  // ✅ Static method to set up associations (called from index.js)
   static associate(models) {
-    // Belongs to relationships
     this.belongsTo(models.Customer, { foreignKey: 'customerAcctNo', targetKey: 'CUST_ID', as: 'customer' });
     this.belongsTo(models.Account, { foreignKey: 'customerAcctNo', targetKey: 'account_number', as: 'fromAccount' });
     this.belongsTo(models.Account, { foreignKey: 'beneficiaryAcctNo', targetKey: 'account_number', as: 'toAccount' });
     this.belongsTo(models.User, { foreignKey: 'approvedBy', as: 'approver' });
     this.belongsTo(models.User, { foreignKey: 'rejectedBy', as: 'rejector' });
-    // Add other associations as needed
+    // this.belongsTo(models.Branch, { foreignKey: 'branch_id', as: 'branch' });
   }
 
-  // ========== Static methods ==========
   static async findByCustomer(customerAcctNo, options = {}) {
     const defaultOptions = {
       where: { customerAcctNo },
@@ -121,7 +118,6 @@ class StandingOrder extends Model {
     }));
   }
 
-  // ========== Instance methods ==========
   async approve(approvedBy, comments = null) {
     this.status = STATUS.APPROVED;
     this.isActive = true;
@@ -155,7 +151,6 @@ class StandingOrder extends Model {
 
   async calculateNextExecutionDate() {
     if (this.status !== STATUS.APPROVED || !this.isActive) return null;
-    const currentDate = new Date();
     const lastExecutionDate = this.nextExecutionDate || this.startDate;
     let nextDate = new Date(lastExecutionDate);
     switch (this.frequency) {
@@ -201,7 +196,6 @@ class StandingOrder extends Model {
   }
 }
 
-// ========== Model initialization ==========
 StandingOrder.init(
   {
     id: {
@@ -291,10 +285,10 @@ StandingOrder.init(
       comment: 'Whether standing order is active'
     },
     approvedBy: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.STRING(50),   // ✅ changed from INTEGER to STRING
       allowNull: true,
       field: 'approved_by',
-      comment: 'User who approved the standing order'
+      comment: 'User who approved the standing order (username or ID)'
     },
     approvedAt: {
       type: DataTypes.DATE,
@@ -303,10 +297,10 @@ StandingOrder.init(
       comment: 'Approval timestamp'
     },
     rejectedBy: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.STRING(50),   // ✅ changed from INTEGER to STRING
       allowNull: true,
       field: 'rejected_by',
-      comment: 'User who rejected the standing order'
+      comment: 'User who rejected the standing order (username or ID)'
     },
     rejectedAt: {
       type: DataTypes.DATE,
@@ -318,6 +312,12 @@ StandingOrder.init(
       type: DataTypes.STRING(500),
       allowNull: true,
       comment: 'Comments or notes'
+    },
+    branch_id: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+      field: 'branch_id',
+      comment: 'Business unit / branch that owns this standing order'
     },
     maxExecutions: {
       type: DataTypes.INTEGER,
@@ -402,7 +402,8 @@ StandingOrder.init(
           customerAcctNo: order.customerAcctNo,
           beneficiaryAcctNo: order.beneficiaryAcctNo,
           amount: order.amount,
-          status: order.status
+          status: order.status,
+          branch_id: order.branch_id
         });
       },
       afterUpdate: (order) => {

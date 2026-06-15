@@ -1,4 +1,4 @@
-// models/Charge.js (updated)
+// models/Charge.js (updated – larger CHRG_CD length)
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 import Decimal from 'decimal.js';
@@ -48,14 +48,14 @@ class Charge extends Model {
 
 Charge.init({
   CHRG_ID: {
-    type: DataTypes.BIGINT,          // ✅ changed to BIGINT
+    type: DataTypes.BIGINT,
     primaryKey: true,
-    autoIncrement: true,             // ✅ enable auto increment
+    autoIncrement: true,
     allowNull: false,
     field: 'CHRG_ID'
   },
   CHRG_CD: {
-    type: DataTypes.STRING(10),
+    type: DataTypes.STRING(50),   // ✅ increased from 10 to 50 to allow longer codes
     allowNull: false,
     unique: true,
     field: 'CHRG_CD'

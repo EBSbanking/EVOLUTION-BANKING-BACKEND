@@ -301,22 +301,42 @@ export const createSimpleApplication = async (req, res) => {
     const accountApplication = await AccountApplication.create(applicationData, { transaction });
     console.log('✅ AccountApplication created ID:', accountApplication.id);
 
-    // Record GL reference
+    // ========== UPDATED GL REFERENCE WITH AVAILABLE_BALANCE ==========
     try {
+      // Add available_balance column if not exists (using CREATE TABLE IF NOT EXISTS with full schema)
       await sequelize.query(`
         CREATE TABLE IF NOT EXISTS gl_references (
-          id INT PRIMARY KEY AUTO_INCREMENT, reference_id VARCHAR(100) UNIQUE,
-          application_id INT NOT NULL, customer_id VARCHAR(20) NOT NULL,
-          account_number VARCHAR(20) NOT NULL, amount DECIMAL(20,2) NOT NULL,
-          currency VARCHAR(3) DEFAULT 'NGN', status VARCHAR(20) DEFAULT 'PENDING',
-          created_by VARCHAR(100), branch_id VARCHAR(10), created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          reference_id VARCHAR(100) UNIQUE,
+          application_id INT NOT NULL,
+          customer_id VARCHAR(20) NOT NULL,
+          account_number VARCHAR(20) NOT NULL,
+          amount DECIMAL(20,2) NOT NULL,
+          available_balance DECIMAL(20,2) DEFAULT 0,
+          currency VARCHAR(3) DEFAULT 'NGN',
+          status VARCHAR(20) DEFAULT 'PENDING',
+          created_by VARCHAR(100),
+          branch_id VARCHAR(10),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `, { transaction });
+      
+      // Insert with available_balance set to the same amount (opening deposit)
       await sequelize.query(
-        `INSERT INTO gl_references (reference_id, application_id, customer_id, account_number, amount, currency, status, created_by, branch_id)
-         VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+        `INSERT INTO gl_references (reference_id, application_id, customer_id, account_number, amount, available_balance, currency, status, created_by, branch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
         {
-          replacements: [`GL_REF_${Date.now()}_${accountApplication.id}`, accountApplication.id, normalizedCUST_ID, accountNumber, openingAmount, finalCRNCY_ID, finalCREATED_BY, finalBU_ID],
+          replacements: [
+            `GL_REF_${Date.now()}_${accountApplication.id}`,
+            accountApplication.id,
+            normalizedCUST_ID,
+            accountNumber,
+            openingAmount,
+            openingAmount,  // available_balance = amount
+            finalCRNCY_ID,
+            finalCREATED_BY,
+            finalBU_ID
+          ],
           transaction
         }
       );
@@ -388,38 +408,39 @@ export const createApplication = async (req, res) => {
     }
 
     // ========== PRODUCT LOOKUP – CORRECT COLUMN NAMES ==========
-console.log('🔍 Looking up product for PROD_ID:', finalPROD_ID);
-let productName = '', productCode = '', productDescription = '';
-try {
-  const [product] = await sequelize.query(
-    `SELECT productName, productCode, productDescription 
-     FROM savings_products 
-     WHERE (PROD_ID = ? OR productCode = ?) 
-     AND REC_ST = 'Active' 
-     LIMIT 1`,
-    {
-      replacements: [finalPROD_ID, finalPROD_ID],
-      type: sequelize.QueryTypes.SELECT,
-      transaction
+    console.log('🔍 Looking up product for PROD_ID:', finalPROD_ID);
+    let productName = '', productCode = '', productDescription = '';
+    try {
+      const [product] = await sequelize.query(
+        `SELECT productName, productCode, productDescription 
+         FROM savings_products 
+         WHERE (PROD_ID = ? OR productCode = ?) 
+         AND REC_ST = 'Active' 
+         LIMIT 1`,
+        {
+          replacements: [finalPROD_ID, finalPROD_ID],
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        }
+      );
+      if (!product) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Product with ID or code "${finalPROD_ID}" not found in savings_products`,
+          code: 'PRODUCT_NOT_FOUND'
+        });
+      }
+      productName = product.productName || '';
+      productCode = product.productCode || '';
+      productDescription = product.productDescription || '';
+      console.log(`✅ Found product: ${productName} (${productCode})`);
+    } catch (err) {
+      console.error('❌ Product lookup SQL error:', err.message);
+      await transaction.rollback();
+      return res.status(500).json({ success: false, message: 'Product lookup failed', details: err.message });
     }
-  );
-  if (!product) {
-    await transaction.rollback();
-    return res.status(400).json({
-      success: false,
-      message: `Product with ID or code "${finalPROD_ID}" not found in savings_products`,
-      code: 'PRODUCT_NOT_FOUND'
-    });
-  }
-  productName = product.productName || '';
-  productCode = product.productCode || '';
-  productDescription = product.productDescription || '';
-  console.log(`✅ Found product: ${productName} (${productCode})`);
-} catch (err) {
-  console.error('❌ Product lookup SQL error:', err.message);
-  await transaction.rollback();
-  return res.status(500).json({ success: false, message: 'Product lookup failed', details: err.message });
-}
+
     // Process uploaded files
     let documentUrls = [];
     if (req.files && req.files.length) {
@@ -468,21 +489,44 @@ try {
     const accountApplication = await AccountApplication.create(applicationData, { transaction });
     console.log('✅ Application created ID:', accountApplication.id);
 
-    // GL reference
+    // ========== UPDATED GL REFERENCE WITH AVAILABLE_BALANCE ==========
     try {
+      // Create table with available_balance column
       await sequelize.query(`
         CREATE TABLE IF NOT EXISTS gl_references (
-          id INT PRIMARY KEY AUTO_INCREMENT, reference_id VARCHAR(100) UNIQUE,
-          application_id INT NOT NULL, customer_id VARCHAR(20) NOT NULL,
-          account_number VARCHAR(20) NOT NULL, amount DECIMAL(20,2) NOT NULL,
-          currency VARCHAR(3) DEFAULT 'NGN', status VARCHAR(20) DEFAULT 'PENDING',
-          created_by VARCHAR(100), branch_id VARCHAR(10), created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          reference_id VARCHAR(100) UNIQUE,
+          application_id INT NOT NULL,
+          customer_id VARCHAR(20) NOT NULL,
+          account_number VARCHAR(20) NOT NULL,
+          amount DECIMAL(20,2) NOT NULL,
+          available_balance DECIMAL(20,2) DEFAULT 0,
+          currency VARCHAR(3) DEFAULT 'NGN',
+          status VARCHAR(20) DEFAULT 'PENDING',
+          created_by VARCHAR(100),
+          branch_id VARCHAR(10),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `, { transaction });
+      
+      // Insert with available_balance
       await sequelize.query(
-        `INSERT INTO gl_references (reference_id, application_id, customer_id, account_number, amount, currency, status, created_by, branch_id)
-         VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
-        { replacements: [`GL_REF_${Date.now()}_${accountApplication.id}`, accountApplication.id, normalizedCUST_ID, accountNumber, openingAmount, finalCRNCY_ID, finalCREATED_BY, finalBU_ID], transaction }
+        `INSERT INTO gl_references (reference_id, application_id, customer_id, account_number, amount, available_balance, currency, status, created_by, branch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+        {
+          replacements: [
+            `GL_REF_${Date.now()}_${accountApplication.id}`,
+            accountApplication.id,
+            normalizedCUST_ID,
+            accountNumber,
+            openingAmount,
+            openingAmount,  // available_balance = amount
+            finalCRNCY_ID,
+            finalCREATED_BY,
+            finalBU_ID
+          ],
+          transaction
+        }
       );
     } catch (glErr) { console.warn('GL ref error:', glErr.message); }
 

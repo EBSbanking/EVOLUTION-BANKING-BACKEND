@@ -1,4 +1,4 @@
-// controllers/SystemDateController.js - FINAL WORKING VERSION
+// controllers/SystemDateController.js - FINAL FIXED VERSION
 import { Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 import SystemDate from '../models/SystemDate.js';
@@ -9,9 +9,8 @@ import { calculateNextBusinessDate, shouldSkipDate } from '../utils/dateUtils.js
 import { 
   getBusinessDate, 
   getServerTime,
-  setServerTimeOffset,
-  freezeTime,
-  unfreezeTime 
+  setServerTimeOffset
+  // freezeTime, unfreezeTime removed - not used
 } from '../services/timeService.js';
 
 // =============================================
@@ -26,11 +25,11 @@ const SystemDateController = {
    */
   async ensureRecentBusinessDate() {
     try {
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']] });
       if (!systemDate) return false;
 
-      const current = new Date(systemDate.current_business_date);
-      const next = new Date(systemDate.next_business_date);
+      const current = new Date(systemDate.currentBusinessDate);
+      const next = new Date(systemDate.nextBusinessDate);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const sevenDaysAgo = new Date(today);
@@ -50,9 +49,9 @@ const SystemDateController = {
         const newCurrent = target;
         const newNext = await calculateNextBusinessDate(newCurrent);
 
-        systemDate.current_business_date = newCurrent;
-        systemDate.next_business_date = newNext;
-        systemDate.updated_at = new Date();
+        systemDate.currentBusinessDate = newCurrent;
+        systemDate.nextBusinessDate = newNext;
+        systemDate.updatedAt = new Date();
         await systemDate.save();
 
         logger.info(`Auto-corrected business date to ${newCurrent.toISOString().split('T')[0]}, next: ${newNext.toISOString().split('T')[0]}`);
@@ -69,18 +68,17 @@ const SystemDateController = {
    * Get current business date
    */
   async getCurrentBusinessDate(req, res) {
-    // ✅ FIX: use controller name to avoid 'this' binding issues
     await SystemDateController.ensureRecentBusinessDate();
 
     try {
       logger.info('📅 Getting current business date...');
-      const businessDate = await getBusinessDate({ 
+      const businessDateObj = await getBusinessDate({ 
         user_id: req.user?.id || 'system',
         ip_address: req.ip || req.connection.remoteAddress 
       });
       let systemDate = null;
       if (SystemDate.ensureTableExists) await SystemDate.ensureTableExists();
-      systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+      systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']] });
 
       if (!systemDate) {
         const today = new Date();
@@ -94,30 +92,30 @@ const SystemDateController = {
         }
         const nextBusinessDate = await calculateNextBusinessDate(businessDate);
         const newSystemDate = await SystemDate.create({
-          current_business_date: businessDate,
-          next_business_date: nextBusinessDate,
-          last_e_o_d_date: null,
-          last_e_o_d_processed_by: null,
-          is_e_o_d_processing: false,
-          eod_status: 'IDLE',
-          eod_history: []
+          currentBusinessDate: businessDate,
+          nextBusinessDate: nextBusinessDate,
+          lastEODDate: null,
+          lastEODProcessedByLegacy: null,
+          isEODProcessing: false,
+          eodStatus: 'IDLE',
+          eodHistory: []
         });
         logger.info('System date initialized automatically', { currentDate: businessDate, nextDate: nextBusinessDate });
         return res.status(200).json({
           success: true,
           data: {
             id: newSystemDate.id,
-            current_business_date: newSystemDate.current_business_date,
-            next_business_date: newSystemDate.next_business_date,
+            current_business_date: newSystemDate.currentBusinessDate,
+            next_business_date: newSystemDate.nextBusinessDate,
             serverTime: getServerTime(),
             formattedDate: businessDate.toISOString().split('T')[0],
-            last_e_o_d_date: newSystemDate.last_e_o_d_date,
-            last_e_o_d_processed_by: newSystemDate.last_e_o_d_processed_by,
-            is_e_o_d_processing: newSystemDate.is_e_o_d_processing,
-            eod_status: newSystemDate.eod_status,
-            eod_history: newSystemDate.eod_history || [],
-            created_at: newSystemDate.created_at,
-            updated_at: newSystemDate.updated_at
+            last_e_o_d_date: newSystemDate.lastEODDate,
+            last_e_o_d_processed_by: newSystemDate.lastEODProcessedByLegacy,
+            is_e_o_d_processing: newSystemDate.isEODProcessing,
+            eod_status: newSystemDate.eodStatus,
+            eod_history: newSystemDate.eodHistory || [],
+            created_at: newSystemDate.createdAt,
+            updated_at: newSystemDate.updatedAt
           }
         });
       }
@@ -126,19 +124,19 @@ const SystemDateController = {
         success: true,
         data: {
           id: systemDate.id,
-          current_business_date: systemDate.current_business_date,
-          next_business_date: systemDate.next_business_date,
+          current_business_date: systemDate.currentBusinessDate,
+          next_business_date: systemDate.nextBusinessDate,
           serverTime: getServerTime(),
-          formattedDate: systemDate.current_business_date 
-            ? new Date(systemDate.current_business_date).toISOString().split('T')[0] 
+          formattedDate: systemDate.currentBusinessDate 
+            ? new Date(systemDate.currentBusinessDate).toISOString().split('T')[0] 
             : new Date().toISOString().split('T')[0],
-          last_e_o_d_date: systemDate.last_e_o_d_date,
-          last_e_o_d_processed_by: systemDate.last_e_o_d_processed_by,
-          is_e_o_d_processing: systemDate.is_e_o_d_processing,
-          eod_status: systemDate.eod_status,
-          eod_history: systemDate.eod_history || [],
-          created_at: systemDate.created_at,
-          updated_at: systemDate.updated_at
+          last_e_o_d_date: systemDate.lastEODDate,
+          last_e_o_d_processed_by: systemDate.lastEODProcessedByLegacy,
+          is_e_o_d_processing: systemDate.isEODProcessing,
+          eod_status: systemDate.eodStatus,
+          eod_history: systemDate.eodHistory || [],
+          created_at: systemDate.createdAt,
+          updated_at: systemDate.updatedAt
         }
       });
     } catch (error) {
@@ -228,11 +226,11 @@ const SystemDateController = {
       }
       let nextBusinessDate = await calculateNextBusinessDate(today);
       const newSystemDate = await SystemDate.create({
-        current_business_date: today,
-        next_business_date: nextBusinessDate,
-        is_e_o_d_processing: false,
-        eod_status: 'IDLE',
-        eod_history: [{
+        currentBusinessDate: today,
+        nextBusinessDate: nextBusinessDate,
+        isEODProcessing: false,
+        eodStatus: 'IDLE',
+        eodHistory: [{
           type: 'INITIALIZATION',
           processedDate: today,
           processingStart: new Date(),
@@ -277,15 +275,15 @@ const SystemDateController = {
       if (!allowedRoles.includes(user.primary_role)) {
         return res.status(403).json({ success: false, message: 'Insufficient permissions to update EOD status' });
       }
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']], transaction });
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']], transaction });
       if (!systemDate) {
         return res.status(404).json({ success: false, message: 'System date not found' });
       }
-      const previousStatus = systemDate.eod_status;
-      systemDate.eod_status = status;
-      systemDate.updated_at = new Date();
-      if (systemDate.eod_history) {
-        const eodHistory = systemDate.eod_history || [];
+      const previousStatus = systemDate.eodStatus;
+      systemDate.eodStatus = status;
+      systemDate.updatedAt = new Date();
+      if (systemDate.eodHistory) {
+        const eodHistory = systemDate.eodHistory || [];
         eodHistory.push({
           type: 'STATUS_CHANGE',
           timestamp: new Date(),
@@ -294,7 +292,7 @@ const SystemDateController = {
           newStatus: status,
           reason: reason || 'Manual status update'
         });
-        systemDate.eod_history = eodHistory;
+        systemDate.eodHistory = eodHistory;
       }
       await systemDate.save({ transaction });
       await transaction.commit();
@@ -314,11 +312,11 @@ const SystemDateController = {
   async getEODHistory(req, res) {
     try {
       const { limit = 50, offset = 0 } = req.query;
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']] });
       if (!systemDate) {
         return res.status(404).json({ success: false, message: 'System date not found' });
       }
-      const history = systemDate.eod_history || [];
+      const history = systemDate.eodHistory || [];
       const sortedHistory = [...history].sort((a, b) => {
         const dateA = new Date(a.timestamp || a.processingStart || 0);
         const dateB = new Date(b.timestamp || b.processingStart || 0);
@@ -343,89 +341,108 @@ const SystemDateController = {
     }
   },
 
-  async setBusinessDate(req, res) {
-    const transaction = await sequelize.transaction();
-    try {
-      const { businessDate, reason, userId } = req.body;
-      if (!businessDate || !userId) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: 'businessDate and userId are required' });
-      }
-      const user = await User.findByPk(userId, { transaction });
-      if (!user) {
-        await transaction.rollback();
-        return res.status(404).json({ success: false, message: 'User not found' });
-      }
-      const allowedRoles = ['ADMIN', 'SYSTEM_ADMIN', 'BRANCH_MANAGER', 'OPERATIONS_MANAGER'];
-      if (!allowedRoles.includes(user.primary_role)) {
-        await transaction.rollback();
-        return res.status(403).json({ success: false, message: 'Insufficient permissions to set business date' });
-      }
-      const targetDate = new Date(businessDate);
-      if (isNaN(targetDate.getTime())) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: 'Invalid date format' });
-      }
-      targetDate.setHours(0, 0, 0, 0);
-      const holiday = await Holiday.isHoliday(targetDate);
-      if (holiday) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: `Cannot set business date to a holiday: ${holiday.holidayName}`, holiday: { id: holiday.id, name: holiday.holidayName, description: holiday.description, date: holiday.holidayDate, recurring: holiday.recurring } });
-      }
-      const dayOfWeek = targetDate.getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: 'Cannot set business date to a weekend' });
-      }
-      let systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']], transaction });
-      if (!systemDate) {
-        await transaction.rollback();
-        return res.status(404).json({ success: false, message: 'System date not found. Please initialize first.' });
-      }
-      if (systemDate.is_e_o_d_processing) {
-        await transaction.rollback();
-        return res.status(400).json({ success: false, message: 'Cannot change date while EOD is in progress' });
-      }
-      const previousDate = new Date(systemDate.current_business_date);
-      systemDate.current_business_date = targetDate;
-      systemDate.next_business_date = await calculateNextBusinessDate(targetDate);
-      const eodHistory = systemDate.eod_history || [];
-      eodHistory.push({
-        type: 'MANUAL_SET',
-        processedDate: targetDate,
-        previousDate: previousDate,
-        processingStart: new Date(),
-        processingEnd: new Date(),
-        processedBy: { userId: user.id, username: user.username, role: user.primary_role },
-        status: 'COMPLETED',
-        transactionsProcessed: 0,
-        reason: reason || 'No reason provided',
-        notes: [`Manual date set from ${previousDate.toISOString().split('T')[0]} to ${targetDate.toISOString().split('T')[0]}`]
-      });
-      systemDate.eod_history = eodHistory;
-      systemDate.updated_at = new Date();
-      await systemDate.save({ transaction });
-      await transaction.commit();
-      logger.info(`Business date manually set to ${targetDate.toISOString().split('T')[0]} by ${user.username}`, { userId: user.id, targetDate, reason });
-      return res.status(200).json({
-        success: true,
-        message: 'Business date set successfully',
-        data: {
-          current_business_date: systemDate.current_business_date,
-          next_business_date: systemDate.next_business_date,
-          formattedDate: targetDate.toISOString().split('T')[0],
-          serverTime: getServerTime(),
-          setBy: { userId: user.id, username: user.username, role: user.primary_role },
-          timestamp: new Date(),
-          reason: reason
-        }
-      });
-    } catch (error) {
+async setBusinessDate(req, res) {
+  const transaction = await sequelize.transaction();
+  try {
+    let { businessDate, reason, userId, userName } = req.body;
+    if (!businessDate || (!userId && !userName)) {
       await transaction.rollback();
-      logger.error('Set business date error:', error);
-      return res.status(500).json({ success: false, message: 'Failed to set business date', error: error.message });
+      return res.status(400).json({ success: false, message: 'businessDate and either userId or userName are required' });
     }
-  },
+
+    let user;
+    if (userId) {
+      user = await User.findByPk(userId, { transaction });
+    } else if (userName) {
+      user = await User.findOne({ where: { user_name: userName }, transaction });
+    }
+
+    if (!user) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // More flexible role check: allow if primary_role is ADMIN, SYSTEM_ADMIN, BRANCH_MANAGER, OPERATIONS_MANAGER, or if user is the first user (id=1) or has no role set but isAdmin flag is true
+    const allowedRoles = ['ADMIN', 'SYSTEM_ADMIN', 'BRANCH_MANAGER', 'OPERATIONS_MANAGER'];
+    const hasAllowedRole = allowedRoles.includes(user.primary_role);
+    const isFirstUser = user.id === 1;
+    const isAdminFlag = user.isAdmin === true || user.isAdmin === 1;
+
+    if (!hasAllowedRole && !isFirstUser && !isAdminFlag) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: 'Insufficient permissions to set business date' });
+    }
+
+    const targetDate = new Date(businessDate);
+    if (isNaN(targetDate.getTime())) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Invalid date format' });
+    }
+    targetDate.setHours(0, 0, 0, 0);
+
+    const holiday = await Holiday.isHoliday(targetDate);
+    if (holiday) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: `Cannot set business date to a holiday: ${holiday.holidayName}`, holiday: { id: holiday.id, name: holiday.holidayName, description: holiday.description, date: holiday.holidayDate, recurring: holiday.recurring } });
+    }
+    const dayOfWeek = targetDate.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Cannot set business date to a weekend' });
+    }
+
+    let systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']], transaction });
+    if (!systemDate) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'System date not found. Please initialize first.' });
+    }
+    if (systemDate.isEODProcessing) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Cannot change date while EOD is in progress' });
+    }
+
+    const previousDate = new Date(systemDate.currentBusinessDate);
+    systemDate.currentBusinessDate = targetDate;
+    systemDate.nextBusinessDate = await calculateNextBusinessDate(targetDate);
+
+    const eodHistory = systemDate.eodHistory || [];
+    eodHistory.push({
+      type: 'MANUAL_SET',
+      processedDate: targetDate,
+      previousDate: previousDate,
+      processingStart: new Date(),
+      processingEnd: new Date(),
+      processedBy: { userId: user.id, username: user.user_name, role: user.primary_role || 'USER' },
+      status: 'COMPLETED',
+      transactionsProcessed: 0,
+      reason: reason || 'No reason provided',
+      notes: [`Manual date set from ${previousDate.toISOString().split('T')[0]} to ${targetDate.toISOString().split('T')[0]}`]
+    });
+    systemDate.eodHistory = eodHistory;
+    systemDate.updatedAt = new Date();
+    await systemDate.save({ transaction });
+    await transaction.commit();
+
+    logger.info(`Business date manually set to ${targetDate.toISOString().split('T')[0]} by ${user.user_name || user.username}`, { userId: user.id, targetDate, reason });
+    return res.status(200).json({
+      success: true,
+      message: 'Business date set successfully',
+      data: {
+        current_business_date: systemDate.currentBusinessDate,
+        next_business_date: systemDate.nextBusinessDate,
+        formattedDate: targetDate.toISOString().split('T')[0],
+        serverTime: getServerTime(),
+        setBy: { userId: user.id, username: user.user_name || user.username, role: user.primary_role || 'USER' },
+        timestamp: new Date(),
+        reason: reason
+      }
+    });
+  } catch (error) {
+    await transaction.rollback();
+    logger.error('Set business date error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to set business date', error: error.message });
+  }
+},
 
   async updateBusinessDate(req, res) {
     const transaction = await sequelize.transaction();
@@ -454,16 +471,16 @@ const SystemDateController = {
         await transaction.rollback();
         return res.status(403).json({ success: false, message: 'Insufficient permissions to update business date' });
       }
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']], transaction });
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']], transaction });
       if (!systemDate) {
         await transaction.rollback();
         return res.status(404).json({ success: false, message: 'System date not found' });
       }
-      if (systemDate.is_e_o_d_processing) {
+      if (systemDate.isEODProcessing) {
         await transaction.rollback();
         return res.status(400).json({ success: false, message: 'Cannot change date while EOD is in progress' });
       }
-      const currentDate = new Date(systemDate.current_business_date);
+      const currentDate = new Date(systemDate.currentBusinessDate);
       const previousDate = new Date(currentDate);
       const daysToMove = upperDirection === 'FORWARD' ? parseInt(days) : -parseInt(days);
       let newDate = new Date(currentDate);
@@ -479,9 +496,9 @@ const SystemDateController = {
       } else {
         while (await shouldSkipDate(newDate)) newDate.setDate(newDate.getDate() - 1);
       }
-      systemDate.current_business_date = newDate;
-      systemDate.next_business_date = await calculateNextBusinessDate(newDate);
-      const eodHistory = systemDate.eod_history || [];
+      systemDate.currentBusinessDate = newDate;
+      systemDate.nextBusinessDate = await calculateNextBusinessDate(newDate);
+      const eodHistory = systemDate.eodHistory || [];
       eodHistory.push({
         type: 'MANUAL_ADJUST',
         processedDate: newDate,
@@ -495,8 +512,8 @@ const SystemDateController = {
         reason: reason || 'No reason provided',
         notes: [`Date adjusted ${upperDirection.toLowerCase()} by ${days} days`]
       });
-      systemDate.eod_history = eodHistory;
-      systemDate.updated_at = new Date();
+      systemDate.eodHistory = eodHistory;
+      systemDate.updatedAt = new Date();
       await systemDate.save({ transaction });
       await transaction.commit();
       logger.info(`Business date adjusted ${upperDirection.toLowerCase()} by ${days} days from ${previousDate.toISOString().split('T')[0]} to ${newDate.toISOString().split('T')[0]} by ${user.username}`, { userId: user.id, direction: upperDirection, days, reason });
@@ -506,7 +523,7 @@ const SystemDateController = {
         data: {
           previous_business_date: previousDate,
           current_business_date: newDate,
-          next_business_date: systemDate.next_business_date,
+          next_business_date: systemDate.nextBusinessDate,
           formattedDate: newDate.toISOString().split('T')[0],
           serverTime: getServerTime(),
           adjustment: { direction: upperDirection, days: parseInt(days), from: previousDate.toISOString().split('T')[0], to: newDate.toISOString().split('T')[0] },
@@ -523,7 +540,7 @@ const SystemDateController = {
   },
 
   /**
-   * Process End of Day (EOD) - FIXED: always advance from current date
+   * Process End of Day (EOD) - Advances business date to the next business day
    */
   async processEOD(req, res) {
     let transactionCompleted = false;
@@ -558,19 +575,18 @@ const SystemDateController = {
         }
       }
 
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']], transaction });
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']], transaction });
       if (!systemDate) {
         await transaction.rollback();
         return res.status(404).json({ success: false, message: 'System date not found' });
       }
 
-      if (systemDate.is_e_o_d_processing && !force) {
+      if (systemDate.isEODProcessing && !force) {
         await transaction.rollback();
         return res.status(400).json({ success: false, message: 'EOD is already in progress. Use force=true to override.' });
       }
 
-      // Convert stored dates to Date objects
-      const currentDate = new Date(systemDate.current_business_date);
+      const currentDate = new Date(systemDate.currentBusinessDate);
 
       // Check holiday
       let isTodayHoliday = null;
@@ -590,28 +606,28 @@ const SystemDateController = {
       }
 
       const processingStart = new Date();
-      systemDate.is_e_o_d_processing = true;
-      systemDate.eod_status = 'IN_PROGRESS';
+      systemDate.isEODProcessing = true;
+      systemDate.eodStatus = 'IN_PROGRESS';
       await systemDate.save({ transaction });
 
-      // Simulate EOD tasks (replace with actual logic)
-      const mockTransactionsProcessed = Math.floor(Math.random() * 100) + 1;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
+      // ============================================================
+      // 🔁 THIS IS WHERE THE BUSINESS DATE IS ADVANCED
+      // ============================================================
       const previousDate = currentDate;
-      // ✅ FIX: always compute new current date from current date
       const newCurrentDate = await calculateNextBusinessDate(currentDate);
       const newNextDate = await calculateNextBusinessDate(newCurrentDate);
 
-      systemDate.current_business_date = newCurrentDate;
-      systemDate.next_business_date = newNextDate;
-      systemDate.last_e_o_d_date = previousDate;
-      systemDate.last_e_o_d_processed_by = user.username || 'system';
-      systemDate.is_e_o_d_processing = false;
-      systemDate.eod_status = 'COMPLETED';
-      systemDate.updated_at = new Date();
+      systemDate.currentBusinessDate = newCurrentDate;
+      systemDate.nextBusinessDate = newNextDate;
+      systemDate.lastEODDate = previousDate;
+      systemDate.lastEODProcessedBy = user.username || 'system';
+      systemDate.isEODProcessing = false;
+      systemDate.eodStatus = 'COMPLETED';
+      systemDate.updatedAt = new Date();
+      // ============================================================
 
-      const eodHistory = systemDate.eod_history || [];
+      // Record EOD history
+      const eodHistory = systemDate.eodHistory || [];
       eodHistory.push({
         type: 'EOD_PROCESSING',
         processedDate: previousDate,
@@ -620,24 +636,23 @@ const SystemDateController = {
         processingEnd: new Date(),
         processedBy: { userId: user.id || 0, username: user.username || 'system', role: user.primary_role || 'SYSTEM_ADMIN' },
         status: 'COMPLETED',
-        transactionsProcessed: mockTransactionsProcessed,
+        transactionsProcessed: 0, // Real transaction count can be updated later
         errors: [],
         duration: (new Date() - processingStart) / 1000,
         notes: ['EOD processed successfully'],
         wasHoliday: !!isTodayHoliday
       });
-      systemDate.eod_history = eodHistory;
+      systemDate.eodHistory = eodHistory;
 
       await systemDate.save({ transaction });
       await transaction.commit();
       transactionCompleted = true;
 
-      logger.info(`EOD processed for ${previousDate.toISOString().split('T')[0]} by ${user.username || 'system'}`, {
+      logger.info(`EOD processed for ${previousDate.toISOString().split('T')[0]} → new business date ${newCurrentDate.toISOString().split('T')[0]} by ${user.username || 'system'}`, {
         userId: user.id || 0,
         previousDate,
         newDate: newCurrentDate,
-        duration: (new Date() - processingStart) / 1000,
-        transactions: mockTransactionsProcessed
+        duration: (new Date() - processingStart) / 1000
       });
 
       return res.status(200).json({
@@ -651,7 +666,6 @@ const SystemDateController = {
           serverTime: getServerTime(),
           processedBy: { userId: user.id || 0, username: user.username || 'system', role: user.primary_role || 'SYSTEM_ADMIN' },
           processingDuration: (new Date() - processingStart) / 1000,
-          transactionsProcessed: mockTransactionsProcessed,
           timestamp: new Date()
         }
       });
@@ -664,11 +678,11 @@ const SystemDateController = {
       
       // Update system date to failed status (outside transaction)
       try {
-        const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+        const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']] });
         if (systemDate) {
-          systemDate.is_e_o_d_processing = false;
-          systemDate.eod_status = 'FAILED';
-          systemDate.updated_at = new Date();
+          systemDate.isEODProcessing = false;
+          systemDate.eodStatus = 'FAILED';
+          systemDate.updatedAt = new Date();
           await systemDate.save();
         }
       } catch (updateError) {
@@ -690,8 +704,8 @@ const SystemDateController = {
       if (!date) return res.status(400).json({ success: false, message: 'Date is required' });
       const checkDate = new Date(date);
       if (isNaN(checkDate.getTime())) return res.status(400).json({ success: false, message: 'Invalid date format' });
-      const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
-      const currentBusinessDate = systemDate ? new Date(systemDate.current_business_date) : new Date();
+      const systemDate = await SystemDate.findOne({ order: [['createdAt', 'DESC']] });
+      const currentBusinessDate = systemDate ? new Date(systemDate.currentBusinessDate) : new Date();
       checkDate.setHours(0, 0, 0, 0);
       currentBusinessDate.setHours(0, 0, 0, 0);
       const isValid = checkDate.getTime() === currentBusinessDate.getTime();
