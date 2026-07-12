@@ -1,3 +1,4 @@
+// routes/StandingOrderRoutes.js
 import express from 'express';
 import { 
   createStandingOrder, 
@@ -9,27 +10,48 @@ import {
   approveStandingOrder,
   rejectStandingOrder,
   getAllPendingStandingOrders
-} from '../controllers/StandingOrderController.js';
-import { authenticate} from '../middlewares/auth.js';
+} from '../controllers/StandingOrderController.js';  // ← Fixed: Was importing from TermDepositController
+import { authenticate } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-// Create (no parameters)
-router.post('/create', createStandingOrder);
+// ============================================================
+// PUBLIC ROUTES (No authentication required)
+// ============================================================
 
-// ✅ Protected routes – require authentication
-router.put('/:customerAcctNo/approve',  authenticate, approveStandingOrder); // no authenticate
-router.put('/:customerAcctNo/reject', authenticate, rejectStandingOrder);
+// Create standing order
+router.post('/', createStandingOrder);
 
-// Generic routes with ID parameter (place AFTER specific ones)
-router.put('/:customerAcctNo/:id', updateStandingOrder);
-router.delete('/:customerAcctNo/:id', deleteStandingOrder);
-router.post('/:customerAcctNo/:id/execute', processStandingOrderExecution);
-router.get('/:customerAcctNo/:id/executions', getStandingOrderExecutions);
+// ============================================================
+// PROTECTED ROUTES (Authentication required)
+// ============================================================
 
-router.get('/pending/all', authenticate, getAllPendingStandingOrders);
+// Get all pending standing orders (admin/approval)
+router.get('/pending', authenticate, getAllPendingStandingOrders);
 
-// List all standing orders for a customer (no ID)
-router.get('/:customerAcctNo', getStandingOrders);
+// Approve standing order
+router.patch('/:customerAcctNo/approve', authenticate, approveStandingOrder);
+
+// Reject standing order
+router.patch('/:customerAcctNo/reject', authenticate, rejectStandingOrder);
+
+// ============================================================
+// CUSTOMER ROUTES (Authentication required)
+// ============================================================
+
+// Get all standing orders for a customer
+router.get('/:customerAcctNo', authenticate, getStandingOrders);
+
+// Get standing order by ID with executions
+router.get('/:customerAcctNo/:id/executions', authenticate, getStandingOrderExecutions);
+
+// Update standing order
+router.put('/:customerAcctNo/:id', authenticate, updateStandingOrder);
+
+// Delete standing order
+router.delete('/:customerAcctNo/:id', authenticate, deleteStandingOrder);
+
+// Execute standing order (manual)
+router.post('/:customerAcctNo/:id/execute', authenticate, processStandingOrderExecution);
 
 export default router;

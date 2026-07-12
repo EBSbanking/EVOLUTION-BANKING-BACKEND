@@ -1,4 +1,4 @@
-// models/Drawer.js - Converted to direct initialization pattern
+// models/Drawer.js - Updated with VARCHAR for all ENUM fields
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js'; // adjust path as needed
 
@@ -6,6 +6,9 @@ class Drawer extends Model {
   static associate(models) {
     // Define associations here if needed
     this.hasMany(models.Vault, { foreignKey: 'drawer_ref', as: 'vaults' });
+    this.belongsTo(models.User, { foreignKey: 'USER_ID', targetKey: 'id', as: 'user' });
+    this.belongsTo(models.BusinessUnit, { foreignKey: 'BU_ID', targetKey: 'id', as: 'businessUnit' });
+    this.belongsTo(models.Branch, { foreignKey: 'BRANCH_CODE', targetKey: 'code', as: 'branch' });
   }
 
   // Static method to ensure table exists
@@ -18,6 +21,31 @@ class Drawer extends Model {
       console.error('❌ Error syncing Drawer table:', error.message);
       return false;
     }
+  }
+
+  // Instance method to check if drawer is open
+  isOpen() {
+    return this.WF_STATUS === 'OPEN';
+  }
+
+  // Instance method to check if drawer can process transactions
+  canTransact() {
+    return this.WF_STATUS === 'OPEN' && this.REC_ST === 'A';
+  }
+
+  // Instance method to get available balance
+  getAvailableBalance() {
+    return Math.max(0, parseFloat(this.CURRENT_BALANCE || 0) - parseFloat(this.MIN_BAL || 0));
+  }
+
+  // Instance method to check if balance exceeds limits
+  isOverLimit() {
+    return parseFloat(this.CURRENT_BALANCE || 0) > parseFloat(this.MAX_BAL || 0);
+  }
+
+  // Instance method to check if balance is below minimum
+  isUnderLimit() {
+    return parseFloat(this.CURRENT_BALANCE || 0) < parseFloat(this.MIN_BAL || 0);
   }
 }
 
@@ -42,18 +70,21 @@ Drawer.init(
       type: DataTypes.STRING(100), 
       allowNull: true 
     },
+    // ✅ Changed from ENUM to VARCHAR
     DRAWER_TY_CD: { 
-      type: DataTypes.ENUM('TELLER','VAULT','ATM','BRANCH','CASH_CENTER'), 
+      type: DataTypes.STRING(30), 
       allowNull: false,
       defaultValue: 'TELLER'
     },
+    // ✅ Changed from ENUM to VARCHAR
     VAULT_TYPE: { 
-      type: DataTypes.ENUM('MAIN_VAULT','BRANCH_VAULT','TEMPORARY_VAULT','CASH_VAULT','BULLION_VAULT','HIGH_SECURITY_VAULT'), 
+      type: DataTypes.STRING(30), 
       defaultValue: 'BRANCH_VAULT',
       allowNull: true
     },
+    // ✅ Changed from ENUM to VARCHAR
     SECURITY_LEVEL: { 
-      type: DataTypes.ENUM('LEVEL_1','LEVEL_2','LEVEL_3','LEVEL_4','LEVEL_5'), 
+      type: DataTypes.STRING(20), 
       defaultValue: 'LEVEL_2',
       allowNull: true
     },
@@ -105,24 +136,28 @@ Drawer.init(
       type: DataTypes.DECIMAL(15,2),
       defaultValue: 0.00
     },
+    // ✅ Changed from ENUM to VARCHAR
     DRAWER_CASH_LIMIT_FG: {
-      type: DataTypes.ENUM('Y', 'N'),
+      type: DataTypes.STRING(5),
       defaultValue: 'N'
     },
+    // ✅ Changed from ENUM to VARCHAR
     DRAWER_INSURED_LIMIT_FG: {
-      type: DataTypes.ENUM('Y', 'N'),
+      type: DataTypes.STRING(5),
       defaultValue: 'N'
     },
     DRAWER_LIMIT_EXCEED_TM: {
       type: DataTypes.INTEGER,
       defaultValue: 0
     },
+    // ✅ Changed from ENUM to VARCHAR
     WF_STATUS: { 
-      type: DataTypes.ENUM('OPEN','CLOSED','SUSPENDED','UNDER_MAINTENANCE','COUNT_IN_PROGRESS'), 
+      type: DataTypes.STRING(30), 
       defaultValue: 'CLOSED' 
     },
+    // ✅ Changed from ENUM to VARCHAR
     REC_ST: { 
-      type: DataTypes.ENUM('A','I','C'), 
+      type: DataTypes.STRING(5), 
       defaultValue: 'A' 
     },
     CURRENT_ASSIGNEE_ID: { 
@@ -133,8 +168,9 @@ Drawer.init(
       type: DataTypes.STRING(100),
       allowNull: true
     },
+    // ✅ Changed from ENUM to VARCHAR
     CURRENT_ASSIGNEE_ROLE: { 
-      type: DataTypes.ENUM('TELLER','SUPERVISOR','MANAGER','VAULT_MANAGER','CASHIER'), 
+      type: DataTypes.STRING(30), 
       defaultValue: 'TELLER' 
     },
     VERSION_NO: {
@@ -202,6 +238,32 @@ Drawer.init(
     tableName: 'drawers',
     timestamps: true,
     underscored: false,
+    // Add hooks for validation and logging
+    hooks: {
+      beforeCreate: (drawer) => {
+        // Ensure CREATED_BY is set
+        if (!drawer.CREATED_BY) {
+          drawer.CREATED_BY = drawer.USER_ID || 'SYSTEM';
+        }
+        // Set CREATE_DT if not provided
+        if (!drawer.CREATE_DT) {
+          drawer.CREATE_DT = new Date();
+        }
+        // Ensure version starts at 1
+        if (!drawer.VERSION_NO) {
+          drawer.VERSION_NO = 1;
+        }
+        // Set drawer ID if not provided
+        if (!drawer.DRAWER_ID) {
+          drawer.DRAWER_ID = Math.floor(Math.random() * 10000) + 1000;
+        }
+      },
+      beforeUpdate: (drawer) => {
+        // Increment version on update
+        drawer.VERSION_NO = (drawer.VERSION_NO || 0) + 1;
+        drawer.updatedAt = new Date();
+      }
+    }
   }
 );
 

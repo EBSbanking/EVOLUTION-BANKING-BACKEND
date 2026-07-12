@@ -1,4 +1,4 @@
-// src/controllers/OsController.js - CORRECTED IMPORTS & FIXED updateLoanBalance
+// src/controllers/OsController.js - COMPLETE UPDATED VERSION (FIXED DUPLICATE IMPORTS)
 import { getServerTime, getBusinessDate, setServerTimeOffset } from '../utils/serverTime.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -8,11 +8,11 @@ import { postDailyAccruedInterest } from '../Services/InterestPostingController.
 import { createLedgerEntry } from '../controllers/GLAccountController.js';
 import { accrueDailyInterest } from '../cronJobs/dailyInterestAccrual.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
-import { checkIfLoanIsOverdue } from '../Services/loanOverdueChecker.js';
+import { checkIfLoanIsOverdue as checkOverdue } from '../Services/loanOverdueChecker.js';
 import { createAuditTrail } from '../controllers/AudiTrailController.js';
 import ThriftController from '../controllers/ThriftController.js';
 import { processAutoCollections } from '../Services/autoCollectionService.js';
-import { initializeModels, getLoanAccount, getLoanRepayment } from '../models/index.js';
+import { initializeModels, getLoanAccount, getLoanRepayment, getPenaltyRule, getLoanPenalty, getRepaymentSchedule } from '../models/index.js';
 import { processDueStandingOrders } from '../controllers/StandingOrderController.js';
 import { processPendingGLTransactions } from '../controllers/PendingGLTransactionController.js';
 
@@ -27,7 +27,6 @@ import Customer from '../models/Customer.js';
 // Import DirectDebit model for loan repayment processing
 import DirectDebit from '../models/DirectDebit.js';
 import Deposit from '../models/Deposit.js';
-// ❌ removed: import Transaction from '../models/Transaction.js';   // Not used in this controller
 import LoanEvent from '../models/LoanEvent.js';
 import LoanAccount from '../models/LoanAccount.js';
 
@@ -37,9 +36,11 @@ import { Op } from 'sequelize';
 
 // Utils
 import logger from '../utils/logger.js';
+import moment from 'moment';
 
 // Import SystemDateController
 import SystemDateController from './SystemDateController.js';
+import os from 'os';
 
 // ==================== MODEL INITIALISATION ====================
 let modelsInitialized = false;
@@ -68,6 +69,499 @@ const getLoanAccountModel = () => {
  */
 const getLoanRepaymentModel = () => {
   return getLoanRepayment ? getLoanRepayment() : null;
+};
+
+// ==================== LOAN OVERDUE PROCESSING ====================
+
+/**
+ * Process overdue loans
+ * @param {Object} options - Processing options
+ * @param {Date} options.asOfDate - Date to process as of (default: today)
+ * @param {boolean} options.dryRun - If true, only log what would be done
+ * @param {boolean} options.updateStatus - If true, update loan statuses
+ * @param {boolean} options.accruePenalties - If true, accrue penalties
+ * @param {number} options.batchSize - Number of loans to process per batch
+ * @returns {Promise<Object>} Processing results
+ */
+const processOverdueLoans = async (options = {}) => {
+  const {
+    asOfDate = new Date(),
+    dryRun = false,
+    updateStatus = true,
+    accruePenalties = true,
+    batchSize = 100
+  } = options;
+
+  logger.info(`⏰ Processing overdue loans as of ${moment(asOfDate).format('YYYY-MM-DD')}...`);
+  logger.info(`📋 Options: dryRun=${dryRun}, updateStatus=${updateStatus}, accruePenalties=${accruePenalties}, batchSize=${batchSize}`);
+
+  const results = {
+    totalLoansProcessed: 0,
+    overdueLoansFound: 0,
+    statusUpdated: 0,
+    penaltiesAccrued: 0,
+    totalPenaltyAmount: 0,
+    failedLoans: [],
+    details: [],
+    dryRun
+  };
+
+  try {
+    // Get models using the getter functions
+    const LoanAccountModel = getLoanAccount();
+    const LoanPenaltyModel = getLoanPenalty();
+    const PenaltyRuleModel = getPenaltyRule();
+    const RepaymentScheduleModel = getRepaymentSchedule();
+
+    if (!LoanAccountModel) {
+      throw new Error('LoanAccount model not available');
+    }
+
+    logger.debug('📦 Models loaded successfully', {
+      hasLoanAccount: !!LoanAccountModel,
+      hasLoanPenalty: !!LoanPenaltyModel,
+      hasPenaltyRule: !!PenaltyRuleModel
+    });
+
+    // Find all loans that are potentially overdue
+    // Using .unscoped() to avoid any default scopes that might include penalty_rule_id
+    const loans = await LoanAccountModel.unscoped().findAll({
+      attributes: [
+        'id',
+        'acct_no',
+        'acct_nm',
+        'cust_id',
+        'amount',
+        'disbursed_amount',
+        'outstanding_principal',
+        'accrued_interest',
+        'penalty_amount',
+        'interest_rate',
+        'loan_status',
+        'servicing_status',
+        'application_date',
+        'approval_date',
+        'disbursement_date',
+        'closure_date',
+        'last_repayment_date',
+        'last_repayment_amount',
+        'next_payment_date',
+        'maturity_dt',
+        'total_repaid_amount',
+        'term_cd',
+        'term_value',
+        'customer_account_id',
+        'guarantor_id',
+        'guaranteed_amount',
+        'loan_portfolio_id',
+        'created_by',
+        'loan_cycle',
+        'has_repayment_schedule',
+        'repayment_schedule_id',
+        'created_at',
+        'updated_at'
+      ],
+      where: {
+        loan_status: ['ACTIVE', 'DISBURSED', 'APPROVED', 'OVERDUE', 'DELINQUENT'],
+        outstanding_principal: { [Op.gt]: 0 }
+      },
+      order: [['next_payment_date', 'ASC']],
+      limit: batchSize,
+      logging: (sql) => logger.debug(`📝 SQL: ${sql}`)
+    });
+
+    logger.info(`📊 Found ${loans.length} active loans to check for overdue status`);
+
+    if (loans.length === 0) {
+      logger.info('No active loans found to process');
+      return {
+        ...results,
+        message: 'No active loans found'
+      };
+    }
+
+    results.totalLoansProcessed = loans.length;
+
+    // Process each loan
+    for (const loan of loans) {
+      try {
+        const loanData = {
+          id: loan.id,
+          acct_no: loan.acct_no,
+          cust_id: loan.cust_id,
+          outstanding_principal: parseFloat(loan.outstanding_principal) || 0,
+          next_payment_date: loan.next_payment_date,
+          maturity_dt: loan.maturity_dt,
+          loan_status: loan.loan_status
+        };
+
+        // Check if loan is overdue
+        const isOverdue = checkIfLoanIsOverdue(loan, asOfDate);
+        const daysOverdue = isOverdue ? calculateDaysOverdue(loan, asOfDate) : 0;
+
+        if (isOverdue) {
+          results.overdueLoansFound++;
+          logger.debug(`🔴 Loan ${loan.acct_no} is overdue by ${daysOverdue} days`);
+
+          // Update loan status if enabled
+          if (updateStatus && !dryRun) {
+            const newStatus = daysOverdue > 30 ? 'DELINQUENT' : 'OVERDUE';
+            if (loan.loan_status !== newStatus) {
+              await loan.update({
+                loan_status: newStatus,
+                updated_at: new Date()
+              });
+              results.statusUpdated++;
+              logger.debug(`✅ Loan ${loan.acct_no} status updated to ${newStatus}`);
+            }
+          }
+
+          // Accrue penalties if enabled
+          if (accruePenalties && !dryRun && LoanPenaltyModel && PenaltyRuleModel) {
+            try {
+              // Get penalty rule
+              const penaltyRule = await getActivePenaltyRule(PenaltyRuleModel);
+              if (penaltyRule) {
+                const penaltyResult = await accruePenaltyForLoan(
+                  loan,
+                  penaltyRule,
+                  asOfDate,
+                  LoanPenaltyModel,
+                  null // transaction
+                );
+
+                if (penaltyResult.accrued) {
+                  results.penaltiesAccrued++;
+                  results.totalPenaltyAmount += penaltyResult.amount || 0;
+                  results.details.push({
+                    loanId: loan.id,
+                    accountNo: loan.acct_no,
+                    daysOverdue: daysOverdue,
+                    penaltyAmount: penaltyResult.amount || 0,
+                    action: penaltyResult.action || 'CREATED'
+                  });
+                  logger.debug(`💰 Penalty accrued for loan ${loan.acct_no}: ₦${penaltyResult.amount}`);
+                }
+              } else {
+                logger.warn(`⚠️ No penalty rule found for loan ${loan.acct_no}`);
+              }
+            } catch (penaltyError) {
+              logger.error(`❌ Failed to accrue penalty for loan ${loan.acct_no}:`, penaltyError.message);
+              results.failedLoans.push({
+                loanId: loan.id,
+                accountNo: loan.acct_no,
+                error: penaltyError.message,
+                stage: 'penalty_accrual'
+              });
+            }
+          }
+
+          // Log for dry run
+          if (dryRun) {
+            logger.info(`🔍 DRY RUN: Loan ${loan.acct_no} is overdue by ${daysOverdue} days, would update status and accrue penalty`);
+          }
+        } else {
+          // Loan is not overdue - ensure status is correct
+          if (updateStatus && !dryRun && ['OVERDUE', 'DELINQUENT'].includes(loan.loan_status)) {
+            // Check if loan should be moved back to active
+            const shouldBeActive = await checkIfLoanShouldBeActive(loan, RepaymentScheduleModel);
+            if (shouldBeActive) {
+              await loan.update({
+                loan_status: 'ACTIVE',
+                updated_at: new Date()
+              });
+              logger.debug(`✅ Loan ${loan.acct_no} status reverted to ACTIVE`);
+            }
+          }
+        }
+
+      } catch (loanError) {
+        logger.error(`❌ Failed to process loan ${loan.acct_no}:`, loanError.message);
+        results.failedLoans.push({
+          loanId: loan.id,
+          accountNo: loan.acct_no,
+          error: loanError.message,
+          stage: 'processing'
+        });
+      }
+    }
+
+    // Summary log
+    logger.info(`✅ Overdue processing completed:`, {
+      totalLoansProcessed: results.totalLoansProcessed,
+      overdueLoansFound: results.overdueLoansFound,
+      statusUpdated: results.statusUpdated,
+      penaltiesAccrued: results.penaltiesAccrued,
+      totalPenaltyAmount: results.totalPenaltyAmount,
+      failedLoans: results.failedLoans.length,
+      dryRun: results.dryRun
+    });
+
+    return results;
+
+  } catch (error) {
+    logger.error('❌ processOverdueLoans failed:', {
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
+  }
+};
+
+/**
+ * Check if a loan is overdue
+ */
+const checkIfLoanIsOverdue = (loan, asOfDate) => {
+  if (!loan.next_payment_date && !loan.maturity_dt) {
+    return false;
+  }
+
+  const dueDate = loan.next_payment_date || loan.maturity_dt;
+  const dueMoment = moment(dueDate);
+  const asOfMoment = moment(asOfDate);
+
+  return dueMoment.isBefore(asOfMoment);
+};
+
+/**
+ * Calculate days overdue
+ */
+const calculateDaysOverdue = (loan, asOfDate) => {
+  if (!loan.next_payment_date && !loan.maturity_dt) {
+    return 0;
+  }
+
+  const dueDate = loan.next_payment_date || loan.maturity_dt;
+  const dueMoment = moment(dueDate);
+  const asOfMoment = moment(asOfDate);
+
+  if (dueMoment.isAfter(asOfMoment)) {
+    return 0;
+  }
+
+  return asOfMoment.diff(dueMoment, 'days');
+};
+
+/**
+ * Get active penalty rule
+ */
+const getActivePenaltyRule = async (PenaltyRule) => {
+  try {
+    if (!PenaltyRule) {
+      logger.warn('PenaltyRule model not available');
+      return null;
+    }
+
+    // Try to get global/default rule
+    let rule = await PenaltyRule.findOne({
+      where: {
+        [Op.or]: [
+          { is_global: true, is_active: true },
+          { is_default: true, is_active: true }
+        ]
+      }
+    });
+
+    if (rule) return rule;
+
+    // Try to get any active rule (simple model)
+    rule = await PenaltyRule.findOne({
+      where: { is_active: true }
+    });
+
+    if (rule) return rule;
+
+    // Try to get any active rule (complex model)
+    const now = new Date();
+    rule = await PenaltyRule.findOne({
+      where: {
+        status: 'ACTIVE',
+        effective_from: { [Op.lte]: now },
+        [Op.or]: [
+          { effective_to: null },
+          { effective_to: { [Op.gte]: now } }
+        ]
+      }
+    });
+
+    if (rule) return rule;
+
+    // Fallback: get any rule
+    rule = await PenaltyRule.findOne();
+    if (rule) {
+      logger.warn('Using fallback penalty rule (may not be active)');
+      return rule;
+    }
+
+    logger.warn('No penalty rule found in database');
+    return null;
+  } catch (error) {
+    logger.error('Error getting penalty rule:', error.message);
+    return null;
+  }
+};
+
+/**
+ * Accrue penalty for a loan
+ */
+const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty, transaction) => {
+  try {
+    if (!LoanPenalty) {
+      logger.warn('LoanPenalty model not available');
+      return { accrued: false, reason: 'LoanPenalty model not available' };
+    }
+
+    const overdueDays = calculateDaysOverdue(loan, accrualDate);
+    
+    if (overdueDays <= 0) {
+      return { accrued: false, reason: 'Not overdue' };
+    }
+
+    // Calculate daily penalty amount
+    const outstandingPrincipal = parseFloat(loan.outstanding_principal || 0);
+    let dailyPenalty = 0;
+
+    // Check if using simple or complex model
+    const isSimpleModel = penaltyRule.calculation_method && 
+      ['PERCENTAGE_OF_PRINCIPAL', 'FLAT_RATE', 'PERCENTAGE_OF_AMOUNT_DUE', 'SLIDING_SCALE']
+      .includes(penaltyRule.calculation_method);
+
+    if (isSimpleModel) {
+      // Simple model calculation
+      switch (penaltyRule.calculation_method) {
+        case 'PERCENTAGE_OF_PRINCIPAL':
+          const dailyRate = (penaltyRule.rate || 1) / 100;
+          dailyPenalty = outstandingPrincipal * (dailyRate / 365);
+          break;
+        case 'FLAT_RATE':
+          dailyPenalty = parseFloat(penaltyRule.flat_amount || 0);
+          break;
+        case 'PERCENTAGE_OF_AMOUNT_DUE':
+          const amountDue = parseFloat(loan.outstanding_principal || 0);
+          dailyPenalty = amountDue * ((penaltyRule.rate || 1) / 100);
+          break;
+        case 'SLIDING_SCALE':
+          const rates = penaltyRule.sliding_rates || [];
+          let applicableRate = 1;
+          for (const tier of rates) {
+            if (overdueDays >= tier.days) {
+              applicableRate = tier.rate;
+            }
+          }
+          dailyPenalty = outstandingPrincipal * (applicableRate / 100 / 365);
+          break;
+        default:
+          dailyPenalty = 0;
+      }
+    } else {
+      // Complex model calculation
+      if (penaltyRule.rate_value) {
+        const dailyRate = parseFloat(penaltyRule.rate_value) / 100;
+        dailyPenalty = outstandingPrincipal * (dailyRate / 365);
+      } else if (penaltyRule.fixed_amount) {
+        dailyPenalty = parseFloat(penaltyRule.fixed_amount);
+      }
+    }
+
+    dailyPenalty = parseFloat(dailyPenalty.toFixed(2));
+
+    if (dailyPenalty <= 0) {
+      return { accrued: false, reason: 'Penalty amount is zero' };
+    }
+
+    // Check if penalty already exists for today
+    const existingPenalty = await LoanPenalty.findOne({
+      where: {
+        loan_id: loan.id,
+        accrual_date: {
+          [Op.gte]: moment(accrualDate).startOf('day').toDate(),
+          [Op.lte]: moment(accrualDate).endOf('day').toDate()
+        },
+        status: 'PENDING'
+      },
+      transaction
+    });
+
+    if (existingPenalty) {
+      await existingPenalty.update({
+        amount: dailyPenalty,
+        days_overdue: overdueDays,
+        updated_at: new Date()
+      }, { transaction });
+      return {
+        accrued: true,
+        penalty: existingPenalty,
+        amount: dailyPenalty,
+        action: 'UPDATED'
+      };
+    }
+
+    // Create new penalty
+    const penalty = await LoanPenalty.create({
+      loan_id: loan.id,
+      loan_account_no: loan.acct_no,
+      customer_id: loan.cust_id,
+      penalty_type: 'LATE_PAYMENT',
+      amount: dailyPenalty,
+      days_overdue: overdueDays,
+      calculation_basis: penaltyRule?.calculation_method || penaltyRule?.rule_type || 'DAILY_RATE',
+      accrual_date: accrualDate,
+      due_date: moment(accrualDate).add(7, 'days').toDate(),
+      status: 'PENDING',
+      description: `Daily late payment penalty - Day ${overdueDays} of overdue (Rule: ${penaltyRule?.rule_name || penaltyRule?.name || penaltyRule?.id})`,
+      penalty_rule_id: penaltyRule?.id || null,
+      created_at: new Date(),
+      updated_at: new Date()
+    }, { transaction });
+
+    return {
+      accrued: true,
+      penalty: penalty,
+      amount: dailyPenalty,
+      action: 'CREATED'
+    };
+
+  } catch (error) {
+    logger.error(`Error accruing penalty for loan ${loan.acct_no}:`, error.message);
+    return { accrued: false, reason: error.message };
+  }
+};
+
+/**
+ * Check if a loan should be moved back to ACTIVE status
+ */
+const checkIfLoanShouldBeActive = async (loan, RepaymentSchedule) => {
+  try {
+    // Check if loan has any pending repayments
+    if (RepaymentSchedule) {
+      const pendingSchedules = await RepaymentSchedule.count({
+        where: {
+          loan_id: loan.id,
+          status: 'PENDING',
+          due_date: { [Op.gte]: new Date() }
+        }
+      });
+      
+      if (pendingSchedules > 0) {
+        return true;
+      }
+    }
+
+    // Check if loan is fully paid
+    if (parseFloat(loan.outstanding_principal || 0) <= 0) {
+      return false;
+    }
+
+    // Check if loan is not overdue
+    if (loan.next_payment_date) {
+      return moment(loan.next_payment_date).isAfter(moment());
+    }
+
+    return false;
+  } catch (error) {
+    logger.error('Error checking if loan should be active:', error.message);
+    return false;
+  }
 };
 
 // ==================== DIRECT DEBIT LOAN REPAYMENT SERVICE ====================
@@ -300,7 +794,7 @@ async function processLoanRepaymentTransaction(paymentData, transaction) {
   try {
     // 1. Create debit transaction from savings account
     const debitTransaction = await createLedgerEntry(null, null, {
-      GL_ACCT_NO: paymentData.fromAccount, // This should be the GL account for the deposit
+      GL_ACCT_NO: paymentData.fromAccount,
       AMOUNT: paymentData.amount,
       TRANSACTION_TYPE: 'DR',
       CREATED_BY: 'SYSTEM',
@@ -310,7 +804,7 @@ async function processLoanRepaymentTransaction(paymentData, transaction) {
 
     // 2. Create credit transaction to loan account
     await createLedgerEntry(null, null, {
-      GL_ACCT_NO: paymentData.toAccount, // This should be the GL account for the loan
+      GL_ACCT_NO: paymentData.toAccount,
       AMOUNT: paymentData.amount,
       TRANSACTION_TYPE: 'CR',
       CREATED_BY: 'SYSTEM',
@@ -540,14 +1034,6 @@ const processDormantAccounts = async () => {
   };
 };
 
-/**
- * Process overdue loans
- */
-const processOverdueLoans = async () => {
-  logger.info('⏰ Processing overdue loans...');
-  return await processLoanOverdueAndStatus();
-};
-
 // ==================== HELPER FUNCTIONS ====================
 
 /**
@@ -573,109 +1059,48 @@ export const processLoanOverdueAndStatus = async () => {
   try {
     logger.info('🔄 Processing loan overdue status...');
     
-    // DEBUG: Add detailed logging
-    console.log('=== DEBUG processLoanOverdueAndStatus ===');
-    console.log('getLoanAccount type:', typeof getLoanAccount);
-    console.log('getLoanAccount is function?:', typeof getLoanAccount === 'function');
-    
-    // Get the models properly inside the function
-    const LoanAccount = getLoanAccount ? getLoanAccount() : null;
-    
-    console.log('LoanAccount result:', LoanAccount);
-    console.log('LoanAccount.findAll exists?:', LoanAccount?.findAll ? 'YES' : 'NO');
-    console.log('LoanAccount is class?:', typeof LoanAccount === 'function' ? 'YES' : 'NO');
-    
-    if (!LoanAccount || typeof LoanAccount.findAll !== 'function') {
-      const errorMsg = 'LoanAccount model not available or findAll not a function';
-      logger.error(errorMsg, {
-        loanAccountExists: !!LoanAccount,
-        loanAccountType: typeof LoanAccount,
-        findAllExists: LoanAccount?.findAll ? 'YES' : 'NO',
-        getLoanAccountType: typeof getLoanAccount,
-        getLoanAccountIsFunction: typeof getLoanAccount === 'function',
-        getLoanAccountValue: getLoanAccount
-      });
-      
-      // Return empty results but don't throw error
-      return {
-        success: false,
-        error: errorMsg,
-        results: {
-          overdueLoans: { accounts: [], count: 0 },
-          statusUpdates: { count: 0 }
-        }
-      };
-    }
-    
-    console.log('DEBUG: Calling LoanAccount.findAll...');
-    const loans = await LoanAccount.findAll({
-      where: {
-        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED'] }
-      },
-      raw: true
+    // Use the new processOverdueLoans function
+    const result = await processOverdueLoans({
+      asOfDate: new Date(),
+      dryRun: false,
+      updateStatus: true,
+      accruePenalties: false, // Don't accrue penalties here, let the penalty service handle it
+      batchSize: 500
     });
-
-    console.log('DEBUG: Found', loans.length, 'loans');
     
-    let updatedCount = 0;
+    logger.info('✅ Loan overdue status processing completed', {
+      totalLoansProcessed: result.totalLoansProcessed,
+      overdueLoansFound: result.overdueLoansFound,
+      statusUpdated: result.statusUpdated
+    });
     
-    for (const loanData of loans) {
-      try {
-        if (!loanData || !loanData.MATURITY_DT || !loanData.ACCT_NO || !loanData.id) {
-          logger.warn(`Skipping invalid loan data:`, { 
-            hasMaturityDate: !!loanData?.MATURITY_DT,
-            hasAccountNo: !!loanData?.ACCT_NO,
-            hasId: !!loanData?.id 
-          });
-          continue;
-        }
-
-        const maturityDate = new Date(loanData.MATURITY_DT);
-        const currentDate = new Date();
-        
-        if (isNaN(maturityDate.getTime())) {
-          logger.warn(`Invalid maturity date for loan ${loanData.ACCT_NO}: ${loanData.MATURITY_DT}`);
-          continue;
-        }
-
-        if (maturityDate < currentDate && loanData.LOAN_STATUS === 'ACTIVE') {
-          await LoanAccount.update(
-            { 
-              LOAN_STATUS: 'OVERDUE', 
-              last_updated: new Date() 
-            },
-            { 
-              where: { id: loanData.id } 
-            }
-          );
-          updatedCount++;
-          logger.info(`✅ Updated loan ${loanData.ACCT_NO} to OVERDUE`);
-        } else {
-          logger.debug(`Loan ${loanData.ACCT_NO} status unchanged: ${loanData.LOAN_STATUS}`, {
-            isOverdue: maturityDate < currentDate,
-            currentStatus: loanData.LOAN_STATUS
-          });
-        }
-      } catch (loanError) {
-        logger.error(`❌ Error processing loan ${loanData?.ACCT_NO || 'unknown'}:`, {
-          error: loanError.message,
-          loanId: loanData?.id
-        });
-        continue;
-      }
-    }
-    
-    logger.info('✅ Loan status updates completed', { updatedCount });
     return {
       success: true,
       results: {
-        overdueLoans: { accounts: [], count: updatedCount },
-        statusUpdates: { count: updatedCount }
+        overdueLoans: { 
+          accounts: result.details.map(d => d.accountNo || d.loanId), 
+          count: result.overdueLoansFound 
+        },
+        statusUpdates: { 
+          count: result.statusUpdated 
+        },
+        details: result.details,
+        failedLoans: result.failedLoans
       }
     };
   } catch (error) {
-    logger.error('❌ Failed to process loan overdue status', { error: error.message });
-    throw error;
+    logger.error('❌ Failed to process loan overdue status', { 
+      error: error.message,
+      stack: error.stack 
+    });
+    return {
+      success: false,
+      error: error.message,
+      results: {
+        overdueLoans: { accounts: [], count: 0 },
+        statusUpdates: { count: 0 }
+      }
+    };
   }
 };
 
@@ -810,7 +1235,6 @@ export const processEODGLTransactions = async (transaction = null) => {
   let transactionCompleted = false;
 
   try {
-    // Using Sequelize transaction instead of MongoDB session
     const t = transaction || await sequelize.transaction();
 
     const pendingTransactions = await GLTransactionQueue.findAll({ 
@@ -1066,374 +1490,6 @@ export const processEODGLTransactions = async (transaction = null) => {
   }
 };
 
-/**
- * Sync loan repayment statuses with repayment system
- */
-export const syncLoanRepaymentStatuses = async () => {
-  try {
-    logger.info('🔄 Syncing loan repayment statuses with repayment system...');
-    
-    const activeLoans = await LoanAccount.findAll({
-      where: {
-        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'APPROVED', 'OVERDUE', 'DELINQUENT'] },
-        OUTSTANDING_PRINCIPAL: { [Op.gt]: 0 }
-      }
-    });
-    
-    const updates = [];
-    const currentDate = new Date();
-    
-    for (const loan of activeLoans) {
-      try {
-        // Get repayment status using the same logic as getAllLoans
-        const repaymentHistory = await getRepaymentHistoryService(loan.ACCT_NO);
-        const repaymentStatus = await calculateRepaymentStatus(loan, currentDate, repaymentHistory);
-        
-        // Check if status needs update
-        let newStatus = loan.LOAN_STATUS;
-        
-        if (repaymentStatus.isDelinquent && loan.LOAN_STATUS !== 'DELINQUENT') {
-          newStatus = 'DELINQUENT';
-        } else if (repaymentStatus.isOverdue && loan.LOAN_STATUS !== 'OVERDUE' && loan.LOAN_STATUS !== 'DELINQUENT') {
-          newStatus = 'OVERDUE';
-        } else if (repaymentStatus.status === 'PAID' && loan.LOAN_STATUS !== 'CLOSED') {
-          newStatus = 'CLOSED';
-        }
-        
-        // Update if changed
-        if (newStatus !== loan.LOAN_STATUS) {
-          await loan.update({
-            LOAN_STATUS: newStatus,
-            last_updated: new Date()
-          });
-          
-          updates.push({
-            accountNo: loan.ACCT_NO,
-            oldStatus: loan.LOAN_STATUS,
-            newStatus,
-            reason: 'Repayment status sync'
-          });
-        }
-        
-      } catch (loanError) {
-        logger.error(`Error syncing loan ${loan.ACCT_NO}:`, loanError.message);
-      }
-    }
-    
-    logger.info('✅ Loan repayment status sync completed', {
-      totalLoans: activeLoans.length,
-      updates: updates.length,
-      updates
-    });
-    
-    return {
-      success: true,
-      totalLoans: activeLoans.length,
-      updates: updates.length,
-      updatedAccounts: updates
-    };
-    
-  } catch (error) {
-    logger.error('❌ Loan repayment status sync failed:', error.message);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-};
-
-/**
- * Manually trigger auto-collection
- */
-export const triggerManualAutoCollection = async (req, res) => {
-  try {
-    const { 
-      accountNumbers = [], 
-      date, 
-      force = false,
-      collectionMethod,
-      limit = 100 
-    } = req.body;
-    
-    const collectionDate = date ? new Date(date) : new Date();
-    const batchId = `MANUAL_${collectionDate.toISOString().split('T')[0]}_${Date.now()}`;
-    
-    logger.info('🔧 Manual auto-collection triggered', {
-      batchId,
-      collectionDate,
-      accountCount: accountNumbers.length,
-      force,
-      collectionMethod
-    });
-    
-    let loansToProcess = [];
-    
-    if (accountNumbers.length > 0) {
-      // Process specific accounts
-      loansToProcess = await LoanAccount.findAll({
-        where: {
-          ACCT_NO: { [Op.in]: accountNumbers }
-        },
-        include: [{
-          model: CustomerAccount,
-          as: 'customerAccount',
-          required: true
-        }],
-        limit: Math.min(limit, 100) // COLLECTION_CONFIG.maxDailyCollections replaced with 100
-      });
-    } else {
-      // Process all due loans (with limit)
-      const result = await identifyLoansForCollection(collectionDate);
-      loansToProcess = result.individualLoans.slice(0, limit);
-    }
-    
-    // Process the loans (you need to implement identifyLoansForCollection and processIndividualLoans if not already)
-    // For brevity, we'll assume they exist; otherwise replace with your logic.
-    const individualResults = { processed: 0, failed: 0, totalCollected: 0 };
-    
-    // Create audit trail
-    await createAuditTrail({
-      eventId: batchId,
-      userId: req.user?.id || 'SYSTEM',
-      eventType: 'MANUAL_AUTO_COLLECTION',
-      action: 'Manual Auto Collection Triggered',
-      oldValue: null,
-      newValue: {
-        accountCount: accountNumbers.length,
-        processed: individualResults.processed,
-        failed: individualResults.failed,
-        totalCollected: individualResults.totalCollected
-      },
-      ipAddress: req.ip || '127.0.0.1'
-    });
-    
-    return res.status(200).json({
-      success: true,
-      message: 'Manual auto-collection completed',
-      batchId,
-      results: {
-        individual: individualResults,
-        summary: {
-          totalProcessed: individualResults.processed,
-          totalFailed: individualResults.failed,
-          totalCollected: individualResults.totalCollected,
-          collectionRate: individualResults.totalDue > 0 ? 
-            (individualResults.totalCollected / individualResults.totalDue) * 100 : 0
-        }
-      },
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    logger.error('Manual auto-collection failed:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Manual auto-collection failed',
-      error: error.message
-    });
-  }
-};
-
-/**
- * Process reconciliation
- */
-export const processReconciliation = async (transaction = null) => {
-  let transactionCompleted = false;
-
-  try {
-    const t = transaction || await sequelize.transaction();
-
-    const bankStatementData = await fetchBankStatementData();
-    if (!bankStatementData.length) {
-      logger.info('No bank statement data to process for reconciliation');
-      await t.commit();
-      return { 
-        success: true, 
-        message: 'No bank statement data to process', 
-        processed: [], 
-        failed: [], 
-        skipped: [], 
-        updated: 0 
-      };
-    }
-
-    const reconciliationOps = [];
-    const processedRecords = [];
-    const failedRecords = [];
-    const skippedRecords = [];
-
-    for (const statement of bankStatementData) {
-      const reconciliation = await Reconciliation.findOne({
-        where: {
-          TRANSACTION_ID: statement.transactionId,
-          GL_ACCT_NO: statement.accountNo,
-        },
-        transaction: t
-      });
-
-      if (!reconciliation) {
-        logger.warn(`No reconciliation record found for transaction ${statement.transactionId}`, {
-          accountNo: statement.accountNo,
-        });
-        skippedRecords.push({
-          transactionId: statement.transactionId,
-          status: 'SKIPPED',
-          reason: 'No matching reconciliation record',
-        });
-        continue;
-      }
-
-      if (statement.amount === reconciliation.AMOUNT && statement.currency === reconciliation.CURRENCY_CODE) {
-        await reconciliation.update(
-          {
-            STATUS: 'Reconciled',
-            RECONCILED_AT: new Date(),
-            EXTERNAL_REF: statement.externalRef || reconciliation.EXTERNAL_REF,
-          },
-          { transaction: t }
-        );
-        
-        processedRecords.push({
-          transactionId: statement.transactionId,
-          status: 'RECONCILED',
-          reconciledAt: new Date(),
-        });
-      } else {
-        failedRecords.push({
-          transactionId: statement.transactionId,
-          status: 'FAILED',
-          reason: 'Amount or currency mismatch',
-        });
-      }
-    }
-
-    transactionCompleted = true;
-    await t.commit();
-    
-    logger.info('Reconciliation processed', {
-      processedCount: processedRecords.length,
-      failedCount: failedRecords.length,
-      skippedCount: skippedRecords.length,
-    });
-
-    systemStatus.services.reconciliation = {
-      ...systemStatus.services.reconciliation,
-      healthy: failedRecords.length === 0,
-      lastError: failedRecords.length > 0 ? failedRecords[0].reason : null,
-      lastRun: new Date(),
-      processed: processedRecords,
-      failed: failedRecords,
-      skipped: skippedRecords,
-      updated: processedRecords.length,
-    };
-    
-    return {
-      success: true,
-      message: 'Reconciliation processed successfully',
-      processed: processedRecords,
-      failed: failedRecords,
-      skipped: skippedRecords,
-      updated: processedRecords.length,
-    };
-  } catch (error) {
-    if (!transactionCompleted) {
-      await t.rollback();
-    }
-    logger.error('Error in processReconciliation:', { error: error.message, stack: error.stack });
-    systemStatus.services.reconciliation = {
-      ...systemStatus.services.reconciliation,
-      healthy: false,
-      lastError: error.message,
-      lastRun: new Date(),
-      processed: [],
-      failed: [{ reason: error.message }],
-      skipped: [],
-      updated: 0,
-    };
-    return {
-      success: false,
-      message: `Reconciliation processing failed: ${error.message}`,
-      processed: [],
-      failed: [{ reason: error.message }],
-      skipped: [],
-      updated: 0,
-    };
-  }
-};
-
-// ==================== BUSINESS DATE FUNCTIONS ====================
-
-/**
- * Calculate next business date (OS version)
- * Renamed to avoid conflict with imported function
- */
-export const calculateNextBusinessDateOS = async (currentDate) => {
-    try {
-        return await calculateNextBusinessDate(currentDate);
-    } catch (error) {
-        logger.error('Error calculating next business date (OS):', error);
-        const fallback = new Date(currentDate);
-        fallback.setDate(fallback.getDate() + 1);
-        fallback.setHours(0, 0, 0, 0);
-        return fallback;
-    }
-};
-
-export const setNextBusinessDateOS = async () => {
-    try {
-        const currentDate = systemStatus.currentBusinessDate || new Date();
-        const nextBusinessDate = await calculateNextBusinessDate(currentDate);
-        systemStatus.nextBusinessDate = nextBusinessDate;
-        systemStatus.lastUpdated = new Date();
-        logger.info('Next business date set', { 
-            currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
-            nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0]
-        });
-        return nextBusinessDate;
-    } catch (error) {
-        logger.error('Error setting next business date', { error: error.message });
-        const fallbackDate = new Date();
-        fallbackDate.setDate(fallbackDate.getDate() + 1);
-        systemStatus.nextBusinessDate = fallbackDate;
-        return fallbackDate;
-    }
-};
-
-export const calculateNextBusinessDateWithHolidaysOS = async (currentDate) => {
-    try {
-        return await calculateNextBusinessDate(currentDate);
-    } catch (error) {
-        logger.error('Error calculating next business date with holidays:', error);
-        const fallback = new Date(currentDate);
-        fallback.setDate(fallback.getDate() + 1);
-        fallback.setHours(0, 0, 0, 0);
-        return fallback;
-    }
-};
-
-/**
- * Safe version that returns a fallback date if calculation fails
- */
-export const calculateNextBusinessDateSafe = async (currentDate) => {
-  try {
-    return await calculateNextBusinessDate(currentDate);
-  } catch (error) {
-    logger.warn('Main holiday method failed, using fallback weekend-only calculation', { 
-      error: error.message 
-    });
-    
-    let nextDate = new Date(currentDate);
-    nextDate.setDate(nextDate.getDate() + 1);
-    
-    while (nextDate.getDay() === 0 || nextDate.getDay() === 6) {
-      nextDate.setDate(nextDate.getDate() + 1);
-    }
-    
-    nextDate.setHours(0, 0, 0, 0);
-    return nextDate;
-  }
-};
-
 // ==================== SERVICE EXECUTOR ====================
 
 /**
@@ -1461,7 +1517,7 @@ const executeService = async (serviceName, serviceFn) => {
     // Handle different service types
     if (serviceName === 'loanProcessing' || serviceName === 'overdueLoans') {
       serviceDetails.processed = serviceResult.results?.overdueLoans?.accounts || [];
-      serviceDetails.failed = [];
+      serviceDetails.failed = serviceResult.failedLoans || [];
       serviceDetails.skipped = [];
       serviceDetails.overdueCount = serviceResult.results?.overdueLoans?.count || 0;
       serviceDetails.statusUpdateCount = serviceResult.results?.statusUpdates?.count || 0;
@@ -1611,60 +1667,35 @@ const executeService = async (serviceName, serviceFn) => {
       lastError: errorDetails,
       lastRun: new Date(),
       executionTime,
+      processed: [],
+      failed: [],
+      skipped: [],
+      overdueCount: 0,
+      statusUpdateCount: 0
     };
 
-    // Set appropriate defaults for each service type
-    if (serviceName === 'loanProcessing' || serviceName === 'overdueLoans') {
+    if (serviceName === 'glTransactions') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
-      serviceDetails.overdueCount = 0;
-      serviceDetails.statusUpdateCount = 0;
-    } 
-    else if (serviceName === 'loanRepaymentSync') {
-      serviceDetails.processed = [];
-      serviceDetails.failed = [];
-      serviceDetails.skipped = [];
-      serviceDetails.updateCount = 0;
-      serviceDetails.updatedCount = 0;
     }
-    else if (serviceName === 'loanStatusUpdates') {
+    if (serviceName === 'reconciliation') {
       serviceDetails.processed = [];
       serviceDetails.failed = [];
       serviceDetails.skipped = [];
-      serviceDetails.updateCount = 0;
+      serviceDetails.updated = 0;
     }
-    else if (serviceName === 'glTransactions' || serviceName === 'reconciliation') {
-      serviceDetails.processed = [];
-      serviceDetails.failed = [];
-      serviceDetails.skipped = [];
-      if (serviceName === 'reconciliation') {
-        serviceDetails.updated = 0;
-      }
-    }
-    else if (serviceName === 'processAutoCollections') {
+    if (serviceName === 'processAutoCollections') {
       serviceDetails.processed = 0;
       serviceDetails.failed = 0;
-      serviceDetails.skipped = [];
       serviceDetails.individualLoans = { processed: 0, failed: 0, totalDue: 0 };
-      serviceDetails.groupLoans = { processed: 0, failed: 0, totalDue: 0, membersProcessed: 0, membersFailed: 0 };
+      serviceDetails.groupLoans = { processed: 0, failed: 0, membersProcessed: 0, membersFailed: 0 };
     }
-    else if (serviceName === 'dormantAccounts') {
-      serviceDetails.processed = [];
-      serviceDetails.failed = [];
-      serviceDetails.skipped = [];
+    if (serviceName === 'dormantAccounts') {
       serviceDetails.updateCount = 0;
     }
-    else if (serviceName === 'pendingRepayments') {
-      serviceDetails.processed = [];
-      serviceDetails.failed = [];
-      serviceDetails.skipped = [];
+    if (serviceName === 'pendingRepayments') {
       serviceDetails.processedCount = 0;
-    }
-    else if (serviceName === 'pendingGLTransactions') {
-      serviceDetails.processed = 0;
-      serviceDetails.failed = 0;
-      serviceDetails.details = [];
     }
 
     systemStatus.services[serviceName] = serviceDetails;
@@ -1700,160 +1731,283 @@ const executeService = async (serviceName, serviceFn) => {
  * Trigger End of Day process
  */
 export const triggerEndOfDayProcess = async (req, res) => {
-    try {
-        const { skipServices = [], runServices = [], userId = 'system' } = req.body;
-        
-        logger.info('Starting End of Day process', {
-            userId,
-            skipServices,
-            runServices
-        });
+  try {
+    const { skipServices = [], runServices = [], userId = 'system' } = req.body;
+    
+    logger.info('Starting End of Day process', {
+      userId,
+      skipServices,
+      runServices
+    });
 
-        const validServices = [
-            'loanProcessing', 'overdueLoans', 'processAutoCollections', 
-            'loanStatusUpdates', 'interestPosting', 'glTransactions',
-            'termDepositInterest', 'reconciliation', 'pendingRepayments', 
-            'dormantAccounts', 'standingOrders', 'pendingGLTransactions'
-        ];
+    const validServices = [
+      'loanProcessing', 'overdueLoans', 'processAutoCollections', 
+      'loanStatusUpdates', 'interestPosting', 'glTransactions',
+      'termDepositInterest', 'reconciliation', 'pendingRepayments', 
+      'dormantAccounts', 'standingOrders', 'pendingGLTransactions'
+    ];
 
-        const invalidServices = skipServices.filter(service => !validServices.includes(service));
-        if (invalidServices.length > 0) {
-            logger.warn('Invalid service names provided in skipServices', { invalidServices });
-        }
-
-        const servicesToRun = runServices.length > 0 
-            ? runServices.filter(service => validServices.includes(service))
-            : validServices.filter(service => !skipServices.includes(service));
-
-        logger.info('Skipping EOD services', { skippedServices: skipServices });
-
-        const serviceFunctions = {
-            loanProcessing: processOverdueLoans,
-            overdueLoans: processOverdueLoans,
-            processAutoCollections: processAutoCollections,
-            loanStatusUpdates: updateLoanStatuses,
-            interestPosting: postInterest,
-            glTransactions: processGLTransactions,
-            termDepositInterest: processTermDepositInterest,
-            reconciliation: performReconciliation,
-            pendingRepayments: processPendingRepayments,
-            dormantAccounts: processDormantAccounts,
-            standingOrders: processDueStandingOrders,
-            pendingGLTransactions: processPendingGLTransactions
-        };
-
-        const serviceResults = {};
-        const currentBusinessDate = systemStatus.currentBusinessDate || new Date();
-
-        for (const service of servicesToRun) {
-            if (serviceFunctions[service]) {
-                logger.info(`Starting ${service} service`, { businessDate: currentBusinessDate });
-                serviceResults[service] = await executeService(service, serviceFunctions[service]);
-            } else {
-                logger.warn(`Service function not found for: ${service}`);
-                serviceResults[service] = { success: false, error: 'Service function not implemented' };
-            }
-        }
-
-        // Use the SystemDateController's processEOD method
-        let validUserId = userId;
-        
-        try {
-            if (userId === 'system') {
-                // You'll need to import your User model if needed
-                // const User = await import('../models/User.js');
-                // const adminUser = await User.findOne({ 
-                //     where: {
-                //         primary_role: { [sequelize.Op.in]: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
-                //         status: 'ACTIVE'
-                //     }
-                // });
-                // if (adminUser) {
-                //     validUserId = adminUser.id.toString();
-                // }
-                logger.warn('User model import commented out, using provided userId');
-            }
-        } catch (userError) {
-            logger.warn('Failed to find valid user for EOD, using provided userId:', {
-                userId,
-                error: userError.message
-            });
-        }
-
-        const mockRes = {
-            statusCode: 200,
-            data: null,
-            status: function(code) { 
-                this.statusCode = code; 
-                return this; 
-            }, 
-            json: function(data) { 
-                this.data = data; 
-                return data; 
-            }
-        };
-
-        const mockReq = { body: { userId: validUserId, force: false } };
-        
-        logger.info('Calling SystemDateController.processEOD with userId:', { userId: validUserId });
-        
-        await SystemDateController.processEOD(mockReq, mockRes);
-
-        // Update local system status
-        systemStatus.lastEODRun = new Date();
-        
-        if (mockRes.data && mockRes.data.success) {
-            systemStatus.nextBusinessDate = mockRes.data.data?.nextBusinessDate || systemStatus.nextBusinessDate;
-            systemStatus.currentBusinessDate = mockRes.data.data?.currentBusinessDate || systemStatus.currentBusinessDate;
-            systemStatus.eodStatus = 'COMPLETED';
-            
-            logger.info('EOD processing completed successfully via SystemDateController', {
-                nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
-                currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0]
-            });
-        } else {
-            systemStatus.eodStatus = 'FAILED';
-            logger.warn('EOD processing failed via SystemDateController', {
-                error: mockRes.data?.message || 'Unknown error'
-            });
-        }
-
-        logger.info('End of Day processing completed successfully', {
-            servicesExecuted: servicesToRun,
-            nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
-            totalServices: servicesToRun.length
-        });
-
-        return res.status(200).json({
-            success: true,
-            message: 'End of Day processing completed successfully',
-            results: serviceResults,
-            eodResult: mockRes.data,
-            nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
-            currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
-            servicesExecuted: servicesToRun,
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        logger.error('EOD failed', { 
-            error: error.message, 
-            stack: error.stack,
-            skippedServices: req.body.skipServices || [],
-            userId: req.body.userId || 'system'
-        });
-        
-        // Update system status to failed
-        systemStatus.eodStatus = 'FAILED';
-        systemStatus.lastEODRun = new Date();
-        
-        return res.status(500).json({
-            success: false,
-            message: 'End of Day processing failed',
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
+    const invalidServices = skipServices.filter(service => !validServices.includes(service));
+    if (invalidServices.length > 0) {
+      logger.warn('Invalid service names provided in skipServices', { invalidServices });
     }
+
+    const servicesToRun = runServices.length > 0 
+      ? runServices.filter(service => validServices.includes(service))
+      : validServices.filter(service => !skipServices.includes(service));
+
+    logger.info('Skipping EOD services', { skippedServices: skipServices });
+
+    const serviceFunctions = {
+      loanProcessing: processOverdueLoans,
+      overdueLoans: processOverdueLoans,
+      processAutoCollections: processAutoCollections,
+      loanStatusUpdates: updateLoanStatuses,
+      interestPosting: postInterest,
+      glTransactions: processGLTransactions,
+      termDepositInterest: processTermDepositInterest,
+      reconciliation: performReconciliation,
+      pendingRepayments: processPendingRepayments,
+      dormantAccounts: processDormantAccounts,
+      standingOrders: processDueStandingOrders,
+      pendingGLTransactions: processPendingGLTransactions
+    };
+
+    const serviceResults = {};
+    const currentBusinessDate = systemStatus.currentBusinessDate || new Date();
+
+    for (const service of servicesToRun) {
+      if (serviceFunctions[service]) {
+        logger.info(`Starting ${service} service`, { businessDate: currentBusinessDate });
+        serviceResults[service] = await executeService(service, serviceFunctions[service]);
+      } else {
+        logger.warn(`Service function not found for: ${service}`);
+        serviceResults[service] = { success: false, error: 'Service function not implemented' };
+      }
+    }
+
+    // Use the SystemDateController's processEOD method
+    let validUserId = userId;
+    
+    try {
+      if (userId === 'system') {
+        // You'll need to import your User model if needed
+        // const User = await import('../models/User.js');
+        // const adminUser = await User.findOne({ 
+        //     where: {
+        //         primary_role: { [sequelize.Op.in]: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
+        //         status: 'ACTIVE'
+        //     }
+        // });
+        // if (adminUser) {
+        //     validUserId = adminUser.id.toString();
+        // }
+        logger.warn('User model import commented out, using provided userId');
+      }
+    } catch (userError) {
+      logger.warn('Failed to find valid user for EOD, using provided userId:', {
+        userId,
+        error: userError.message
+      });
+    }
+
+    const mockRes = {
+      statusCode: 200,
+      data: null,
+      status: function(code) { 
+        this.statusCode = code; 
+        return this; 
+      }, 
+      json: function(data) { 
+        this.data = data; 
+        return data; 
+      }
+    };
+
+    const mockReq = { body: { userId: validUserId, force: false } };
+    
+    logger.info('Calling SystemDateController.processEOD with userId:', { userId: validUserId });
+    
+    await SystemDateController.processEOD(mockReq, mockRes);
+
+    // Update local system status
+    systemStatus.lastEODRun = new Date();
+    
+    if (mockRes.data && mockRes.data.success) {
+      systemStatus.nextBusinessDate = mockRes.data.data?.nextBusinessDate || systemStatus.nextBusinessDate;
+      systemStatus.currentBusinessDate = mockRes.data.data?.currentBusinessDate || systemStatus.currentBusinessDate;
+      systemStatus.eodStatus = 'COMPLETED';
+      
+      logger.info('EOD processing completed successfully via SystemDateController', {
+        nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+        currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0]
+      });
+    } else {
+      systemStatus.eodStatus = 'FAILED';
+      logger.warn('EOD processing failed via SystemDateController', {
+        error: mockRes.data?.message || 'Unknown error'
+      });
+    }
+
+    logger.info('End of Day processing completed successfully', {
+      servicesExecuted: servicesToRun,
+      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+      totalServices: servicesToRun.length
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'End of Day processing completed successfully',
+      results: serviceResults,
+      eodResult: mockRes.data,
+      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+      currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
+      servicesExecuted: servicesToRun,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('EOD failed', { 
+      error: error.message, 
+      stack: error.stack,
+      skippedServices: req.body.skipServices || [],
+      userId: req.body.userId || 'system'
+    });
+    
+    // Update system status to failed
+    systemStatus.eodStatus = 'FAILED';
+    systemStatus.lastEODRun = new Date();
+    
+    return res.status(500).json({
+      success: false,
+      message: 'End of Day processing failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+// ==================== EOD STATUS ====================
+
+/**
+ * Get EOD status with detailed service information
+ */
+export const getEODStatus = async (req, res) => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+
+    const status = {
+      success: true,
+      data: {
+        system: {
+          state: systemStatus.state || 'idle',
+          lastRun: systemStatus.lastRun || null,
+          nextRun: systemStatus.nextRun || null,
+          currentBusinessDate: systemStatus.currentBusinessDate || systemDate?.currentBusinessDate || null,
+          nextBusinessDate: systemStatus.nextBusinessDate || systemDate?.nextBusinessDate || null,
+          isEODProcessing: systemStatus.isEODProcessing || false,
+          eodStatus: systemStatus.eodStatus || systemDate?.eodStatus || 'IDLE',
+          serverTime: getServerTime(),
+          uptime: process.uptime(),
+        },
+        database: {
+          systemDateExists: !!systemDate,
+          currentBusinessDate: systemDate?.currentBusinessDate,
+          nextBusinessDate: systemDate?.nextBusinessDate,
+          eodStatus: systemDate?.eodStatus,
+          lastEODProcessedBy: systemDate?.lastEODProcessedBy,
+          isEODProcessing: systemDate?.isEODProcessing,
+          lastEODRun: systemDate?.lastEODRun
+        },
+        services: Object.keys(systemStatus.services).map((serviceName) => ({
+          name: serviceName,
+          healthy: systemStatus.services[serviceName].healthy,
+          lastRun: systemStatus.services[serviceName].lastRun,
+          lastError: systemStatus.services[serviceName].lastError,
+          executionTime: systemStatus.services[serviceName].executionTime,
+          // Service-specific details
+          ...(serviceName === 'glTransactions' && {
+            processed: systemStatus.services.glTransactions.processed?.length || 0,
+            failed: systemStatus.services.glTransactions.failed?.length || 0,
+            skipped: systemStatus.services.glTransactions.skipped?.length || 0,
+            details: {
+              processed: systemStatus.services.glTransactions.processed || [],
+              failed: systemStatus.services.glTransactions.failed || [],
+              skipped: systemStatus.services.glTransactions.skipped || []
+            }
+          }),
+          ...(serviceName === 'reconciliation' && {
+            updated: systemStatus.services.reconciliation.updated || 0,
+            processed: systemStatus.services.reconciliation.processed?.length || 0,
+            failed: systemStatus.services.reconciliation.failed?.length || 0,
+            skipped: systemStatus.services.reconciliation.skipped?.length || 0,
+            details: {
+              processed: systemStatus.services.reconciliation.processed || [],
+              failed: systemStatus.services.reconciliation.failed || [],
+              skipped: systemStatus.services.reconciliation.skipped || []
+            }
+          }),
+          ...(serviceName === 'loanProcessing' && {
+            overdueCount: systemStatus.services.loanProcessing.overdueCount || 0,
+            statusUpdateCount: systemStatus.services.loanProcessing.statusUpdateCount || 0,
+            details: {
+              processed: systemStatus.services.loanProcessing.processed || [],
+              failed: systemStatus.services.loanProcessing.failed || []
+            }
+          }),
+          ...(serviceName === 'processAutoCollections' && {
+            processed: systemStatus.services.processAutoCollections.processed || 0,
+            failed: systemStatus.services.processAutoCollections.failed || 0,
+            details: {
+              individualLoans: systemStatus.services.processAutoCollections.individualLoans || {},
+              groupLoans: systemStatus.services.processAutoCollections.groupLoans || {},
+              collections: systemStatus.services.processAutoCollections.collections || []
+            }
+          }),
+          ...(serviceName === 'dormantAccounts' && {
+            updateCount: systemStatus.services.dormantAccounts.updateCount || 0,
+            details: {
+              processed: systemStatus.services.dormantAccounts.processed || [],
+              failed: systemStatus.services.dormantAccounts.failed || []
+            }
+          }),
+          ...(serviceName === 'standingOrders' && {
+            successful: systemStatus.services.standingOrders.successful || 0,
+            failed: systemStatus.services.standingOrders.failed || 0,
+            details: {
+              processed: systemStatus.services.standingOrders.processed || [],
+              errors: systemStatus.services.standingOrders.errors || []
+            }
+          }),
+          ...(serviceName === 'pendingGLTransactions' && {
+            processed: systemStatus.services.pendingGLTransactions.processed || 0,
+            failed: systemStatus.services.pendingGLTransactions.failed || 0,
+            details: systemStatus.services.pendingGLTransactions.details || []
+          })
+        })),
+        metrics: {
+          serverTime: getServerTime(),
+          memoryUsage: process.memoryUsage(),
+          loadAverage: os.loadavg(),
+          cpuUsage: process.cpuUsage()
+        }
+      }
+    };
+
+    return res.status(200).json(status);
+  } catch (error) {
+    logger.error('Failed to get EOD status:', {
+      error: error.message,
+      stack: error.stack
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get EOD status',
+      error: error.message
+    });
+  }
 };
 
 // ==================== OTHER CONTROLLER FUNCTIONS ====================
@@ -1893,6 +2047,35 @@ export const getCurrentBusinessDateOS = async (req, res) => {
       details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       timestamp: systemStatus.serverTime.toISOString(),
     });
+  }
+};
+
+// ==================== SET NEXT BUSINESS DATE ====================
+
+/**
+ * Set the next business date
+ * @param {Date} currentDate - Current date to calculate from
+ * @returns {Promise<Date>} Next business date
+ */
+const setNextBusinessDateOS = async (currentDate = null) => {
+  try {
+    const dateToUse = currentDate || systemStatus.currentBusinessDate || new Date();
+    const nextBusinessDate = await calculateNextBusinessDate(dateToUse);
+    systemStatus.nextBusinessDate = nextBusinessDate;
+    systemStatus.lastUpdated = new Date();
+    
+    logger.info('Next business date set', {
+      currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
+      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0]
+    });
+    
+    return nextBusinessDate;
+  } catch (error) {
+    logger.error('Error setting next business date', { error: error.message });
+    const fallbackDate = new Date();
+    fallbackDate.setDate(fallbackDate.getDate() + 1);
+    systemStatus.nextBusinessDate = fallbackDate;
+    return fallbackDate;
   }
 };
 
@@ -2194,7 +2377,7 @@ export const initializeSystemDatesOS = async (req, res) => {
         } else {
           const defaultStartDate = new Date('2025-01-01');
           const currentBusinessDate = defaultStartDate;
-          const nextBusinessDate = await calculateNextBusinessDateSafe(currentBusinessDate);
+          const nextBusinessDate = await calculateNextBusinessDate(currentBusinessDate);
 
           const newSystemDate = await SystemDate.create({
             currentBusinessDate,
@@ -2339,7 +2522,7 @@ export const debugHolidaySystem = async (req, res) => {
         })),
         currentYearHolidays: yearHolidays.length,
         holidayCount: await Holiday.count(),
-        nextBusinessDate: await calculateNextBusinessDateWithHolidaysOS(today)
+        nextBusinessDate: await calculateNextBusinessDate(today)
       }
     });
   } catch (error) {
@@ -2352,28 +2535,37 @@ export const debugHolidaySystem = async (req, res) => {
   }
 };
 
-// ==================== ADD NAMED EXPORTS ====================
+// ==================== EXPORTS ====================
 
-/**
- * Additional named exports for backward compatibility
- */
+// Export the main functions
 export {
+  processOverdueLoans,
+  checkIfLoanIsOverdue,
+  calculateDaysOverdue,
+  getActivePenaltyRule,
+  accruePenaltyForLoan,
+  checkIfLoanShouldBeActive,
+  processLoanRepaymentDirectDebits,
   initializeSystemDatesOS as initializeSystemDates,
-  processLoanRepaymentDirectDebits
+  getCurrentBusinessDateOS as getCurrentBusinessDate,
+  setBusinessDateManuallyOS as setBusinessDateManually,
+  debugDateIssuesOS as debugDateIssues,
+  getStatusOS as getStatus,
+  getSystemStatusOS as getSystemStatus,
+ 
+ 
 };
 
 // ==================== DEFAULT EXPORT ====================
 
-/**
- * Default export with all controller functions
- */
 export default {
   triggerEndOfDayProcess,
   getCurrentBusinessDate: getCurrentBusinessDateOS,
   getServiceErrors,
+  getEODStatus,
   getDormantAccountsCount,
   getStatus: getStatusOS,
-  processReconciliation,
+  processReconciliation: performReconciliation,
   initializeSystemDates: initializeSystemDatesOS,
   debugDates: debugDateIssuesOS,
   debugHolidaySystem,
@@ -2384,9 +2576,9 @@ export default {
   updateBusinessDate: SystemDateController.updateBusinessDate,
   processEndOfDay: SystemDateController.processEOD,
   setBusinessDateManually: setBusinessDateManuallyOS,
-  calculateNextBusinessDate: calculateNextBusinessDateOS,
-  calculateNextBusinessDateSafe: calculateNextBusinessDateSafe,
-  calculateNextBusinessDateWithHolidays: calculateNextBusinessDateWithHolidaysOS,
+  calculateNextBusinessDate: calculateNextBusinessDate,
+  calculateNextBusinessDateWithHolidays: calculateNextBusinessDate,
   setNextBusinessDate: setNextBusinessDateOS,
-  processLoanRepaymentDirectDebits
+  processLoanRepaymentDirectDebits,
+  processOverdueLoans
 };

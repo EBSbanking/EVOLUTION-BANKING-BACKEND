@@ -1,4 +1,4 @@
-﻿// models/Transaction.js - Updated with STRING(50) for IDs
+﻿// models/Transaction.js - Updated with drawer reference fields
 import { DataTypes, Op, QueryTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -66,6 +66,8 @@ class Transaction extends Model {
       if (filters.transaction_type) whereClause.transaction_type = filters.transaction_type;
       if (filters.status) whereClause.status = filters.status;
       if (filters.bu_id) whereClause.bu_id = filters.bu_id;
+      if (filters.drawer_no) whereClause.drawer_no = filters.drawer_no;
+      if (filters.drawer_id) whereClause.drawer_id = filters.drawer_id;
       
       const transactions = await Transaction.findAll({
         where: whereClause,
@@ -74,6 +76,90 @@ class Transaction extends Model {
       return transactions;
     } catch (error) {
       console.error('Error getting transactions by date range:', error.message);
+      throw error;
+    }
+  }
+
+  static async getTransactionsByDrawer(drawerNo, drawerId = null, filters = {}) {
+    try {
+      const whereClause = {
+        [Op.or]: [
+          { drawer_no: drawerNo },
+          { drawer_id: drawerId }
+        ]
+      };
+      
+      if (filters.start_date && filters.end_date) {
+        whereClause.transaction_date = {
+          [Op.between]: [filters.start_date, filters.end_date]
+        };
+      }
+      if (filters.transaction_type) whereClause.transaction_type = filters.transaction_type;
+      if (filters.status) whereClause.status = filters.status;
+      
+      const transactions = await Transaction.findAll({
+        where: whereClause,
+        order: [['transaction_date', 'DESC']]
+      });
+      return transactions;
+    } catch (error) {
+      console.error('Error getting transactions by drawer:', error.message);
+      throw error;
+    }
+  }
+
+  static async getDrawerTransactionSummary(drawerNo, drawerId = null, period = 'today') {
+    try {
+      let dateFilter = {};
+      const now = new Date();
+      
+      if (period === 'today') {
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        dateFilter = {
+          [Op.between]: [today, tomorrow]
+        };
+      } else if (period === 'week') {
+        const weekAgo = new Date(now);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        dateFilter = {
+          [Op.between]: [weekAgo, now]
+        };
+      } else if (period === 'month') {
+        const monthAgo = new Date(now);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        dateFilter = {
+          [Op.between]: [monthAgo, now]
+        };
+      }
+      
+      const whereClause = {
+        [Op.or]: [
+          { drawer_no: drawerNo },
+          { drawer_id: drawerId }
+        ],
+        status: 'COMPLETED'
+      };
+      
+      if (Object.keys(dateFilter).length > 0) {
+        whereClause.transaction_date = dateFilter;
+      }
+      
+      const transactions = await Transaction.findAll({
+        where: whereClause,
+        attributes: [
+          [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions'],
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('SUM', sequelize.literal(`CASE WHEN transaction_direction = 'CREDIT' THEN amount ELSE 0 END`)), 'totalCredits'],
+          [sequelize.fn('SUM', sequelize.literal(`CASE WHEN transaction_direction = 'DEBIT' THEN amount ELSE 0 END`)), 'totalDebits']
+        ]
+      });
+      
+      return transactions[0] || { totalTransactions: 0, totalAmount: 0, totalCredits: 0, totalDebits: 0 };
+    } catch (error) {
+      console.error('Error getting drawer transaction summary:', error.message);
       throw error;
     }
   }
@@ -189,6 +275,10 @@ class Transaction extends Model {
         whereClause += whereClause ? ' AND bu_id = ?' : 'WHERE bu_id = ?';
         replacements.push(filters.bu_id);
       }
+      if (filters.drawer_no) {
+        whereClause += whereClause ? ' AND drawer_no = ?' : 'WHERE drawer_no = ?';
+        replacements.push(filters.drawer_no);
+      }
       
       const [stats] = await sequelize.query(`
         SELECT 
@@ -220,6 +310,8 @@ class Transaction extends Model {
           id INT AUTO_INCREMENT PRIMARY KEY,
           account_number VARCHAR(50) NOT NULL,
           account_id VARCHAR(50) NOT NULL,
+          drawer_no VARCHAR(50) NULL,
+          drawer_id INT NULL,
           bu_id INT NOT NULL,
           customer_id VARCHAR(50) NOT NULL,
           account_name VARCHAR(255) NOT NULL,
@@ -257,6 +349,8 @@ class Transaction extends Model {
           updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_account_number (account_number),
           INDEX idx_account_id (account_id),
+          INDEX idx_drawer_no (drawer_no),
+          INDEX idx_drawer_id (drawer_id),
           INDEX idx_transaction_date (transaction_date),
           INDEX idx_transaction_type (transaction_type),
           INDEX idx_customer_id (customer_id),
@@ -320,6 +414,16 @@ Transaction.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       field: 'account_id'
+    },
+    DRAWER_NO: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'drawer_no'
+    },
+    DRAWER_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'drawer_id'
     },
     BU_ID: {
       type: DataTypes.INTEGER,
@@ -467,6 +571,8 @@ Transaction.init(
     indexes: [
       { fields: ['account_number'] },
       { fields: ['account_id'] },
+      { fields: ['drawer_no'] },
+      { fields: ['drawer_id'] },
       { fields: ['transaction_date'] },
       { fields: ['transaction_type'] },
       { fields: ['customer_id'] },
@@ -486,7 +592,9 @@ Transaction.beforeCreate(async (transaction, options) => {
     TRANSACTION_IDENTIFIER: transaction.TRANSACTION_IDENTIFIER,
     EVENT_ID: transaction.EVENT_ID, 
     TRAN_JOURNAL_ID: transaction.TRAN_JOURNAL_ID,
-    REFERENCE: transaction.REFERENCE
+    REFERENCE: transaction.REFERENCE,
+    DRAWER_NO: transaction.DRAWER_NO,
+    DRAWER_ID: transaction.DRAWER_ID
   });
 
   const hasProvidedIds = transaction.TRANSACTION_IDENTIFIER && transaction.EVENT_ID && transaction.TRAN_JOURNAL_ID && transaction.REFERENCE;

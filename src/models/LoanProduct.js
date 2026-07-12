@@ -97,7 +97,18 @@ const LoanProduct = sequelize.define('LoanProduct', {
   created_by: { type: DataTypes.STRING(100), allowNull: false, defaultValue: 'SYSTEM' },
   user_id: { type: DataTypes.STRING(100), allowNull: false, defaultValue: 'SYSTEM' },
   last_modified_by: { type: DataTypes.STRING(100), defaultValue: '' },
-  metadata: { type: DataTypes.JSON, defaultValue: { interestRateIntegration: { usesLoanProudIntId: false, syncStatus: 'PENDING', lastSyncAt: null }, productClassification: { systemDefined: false, customType: false, tags: [] } } }
+  metadata: { type: DataTypes.JSON, defaultValue: { 
+    interestRateIntegration: { 
+      usesLoanProudIntId: false, 
+      syncStatus: 'PENDING', 
+      lastSyncAt: null 
+    }, 
+    productClassification: { 
+      systemDefined: false, 
+      customType: false, 
+      tags: [] 
+    } 
+  } }
 }, {
   tableName: 'loan_products',
   timestamps: true,
@@ -105,62 +116,91 @@ const LoanProduct = sequelize.define('LoanProduct', {
   updatedAt: 'updated_at',
   
   hooks: {
-    beforeCreate: async (product) => { await product.validateAndSyncInterestRate(); },
+    beforeCreate: async (product) => { 
+      await product.validateAndSyncInterestRate(); 
+    },
     beforeUpdate: async (product) => {
       if (product.changed('loan_proud_int_id')) await product.validateAndSyncInterestRate();
       if (product.changed('loan_interest_rate_id')) await product.syncLoanProudIntId();
     },
-   beforeSave: async (product) => {
-  if (!product.prod_id && product.product_code) {
-    const numericCode = parseInt(product.product_code.replace(/\D/g, ''), 10);
-    product.prod_id = numericCode || Math.floor(Date.now() / 1000) % 1000000;
-  }
-  if (!product.term_cd) {
-    const map = { DAYS: 'D', WEEKS: 'W', MONTHS: 'M', QUARTERS: 'Q', YEARS: 'Y' };
-    product.term_cd = map[product.loan_term_type] || 'M';
-  }
-  if (!product.payment_frequency) {
-    const freqMap = { DAYS: 'DAILY', WEEKS: 'WEEKLY', MONTHS: 'MONTHLY', QUARTERS: 'MONTHLY', YEARS: 'MONTHLY' };
-    product.payment_frequency = freqMap[product.loan_term_type] || 'MONTHLY';
-  }
-  if (product.is_global_product) {
-    product.bu_id = '*';
-    product.visibility = 'GLOBAL';
-  }
-  if (product.product_type) {
-    product.product_type = product.product_type.trim().toUpperCase().replace(/\s+/g, '_');
-  }
+    beforeSave: async (product) => {
+      if (!product.prod_id && product.product_code) {
+        const numericCode = parseInt(product.product_code.replace(/\D/g, ''), 10);
+        product.prod_id = numericCode || Math.floor(Date.now() / 1000) % 1000000;
+      }
+      if (!product.term_cd) {
+        const map = { DAYS: 'D', WEEKS: 'W', MONTHS: 'M', QUARTERS: 'Q', YEARS: 'Y' };
+        product.term_cd = map[product.loan_term_type] || 'M';
+      }
+      if (!product.payment_frequency) {
+        const freqMap = { DAYS: 'DAILY', WEEKS: 'WEEKLY', MONTHS: 'MONTHLY', QUARTERS: 'MONTHLY', YEARS: 'MONTHLY' };
+        product.payment_frequency = freqMap[product.loan_term_type] || 'MONTHLY';
+      }
+      if (product.is_global_product) {
+        product.bu_id = '*';
+        product.visibility = 'GLOBAL';
+      }
+      if (product.product_type) {
+        product.product_type = product.product_type.trim().toUpperCase().replace(/\s+/g, '_');
+      }
 
-  // ========== FIX: Ensure metadata structure exists ==========
-  if (!product.metadata || typeof product.metadata !== 'object') {
-    product.metadata = {
-      interestRateIntegration: { usesLoanProudIntId: false, syncStatus: 'PENDING', lastSyncAt: null },
-      productClassification: { systemDefined: false, customType: false, tags: [] }
-    };
-  } else {
-    // Ensure productClassification exists
-    if (!product.metadata.productClassification) {
-      product.metadata.productClassification = { systemDefined: false, customType: false, tags: [] };
-    }
-    // Ensure nested objects exist (optional but safe)
-    if (!product.metadata.interestRateIntegration) {
-      product.metadata.interestRateIntegration = { usesLoanProudIntId: false, syncStatus: 'PENDING', lastSyncAt: null };
-    }
-  }
+      // ========== FIX: Ensure metadata structure exists ==========
+      if (!product.metadata || typeof product.metadata !== 'object') {
+        product.metadata = {
+          interestRateIntegration: { 
+            usesLoanProudIntId: false, 
+            syncStatus: 'PENDING', 
+            lastSyncAt: null 
+          },
+          productClassification: { 
+            systemDefined: false, 
+            customType: false, 
+            tags: [] 
+          }
+        };
+      } else {
+        // Ensure productClassification exists
+        if (!product.metadata.productClassification) {
+          product.metadata.productClassification = { 
+            systemDefined: false, 
+            customType: false, 
+            tags: [] 
+          };
+        }
+        // Ensure nested objects exist (optional but safe)
+        if (!product.metadata.interestRateIntegration) {
+          product.metadata.interestRateIntegration = { 
+            usesLoanProudIntId: false, 
+            syncStatus: 'PENDING', 
+            lastSyncAt: null 
+          };
+        }
+      }
 
-  const predefinedTypes = [
-    'BUSINESS_TERM_LOAN', 'INDIVIDUAL_LOAN', 'CONSUMER_LOAN', 'MORTGAGE',
-    'AUTO_LOAN', 'PERSONAL_LOAN', 'EDUCATION_LOAN', 'CREDIT_CARD',
-    'LINE_OF_CREDIT', 'SME_LOAN', 'GENERAL_LOAN', 'GROUP_LOAN',
-    'MICRO_LOAN', 'AGRI_LOAN', 'HOUSING_LOAN', 'VEHICLE_LOAN'
-  ];
-  product.metadata.productClassification.systemDefined = predefinedTypes.includes(product.product_type);
-  product.metadata.productClassification.customType = !predefinedTypes.includes(product.product_type);
-}
+      const predefinedTypes = [
+        'BUSINESS_TERM_LOAN', 'INDIVIDUAL_LOAN', 'CONSUMER_LOAN', 'MORTGAGE',
+        'AUTO_LOAN', 'PERSONAL_LOAN', 'EDUCATION_LOAN', 'CREDIT_CARD',
+        'LINE_OF_CREDIT', 'SME_LOAN', 'GENERAL_LOAN', 'GROUP_LOAN',
+        'MICRO_LOAN', 'AGRI_LOAN', 'HOUSING_LOAN', 'VEHICLE_LOAN'
+      ];
+      product.metadata.productClassification.systemDefined = predefinedTypes.includes(product.product_type);
+      product.metadata.productClassification.customType = !predefinedTypes.includes(product.product_type);
+    }
   },
   getterMethods: {
-    termRange() { return `${this.min_loan_term_value} - ${this.max_loan_term_value} ${this.loan_term_type}`; },
-    accessibleBUs() { return this.is_global_product ? ['*'] : (this.bu_id ? this.bu_id.split(',').filter(bu => bu.trim()) : []); },
+    termRange() { 
+      return `${this.min_loan_term_value} - ${this.max_loan_term_value} ${this.loan_term_type}`; 
+    },
+    // ✅ FIXED: accessibleBUs handles both array and string
+    accessibleBUs() { 
+      if (this.is_global_product) return ['*'];
+      if (!this.bu_id) return [];
+      // bu_id is already an array from the custom getter, so use it directly
+      if (Array.isArray(this.bu_id)) return this.bu_id.filter(bu => bu && bu.trim());
+      // Fallback: if it's a string, split it
+      if (typeof this.bu_id === 'string') return this.bu_id.split(',').filter(bu => bu.trim());
+      return [];
+    },
     interestRateConfig() {
       return {
         hasLoanProudIntId: !!this.loan_proud_int_id,
@@ -198,7 +238,10 @@ LoanProduct.prototype.validateAndSyncInterestRate = async function() {
     this.metadata.interestRateIntegration.syncStatus = 'SYNCED';
     this.metadata.interestRateIntegration.lastSyncAt = new Date();
     this.metadata.interestRateIntegration.matchedInterestRate = {
-      id: interestRate.id, name: interestRate.name, code: interestRate.code, loanProudIntId: interestRate.LOAN_PROUD_INT_ID
+      id: interestRate.id, 
+      name: interestRate.name, 
+      code: interestRate.code, 
+      loanProudIntId: interestRate.LOAN_PROUD_INT_ID
     };
   }
   return true;
@@ -216,7 +259,10 @@ LoanProduct.prototype.syncLoanProudIntId = async function() {
       this.metadata.interestRateIntegration.syncStatus = 'SYNCED';
       this.metadata.interestRateIntegration.lastSyncAt = new Date();
       this.metadata.interestRateIntegration.matchedInterestRate = {
-        id: interestRate.id, name: interestRate.name, code: interestRate.code, loanProudIntId: interestRate.LOAN_PROUD_INT_ID
+        id: interestRate.id, 
+        name: interestRate.name, 
+        code: interestRate.code, 
+        loanProudIntId: interestRate.LOAN_PROUD_INT_ID
       };
     }
   }
@@ -226,13 +272,23 @@ LoanProduct.prototype.syncLoanProudIntId = async function() {
 LoanProduct.prototype.getInterestRate = async function(options = {}) {
   const { forceRefresh = false } = options;
   const { LoanInterestRate } = sequelize.models;
-  if (this.loan_proud_int_id && (!this.loan_interest_rate_id || forceRefresh)) await this.validateAndSyncInterestRate();
+  if (this.loan_proud_int_id && (!this.loan_interest_rate_id || forceRefresh)) {
+    await this.validateAndSyncInterestRate();
+  }
   const interestRate = await LoanInterestRate.findByPk(this.loan_interest_rate_id);
   if (!interestRate) throw new Error(`LoanInterestRate with ID ${this.loan_interest_rate_id} not found`);
   return interestRate;
 };
 
-LoanProduct.prototype.calculateLoanRepayment = async function({ principal, termValue, termType = null, useDefaultRate = true, customRate = null, generateSchedule = true, startDate = null }) {
+LoanProduct.prototype.calculateLoanRepayment = async function({ 
+  principal, 
+  termValue, 
+  termType = null, 
+  useDefaultRate = true, 
+  customRate = null, 
+  generateSchedule = true, 
+  startDate = null 
+}) {
   const interestRate = await this.getInterestRate();
   const actualTermType = termType || this.loan_term_type;
   const termMonths = convertTermToMonths(termValue, actualTermType);
@@ -242,25 +298,48 @@ LoanProduct.prototype.calculateLoanRepayment = async function({ principal, termV
     ratePerMonth = parseFloat(customRate);
     const minRate = parseFloat(interestRate.MIN_RATE_PER_MONTH || '0');
     const maxRate = parseFloat(interestRate.MAX_RATE_PER_MONTH || '100');
-    if (ratePerMonth < minRate || ratePerMonth > maxRate) throw new Error(`Custom rate ${ratePerMonth}% outside range (${minRate}% - ${maxRate}%)`);
-  } else ratePerMonth = parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0');
+    if (ratePerMonth < minRate || ratePerMonth > maxRate) {
+      throw new Error(`Custom rate ${ratePerMonth}% outside range (${minRate}% - ${maxRate}%)`);
+    }
+  } else {
+    ratePerMonth = parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0');
+  }
   const calculationMethod = this.calculation_method_override || interestRate.CALCULATION_METHOD || 'FLAT';
   const interestType = this.interest_type_override || interestRate.INTEREST_TYPE || 'SIMPLE';
   const isAmortized = this.repayment_type !== 'BULLET';
-  const calculation = LoanProductInterestCalculator.calculateFlatRate(principal, ratePerMonth, termMonths, interestType, isAmortized, calculationMethod, this.payment_frequency);
+  const calculation = LoanProductInterestCalculator.calculateFlatRate(
+    principal, ratePerMonth, termMonths, interestType, isAmortized, calculationMethod, this.payment_frequency
+  );
   let paymentSchedule = [];
   if (generateSchedule) {
-    paymentSchedule = LoanProductInterestCalculator.generateAmortizationSchedule(principal, calculation.monthlyPayment, ratePerMonth / 100, termMonths, interestType, isAmortized, startDate);
+    paymentSchedule = LoanProductInterestCalculator.generateAmortizationSchedule(
+      principal, calculation.monthlyPayment, ratePerMonth / 100, termMonths, interestType, isAmortized, startDate
+    );
   }
   return {
-    ...calculation, paymentSchedule,
+    ...calculation, 
+    paymentSchedule,
     interestRateDetails: {
-      id: interestRate.id, name: interestRate.name, code: interestRate.code, loanProudIntId: interestRate.LOAN_PROUD_INT_ID,
-      rateType: interestRate.RATE_TYPE, interestType: interestRate.INTEREST_TYPE, calculationMethod: interestRate.CALCULATION_METHOD,
-      minRate: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'), maxRate: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
+      id: interestRate.id, 
+      name: interestRate.name, 
+      code: interestRate.code, 
+      loanProudIntId: interestRate.LOAN_PROUD_INT_ID,
+      rateType: interestRate.RATE_TYPE, 
+      interestType: interestRate.INTEREST_TYPE, 
+      calculationMethod: interestRate.CALCULATION_METHOD,
+      minRate: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'), 
+      maxRate: parseFloat(interestRate.MAX_RATE_PER_MONTH || '0'),
       defaultRate: parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0')
     },
-    productDetails: { id: this.id, prod_id: this.prod_id, name: this.name, productCode: this.product_code, loanProudIntId: this.loan_proud_int_id, productType: this.product_type, productCategory: this.product_category }
+    productDetails: { 
+      id: this.id, 
+      prod_id: this.prod_id, 
+      name: this.name, 
+      productCode: this.product_code, 
+      loanProudIntId: this.loan_proud_int_id, 
+      productType: this.product_type, 
+      productCategory: this.product_category 
+    }
   };
 };
 
@@ -268,8 +347,10 @@ LoanProduct.prototype.validateLoanApplication = async function(amount, termValue
   const interestRate = await this.getInterestRate();
   const actualTermType = termType || this.loan_term_type;
   const constraints = {
-    minAmount: this.min_amount, maxAmount: this.max_amount,
-    MIN_LOAN_TERM_VALUE: this.min_loan_term_value, MAX_LOAN_TERM_VALUE: this.max_loan_term_value,
+    minAmount: this.min_amount, 
+    maxAmount: this.max_amount,
+    MIN_LOAN_TERM_VALUE: this.min_loan_term_value, 
+    MAX_LOAN_TERM_VALUE: this.max_loan_term_value,
     LOAN_TERM_TYPE: this.loan_term_type,
     rateRange: {
       min: parseFloat(interestRate.MIN_RATE_PER_MONTH || '0'),
@@ -280,12 +361,29 @@ LoanProduct.prototype.validateLoanApplication = async function(amount, termValue
   const validation = LoanProductInterestCalculator.validateLoanParameters(constraints, amount, termValue, actualTermType, requestedRate);
   return {
     ...validation,
-    product: { id: this.id, prod_id: this.prod_id, name: this.name, productCode: this.product_code, productType: this.product_type },
-    interestRate: { id: interestRate.id, name: interestRate.name, code: interestRate.code, loanProudIntId: interestRate.LOAN_PROUD_INT_ID }
+    product: { 
+      id: this.id, 
+      prod_id: this.prod_id, 
+      name: this.name, 
+      productCode: this.product_code, 
+      productType: this.product_type 
+    },
+    interestRate: { 
+      id: interestRate.id, 
+      name: interestRate.name, 
+      code: interestRate.code, 
+      loanProudIntId: interestRate.LOAN_PROUD_INT_ID 
+    }
   };
 };
 
-LoanProduct.prototype.calculateInterestForPeriod = async function({ principal, startDate, endDate, useDefaultRate = true, customRate = null }) {
+LoanProduct.prototype.calculateInterestForPeriod = async function({ 
+  principal, 
+  startDate, 
+  endDate, 
+  useDefaultRate = true, 
+  customRate = null 
+}) {
   const interestRate = await this.getInterestRate();
   let ratePerMonth;
   if (useDefaultRate) ratePerMonth = parseFloat(interestRate.DEFAULT_RATE_PER_MONTH || '0');
@@ -357,46 +455,88 @@ LoanProduct.findByLoanProudIntId = async function(loanProudIntId, options = {}) 
 LoanProduct.findByInterestRateLoanProudIntId = async function(loanProudIntId, options = {}) {
   const { status = 'ACTIVE', limit, offset } = options;
   return this.findAll({
-    where: { status, is_active: true },
-    include: [{ model: sequelize.models.LoanInterestRate, as: 'LoanInterestRate', where: { LOAN_PROUD_INT_ID: loanProudIntId }, required: true }],
-    order: [['name', 'ASC']], limit, offset
+    where: { 
+      status, 
+      is_active: true 
+    },
+    include: [{ 
+      model: sequelize.models.LoanInterestRate, 
+      as: 'LoanInterestRate', 
+      where: { LOAN_PROUD_INT_ID: loanProudIntId }, 
+      required: true 
+    }],
+    order: [['name', 'ASC']], 
+    limit, 
+    offset
   });
 };
 
 LoanProduct.findByProductType = async function(productType, options = {}) {
   const { status = 'ACTIVE', limit, offset, includeInterestRate = true } = options;
   const query = {
-    where: { product_type: productType.toUpperCase(), status, is_active: true },
-    order: [['name', 'ASC']], limit, offset
+    where: { 
+      product_type: productType.toUpperCase(), 
+      status, 
+      is_active: true 
+    },
+    order: [['name', 'ASC']], 
+    limit, 
+    offset
   };
   if (includeInterestRate) {
-    query.include = [{ model: sequelize.models.LoanInterestRate, as: 'LoanInterestRate', required: true }];
+    query.include = [{ 
+      model: sequelize.models.LoanInterestRate, 
+      as: 'LoanInterestRate', 
+      required: true 
+    }];
   }
   return this.findAll(query);
 };
 
 LoanProduct.getProductTypes = async function() {
-  const result = await this.findAll({ attributes: [[sequelize.fn('DISTINCT', sequelize.col('product_type')), 'product_type']], order: [['product_type', 'ASC']] });
+  const result = await this.findAll({ 
+    attributes: [[sequelize.fn('DISTINCT', sequelize.col('product_type')), 'product_type']], 
+    order: [['product_type', 'ASC']] 
+  });
   return result.map(item => item.dataValues.product_type);
 };
 
 LoanProduct.findActiveProductsWithInterestRates = function(options = {}) {
   const { limit, offset } = options;
   return this.findAll({
-    where: { status: 'ACTIVE', is_active: true },
-    include: [{ model: sequelize.models.LoanInterestRate, as: 'LoanInterestRate', required: true }],
-    order: [['name', 'ASC']], limit, offset
+    where: { 
+      status: 'ACTIVE', 
+      is_active: true 
+    },
+    include: [{ 
+      model: sequelize.models.LoanInterestRate, 
+      as: 'LoanInterestRate', 
+      required: true 
+    }],
+    order: [['name', 'ASC']], 
+    limit, 
+    offset
   });
 };
 
 LoanProduct.findByCategory = async function(category, options = {}) {
   const { status = 'ACTIVE', limit, offset, includeInterestRate = true } = options;
   const query = {
-    where: { product_category: category, status, is_active: true },
-    order: [['name', 'ASC']], limit, offset
+    where: { 
+      product_category: category, 
+      status, 
+      is_active: true 
+    },
+    order: [['name', 'ASC']], 
+    limit, 
+    offset
   };
   if (includeInterestRate) {
-    query.include = [{ model: sequelize.models.LoanInterestRate, as: 'LoanInterestRate', required: true }];
+    query.include = [{ 
+      model: sequelize.models.LoanInterestRate, 
+      as: 'LoanInterestRate', 
+      required: true 
+    }];
   }
   return this.findAll(query);
 };
@@ -406,10 +546,28 @@ export function setupLoanProductAssociations() {
   // ❌ Temporarily disabled – uncomment after tables exist
   /*
   const { LoanInterestRate } = sequelize.models;
-  LoanProduct.belongsTo(LoanInterestRate, { foreignKey: 'loan_interest_rate_id', as: 'LoanInterestRate', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
-  LoanProduct.belongsTo(LoanInterestRate, { foreignKey: 'loan_proud_int_id', targetKey: 'LOAN_PROUD_INT_ID', as: 'LoanInterestRateByProudId', onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
-  LoanInterestRate.hasMany(LoanProduct, { foreignKey: 'loan_interest_rate_id', as: 'LoanProducts' });
-  LoanInterestRate.hasMany(LoanProduct, { foreignKey: 'loan_proud_int_id', targetKey: 'LOAN_PROUD_INT_ID', as: 'LoanProductsByProudId' });
+  LoanProduct.belongsTo(LoanInterestRate, { 
+    foreignKey: 'loan_interest_rate_id', 
+    as: 'LoanInterestRate', 
+    onDelete: 'RESTRICT', 
+    onUpdate: 'CASCADE' 
+  });
+  LoanProduct.belongsTo(LoanInterestRate, { 
+    foreignKey: 'loan_proud_int_id', 
+    targetKey: 'LOAN_PROUD_INT_ID', 
+    as: 'LoanInterestRateByProudId', 
+    onDelete: 'RESTRICT', 
+    onUpdate: 'CASCADE' 
+  });
+  LoanInterestRate.hasMany(LoanProduct, { 
+    foreignKey: 'loan_interest_rate_id', 
+    as: 'LoanProducts' 
+  });
+  LoanInterestRate.hasMany(LoanProduct, { 
+    foreignKey: 'loan_proud_int_id', 
+    targetKey: 'LOAN_PROUD_INT_ID', 
+    as: 'LoanProductsByProudId' 
+  });
   */
 }
 

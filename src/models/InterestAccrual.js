@@ -1,8 +1,22 @@
-// interestAccrual.js - UPDATED
+// models/InterestAccrual.js
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-class InterestAccrual extends Model {}
+class InterestAccrual extends Model {
+  static associate(models) {
+    // Add associations if needed
+    this.belongsTo(models.CustomerAccount, {
+      foreignKey: 'account_no',
+      targetKey: 'account_number',
+      as: 'customerAccount'
+    });
+    this.belongsTo(models.LoanAccount, {
+      foreignKey: 'account_no',
+      targetKey: 'ACCT_NO',
+      as: 'loanAccount'
+    });
+  }
+}
 
 InterestAccrual.init({
   id: {
@@ -10,63 +24,111 @@ InterestAccrual.init({
     primaryKey: true,
     autoIncrement: true
   },
-  // Check what column name actually exists for account number
-  // It might be 'account_no', 'ACCOUNT_NO', 'account_number', etc.
-  account_no: {  // Changed from ACCT_NO to match your database
+  account_no: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    field: 'account_no', // Explicitly map to database column
+    field: 'account_no',
     validate: {
       notEmpty: true
     }
   },
   date: {
     type: DataTypes.DATEONLY,
-    allowNull: false
+    allowNull: false,
+    field: 'date'
   },
-  dailyInterest: {
+  daily_interest: {
     type: DataTypes.DECIMAL(15, 4),
     allowNull: false,
-    field: 'daily_interest', // Map to database column
+    defaultValue: 0,
+    field: 'daily_interest',
     validate: {
       min: 0
     }
   },
   principal: {
-    type: DataTypes.DECIMAL(15, 2),
+    type: DataTypes.DECIMAL(15, 4),
     allowNull: false,
+    defaultValue: 0,
+    field: 'principal',
     validate: {
       min: 0
     }
   },
-  annualRate: {
-    type: DataTypes.DECIMAL(5, 3),
+  annual_rate: {
+    type: DataTypes.DECIMAL(10, 4),
     allowNull: false,
-    field: 'annual_rate', // Map to database column
+    defaultValue: 0,
+    field: 'annual_rate',
     validate: {
       min: 0,
       max: 100
     }
   },
-  accrualType: {
+  accrual_type: {
     type: DataTypes.ENUM('DAILY_INTEREST', 'MONTHLY_COMPOUND', 'QUARTERLY_COMPOUND'),
     defaultValue: 'DAILY_INTEREST',
-    field: 'accrual_type' // Map to database column
+    field: 'accrual_type'
   },
   status: {
     type: DataTypes.ENUM('PENDING', 'POSTED', 'REVERSED', 'FAILED'),
-    defaultValue: 'PENDING'
+    defaultValue: 'PENDING',
+    field: 'status'
+  },
+  product_type: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'product_type'
+  },
+  product_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    field: 'product_id'
+  },
+  customer_id: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'customer_id'
+  },
+  gl_interest_accrued: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'gl_interest_accrued'
+  },
+  gl_interest_income: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'gl_interest_income'
+  },
+  gl_interest_expense: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'gl_interest_expense'
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
+  },
+  updated_at: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
   sequelize,
   modelName: 'InterestAccrual',
   tableName: 'interest_accruals',
   timestamps: true,
-  underscored: true, // This helps with snake_case mapping
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  underscored: false,
   indexes: [
     {
       name: 'idx_acct_date',
-      fields: ['account_no', 'date'] // Use model field name
+      fields: ['account_no', 'date']
     },
     {
       name: 'idx_status',
@@ -75,6 +137,14 @@ InterestAccrual.init({
     {
       name: 'idx_date_status',
       fields: ['date', 'status']
+    },
+    {
+      name: 'idx_product_type',
+      fields: ['product_type']
+    },
+    {
+      name: 'idx_customer_id',
+      fields: ['customer_id']
     }
   ]
 });

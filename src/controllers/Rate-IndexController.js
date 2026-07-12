@@ -1,7 +1,7 @@
-// src/controllers/RateIndexController.js - UPDATED VERSION WITH SEQUELIZE
+// src/controllers/RateIndexController.js - UPDATED WITH RATE_PRECISION
 import asyncHandler from 'express-async-handler';
 import { Sequelize, Op } from 'sequelize';
-import db from '../models/index.js'; // Your Sequelize models
+import db from '../models/index.js';
 import { 
   auditLogger, 
   logAuditTrail, 
@@ -63,7 +63,7 @@ const RateIndexController = {
       // Required fields based on your frontend
       const requiredFields = [
         'INDEX_RATE_ID', 'INDEX_CD', 'INDEX_RATE', 
-        'INDEX_NM', 'CRNCY_ID', 'PRECISION', 
+        'INDEX_NM', 'CRNCY_ID', 'RATE_PRECISION', 
         'EFFECTIVE_DT', 'DAY_COUNT_CONVENTION'
       ];
       
@@ -126,7 +126,7 @@ const RateIndexController = {
         INDEX_NM: req.body.INDEX_NM,
         RATE_TYPE: req.body.RATE_TYPE || 'FIXED',
         CRNCY_ID: req.body.CRNCY_ID.toUpperCase(),
-        PRECISION: parseInt(req.body.PRECISION),
+        RATE_PRECISION: parseInt(req.body.RATE_PRECISION) || 4,
         EFFECTIVE_DT: new Date(req.body.EFFECTIVE_DT),
         DAY_COUNT_CONVENTION: req.body.DAY_COUNT_CONVENTION,
         IS_DEFAULT: req.body.IS_DEFAULT || false,
@@ -146,7 +146,7 @@ const RateIndexController = {
         newRateIndex.id.toString(),
         req.user?.id?.toString() || 'SYSTEM',
         'CREATE',
-        null, // old_value
+        null,
         {
           INDEX_RATE_ID: newRateIndex.INDEX_RATE_ID,
           INDEX_CD: newRateIndex.INDEX_CD,
@@ -154,19 +154,20 @@ const RateIndexController = {
           INDEX_NM: newRateIndex.INDEX_NM,
           RATE_TYPE: newRateIndex.RATE_TYPE,
           CRNCY_ID: newRateIndex.CRNCY_ID,
+          RATE_PRECISION: newRateIndex.RATE_PRECISION,
           EFFECTIVE_DT: newRateIndex.EFFECTIVE_DT,
           IS_DEFAULT: newRateIndex.IS_DEFAULT,
           STATUS: newRateIndex.STATUS
-        }, // new_value
+        },
         getClientIp(req),
         'RATE_INDEX_CREATED',
         {
-          branch: 1, // Default branch
+          branch: 1,
           user_name: req.user?.name || 'SYSTEM',
           user_agent: req.headers['user-agent'],
           route: req.originalUrl,
           method: req.method
-        } // additional_info
+        }
       );
 
       await transaction.commit();
@@ -179,7 +180,8 @@ const RateIndexController = {
           rateIndexId: newRateIndex.INDEX_RATE_ID,
           rateCode: newRateIndex.INDEX_CD,
           isDefault: newRateIndex.IS_DEFAULT,
-          effectiveDate: newRateIndex.EFFECTIVE_DT
+          effectiveDate: newRateIndex.EFFECTIVE_DT,
+          precision: newRateIndex.RATE_PRECISION
         }
       });
 
@@ -303,6 +305,7 @@ const RateIndexController = {
         RATE_TYPE: rateIndex.RATE_TYPE,
         STATUS: rateIndex.STATUS,
         IS_DEFAULT: rateIndex.IS_DEFAULT,
+        RATE_PRECISION: rateIndex.RATE_PRECISION,
         DAY_COUNT_CONVENTION: rateIndex.DAY_COUNT_CONVENTION,
         DESCRIPTION: rateIndex.DESCRIPTION
       };
@@ -321,7 +324,7 @@ const RateIndexController = {
       // Update specific fields
       const allowedUpdates = [
         'INDEX_NM', 'INDEX_RATE', 'RATE_TYPE', 'STATUS', 
-        'IS_DEFAULT', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
+        'IS_DEFAULT', 'RATE_PRECISION', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
       ];
       
       const updates = {};
@@ -335,6 +338,13 @@ const RateIndexController = {
         updates.INDEX_RATE = parseFloat(updates.INDEX_RATE);
         if (isNaN(updates.INDEX_RATE) || updates.INDEX_RATE <= 0) {
           throw new Error('INDEX_RATE must be a positive number');
+        }
+      }
+      
+      if (updates.RATE_PRECISION !== undefined) {
+        updates.RATE_PRECISION = parseInt(updates.RATE_PRECISION);
+        if (isNaN(updates.RATE_PRECISION) || updates.RATE_PRECISION < 2 || updates.RATE_PRECISION > 8) {
+          throw new Error('RATE_PRECISION must be between 2 and 8');
         }
       }
       
@@ -429,6 +439,7 @@ const RateIndexController = {
         INDEX_RATE: rateIndex.INDEX_RATE,
         RATE_TYPE: rateIndex.RATE_TYPE,
         CRNCY_ID: rateIndex.CRNCY_ID,
+        RATE_PRECISION: rateIndex.RATE_PRECISION,
         STATUS: rateIndex.STATUS
       };
       
@@ -562,13 +573,14 @@ const RateIndexController = {
           days: daysCount,
           dayCountConvention: rateIndex.DAY_COUNT_CONVENTION,
           calculationMethod,
-          interestAmount: parseFloat(interestAmount.toFixed(2)),
-          totalAmount: parseFloat(totalAmount.toFixed(2)),
-          dailyInterest: parseFloat(dailyInterest.toFixed(2)),
+          interestAmount: parseFloat(interestAmount.toFixed(rateIndex.RATE_PRECISION || 2)),
+          totalAmount: parseFloat(totalAmount.toFixed(rateIndex.RATE_PRECISION || 2)),
+          dailyInterest: parseFloat(dailyInterest.toFixed(rateIndex.RATE_PRECISION || 2)),
           rateIndexDetails: {
             name: rateIndex.INDEX_NM,
             code: rateIndex.INDEX_CD,
-            type: rateIndex.RATE_TYPE
+            type: rateIndex.RATE_TYPE,
+            precision: rateIndex.RATE_PRECISION
           }
         }
       });
@@ -715,6 +727,7 @@ const RateIndexController = {
             RATE_TYPE: rateIndex.RATE_TYPE,
             STATUS: rateIndex.STATUS,
             IS_DEFAULT: rateIndex.IS_DEFAULT,
+            RATE_PRECISION: rateIndex.RATE_PRECISION,
             DAY_COUNT_CONVENTION: rateIndex.DAY_COUNT_CONVENTION,
             DESCRIPTION: rateIndex.DESCRIPTION
           };
@@ -733,7 +746,7 @@ const RateIndexController = {
           // Update specific fields
           const allowedUpdates = [
             'INDEX_NM', 'INDEX_RATE', 'RATE_TYPE', 'STATUS', 
-            'IS_DEFAULT', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
+            'IS_DEFAULT', 'RATE_PRECISION', 'DAY_COUNT_CONVENTION', 'DESCRIPTION'
           ];
           
           const updatesToApply = {};
@@ -747,6 +760,13 @@ const RateIndexController = {
             updatesToApply.INDEX_RATE = parseFloat(updatesToApply.INDEX_RATE);
             if (isNaN(updatesToApply.INDEX_RATE) || updatesToApply.INDEX_RATE <= 0) {
               throw new Error('INDEX_RATE must be a positive number');
+            }
+          }
+          
+          if (updatesToApply.RATE_PRECISION !== undefined) {
+            updatesToApply.RATE_PRECISION = parseInt(updatesToApply.RATE_PRECISION);
+            if (isNaN(updatesToApply.RATE_PRECISION) || updatesToApply.RATE_PRECISION < 2 || updatesToApply.RATE_PRECISION > 8) {
+              throw new Error('RATE_PRECISION must be between 2 and 8');
             }
           }
           

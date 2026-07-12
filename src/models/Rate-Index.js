@@ -300,7 +300,7 @@ class RateIndex extends Model {
       rateValue: this.INDEX_RATE,
       rateType: this.RATE_TYPE,
       currency: this.CRNCY_ID,
-      precision: this.PRECISION,
+      precision: this.RATE_PRECISION,
       effectiveDate: this.EFFECTIVE_DT,
       expiryDate: this.EXPIRY_DT,
       dayCountConvention: this.DAY_COUNT_CONVENTION,
@@ -371,7 +371,7 @@ class RateIndex extends Model {
       errors.push('Rate cannot exceed 1000%');
     }
     
-    if (this.PRECISION < 2 || this.PRECISION > 8) {
+    if (this.RATE_PRECISION < 2 || this.RATE_PRECISION > 8) {
       errors.push('Precision must be between 2 and 8');
     }
     
@@ -387,16 +387,14 @@ class RateIndex extends Model {
 
   // Instance method: Get formatted rate
   getFormattedRate(precision = null) {
-    const ratePrecision = precision || this.PRECISION || 2;
+    const ratePrecision = precision || this.RATE_PRECISION || 2;
     const formattedRate = this.INDEX_RATE.toFixed(ratePrecision);
     return `${formattedRate}%`;
   }
 
   // Instance method: Get annualized rate (based on day count convention)
   getAnnualizedRate() {
-    // This is a simplified calculation
-    // In practice, you would use the day count convention
-    return this.INDEX_RATE; // Return as annual percentage rate
+    return this.INDEX_RATE;
   }
 
   // Instance method: Get monthly rate
@@ -406,7 +404,7 @@ class RateIndex extends Model {
 
   // Instance method: Get daily rate
   getDailyRate() {
-    return this.INDEX_RATE / 365; // Simplified - should use day count convention
+    return this.INDEX_RATE / 365;
   }
 
   // Virtual getter: Display name
@@ -519,10 +517,11 @@ RateIndex.init({
     comment: 'Currency code'
   },
 
-  PRECISION: {
+  RATE_PRECISION: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 4,
+    field: 'RATE_PRECISION',
     validate: {
       min: {
         args: [2],

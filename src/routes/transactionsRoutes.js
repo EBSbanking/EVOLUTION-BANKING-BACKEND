@@ -44,6 +44,26 @@ router.post('/transactions', withDecryption, async (req, res) => {
   }
 });
 
+// In your routes file (e.g., transactionRoutes.js or index.js)
+
+// Get daily transactions for a specific teller
+router.get(
+  '/transactions/teller/daily/:userId',
+  transactionController.getTellerDailyTransactions
+);
+
+// Alternative with query parameter
+router.get(
+  '/transactions/teller/daily',
+  transactionController.getTellerDailyTransactions
+);
+
+// Get teller transaction summary (for dashboard)
+router.get(
+  '/transactions/teller/summary',
+  transactionController.getTellerTransactionSummary
+);
+
 // All other routes (keep your existing ones)
 router.get('/transactions/account/:accountNo/balance', transactionController.getAccountBalance);
 router.get('/transactions/account/:accountNo', transactionController.getTransactionsByAccount);

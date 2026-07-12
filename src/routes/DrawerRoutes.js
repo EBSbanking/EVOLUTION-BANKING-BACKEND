@@ -1,227 +1,231 @@
-// routes/drawerRoutes.js - WORKING VERSION
+// routes/DrawerRoutes.js - COMPLETE UPDATED VERSION
 import express from 'express';
-const router = express.Router();
-
-// Import ONLY functions that definitely exist in your DrawerController
-import { 
+import {
   createDrawer,
-  getAllDrawers,
-  getDrawerById,
   openDrawer,
   closeDrawer,
-  getDrawerBalance
+  getAllDrawers,
+  getDrawerById,
+  getDrawerBalance,
+  getDrawerCloseoutReport,
+  getDrawerOpeningReport,
+  getDrawerTransactionHistory,
+  getDrawerTransactionSummary,
+  getDrawerEnquiry,
+  getMultipleDrawersEnquiry,
+  getDrawersSummary,
+  getDrawerTellerSummary,
+  updateDrawerCurrency,
+  updateDrawer,
+  deleteDrawer,
+  processDrawerTransaction,
+  postDrawerTransaction,
+  postBulkDrawerTransactions,
+  getDrawerTransactionById,
+  reverseDrawerTransaction,
+  processDrawerToDrawerTransfer,
+  processDrawerToVaultTransfer,
+  forceCloseAllDrawers,
+  getMyOpenDrawers,
+  getDrawersByUserId,
+  getOpenDrawersByUserId,
+  getUserDrawerSummary
 } from '../controllers/DrawerController.js';
 
-// For functions that might not exist, create placeholders
-const updateDrawer = (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'updateDrawer not yet implemented',
-    timestamp: new Date()
-  });
-};
-
-const deleteDrawer = (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'deleteDrawer not yet implemented',
-    timestamp: new Date()
-  });
-};
-
-// Create placeholders for other functions you're trying to use
-const getDrawerByUserId = (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'getDrawerByUserId not yet implemented',
-    timestamp: new Date()
-  });
-};
-
-const getDrawerCloseoutReport = (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'getDrawerCloseoutReport not yet implemented',
-    timestamp: new Date()
-  });
-};
-
-const getDrawerOpeningReport = (req, res) => {
-  res.status(501).json({
-    success: false,
-    message: 'getDrawerOpeningReport not yet implemented',
-    timestamp: new Date()
-  });
-};
-
-// Middleware to handle database connection
-router.use((req, res, next) => {
-  console.log(`🎯 Drawer route: ${req.method} ${req.path}`);
-  
-  // Check for database connection
-  const hasSequelize = !!req.sequelize || !!(req.db?.sequelize);
-  
-  if (!hasSequelize) {
-    console.warn('⚠️ No sequelize instance found in request');
-  } else {
-    console.log('✅ Database connection available');
-  }
-  
-  next();
-});
+const router = express.Router();
 
 // =============================================
-// BASIC DRAWER ROUTES (using only functions that exist)
+// HEALTH & TEST ROUTES
 // =============================================
 
-// 1. Create drawer
-router.post('/', createDrawer);
-
-// 2. Get all drawers
-router.get('/', getAllDrawers);
-
-// 3. Get drawer by ID (DRAWER_ID or DRAWER_NO)
-router.get('/:id', getDrawerById);
-
-// 4. Update drawer (placeholder)
-router.put('/:id', updateDrawer);
-
-// 5. Delete drawer (placeholder)
-router.delete('/:id', deleteDrawer);
-
-// 6. Open drawer
-router.post('/:id/open', openDrawer);
-
-// 7. Close drawer
-router.post('/:id/close', closeDrawer);
-
-// 8. Get drawer balance
-router.get('/:id/balance', getDrawerBalance);
-
-// =============================================
-// ADDITIONAL ROUTES (with placeholders)
-// =============================================
-
-// Get drawers by user ID (placeholder)
-router.get('/user/:userId', getDrawerByUserId);
-
-// Get drawer closeout report (placeholder)
-router.get('/report/:id', getDrawerCloseoutReport);
-
-// Get drawer opening report (placeholder)
-router.get('/:id/opening-report', getDrawerOpeningReport);
-
-// =============================================
-// TEST ENDPOINTS
-// =============================================
-
-// Health check
 router.get('/test/health', (req, res) => {
-  res.json({
-    success: true,
+  res.json({ 
+    success: true, 
     message: 'Drawer routes are working',
-    timestamp: new Date(),
-    availableEndpoints: [
-      'POST / - Create drawer',
-      'GET / - Get all drawers',
-      'GET /:id - Get drawer by ID',
-      'PUT /:id - Update drawer',
-      'DELETE /:id - Delete drawer',
-      'POST /:id/open - Open drawer',
-      'POST /:id/close - Close drawer',
-      'GET /:id/balance - Get drawer balance',
-      'GET /user/:userId - Get drawers by user ID',
-      'GET /:id/closeout-report - Get closeout report',
-      'GET /:id/opening-report - Get opening report'
-    ]
+    timestamp: new Date().toISOString()
   });
 });
 
-// Check what controller functions are actually available
-router.get('/test/controller-check', (req, res) => {
-  const controllerFunctions = {
-    createDrawer: typeof createDrawer,
-    getAllDrawers: typeof getAllDrawers,
-    getDrawerById: typeof getDrawerById,
-    openDrawer: typeof openDrawer,
-    closeDrawer: typeof closeDrawer,
-    getDrawerBalance: typeof getDrawerBalance,
-    updateDrawer: typeof updateDrawer,
-    deleteDrawer: typeof deleteDrawer,
-    getDrawerByUserId: typeof getDrawerByUserId,
-    getDrawerCloseoutReport: typeof getDrawerCloseoutReport,
-    getDrawerOpeningReport: typeof getDrawerOpeningReport
-  };
-  
-  res.json({
-    success: true,
-    message: 'Controller function status',
-    functions: controllerFunctions,
-    note: 'Functions marked as "function" are real, "undefined" are placeholders',
-    timestamp: new Date()
-  });
-});
+// =============================================
+// USER-SPECIFIC ROUTES (MUST COME FIRST)
+// =============================================
 
-// Database test endpoint
-router.get('/test/database', async (req, res) => {
+// 1. Get all drawers for a specific user (teller)
+// GET /api/drawer/user/:userId
+router.get('/user/:userId', getDrawersByUserId);
+
+// 2. Get only open drawers for a specific user (for transaction posting)
+// GET /api/drawer/user/:userId/open
+router.get('/user/:userId/open', getOpenDrawersByUserId);
+
+// 3. Get drawer summary for a specific user (dashboard)
+// GET /api/drawer/user/:userId/summary
+router.get('/user/:userId/summary', getUserDrawerSummary);
+
+// 4. Get user's open drawers (alias for backward compatibility)
+// GET /api/drawer/my-open/:userId
+router.get('/my-open/:userId', getMyOpenDrawers);
+
+// =============================================
+// TELLER & DASHBOARD SUMMARY ROUTES
+// =============================================
+
+// 5. Teller summary (open drawers + balance)
+// GET /api/drawer/teller-summary?userId=xxx
+router.get('/teller-summary', getDrawerTellerSummary);
+
+// 6. Dashboard summary (alias)
+// GET /api/drawer/dashboard-summary?userId=xxx
+router.get('/dashboard-summary', async (req, res) => {
   try {
-    // Get sequelize from request
-    const sequelize = req.sequelize || (req.db && req.db.sequelize);
+    const userId = req.query.userId;
+    const Drawer = (await import('../models/Drawer.js')).default;
     
-    if (!sequelize) {
-      return res.json({
-        success: false,
-        message: 'No database connection found in request',
-        recommendation: 'Make sure your server.js attaches sequelize to req.sequelize'
-      });
-    }
-    
-    // Test connection
-    await sequelize.authenticate();
-    console.log('✅ Database connection authenticated');
-    
-    // Check for Drawer model
-    const hasDrawerModel = !!(sequelize.models && sequelize.models.Drawer);
-    let drawerCount = null;
-    
-    if (hasDrawerModel) {
-      try {
-        drawerCount = await sequelize.models.Drawer.count();
-      } catch (error) {
-        console.log('Note: Could not count drawers:', error.message);
-      }
-    }
-    
+    const where = { WF_STATUS: 'OPEN' };
+    if (userId) where.USER_ID = userId;
+
+    const drawers = await Drawer.findAll({ where });
+    const totalBalance = drawers.reduce((sum, d) => sum + parseFloat(d.CURRENT_BALANCE || 0), 0);
+
     res.json({
       success: true,
-      message: 'Database connection successful',
-      database: {
-        connected: true,
-        dialect: sequelize.getDialect(),
-        modelsLoaded: Object.keys(sequelize.models || {}),
-        drawerModelExists: hasDrawerModel,
-        drawerCount
+      data: {
+        totalBalance,
+        openDrawers: drawers.length,
+        summary: { 
+          balance: totalBalance, 
+          count: drawers.length 
+        }
       }
     });
   } catch (error) {
-    console.error('Database test failed:', error);
+    console.error('Error in drawer dashboard-summary:', error);
     res.status(500).json({
       success: false,
-      message: 'Database test failed',
+      message: 'Failed to fetch drawer dashboard summary',
       error: error.message
     });
   }
 });
 
-// Simple echo endpoint for testing
-router.get('/echo/:message', (req, res) => {
-  res.json({
-    success: true,
-    message: `Echo: ${req.params.message}`,
-    timestamp: new Date(),
-    path: req.path,
-    method: req.method
-  });
-});
+// 7. Get all drawers summary (admin)
+// GET /api/drawer/summary
+router.get('/summary', getDrawersSummary);
+
+// =============================================
+// DRAWER TRANSACTION ROUTES
+// =============================================
+
+// 8. Post a transaction to a drawer
+// POST /api/drawer/transaction
+router.post('/transaction', postDrawerTransaction);
+
+// 9. Post bulk transactions
+// POST /api/drawer/transactions/bulk
+router.post('/transactions/bulk', postBulkDrawerTransactions);
+
+// 10. Get transaction by ID
+// GET /api/drawer/transactions/:transactionId
+router.get('/transactions/:transactionId', getDrawerTransactionById);
+
+// 11. Reverse a transaction
+// POST /api/drawer/transactions/:transactionId/reverse
+router.post('/transactions/:transactionId/reverse', reverseDrawerTransaction);
+
+// 12. Get drawer transaction history
+// GET /api/drawer/:id/transactions
+router.get('/:id/transactions', getDrawerTransactionHistory);
+
+// 13. Get drawer transaction summary
+// GET /api/drawer/:id/transactions/summary
+router.get('/:id/transactions/summary', getDrawerTransactionSummary);
+
+// =============================================
+// DRAWER TRANSFER ROUTES
+// =============================================
+
+// 14. Drawer to drawer transfer
+// POST /api/drawer/transfer/drawer-to-drawer
+router.post('/transfer/drawer-to-drawer', processDrawerToDrawerTransfer);
+
+// 15. Drawer to vault transfer
+// POST /api/drawer/transfer/drawer-to-vault
+router.post('/transfer/drawer-to-vault', processDrawerToVaultTransfer);
+
+// =============================================
+// DRAWER BALANCE & STATUS ROUTES
+// =============================================
+
+// 16. Get drawer balance by ID
+// GET /api/drawer/:id/balance
+router.get('/:id/balance', getDrawerBalance);
+
+// 17. Get opening report
+// GET /api/drawer/:id/opening-report
+router.get('/:id/opening-report', getDrawerOpeningReport);
+
+// 18. Get closeout report
+// GET /api/drawer/:id/closeout-report
+router.get('/:id/closeout-report', getDrawerCloseoutReport);
+
+// 19. Get drawer enquiry (detailed)
+// GET /api/drawer/:id/enquiry
+router.get('/:id/enquiry', getDrawerEnquiry);
+
+// =============================================
+// DRAWER OPERATIONS (OPEN/CLOSE)
+// =============================================
+
+// 20. Create a new drawer
+// POST /api/drawer
+router.post('/', createDrawer);
+
+// 21. Open a drawer
+// POST /api/drawer/:id/open
+router.post('/:id/open', openDrawer);
+
+// 22. Close a drawer
+// POST /api/drawer/:id/close
+router.post('/:id/close', closeDrawer);
+
+// 23. Force close all drawers (admin)
+// POST /api/drawer/admin/force-close-all
+router.post('/admin/force-close-all', forceCloseAllDrawers);
+
+// 24. Update drawer currency (mid-day adjustment)
+// PUT /api/drawer/:id/currency
+router.put('/:id/currency', updateDrawerCurrency);
+
+// =============================================
+// DRAWER CRUD OPERATIONS
+// =============================================
+
+// 25. Get all drawers (with filters)
+// GET /api/drawer
+router.get('/', getAllDrawers);
+
+// 26. Get drawer by ID (MUST BE LAST)
+// GET /api/drawer/:id
+router.get('/:id', getDrawerById);
+
+// 27. Update drawer
+// PUT /api/drawer/:id
+router.put('/:id', updateDrawer);
+
+// 28. Delete drawer
+// DELETE /api/drawer/:id
+router.delete('/:id', deleteDrawer);
+
+// =============================================
+// MULTIPLE DRAWERS ENQUIRY
+// =============================================
+
+// 29. Get multiple drawers enquiry
+// POST /api/drawer/enquiry/multiple
+router.post('/enquiry/multiple', getMultipleDrawersEnquiry);
+
+// 30. Process drawer transaction (internal)
+// POST /api/drawer/process-transaction
+router.post('/process-transaction', processDrawerTransaction);
 
 export default router;

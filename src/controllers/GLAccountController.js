@@ -8,6 +8,9 @@ import { Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 // ==================== COMPREHENSIVE BANKING CHART OF ACCOUNTS ====================
+// utils/ChartOfAccounts.js
+
+// ==================== COMPREHENSIVE BANKING CHART OF ACCOUNTS ====================
 const ACCOUNT_TYPE_CODES = {
   // ==================== ASSET ACCOUNTS (1000-1999) ====================
   
@@ -44,9 +47,14 @@ const ACCOUNT_TYPE_CODES = {
   'LOAN_IMPAIRED': '1207',
   'LOAN_PROVISION': '1208',
   'LOAN_WRITE_OFF': '1209',
-  'ADVANCES_TO_CUSTOMERS': '1210',
-  'ADVANCES_TO_STAFF': '1211',
-  'ADVANCES_TO_SUPPLIERS': '1212',
+  'LOAN_WRITE_OFF_BALANCE': '1210',
+  'LOAN_BAD_DEBT_BALANCE': '1211',
+  'LOAN_ACCOUNT_CHARGE_RECEIVABLE': '1212',
+  'LOAN_DELINQUENT_BALANCE': '1213',
+  'LOAN_NON_ACCRUAL_BALANCE': '1214',
+  'ADVANCES_TO_CUSTOMERS': '1215',
+  'ADVANCES_TO_STAFF': '1216',
+  'ADVANCES_TO_SUPPLIERS': '1217',
   
   // Specific Loan Types (1300-1399)
   'MORTGAGE_LOAN': '1300',
@@ -62,6 +70,14 @@ const ACCOUNT_TYPE_CODES = {
   'TERM_LOAN': '1310',
   'REVOLVING_CREDIT': '1311',
   
+  // Provision Related Asset Accounts (1320-1339)
+  'LOAN_PROVISION_ACCOUNT': '1320',
+  'LOAN_PROVISION_ACCOUNT_OFFSET': '1321',
+  'LOAN_PROVISION_RESERVE_ACCOUNT': '1322',
+  'LOAN_PROVISION_EXPENSE_ACCOUNT': '1323',
+  'AFTER_MATURITY_BALANCE': '1324',
+  'CHARGE_OFF_BALANCE': '1325',
+  
   // Receivables (1400-1499)
   'ACCOUNTS_RECEIVABLE': '1400',
   'INTEREST_RECEIVABLE': '1401',
@@ -74,6 +90,15 @@ const ACCOUNT_TYPE_CODES = {
   'CUSTOMER_RECEIVABLE': '1408',
   'EMPLOYEE_RECEIVABLE': '1409',
   'SUNDRY_RECEIVABLE': '1410',
+  'RECOVERIES': '1411',
+  
+  // Suspense and Clearing (1420-1439)
+  'LOAN_SUSPENSE_ACCOUNT': '1420',
+  'LOAN_SUSPENSE_CHARGE_ACCOUNT': '1421',
+  'THIRD_PARTY_SUSPENSE_ACCOUNT': '1422',
+  'UNAPPLIED_FUNDS': '1423',
+  'LOAN_UNCLEARED_BALANCE': '1424',
+  'UNEARNED_INTEREST': '1425',
   
   // Investments (1500-1599)
   'INVESTMENT_ASSET': '1500',
@@ -162,6 +187,10 @@ const ACCOUNT_TYPE_CODES = {
   'THRIFT_COLLECTION_ACCOUNT': '2015',
   'THRIFT_WITHDRAWAL_ACCOUNT': '2016',
   
+  // Repayment Control (2020-2029)
+  'REPAYMENT_CONTROL_BALANCES': '2020',
+  'LOAN_LATE_FEE_SUSPENSE_ACCOUNT': '2021',
+  
   // Loans Payable (2100-2199)
   'LOAN_LIABILITY': '2100',
   'BORROWINGS': '2101',
@@ -183,8 +212,40 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_PAYABLE_ON_BONDS': '2205',
   'INTEREST_PAYABLE_ON_OVERDRAFT': '2206',
   'ACCRUED_INTEREST_PAYABLE': '2207',
-  // Thrift interest payable (if applicable)
   'THRIFT_INTEREST_PAYABLE': '2208',
+  
+  // ==================== INTEREST PAYABLE BY PRODUCT (2209-2299) ====================
+  'INTEREST_PAYABLE_PERSONAL_LOAN': '2209',
+  'INTEREST_PAYABLE_BUSINESS_LOAN': '2210',
+  'INTEREST_PAYABLE_MORTGAGE_LOAN': '2211',
+  'INTEREST_PAYABLE_AUTO_LOAN': '2212',
+  'INTEREST_PAYABLE_EDUCATION_LOAN': '2213',
+  'INTEREST_PAYABLE_CONSUMER_LOAN': '2214',
+  'INTEREST_PAYABLE_SME_LOAN': '2215',
+  'INTEREST_PAYABLE_AGRICULTURAL_LOAN': '2216',
+  'INTEREST_PAYABLE_DAILY_LOAN': '2217',
+  'INTEREST_PAYABLE_WEEKLY_LOAN': '2218',
+  'INTEREST_PAYABLE_GROUP_LOAN': '2219',
+  'INTEREST_PAYABLE_MONTHLY_LOAN': '2220',
+  'INTEREST_PAYABLE_GROUP_MONTHLY_LOAN': '2221',
+  'INTEREST_PAYABLE_ASSET_LOAN': '2222',
+  'INTEREST_PAYABLE_SOLAR_LOAN': '2223',
+  'INTEREST_PAYABLE_RAPID_CASH_LOAN': '2224',
+  'INTEREST_PAYABLE_STAFF_SALARY_ADVANCE': '2225',
+  'INTEREST_PAYABLE_STAFF_LOAN': '2226',
+  'INTEREST_PAYABLE_INDIVIDUAL_LOAN': '2227',
+  'INTEREST_PAYABLE_CORPORATE_LOAN': '2228',
+  'INTEREST_PAYABLE_OVERDRAFT': '2229',
+  'INTEREST_PAYABLE_HOME_IMPROVEMENT_LOAN': '2230',
+  'INTEREST_PAYABLE_SCHOOL_IMPROVEMENT_LOAN': '2231',
+  'INTEREST_PAYABLE_AGRICULTURE_LOAN': '2232',
+  'INTEREST_PAYABLE_GENERAL_LOAN': '2233',
+  'INTEREST_PAYABLE_MORTGAGE': '2234',
+  'INTEREST_PAYABLE_HOME_LOAN': '2235',
+  'INTEREST_PAYABLE_SAVINGS': '2236',
+  'INTEREST_PAYABLE_TERM_DEPOSIT': '2237',
+  'INTEREST_PAYABLE_CREDIT_CARD': '2238',
+  'INTEREST_PAYABLE_LINE_OF_CREDIT': '2239',
   
   // Accounts Payable (2300-2399)
   'PAYABLE_ACCOUNT': '2300',
@@ -296,7 +357,7 @@ const ACCOUNT_TYPE_CODES = {
   
   // ==================== REVENUE/INCOME ACCOUNTS (4000-4999) ====================
   
-  // Interest Income (4000-4099)
+  // Interest Income - General (4000-4099)
   'INTEREST_INCOME': '4000',
   'INTEREST_INCOME_ON_LOANS': '4001',
   'INTEREST_INCOME_ON_MORTGAGES': '4002',
@@ -308,11 +369,44 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_INCOME_ON_INTERBANK': '4008',
   'INTEREST_INCOME_ON_CALL_MONEY': '4009',
   'INTEREST_INCOME_ACCRUED': '4010',
-  // Thrift interest income
   'THRIFT_INTEREST_INCOME': '4011',
   'THRIFT_CYCLE_INTEREST_INCOME': '4012',
   
-  // Fee Income (4100-4199) – updated with new charge types and thrift fees
+  // ==================== INTEREST INCOME BY PRODUCT (4013-4049) ====================
+  'INTEREST_ON_PERSONAL_LOAN': '4013',
+  'INTEREST_ON_BUSINESS_LOAN': '4014',
+  'INTEREST_ON_MORTGAGE_LOAN': '4015',
+  'INTEREST_ON_AUTO_LOAN': '4016',
+  'INTEREST_ON_EDUCATION_LOAN': '4017',
+  'INTEREST_ON_CONSUMER_LOAN': '4018',
+  'INTEREST_ON_SME_LOAN': '4019',
+  'INTEREST_ON_AGRICULTURAL_LOAN': '4020',
+  'INTEREST_ON_DAILY_LOAN': '4021',
+  'INTEREST_ON_WEEKLY_LOAN': '4022',
+  'INTEREST_ON_GROUP_LOAN': '4023',
+  'INTEREST_ON_MONTHLY_LOAN': '4024',
+  'INTEREST_ON_GROUP_MONTHLY_LOAN': '4025',
+  'INTEREST_ON_ASSET_LOAN': '4026',
+  'INTEREST_ON_SOLAR_LOAN': '4027',
+  'INTEREST_ON_RAPID_CASH_LOAN': '4028',
+  'INTEREST_ON_STAFF_SALARY_ADVANCE': '4029',
+  'INTEREST_ON_STAFF_LOAN': '4030',
+  'INTEREST_ON_INDIVIDUAL_LOAN': '4031',
+  'INTEREST_ON_CORPORATE_LOAN': '4032',
+  'INTEREST_ON_OVERDRAFT': '4033',
+  'INTEREST_ON_HOME_IMPROVEMENT_LOAN': '4034',
+  'INTEREST_ON_SMALL_MEDIUM_ENTERPRISE_LOAN': '4035',
+  'INTEREST_ON_SCHOOL_IMPROVEMENT_LOAN': '4036',
+  'INTEREST_ON_AGRICULTURE_LOAN': '4037',
+  'INTEREST_ON_GENERAL_LOAN': '4038',
+  'INTEREST_ON_MORTGAGE': '4039',
+  'INTEREST_ON_HOME_LOAN': '4040',
+  'INTEREST_ON_SAVINGS': '4041',
+  'INTEREST_ON_TERM_DEPOSIT': '4042',
+  'INTEREST_ON_CREDIT_CARD': '4043',
+  'INTEREST_ON_LINE_OF_CREDIT': '4044',
+  
+  // Fee Income (4100-4199)
   'FEE_INCOME': '4100',
   'LOAN_PROCESSING_FEE': '4101',
   'LOAN_DISBURSEMENT_FEE': '4102',
@@ -337,7 +431,6 @@ const ACCOUNT_TYPE_CODES = {
   'LOAN_INSURANCE_FEE': '4121',
   'LATE_PAYMENT_FEE_INCOME': '4122',
   'OTHER_FEE_INCOME': '4123',
-  // New fee/charge types (aligned with GENERAL_TX_TYPES)
   'SMS_CHARGE': '4124',
   'PROCESSING_FEE': '4125',
   'SERVICE_FEE': '4126',
@@ -349,7 +442,6 @@ const ACCOUNT_TYPE_CODES = {
   'INVESTMENT_FEE': '4132',
   'BANK_CHARGE': '4133',
   'CHARGE': '4134',
-  // Thrift fee income
   'THRIFT_CYCLE_FEE': '4135',
   'THRIFT_SERVICE_FEE': '4136',
   'THRIFT_PENALTY_FEE': '4137',
@@ -367,7 +459,6 @@ const ACCOUNT_TYPE_CODES = {
   'WIRE_TRANSFER_FEE': '4208',
   'FOREIGN_EXCHANGE_INCOME': '4209',
   'CURRENCY_EXCHANGE_INCOME': '4210',
-  // Thrift service income
   'THRIFT_MANAGEMENT_FEE': '4211',
   
   // Operating Revenue (4300-4399)
@@ -392,7 +483,7 @@ const ACCOUNT_TYPE_CODES = {
   
   // ==================== EXPENSE ACCOUNTS (5000-5999) ====================
   
-  // Interest Expense (5000-5099)
+  // Interest Expense - General (5000-5099)
   'INTEREST_EXPENSE': '5000',
   'INTEREST_EXPENSE_ON_DEPOSITS': '5001',
   'INTEREST_EXPENSE_ON_SAVINGS': '5002',
@@ -402,8 +493,40 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_EXPENSE_ON_LEASE': '5006',
   'INTEREST_EXPENSE_ON_OVERDRAFT': '5007',
   'INTEREST_EXPENSE_ACCRUED': '5008',
-  // Thrift interest expense (if paid to customers)
   'THRIFT_INTEREST_EXPENSE': '5009',
+  
+  // ==================== INTEREST EXPENSE BY PRODUCT (5010-5049) ====================
+  'INTEREST_EXPENSE_PERSONAL_LOAN': '5010',
+  'INTEREST_EXPENSE_BUSINESS_LOAN': '5011',
+  'INTEREST_EXPENSE_MORTGAGE_LOAN': '5012',
+  'INTEREST_EXPENSE_AUTO_LOAN': '5013',
+  'INTEREST_EXPENSE_EDUCATION_LOAN': '5014',
+  'INTEREST_EXPENSE_CONSUMER_LOAN': '5015',
+  'INTEREST_EXPENSE_SME_LOAN': '5016',
+  'INTEREST_EXPENSE_AGRICULTURAL_LOAN': '5017',
+  'INTEREST_EXPENSE_DAILY_LOAN': '5018',
+  'INTEREST_EXPENSE_WEEKLY_LOAN': '5019',
+  'INTEREST_EXPENSE_GROUP_LOAN': '5020',
+  'INTEREST_EXPENSE_MONTHLY_LOAN': '5021',
+  'INTEREST_EXPENSE_GROUP_MONTHLY_LOAN': '5022',
+  'INTEREST_EXPENSE_ASSET_LOAN': '5023',
+  'INTEREST_EXPENSE_SOLAR_LOAN': '5024',
+  'INTEREST_EXPENSE_RAPID_CASH_LOAN': '5025',
+  'INTEREST_EXPENSE_STAFF_SALARY_ADVANCE': '5026',
+  'INTEREST_EXPENSE_STAFF_LOAN': '5027',
+  'INTEREST_EXPENSE_INDIVIDUAL_LOAN': '5028',
+  'INTEREST_EXPENSE_CORPORATE_LOAN': '5029',
+  'INTEREST_EXPENSE_OVERDRAFT': '5030',
+  'INTEREST_EXPENSE_HOME_IMPROVEMENT_LOAN': '5031',
+  'INTEREST_EXPENSE_SCHOOL_IMPROVEMENT_LOAN': '5032',
+  'INTEREST_EXPENSE_AGRICULTURE_LOAN': '5033',
+  'INTEREST_EXPENSE_GENERAL_LOAN': '5034',
+  'INTEREST_EXPENSE_MORTGAGE': '5035',
+  'INTEREST_EXPENSE_HOME_LOAN': '5036',
+  'INTEREST_EXPENSE_SAVINGS': '5037',
+  'INTEREST_EXPENSE_TERM_DEPOSIT': '5038',
+  'INTEREST_EXPENSE_CREDIT_CARD': '5039',
+  'INTEREST_EXPENSE_LINE_OF_CREDIT': '5040',
   
   // Staff Expenses (5100-5199)
   'STAFF_EXPENSE': '5100',
@@ -522,6 +645,105 @@ const ACCOUNT_TYPE_CODES = {
   'SETTLEMENT_EXPENSE': '5806',
   'SWIFT_CHARGES': '5807',
   
+  // ==================== MATURED DEPOSIT ACCOUNTS (5900-5999) ====================
+  'MATURED_DEPOSIT_PERSONAL_LOAN': '5900',
+  'MATURED_DEPOSIT_BUSINESS_LOAN': '5901',
+  'MATURED_DEPOSIT_MORTGAGE_LOAN': '5902',
+  'MATURED_DEPOSIT_AUTO_LOAN': '5903',
+  'MATURED_DEPOSIT_EDUCATION_LOAN': '5904',
+  'MATURED_DEPOSIT_CONSUMER_LOAN': '5905',
+  'MATURED_DEPOSIT_SME_LOAN': '5906',
+  'MATURED_DEPOSIT_AGRICULTURAL_LOAN': '5907',
+  'MATURED_DEPOSIT_DAILY_LOAN': '5908',
+  'MATURED_DEPOSIT_WEEKLY_LOAN': '5909',
+  'MATURED_DEPOSIT_GROUP_LOAN': '5910',
+  'MATURED_DEPOSIT_MONTHLY_LOAN': '5911',
+  'MATURED_DEPOSIT_GROUP_MONTHLY_LOAN': '5912',
+  'MATURED_DEPOSIT_ASSET_LOAN': '5913',
+  'MATURED_DEPOSIT_SOLAR_LOAN': '5914',
+  'MATURED_DEPOSIT_RAPID_CASH_LOAN': '5915',
+  'MATURED_DEPOSIT_STAFF_SALARY_ADVANCE': '5916',
+  'MATURED_DEPOSIT_STAFF_LOAN': '5917',
+  'MATURED_DEPOSIT_INDIVIDUAL_LOAN': '5918',
+  'MATURED_DEPOSIT_CORPORATE_LOAN': '5919',
+  'MATURED_DEPOSIT_OVERDRAFT': '5920',
+  'MATURED_DEPOSIT_HOME_IMPROVEMENT_LOAN': '5921',
+  'MATURED_DEPOSIT_SCHOOL_IMPROVEMENT_LOAN': '5922',
+  'MATURED_DEPOSIT_AGRICULTURE_LOAN': '5923',
+  'MATURED_DEPOSIT_GENERAL_LOAN': '5924',
+  'MATURED_DEPOSIT_MORTGAGE': '5925',
+  'MATURED_DEPOSIT_HOME_LOAN': '5926',
+  'MATURED_DEPOSIT_SAVINGS': '5927',
+  'MATURED_DEPOSIT_TERM_DEPOSIT': '5928',
+  'MATURED_DEPOSIT_CREDIT_CARD': '5929',
+  'MATURED_DEPOSIT_LINE_OF_CREDIT': '5930',
+  
+  // ==================== CHARGE RECEIVABLE ACCOUNTS (5931-5960) ====================
+  'CHARGE_RECEIVABLE_PERSONAL_LOAN': '5931',
+  'CHARGE_RECEIVABLE_BUSINESS_LOAN': '5932',
+  'CHARGE_RECEIVABLE_MORTGAGE_LOAN': '5933',
+  'CHARGE_RECEIVABLE_AUTO_LOAN': '5934',
+  'CHARGE_RECEIVABLE_EDUCATION_LOAN': '5935',
+  'CHARGE_RECEIVABLE_CONSUMER_LOAN': '5936',
+  'CHARGE_RECEIVABLE_SME_LOAN': '5937',
+  'CHARGE_RECEIVABLE_AGRICULTURAL_LOAN': '5938',
+  'CHARGE_RECEIVABLE_DAILY_LOAN': '5939',
+  'CHARGE_RECEIVABLE_WEEKLY_LOAN': '5940',
+  'CHARGE_RECEIVABLE_GROUP_LOAN': '5941',
+  'CHARGE_RECEIVABLE_MONTHLY_LOAN': '5942',
+  'CHARGE_RECEIVABLE_GROUP_MONTHLY_LOAN': '5943',
+  'CHARGE_RECEIVABLE_ASSET_LOAN': '5944',
+  'CHARGE_RECEIVABLE_SOLAR_LOAN': '5945',
+  'CHARGE_RECEIVABLE_RAPID_CASH_LOAN': '5946',
+  'CHARGE_RECEIVABLE_STAFF_SALARY_ADVANCE': '5947',
+  'CHARGE_RECEIVABLE_STAFF_LOAN': '5948',
+  'CHARGE_RECEIVABLE_INDIVIDUAL_LOAN': '5949',
+  'CHARGE_RECEIVABLE_CORPORATE_LOAN': '5950',
+  'CHARGE_RECEIVABLE_OVERDRAFT': '5951',
+  'CHARGE_RECEIVABLE_HOME_IMPROVEMENT_LOAN': '5952',
+  'CHARGE_RECEIVABLE_SCHOOL_IMPROVEMENT_LOAN': '5953',
+  'CHARGE_RECEIVABLE_AGRICULTURE_LOAN': '5954',
+  'CHARGE_RECEIVABLE_GENERAL_LOAN': '5955',
+  'CHARGE_RECEIVABLE_MORTGAGE': '5956',
+  'CHARGE_RECEIVABLE_HOME_LOAN': '5957',
+  'CHARGE_RECEIVABLE_SAVINGS': '5958',
+  'CHARGE_RECEIVABLE_TERM_DEPOSIT': '5959',
+  'CHARGE_RECEIVABLE_CREDIT_CARD': '5960',
+  'CHARGE_RECEIVABLE_LINE_OF_CREDIT': '5961',
+  
+  // ==================== PRINCIPAL BALANCE ACCOUNTS (5962-5999) ====================
+  'PRINCIPAL_BALANCE_PERSONAL_LOAN': '5962',
+  'PRINCIPAL_BALANCE_BUSINESS_LOAN': '5963',
+  'PRINCIPAL_BALANCE_MORTGAGE_LOAN': '5964',
+  'PRINCIPAL_BALANCE_AUTO_LOAN': '5965',
+  'PRINCIPAL_BALANCE_EDUCATION_LOAN': '5966',
+  'PRINCIPAL_BALANCE_CONSUMER_LOAN': '5967',
+  'PRINCIPAL_BALANCE_SME_LOAN': '5968',
+  'PRINCIPAL_BALANCE_AGRICULTURAL_LOAN': '5969',
+  'PRINCIPAL_BALANCE_DAILY_LOAN': '5970',
+  'PRINCIPAL_BALANCE_WEEKLY_LOAN': '5971',
+  'PRINCIPAL_BALANCE_GROUP_LOAN': '5972',
+  'PRINCIPAL_BALANCE_MONTHLY_LOAN': '5973',
+  'PRINCIPAL_BALANCE_GROUP_MONTHLY_LOAN': '5974',
+  'PRINCIPAL_BALANCE_ASSET_LOAN': '5975',
+  'PRINCIPAL_BALANCE_SOLAR_LOAN': '5976',
+  'PRINCIPAL_BALANCE_RAPID_CASH_LOAN': '5977',
+  'PRINCIPAL_BALANCE_STAFF_SALARY_ADVANCE': '5978',
+  'PRINCIPAL_BALANCE_STAFF_LOAN': '5979',
+  'PRINCIPAL_BALANCE_INDIVIDUAL_LOAN': '5980',
+  'PRINCIPAL_BALANCE_CORPORATE_LOAN': '5981',
+  'PRINCIPAL_BALANCE_OVERDRAFT': '5982',
+  'PRINCIPAL_BALANCE_HOME_IMPROVEMENT_LOAN': '5983',
+  'PRINCIPAL_BALANCE_SCHOOL_IMPROVEMENT_LOAN': '5984',
+  'PRINCIPAL_BALANCE_AGRICULTURE_LOAN': '5985',
+  'PRINCIPAL_BALANCE_GENERAL_LOAN': '5986',
+  'PRINCIPAL_BALANCE_MORTGAGE': '5987',
+  'PRINCIPAL_BALANCE_HOME_LOAN': '5988',
+  'PRINCIPAL_BALANCE_SAVINGS': '5989',
+  'PRINCIPAL_BALANCE_TERM_DEPOSIT': '5990',
+  'PRINCIPAL_BALANCE_CREDIT_CARD': '5991',
+  'PRINCIPAL_BALANCE_LINE_OF_CREDIT': '5992',
+  
   // ==================== CONTROL ACCOUNTS (6000-6999) ====================
   
   // Control Accounts (6000-6099)
@@ -579,6 +801,39 @@ const ACCOUNT_TYPE_CODES = {
   'STAMP_DUTY_PAYABLE': '7008',
   'CAPITAL_GAINS_TAX_PAYABLE': '7009',
   
+  // ==================== WITHHOLDING TAX BY PRODUCT (7010-7040) ====================
+  'WITHHOLDING_TAX_PERSONAL_LOAN': '7010',
+  'WITHHOLDING_TAX_BUSINESS_LOAN': '7011',
+  'WITHHOLDING_TAX_MORTGAGE_LOAN': '7012',
+  'WITHHOLDING_TAX_AUTO_LOAN': '7013',
+  'WITHHOLDING_TAX_EDUCATION_LOAN': '7014',
+  'WITHHOLDING_TAX_CONSUMER_LOAN': '7015',
+  'WITHHOLDING_TAX_SME_LOAN': '7016',
+  'WITHHOLDING_TAX_AGRICULTURAL_LOAN': '7017',
+  'WITHHOLDING_TAX_DAILY_LOAN': '7018',
+  'WITHHOLDING_TAX_WEEKLY_LOAN': '7019',
+  'WITHHOLDING_TAX_GROUP_LOAN': '7020',
+  'WITHHOLDING_TAX_MONTHLY_LOAN': '7021',
+  'WITHHOLDING_TAX_GROUP_MONTHLY_LOAN': '7022',
+  'WITHHOLDING_TAX_ASSET_LOAN': '7023',
+  'WITHHOLDING_TAX_SOLAR_LOAN': '7024',
+  'WITHHOLDING_TAX_RAPID_CASH_LOAN': '7025',
+  'WITHHOLDING_TAX_STAFF_SALARY_ADVANCE': '7026',
+  'WITHHOLDING_TAX_STAFF_LOAN': '7027',
+  'WITHHOLDING_TAX_INDIVIDUAL_LOAN': '7028',
+  'WITHHOLDING_TAX_CORPORATE_LOAN': '7029',
+  'WITHHOLDING_TAX_OVERDRAFT': '7030',
+  'WITHHOLDING_TAX_HOME_IMPROVEMENT_LOAN': '7031',
+  'WITHHOLDING_TAX_SCHOOL_IMPROVEMENT_LOAN': '7032',
+  'WITHHOLDING_TAX_AGRICULTURE_LOAN': '7033',
+  'WITHHOLDING_TAX_GENERAL_LOAN': '7034',
+  'WITHHOLDING_TAX_MORTGAGE': '7035',
+  'WITHHOLDING_TAX_HOME_LOAN': '7036',
+  'WITHHOLDING_TAX_SAVINGS': '7037',
+  'WITHHOLDING_TAX_TERM_DEPOSIT': '7038',
+  'WITHHOLDING_TAX_CREDIT_CARD': '7039',
+  'WITHHOLDING_TAX_LINE_OF_CREDIT': '7040',
+  
   // Tax Receivable (7100-7199)
   'TAX_RECEIVABLE': '7100',
   'WITHHOLDING_TAX_RECOVERABLE': '7101',
@@ -626,6 +881,7 @@ const ACCOUNT_TYPE_CODES = {
   'BUDGET_ACCOUNT': '8204',
   'FORECAST_ACCOUNT': '8205'
 };
+
 
 
 // Account class to code mapping (updated with more classes)
@@ -844,11 +1100,12 @@ export const addAuditTrail = async (auditParams, connection) => {
 };
 
 // ==================== ENHANCED: CREATE COA-ALIGNED GL ACCOUNT + LEDGER ENTRY ====================
+// ==================== ENHANCED: CREATE COA-ALIGNED GL ACCOUNT + LEDGER + HIERARCHY ====================
 export const createCOAAlignedGLAccount = async (req, res) => {
   let transaction;
 
   try {
-    logger.info('Starting COA-aligned GL account creation with Ledger linkage');
+    logger.info('Starting COA-aligned GL account creation with Ledger linkage & hierarchy');
     console.log('📦 Request body:', JSON.stringify(req.body, null, 2));
 
     await GLAccount.createTableIfNotExists();
@@ -856,7 +1113,9 @@ export const createCOAAlignedGLAccount = async (req, res) => {
 
     transaction = await sequelize.transaction();
 
+    // -------- DESTRUCTURE WITH HIERARCHY FIELDS --------
     const {
+      // Existing fields
       organizationCode: rawOrgCode,
       organizationName = '',
       branchCode: rawBranchCode,
@@ -873,7 +1132,12 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       allowNegativeBalance = false,
       productType,
       subAccount,
-      metadata = {}
+      metadata = {},
+      // New hierarchical fields (frontend sends these)
+      parentId,
+      isFolder = false,
+      sortOrder = 0,
+      name: providedName,       // if frontend sends 'name' instead of ACCT_DESC
     } = req.body;
 
     // ------------------ SAFE INPUT CONVERSION ------------------
@@ -892,7 +1156,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
 
     const organizationCode = safeTrim(rawOrgCode);
     const branchCode = safeTrim(rawBranchCode);
-    const acctDesc = safeTrim(ACCT_DESC);
+    const acctDesc = safeTrim(ACCT_DESC || providedName || '');
     const safeOrganizationName = safeTrim(organizationName);
     const safeBranchName = safeTrim(branchName);
 
@@ -900,7 +1164,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing or invalid required fields: organizationCode, branchCode, ACCT_DESC'
+        message: 'Missing or invalid required fields: organizationCode, branchCode, ACCT_DESC (or name)'
       });
     }
 
@@ -917,7 +1181,8 @@ export const createCOAAlignedGLAccount = async (req, res) => {
 
     console.log('🔍 Account classification:', { accountClassUpper, accountTypeUpper });
 
-    // ✅ validClasses already includes 'CONTROL_SUSPENSE'
+    // Valid classes
+    const validClasses = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE', 'CONTROL', 'SUSPENSE', 'TAX', 'OFF_BALANCE_SHEET', 'CONTROL_SUSPENSE'];
     if (!validClasses.includes(accountClassUpper)) {
       await transaction.rollback();
       return res.status(400).json({
@@ -936,7 +1201,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     const normalizedBranchCode = normalizeBranchCodeSimple(branchCode);
     const subAccountCode = subAccount || '0001';
 
-    // ✅ clsMap now includes CONTROL_SUSPENSE
     const clsMap = {
       'ASSET': '1', 'LIABILITY': '2', 'EQUITY': '3',
       'REVENUE': '4', 'EXPENSE': '5', 'CONTROL': '6',
@@ -980,7 +1244,38 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     };
 
     const normalBalance = getSimpleNormalBalance(accountClassUpper);
-    const accountLevel = parseInt(safeToString(level), 10) || 4;
+    let accountLevel = parseInt(safeToString(level), 10) || 4;
+    let accountPath = null;
+
+    // ---------- HIERARCHY LOGIC ----------
+    // Resolve parentId (could come as 'parentId' or from parentAccountNo)
+    const resolvedParentId = parentId || (parentAccountNo ? parseInt(parentAccountNo, 10) : null);
+
+    if (resolvedParentId) {
+      const parent = await ChartofAccount.findOne({
+        where: {
+          id: resolvedParentId,
+          organization_code: parseInt(organizationCode, 10),
+          branch_code: normalizedBranchCode,
+          is_deleted: false
+        },
+        transaction
+      });
+      if (!parent) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Parent account with ID ${resolvedParentId} not found in this branch`
+        });
+      }
+      // Level = parent level + 1 (or use provided level if greater)
+      const parentLevel = parent.accountLevel || 0;
+      accountLevel = Math.max(accountLevel, parentLevel + 1);
+      // Path = parent path + parent id
+      accountPath = parent.accountPath
+        ? `${parent.accountPath}/${parent.id}`
+        : `${parent.id}`;
+    }
 
     const getPostingRules = (accountClass, normalBalance, allowNegativeBalance, isControlAccount, isSuspenseAccount, metadata = {}) => {
       const baseRules = {
@@ -989,27 +1284,10 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         controlAccount: Boolean(isControlAccount),
         suspenseAccount: Boolean(isSuspenseAccount)
       };
-
       if (metadata.postingRulesOverride) {
         return { ...baseRules, ...metadata.postingRulesOverride };
       }
-
-      switch (accountClass) {
-        case 'REVENUE':
-        case 'EXPENSE':
-        case 'ASSET':
-        case 'LIABILITY':
-        case 'EQUITY':
-          return { ...baseRules, crAllowed: true, drAllowed: true };
-        case 'CONTROL':
-        case 'SUSPENSE':
-        case 'TAX':
-        case 'OFF_BALANCE_SHEET':
-        case 'CONTROL_SUSPENSE':   // ✅ added
-          return { ...baseRules, crAllowed: true, drAllowed: true };
-        default:
-          return { ...baseRules, crAllowed: true, drAllowed: true };
-      }
+      return { ...baseRules, crAllowed: true, drAllowed: true };
     };
 
     const postingRules = getPostingRules(
@@ -1017,13 +1295,9 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       isControlAccount, isSuspenseAccount, metadata
     );
 
-    // ---------------- MAP TO DATABASE-SAFE ACCOUNT CLASS ----------------
+    // ---------------- MAP TO DB-SAFE ACCOUNT CLASS ----------------
     const getDbSafeAccountClass = (accClass) => {
-      // Map any custom/combined classes to a value the DB column accepts
-      const mapping = {
-        'CONTROL_SUSPENSE': 'CONTROL'
-        // Add more mappings if needed, e.g. 'SUSPENSE_CONTROL': 'SUSPENSE'
-      };
+      const mapping = { 'CONTROL_SUSPENSE': 'CONTROL' };
       return mapping[accClass] || accClass;
     };
 
@@ -1046,9 +1320,11 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       },
       hierarchy: {
         level: accountLevel,
-        parentAccountNo: safeToString(parentAccountNo),
-        isControlAccount: Boolean(isControlAccount),
-        isSuspenseAccount: Boolean(isSuspenseAccount)
+        parentId: resolvedParentId,
+        isFolder: Boolean(isFolder),
+        sortOrder: sortOrder || 0,
+        accountPath: accountPath,
+        parentAccountNo: safeToString(parentAccountNo)
       },
       postingRules,
       ...(typeof metadata === 'object' ? metadata : {})
@@ -1098,7 +1374,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       });
     }
 
-    // ------------------ CREATE CHART OF ACCOUNT ------------------
+    // ------------------ CREATE CHART OF ACCOUNT (with hierarchy) ------------------
     const chartAccount = await ChartofAccount.create({
       name: acctDesc,
       glcode,
@@ -1125,6 +1401,12 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       createdBy: safeTrim(CREATED_BY),
       updatedBy: safeTrim(CREATED_BY),
       sourceSystem: 'INTERNAL_COA_ENGINE',
+      // HIERARCHY FIELDS
+      parentId: resolvedParentId,
+      accountLevel: accountLevel,
+      isFolder: Boolean(isFolder),
+      sortOrder: sortOrder || 0,
+      accountPath: accountPath,
       metadata: JSON.stringify(coaMetadata)
     }, { transaction });
 
@@ -1135,7 +1417,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         'REVENUE': '4000', 'EXPENSE': '5000',
         'CONTROL': '6000', 'SUSPENSE': '6100',
         'TAX': '7000', 'OFF_BALANCE_SHEET': '8000',
-        'CONTROL_SUSPENSE': '6000'   // ✅ added
+        'CONTROL_SUSPENSE': '6000'
       };
       return map[accClass] || '1000';
     };
@@ -1149,7 +1431,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       ACCT_DESC: acctDesc,
       LEDGER_NO: '001',
       BU_ID: normalizedBranchCode,
-      GL_ACCT_CAT: dbSafeClass,                     // ✅ use db-safe class
+      GL_ACCT_CAT: dbSafeClass,
       CR_ALLOWED: postingRules.crAllowed,
       DR_ALLOWED: postingRules.drAllowed,
       REC_ST: 'Active',
@@ -1180,7 +1462,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       TRANSACTION_TYPE: `${accountClassUpper} Balance`,
       metadata: JSON.stringify(coaMetadata),
       categoryCode: getAccountClassCategoryCode(accountClassUpper),
-      categoryName: `${dbSafeClass} - ${accountTypeUpper}`,   // ✅ use db-safe class
+      categoryName: `${dbSafeClass} - ${accountTypeUpper}`,
       level: accountLevel,
       childAccounts: '[]',
       accountType: accountTypeUpper
@@ -1200,7 +1482,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       branchCode: normalizedBranchCode,
       branchType: 'MAIN',
       categoryCode: getAccountClassCategoryCode(accountClassUpper),
-      categoryName: `${dbSafeClass} - ${accountTypeUpper}`,   // ✅ use db-safe class
+      categoryName: `${dbSafeClass} - ${accountTypeUpper}`,
       parentCode: parentAccountNo,
       level: accountLevel,
       LEDGER_NO: '001',
@@ -1211,7 +1493,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       SEG_NO: 1,
       CHART_OF_ACCT_ID: '10001',
       ACCT_DESC: acctDesc,
-      GL_ACCT_CAT: dbSafeClass,                     // ✅ use db-safe class
+      GL_ACCT_CAT: dbSafeClass,
       JOURNAL_ID: `JRN-COA-${Date.now()}`,
       TRANSACTION_TYPE: `${accountClassUpper} Balance`,
       CR_ALLOWED: postingRules.crAllowed,
@@ -1252,9 +1534,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       accountType: accountTypeUpper
     };
 
-    // If your gl_accounts table does NOT have an ACCT_DESC column, remove that line:
-    // delete glAccountData.ACCT_DESC;
-
     const glAccountEntry = await GLAccount.create(glAccountData, { transaction });
 
     // Optional bidirectional links
@@ -1293,7 +1572,15 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       createdAt: chartAccount.createdAt,
       coaStructure,
       metadata: coaMetadata,
-      categoryCode: accountTypeCategoryMap[accountTypeUpper] || '0000'
+      categoryCode: accountTypeCategoryMap[accountTypeUpper] || '0000',
+      // Hierarchy info
+      hierarchy: {
+        parentId: chartAccount.parentId,
+        accountLevel: chartAccount.accountLevel,
+        isFolder: chartAccount.isFolder,
+        sortOrder: chartAccount.sortOrder,
+        accountPath: chartAccount.accountPath
+      }
     };
 
     return res.status(201).json({
@@ -1327,10 +1614,16 @@ export const getCOAAlignedAccount = async (req, res) => {
 
     console.log('🔍 Fetching COA-aligned account(s):', { glAccountNo, glAccountId });
 
-    // If no identifier provided, return all COA-aligned GL accounts (paginated)
+    // If no identifier provided, return all COA-aligned GL accounts
     if (!glAccountNo && !glAccountId) {
       const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
+      // ✅ Support 'all' parameter or use a larger default limit
+      let limit;
+      if (req.query.limit === 'all') {
+        limit = 10000; // Large number to get all records
+      } else {
+        limit = parseInt(req.query.limit) || 100; // Default to 100 instead of 20
+      }
       const offset = (page - 1) * limit;
 
       const { count, rows } = await GLAccount.findAndCountAll({
@@ -1339,8 +1632,7 @@ export const getCOAAlignedAccount = async (req, res) => {
         order: [['GL_ACCT_NO', 'ASC']]
       });
 
-      // For each account, we could optionally enrich with ChartOfAccount/Ledger data,
-      // but that would be heavy for a list. Return basic info.
+      // Format accounts for response
       const accounts = rows.map(glAccount => ({
         glcode: glAccount.GL_ACCT_NO,
         glAccountId: glAccount.GL_ACCT_ID,

@@ -1,4 +1,5 @@
 // src/models/BusinessRole.js - COMPLETE FIXED VERSION with sync: false
+
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -332,16 +333,10 @@ BusinessRole.init(
         }
       },
     },
-   
   }
 );
 
-// Remove association code since Branch model doesn't exist
-// BusinessRole.associate = (models) => {
-//   // No associations for now
-// };
-
-// === INSTANCE METHODS ===
+// ========== INSTANCE METHODS ==========
 BusinessRole.prototype.getRoleDetails = function () {
   return getRoleById(this.ROLE_ID);
 };
@@ -356,6 +351,10 @@ BusinessRole.prototype.isSupervisor = function () {
 
 BusinessRole.prototype.canPostTransactions = function () {
   return this.ALLOW_TXN_POSTING_FG === 'Y';
+};
+
+BusinessRole.prototype.getBU_ID = function() {
+  return this.BU_ID;
 };
 
 BusinessRole.prototype.getBasicInfo = function () {
@@ -373,7 +372,7 @@ BusinessRole.prototype.getBasicInfo = function () {
   };
 };
 
-// === STATIC METHODS ===
+// ========== STATIC METHODS ==========
 BusinessRole.findByUserId = async function (userId, options = {}) {
   const { includeInactive = false } = options;
   
@@ -479,7 +478,7 @@ BusinessRole.validateRoleData = function (roleData) {
   return errors;
 };
 
-// === QUERY SCOPES ===
+// ========== QUERY SCOPES ==========
 BusinessRole.addScope('active', {
   where: { REC_ST: 'Active' },
 });

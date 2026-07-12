@@ -891,7 +891,7 @@ export const getAccountByNumber = async (req, res) => {
     console.log(`🔍 Searching for account: ${accountNumber}`);
     const cleanAccountNumber = accountNumber.trim();
 
-    // ✅ SELECT only columns that exist in customer_accounts table
+    // ✅ SELECT columns including sms_alert
     const query = `
       SELECT 
         id,
@@ -908,7 +908,8 @@ export const getAccountByNumber = async (req, res) => {
         updated_at,
         product_id,
         product_code,
-        depositor_name
+        depositor_name,
+        sms_alert
       FROM customer_accounts 
       WHERE account_number = ?
       LIMIT 1
@@ -978,7 +979,10 @@ export const getAccountByNumber = async (req, res) => {
         
         prod_id: account.product_id,
         gl_account_id: null,
-        gl_account_number: null
+        gl_account_number: null,
+        
+        // ✅ SMS alert flag
+        sms_alert: account.sms_alert || 'No'   // default to 'No' if null
       }
     };
 

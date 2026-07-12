@@ -1154,5 +1154,508 @@ router.get('/reports/inward-payments', async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to fetch inward payments', error: error.message });
   }
 });
+/////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+// LOAN PROVISION REPORT - FIXED COLLATION
+///////////////////////////////////////////////////////////////////////
+
+
+// ============================================================
+// Helper: Build the loan provision query
+// ============================================================
+const buildLoanProvisionQuery = (filters = {}) => {
+  const { branch, product, status } = filters;
+  const conditions = ["la.LOAN_STATUS = 'ACTIVE'"];
+  const replacements = {};
+
+  // ✅ Branch filter using BU_ID from customers table
+  if (branch) {
+    conditions.push('c.BU_ID = :branch');
+    replacements.branch = branch;
+  }
+  
+  if (product) {
+    conditions.push('la.LOAN_PRODUCT_ID = :product');
+    replacements.product = product;
+  }
+  if (status) {
+    conditions.push('lp.status = :status');
+    replacements.status = status;
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const query = `
+    SELECT 
+      -- Customer Info (from customers table) - matched by CUST_ID
+      c.CUST_ID AS customerId,
+      CONCAT(COALESCE(c.FIRST_NAME, ''), ' ', COALESCE(c.LAST_NAME, '')) AS customerName,
+      c.GENDER_TY AS gender,
+      c.BVN AS bvn,                          -- ✅ BVN from customers table
+      c.INDUSTRY_CD AS industryCode,
+      c.BU_ID AS branch,                     -- ✅ Branch from customers table
+      c.CREATED_BY AS accountOfficer,        -- ✅ Officer from customers table (CREATED_BY)
+      
+      -- Loan Account Info
+      la.ACCT_NO AS loanAccount,
+      la.ACCT_NM AS accountName,
+      la.AMOUNT AS disbursementAmount,
+      la.DISBURSED_AMOUNT AS actualDisbursed,
+      la.OUTSTANDING_PRINCIPAL AS outstandingPrincipal,
+      la.ACCRUED_INTEREST AS accruedInterest,
+      (la.OUTSTANDING_PRINCIPAL + COALESCE(la.ACCRUED_INTEREST, 0)) AS totalOutstanding,
+      la.TOTAL_REPAID_AMOUNT AS totalRepaid,
+      
+      -- Provision Data (from loan_provisions table)
+      COALESCE(lp.provision_amount, 0) AS provisionBalance,
+      lp.provision_rate AS provisionRate,
+      lp.provision_date AS provisionDate,
+      lp.gl_account AS provisionGLAccount,
+      lp.status AS provisionStatus,
+      
+      -- Loan Status
+      la.LOAN_STATUS AS loanStatus,
+      la.SERVICING_STATUS AS servicingStatus,
+      la.DISBURSEMENT_DATE AS disbursementDate,
+      la.MATURITY_DT AS maturityDate,
+      la.INTEREST_RATE AS interestRate,
+      
+      -- Product Info
+      lp2.product_code AS productCode,
+      lp2.name AS productName,
+      lp2.PROD_ID AS productId,
+      lp2.product_type AS productType,
+      
+      -- Days in Arrears (calculated using disbursement date)
+      GREATEST(0, DATEDIFF(CURDATE(), la.DISBURSEMENT_DATE)) AS daysInArrears,
+      
+      -- Principal Arrears - from loan_accounts (use ABS for positive value)
+      ABS(la.OUTSTANDING_PRINCIPAL) AS principalArrears,
+      
+      -- ✅ Loan Cycle - using stored value from loan_accounts table
+      la.loan_cycle AS loanCycle,
+      
+      -- Provision Class (based on days since disbursement)
+      CASE 
+        WHEN DATEDIFF(CURDATE(), la.DISBURSEMENT_DATE) <= 30 THEN 'Standard'
+        WHEN DATEDIFF(CURDATE(), la.DISBURSEMENT_DATE) BETWEEN 31 AND 60 THEN 'Watch'
+        WHEN DATEDIFF(CURDATE(), la.DISBURSEMENT_DATE) BETWEEN 61 AND 90 THEN 'Substandard'
+        WHEN DATEDIFF(CURDATE(), la.DISBURSEMENT_DATE) BETWEEN 91 AND 180 THEN 'Doubtful'
+        ELSE 'Loss'
+      END AS provisionClass,
+      
+      -- Ledger Balance (using outstanding principal + accrued interest)
+      (ABS(la.OUTSTANDING_PRINCIPAL) + COALESCE(la.ACCRUED_INTEREST, 0)) AS ledgerBalance
+      
+    FROM loan_accounts la
+    
+    -- ✅ Join with customers - matched by CUST_ID with proper collation
+    INNER JOIN customers c ON la.CUST_ID COLLATE utf8mb4_unicode_ci = c.CUST_ID COLLATE utf8mb4_unicode_ci
+    
+    -- Join with loan_provisions (use LEFT JOIN to include loans without provisions)
+    LEFT JOIN loan_provisions lp ON la.id = lp.loan_account_id
+    
+    -- Join with loan_products
+    LEFT JOIN loan_products lp2 ON la.LOAN_PRODUCT_ID = lp2.PROD_ID
+    
+    ${whereClause}
+    ORDER BY la.DISBURSEMENT_DATE DESC, la.created_at DESC
+  `;
+
+  return { query, replacements };
+};
+
+
+// ============================================================
+// GET /api/reports/loan-provision
+// ============================================================
+router.get('/loan-provision', async (req, res) => {
+  try {
+    const { branch, product, status } = req.query;
+    const { query, replacements } = buildLoanProvisionQuery({ branch, product, status });
+
+    console.log('📊 Loan Provision Query:', query);
+    console.log('📊 Replacements:', replacements);
+
+    const results = await sequelize.query(query, {
+      replacements,
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    // Calculate totals
+    const totals = {
+      totalLoans: results.length,
+      totalDisbursed: 0,
+      totalOutstanding: 0,
+      totalProvision: 0,
+      totalArrears: 0,                       // ✅ NEW: Total Arrears
+      loansWithProvision: results.filter(r => r.provisionBalance !== null && parseFloat(r.provisionBalance) > 0).length,
+    };
+
+    results.forEach(row => {
+      totals.totalDisbursed += parseFloat(row.disbursementAmount || row.actualDisbursed || 0);
+      totals.totalOutstanding += parseFloat(row.outstandingPrincipal || 0) + parseFloat(row.accruedInterest || 0);
+      totals.totalProvision += parseFloat(row.provisionBalance || 0);
+      totals.totalArrears += Math.abs(parseFloat(row.principalArrears || 0)); // ✅ Add to arrears total
+    });
+
+    res.json({
+      success: true,
+      count: results.length,
+      totals,
+      data: results,
+    });
+  } catch (error) {
+    console.error('❌ Loan provision report error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to generate loan provision report',
+      details: error.message,
+      sql: error.sql || null
+    });
+  }
+});
+
+
+// ============================================================
+// GET /api/reports/loan-provision/summary - WITH TOTAL ARREARS
+// ============================================================
+router.get('/loan-provision/summary', async (req, res) => {
+  try {
+    const { branch, product } = req.query;
+    
+    let summaryQuery = `
+      SELECT 
+        lp.status AS provisionStatus,
+        COUNT(*) AS count,
+        SUM(lp.provision_amount) AS totalProvision,
+        SUM(ABS(la.OUTSTANDING_PRINCIPAL)) AS totalOutstandingPrincipal,
+        SUM(ABS(la.OUTSTANDING_PRINCIPAL) + COALESCE(la.ACCRUED_INTEREST, 0)) AS totalArrears,
+        AVG(lp.provision_rate) AS avgProvisionRate,
+        MIN(lp.provision_date) AS firstProvisionDate,
+        MAX(lp.provision_date) AS lastProvisionDate
+      FROM loan_provisions lp
+      JOIN loan_accounts la ON lp.loan_account_id = la.id
+      INNER JOIN customers c ON la.CUST_ID COLLATE utf8mb4_unicode_ci = c.CUST_ID COLLATE utf8mb4_unicode_ci
+      WHERE la.LOAN_STATUS = 'ACTIVE'
+    `;
+
+    const replacements = {};
+
+    if (branch) {
+      summaryQuery += ` AND c.BU_ID = :branch`;
+      replacements.branch = branch;
+    }
+
+    if (product) {
+      summaryQuery += ` AND la.LOAN_PRODUCT_ID = :product`;
+      replacements.product = product;
+    }
+
+    summaryQuery += ` GROUP BY lp.status`;
+
+    const results = await sequelize.query(summaryQuery, {
+      replacements,
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    // Calculate overall totals across all statuses
+    const overallTotals = {
+      totalProvision: 0,
+      totalOutstandingPrincipal: 0,
+      totalArrears: 0,
+      totalCount: 0
+    };
+
+    results.forEach(row => {
+      overallTotals.totalProvision += parseFloat(row.totalProvision || 0);
+      overallTotals.totalOutstandingPrincipal += parseFloat(row.totalOutstandingPrincipal || 0);
+      overallTotals.totalArrears += parseFloat(row.totalArrears || 0);
+      overallTotals.totalCount += parseInt(row.count || 0);
+    });
+
+    res.json({
+      success: true,
+      data: {
+        byStatus: results,
+        overall: {
+          totalProvision: overallTotals.totalProvision,
+          totalOutstandingPrincipal: overallTotals.totalOutstandingPrincipal,
+          totalArrears: overallTotals.totalArrears,
+          totalCount: overallTotals.totalCount
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Provision summary error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to generate provision summary',
+      details: error.message
+    });
+  }
+});
+
+
+// ============================================================
+// GET /api/reports/loan-provision/export-csv
+// ============================================================
+router.get('/loan-provision/export-csv', async (req, res) => {
+  try {
+    const { branch, product, status } = req.query;
+    const { query, replacements } = buildLoanProvisionQuery({ branch, product, status });
+
+    const results = await sequelize.query(query, {
+      replacements,
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    if (!results.length) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'No data to export' 
+      });
+    }
+
+    // Define CSV columns with Branch and Officer
+    const columns = [
+      'customerName',
+      'loanAccount',
+      'disbursementAmount',
+      'ledgerBalance',
+      'provisionBalance',
+      'provisionClass',
+      'daysInArrears',
+      'outstandingPrincipal',
+      'principalArrears',
+      'accruedInterest',
+      'gender',
+      'branch',
+      'accountOfficer',
+      'productName',
+      'disbursementDate',
+      'loanCycle',
+      'bvn',
+      'industryCode'
+    ];
+
+    // Build CSV
+    const header = columns.join(',');
+    const rows = results.map(row => {
+      return columns.map(col => {
+        const value = row[col];
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'string' && value.includes(',')) {
+          return `"${value}"`;
+        }
+        if (value instanceof Date || (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/))) {
+          const d = new Date(value);
+          if (!isNaN(d.getTime())) {
+            return d.toISOString().split('T')[0];
+          }
+        }
+        // ✅ Handle negative numbers - use ABS
+        if (col === 'outstandingPrincipal' || col === 'principalArrears' || col === 'ledgerBalance') {
+          return Math.abs(parseFloat(value) || 0);
+        }
+        return value;
+      }).join(',');
+    });
+    const csv = [header, ...rows].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=loan-provision-report.csv');
+    res.send(csv);
+  } catch (error) {
+    console.error('❌ CSV export error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to export CSV',
+      details: error.message
+    });
+  }
+});
+
+
+// ============================================================
+// GET /api/reports/loan-provision/:loanAccount
+// ============================================================
+router.get('/loan-provision/:loanAccount', async (req, res) => {
+  try {
+    const { loanAccount } = req.params;
+
+    const query = `
+      SELECT 
+        lp.*,
+        la.ACCT_NO AS loanAccount,
+        la.ACCT_NM AS customerName,
+        la.AMOUNT AS loanAmount,
+        la.OUTSTANDING_PRINCIPAL AS outstandingPrincipal,
+        la.ACCRUED_INTEREST AS accruedInterest,
+        la.LOAN_STATUS AS loanStatus,
+        la.DISBURSEMENT_DATE AS disbursementDate,
+        c.FIRST_NAME AS firstName,
+        c.LAST_NAME AS lastName,
+        c.BVN AS bvn,                        -- ✅ BVN from customers
+        c.INDUSTRY_CD AS industryCode,
+        c.BU_ID AS branch,                   -- ✅ Branch from customers
+        c.CREATED_BY AS accountOfficer,      -- ✅ Officer from customers table
+        la.loan_cycle AS loanCycle           -- ✅ Stored loan cycle from loan_accounts
+      FROM loan_provisions lp
+      JOIN loan_accounts la ON lp.loan_account_id = la.id
+      LEFT JOIN customers c ON la.CUST_ID COLLATE utf8mb4_unicode_ci = c.CUST_ID COLLATE utf8mb4_unicode_ci
+      WHERE la.ACCT_NO = :loanAccount
+        AND la.LOAN_STATUS = 'ACTIVE'
+      ORDER BY lp.created_at DESC
+    `;
+
+    const results = await sequelize.query(query, {
+      replacements: { loanAccount },
+      type: sequelize.QueryTypes.SELECT,
+    });
+
+    if (!results.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active provisions found for this loan account'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: results,
+    });
+  } catch (error) {
+    console.error('❌ Error fetching loan provision:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch loan provision details',
+      details: error.message
+    });
+  }
+});
+
+// ============================================================
+// GET /api/reports/loan-provision/debug/columns
+// ============================================================
+router.get('/loan-provision/debug/columns', async (req, res) => {
+  try {
+    const loanAccountsColumns = await sequelize.query(
+      `SHOW COLUMNS FROM loan_accounts`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    const customersColumns = await sequelize.query(
+      `SHOW COLUMNS FROM customers`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    const provisionsColumns = await sequelize.query(
+      `SHOW COLUMNS FROM loan_provisions`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    const productsColumns = await sequelize.query(
+      `SHOW COLUMNS FROM loan_products`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+
+    res.json({
+      success: true,
+      tables: {
+        loan_accounts: loanAccountsColumns.map(c => c.Field),
+        customers: customersColumns.map(c => c.Field),
+        loan_provisions: provisionsColumns.map(c => c.Field),
+        loan_products: productsColumns.map(c => c.Field)
+      },
+      message: 'These are the actual column names in the tables'
+    });
+  } catch (error) {
+    console.error('❌ Error fetching columns:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch column names',
+      details: error.message
+    });
+  }
+});
+
+// ============================================================
+// GET /api/reports/loan-provision/backfill-loan-cycle
+// ============================================================
+router.get('/loan-provision/backfill-loan-cycle', async (req, res) => {
+  try {
+    // Backfill loan_cycle for existing loans using stored procedure style
+    await sequelize.query(`SET @row_number = 0`);
+    await sequelize.query(`SET @current_customer = ''`);
+    
+    const result = await sequelize.query(`
+      UPDATE loan_accounts la
+      JOIN (
+        SELECT 
+          id,
+          CUST_ID,
+          @row_number := IF(@current_customer = CUST_ID, @row_number + 1, 1) AS cycle_number,
+          @current_customer := CUST_ID
+        FROM loan_accounts
+        ORDER BY CUST_ID, created_at ASC
+      ) AS ordered ON la.id = ordered.id
+      SET la.loan_cycle = ordered.cycle_number
+    `);
+
+    // Get count of updated rows
+    const countResult = await sequelize.query(`
+      SELECT COUNT(*) as total FROM loan_accounts WHERE loan_cycle IS NOT NULL
+    `);
+
+    res.json({
+      success: true,
+      message: 'Loan cycle backfilled successfully',
+      totalUpdated: countResult[0]?.[0]?.total || 0,
+      data: result
+    });
+  } catch (error) {
+    console.error('❌ Error backfilling loan cycle:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to backfill loan cycle',
+      details: error.message
+    });
+  }
+});
+
+
+// ============================================================
+// GET /api/reports/loan-provision/fix-negative-principal
+// ============================================================
+router.get('/loan-provision/fix-negative-principal', async (req, res) => {
+  try {
+    // Fix negative outstanding principal
+    const result = await sequelize.query(`
+      UPDATE loan_accounts 
+      SET OUTSTANDING_PRINCIPAL = ABS(OUTSTANDING_PRINCIPAL) 
+      WHERE OUTSTANDING_PRINCIPAL < 0
+    `);
+
+    const countResult = await sequelize.query(`
+      SELECT COUNT(*) as total FROM loan_accounts WHERE OUTSTANDING_PRINCIPAL < 0
+    `);
+
+    res.json({
+      success: true,
+      message: 'Negative outstanding principal fixed',
+      remainingNegative: countResult[0]?.[0]?.total || 0
+    });
+  } catch (error) {
+    console.error('❌ Error fixing negative principal:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fix negative principal',
+      details: error.message
+    });
+  }
+});
+
+
 
 export default router;

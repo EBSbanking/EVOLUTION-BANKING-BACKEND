@@ -3,11 +3,22 @@ import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
 import {
   Vault,
-  VaultAuthorizedPersonnel,
-  VaultPendingApproval,
-  VaultAccessAttempt,
+  VaultPersonnel,
+  VaultApprovalRequest,
+  VaultAuditLog,
   VaultMaintenanceLog,
-  Drawer
+  VaultConfiguration,
+  VaultAccessAttempt,
+  VaultAuthorizedPersonnel,
+  VaultTransaction,
+  VaultPendingApproval,
+  VaultApprovalRequiredRole,
+  VaultCurrentApprover,
+  VaultEscalationHierarchy,
+  VaultRoleAccessMatrix,
+  Drawer,
+  User,
+  Branch
 } from '../models/index.js';
 
 // =============================================
@@ -36,14 +47,20 @@ export const createVault = async (req, res) => {
       DRAWER_ID
     } = req.body;
 
+    // Get user info from authenticated request
+    const userId = req.user?.user_name || req.user?.id || CREATED_BY || 'system';
+    
+    console.log('👤 User ID from request:', userId);
+
     console.log('📝 Validating input...');
     
     // Validate required fields
-    if (!VAULT_ID || !VAULT_CD || !VAULT_NM || !CREATED_BY || !DRAWER_ID) {
+    if (!VAULT_ID || !VAULT_CD || !VAULT_NM || !DRAWER_ID) {
       console.log('❌ Validation failed - missing fields');
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: VAULT_ID, VAULT_CD, VAULT_NM, CREATED_BY, DRAWER_ID'
+        message: 'Missing required fields: VAULT_ID, VAULT_CD, VAULT_NM, DRAWER_ID'
       });
     }
 
@@ -51,24 +68,25 @@ export const createVault = async (req, res) => {
     if (VAULT_CAPACITY !== undefined && VAULT_CAPACITY !== null && VAULT_CAPACITY !== '') {
       const capacityRegex = /^\d+(\.\d{1,2})?$/;
       if (!capacityRegex.test(VAULT_CAPACITY.toString())) {
+        await transaction.rollback();
         return res.status(400).json({
           success: false,
           message: 'Invalid VAULT_CAPACITY format. Must be a number with up to 2 decimal places (e.g., 5000000.00)'
         });
       }
       
-      // ✅ ENHANCED: Validate capacity is positive
       const capacityNum = parseFloat(VAULT_CAPACITY);
       if (capacityNum <= 0) {
+        await transaction.rollback();
         return res.status(400).json({
           success: false,
           message: 'VAULT_CAPACITY must be a positive number'
         });
       }
       
-      // ✅ ENHANCED: Validate capacity doesn't exceed maximum safe amount
-      const MAX_SAFE_AMOUNT = 1000000000000; // 1 trillion
+      const MAX_SAFE_AMOUNT = 1000000000000;
       if (capacityNum > MAX_SAFE_AMOUNT) {
+        await transaction.rollback();
         return res.status(400).json({
           success: false,
           message: `VAULT_CAPACITY cannot exceed ${MAX_SAFE_AMOUNT.toLocaleString()}`
@@ -102,7 +120,7 @@ export const createVault = async (req, res) => {
     
     // Find drawer
     const existingDrawer = await Drawer.findOne({
-      where: { drawer_id: DRAWER_ID },
+      where: { DRAWER_ID: DRAWER_ID },
       transaction
     });
     
@@ -134,7 +152,6 @@ export const createVault = async (req, res) => {
 
     console.log('🔄 Updating drawer...');
     
-    // ✅ ENHANCED: Parse capacity properly
     const capacity = VAULT_CAPACITY ? parseFloat(VAULT_CAPACITY) : 10000000.00;
     
     // Update drawer
@@ -149,7 +166,7 @@ export const createVault = async (req, res) => {
       gl_acct_no: `VAULT-${VAULT_CD}`,
       branch_code: BRANCH_CODE || existingDrawer.branch_code,
       location_code: LOCATION_CODE || existingDrawer.location_code,
-      updated_by: CREATED_BY
+      updated_by: userId
     }, { transaction });
 
     console.log('📝 Creating vault...');
@@ -167,7 +184,7 @@ export const createVault = async (req, res) => {
       vault_capacity: capacity,
       branch_code: BRANCH_CODE || existingDrawer.branch_code,
       location_code: LOCATION_CODE || existingDrawer.location_code,
-      created_by: CREATED_BY,
+      created_by: userId,
       vault_status: 'OPERATIONAL',
       is_active: true,
       
@@ -175,12 +192,7 @@ export const createVault = async (req, res) => {
       limit_max_single_deposit: capacity * 0.1,
       limit_max_single_withdrawal: capacity * 0.05,
       limit_daily_deposit: capacity * 0.3,
-      limit_daily_withdrawal: capacity * 0.2,
-      limit_min_transaction: 100.00,
-      limit_require_approval: capacity * 0.02,
-      limit_head_teller_approval: capacity * 0.01,
-      limit_supervisor_approval: capacity * 0.03,
-      limit_branch_manager_approval: capacity * 0.05
+      limit_daily_withdrawal: capacity * 0.2
     }, { transaction });
 
     // Create initial authorized personnel
@@ -191,26 +203,26 @@ export const createVault = async (req, res) => {
     await VaultAuthorizedPersonnel.bulkCreate([
       {
         vault_id: vault.id,
-        user_id: CREATED_BY,
-        user_name: "Primary Vault Manager",
+        user_id: userId,
+        user_name: req.user?.preferred_name || "Primary Vault Manager",
         user_role: "VAULT_MANAGER",
         access_level: "FULL",
         authorization_start: currentDate,
         authorization_end: futureDate,
         is_active: true,
-        authorized_by: CREATED_BY,
+        authorized_by: userId,
         authorization_notes: "Primary vault administrator with full access rights"
       },
       {
         vault_id: vault.id,
-        user_id: `${CREATED_BY}_backup`,
+        user_id: `${userId}_backup`,
         user_name: "Backup Vault Manager",
         user_role: "VAULT_MANAGER",
         access_level: "FULL",
         authorization_start: currentDate,
         authorization_end: futureDate,
         is_active: true,
-        authorized_by: CREATED_BY,
+        authorized_by: userId,
         authorization_notes: "Backup vault administrator with full access rights"
       }
     ], { transaction });
@@ -224,7 +236,7 @@ export const createVault = async (req, res) => {
       where: { id: vault.id },
       include: [
         { model: Drawer, as: 'drawer' },
-        { model: VaultAuthorizedPersonnel, as: 'authorized_personnel' }
+        { model: VaultAuthorizedPersonnel, as: 'authorizedPersonnel' }
       ]
     });
 
@@ -234,18 +246,18 @@ export const createVault = async (req, res) => {
       data: {
         vault: populatedVault,
         drawer: existingDrawer,
+        created_by: userId,
         capacityDetails: {
           capacity: capacity,
-          formattedCapacity: capacity.toLocaleString('en-US', {
+          formattedCapacity: capacity.toLocaleString('en-NG', {
             style: 'currency',
             currency: 'NGN',
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
           }),
           transactionLimits: {
-            maxSingleDeposit: (capacity * 0.1).toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-            maxSingleWithdrawal: (capacity * 0.05).toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-            approvalThreshold: (capacity * 0.02).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+            maxSingleDeposit: (capacity * 0.1).toLocaleString('en-NG', { style: 'currency', currency: 'NGN' }),
+            maxSingleWithdrawal: (capacity * 0.05).toLocaleString('en-NG', { style: 'currency', currency: 'NGN' })
           }
         }
       }
@@ -256,7 +268,6 @@ export const createVault = async (req, res) => {
     console.error('❌ Create vault error:', error.message);
     console.error('Error stack:', error.stack);
     
-    // Enhanced error handling
     if (error.name === 'SequelizeUniqueConstraintError') {
       const field = Object.keys(error.fields)[0];
       return res.status(409).json({
@@ -275,16 +286,14 @@ export const createVault = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Vault validation failed',
-        errors: errors,
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        errors: errors
       });
     }
     
     return res.status(500).json({
       success: false,
       message: 'Failed to create vault',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -305,7 +314,6 @@ export const getAllVaults = async (req, res) => {
       active = true
     } = req.query;
 
-    // Build where clause
     const where = {};
     if (active !== undefined) {
       where.is_active = active === 'true' || active === true;
@@ -314,7 +322,6 @@ export const getAllVaults = async (req, res) => {
     if (status) where.vault_status = status;
     if (security_level) where.security_level = security_level;
     
-    // Search functionality
     if (search) {
       where[Op.or] = [
         { vault_cd: { [Op.like]: `%${search}%` } },
@@ -322,7 +329,6 @@ export const getAllVaults = async (req, res) => {
       ];
     }
 
-    // Build include clause for branch filter
     const include = [
       {
         model: Drawer,
@@ -334,13 +340,11 @@ export const getAllVaults = async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get total count
     const total = await Vault.count({
       where,
       include
     });
 
-    // Get paginated results
     const vaults = await Vault.findAll({
       where,
       include,
@@ -381,18 +385,14 @@ export const getAllVaults = async (req, res) => {
 export const getVaultById = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('🔍 Fetching vault with ID:', id, 'Type:', typeof id);
+    console.log('🔍 Fetching vault with ID:', id);
     
-    // Try to parse as number first (if it looks like VAULT_ID)
     const numericId = parseInt(id);
     
     let where;
     if (!isNaN(numericId) && numericId.toString() === id) {
-      // It's a pure number, search by VAULT_ID
-      console.log('🔍 Searching by VAULT_ID:', numericId);
       where = { vault_id: numericId };
     } else {
-      // Try as primary key ID first, then as vault_cd
       if (/^\d+$/.test(id)) {
         where = { id: parseInt(id) };
       } else {
@@ -400,15 +400,13 @@ export const getVaultById = async (req, res) => {
       }
     }
     
-    console.log('🔍 Query:', where);
-    
     const vault = await Vault.findOne({
       where,
       include: [
         { model: Drawer, as: 'drawer' },
-        { model: VaultAuthorizedPersonnel, as: 'authorized_personnel' },
-        { model: VaultAccessAttempt, as: 'access_attempts', limit: 100 },
-        { model: VaultMaintenanceLog, as: 'maintenance_logs', limit: 10 }
+        { model: VaultAuthorizedPersonnel, as: 'authorizedPersonnel' },
+        { model: VaultAccessAttempt, as: 'accessAttempts', limit: 100 },
+        { model: VaultMaintenanceLog, as: 'maintenanceLogs', limit: 10 }
       ]
     });
     
@@ -419,16 +417,9 @@ export const getVaultById = async (req, res) => {
       });
     }
     
-    // Calculate virtual fields
-    const vaultData = vault.toJSON();
-    vaultData.utilization_percentage = vault.utilization_percentage;
-    vaultData.available_capacity = vault.available_capacity;
-    vaultData.maintenance_status = vault.maintenance_status;
-    vaultData.security_compliance = vault.security_compliance;
-    
     res.json({
       success: true,
-      data: vaultData
+      data: vault
     });
     
   } catch (error) {
@@ -450,17 +441,16 @@ export const updateVault = async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
-    const { UPDATED_BY } = req.body;
+    const userId = req.user?.user_name || req.user?.id || updateData.UPDATED_BY || 'system';
 
-    if (!UPDATED_BY) {
+    if (!userId) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'UPDATED_BY is required'
+        message: 'User ID is required'
       });
     }
 
-    // Find vault
     const vault = await Vault.findOne({
       where: {
         [Op.or]: [
@@ -480,17 +470,14 @@ export const updateVault = async (req, res) => {
       });
     }
 
-    // Fields that cannot be updated directly
     const restrictedFields = ['vault_id', 'vault_cd', 'drawer_ref', 'created_by'];
     restrictedFields.forEach(field => delete updateData[field]);
 
-    // Update vault
     await vault.update({
       ...updateData,
-      updated_by: UPDATED_BY
+      updated_by: userId
     }, { transaction });
 
-    // Update associated drawer if vault name changed
     if (updateData.vault_nm && vault.drawer_ref) {
       await Drawer.update(
         { drawer_nm: updateData.vault_nm },
@@ -533,13 +520,14 @@ export const deactivateVault = async (req, res) => {
   
   try {
     const { id } = req.params;
-    const { UPDATED_BY, reason } = req.body;
+    const userId = req.user?.user_name || req.user?.id || req.body.UPDATED_BY || 'system';
+    const { reason } = req.body;
 
-    if (!UPDATED_BY) {
+    if (!userId) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'UPDATED_BY is required'
+        message: 'User ID is required'
       });
     }
 
@@ -563,7 +551,6 @@ export const deactivateVault = async (req, res) => {
       });
     }
 
-    // Check if vault has balance
     if (vault.drawer && parseFloat(vault.drawer.current_balance) > 0) {
       await transaction.rollback();
       return res.status(400).json({
@@ -572,17 +559,15 @@ export const deactivateVault = async (req, res) => {
       });
     }
 
-    // Deactivate vault
     await vault.update({
       is_active: false,
       vault_status: 'DECOMMISSIONED',
-      updated_by: UPDATED_BY
+      updated_by: userId
     }, { transaction });
 
-    // Deactivate associated drawer
     if (vault.drawer) {
       await vault.drawer.update({
-        rec_st: 'C', // Closed status
+        rec_st: 'C',
         wf_status: 'CLOSED'
       }, { transaction });
     }
@@ -625,17 +610,17 @@ export const authorizePersonnel = async (req, res) => {
       user_id,
       user_name,
       user_role,
-      authorized_by,
       access_level = 'LIMITED',
       notes = ''
     } = req.body;
 
-    // Validate required fields
-    if (!user_id || !user_name || !user_role || !authorized_by) {
+    const userId = req.user?.user_name || req.user?.id || user_id;
+
+    if (!user_id || !user_name || !user_role) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: user_id, user_name, user_role, authorized_by'
+        message: 'Missing required fields: user_id, user_name, user_role'
       });
     }
 
@@ -658,43 +643,40 @@ export const authorizePersonnel = async (req, res) => {
       });
     }
 
-    // Check if authorizer has permission (simplified - implement proper auth middleware)
-    // For now, just check if the user exists in authorized personnel with sufficient role
-    const authorizerAuth = await VaultAuthorizedPersonnel.findOne({
+    // Check if user already authorized
+    const existingAuth = await VaultAuthorizedPersonnel.findOne({
       where: {
         vault_id: vault.id,
-        user_id: req.user?.id || authorized_by,
+        user_id: user_id,
         is_active: true
-      }
+      },
+      transaction
     });
 
-    if (!authorizerAuth) {
+    if (existingAuth) {
       await transaction.rollback();
-      return res.status(403).json({
+      return res.status(409).json({
         success: false,
-        message: 'Authorizer must be an authorized personnel member'
+        message: 'User is already authorized for this vault'
       });
     }
 
-    // Authorize personnel using model method
-    const authorizedPerson = await vault.authorizePersonnel(
-      user_id,
-      user_name,
-      user_role,
-      authorized_by,
-      access_level,
-      notes
-    );
+    const currentDate = new Date();
+    const futureDate = new Date();
+    futureDate.setFullYear(currentDate.getFullYear() + 1);
 
-    // Log access attempt
-    await vault.logAccessAttempt(
-      authorized_by,
-      req.user?.role || 'SYSTEM',
-      'AUTHORIZATION',
-      true,
-      null,
-      req.ip
-    );
+    const authorization = await VaultAuthorizedPersonnel.create({
+      vault_id: vault.id,
+      user_id: user_id,
+      user_name: user_name,
+      user_role: user_role,
+      access_level: access_level,
+      authorization_start: currentDate,
+      authorization_end: futureDate,
+      is_active: true,
+      authorized_by: userId,
+      authorization_notes: notes
+    }, { transaction });
 
     await transaction.commit();
 
@@ -703,7 +685,7 @@ export const authorizePersonnel = async (req, res) => {
       message: 'Personnel authorized successfully',
       data: {
         vault: vault.vault_cd,
-        authorized_person: authorizedPerson
+        authorized_person: authorization
       }
     });
 
@@ -722,21 +704,18 @@ export const authorizePersonnel = async (req, res) => {
  * Bulk authorize personnel
  */
 export const bulkAuthorizePersonnel = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
-    const { personnel, authorized_by } = req.body;
+    const { personnel } = req.body;
+    const userId = req.user?.user_name || req.user?.id || 'system';
 
     if (!personnel || !Array.isArray(personnel) || personnel.length === 0) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'personnel array is required and must not be empty'
-      });
-    }
-
-    if (!authorized_by) {
-      return res.status(400).json({
-        success: false,
-        message: 'authorized_by is required'
       });
     }
 
@@ -747,29 +726,69 @@ export const bulkAuthorizePersonnel = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // TODO: Implement bulk authorization logic
-    console.log(`Bulk authorizing ${personnel.length} personnel for vault ${id}`);
-    
-    return res.status(501).json({
-      success: false,
-      message: 'Bulk authorize personnel not implemented yet',
+    const currentDate = new Date();
+    const futureDate = new Date();
+    futureDate.setFullYear(currentDate.getFullYear() + 1);
+
+    const results = [];
+    for (const person of personnel) {
+      const { user_id, user_name, user_role, access_level = 'LIMITED' } = person;
+      
+      if (!user_id || !user_name || !user_role) continue;
+
+      const existing = await VaultAuthorizedPersonnel.findOne({
+        where: {
+          vault_id: vault.id,
+          user_id: user_id,
+          is_active: true
+        },
+        transaction
+      });
+
+      if (!existing) {
+        const auth = await VaultAuthorizedPersonnel.create({
+          vault_id: vault.id,
+          user_id: user_id,
+          user_name: user_name,
+          user_role: user_role,
+          access_level: access_level,
+          authorization_start: currentDate,
+          authorization_end: futureDate,
+          is_active: true,
+          authorized_by: userId
+        }, { transaction });
+        
+        results.push({ user_id, success: true, authorization: auth });
+      } else {
+        results.push({ user_id, success: false, message: 'Already authorized' });
+      }
+    }
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message: `${results.filter(r => r.success).length} personnel authorized successfully`,
       data: {
-        vault_id: id,
-        personnel_count: personnel.length
+        vault: vault.vault_cd,
+        results: results
       }
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Bulk authorize personnel error:', error);
     res.status(500).json({
       success: false,
@@ -787,15 +806,8 @@ export const revokeAuthorization = async (req, res) => {
   
   try {
     const { id, userId } = req.params;
-    const { revoked_by, reason = '' } = req.body;
-
-    if (!revoked_by) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'revoked_by is required'
-      });
-    }
+    const revokedBy = req.user?.user_name || req.user?.id || 'system';
+    const { reason = '' } = req.body;
 
     const vault = await Vault.findOne({
       where: {
@@ -816,7 +828,6 @@ export const revokeAuthorization = async (req, res) => {
       });
     }
 
-    // Find the authorization to revoke
     const authorization = await VaultAuthorizedPersonnel.findOne({
       where: {
         vault_id: vault.id,
@@ -834,28 +845,9 @@ export const revokeAuthorization = async (req, res) => {
       });
     }
 
-    // Check if revoker has permission (simplified)
-    const revokerAuth = await VaultAuthorizedPersonnel.findOne({
-      where: {
-        vault_id: vault.id,
-        user_id: revoked_by,
-        is_active: true,
-        user_role: { [Op.in]: ['BRANCH_MANAGER', 'VAULT_MANAGER'] }
-      }
-    });
-
-    if (!revokerAuth) {
-      await transaction.rollback();
-      return res.status(403).json({
-        success: false,
-        message: 'Insufficient permissions to revoke authorization'
-      });
-    }
-
-    // Revoke authorization
     await authorization.update({
       is_active: false,
-      authorization_notes: `Revoked by ${revoked_by} on ${new Date().toISOString()}. Reason: ${reason}`
+      authorization_notes: `Revoked by ${revokedBy} on ${new Date().toISOString()}. Reason: ${reason}`
     }, { transaction });
 
     await transaction.commit();
@@ -898,7 +890,7 @@ export const getAuthorizedPersonnel = async (req, res) => {
       },
       include: [{
         model: VaultAuthorizedPersonnel,
-        as: 'authorized_personnel',
+        as: 'authorizedPersonnel',
         where: active_only === 'true' ? { is_active: true } : {}
       }]
     });
@@ -914,8 +906,8 @@ export const getAuthorizedPersonnel = async (req, res) => {
       success: true,
       data: {
         vault: vault.vault_cd,
-        personnel_count: vault.authorized_personnel.length,
-        personnel: vault.authorized_personnel
+        personnel_count: vault.authorizedPersonnel?.length || 0,
+        personnel: vault.authorizedPersonnel || []
       }
     });
 
@@ -937,21 +929,23 @@ export const getAuthorizedPersonnel = async (req, res) => {
  * Create approval request
  */
 export const createApprovalRequest = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
     const {
-      transaction_type,
-      amount,
-      requested_by,
-      requested_by_role,
+      request_type,
+      request_details,
       urgency = 'NORMAL'
     } = req.body;
 
-    // Validate required fields
-    if (!transaction_type || !amount || !requested_by || !requested_by_role) {
+    const userId = req.user?.user_name || req.user?.id || 'system';
+
+    if (!request_type || !request_details) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: transaction_type, amount, requested_by, requested_by_role'
+        message: 'Missing required fields: request_type, request_details'
       });
     }
 
@@ -962,48 +956,41 @@ export const createApprovalRequest = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // Validate transaction
-    const validation = await vault.validateTransaction(amount, transaction_type, requested_by_role);
-    
-    if (!validation.isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Transaction validation failed',
-        violations: validation.violations
-      });
-    }
+    const approvalRequest = await VaultPendingApproval.create({
+      vault_id: vault.id,
+      approval_id: `APPR-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      request_type: request_type,
+      requested_by: userId,
+      requested_at: new Date(),
+      status: 'PENDING',
+      request_details: request_details
+    }, { transaction });
 
-    // Create approval request using model method
-    const approvalRequest = await vault.createApprovalRequest(
-      transaction_type,
-      parseFloat(amount),
-      requested_by,
-      requested_by_role,
-      urgency
-    );
+    await transaction.commit();
 
     res.status(201).json({
       success: true,
       message: 'Approval request created successfully',
       data: {
         vault: vault.vault_cd,
-        approval_request: approvalRequest,
-        requires_approval: validation.requiresApproval,
-        approval_role: validation.approvalRole
+        approval_request: approvalRequest
       }
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Create approval request error:', error);
     res.status(500).json({
       success: false,
@@ -1017,22 +1004,12 @@ export const createApprovalRequest = async (req, res) => {
  * Approve request
  */
 export const approveRequest = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id, approvalId } = req.params;
-    const {
-      approver_id,
-      approver_name,
-      approver_role,
-      notes = ''
-    } = req.body;
-
-    // Validate required fields
-    if (!approver_id || !approver_name || !approver_role) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: approver_id, approver_name, approver_role'
-      });
-    }
+    const userId = req.user?.user_name || req.user?.id || 'system';
+    const { comments = '' } = req.body;
 
     const vault = await Vault.findOne({
       where: {
@@ -1041,52 +1018,54 @@ export const approveRequest = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // Check if approver has permission for this role (simplified)
-    const approverAuth = await VaultAuthorizedPersonnel.findOne({
+    const approval = await VaultPendingApproval.findOne({
       where: {
+        approval_id: approvalId,
         vault_id: vault.id,
-        user_id: approver_id,
-        user_role: approver_role,
-        is_active: true
-      }
+        status: 'PENDING'
+      },
+      transaction
     });
 
-    if (!approverAuth) {
-      return res.status(403).json({
+    if (!approval) {
+      await transaction.rollback();
+      return res.status(404).json({
         success: false,
-        message: 'Approver is not authorized for this role'
+        message: 'Approval request not found or already processed'
       });
     }
 
-    // Approve request using model method
-    const approvedRequest = await vault.approveRequest(
-      approvalId,
-      approver_id,
-      approver_name,
-      approver_role,
-      notes
-    );
+    await approval.update({
+      status: 'APPROVED',
+      approved_by: userId,
+      approved_at: new Date()
+    }, { transaction });
+
+    await transaction.commit();
 
     res.json({
       success: true,
       message: 'Request approved successfully',
       data: {
         vault: vault.vault_cd,
-        approval_request: approvedRequest
+        approval_request: approval
       }
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Approve request error:', error);
     res.status(500).json({
       success: false,
@@ -1114,7 +1093,7 @@ export const getPendingApprovals = async (req, res) => {
       },
       include: [{
         model: VaultPendingApproval,
-        as: 'pending_approvals',
+        as: 'pendingApprovals',
         where: { status: 'PENDING' },
         required: false
       }]
@@ -1127,16 +1106,7 @@ export const getPendingApprovals = async (req, res) => {
       });
     }
 
-    let pendingApprovals = vault.pending_approvals;
-
-    // Filter by role if specified (simplified - would need role-based filtering)
-    if (role) {
-      // This would need additional logic based on your approval hierarchy
-      pendingApprovals = pendingApprovals.filter(approval => {
-        // Basic role filtering - you'll need to implement based on your requirements
-        return true; // Placeholder
-      });
-    }
+    let pendingApprovals = vault.pendingApprovals || [];
 
     res.json({
       success: true,
@@ -1165,22 +1135,22 @@ export const getPendingApprovals = async (req, res) => {
  * Log access attempt
  */
 export const logAccessAttempt = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
     const {
       user_id,
-      user_role,
-      access_method,
-      success,
-      failure_reason = null,
-      location = null
+      attempt_type,
+      status,
+      ip_address = null
     } = req.body;
 
-    // Validate required fields
-    if (!user_id || !user_role || !access_method || success === undefined) {
+    if (!user_id || !attempt_type || !status) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: user_id, user_role, access_method, success'
+        message: 'Missing required fields: user_id, attempt_type, status'
       });
     }
 
@@ -1191,25 +1161,28 @@ export const logAccessAttempt = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // Log access attempt using model method
-    const accessLog = await vault.logAccessAttempt(
-      user_id,
-      user_role,
-      access_method,
-      success,
-      failure_reason,
-      location
-    );
+    const accessLog = await VaultAccessAttempt.create({
+      vault_id: vault.id,
+      user_id: user_id,
+      attempt_type: attempt_type,
+      status: status,
+      ip_address: ip_address || req.ip,
+      user_agent: req.headers['user-agent'] || null
+    }, { transaction });
+
+    await transaction.commit();
 
     res.json({
       success: true,
@@ -1221,6 +1194,7 @@ export const logAccessAttempt = async (req, res) => {
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Log access attempt error:', error);
     res.status(500).json({
       success: false,
@@ -1234,22 +1208,24 @@ export const logAccessAttempt = async (req, res) => {
  * Record maintenance
  */
 export const recordMaintenance = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
     const {
       maintenance_type,
-      performed_by,
       description,
       cost,
-      duration_hours,
-      approved_by = null
+      next_maintenance_date
     } = req.body;
 
-    // Validate required fields
-    if (!maintenance_type || !performed_by || !description || !cost || !duration_hours) {
+    const userId = req.user?.user_name || req.user?.id || 'system';
+
+    if (!maintenance_type || !description) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: maintenance_type, performed_by, description, cost, duration_hours'
+        message: 'Missing required fields: maintenance_type, description'
       });
     }
 
@@ -1260,25 +1236,36 @@ export const recordMaintenance = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // Record maintenance using model method
-    const maintenanceLog = await vault.recordMaintenance(
-      maintenance_type,
-      performed_by,
-      description,
-      parseFloat(cost),
-      parseInt(duration_hours),
-      approved_by
-    );
+    const maintenanceLog = await VaultMaintenanceLog.create({
+      vault_id: vault.id,
+      maintenance_type: maintenance_type,
+      performed_by: userId,
+      performed_at: new Date(),
+      description: description,
+      cost: cost || null,
+      next_maintenance_date: next_maintenance_date || null,
+      status: 'COMPLETED'
+    }, { transaction });
+
+    // Update vault maintenance info
+    await vault.update({
+      maintenance_last_date: new Date(),
+      maintenance_next_date: next_maintenance_date || null
+    }, { transaction });
+
+    await transaction.commit();
 
     res.status(201).json({
       success: true,
@@ -1290,6 +1277,7 @@ export const recordMaintenance = async (req, res) => {
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Record maintenance error:', error);
     res.status(500).json({
       success: false,
@@ -1303,18 +1291,15 @@ export const recordMaintenance = async (req, res) => {
  * Update security features
  */
 export const updateSecurityFeatures = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { id } = req.params;
-    const { security_features, UPDATED_BY } = req.body;
-
-    if (!UPDATED_BY) {
-      return res.status(400).json({
-        success: false,
-        message: 'UPDATED_BY is required'
-      });
-    }
+    const { security_features } = req.body;
+    const userId = req.user?.user_name || req.user?.id || 'system';
 
     if (!security_features) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'security_features is required'
@@ -1328,39 +1313,24 @@ export const updateSecurityFeatures = async (req, res) => {
           { vault_id: parseInt(id) },
           { vault_cd: id }
         ]
-      }
+      },
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // Check if user has permission to configure security
-    const userAuth = await VaultAuthorizedPersonnel.findOne({
-      where: {
-        vault_id: vault.id,
-        user_id: UPDATED_BY,
-        is_active: true,
-        user_role: { [Op.in]: ['BRANCH_MANAGER', 'VAULT_MANAGER'] }
-      }
-    });
-
-    if (!userAuth) {
-      return res.status(403).json({
-        success: false,
-        message: 'Insufficient permissions to update security features'
-      });
-    }
-
-    // Update security features
-    const updatedVault = await vault.update({
+    await vault.update({
       security_features: security_features,
-      updated_by: UPDATED_BY,
-      updated_at: new Date()
-    });
+      updated_by: userId
+    }, { transaction });
+
+    await transaction.commit();
 
     return res.json({
       success: true,
@@ -1368,17 +1338,17 @@ export const updateSecurityFeatures = async (req, res) => {
       data: {
         vault_id: vault.vault_id,
         vault_code: vault.vault_cd,
-        updated_security_features: security_features,
-        updated_at: updatedVault.updated_at
+        updated_security_features: security_features
       }
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Update security features error:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to update security features',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      error: error.message
     });
   }
 };
@@ -1460,7 +1430,6 @@ export const getVaultByBU = async (req, res) => {
 
     console.log(`🔍 Fetching vaults for branch: ${branchCode}`);
 
-    // Validate branch code
     if (!branchCode || branchCode.trim() === '') {
       return res.status(400).json({
         success: false,
@@ -1468,34 +1437,28 @@ export const getVaultByBU = async (req, res) => {
       });
     }
 
-    // Build where clause for drawer
     const drawerWhere = {
       branch_code: branchCode.trim()
     };
 
-    // Build where clause for vault
     const vaultWhere = {};
     
-    // Handle active status filter
     if (active !== undefined) {
       if (active === 'true' || active === true) {
         vaultWhere.is_active = true;
         vaultWhere.vault_status = { [Op.ne]: 'DECOMMISSIONED' };
-      } else if (active === 'false' || active === false) {
+      } else {
         vaultWhere.is_active = false;
         vaultWhere.vault_status = 'DECOMMISSIONED';
       }
     }
 
-    // Apply additional filters
     if (category) vaultWhere.vault_category = category;
     if (status) vaultWhere.vault_status = status;
     if (security_level) vaultWhere.security_level = security_level;
 
-    // Pagination
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get total count
     const total = await Vault.count({
       where: vaultWhere,
       include: [{
@@ -1506,7 +1469,6 @@ export const getVaultByBU = async (req, res) => {
       }]
     });
 
-    // Get paginated results
     const vaults = await Vault.findAll({
       where: vaultWhere,
       include: [{
@@ -1520,27 +1482,6 @@ export const getVaultByBU = async (req, res) => {
       order: [['created_at', 'DESC']]
     });
 
-    // If no vaults found
-    if (vaults.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: `No vaults found for branch code: ${branchCode}`,
-        data: {
-          docs: [],
-          totalDocs: 0,
-          limit: parseInt(limit),
-          totalPages: 0,
-          page: parseInt(page),
-          pagingCounter: 0,
-          hasPrevPage: false,
-          hasNextPage: false,
-          prevPage: null,
-          nextPage: null
-        }
-      });
-    }
-
-    // Enhance the response data with calculated fields
     const enhancedDocs = vaults.map(vault => {
       const vaultData = vault.toJSON();
       const capacity = parseFloat(vaultData.vault_capacity || 0);
@@ -1549,49 +1490,33 @@ export const getVaultByBU = async (req, res) => {
       return {
         ...vaultData,
         utilization_percentage: capacity > 0 ? ((currentBalance / capacity) * 100).toFixed(2) + '%' : '0%',
-        available_capacity: capacity - currentBalance,
-        drawer_summary: vaultData.drawer ? {
-          drawerId: vaultData.drawer.drawer_id || 'N/A',
-          drawerName: vaultData.drawer.drawer_nm || 'N/A',
-          currentBalance: currentBalance,
-          maxBalance: parseFloat(vaultData.drawer.max_bal || 0),
-          status: vaultData.drawer.rec_st || 'N/A',
-          glAccount: vaultData.drawer.gl_acct_no || 'N/A',
-          branchCode: vaultData.drawer.branch_code || 'N/A',
-          locationCode: vaultData.drawer.location_code || 'N/A'
-        } : null
+        available_capacity: capacity - currentBalance
       };
     });
 
-    // Calculate branch-level statistics
     const branchStatistics = {
       total_vaults: total,
       active_vaults: enhancedDocs.filter(v => v.is_active).length,
       total_capacity: enhancedDocs.reduce((sum, v) => 
         sum + parseFloat(v.vault_capacity || 0), 0),
       total_balance: enhancedDocs.reduce((sum, v) => 
-        sum + (v.drawer_summary?.currentBalance || 0), 0),
+        sum + (v.drawer?.current_balance || 0), 0),
       categories: {},
       security_levels: {}
     };
 
-    // Count by category and security level
     enhancedDocs.forEach(vault => {
-      // Category counts
       const category = vault.vault_category || 'UNKNOWN';
       branchStatistics.categories[category] = (branchStatistics.categories[category] || 0) + 1;
       
-      // Security level counts
       const securityLevel = vault.security_level || 'UNKNOWN';
       branchStatistics.security_levels[securityLevel] = (branchStatistics.security_levels[securityLevel] || 0) + 1;
     });
 
-    // Add overall utilization percentage
     branchStatistics.utilization_percentage = branchStatistics.total_capacity > 0 
       ? ((branchStatistics.total_balance / branchStatistics.total_capacity) * 100).toFixed(2) + '%'
       : '0%';
 
-    // Format currency values
     const formatCurrency = (amount) => {
       return new Intl.NumberFormat('en-NG', {
         style: 'currency',
@@ -1601,8 +1526,7 @@ export const getVaultByBU = async (req, res) => {
       }).format(amount);
     };
 
-    // Enhanced pagination info
-    const enhancedResponse = {
+    return res.json({
       success: true,
       message: `Found ${total} vault(s) for branch ${branchCode}`,
       data: {
@@ -1623,31 +1547,16 @@ export const getVaultByBU = async (req, res) => {
           formatted_available_capacity: formatCurrency(
             branchStatistics.total_capacity - branchStatistics.total_balance
           )
-        },
-        query_info: {
-          branch_code: branchCode,
-          active_filter: active,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          category_filter: category || 'All',
-          status_filter: status || 'All'
         }
       }
-    };
-
-    console.log(`✅ Successfully retrieved ${total} vault(s) for branch ${branchCode}`);
-
-    return res.json(enhancedResponse);
+    });
 
   } catch (error) {
     console.error('❌ Get vault by BU error:', error.message);
-    console.error('Error stack:', error.stack);
-
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch vaults by branch',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
 };
@@ -1672,7 +1581,6 @@ export const getBranchVaultSummary = async (req, res) => {
       });
     }
 
-    // Get all active vaults for the branch
     const vaults = await Vault.findAll({
       where: {
         is_active: true,
@@ -1686,7 +1594,6 @@ export const getBranchVaultSummary = async (req, res) => {
       }]
     });
 
-    // Initialize summary
     const summary = {
       branch_code: branchCode,
       total_vaults: vaults.length,
@@ -1706,36 +1613,24 @@ export const getBranchVaultSummary = async (req, res) => {
       vault_list: []
     };
 
-    // Calculate totals
     vaults.forEach(vault => {
       const capacity = parseFloat(vault.vault_capacity || 0);
       const balance = parseFloat(vault.drawer?.current_balance || 0);
       
-      // Update capacity summary
       summary.capacity_summary.total_capacity += capacity;
       summary.capacity_summary.utilized_capacity += balance;
       
-      // Update category counts
       const category = vault.vault_category || 'UNKNOWN';
       summary.categories[category] = (summary.categories[category] || 0) + 1;
       
-      // Update security level counts
       const securityLevel = vault.security_level || 'UNKNOWN';
       switch(securityLevel) {
-        case 'LEVEL_1':
-          summary.security_summary.level_1++;
-          break;
-        case 'LEVEL_2':
-          summary.security_summary.level_2++;
-          break;
-        case 'LEVEL_3':
-          summary.security_summary.level_3++;
-          break;
-        default:
-          summary.security_summary.other++;
+        case 'LEVEL_1': summary.security_summary.level_1++; break;
+        case 'LEVEL_2': summary.security_summary.level_2++; break;
+        case 'LEVEL_3': summary.security_summary.level_3++; break;
+        default: summary.security_summary.other++;
       }
       
-      // Add to vault list
       summary.vault_list.push({
         vault_id: vault.vault_id,
         vault_code: vault.vault_cd,
@@ -1746,12 +1641,10 @@ export const getBranchVaultSummary = async (req, res) => {
         current_balance: balance,
         utilization: capacity > 0 ? (balance / capacity * 100).toFixed(2) + '%' : '0%',
         status: vault.vault_status,
-        requires_dual_control: vault.requires_dual_control || false,
-        authorized_personnel_count: 0 // Would need to query this separately
+        requires_dual_control: vault.requires_dual_control || false
       });
     });
 
-    // Calculate available capacity and utilization rate
     summary.capacity_summary.available_capacity = 
       summary.capacity_summary.total_capacity - summary.capacity_summary.utilized_capacity;
     
@@ -1759,7 +1652,6 @@ export const getBranchVaultSummary = async (req, res) => {
       ? (summary.capacity_summary.utilized_capacity / summary.capacity_summary.total_capacity * 100).toFixed(2) + '%'
       : '0%';
 
-    // Format currency values
     const formatCurrency = (amount) => {
       return new Intl.NumberFormat('en-NG', {
         style: 'currency',
@@ -1769,21 +1661,18 @@ export const getBranchVaultSummary = async (req, res) => {
       }).format(amount);
     };
 
-    // Format the response
-    const formattedSummary = {
-      ...summary,
-      capacity_summary: {
-        ...summary.capacity_summary,
-        formatted_total_capacity: formatCurrency(summary.capacity_summary.total_capacity),
-        formatted_utilized_capacity: formatCurrency(summary.capacity_summary.utilized_capacity),
-        formatted_available_capacity: formatCurrency(summary.capacity_summary.available_capacity)
-      }
-    };
-
     return res.json({
       success: true,
       message: `Branch vault summary for ${branchCode}`,
-      data: formattedSummary
+      data: {
+        ...summary,
+        capacity_summary: {
+          ...summary.capacity_summary,
+          formatted_total_capacity: formatCurrency(summary.capacity_summary.total_capacity),
+          formatted_utilized_capacity: formatCurrency(summary.capacity_summary.utilized_capacity),
+          formatted_available_capacity: formatCurrency(summary.capacity_summary.available_capacity)
+        }
+      }
     });
 
   } catch (error) {
@@ -1808,16 +1697,10 @@ export const getVaultStatistics = async (req, res) => {
       category
     } = req.query;
 
-    // Build where clause
     const where = {};
-    if (branch_code) {
-      where.branch_code = branch_code;
-    }
-    if (category) {
-      where.vault_category = category;
-    }
+    if (branch_code) where.branch_code = branch_code;
+    if (category) where.vault_category = category;
     
-    // Date filtering if provided
     if (start_date) {
       where.created_at = { [Op.gte]: new Date(start_date) };
     }
@@ -1825,13 +1708,11 @@ export const getVaultStatistics = async (req, res) => {
       where.created_at = { ...where.created_at, [Op.lte]: new Date(end_date) };
     }
 
-    // Get all vaults matching criteria
     const vaults = await Vault.findAll({
       where,
       include: [{ model: Drawer, as: 'drawer' }]
     });
 
-    // Calculate statistics
     const totalVaults = vaults.length;
     const activeVaults = vaults.filter(v => v.is_active).length;
     
@@ -1848,21 +1729,18 @@ export const getVaultStatistics = async (req, res) => {
       ? ((utilizedCapacity / totalCapacity) * 100).toFixed(2) + '%' 
       : '0%';
 
-    // Category distribution
     const categoryDistribution = {};
     vaults.forEach(vault => {
       const category = vault.vault_category || 'UNKNOWN';
       categoryDistribution[category] = (categoryDistribution[category] || 0) + 1;
     });
 
-    // Security level distribution
     const securityDistribution = {};
     vaults.forEach(vault => {
       const level = vault.security_level || 'UNKNOWN';
       securityDistribution[level] = (securityDistribution[level] || 0) + 1;
     });
 
-    // Branch distribution
     const branchDistribution = {};
     vaults.forEach(vault => {
       const branch = vault.branch_code || 'UNKNOWN';
@@ -1879,8 +1757,7 @@ export const getVaultStatistics = async (req, res) => {
       average_utilization: averageUtilization,
       category_distribution: categoryDistribution,
       security_level_distribution: securityDistribution,
-      branch_distribution: branchDistribution,
-      recent_activity: []
+      branch_distribution: branchDistribution
     };
 
     return res.json({
@@ -1915,8 +1792,8 @@ export const getSecurityCompliance = async (req, res) => {
       },
       include: [
         { model: Drawer, as: 'drawer' },
-        { model: VaultAccessAttempt, as: 'access_attempts', limit: 50 },
-        { model: VaultMaintenanceLog, as: 'maintenance_logs', limit: 10 }
+        { model: VaultAccessAttempt, as: 'accessAttempts', limit: 50 },
+        { model: VaultMaintenanceLog, as: 'maintenanceLogs', limit: 10 }
       ]
     });
 
@@ -1927,15 +1804,14 @@ export const getSecurityCompliance = async (req, res) => {
       });
     }
 
-    // Calculate compliance metrics
-    const totalAccessAttempts = vault.access_attempts?.length || 0;
-    const failedAccessAttempts = vault.access_attempts?.filter(a => !a.success).length || 0;
+    const totalAccessAttempts = vault.accessAttempts?.length || 0;
+    const failedAccessAttempts = vault.accessAttempts?.filter(a => a.status === 'FAILED' || a.status === 'BLOCKED').length || 0;
     const successRate = totalAccessAttempts > 0 
       ? ((totalAccessAttempts - failedAccessAttempts) / totalAccessAttempts * 100).toFixed(2) + '%'
       : '100%';
 
-    const lastMaintenance = vault.maintenance_logs?.length > 0
-      ? vault.maintenance_logs[0]
+    const lastMaintenance = vault.maintenanceLogs?.length > 0
+      ? vault.maintenanceLogs[0]
       : null;
 
     const complianceData = {
@@ -1957,7 +1833,7 @@ export const getSecurityCompliance = async (req, res) => {
           : new Date()
       },
       security_features: vault.security_features || {},
-      compliance_score: 'N/A', // You can calculate this based on your criteria
+      compliance_score: 'N/A',
       recommendations: [
         'Ensure regular maintenance schedule',
         'Review access logs weekly',
@@ -1984,14 +1860,18 @@ export const getSecurityCompliance = async (req, res) => {
  * Transfer vault to branch
  */
 export const transferVaultToBranch = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const { vaultId } = req.params;
-    const { new_branch_code, new_location_code, transferred_by, notes = '' } = req.body;
+    const { new_branch_code, new_location_code, notes = '' } = req.body;
+    const userId = req.user?.user_name || req.user?.id || 'system';
 
-    if (!new_branch_code || !transferred_by) {
+    if (!new_branch_code) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'new_branch_code and transferred_by are required'
+        message: 'new_branch_code is required'
       });
     }
 
@@ -2003,30 +1883,48 @@ export const transferVaultToBranch = async (req, res) => {
           { vault_cd: vaultId }
         ]
       },
-      include: [{ model: Drawer, as: 'drawer' }]
+      include: [{ model: Drawer, as: 'drawer' }],
+      transaction
     });
 
     if (!vault) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Vault not found'
       });
     }
 
-    // TODO: Implement transfer logic with transaction
-    // For now, return not implemented
-    return res.status(501).json({
-      success: false,
-      message: 'Transfer vault to branch not implemented yet',
+    await vault.update({
+      branch_code: new_branch_code,
+      location_code: new_location_code || vault.location_code,
+      updated_by: userId
+    }, { transaction });
+
+    if (vault.drawer) {
+      await vault.drawer.update({
+        branch_code: new_branch_code,
+        location_code: new_location_code || vault.drawer.location_code,
+        updated_by: userId
+      }, { transaction });
+    }
+
+    await transaction.commit();
+
+    return res.json({
+      success: true,
+      message: 'Vault transferred successfully',
       data: {
         vault_id: vault.vault_id,
-        current_branch: vault.branch_code,
+        vault_code: vault.vault_cd,
         new_branch: new_branch_code,
-        transferred_by: transferred_by
+        transferred_by: userId,
+        transferred_at: new Date()
       }
     });
 
   } catch (error) {
+    await transaction.rollback();
     console.error('Transfer vault error:', error);
     return res.status(500).json({
       success: false,

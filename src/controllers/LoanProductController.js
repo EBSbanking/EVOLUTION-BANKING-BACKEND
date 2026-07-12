@@ -1,4 +1,4 @@
-// src/controllers/LoanProductController.js - FULL GL WILDCARD SUPPORT
+// src/controllers/LoanProductController.js - FULL GL WILDCARD SUPPORT + PROVISION GL ACCOUNTS
 import asyncHandler from 'express-async-handler';
 import { Op } from 'sequelize';
 import sequelize from '../../config/db.js';
@@ -13,7 +13,7 @@ try {
   ProductTypeMapping = (await import('../models/ProductTypeMapping.js')).default;
   AuditTrail = (await import('../models/AuditTrail.js')).default;
   Branch = (await import('../models/Branch.js')).default;
-  GLAccount = (await import('../models/GLAccount.js')).default; // Add GLAccount model
+  GLAccount = (await import('../models/GLAccount.js')).default;
 } catch (error) {
   console.log('❌ Individual model imports failed, trying index import...');
   const Models = await import('../models/index.js');
@@ -77,7 +77,7 @@ async function validateGLAccountsObject(glAccountsObj, transaction) {
   }
 }
 
-// Validate branch codes (unchanged)
+// Validate branch codes
 const validateBranchCodes = async (branchCodes, transaction) => {
   const validPattern = /^\d{3}$/;
   const validCodes = [];
@@ -114,7 +114,7 @@ export const LoanProductController = {
       account_prefix = 'BL'
     } = req.body;
 
-    // Duplicate checks: LoanProduct and ProductTypeMapping
+    // Duplicate checks
     const existingLoanProduct = await LoanProduct.findOne({
       where: {
         [Op.or]: [
@@ -126,7 +126,6 @@ export const LoanProductController = {
     });
     if (existingLoanProduct) return res.status(400).json({ success: false, message: `Product already exists: ${existingLoanProduct.product_code}` });
 
-    // Check ProductTypeMapping for same prod_id (snake_case)
     const existingMapping = await ProductTypeMapping.findOne({ where: { prod_id: PROD_ID || Number(productCode) } });
     if (existingMapping) return res.status(400).json({ success: false, message: `prod_id ${PROD_ID} already exists in ProductTypeMapping` });
 
@@ -150,7 +149,7 @@ export const LoanProductController = {
       if (!defaultGLAccounts?.loanGLAccount) throw new Error('Default loan GL account required');
       if (!minAmount || !maxAmount) throw new Error('minAmount and maxAmount required');
 
-      // ---------- TERM FIELDS (MUST BE DEFINED BEFORE INTEREST RATE CREATION) ----------
+      // ---------- TERM FIELDS ----------
       let minTermValue, maxTermValue, termType;
       if (MIN_LOAN_TERM_VALUE && MAX_LOAN_TERM_VALUE && LOAN_TERM_TYPE) {
         minTermValue = parseInt(MIN_LOAN_TERM_VALUE);
@@ -169,11 +168,10 @@ export const LoanProductController = {
       }
       if (minTermValue >= maxTermValue) throw new Error('MIN_LOAN_TERM_VALUE must be less than MAX_LOAN_TERM_VALUE');
 
-      // ---------- INTEREST RATE HANDLING (NO DEFAULTS) ----------
+      // ---------- INTEREST RATE HANDLING ----------
       let interestRateRecord, loanInterestRateId, loanProudIntId;
 
       if (LOAN_INTEREST_RATE_ID) {
-        // Case 1: Frontend provided an existing interest rate ID
         interestRateRecord = await LoanInterestRate.findOne({
           where: { [Op.or]: [{ id: LOAN_INTEREST_RATE_ID }, { loan_proud_int_id: LOAN_INTEREST_RATE_ID }, { code: LOAN_INTEREST_RATE_ID.toString() }] },
           transaction
@@ -183,8 +181,6 @@ export const LoanProductController = {
         loanProudIntId = LOAN_PROUD_INT_ID || interestRateRecord.loan_proud_int_id;
       } 
       else if (MIN_RATE_PER_MONTH !== undefined || DEFAULT_RATE_PER_MONTH !== undefined || interestRateConfig) {
-        // Case 2: Frontend provided rate parameters to auto-create a new rate
-        // Validate required fields
         if (!MIN_RATE_PER_MONTH && !interestRateConfig?.MIN_RATE_PER_MONTH) {
           throw new Error('MIN_RATE_PER_MONTH is required when creating a new interest rate');
         }
@@ -197,10 +193,9 @@ export const LoanProductController = {
         const minRate = MIN_RATE_PER_MONTH ?? interestRateConfig?.MIN_RATE_PER_MONTH;
         const maxRate = MAX_RATE_PER_MONTH ?? interestRateConfig?.MAX_RATE_PER_MONTH ?? minRate;
         const defaultRate = DEFAULT_RATE_PER_MONTH ?? interestRateConfig?.DEFAULT_RATE_PER_MONTH;
-        const annualRate = defaultRate * 12; // APR
-        const totalInterestRate = defaultRate * maxTermValue; // total interest over max term (adjust as needed)
+        const annualRate = defaultRate * 12;
+        const totalInterestRate = defaultRate * maxTermValue;
 
-        // Build object with only fields provided by frontend
         const newRateData = {
           name: nameRate,
           code: codeRate,
@@ -219,7 +214,6 @@ export const LoanProductController = {
           user_id: USER_ID,
           metadata: { createdWithProduct: true, productCode, productName: name }
         };
-        // Add optional fields if provided by frontend
         if (ACCRUAL_BASIS) newRateData.accrual_basis = ACCRUAL_BASIS;
         if (ACCRUAL_FREQUENCY) newRateData.accrual_frequency = ACCRUAL_FREQUENCY;
         if (termType) newRateData.term_type = termType;
@@ -231,11 +225,10 @@ export const LoanProductController = {
         loanProudIntId = interestRateRecord.loan_proud_int_id;
       } 
       else {
-        // Case 3: Neither an ID nor rate parameters provided → throw error
         throw new Error('Either LOAN_INTEREST_RATE_ID or interest rate parameters (MIN_RATE_PER_MONTH, DEFAULT_RATE_PER_MONTH) must be provided');
       }
 
-      // ---------- BRANCH CODES (unchanged) ----------
+      // ---------- BRANCH CODES ----------
       let branchCodes = Array.isArray(BU_ID) ? BU_ID.map(String) : (typeof BU_ID === 'string' ? BU_ID.split(',').map(String) : []);
       branchCodes = [...new Set(branchCodes.filter(c => c.trim()))];
       if (branchCodes.length === 0) throw new Error('BU_ID (branch codes) is required');
@@ -260,7 +253,7 @@ export const LoanProductController = {
         allActiveBranches = branches;
       }
 
-      // ==================== GL ACCOUNTS WITH PATTERN SUPPORT ====================
+      // ==================== GL ACCOUNTS WITH PROVISION SUPPORT ====================
       const formattedDefaultGLAccounts = {
         loanGLAccount: defaultGLAccounts.loanGLAccount,
         interestGLAccountNo: defaultGLAccounts.interestGLAccountNo || defaultGLAccounts.loanGLAccount,
@@ -269,8 +262,13 @@ export const LoanProductController = {
         suspenseGLAccountNo: defaultGLAccounts.suspenseGLAccountNo || defaultGLAccounts.loanGLAccount,
         principalGLAccountNo: defaultGLAccounts.principalGLAccountNo || defaultGLAccounts.loanGLAccount,
         processingFeeGLCode: defaultGLAccounts.processingFeeGLCode || defaultGLAccounts.loanGLAccount,
-        ...defaultGLAccounts
+        // ✅ PROVISION GL ACCOUNTS
+        provisionGLAccount: defaultGLAccounts.provisionGLAccount || '',
+        provisionExpenseGLAccount: defaultGLAccounts.provisionExpenseGLAccount || ''
       };
+
+      console.log('📦 Provision GL Account:', formattedDefaultGLAccounts.provisionGLAccount);
+      console.log('📦 Provision Expense GL Account:', formattedDefaultGLAccounts.provisionExpenseGLAccount);
 
       // Validate GL accounts (allow patterns, check real accounts)
       await validateGLAccountsObject(formattedDefaultGLAccounts, transaction);
@@ -279,7 +277,7 @@ export const LoanProductController = {
         console.warn('Pattern GL account used for non‑global product – will only resolve if product becomes global.');
       }
 
-      // Create loan product (snake_case)
+      // Create loan product
       const loanProduct = await LoanProduct.create({
         prod_id: PROD_ID || Number(productCode),
         product_code: productCode,
@@ -304,7 +302,12 @@ export const LoanProductController = {
         product_category: productCategory || PRODUCT_TYPE,
         allowed_currencies: allowedCurrencies,
         default_gl_accounts: formattedDefaultGLAccounts,
-        branch_gl_accounts: branchGLAccounts.map(b => ({ ...b, loanGLAccount: b.loanGLAccount || defaultGLAccounts.loanGLAccount })),
+        branch_gl_accounts: branchGLAccounts.map(b => ({ 
+          ...b, 
+          loanGLAccount: b.loanGLAccount || defaultGLAccounts.loanGLAccount,
+          provisionGLAccount: b.provisionGLAccount || defaultGLAccounts.provisionGLAccount || '',
+          provisionExpenseGLAccount: b.provisionExpenseGLAccount || defaultGLAccounts.provisionExpenseGLAccount || ''
+        })),
         fee_structure: feeStructure.map(f => ({ ...f, amount: parseFloat(f.amount || 0) })),
         processing_fee_rate: parseFloat(processingFeeRate || 0),
         processing_fee_gl_code: processingFeeGLCode || defaultGLAccounts.loanGLAccount,
@@ -327,7 +330,7 @@ export const LoanProductController = {
         }
       }, { transaction });
 
-      // ==================== CREATE ProductTypeMapping (snake_case fields) ====================
+      // ==================== CREATE ProductTypeMapping ====================
       const productTypeMappingData = {
         prod_id: loanProduct.prod_id,
         product_type: PRODUCT_TYPE.toUpperCase(),
@@ -346,7 +349,6 @@ export const LoanProductController = {
       try {
         productMapping = await ProductTypeMapping.create(productTypeMappingData, { transaction });
       } catch (err) {
-        // Fallback using direct SQL (in case model validation fails)
         const sql = `INSERT INTO ProductTypeMapping 
           (prod_id, product_type, product_name, product_description, product_code, account_prefix, gl_accounts, loan_interest_rate_id, loan_proud_int_id, product_short_name, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -373,7 +375,17 @@ export const LoanProductController = {
           event_type: 'CREATE',
           action: 'CREATE_LOAN_PRODUCT',
           old_value: null,
-          new_value: JSON.stringify({ productCode, name, PRODUCT_TYPE, loanInterestRateId, loanProudIntId, validatedBranchCodes, allowMultipleDisbursement, defaultGLAccountsPatterns: Object.values(formattedDefaultGLAccounts).some(isPattern) }),
+          new_value: JSON.stringify({ 
+            productCode, 
+            name, 
+            PRODUCT_TYPE, 
+            loanInterestRateId, 
+            loanProudIntId, 
+            validatedBranchCodes, 
+            allowMultipleDisbursement, 
+            hasProvisionGL: !!formattedDefaultGLAccounts.provisionGLAccount,
+            defaultGLAccountsPatterns: Object.values(formattedDefaultGLAccounts).some(v => isPattern(v)) 
+          }),
           ip_address: getClientIp(req),
           entity_id: loanProduct.id,
           entity_type: 'LoanProduct',
@@ -416,79 +428,20 @@ export const LoanProductController = {
     }
   }),
 
-  // ---------- GET PRODUCT (by PROD_ID or product_code) ----------
- // ---------- GET PRODUCT (by PROD_ID or product_code) ----------
-getProduct: asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  let product;
-  const numeric = parseInt(id, 10);
-  if (!isNaN(numeric)) {
-    product = await LoanProduct.findOne({ where: { prod_id: numeric, status: 'ACTIVE' } });
-  } else {
-    product = await LoanProduct.findOne({ where: { product_code: id, status: 'ACTIVE' } });
-  }
-  if (!product) return res.status(404).json({ success: false, message: 'Active loan product not found' });
-
-  const interestRate = product.loan_interest_rate_id ? await LoanInterestRate.findByPk(product.loan_interest_rate_id) : null;
-  
-  // ✅ Safe branch code handling (supports both array and string)
-  let branchCodes = [];
-  if (product.bu_id) {
-    if (Array.isArray(product.bu_id)) {
-      branchCodes = product.bu_id.filter(code => code && code.trim());
-    } else if (typeof product.bu_id === 'string') {
-      branchCodes = product.bu_id.split(',').filter(code => code && code.trim());
+  // ---------- GET PRODUCT ----------
+  getProduct: asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    let product;
+    const numeric = parseInt(id, 10);
+    if (!isNaN(numeric)) {
+      product = await LoanProduct.findOne({ where: { prod_id: numeric, status: 'ACTIVE' } });
+    } else {
+      product = await LoanProduct.findOne({ where: { product_code: id, status: 'ACTIVE' } });
     }
-  }
-  
-  const branchDetails = await Promise.all(branchCodes.map(async code => {
-    if (code === '*') return { branchCode: '*', branchName: 'All Branches', branchType: 'GLOBAL' };
-    const branch = await Branch.findOne({ where: { branchCode: code } });
-    return branch ? { branchCode: branch.branchCode, branchName: branch.branchName, branchType: branch.branchType } : { branchCode: code, branchName: `Unknown (${code})`, branchType: 'UNKNOWN' };
-  }));
+    if (!product) return res.status(404).json({ success: false, message: 'Active loan product not found' });
 
-  res.json({
-    success: true,
-    data: {
-      ...product.toJSON(),
-      branchDetails,
-      interestRate: interestRate ? {
-        id: interestRate.id, name: interestRate.name, rate_type: interestRate.rate_type,
-        interest_type: interestRate.interest_type, calculation_method: interestRate.calculation_method,
-        min_rate_per_month: parseFloat(interestRate.min_rate_per_month || '0'),
-        max_rate_per_month: parseFloat(interestRate.max_rate_per_month || '0'),
-        default_rate_per_month: parseFloat(interestRate.default_rate_per_month || '0'),
-        loan_proud_int_id: interestRate.loan_proud_int_id
-      } : null
-    }
-  });
-}),
-
-  // ---------- GET ALL LOAN PRODUCTS (with pagination & filters) ----------
-// ---------- GET ALL LOAN PRODUCTS (with pagination & filters) ----------
-getAllLoanProducts: asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, search, productType, termType, isActive, buId, status = 'ACTIVE' } = req.query;
-  const where = { status };
-  if (search) where[Op.or] = [
-    { name: { [Op.like]: `%${search}%` } },
-    { product_code: { [Op.like]: `%${search}%` } },
-    { description: { [Op.like]: `%${search}%` } },
-    { product_short_name: { [Op.like]: `%${search}%` } }
-  ];
-  if (productType) where.product_type = productType;
-  if (termType) where.loan_term_type = termType.toUpperCase();
-  if (isActive !== undefined) where.is_active = isActive === 'true';
-  if (buId) where[Op.or] = [
-    { bu_id: { [Op.like]: `%${buId}%` } },
-    { bu_id: { [Op.like]: '%*%' } }
-  ];
-  const pageNum = parseInt(page), limitNum = parseInt(limit), offset = (pageNum - 1) * limitNum;
-  const { count, rows } = await LoanProduct.findAndCountAll({ where, limit: limitNum, offset, order: [['created_at', 'DESC']] });
-  
-  const enhanced = await Promise.all(rows.map(async (product) => {
     const interestRate = product.loan_interest_rate_id ? await LoanInterestRate.findByPk(product.loan_interest_rate_id) : null;
     
-    // ✅ Safe branch code handling (supports both array and string)
     let branchCodes = [];
     if (product.bu_id) {
       if (Array.isArray(product.bu_id)) {
@@ -503,117 +456,318 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
       const branch = await Branch.findOne({ where: { branchCode: code } });
       return branch ? { branchCode: branch.branchCode, branchName: branch.branchName, branchType: branch.branchType } : { branchCode: code, branchName: `Unknown (${code})`, branchType: 'UNKNOWN' };
     }));
+
+    res.json({
+      success: true,
+      data: {
+        ...product.toJSON(),
+        branchDetails,
+        interestRate: interestRate ? {
+          id: interestRate.id, name: interestRate.name, rate_type: interestRate.rate_type,
+          interest_type: interestRate.interest_type, calculation_method: interestRate.calculation_method,
+          min_rate_per_month: parseFloat(interestRate.min_rate_per_month || '0'),
+          max_rate_per_month: parseFloat(interestRate.max_rate_per_month || '0'),
+          default_rate_per_month: parseFloat(interestRate.default_rate_per_month || '0'),
+          loan_proud_int_id: interestRate.loan_proud_int_id
+        } : null
+      }
+    });
+  }),
+
+  // ---------- GET ALL LOAN PRODUCTS ----------
+  getAllLoanProducts: asyncHandler(async (req, res) => {
+    const { page = 1, limit = 10, search, productType, termType, isActive, buId, status = 'ACTIVE' } = req.query;
+    const where = { status };
+    if (search) where[Op.or] = [
+      { name: { [Op.like]: `%${search}%` } },
+      { product_code: { [Op.like]: `%${search}%` } },
+      { description: { [Op.like]: `%${search}%` } },
+      { product_short_name: { [Op.like]: `%${search}%` } }
+    ];
+    if (productType) where.product_type = productType;
+    if (termType) where.loan_term_type = termType.toUpperCase();
+    if (isActive !== undefined) where.is_active = isActive === 'true';
+    if (buId) where[Op.or] = [
+      { bu_id: { [Op.like]: `%${buId}%` } },
+      { bu_id: { [Op.like]: '%*%' } }
+    ];
+    const pageNum = parseInt(page), limitNum = parseInt(limit), offset = (pageNum - 1) * limitNum;
+    const { count, rows } = await LoanProduct.findAndCountAll({ where, limit: limitNum, offset, order: [['created_at', 'DESC']] });
     
-    return {
-      prod_id: product.prod_id, product_name: product.name, product_short_name: product.product_short_name,
-      product_type: product.product_type, min_loan_amount: parseFloat(product.min_amount || '0'),
-      max_loan_amount: parseFloat(product.max_amount || '0'), loan_term_type: product.loan_term_type,
-      min_loan_term_value: product.min_loan_term_value, max_loan_term_value: product.max_loan_term_value,
-      term_range: `${product.min_loan_term_value || 1}-${product.max_loan_term_value || 60} ${product.loan_term_type || 'MONTHS'}`,
-      has_interest_rate_reference: !!interestRate,
-      interest_rate: interestRate ? {
-        id: interestRate.id, name: interestRate.name, rate_type: interestRate.rate_type,
-        min_rate: parseFloat(interestRate.min_rate_per_month || '0'),
-        max_rate: parseFloat(interestRate.max_rate_per_month || '0'),
-        default_rate: parseFloat(interestRate.default_rate_per_month || '0'),
-        loan_proud_int_id: interestRate.loan_proud_int_id
-      } : null,
-      status: product.status, branches: branchDetails, is_global_product: product.is_global_product,
-      created_at: product.created_at, updated_at: product.updated_at
-    };
-  }));
-  
-  res.json({ success: true, data: enhanced, pagination: { page: pageNum, limit: limitNum, total: count, pages: Math.ceil(count / limitNum) } });
-}),
-
-  // ---------- UPDATE LOAN PRODUCT ----------
-  updateLoanProduct: asyncHandler(async (req, res) => {
-    const transaction = await sequelize.transaction();
-    try {
-      const { id } = req.params;
-      const updateData = { ...req.body };
-      const prodIdFromParam = parseInt(id, 10);
-      if (isNaN(prodIdFromParam)) throw new Error('Invalid product ID in URL');
-      const whereClause = { prod_id: prodIdFromParam };
-
-      const product = await LoanProduct.findOne({ where: whereClause, transaction });
-      if (!product) {
-        await transaction.rollback();
-        return res.status(404).json({ success: false, message: 'Loan product not found' });
-      }
-
-      // Sanitize allowed fields (use snake_case for model)
-      const allowedFields = [
-        'name', 'description', 'product_short_name', 'product_type',
-        'min_amount', 'max_amount', 'min_loan_term_value', 'max_loan_term_value',
-        'loan_term_type', 'bu_id', 'is_global_product', 'visibility',
-        'status', 'is_active', 'allow_multiple_disbursement',
-        'loan_interest_rate_id', 'loan_proud_int_id', 'metadata',
-        'default_gl_accounts', 'branch_gl_accounts', 'fee_structure',
-        'processing_fee_rate', 'late_fee_per_day', 'max_late_fee'
-      ];
-      const sanitized = {};
-      Object.keys(updateData).forEach(field => {
-        if (allowedFields.includes(field)) sanitized[field] = updateData[field];
-      });
-
-      // Handle interest rate change
-      if (sanitized.loan_interest_rate_id) {
-        const rate = await LoanInterestRate.findByPk(sanitized.loan_interest_rate_id, { transaction });
-        if (rate) sanitized.loan_proud_int_id = rate.loan_proud_int_id;
-      }
-
-      // BU_ID update (branch codes)
-      if (sanitized.bu_id) {
-        const branches = Array.isArray(sanitized.bu_id) ? sanitized.bu_id : [sanitized.bu_id];
-        const unique = [...new Set(branches.map(String).filter(Boolean))];
-        const { validCodes, invalidCodes } = await validateBranchCodes(unique, transaction);
-        if (invalidCodes.length) throw new Error(`Invalid branch codes: ${invalidCodes.join(', ')}`);
-        sanitized.bu_id = validCodes.join(',');
-        sanitized.is_global_product = validCodes.includes('*');
-        sanitized.visibility = validCodes.includes('*') ? 'GLOBAL' : 'SELECTED_BUS';
-      }
-
-      // Term handling
-      if (sanitized.loan_term_type || sanitized.min_loan_term_value || sanitized.max_loan_term_value) {
-        sanitized.loan_term_type = sanitized.loan_term_type || product.loan_term_type || 'MONTHS';
-        sanitized.min_loan_term_value = sanitized.min_loan_term_value || product.min_loan_term_value || 1;
-        sanitized.max_loan_term_value = sanitized.max_loan_term_value || product.max_loan_term_value || 60;
-      }
-
-      // GL account pattern validation & updating
-      if (sanitized.default_gl_accounts && typeof sanitized.default_gl_accounts === 'object') {
-        // Validate GL accounts (patterns allowed)
-        await validateGLAccountsObject(sanitized.default_gl_accounts, transaction);
-        const hasPattern = Object.values(sanitized.default_gl_accounts).some(v => isPattern(v));
-        if (hasPattern && !sanitized.is_global_product && !product.is_global_product) {
-          console.warn(`Product ${product.prod_id} uses GL pattern but is not global – patterns will not be resolved.`);
+    const enhanced = await Promise.all(rows.map(async (product) => {
+      const interestRate = product.loan_interest_rate_id ? await LoanInterestRate.findByPk(product.loan_interest_rate_id) : null;
+      
+      let branchCodes = [];
+      if (product.bu_id) {
+        if (Array.isArray(product.bu_id)) {
+          branchCodes = product.bu_id.filter(code => code && code.trim());
+        } else if (typeof product.bu_id === 'string') {
+          branchCodes = product.bu_id.split(',').filter(code => code && code.trim());
         }
       }
+      
+      const branchDetails = await Promise.all(branchCodes.map(async code => {
+        if (code === '*') return { branchCode: '*', branchName: 'All Branches', branchType: 'GLOBAL' };
+        const branch = await Branch.findOne({ where: { branchCode: code } });
+        return branch ? { branchCode: branch.branchCode, branchName: branch.branchName, branchType: branch.branchType } : { branchCode: code, branchName: `Unknown (${code})`, branchType: 'UNKNOWN' };
+      }));
+      
+      return {
+        prod_id: product.prod_id, product_name: product.name, product_short_name: product.product_short_name,
+        product_type: product.product_type, min_loan_amount: parseFloat(product.min_amount || '0'),
+        max_loan_amount: parseFloat(product.max_amount || '0'), loan_term_type: product.loan_term_type,
+        min_loan_term_value: product.min_loan_term_value, max_loan_term_value: product.max_loan_term_value,
+        term_range: `${product.min_loan_term_value || 1}-${product.max_loan_term_value || 60} ${product.loan_term_type || 'MONTHS'}`,
+        has_interest_rate_reference: !!interestRate,
+        interest_rate: interestRate ? {
+          id: interestRate.id, name: interestRate.name, rate_type: interestRate.rate_type,
+          min_rate: parseFloat(interestRate.min_rate_per_month || '0'),
+          max_rate: parseFloat(interestRate.max_rate_per_month || '0'),
+          default_rate: parseFloat(interestRate.default_rate_per_month || '0'),
+          loan_proud_int_id: interestRate.loan_proud_int_id
+        } : null,
+        status: product.status, branches: branchDetails, is_global_product: product.is_global_product,
+        created_at: product.created_at, updated_at: product.updated_at
+      };
+    }));
+    
+    res.json({ success: true, data: enhanced, pagination: { page: pageNum, limit: limitNum, total: count, pages: Math.ceil(count / limitNum) } });
+  }),
 
-      if (Object.keys(sanitized).length) {
-        await LoanProduct.update(sanitized, { where: whereClause, transaction });
+// ---------- UPDATE LOAN PRODUCT - FIXED WITH PROPER ProductTypeMapping ----------
+updateLoanProduct: asyncHandler(async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body };
+    
+    // ✅ Parse the ID properly
+    let prodIdFromParam;
+    if (id) {
+      prodIdFromParam = parseInt(id, 10);
+    }
+    
+    if (isNaN(prodIdFromParam) || prodIdFromParam === undefined) {
+      if (updateData.prod_id) {
+        prodIdFromParam = parseInt(updateData.prod_id, 10);
+      } else if (updateData.PROD_ID) {
+        prodIdFromParam = parseInt(updateData.PROD_ID, 10);
+      } else {
+        throw new Error('Invalid product ID: No valid prod_id found in request');
       }
+    }
+    
+    if (isNaN(prodIdFromParam) || prodIdFromParam <= 0) {
+      throw new Error(`Invalid product ID: ${id} is not a valid number`);
+    }
+    
+    console.log(`🔍 Updating product with prod_id: ${prodIdFromParam}`);
+    
+    const whereClause = { prod_id: prodIdFromParam };
 
-      const updatedProduct = await LoanProduct.findOne({ where: whereClause, transaction });
+    const product = await LoanProduct.findOne({ where: whereClause, transaction });
+    if (!product) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: `Loan product with prod_id ${prodIdFromParam} not found` });
+    }
 
-      // Update ProductTypeMapping
+    // Sanitize allowed fields
+    const allowedFields = [
+      'name', 'description', 'product_short_name', 'product_type',
+      'min_amount', 'max_amount', 'min_loan_term_value', 'max_loan_term_value',
+      'loan_term_type', 'bu_id', 'is_global_product', 'visibility',
+      'status', 'is_active', 'allow_multiple_disbursement',
+      'loan_interest_rate_id', 'loan_proud_int_id', 'metadata',
+      'default_gl_accounts', 'branch_gl_accounts', 'fee_structure',
+      'processing_fee_rate', 'late_fee_per_day', 'max_late_fee'
+    ];
+    const sanitized = {};
+    Object.keys(updateData).forEach(field => {
+      if (allowedFields.includes(field)) sanitized[field] = updateData[field];
+    });
+
+    // Handle interest rate change
+    if (sanitized.loan_interest_rate_id) {
+      const rate = await LoanInterestRate.findByPk(sanitized.loan_interest_rate_id, { transaction });
+      if (rate) sanitized.loan_proud_int_id = rate.loan_proud_int_id;
+    }
+
+    // BU_ID update
+    if (sanitized.bu_id) {
+      const branches = Array.isArray(sanitized.bu_id) ? sanitized.bu_id : [sanitized.bu_id];
+      const unique = [...new Set(branches.map(String).filter(Boolean))];
+      const { validCodes, invalidCodes } = await validateBranchCodes(unique, transaction);
+      if (invalidCodes.length) throw new Error(`Invalid branch codes: ${invalidCodes.join(', ')}`);
+      sanitized.bu_id = validCodes.join(',');
+      sanitized.is_global_product = validCodes.includes('*');
+      sanitized.visibility = validCodes.includes('*') ? 'GLOBAL' : 'SELECTED_BUS';
+    }
+
+    // Term handling
+    if (sanitized.loan_term_type || sanitized.min_loan_term_value || sanitized.max_loan_term_value) {
+      sanitized.loan_term_type = sanitized.loan_term_type || product.loan_term_type || 'MONTHS';
+      sanitized.min_loan_term_value = sanitized.min_loan_term_value || product.min_loan_term_value || 1;
+      sanitized.max_loan_term_value = sanitized.max_loan_term_value || product.max_loan_term_value || 60;
+    }
+
+    // ==================== GL ACCOUNT UPDATE WITH PROVISION SUPPORT ====================
+    if (sanitized.default_gl_accounts && typeof sanitized.default_gl_accounts === 'object') {
+      const glAccounts = sanitized.default_gl_accounts;
+      
+      if (updateData.provisionGLAccount !== undefined) {
+        glAccounts.provisionGLAccount = updateData.provisionGLAccount;
+      }
+      if (updateData.provisionExpenseGLAccount !== undefined) {
+        glAccounts.provisionExpenseGLAccount = updateData.provisionExpenseGLAccount;
+      }
+      
+      if (updateData.defaultGLAccounts) {
+        if (updateData.defaultGLAccounts.provisionGLAccount) {
+          glAccounts.provisionGLAccount = updateData.defaultGLAccounts.provisionGLAccount;
+        }
+        if (updateData.defaultGLAccounts.provisionExpenseGLAccount) {
+          glAccounts.provisionExpenseGLAccount = updateData.defaultGLAccounts.provisionExpenseGLAccount;
+        }
+      }
+      
+      console.log('📦 Updating default GL accounts with provision:', {
+        provisionGLAccount: glAccounts.provisionGLAccount,
+        provisionExpenseGLAccount: glAccounts.provisionExpenseGLAccount
+      });
+      
+      await validateGLAccountsObject(glAccounts, transaction);
+      sanitized.default_gl_accounts = glAccounts;
+    } else if (updateData.defaultGLAccounts) {
+      const existingGL = typeof product.default_gl_accounts === 'string' 
+        ? JSON.parse(product.default_gl_accounts) 
+        : (product.default_gl_accounts || {});
+      
+      const mergedGL = {
+        ...existingGL,
+        ...updateData.defaultGLAccounts,
+        provisionGLAccount: updateData.defaultGLAccounts.provisionGLAccount || existingGL.provisionGLAccount || '',
+        provisionExpenseGLAccount: updateData.defaultGLAccounts.provisionExpenseGLAccount || existingGL.provisionExpenseGLAccount || ''
+      };
+      
+      console.log('📦 Merged GL accounts with provision:', {
+        provisionGLAccount: mergedGL.provisionGLAccount,
+        provisionExpenseGLAccount: mergedGL.provisionExpenseGLAccount
+      });
+      
+      await validateGLAccountsObject(mergedGL, transaction);
+      sanitized.default_gl_accounts = mergedGL;
+    }
+
+    if (updateData.branchGLAccounts && Array.isArray(updateData.branchGLAccounts)) {
+      const existingBranchGL = typeof product.branch_gl_accounts === 'string' 
+        ? JSON.parse(product.branch_gl_accounts) 
+        : (product.branch_gl_accounts || []);
+      
+      const mergedBranchGL = updateData.branchGLAccounts.map((newAcc, index) => {
+        const existing = existingBranchGL[index] || {};
+        return {
+          ...newAcc,
+          provisionGLAccount: newAcc.provisionGLAccount || existing.provisionGLAccount || '',
+          provisionExpenseGLAccount: newAcc.provisionExpenseGLAccount || existing.provisionExpenseGLAccount || ''
+        };
+      });
+      
+      sanitized.branch_gl_accounts = mergedBranchGL;
+    }
+
+    if (Object.keys(sanitized).length) {
+      await LoanProduct.update(sanitized, { where: whereClause, transaction });
+    }
+
+    const updatedProduct = await LoanProduct.findOne({ where: whereClause, transaction });
+
+    // ✅ FIX: Update ProductTypeMapping - check column name first
+    try {
+      // First, check if ProductTypeMapping has a prod_id column
+      const mappingColumns = await sequelize.query(
+        `SHOW COLUMNS FROM ProductTypeMapping`,
+        { transaction, type: sequelize.QueryTypes.SELECT }
+      );
+      
+      console.log('📋 ProductTypeMapping columns:', mappingColumns.map(c => c.Field).join(', '));
+      
+      // Determine the correct column name
+      let prodIdColumn = 'prod_id';
+      const hasProdId = mappingColumns.some(c => c.Field === 'prod_id');
+      const hasPROD_ID = mappingColumns.some(c => c.Field === 'PROD_ID');
+      
+      if (hasPROD_ID && !hasProdId) {
+        prodIdColumn = 'PROD_ID';
+      } else if (hasProdId) {
+        prodIdColumn = 'prod_id';
+      } else {
+        console.warn('⚠️ ProductTypeMapping does not have prod_id or PROD_ID column, skipping update');
+        // Skip ProductTypeMapping update if column doesn't exist
+      }
+      
       const mappingUpdate = {};
       if (updateData.product_short_name !== undefined) mappingUpdate.product_short_name = updateData.product_short_name;
       if (updateData.loan_interest_rate_id !== undefined) mappingUpdate.loan_interest_rate_id = updateData.loan_interest_rate_id;
-      if (updateData.default_gl_accounts !== undefined) mappingUpdate.gl_accounts = updateData.default_gl_accounts;
-      if (Object.keys(mappingUpdate).length) {
-        await ProductTypeMapping.update(mappingUpdate, { where: { prod_id: prodIdFromParam }, transaction });
+      
+      if (sanitized.default_gl_accounts) {
+        mappingUpdate.gl_accounts = sanitized.default_gl_accounts;
+      } else if (updateData.defaultGLAccounts) {
+        mappingUpdate.gl_accounts = updateData.defaultGLAccounts;
+      } else if (updateData.default_gl_accounts) {
+        mappingUpdate.gl_accounts = updateData.default_gl_accounts;
       }
-
-      await transaction.commit();
-      res.json({ success: true, message: 'Loan product updated successfully', data: updatedProduct.toJSON() });
-    } catch (error) {
-      await transaction.rollback();
-      console.error('Update error:', error);
-      res.status(400).json({ success: false, message: error.message || 'Failed to update loan product' });
+      
+      if (Object.keys(mappingUpdate).length && prodIdColumn) {
+        console.log(`📝 Updating ProductTypeMapping for ${prodIdColumn}: ${prodIdFromParam}`);
+        await ProductTypeMapping.update(mappingUpdate, { 
+          where: { [prodIdColumn]: prodIdFromParam }, 
+          transaction 
+        });
+      }
+    } catch (mappingError) {
+      console.error('❌ Error updating ProductTypeMapping:', mappingError.message);
+      // Don't fail the whole update if ProductTypeMapping fails
+      // Just log the error and continue
     }
-  }),
+
+    // Audit trail
+    try {
+      const newGL = typeof updatedProduct.default_gl_accounts === 'string' 
+        ? JSON.parse(updatedProduct.default_gl_accounts) 
+        : updatedProduct.default_gl_accounts;
+      
+      await AuditTrail.create({
+        event_id: generateEventId(),
+        user_id: req.user?.id || 'SYSTEM',
+        event_type: 'UPDATE',
+        action: 'UPDATE_LOAN_PRODUCT',
+        old_value: JSON.stringify({ 
+          name: product.name, 
+          default_gl_accounts: product.default_gl_accounts,
+          hasProvisionGL: product.default_gl_accounts?.provisionGLAccount ? true : false
+        }),
+        new_value: JSON.stringify({ 
+          name: updatedProduct.name, 
+          default_gl_accounts: updatedProduct.default_gl_accounts,
+          hasProvisionGL: newGL?.provisionGLAccount ? true : false
+        }),
+        ip_address: getClientIp(req),
+        entity_id: updatedProduct.id,
+        entity_type: 'LoanProduct',
+        status: 'SUCCESS',
+        description: `Updated loan product: ${updatedProduct.name} (${updatedProduct.product_code})`,
+        timestamp: new Date()
+      }, { transaction });
+    } catch (auditError) { console.error('Audit failed', auditError.message); }
+
+    await transaction.commit();
+    res.json({ success: true, message: 'Loan product updated successfully', data: updatedProduct.toJSON() });
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Update error:', error);
+    res.status(400).json({ success: false, message: error.message || 'Failed to update loan product' });
+  }
+}),
 
   // ---------- DELETE (SOFT DELETE) ----------
   deleteLoanProduct: asyncHandler(async (req, res) => {
@@ -669,7 +823,6 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
       });
     }
     
-    // Find product (by prod_id or product_code)
     const product = await LoanProduct.findOne({
       where: {
         [Op.or]: [
@@ -696,7 +849,6 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
         });
         res.json({ success: true, message: 'Loan repayment calculated successfully', data: calculation });
       } else {
-        // Fallback manual calculation
         const termInMonths = convertTermToMonths(termValue, termType);
         const interestRate = await product.getInterestRate();
         let ratePerMonth = useDefaultRate ? parseFloat(interestRate.default_rate_per_month || '0') : (customRate ? parseFloat(customRate) : parseFloat(interestRate.default_rate_per_month || '0'));
@@ -737,7 +889,6 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
         const validation = await product.validateLoanApplication(parseFloat(amount), parseInt(termValue), termType, requestedRate ? parseFloat(requestedRate) : null);
         res.json({ success: true, message: validation.isValid ? 'Loan application is valid' : 'Validation failed', data: { product: { id: product.prod_id, name: product.name }, validation } });
       } else {
-        // Simple validation
         const minAmount = parseFloat(product.min_amount || '0');
         const maxAmount = parseFloat(product.max_amount || '0');
         const minTerm = product.min_loan_term_value || 1;
@@ -768,7 +919,6 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
         const calc = await product.calculateInterestForPeriod({ principal: parseFloat(principal), startDate, endDate, useDefaultRate, customRate: customRate ? parseFloat(customRate) : null });
         res.json({ success: true, message: 'Interest calculated', data: calc });
       } else {
-        // Manual daily interest
         const start = new Date(startDate), end = new Date(endDate);
         const daysDiff = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24));
         const interestRate = await product.getInterestRate();
@@ -872,26 +1022,14 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
   // ---------- GET PRODUCTS BY INTEREST RATE ID ----------
   getProductsByInterestRate: asyncHandler(async (req, res) => {
     const { interestRateId } = req.params;
-    const {
-      page = 1,
-      limit = 10,
-      status = 'ACTIVE'
-    } = req.query;
+    const { page = 1, limit = 10, status = 'ACTIVE' } = req.query;
 
-    // Validate interest rate exists
     const interestRate = await LoanInterestRate.findByPk(interestRateId);
     if (!interestRate) {
-      return res.status(404).json({
-        success: false,
-        message: 'Loan interest rate not found'
-      });
+      return res.status(404).json({ success: false, message: 'Loan interest rate not found' });
     }
 
-    const where = {
-      status: status,
-      loan_interest_rate_id: interestRateId
-    };
-
+    const where = { status: status, loan_interest_rate_id: interestRateId };
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
@@ -944,11 +1082,7 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
   // ---------- GET PRODUCTS BY LOAN_PROUD_INT_ID ----------
   getProductsByLoanProudIntId: asyncHandler(async (req, res) => {
     const { loanProudIntId } = req.params;
-    const {
-      page = 1,
-      limit = 10,
-      status = 'ACTIVE'
-    } = req.query;
+    const { page = 1, limit = 10, status = 'ACTIVE' } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -965,7 +1099,6 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
       order: [['name', 'ASC']]
     });
 
-    // Enrich products with interest rate details (optional)
     const enhancedProducts = await Promise.all(
       products.map(async (product) => {
         const interestRate = product.loan_interest_rate_id
@@ -1008,7 +1141,7 @@ getAllLoanProducts: asyncHandler(async (req, res) => {
     });
   }),
 
-  // ---------- TEST CREATE SIMPLE (utility) ----------
+  // ---------- TEST CREATE SIMPLE ----------
   testCreateSimple: asyncHandler(async (req, res) => {
     const transaction = await sequelize.transaction();
     try {

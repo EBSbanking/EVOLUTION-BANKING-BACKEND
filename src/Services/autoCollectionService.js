@@ -1,4 +1,4 @@
-// src/services/autoCollectionService.js - FINAL WORKING VERSION
+// src/services/autoCollectionService.js - FIXED VERSION
 import { Op } from 'sequelize';
 import { 
   getLoanAccount, 
@@ -9,8 +9,205 @@ import {
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
 import { handleLoanRepayment } from '../controllers/LoanRepaymentController.js';
-// import { addAuditTrail } from '../controllers/AudiTrailController.js'; // Temporarily disabled due to validation errors
 
+// ----------------------------------------------------------------------
+// Helper: Find customer account by customer ID (supports multiple field names)
+// ----------------------------------------------------------------------
+async function findCustomerAccount(customerId, transaction) {
+  try {
+    const CustomerAccount = getCustomerAccount();
+    if (!CustomerAccount) {
+      logger.error('CustomerAccount model not available');
+      return null;
+    }
+
+    // ✅ Fix: Try multiple field names for customer ID
+    const account = await CustomerAccount.findOne({
+      where: {
+        [Op.or]: [
+          { CUST_ID: customerId },           // ✅ Primary field
+          { customer_id: customerId },       // Fallback
+          { cust_id: customerId },           // Another fallback
+          { ACCT_NO: customerId },           // Also try account number
+          { account_number: customerId }     // Also try account number
+        ],
+        status: 'ACTIVE'
+      },
+      transaction
+    });
+
+    if (!account) {
+      logger.warn(`No active customer account found for customer ID: ${customerId}`);
+    }
+
+    return account;
+  } catch (error) {
+    logger.error(`Error finding customer account for ${customerId}:`, error.message);
+    return null;
+  }
+}
+
+// ----------------------------------------------------------------------
+// Process a single loan using auto-debit from customer account
+// ----------------------------------------------------------------------
+async function processLoanViaAutoDebit(loan, currentDate, batchId, transaction, CustomerAccount) {
+  try {
+    if (checkManualPayment(loan, currentDate)) {
+      logger.info(`✅ Manual payment detected for loan ${loan.id} – skipping auto-collection`);
+      return { success: true, skipped: true };
+    }
+
+    const dueAmount = calculateDueAmount(loan);
+    if (dueAmount <= 0) {
+      logger.info(`💰 No due amount for loan ${loan.id} – skipping`);
+      return { success: true, skipped: true };
+    }
+
+    // ✅ Fix: Use the helper function to find customer account
+    const customerId = loan.CUST_ID || loan.customer_id || loan.cust_id;
+    if (!customerId) {
+      const reason = `No customer ID found for loan ${loan.id}`;
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+      return { success: false, markedOverdue: true, reason };
+    }
+
+    const customerAccount = await findCustomerAccount(customerId, transaction);
+    
+    if (!customerAccount) {
+      const reason = `No active customer account found for customer ${customerId}`;
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+      return { success: false, markedOverdue: true, reason };
+    }
+
+    // Determine available balance
+    const availableBalance = parseFloat(
+      customerAccount.available_balance ?? 
+      customerAccount.AVAILABLE_BALANCE ?? 
+      customerAccount.ledger_balance ?? 
+      0
+    );
+    
+    if (availableBalance < dueAmount) {
+      const reason = `Insufficient balance. Available: ${availableBalance}, Required: ${dueAmount}`;
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+      return { success: false, markedOverdue: true, reason };
+    }
+
+    // Get account number
+    const accountNumber = customerAccount.account_number ?? 
+                          customerAccount.ACCT_NO ?? 
+                          customerAccount.ACCOUNT_NO;
+    if (!accountNumber) {
+      const reason = 'Customer account number not found';
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+      return { success: false, markedOverdue: true, reason };
+    }
+
+    // Execute repayment via handleLoanRepayment
+    const repaymentResult = await handleLoanRepayment({
+      ACCT_NO: loan.ACCT_NO,
+      amount: dueAmount,
+      date: currentDate.toISOString(),
+      customerAccountNo: accountNumber,
+      paymentMethod: 'AUTO_DEBIT',
+      reference: `AUTO-${batchId}-${loan.ACCT_NO}`,
+      description: `Auto-collection from customer account (Batch: ${batchId})`,
+      createdBy: 'AUTO_COLLECTION_SYSTEM'
+    });
+
+    if (!repaymentResult || !repaymentResult.success) {
+      const reason = repaymentResult?.error || 'Auto-debit repayment failed';
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+      return { success: false, markedOverdue: true, reason };
+    }
+
+    return {
+      success: true,
+      amount: dueAmount,
+      method: 'AUTO_DEBIT',
+      customerAccount: accountNumber,
+      transactionId: repaymentResult.data?.repaymentId || repaymentResult.data?.id
+    };
+  } catch (error) {
+    logger.error(`Auto-debit failed for ${loan.id}:`, error);
+    const reason = error.message;
+    try {
+      await markLoanAsOverdue(loan, currentDate, reason, transaction);
+    } catch (markError) {
+      logger.error(`Failed to mark loan ${loan.id} as overdue:`, markError);
+    }
+    return { success: false, markedOverdue: true, reason };
+  }
+}
+
+// ----------------------------------------------------------------------
+// Helper: Check if manual payment was made after due date
+// ----------------------------------------------------------------------
+function checkManualPayment(loan, currentDate) {
+  const lastRepaymentDate = loan.LAST_REPAYMENT_DATE || loan.lastRepaymentDate;
+  const nextPaymentDate = loan.NEXT_PAYMENT_DATE || loan.nextPaymentDate;
+  if (lastRepaymentDate) {
+    const lastRepayment = new Date(lastRepaymentDate);
+    const dueDate = nextPaymentDate ? new Date(nextPaymentDate) : currentDate;
+    return lastRepayment > dueDate;
+  }
+  return false;
+}
+
+// ----------------------------------------------------------------------
+// Helper: Calculate due amount
+// ----------------------------------------------------------------------
+function calculateDueAmount(loan) {
+  const principal = parseFloat(loan.OUTSTANDING_PRINCIPAL || loan.outstandingPrincipal || 0);
+  const interest = parseFloat(loan.ACCRUED_INTEREST || loan.accruedInterest || 0);
+  const penalty = parseFloat(loan.PENALTY_AMOUNT || loan.penaltyAmount || 0);
+  const status = loan.LOAN_STATUS || loan.loanStatus || 'ACTIVE';
+  const nextPaymentDate = loan.NEXT_PAYMENT_DATE || loan.nextPaymentDate;
+  const termValue = loan.TERM_VALUE || loan.termValue || 12;
+
+  if (status === 'OVERDUE' || status === 'DELINQUENT') {
+    const lateFee = Math.min(principal * 0.05, 5000);
+    return Math.min(principal + interest + penalty + lateFee, principal * 1.1);
+  }
+
+  if (status === 'ACTIVE' || status === 'APPROVED' || status === 'DISBURSED') {
+    if (nextPaymentDate) {
+      const nextDate = new Date(nextPaymentDate);
+      nextDate.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (nextDate <= today) {
+        const due = Math.max((principal / termValue) + interest, 100);
+        return due;
+      }
+    }
+    const fallbackDue = Math.min(principal * 0.1, 100000, principal + interest + penalty);
+    return fallbackDue;
+  }
+  return 0;
+}
+
+// ----------------------------------------------------------------------
+// Helper: Mark loan as overdue
+// ----------------------------------------------------------------------
+async function markLoanAsOverdue(loan, currentDate, reason, transaction) {
+  const dueDate = loan.NEXT_PAYMENT_DATE || loan.nextPaymentDate ? 
+    new Date(loan.NEXT_PAYMENT_DATE || loan.nextPaymentDate) : currentDate;
+  const overdueDays = Math.max(0, Math.ceil((currentDate - dueDate) / (1000 * 60 * 60 * 24)));
+
+  await loan.update(
+    { 
+      LOAN_STATUS: 'OVERDUE', 
+      updated_at: currentDate 
+    },
+    { transaction }
+  );
+  logger.info(`📝 Loan marked OVERDUE: ${loan.id}`, { overdueDays, reason });
+}
+
+// ----------------------------------------------------------------------
+// Main auto-collection processing function
+// ----------------------------------------------------------------------
 export const processAutoCollections = async (options = {}) => {
   await initializeModels();
   
@@ -55,7 +252,7 @@ export const processAutoCollections = async (options = {}) => {
           loan, collectionDate, batchId, transaction, CustomerAccount
         );
 
-        const accountNo = loan.ACCT_NO;
+        const accountNo = loan.ACCT_NO || loan.acctNo;
         if (collectionResult.success) {
           results.individual.processed++;
           results.individual.collections.push({
@@ -91,7 +288,7 @@ export const processAutoCollections = async (options = {}) => {
         results.individual.failed++;
         results.individual.collections.push({
           loanId: loan.id,
-          accountNo: loan.ACCT_NO,
+          accountNo: loan.ACCT_NO || loan.acctNo,
           status: 'ERROR',
           error: error.message,
           timestamp: new Date()
@@ -106,23 +303,6 @@ export const processAutoCollections = async (options = {}) => {
     const totalCollected = results.individual.collections.reduce((sum, coll) => sum + (coll.amount || 0), 0);
     
     logger.info('✅ Auto-collection processing completed successfully', { results, totalCollected, executionTime: `${executionTime}ms`, batchId });
-
-    // Audit trail disabled – uncomment after fixing AuditTrail model validation
-    /*
-    try {
-      await addAuditTrail({
-        EVENT_TYPE: 'AUTO_COLLECTION_COMPLETED',
-        USER_ID: 'SYSTEM',
-        ACTION: 'Auto Collection Batch Processed',
-        NEW_VALUE: { batchId, collectionDate: collectionDate.toISOString(), executionTime, totalCollected, processedCount: results.individual.processed, failedCount: results.individual.failed, overdueMarkedCount: results.individual.overdueMarked, results: { individual: results.individual } },
-        OLD_VALUE: null,
-        IP_ADDRESS: '127.0.0.1',
-        ENTITY_ID: batchId,
-        ENTITY_TYPE: 'auto_collection_batch',
-        additional_info: { status: 'SUCCESS' }
-      });
-    } catch (auditError) { logger.warn('Audit trail failed:', auditError.message); }
-    */
 
     return {
       success: true,
@@ -142,185 +322,12 @@ export const processAutoCollections = async (options = {}) => {
   } catch (error) {
     if (transaction) await transaction.rollback();
     logger.error('❌ Auto-collection processing failed', { batchId, error: error.message, stack: error.stack });
-    // Audit trail disabled – uncomment after fixing
-    /*
-    try {
-      await addAuditTrail({
-        EVENT_TYPE: 'AUTO_COLLECTION_PROCESSING',
-        USER_ID: 'system',
-        ACTION: 'process_auto_collections',
-        NEW_VALUE: { batchId, collectionDate: collectionDate.toISOString(), error: error.message },
-        OLD_VALUE: null,
-        IP_ADDRESS: '127.0.0.1',
-        ENTITY_ID: batchId,
-        ENTITY_TYPE: 'auto_collection_batch',
-        additional_info: { status: 'FAILED' }
-      });
-    } catch (auditError) {}
-    */
     return { success: false, batchId, error: error.message, results: { individual: { processed: 0, overdueMarked: 0, failed: 0, totalDue: 0, collections: [] }, group: {} } };
   }
 };
 
 // ----------------------------------------------------------------------
-// Process a single loan using auto-debit from customer account
-// ----------------------------------------------------------------------
-async function processLoanViaAutoDebit(loan, currentDate, batchId, transaction, CustomerAccount) {
-  try {
-    if (checkManualPayment(loan, currentDate)) {
-      logger.info(`✅ Manual payment detected for loan ${loan.id} – skipping auto-collection`);
-      return { success: true, skipped: true };
-    }
-
-    const dueAmount = calculateDueAmount(loan);
-    if (dueAmount <= 0) {
-      logger.info(`💰 No due amount for loan ${loan.id} – skipping`);
-      return { success: true, skipped: true };
-    }
-
-    // Find active customer account – try multiple possible column names
-    let customerAccount = await CustomerAccount.findOne({
-      where: { 
-        [Op.or]: [
-          { customer_id: loan.CUST_ID },
-          { CUST_ID: loan.CUST_ID },
-          { cust_id: loan.CUST_ID }
-        ],
-        status: 'ACTIVE'
-      },
-      transaction
-    });
-
-    if (!customerAccount) {
-      const reason = `No active customer account found for customer ${loan.CUST_ID}`;
-      await markLoanAsOverdue(loan, currentDate, reason, transaction);
-      return { success: false, markedOverdue: true, reason };
-    }
-
-    // Determine available balance (try common field names)
-    const availableBalance = parseFloat(
-      customerAccount.available_balance ?? 
-      customerAccount.AVAILABLE_BALANCE ?? 
-      customerAccount.ledger_balance ?? 
-      0
-    );
-    if (availableBalance < dueAmount) {
-      const reason = `Insufficient balance. Available: ${availableBalance}, Required: ${dueAmount}`;
-      await markLoanAsOverdue(loan, currentDate, reason, transaction);
-      return { success: false, markedOverdue: true, reason };
-    }
-
-    // Get account number (try common field names)
-    const accountNumber = customerAccount.account_number ?? 
-                          customerAccount.ACCOUNT_NO ?? 
-                          customerAccount.ACCT_NO;
-    if (!accountNumber) {
-      const reason = 'Customer account number not found';
-      await markLoanAsOverdue(loan, currentDate, reason, transaction);
-      return { success: false, markedOverdue: true, reason };
-    }
-
-    // Execute repayment via handleLoanRepayment
-    const repaymentResult = await handleLoanRepayment({
-      ACCT_NO: loan.ACCT_NO,
-      amount: dueAmount,
-      date: currentDate.toISOString(),
-      customerAccountNo: accountNumber,
-      paymentMethod: 'AUTO_DEBIT',
-      reference: `AUTO-${batchId}-${loan.ACCT_NO}`,
-      description: `Auto-collection from customer account (Batch: ${batchId})`,
-      createdBy: 'AUTO_COLLECTION_SYSTEM'
-    });
-
-    if (!repaymentResult.success) {
-      const reason = repaymentResult.error || 'Auto-debit repayment failed';
-      await markLoanAsOverdue(loan, currentDate, reason, transaction);
-      return { success: false, markedOverdue: true, reason };
-    }
-
-    return {
-      success: true,
-      amount: dueAmount,
-      method: 'AUTO_DEBIT',
-      customerAccount: accountNumber,
-      transactionId: repaymentResult.data?.repaymentId
-    };
-  } catch (error) {
-    logger.error(`Auto-debit failed for ${loan.id}:`, error);
-    const reason = error.message;
-    try {
-      await markLoanAsOverdue(loan, currentDate, reason, transaction);
-    } catch (markError) {
-      logger.error(`Failed to mark loan ${loan.id} as overdue:`, markError);
-    }
-    return { success: false, markedOverdue: true, reason };
-  }
-}
-
-// ----------------------------------------------------------------------
-// Helper: Check if manual payment was made after due date
-// ----------------------------------------------------------------------
-function checkManualPayment(loan, currentDate) {
-  const lastRepaymentDate = loan.LAST_REPAYMENT_DATE;
-  const nextPaymentDate = loan.NEXT_PAYMENT_DATE;
-  if (lastRepaymentDate) {
-    const lastRepayment = new Date(lastRepaymentDate);
-    const dueDate = nextPaymentDate ? new Date(nextPaymentDate) : currentDate;
-    return lastRepayment > dueDate;
-  }
-  return false;
-}
-
-// ----------------------------------------------------------------------
-// Helper: Calculate due amount (uses correct attribute names)
-// ----------------------------------------------------------------------
-function calculateDueAmount(loan) {
-  const principal = parseFloat(loan.OUTSTANDING_PRINCIPAL || 0);
-  const interest = parseFloat(loan.ACCRUED_INTEREST || 0);
-  const penalty = parseFloat(loan.PENALTY_AMOUNT || 0);
-  const status = loan.LOAN_STATUS;
-  const nextPaymentDate = loan.NEXT_PAYMENT_DATE;
-  const termValue = loan.TERM_VALUE || 12;
-
-  if (status === 'OVERDUE' || status === 'DELINQUENT') {
-    const lateFee = Math.min(principal * 0.05, 5000);
-    return Math.min(principal + interest + penalty + lateFee, principal * 1.1);
-  }
-
-  if (status === 'ACTIVE' || status === 'APPROVED') {
-    if (nextPaymentDate) {
-      const nextDate = new Date(nextPaymentDate);
-      nextDate.setHours(0, 0, 0, 0);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (nextDate <= today) {
-        const due = Math.max((principal / termValue) + interest, 100);
-        logger.debug(`Due amount for loan ${loan.id}: ${due}`);
-        return due;
-      }
-    }
-    const fallbackDue = Math.min(principal * 0.1, 100000, principal + interest + penalty);
-    return fallbackDue;
-  }
-  return 0;
-}
-
-// ----------------------------------------------------------------------
-// Helper: Mark loan as overdue (uses correct attribute names)
-// ----------------------------------------------------------------------
-async function markLoanAsOverdue(loan, currentDate, reason, transaction) {
-  const dueDate = loan.NEXT_PAYMENT_DATE ? new Date(loan.NEXT_PAYMENT_DATE) : currentDate;
-  const overdueDays = Math.max(0, Math.ceil((currentDate - dueDate) / (1000 * 60 * 60 * 24)));
-
-  await loan.update(
-    { LOAN_STATUS: 'OVERDUE', updated_at: currentDate },
-    { transaction }
-  );
-  logger.info(`📝 Loan marked OVERDUE: ${loan.id}`, { overdueDays, reason });
-}
-
-// ----------------------------------------------------------------------
-// Batch processing (kept for compatibility)
+// Batch processing
 // ----------------------------------------------------------------------
 export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 3) => {
   try {
@@ -360,7 +367,7 @@ export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 
               else { attempts++; if (attempts < maxRetries) { results.retried++; await new Promise(r => setTimeout(r, 1000 * attempts)); } else { results.failed++; processed = true; } }
             } catch (err) {
               attempts++;
-              results.errors.push({ loanId: loan.id, accountNo: loan.ACCT_NO, error: err.message });
+              results.errors.push({ loanId: loan.id, accountNo: loan.ACCT_NO || loan.acctNo, error: err.message });
               if (attempts >= maxRetries) { results.failed++; processed = true; } else { results.retried++; await new Promise(r => setTimeout(r, 1000 * attempts)); }
             }
           }
@@ -382,6 +389,10 @@ export const getAutoCollectionStats = async (startDate, endDate) => {
   try {
     await initializeModels();
     const LoanRepayment = getLoanRepayment();
+    if (!LoanRepayment) {
+      return { success: false, error: 'LoanRepayment model not available' };
+    }
+    
     const stats = await LoanRepayment.findAll({
       where: {
         paymentMethod: { [Op.in]: ['AUTO_DEBIT', 'DIRECT_DEBIT', 'DIRECT_DEBIT_REQUEST'] },
@@ -396,6 +407,7 @@ export const getAutoCollectionStats = async (startDate, endDate) => {
       group: ['paymentMethod', sequelize.fn('DATE', sequelize.col('repayment_date'))],
       order: [[sequelize.fn('DATE', sequelize.col('repayment_date')), 'DESC']],
     });
+    
     const totalTransactions = stats.reduce((sum, row) => sum + parseInt(row.get('count') || 0), 0);
     const totalAmount = stats.reduce((sum, row) => sum + parseFloat(row.get('totalAmount') || 0), 0);
     return { success: true, stats: { byMethod: stats, totalTransactions, totalAmount, period: { startDate, endDate } } };

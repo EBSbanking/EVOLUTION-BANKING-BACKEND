@@ -1,60 +1,92 @@
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8
-    container_name: evolution-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: core_banking
-      MYSQL_USER: evolution_user
-      MYSQL_PASSWORD: evolution_pass
+  # --- Nginx Load Balancer (fronts the backend replicas) ---
+  nginx-lb:
+    image: nginx:alpine
+    container_name: evolution-lb
     ports:
-      - "3306:3306"
+      - "3002:80"                    # Expose port 3002 to the host
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./mysql-init:/docker-entrypoint-initdb.d
-    command: 
-      - --default-authentication-plugin=mysql_native_password
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --innodb-buffer-pool-size=2G
-      - --innodb-log-file-size=512M
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      timeout: 20s
-      retries: 10
-
-  app:
-    build: .
-    container_name: evolution-backend
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_NAME: core_banking
-      DB_USER: evolution_user
-      DB_PASSWORD: evolution_pass
-      PORT: 5000
-    ports:
-      - "5000:5000"
-      - "9229:9229" # For debugging
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      mysql:
-        condition: service_healthy
+      - backend
+    restart: unless-stopped
+
+  # --- Backend (scalable replicas) ---
+  backend:
+    build:
+      context: ./EVOLUTION\ BANKING\ BACKEND
+      dockerfile: Dockerfile
+    # No `ports` defined here – the load balancer will route to the container's internal port 3002
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_HOST=postgres
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PORT=3002                     # internal port
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
-      - ./backups:/app/backups
-    command: npm run start
+      - /var/run/docker.sock:/var/run/docker.sock   # needed for dockerode restart
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/admin/server/status', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 3                     # adjust as needed
+
+  # --- Frontend (React Admin) ---
+  frontend:
+    build:
+      context: ./Admin-ui
+      dockerfile: Dockerfile
+    container_name: evolution-frontend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:15-alpine
+    container_name: evolution-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-evolution}
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-securepass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-evolution}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis ---
+  redis:
+    image: redis:7-alpine
+    container_name: evolution-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  mysql_data:
-    driver: local
+  postgres_data:

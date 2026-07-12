@@ -4,11 +4,49 @@ import Bank from '../models/Banks.js';
 import logger from '../utils/logger.js';
 import axios from 'axios';
 
-// Prembly API configuration
-const PREMBLY_API_KEY = process.env.PREMBLY_API_KEY || 'test_sk_9b1c2bafe7c3466fb0e433daab2ac87c';
+// Prembly API configuration – read from environment
+const PREMBLY_API_KEY = process.env.PREMBLY_API_KEY || process.env.PREMBLY_PUBLIC_KEY;
 const PREMBLY_APP_ID = process.env.PREMBLY_APP_ID;
+const PREMBLY_BANK_URL = 'https://api.prembly.com/verification/bank_account/bank_code';
 
-// @desc    Get all banks
+// Log configuration status (but not the actual key)
+console.log('🔐 Prembly config:');
+console.log(`  → API Key: ${PREMBLY_API_KEY ? '✅ Set' : '❌ Missing'}`);
+console.log(`  → App ID: ${PREMBLY_APP_ID ? '✅ Set' : '❌ Missing'}`);
+console.log(`  → URL: ${PREMBLY_BANK_URL}`);
+
+// Helper function to call Prembly API with error handling
+const fetchFromPrembly = async () => {
+  if (!PREMBLY_API_KEY || !PREMBLY_APP_ID) {
+    throw new Error('Prembly API credentials (API Key and App ID) are not configured.');
+  }
+
+  try {
+    const response = await axios.get(PREMBLY_BANK_URL, {
+      headers: {
+        'x-api-key': PREMBLY_API_KEY,
+        'app-id': PREMBLY_APP_ID
+      },
+      timeout: 60000 // 60 seconds
+    });
+
+    return response.data;
+  } catch (error) {
+    // Enhance error with details for logging
+    if (error.response) {
+      // The request was made and the server responded with a status code outside 2xx
+      throw new Error(`Prembly API error: ${error.response.status} - ${error.response.data?.message || error.message}`);
+    } else if (error.request) {
+      // The request was made but no response was received
+      throw new Error(`Prembly API no response: ${error.message} (${error.code || 'unknown'})`);
+    } else {
+      // Something happened in setting up the request
+      throw new Error(`Prembly API request error: ${error.message}`);
+    }
+  }
+};
+
+// @desc    Get all banks (paginated, with search & filters)
 // @route   GET /api/banks
 // @access  Public
 export const getAllBanks = async (req, res) => {
@@ -74,7 +112,7 @@ export const getAllBanks = async (req, res) => {
   }
 };
 
-// @desc    Get single bank
+// @desc    Get single bank by ID
 // @route   GET /api/banks/:id
 // @access  Public
 export const getBank = async (req, res) => {
@@ -112,7 +150,7 @@ export const getBank = async (req, res) => {
   }
 };
 
-// @desc    Create new bank
+// @desc    Create new bank (manual)
 // @route   POST /api/banks
 // @access  Private/Admin
 export const createBank = async (req, res) => {
@@ -349,32 +387,15 @@ export const deleteBank = async (req, res) => {
   }
 };
 
-// @desc    Get active banks
-// @route   GET /api/banks/active/list
-// @access  Public
-// @desc    Get active banks
+// @desc    Get active banks (for dropdowns)
 // @route   GET /api/banks/active/list
 // @access  Public
 export const getActiveBanks = async (req, res) => {
   try {
-    // Check if currency column exists first
-    let attributes = ['id', 'name', 'code', 'long_code', 'type'];
-    
-    try {
-      // Try to include currency if column exists
-      const [columns] = await sequelize.query("SHOW COLUMNS FROM banks LIKE 'currency'");
-      if (columns.length > 0) {
-        attributes.push('currency');
-      }
-    } catch (err) {
-      // Column doesn't exist, continue without it
-      console.log('Currency column not found in banks table');
-    }
-    
     const banks = await Bank.findAll({
       where: { status: 'ACTIVE' },
       order: [['name', 'ASC']],
-      attributes,
+      attributes: ['id', 'name', 'code', 'long_code', 'type', 'currency'],
       raw: true
     });
 
@@ -532,54 +553,48 @@ export const validateBankCode = async (req, res) => {
   }
 };
 
-// @desc    Fetch banks from Prembly API
-// @route   GET /api/banks/fetch-from-prembly
-// @access  Private/Admin
+// ============================================================
+//  PREMBLY INTEGRATION — Fetch & Sync Banks
+// ============================================================
+
+/**
+ * Fetch banks directly from Prembly API (read‑only, no DB storage)
+ * GET /api/banks/fetch-from-prembly
+ */
 export const fetchBanksFromPrembly = async (req, res) => {
   try {
-    if (!PREMBLY_APP_ID) {
-      return res.status(400).json({
-        success: false,
-        message: 'Prembly App ID not configured. Please set PREMBLY_APP_ID in environment variables.'
-      });
-    }
+    const premblyData = await fetchFromPrembly();
 
-    console.log('📡 Fetching banks from Prembly API...');
-    
-    const response = await axios.get(
-      'https://api.prembly.com/verification/bank_account/bank_code',
-      {
-        headers: {
-          'x-api-key': PREMBLY_API_KEY,
-          'app-id': PREMBLY_APP_ID
-        },
-        timeout: 30000
-      }
-    );
-
-    if (response.data.status === true && response.data.data) {
-      console.log(`✅ Fetched ${response.data.data.length} banks from Prembly`);
+    if (premblyData?.status === true && Array.isArray(premblyData.data)) {
+      logger.info(`✅ Fetched ${premblyData.data.length} banks from Prembly`);
       
-      res.status(200).json({
+      return res.status(200).json({
         success: true,
         message: 'Banks fetched successfully from Prembly',
-        data: response.data.data,
-        count: response.data.data.length,
-        is_sandbox: response.data.is_sandbox || false,
-        meta: response.data.meta
+        data: premblyData.data,
+        count: premblyData.data.length,
+        is_sandbox: premblyData.is_sandbox || false,
+        meta: premblyData.meta || {},
+        billing_info: premblyData.billing_info || null,
+        verification: premblyData.verification || null,
+        reference_id: premblyData.reference_id || null
       });
-    } else {
-      throw new Error(response.data.message || 'Failed to fetch banks');
     }
+
+    throw new Error(premblyData?.message || 'Failed to fetch banks');
 
   } catch (error) {
     logger.error('Fetch banks from Prembly error:', { error: error.message });
     
     let errorMessage = 'Failed to fetch banks from Prembly';
-    if (error.response?.status === 401) {
+    if (error.message.includes('not configured')) {
+      errorMessage = 'Prembly API credentials are not configured in environment variables.';
+    } else if (error.message.includes('401')) {
       errorMessage = 'Authentication failed. Please check your Prembly API key and App ID.';
-    } else if (error.response?.status === 429) {
+    } else if (error.message.includes('429')) {
       errorMessage = 'Rate limit exceeded. Please try again later.';
+    } else if (error.message.includes('no response') || error.message.includes('socket hang up')) {
+      errorMessage = 'Could not connect to Prembly API. Please check your network and firewall settings.';
     }
     
     res.status(500).json({
@@ -591,42 +606,26 @@ export const fetchBanksFromPrembly = async (req, res) => {
   }
 };
 
-// @desc    Sync banks from Prembly to database
-// @route   POST /api/banks/sync-from-prembly
-// @access  Private/Admin
+/**
+ * Sync banks from Prembly to local database (upsert)
+ * POST /api/banks/sync-from-prembly
+ */
 export const syncBanksFromPrembly = async (req, res) => {
   try {
-    if (!PREMBLY_APP_ID) {
-      return res.status(400).json({
-        success: false,
-        message: 'Prembly App ID not configured. Please set PREMBLY_APP_ID in environment variables.'
-      });
+    const premblyData = await fetchFromPrembly();
+
+    if (premblyData?.status !== true || !Array.isArray(premblyData.data)) {
+      throw new Error(premblyData?.message || 'Failed to fetch banks');
     }
 
-    console.log('🔄 Syncing banks from Prembly to database...');
-    
-    const response = await axios.get(
-      'https://api.prembly.com/verification/bank_account/bank_code',
-      {
-        headers: {
-          'x-api-key': PREMBLY_API_KEY,
-          'app-id': PREMBLY_APP_ID
-        },
-        timeout: 30000
-      }
-    );
-
-    if (!response.data.status === true || !response.data.data) {
-      throw new Error(response.data.message || 'Failed to fetch banks');
-    }
-
-    const premblyBanks = response.data.data;
+    const premblyBanks = premblyData.data;
     let created = 0;
     let updated = 0;
     let skipped = 0;
 
     for (const premblyBank of premblyBanks) {
       try {
+        // Check if bank already exists by code or prembly_id
         const existingBank = await Bank.findOne({
           where: {
             [Op.or]: [
@@ -657,7 +656,7 @@ export const syncBanksFromPrembly = async (req, res) => {
           await Bank.update(bankData, { where: { id: existingBank.id } });
           updated++;
           if (process.env.NODE_ENV !== 'production') {
-            console.log(`🔄 Updated bank: ${premblyBank.name} (${premblyBank.code})`);
+            logger.debug(`🔄 Updated bank: ${premblyBank.name} (${premblyBank.code})`);
           }
         } else {
           const lastBank = await Bank.findOne({ order: [['id', 'DESC']] });
@@ -669,15 +668,15 @@ export const syncBanksFromPrembly = async (req, res) => {
             created_at: new Date()
           });
           created++;
-          console.log(`✅ Created bank: ${premblyBank.name} (${premblyBank.code})`);
+          logger.info(`✅ Created bank: ${premblyBank.name} (${premblyBank.code})`);
         }
       } catch (bankError) {
-        console.error(`❌ Error syncing bank ${premblyBank.name}:`, bankError.message);
+        logger.error(`❌ Error syncing bank ${premblyBank.name}:`, bankError.message);
         skipped++;
       }
     }
 
-    console.log(`✅ Sync complete: ${created} created, ${updated} updated, ${skipped} skipped`);
+    logger.info(`✅ Sync complete: ${created} created, ${updated} updated, ${skipped} skipped`);
 
     res.status(200).json({
       success: true,
@@ -687,7 +686,7 @@ export const syncBanksFromPrembly = async (req, res) => {
         updated,
         skipped,
         total: premblyBanks.length,
-        is_sandbox: response.data.is_sandbox || false
+        is_sandbox: premblyData.is_sandbox || false
       }
     });
 
@@ -695,8 +694,14 @@ export const syncBanksFromPrembly = async (req, res) => {
     logger.error('Sync banks from Prembly error:', { error: error.message });
     
     let errorMessage = 'Failed to sync banks from Prembly';
-    if (error.response?.status === 401) {
+    if (error.message.includes('not configured')) {
+      errorMessage = 'Prembly API credentials are not configured in environment variables.';
+    } else if (error.message.includes('401')) {
       errorMessage = 'Authentication failed. Please check your Prembly API key and App ID.';
+    } else if (error.message.includes('429')) {
+      errorMessage = 'Rate limit exceeded. Please try again later.';
+    } else if (error.message.includes('no response') || error.message.includes('socket hang up')) {
+      errorMessage = 'Could not connect to Prembly API. Please check your network and firewall settings.';
     }
     
     res.status(500).json({
@@ -707,9 +712,10 @@ export const syncBanksFromPrembly = async (req, res) => {
   }
 };
 
-// @desc    Get bank sync status
-// @route   GET /api/banks/sync-status
-// @access  Public
+/**
+ * Get bank sync status (counts, last update, etc.)
+ * GET /api/banks/sync-status
+ */
 export const getBankSyncStatus = async (req, res) => {
   try {
     const totalBanks = await Bank.count();
@@ -730,7 +736,7 @@ export const getBankSyncStatus = async (req, res) => {
         inactive_banks: totalBanks - activeBanks,
         last_updated: lastBank?.updated_at || null,
         banks_by_country: banksByCountry,
-        prembly_configured: !!PREMBLY_APP_ID
+        prembly_configured: !!PREMBLY_API_KEY && !!PREMBLY_APP_ID
       }
     });
 

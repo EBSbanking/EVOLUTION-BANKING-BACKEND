@@ -1,4 +1,5 @@
-// src/models/User.js - Direct model (no factory)
+// src/models/User.js - Complete with BusinessRole association
+
 import { DataTypes, Op, Model } from 'sequelize';
 import bcrypt from 'bcrypt';
 import logger from '../utils/logger.js';
@@ -36,7 +37,11 @@ User.init(
     customer_number: DataTypes.STRING,
     roles: { type: DataTypes.JSON, defaultValue: [] },
     primary_role: DataTypes.STRING,
-    BU_ROLE_ID: DataTypes.STRING,
+    BU_ROLE_ID: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'Business Role ID - links to business_roles table via ROLE_ID',
+    },
     primary_business_role: { type: DataTypes.STRING, defaultValue: 'Staff' },
     main_business_unit: DataTypes.STRING,
     responsibility_centre: DataTypes.STRING,
@@ -89,6 +94,12 @@ User.init(
     scopes: {
       withSensitiveData: {
         attributes: { include: ['password', 'default_password', 'reset_token', 'temp_password_token'] },
+      },
+      withBusinessRole: {
+        include: [{
+          association: 'businessRole',
+          attributes: ['BU_ID', 'ROLE_NM', 'ROLE_ID', 'BUSINESS_UNIT', 'SUPERVISOR_FG', 'ALLOW_TXN_POSTING_FG']
+        }]
       },
       active: { where: { status: 'Active' } },
       needsPasswordChange: {
@@ -209,6 +220,34 @@ User.prototype.hasAnyPermission = async function (permissions) { /* ... keep as 
 User.prototype.hasAllPermissions = async function (permissions) { /* ... keep as is ... */ };
 User.prototype.getUserInfoWithPermissions = async function () { /* ... keep as is ... */ };
 
+// ✅ Get BU_ID from business role
+User.prototype.getBU_ID = async function() {
+  // If BU_ID is already set directly, return it
+  if (this.BU_ID) return this.BU_ID;
+  
+  // If we have a businessRole association loaded
+  if (this.businessRole) {
+    return this.businessRole.BU_ID;
+  }
+  
+  // If we have BU_ROLE_ID but no association loaded, fetch it
+  if (this.BU_ROLE_ID) {
+    try {
+      const BusinessRole = (await import('./BusinessRole.js')).default;
+      const businessRole = await BusinessRole.findOne({
+        where: { ROLE_ID: this.BU_ROLE_ID }
+      });
+      if (businessRole) {
+        return businessRole.BU_ID;
+      }
+    } catch (error) {
+      logger.error('Error fetching business role:', error);
+    }
+  }
+  
+  return null;
+};
+
 // ========== Static Methods ==========
 User.findByUsernameWithPassword = function (identifier) {
   return this.scope('withSensitiveData').findOne({
@@ -272,6 +311,17 @@ export const associateUser = (models) => {
       otherKey: 'role_id',
       as: 'roles',
       onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    });
+  }
+  
+  // ✅ Add BusinessRole association
+  if (models.BusinessRole) {
+    User.belongsTo(models.BusinessRole, {
+      foreignKey: 'BU_ROLE_ID',
+      targetKey: 'ROLE_ID',
+      as: 'businessRole',
+      onDelete: 'SET NULL',
       onUpdate: 'CASCADE'
     });
   }

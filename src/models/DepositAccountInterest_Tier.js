@@ -3,89 +3,81 @@ import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class DepositAccountInterest_Tier extends Model {
-  // Static method: Find tiers by deposit interest ID
-  static async findByDepositInterestId(depositInterestId) {
+  // Static method: Find tiers by product type
+  static async findByProductType(productType) {
     return this.findAll({
-      where: { DEPOSIT_ACCT_INT_ID: depositInterestId },
-      order: [['FROM_AMT', 'ASC']]
-    });
-  }
-
-  // Static method: Find tiers by product ID
-  static async findByProductId(productId) {
-    return this.findAll({
-      where: { PROD_ID: productId },
-      order: [['FROM_AMT', 'ASC']]
+      where: { product_type: productType, is_active: true },
+      order: [['min_balance', 'ASC']]
     });
   }
 
   // Static method: Find applicable tier for amount
-  static async findApplicableTier(depositInterestId, amount) {
+  static async findApplicableTier(productType, amount) {
     const tiers = await this.findAll({
       where: {
-        DEPOSIT_ACCT_INT_ID: depositInterestId,
-        REC_ST: 'A',
-        [Op.and]: [
-          { FROM_AMT: { [Op.lte]: amount } },
-          { TO_AMT: { [Op.gte]: amount } }
+        product_type: productType,
+        is_active: true,
+        min_balance: { [Op.lte]: amount },
+        [Op.or]: [
+          { max_balance: { [Op.gte]: amount } },
+          { max_balance: null }
         ]
       },
-      order: [['FROM_AMT', 'ASC']]
+      order: [['min_balance', 'DESC']],
+      limit: 1
     });
     
     return tiers.length > 0 ? tiers[0] : null;
   }
 
   // Static method: Calculate interest for amount
-  static async calculateInterest(depositInterestId, amount) {
-    const tier = await this.findApplicableTier(depositInterestId, amount);
+  static async calculateInterest(productType, amount) {
+    const tier = await this.findApplicableTier(productType, amount);
     
     if (!tier) {
       return {
         applicable: false,
         interestAmount: 0,
-        marginRate: 0,
+        interestRate: 0,
         tier: null,
         message: 'No applicable interest tier found for this amount'
       };
     }
     
-    const interestAmount = (amount * parseFloat(tier.MARGIN_RATE)) / 100;
+    const interestAmount = (amount * parseFloat(tier.interest_rate)) / 100;
     
     return {
       applicable: true,
       interestAmount,
-      marginRate: tier.MARGIN_RATE,
+      interestRate: tier.interest_rate,
       tier: tier.getTierInfo(),
-      fromAmount: tier.FROM_AMT,
-      toAmount: tier.TO_AMT,
-      marginType: tier.MARGIN_TY_CD,
-      penaltyMarginRate: tier.PENAL_MARGIN_RATE,
-      penaltyMarginType: tier.PENAL_MARGIN_TY_CD
+      minBalance: tier.min_balance,
+      maxBalance: tier.max_balance,
+      tierName: tier.tier_name,
+      productType: tier.product_type
     };
   }
 
-  // Static method: Get tier summary by deposit interest
-  static async getTierSummary(depositInterestId) {
+  // Static method: Get tier summary by product type
+  static async getTierSummary(productType) {
     const tiers = await this.findAll({
-      where: { DEPOSIT_ACCT_INT_ID: depositInterestId },
-      order: [['FROM_AMT', 'ASC']]
+      where: { product_type: productType },
+      order: [['min_balance', 'ASC']]
     });
     
     const summary = tiers.map(tier => tier.getTierInfo());
     
-    // Calculate tier coverage
     const totalTiers = tiers.length;
-    const activeTiers = tiers.filter(t => t.REC_ST === 'A').length;
-    const lowestTier = tiers.length > 0 ? parseFloat(tiers[0].FROM_AMT) : 0;
-    const highestTier = tiers.length > 0 ? parseFloat(tiers[tiers.length - 1].TO_AMT) : 0;
+    const activeTiers = tiers.filter(t => t.is_active).length;
+    const lowestTier = tiers.length > 0 ? parseFloat(tiers[0].min_balance) : 0;
+    const highestTier = tiers.length > 0 ? parseFloat(tiers[tiers.length - 1].max_balance) : null;
     
     return {
-      depositInterestId,
+      productType,
       totalTiers,
       activeTiers,
       inactiveTiers: totalTiers - activeTiers,
-      amountRange: `${lowestTier.toLocaleString()} - ${highestTier.toLocaleString()}`,
+      amountRange: `${lowestTier.toLocaleString()} - ${highestTier ? highestTier.toLocaleString() : 'Unlimited'}`,
       tiers: summary
     };
   }
@@ -93,34 +85,31 @@ class DepositAccountInterest_Tier extends Model {
   // Instance method: Get tier information
   getTierInfo() {
     return {
-      tierId: this.DEPOSIT_ACCT_INT_TIER_ID,
-      depositInterestId: this.DEPOSIT_ACCT_INT_ID,
-      productId: this.PROD_ID,
-      fromAmount: this.FROM_AMT,
-      toAmount: this.TO_AMT,
-      marginRate: this.MARGIN_RATE,
-      marginType: this.MARGIN_TY_CD,
-      penaltyMarginRate: this.PENAL_MARGIN_RATE,
-      penaltyMarginType: this.PENAL_MARGIN_TY_CD,
-      status: this.REC_ST,
-      version: this.VERSION_NO,
-      createdBy: this.CREATED_BY,
-      createdDate: this.CREATE_DT,
-      lastUpdated: this.ROW_TS
+      id: this.id,
+      tierName: this.tier_name,
+      minBalance: this.min_balance,
+      maxBalance: this.max_balance,
+      interestRate: this.interest_rate,
+      productType: this.product_type,
+      currency: this.currency,
+      isActive: this.is_active,
+      createdBy: this.created_by,
+      updatedBy: this.updated_by,
+      createdAt: this.created_at,
+      updatedAt: this.updated_at
     };
   }
 
   // Instance method: Check if tier is active
   isActive() {
-    return this.REC_ST === 'A';
+    return this.is_active === true;
   }
 
   // Instance method: Check if amount falls within tier
   isAmountInTier(amount) {
-    const fromAmount = this.FROM_AMT || 0;
-    const toAmount = this.TO_AMT;
-    
-    return amount >= fromAmount && amount <= toAmount;
+    const minBalance = parseFloat(this.min_balance) || 0;
+    const maxBalance = this.max_balance ? parseFloat(this.max_balance) : Infinity;
+    return amount >= minBalance && amount <= maxBalance;
   }
 
   // Instance method: Calculate interest for this tier
@@ -133,29 +122,29 @@ class DepositAccountInterest_Tier extends Model {
       };
     }
     
-    const interestAmount = (amount * parseFloat(this.MARGIN_RATE)) / 100;
+    const interestAmount = (amount * parseFloat(this.interest_rate)) / 100;
     
     return {
       applicable: true,
       interestAmount,
-      marginRate: this.MARGIN_RATE,
-      tierId: this.DEPOSIT_ACCT_INT_TIER_ID,
-      fromAmount: this.FROM_AMT,
-      toAmount: this.TO_AMT,
-      marginType: this.MARGIN_TY_CD
+      interestRate: this.interest_rate,
+      tierId: this.id,
+      tierName: this.tier_name,
+      minBalance: this.min_balance,
+      maxBalance: this.max_balance
     };
   }
 
   // Virtual getter: Tier range description
   get tierRange() {
-    const from = this.FROM_AMT ? parseFloat(this.FROM_AMT).toLocaleString() : '0';
-    const to = parseFloat(this.TO_AMT).toLocaleString();
-    return `${from} - ${to}`;
+    const min = this.min_balance ? parseFloat(this.min_balance).toLocaleString() : '0';
+    const max = this.max_balance ? parseFloat(this.max_balance).toLocaleString() : '∞';
+    return `${min} - ${max}`;
   }
 
-  // Virtual getter: Formatted margin rate
-  get formattedMarginRate() {
-    return `${parseFloat(this.MARGIN_RATE)}%`;
+  // Virtual getter: Formatted interest rate
+  get formattedInterestRate() {
+    return `${parseFloat(this.interest_rate)}%`;
   }
 }
 
@@ -166,116 +155,61 @@ DepositAccountInterest_Tier.init({
     autoIncrement: true
   },
   
-  DEPOSIT_ACCT_INT_TIER_ID: {
-    type: DataTypes.INTEGER,
+  tier_name: {
+    type: DataTypes.STRING(100),
+    allowNull: false
+  },
+  
+  min_balance: {
+    type: DataTypes.DECIMAL(20, 4),
     allowNull: false,
-    unique: true,
-    comment: 'Deposit account interest tier identifier'
+    defaultValue: 0
   },
   
-  DEPOSIT_ACCT_INT_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    comment: 'Deposit account interest identifier'
+  max_balance: {
+    type: DataTypes.DECIMAL(20, 4),
+    allowNull: true
   },
   
-  PROD_ID: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    comment: 'Product identifier'
+  interest_rate: {
+    type: DataTypes.DECIMAL(10, 4),
+    allowNull: false
   },
   
-  MARGIN_RATE: {
-    type: DataTypes.DECIMAL(10, 6),
-    allowNull: false,
-    comment: 'Margin rate'
+  product_type: {
+    type: DataTypes.STRING(50),
+    allowNull: false
   },
   
-  FROM_AMT: {
-    type: DataTypes.DECIMAL(20, 2),
-    allowNull: true,
-    defaultValue: 0.00,
-    comment: 'From amount (inclusive)'
-  },
-  
-  TO_AMT: {
-    type: DataTypes.DECIMAL(20, 2),
-    allowNull: false,
-    comment: 'To amount (inclusive)'
-  },
-  
-  REC_ST: {
-    type: DataTypes.STRING(1),
-    allowNull: false,
-    defaultValue: 'A',
-    validate: {
-      isIn: [['A', 'I']] // A=Active, I=Inactive
-    },
-    comment: 'Record status'
-  },
-  
-  VERSION_NO: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    defaultValue: 1,
-    comment: 'Version number'
-  },
-  
-  ROW_TS: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    comment: 'Row timestamp'
-  },
-  
-  USER_ID: {
-    type: DataTypes.STRING(24),
-    allowNull: false,
-    comment: 'User identifier'
-  },
-  
-  CREATE_DT: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    comment: 'Create date'
-  },
-  
-  CREATED_BY: {
-    type: DataTypes.STRING(24),
-    allowNull: false,
-    comment: 'Created by user'
-  },
-  
-  SYS_CREATE_TS: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    comment: 'System create timestamp'
-  },
-  
-  MARGIN_TY_CD: {
+  currency: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    comment: 'Margin type code'
+    defaultValue: 'NGN'
   },
   
-  PENAL_MARGIN_RATE: {
-    type: DataTypes.DECIMAL(10, 6),
-    allowNull: true,
-    comment: 'Penalty margin rate'
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true
   },
   
-  PENAL_MARGIN_TY_CD: {
-    type: DataTypes.STRING(10),
-    allowNull: true,
-    comment: 'Penalty margin type code'
+  created_by: {
+    type: DataTypes.STRING(50),
+    allowNull: true
   },
   
-  updatedAt: {
+  updated_by: {
+    type: DataTypes.STRING(50),
+    allowNull: true
+  },
+  
+  created_at: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW
   },
   
-  createdAt: {
+  updated_at: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW
@@ -285,118 +219,79 @@ DepositAccountInterest_Tier.init({
   modelName: 'DepositAccountInterest_Tier',
   tableName: 'deposit_account_interest_tier',
   timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   hooks: {
     beforeValidate: (tier) => {
-      // Ensure FROM_AMT is 0 if null/undefined
-      if (!tier.FROM_AMT && tier.FROM_AMT !== 0) {
-        tier.FROM_AMT = 0.00;
+      if (!tier.min_balance && tier.min_balance !== 0) {
+        tier.min_balance = 0;
       }
       
-      // Ensure uppercase for status
-      if (tier.REC_ST) {
-        tier.REC_ST = tier.REC_ST.toUpperCase();
+      if (tier.product_type) {
+        tier.product_type = tier.product_type.toUpperCase();
+      }
+      
+      if (tier.currency) {
+        tier.currency = tier.currency.toUpperCase();
       }
     },
     
     beforeCreate: (tier) => {
-      // Validate tier range
-      const fromAmount = tier.FROM_AMT || 0;
-      const toAmount = tier.TO_AMT;
+      const minBalance = parseFloat(tier.min_balance) || 0;
+      const maxBalance = tier.max_balance ? parseFloat(tier.max_balance) : null;
       
-      if (fromAmount > toAmount) {
-        throw new Error('FROM_AMT cannot be greater than TO_AMT');
+      if (maxBalance !== null && minBalance > maxBalance) {
+        throw new Error('min_balance cannot be greater than max_balance');
       }
       
-      // Set timestamps
-      const now = new Date();
-      if (!tier.CREATE_DT) tier.CREATE_DT = now;
-      if (!tier.SYS_CREATE_TS) tier.SYS_CREATE_TS = now;
-      if (!tier.ROW_TS) tier.ROW_TS = now;
-      
-      // Ensure FROM_AMT is set (default to 0)
-      if (!tier.FROM_AMT && tier.FROM_AMT !== 0) {
-        tier.FROM_AMT = 0.00;
+      if (!tier.currency) {
+        tier.currency = 'NGN';
       }
     },
     
     beforeUpdate: (tier) => {
-      // Update row timestamp on every update
-      tier.ROW_TS = new Date();
-      
-      // Validate tier range if updating amounts
-      if (tier.changed('FROM_AMT') || tier.changed('TO_AMT')) {
-        const fromAmount = tier.FROM_AMT || 0;
-        const toAmount = tier.TO_AMT;
+      if (tier.changed('min_balance') || tier.changed('max_balance')) {
+        const minBalance = parseFloat(tier.min_balance) || 0;
+        const maxBalance = tier.max_balance ? parseFloat(tier.max_balance) : null;
         
-        if (fromAmount > toAmount) {
-          throw new Error('FROM_AMT cannot be greater than TO_AMT');
+        if (maxBalance !== null && minBalance > maxBalance) {
+          throw new Error('min_balance cannot be greater than max_balance');
         }
-      }
-      
-      // Increment version number on update
-      if (tier.changed() && !tier.changed('VERSION_NO')) {
-        tier.VERSION_NO = (tier.VERSION_NO || 0) + 1;
-      }
-    },
-    
-    beforeSave: (tier) => {
-      // Validate that FROM_AMT is less than or equal to TO_AMT
-      if (parseFloat(tier.FROM_AMT) > parseFloat(tier.TO_AMT)) {
-        throw new Error('FROM_AMT must be less than or equal to TO_AMT');
       }
     }
   },
   
   scopes: {
     active: {
-      where: { REC_ST: 'A' }
+      where: { is_active: true }
     },
     inactive: {
-      where: { REC_ST: 'I' }
+      where: { is_active: false }
     },
-    byDepositInterest: (depositInterestId) => ({
-      where: { DEPOSIT_ACCT_INT_ID: depositInterestId }
+    byProductType: (productType) => ({
+      where: { product_type: productType }
     }),
-    byProduct: (productId) => ({
-      where: { PROD_ID: productId }
-    }),
-    byAmountRange: (minAmount, maxAmount) => ({
-      where: {
-        [Op.or]: [
-          {
-            [Op.and]: [
-              { FROM_AMT: { [Op.lte]: maxAmount } },
-              { TO_AMT: { [Op.gte]: minAmount } }
-            ]
-          },
-          {
-            [Op.and]: [
-              { FROM_AMT: { [Op.lte]: maxAmount } },
-              { TO_AMT: { [Op.gte]: minAmount } }
-            ]
-          }
-        ]
-      }
+    byCurrency: (currency) => ({
+      where: { currency: currency }
     }),
     forAmount: (amount) => ({
       where: {
         [Op.and]: [
-          { FROM_AMT: { [Op.lte]: amount } },
-          { TO_AMT: { [Op.gte]: amount } }
+          { min_balance: { [Op.lte]: amount } },
+          { [Op.or]: [
+            { max_balance: { [Op.gte]: amount } },
+            { max_balance: null }
+          ]}
         ]
       }
     }),
+    sortedByMinBalance: {
+      order: [['min_balance', 'ASC']]
+    },
     lowestTier: {
-      where: { FROM_AMT: 0 },
-      order: [['FROM_AMT', 'ASC']],
+      where: { min_balance: 0 },
+      order: [['min_balance', 'ASC']],
       limit: 1
-    },
-    sortedByAmount: {
-      order: [['FROM_AMT', 'ASC']]
-    },
-    recent: {
-      order: [['ROW_TS', 'DESC']],
-      limit: 50
     }
   }
 });

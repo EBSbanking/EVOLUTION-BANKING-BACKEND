@@ -1,36 +1,54 @@
-import cron from 'node-cron';
-import connection from '../../config/db.js'; // Your MySQL connection
+// src/cronJobs/InterestAccrualJob.js
+import { sequelize } from '../../config/db.js';
 import logger from '../utils/logger.js';
+import jobRegistry from '../services/jobRegistry.js';
 
 /**
- * Daily deposit interest accrual cron job with dynamic rates
+ * Ensure required columns exist in deposit_account_summary
+ */
+async function ensureColumnsExist() {
+  const requiredColumns = {
+    DR_INT_ACCRUED: 'DECIMAL(15,2) DEFAULT 0',
+    CR_INT_ACCRUED: 'DECIMAL(15,2) DEFAULT 0',
+    last_debit_date: 'DATETIME NULL',
+    days_outstanding: 'INT DEFAULT 0',
+    LAST_INTEREST_UPDATE: 'DATETIME NULL',
+  };
+
+  const [columns] = await sequelize.query(
+    `SHOW COLUMNS FROM deposit_account_summary`
+  );
+  const existingCols = columns.map(c => c.Field);
+
+  for (const [colName, colDef] of Object.entries(requiredColumns)) {
+    if (!existingCols.includes(colName)) {
+      await sequelize.query(
+        `ALTER TABLE deposit_account_summary ADD COLUMN ${colName} ${colDef}`
+      );
+      logger.info(`✅ Added column ${colName} to deposit_account_summary`);
+    }
+  }
+}
+
+/**
+ * Daily deposit interest accrual with dynamic rates (Sequelize version)
  */
 class DepositInterestAccrual {
   constructor() {
     this.interestRatesCache = new Map();
-    this.cacheExpiry = 30 * 60 * 1000; // 30 minutes cache
+    this.cacheExpiry = 30 * 60 * 1000; // 30 minutes
     this.lastCacheUpdate = 0;
-    this.connection = connection;
   }
 
-  /**
-   * Get interest rate for account type from database
-   */
   async getInterestRate(accountType, balanceTier = 'DEFAULT') {
-    // Check cache first
     const cacheKey = `${accountType}_${balanceTier}`;
     const now = Date.now();
-    
-    if (this.interestRatesCache.has(cacheKey) && 
-        (now - this.lastCacheUpdate) < this.cacheExpiry) {
+    if (this.interestRatesCache.has(cacheKey) && (now - this.lastCacheUpdate) < this.cacheExpiry) {
       return this.interestRatesCache.get(cacheKey);
     }
 
-    const conn = await this.connection.getConnection();
-    
     try {
-      // Fetch interest rate from database
-      const [rows] = await conn.execute(`
+      const [rows] = await sequelize.query(`
         SELECT ANNUAL_RATE 
         FROM deposit_account_interest 
         WHERE ACCOUNT_TYPE = ? 
@@ -40,37 +58,29 @@ class DepositInterestAccrual {
           AND (EXPIRY_DATE >= NOW() OR EXPIRY_DATE IS NULL)
         ORDER BY EFFECTIVE_DATE DESC 
         LIMIT 1
-      `, [accountType, balanceTier]);
+      `, {
+        replacements: [accountType, balanceTier],
+        type: sequelize.QueryTypes.SELECT
+      });
 
-      let annualRate = 0.05; // Default 5% if no rate found
-
-      if (rows.length > 0) {
+      let annualRate = 0.05;
+      if (rows && rows.length > 0) {
         annualRate = parseFloat(rows[0].ANNUAL_RATE) || 0.05;
         logger.debug(`Found interest rate for ${accountType}/${balanceTier}: ${annualRate}%`);
       } else {
-        logger.warn(`No interest rate found for ${accountType}/${balanceTier}, using default 5%`);
+        logger.warn(`No rate found for ${accountType}/${balanceTier}, using default 5%`);
       }
 
-      const dailyRate = annualRate / 100 / 365; // Convert annual percentage to daily decimal
-      
-      // Update cache
+      const dailyRate = annualRate / 100 / 365;
       this.interestRatesCache.set(cacheKey, dailyRate);
       this.lastCacheUpdate = now;
-
       return dailyRate;
-
     } catch (error) {
       logger.error(`Error fetching interest rate for ${accountType}:`, error);
-      // Return default rate on error
       return 0.05 / 100 / 365;
-    } finally {
-      conn.release();
     }
   }
 
-  /**
-   * Determine balance tier based on account balance
-   */
   getBalanceTier(balance) {
     if (balance >= 100000) return 'PREMIUM';
     if (balance >= 50000) return 'GOLD';
@@ -78,40 +88,33 @@ class DepositInterestAccrual {
     return 'STANDARD';
   }
 
-  /**
-   * Calculate accrued interest based on balance, account type, and days
-   */
   async calculateAccruedInterest(account, balance, days = 1) {
     if (!balance || balance <= 0) return 0;
-    
     try {
       const accountType = account.ACCOUNT_TYPE || 'SAVINGS';
       const balanceTier = this.getBalanceTier(balance);
       const dailyRate = await this.getInterestRate(accountType, balanceTier);
-      
       const interest = balance * dailyRate * days;
-      return Math.round(interest * 100) / 100; // Round to 2 decimal places
+      return Math.round(interest * 100) / 100;
     } catch (error) {
       logger.error(`Error calculating interest for account ${account.ACCT_NO}:`, error);
       return 0;
     }
   }
 
-  /**
-   * Update interest accrued for all deposit accounts with dynamic rates
-   */
   async updateAllAccountsInterest() {
-    const conn = await this.connection.getConnection();
-    
+    const transaction = await sequelize.transaction();
     try {
-      await conn.beginTransaction();
       logger.info('Starting daily deposit interest accrual job with dynamic rates');
 
-      const [depositAccounts] = await conn.execute(`
+      // Ensure columns exist (first run)
+      await ensureColumnsExist();
+
+      const [depositAccounts] = await sequelize.query(`
         SELECT * FROM deposit_account_summary 
-        WHERE STATUS = 'ACTIVE'
+        WHERE REC_ST = 'A'
         FOR UPDATE
-      `);
+      `, { transaction });
 
       let updatedCount = 0;
       let totalInterestAccrued = 0;
@@ -119,22 +122,19 @@ class DepositInterestAccrual {
 
       for (const account of depositAccounts) {
         try {
-          const result = await this.updateAccountInterest(account, conn);
+          const result = await this.updateAccountInterest(account, transaction);
           if (result) {
             updatedCount++;
             totalInterestAccrued += result.totalInterest;
-            
-            // Track rates used
             const accountType = account.ACCOUNT_TYPE || 'SAVINGS';
             rateSummary[accountType] = (rateSummary[accountType] || 0) + 1;
           }
         } catch (accountError) {
           logger.error(`Error updating interest for account ${account.ACCT_NO}:`, accountError);
-          // Continue with other accounts
         }
       }
 
-      await conn.commit();
+      await transaction.commit();
       
       logger.info('Daily deposit interest accrual completed', {
         accountsProcessed: updatedCount,
@@ -150,146 +150,107 @@ class DepositInterestAccrual {
         rateDistribution: rateSummary,
         timestamp: new Date()
       };
-
     } catch (error) {
-      await conn.rollback();
+      await transaction.rollback();
       logger.error('Daily deposit interest accrual job failed:', error);
       throw error;
-    } finally {
-      conn.release();
     }
   }
 
-  /**
-   * Update interest for a single account with dynamic rates
-   */
-  async updateAccountInterest(account, conn = null) {
-    let localConn = conn;
-    let shouldRelease = false;
-    
-    if (!localConn) {
-      localConn = await this.connection.getConnection();
-      shouldRelease = true;
-    }
+  async updateAccountInterest(account, transaction) {
+    let totalInterest = 0;
+    const updateData = {};
 
-    try {
-      const updateData = {};
-      let totalInterest = 0;
-
-      // Calculate debit interest (DR_INT_ACCRUED) - for overdrafts/negative balances
-      if (account.LEDGER_BAL < 0) {
-        const daysOutstanding = this.calculateDaysOutstanding(account.last_debit_date);
-        const debitInterest = await this.calculateAccruedInterest(
-          account,
-          Math.abs(account.LEDGER_BAL), 
-          daysOutstanding
-        );
-        
-        if (debitInterest > 0) {
-          updateData.DR_INT_ACCRUED = (account.DR_INT_ACCRUED || 0) + debitInterest;
-          updateData.last_debit_date = new Date();
-          updateData.days_outstanding = daysOutstanding;
-          totalInterest += debitInterest;
-        }
-      }
-
-      // Calculate credit interest (CR_INT_ACCRUED) - for positive balances
-      if (account.CLEARED_BAL > 0) {
-        const creditInterest = await this.calculateAccruedInterest(account, account.CLEARED_BAL);
-        
-        if (creditInterest > 0) {
-          updateData.CR_INT_ACCRUED = (account.CR_INT_ACCRUED || 0) + creditInterest;
-          totalInterest += creditInterest;
-        }
-      }
-
-      // Update account if there's interest to accrue
-      if (Object.keys(updateData).length > 0) {
-        updateData.LAST_INTEREST_UPDATE = new Date();
-        
-        // Build SET clause for update
-        const setClauses = [];
-        const values = [];
-        
-        for (const [key, value] of Object.entries(updateData)) {
-          setClauses.push(`${key} = ?`);
-          values.push(value);
-        }
-        
-        values.push(account.id); // WHERE condition
-        
-        await localConn.execute(`
-          UPDATE deposit_account_summary 
-          SET ${setClauses.join(', ')}
-          WHERE id = ?
-        `, values);
-
-        return { 
-          account: account.ACCT_NO, 
-          totalInterest,
-          accountType: account.ACCOUNT_TYPE || 'SAVINGS'
-        };
-      }
-
-      return null;
-    } finally {
-      if (shouldRelease && localConn) {
-        localConn.release();
+    // Debit interest (negative ledger balance)
+    if (parseFloat(account.LEDGER_BAL) < 0) {
+      const lastDebitDate = account.LAST_WITHDRAWL_DT || account.last_debit_date || new Date();
+      const daysOutstanding = this.calculateDaysOutstanding(lastDebitDate);
+      const debitInterest = await this.calculateAccruedInterest(
+        account,
+        Math.abs(account.LEDGER_BAL),
+        daysOutstanding
+      );
+      if (debitInterest > 0) {
+        updateData.DR_INT_ACCRUED = (account.DR_INT_ACCRUED || 0) + debitInterest;
+        updateData.last_debit_date = new Date();
+        updateData.days_outstanding = daysOutstanding;
+        totalInterest += debitInterest;
       }
     }
+
+    // Credit interest (positive cleared balance)
+    if (parseFloat(account.CLEARED_BAL) > 0) {
+      const creditInterest = await this.calculateAccruedInterest(account, account.CLEARED_BAL);
+      if (creditInterest > 0) {
+        updateData.CR_INT_ACCRUED = (account.CR_INT_ACCRUED || 0) + creditInterest;
+        totalInterest += creditInterest;
+      }
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      updateData.LAST_INTEREST_UPDATE = new Date();
+
+      const setClauses = [];
+      const values = [];
+      for (const [key, value] of Object.entries(updateData)) {
+        setClauses.push(`${key} = ?`);
+        values.push(value);
+      }
+      values.push(account.ACCT_ID);
+
+      await sequelize.query(`
+        UPDATE deposit_account_summary 
+        SET ${setClauses.join(', ')}
+        WHERE ACCT_ID = ?
+      `, {
+        replacements: values,
+        transaction
+      });
+
+      return {
+        account: account.ACCT_NO,
+        totalInterest,
+        accountType: account.ACCOUNT_TYPE || 'SAVINGS'
+      };
+    }
+    return null;
   }
 
-  /**
-   * Calculate days outstanding since last debit
-   */
   calculateDaysOutstanding(lastDebitDate) {
     if (!lastDebitDate) return 1;
-    
     const currentDate = new Date();
     const lastDate = new Date(lastDebitDate);
     const timeDiff = currentDate.getTime() - lastDate.getTime();
     const daysOutstanding = Math.ceil(timeDiff / (1000 * 3600 * 24));
-    
-    return Math.max(1, daysOutstanding); // Minimum 1 day
+    return Math.max(1, daysOutstanding);
   }
 
-  /**
-   * Update account summary after debit transaction with dynamic rates
-   */
   async updateAfterDebitTransaction(ACCT_NO, debitAmount) {
-    const conn = await this.connection.getConnection();
-    
+    const transaction = await sequelize.transaction();
     try {
-      await conn.beginTransaction();
-
-      const [accounts] = await conn.execute(`
+      const [accounts] = await sequelize.query(`
         SELECT * FROM deposit_account_summary 
         WHERE ACCT_NO = ?
         FOR UPDATE
-      `, [ACCT_NO]);
+      `, {
+        replacements: [ACCT_NO],
+        transaction
+      });
 
-      if (accounts.length === 0) {
-        throw new Error(`Account not found: ${ACCT_NO}`);
-      }
+      if (accounts.length === 0) throw new Error(`Account not found: ${ACCT_NO}`);
 
       const account = accounts[0];
-
-      // Calculate days since last debit
-      const daysOutstanding = this.calculateDaysOutstanding(account.last_debit_date);
-      
-      // Calculate debit interest with dynamic rate
+      const daysOutstanding = this.calculateDaysOutstanding(account.LAST_WITHDRAWL_DT);
       const debitInterest = await this.calculateAccruedInterest(
         account,
-        Math.abs(debitAmount), 
+        Math.abs(debitAmount),
         daysOutstanding
       );
+      const creditInterest = account.CLEARED_BAL > 0
+        ? await this.calculateAccruedInterest(account, account.CLEARED_BAL)
+        : 0;
 
-      // Calculate credit interest for cleared balance with dynamic rate
-      const creditInterest = account.CLEARED_BAL > 0 ? 
-        await this.calculateAccruedInterest(account, account.CLEARED_BAL) : 0;
-
-      // Update account
-      await conn.execute(`
+      await sequelize.query(`
         UPDATE deposit_account_summary 
         SET DR_INT_ACCRUED = COALESCE(DR_INT_ACCRUED, 0) + ?,
             CR_INT_ACCRUED = COALESCE(CR_INT_ACCRUED, 0) + ?,
@@ -297,13 +258,14 @@ class DepositInterestAccrual {
             days_outstanding = ?,
             LAST_INTEREST_UPDATE = NOW()
         WHERE ACCT_NO = ?
-      `, [debitInterest, creditInterest, daysOutstanding, ACCT_NO]);
+      `, {
+        replacements: [debitInterest, creditInterest, daysOutstanding, ACCT_NO],
+        transaction
+      });
 
-      await conn.commit();
-
+      await transaction.commit();
       logger.info('Deposit account summary updated after debit', {
         account: ACCT_NO,
-        accountType: account.ACCOUNT_TYPE || 'SAVINGS',
         debitAmount,
         debitInterest,
         creditInterest,
@@ -313,33 +275,23 @@ class DepositInterestAccrual {
       return {
         success: true,
         account: ACCT_NO,
-        accountType: account.ACCOUNT_TYPE || 'SAVINGS',
         debitInterest,
         creditInterest,
         totalInterest: debitInterest + creditInterest
       };
-
     } catch (error) {
-      await conn.rollback();
+      await transaction.rollback();
       logger.error('Error updating deposit account after debit:', error);
       throw error;
-    } finally {
-      conn.release();
     }
   }
 
-  /**
-   * Clear interest rates cache (useful for testing or when rates change)
-   */
   clearCache() {
     this.interestRatesCache.clear();
     this.lastCacheUpdate = 0;
     logger.info('Interest rates cache cleared');
   }
 
-  /**
-   * Get current cache status
-   */
   getCacheStatus() {
     return {
       cacheSize: this.interestRatesCache.size,
@@ -349,21 +301,23 @@ class DepositInterestAccrual {
   }
 }
 
-// Create singleton instance
+// ──────────────────────────────────────────────────────────────
+// Singleton & registration
+// ──────────────────────────────────────────────────────────────
 const depositInterestAccrual = new DepositInterestAccrual();
 
-// Daily cron job - runs at midnight every day
-cron.schedule('0 0 * * *', async () => {
-  try {
-    logger.info('Executing scheduled deposit interest accrual job');
-    const result = await depositInterestAccrual.updateAllAccountsInterest();
-    logger.info('Scheduled deposit interest accrual completed', result);
-  } catch (error) {
-    logger.error('Scheduled deposit interest accrual job failed:', error);
-  }
-});
+jobRegistry.registerJob(
+  'Deposit Interest Accrual (Dynamic)',
+  '0 0 * * *',
+  async () => {
+    await depositInterestAccrual.updateAllAccountsInterest();
+  },
+  'Daily interest accrual for deposit accounts with dynamic rates'
+);
 
-// Export functions
+// ──────────────────────────────────────────────────────────────
+// Exports (unchanged)
+// ──────────────────────────────────────────────────────────────
 export const updateAllAccountsInterest = async () => {
   return await depositInterestAccrual.updateAllAccountsInterest();
 };
@@ -376,98 +330,48 @@ export const calculateDailyInterest = async (account, balance, days = 1) => {
   return await depositInterestAccrual.calculateAccruedInterest(account, balance, days);
 };
 
-export const clearInterestCache = () => {
-  return depositInterestAccrual.clearCache();
-};
+export const clearInterestCache = () => depositInterestAccrual.clearCache();
+export const getCacheStatus = () => depositInterestAccrual.getCacheStatus();
 
-export const getCacheStatus = () => {
-  return depositInterestAccrual.getCacheStatus();
-};
-
-// HTTP endpoint for manual trigger
 export const manualInterestAccrual = async (req, res) => {
   try {
     const result = await depositInterestAccrual.updateAllAccountsInterest();
-    
-    res.json({
-      success: true,
-      message: 'Manual interest accrual completed successfully',
-      data: result
-    });
+    res.json({ success: true, message: 'Manual interest accrual completed', data: result });
   } catch (error) {
     logger.error('Manual interest accrual failed:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Manual interest accrual failed',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// HTTP endpoint for debit transaction update
 export const updateAfterDebitEndpoint = async (req, res) => {
   try {
     const { ACCT_NO, debitAmount } = req.body;
-
     if (!ACCT_NO || !debitAmount) {
-      return res.status(400).json({
-        success: false,
-        message: 'ACCT_NO and debitAmount are required'
-      });
+      return res.status(400).json({ success: false, message: 'ACCT_NO and debitAmount required' });
     }
-
     const result = await depositInterestAccrual.updateAfterDebitTransaction(ACCT_NO, debitAmount);
-    
-    res.json({
-      success: true,
-      message: 'Account updated successfully after debit transaction',
-      data: result
-    });
+    res.json({ success: true, data: result });
   } catch (error) {
-    logger.error('Error updating account after debit:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update account after debit transaction',
-      error: error.message
-    });
+    logger.error('Error updating after debit:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// HTTP endpoint to clear cache
 export const clearCacheEndpoint = async (req, res) => {
   try {
     depositInterestAccrual.clearCache();
-    
-    res.json({
-      success: true,
-      message: 'Interest rates cache cleared successfully'
-    });
+    res.json({ success: true, message: 'Cache cleared' });
   } catch (error) {
-    logger.error('Error clearing cache:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to clear cache',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// HTTP endpoint to get cache status
 export const getCacheStatusEndpoint = async (req, res) => {
   try {
-    const cacheStatus = depositInterestAccrual.getCacheStatus();
-    
-    res.json({
-      success: true,
-      data: cacheStatus
-    });
+    const status = depositInterestAccrual.getCacheStatus();
+    res.json({ success: true, data: status });
   } catch (error) {
-    logger.error('Error getting cache status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get cache status',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 

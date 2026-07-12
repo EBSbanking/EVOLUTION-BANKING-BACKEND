@@ -1,6 +1,7 @@
 // controllers/bulkLoanController.js
 // Full implementation for bulk individual loan disbursement + repayment
 // Supports >50 customers, automatic prepaid installment recording, batching, concurrency
+// INCLUDES: Loan provision (1% of disbursed amount) with GL posting
 
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
@@ -15,14 +16,28 @@ import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountI
 
 // ========== DIRECT MODEL IMPORTS ==========
 import LoanProduct from '../models/LoanProduct.js';
+import LoanInterestRate from '../models/LoanInterestRate.js';
+import LoanPortfolio from '../models/LoanPortfolio.js';
+import LoanAccount from '../models/LoanAccount.js';          // ✅ ADDED for provision
 import AuditTrail from '../models/AuditTrail.js';
 import Customer from '../models/Customer.js';
+import { ProcessingSummary } from '../models/Collection.js';
+import Collection from '../models/Collection.js';
+import Group from '../models/Group.js';
+import LoanRepaymentHistory from '../models/LoanRepaymentHistory.js';
+import LoanProvision from '../models/LoanProvision.js';
+
+// ✅ Import loan provision helper
+import { createLoanProvision } from '../utils/provisionHelper.js';
 
 // ========== DIAGNOSTIC: Check imports ==========
 console.log('\n=== DIAGNOSTIC: Checking imports ===');
 console.log('LoanProduct:', typeof LoanProduct, LoanProduct ? '✅' : '❌');
+console.log('LoanAccount:', typeof LoanAccount, LoanAccount ? '✅' : '❌');
 console.log('AuditTrail:', typeof AuditTrail, AuditTrail ? '✅' : '❌');
 console.log('Customer:', typeof Customer, Customer ? '✅' : '❌');
+console.log('ProcessingSummary:', typeof ProcessingSummary, ProcessingSummary ? '✅' : '❌');
+console.log('Collection:', typeof Collection, Collection ? '✅' : '❌');
 console.log('================================\n');
 
 // ========== CONFIGURATION ==========
@@ -128,16 +143,16 @@ const calculateFlatRateEMI = (principal, flatRatePercent, termMonths, paymentFre
   };
 };
 
-// Generate unique loan account number - uses raw SQL
+// Generate unique loan account number - uses raw SQL with correct column names
 const generateUniqueAccountNumber = async (prodId, transaction) => {
   let attempts = 0;
   while (attempts < 10) {
     let accNo = await generateLoanAccountNumberByProdId(prodId);
     if (typeof accNo === 'object') accNo = accNo.accountNumber;
     accNo = String(accNo).padStart(10, '0').slice(0, 10);
-    
+
     const [existing] = await sequelize.query(
-      `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
+      `SELECT id FROM loan_accounts WHERE ACCT_NO = ? LIMIT 1`,
       {
         replacements: [accNo],
         type: sequelize.QueryTypes.SELECT,
@@ -150,49 +165,95 @@ const generateUniqueAccountNumber = async (prodId, transaction) => {
   return `319${Date.now().toString().slice(-7)}`;
 };
 
-// Get or create default collection ID
+// Get or create default collection ID – using Sequelize models
 const getOrCreateCollectionId = async (connection) => {
   try {
-    const [anyCollection] = await sequelize.query(
-      `SELECT id FROM collections LIMIT 1`,
-      { transaction: connection }
-    );
-    
-    if (anyCollection && anyCollection.length > 0) {
-      console.log(`📋 Using existing collection ID: ${anyCollection[0].id}`);
-      return anyCollection[0].id;
+    let group = await Group.findOne({ transaction: connection });
+    if (!group) {
+      group = await Group.create({
+        groupCode: 'DEFAULT_GROUP',
+        groupName: 'Default Group',
+        branch: 1,
+        createdBy: 1,
+        status: 'ACTIVE',
+        description: 'Automatically created default group for individual loan collections'
+      }, { transaction: connection });
+      console.log(`✅ Created default group with ID: ${group.id}`);
+    } else {
+      console.log(`📋 Using existing group ID: ${group.id}`);
     }
-    
-    const collectionId = `COL-${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '').replace('T', '-')}`;
-    const [insertResult] = await sequelize.query(
-      `INSERT INTO collections (
-        collection_id, group_id, group_code, amount, currency, 
-        collection_date, status, repayment_type, branch, 
-        relationship_manager, channel, payment_method, 
-        transaction_reference, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      {
-        replacements: [
-          collectionId, 1, 'DEFAULT_GROUP', 0, 'NGN',
-          new Date(), 'active', 'loan_repayment', 1,
-          1, 6, 'CASH_DEPOSIT',
-          `REF_${Date.now()}`, 'SYSTEM'
-        ],
-        transaction: connection
+
+    let collection = await Collection.findOne({
+      where: { groupId: group.id },
+      transaction: connection
+    });
+
+    if (!collection) {
+      const collectionData = {
+        groupId: group.id,
+        groupCode: group.groupCode || 'DEFAULT_GROUP',
+        amount: 0,
+        currency: 'NGN',
+        collectionDate: new Date(),
+        status: 'pending',
+        repaymentType: 'loan_repayment',
+        branch: 1,
+        relationshipManager: 1,
+        channel: 6,
+        paymentMethod: 'CASH',
+        transactionReference: `REF_${Date.now()}`,
+        createdBy: 'SYSTEM'
+      };
+
+      const newCollection = Collection.build(collectionData);
+      await newCollection.save({ hooks: false, transaction: connection });
+      collection = newCollection;
+      console.log(`✅ Created default collection with ID: ${collection.id} (hooks skipped)`);
+
+      await ProcessingSummary.create({
+        collectionId: collection.id,
+        totalLoanAmount: 0,
+        totalSavingsAmount: 0,
+        totalFeesAmount: 0,
+        successfulLoanRepayments: 0,
+        failedLoanRepayments: 0,
+        successfulSavings: 0,
+        failedSavings: 0,
+        repaymentSchedulesUpdated: 0,
+        totalProcessedAmount: 0
+      }, { transaction: connection });
+      console.log(`✅ Created ProcessingSummary for collection ${collection.id}`);
+
+      collection.status = 'pending';
+      await collection.save({ transaction: connection });
+      console.log(`✅ Collection saved with ProcessingSummary in place`);
+    } else {
+      console.log(`📋 Using existing collection ID: ${collection.id} for group ${group.id}`);
+      const summary = await ProcessingSummary.findOne({ where: { collectionId: collection.id }, transaction: connection });
+      if (!summary) {
+        await ProcessingSummary.create({
+          collectionId: collection.id,
+          totalLoanAmount: 0,
+          totalSavingsAmount: 0,
+          totalFeesAmount: 0,
+          successfulLoanRepayments: 0,
+          failedLoanRepayments: 0,
+          successfulSavings: 0,
+          failedSavings: 0,
+          repaymentSchedulesUpdated: 0,
+          totalProcessedAmount: 0
+        }, { transaction: connection });
+        console.log(`✅ Created missing ProcessingSummary for existing collection ${collection.id}`);
       }
-    );
-    const newId = insertResult.insertId;
-    console.log(`✅ Created default collection with ID: ${newId}`);
-    return newId;
-    
+    }
+
+    return collection.id;
   } catch (error) {
     console.error(`❌ Error in getOrCreateCollectionId:`, error.message);
-    const [anyCollection] = await sequelize.query(
-      `SELECT id FROM collections LIMIT 1`,
-      { transaction: connection }
-    );
-    if (anyCollection && anyCollection.length > 0) {
-      return anyCollection[0].id;
+    const anyCollection = await Collection.findOne({ transaction: connection });
+    if (anyCollection) {
+      console.log(`⚠️ Fallback: using collection ID: ${anyCollection.id}`);
+      return anyCollection.id;
     }
     throw new Error(`Cannot get or create collection: ${error.message}`);
   }
@@ -262,41 +323,23 @@ const createRepaymentSchedule = async (loanAccountId, loanAccNo, customerId, pri
   }
 };
 
-// ========== FIND LOAN PRODUCT HELPER - SUPPORTS BOTH TABLES ==========
+// ========== FIND LOAN PRODUCT HELPER - CORRECTED FIELD NAMES ==========
 const findLoanProduct = async (productCodeStr, connection) => {
   let loanProduct = null;
   const searchCode = String(productCodeStr).trim();
   
   console.log(`🔍 Searching for loan product: "${searchCode}"`);
   
-  // Try 1: Search by PROD_ID (numeric) in loan_product table
-  if (!loanProduct) {
+  // Try 1: Search by prod_id (numeric)
+  if (!loanProduct && !isNaN(searchCode)) {
     loanProduct = await LoanProduct.findOne({
-      where: { PROD_ID: searchCode },
+      where: { prod_id: parseInt(searchCode, 10) },
       transaction: connection
     });
-    if (loanProduct) console.log(`✅ Found by PROD_ID: ${searchCode}`);
+    if (loanProduct) console.log(`✅ Found by prod_id: ${searchCode}`);
   }
   
-  // Try 2: Search by productCode (string) in loan_product table
-  if (!loanProduct) {
-    loanProduct = await LoanProduct.findOne({
-      where: { productCode: searchCode },
-      transaction: connection
-    });
-    if (loanProduct) console.log(`✅ Found by productCode: ${searchCode}`);
-  }
-  
-  // Try 3: Search by PRODUCT_SHORT_NAME in loan_product table
-  if (!loanProduct) {
-    loanProduct = await LoanProduct.findOne({
-      where: { PRODUCT_SHORT_NAME: searchCode.toUpperCase() },
-      transaction: connection
-    });
-    if (loanProduct) console.log(`✅ Found by PRODUCT_SHORT_NAME: ${searchCode}`);
-  }
-  
-  // Try 4: Search by product_code in loan_products table
+  // Try 2: Search by product_code (string)
   if (!loanProduct) {
     loanProduct = await LoanProduct.findOne({
       where: { product_code: searchCode },
@@ -305,16 +348,16 @@ const findLoanProduct = async (productCodeStr, connection) => {
     if (loanProduct) console.log(`✅ Found by product_code: ${searchCode}`);
   }
   
-  // Try 5: Search by p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e in loan_products table
+  // Try 3: Search by product_short_name
   if (!loanProduct) {
     loanProduct = await LoanProduct.findOne({
-      where: { p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e: searchCode.toUpperCase() },
+      where: { product_short_name: searchCode.toUpperCase() },
       transaction: connection
     });
-    if (loanProduct) console.log(`✅ Found by p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e: ${searchCode}`);
+    if (loanProduct) console.log(`✅ Found by product_short_name: ${searchCode}`);
   }
   
-  // Try 6: Search by name
+  // Try 4: Search by name (partial match)
   if (!loanProduct) {
     loanProduct = await LoanProduct.findOne({
       where: { name: { [Op.like]: `%${searchCode}%` } },
@@ -361,58 +404,40 @@ async function processIndividualLoan(record, results, createdBy, connection) {
 
     const productCodeStr = String(product_code).trim();
 
-    // ========== FIND LOAN PRODUCT - USING HELPER FUNCTION ==========
+    // ========== FIND LOAN PRODUCT ==========
     const loanProduct = await findLoanProduct(productCodeStr, connection);
     
     if (!loanProduct) {
       console.log(`❌ Loan product NOT found for: ${productCodeStr}`);
       
-      // Debug: Log available products
       const allProducts = await LoanProduct.findAll({
-        attributes: ['PROD_ID', 'productCode', 'product_code', 'PRODUCT_SHORT_NAME', 'p_r_o_d_u_c_t__s_h_o_r_t__n_a_m_e', 'name'],
+        attributes: ['prod_id', 'product_code', 'product_short_name', 'name', 'loan_interest_rate_id'],
         raw: true,
-        limit: 10
-      }, { transaction: connection });
+        limit: 10,
+        transaction: connection
+      });
       
       console.log('Sample of available products:', JSON.stringify(allProducts, null, 2));
       throw new Error(`Loan product not found: ${productCodeStr}`);
     }
 
-    console.log(`✅ Found loan product: ID=${loanProduct.PROD_ID}, Name=${loanProduct.name || loanProduct.PRODUCT_SHORT_NAME}`);
+    console.log(`✅ Found loan product: ID=${loanProduct.prod_id}, Name=${loanProduct.name || loanProduct.product_short_name}`);
 
-    // Fetch interest rate
+    // ========== FETCH INTEREST RATE ==========
     let flatRatePercent = safeNumber(interest_rate);
     if (flatRatePercent === 0 && loanProduct) {
       try {
-        // Try different possible column names for interest rate
         let rateValue = null;
-        
-        if (loanProduct.LOAN_INTEREST_RATE_ID) {
-          const [rateResult] = await sequelize.query(
-            `SELECT DEFAULT_RATE_PER_MONTH FROM loan_interest_rates WHERE id = ? LIMIT 1`,
-            {
-              replacements: [loanProduct.LOAN_INTEREST_RATE_ID],
-              type: sequelize.QueryTypes.SELECT,
-              transaction: connection
-            }
-          );
-          if (rateResult) rateValue = rateResult.DEFAULT_RATE_PER_MONTH;
+        if (loanProduct.loan_interest_rate_id) {
+          const rateRecord = await LoanInterestRate.findByPk(loanProduct.loan_interest_rate_id, {
+            transaction: connection
+          });
+          if (rateRecord) {
+            rateValue = parseFloat(rateRecord.DEFAULT_RATE_PER_MONTH);
+          }
         }
-        
-        if (!rateValue && loanProduct.l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d) {
-          const [rateResult] = await sequelize.query(
-            `SELECT DEFAULT_RATE_PER_MONTH FROM loan_interest_rates WHERE id = ? LIMIT 1`,
-            {
-              replacements: [loanProduct.l_o_a_n__i_n_t_e_r_e_s_t__r_a_t_e__i_d],
-              type: sequelize.QueryTypes.SELECT,
-              transaction: connection
-            }
-          );
-          if (rateResult) rateValue = rateResult.DEFAULT_RATE_PER_MONTH;
-        }
-        
         if (rateValue) {
-          flatRatePercent = parseFloat(rateValue);
+          flatRatePercent = rateValue;
           console.log(`✅ Interest rate: ${flatRatePercent}% per month (${flatRatePercent * 12}% annual)`);
         } else {
           flatRatePercent = 6.2;
@@ -447,7 +472,8 @@ async function processIndividualLoan(record, results, createdBy, connection) {
     const disbursementDateObj = new Date(disbursement_date);
     const maturityDate = calculateDueDate(disbursementDateObj, termMonths, payment_frequency);
 
-    const loanAccNo = await generateUniqueAccountNumber(loanProduct.PROD_ID, connection);
+    // Generate loan account number using the product's prod_id
+    const loanAccNo = await generateUniqueAccountNumber(loanProduct.prod_id, connection);
 
     const customer = await Customer.findOne({
       where: { CUST_ID: String(customer_id).padStart(10, '0') },
@@ -455,24 +481,24 @@ async function processIndividualLoan(record, results, createdBy, connection) {
     });
     if (!customer) console.warn(`Customer ${customer_id} not found, but continuing`);
 
-    // ========== CREATE LOAN ACCOUNT - MATCHING ACTUAL TABLE STRUCTURE ==========
+    // ========== CREATE LOAN ACCOUNT – using correct model column names ==========
     const columns = [
-      'a_c_c_t__n_o',
-      'a_c_c_t__n_m',
+      'ACCT_NO',
+      'ACCT_NM',
       'CUST_ID',
-      'a_m_o_u_n_t',
-      'd_i_s_b_u_r_s_e_d__a_m_o_u_n_t',
-      'o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l',
-      'a_c_c_r_u_e_d__i_n_t_e_r_e_s_t',
-      'i_n_t_e_r_e_s_t__r_a_t_e',
-      'l_o_a_n__s_t_a_t_u_s',
-      's_e_r_v_i_c_i_n_g__s_t_a_t_u_s',
-      't_e_r_m__c_d',
-      't_e_r_m__v_a_l_u_e',
-      'l_o_a_n__p_r_o_d_u_c_t__i_d',
-      'm_a_t_u_r_i_t_y__d_t',
-      'd_i_s_b_u_r_s_e_m_e_n_t__d_a_t_e',
-      'a_p_p_l_i_c_a_t_i_o_n__d_a_t_e',
+      'AMOUNT',
+      'DISBURSED_AMOUNT',
+      'OUTSTANDING_PRINCIPAL',
+      'accrued_interest',
+      'INTEREST_RATE',
+      'LOAN_STATUS',
+      'SERVICING_STATUS',
+      'TERM_CD',
+      'TERM_VALUE',
+      'LOAN_PRODUCT_ID',
+      'MATURITY_DT',
+      'DISBURSEMENT_DATE',
+      'APPLICATION_DATE',
       'created_at',
       'updated_at'
     ];
@@ -490,7 +516,7 @@ async function processIndividualLoan(record, results, createdBy, connection) {
       'SERVICED',
       payment_frequency.charAt(0),
       termMonths,
-      loanProduct.PROD_ID,
+      loanProduct.prod_id,
       maturityDate,
       disbursementDateObj,
       disbursementDateObj,
@@ -510,97 +536,80 @@ async function processIndividualLoan(record, results, createdBy, connection) {
     const loanAccountId = loanResult.insertId || loanResult;
     console.log(`✅ Loan account created with ID: ${loanAccountId}`);
 
-    // ========== CREATE REPAYMENT SCHEDULE (with installments) ==========
+    // ============================================================
+    // ⭐ LOAN PROVISION (1% of disbursed amount) – NEW
+    // ============================================================
+    try {
+      // Fetch the loan account instance (needed by createLoanProvision)
+      const loanAccountInstance = await LoanAccount.findByPk(loanAccountId, { transaction: connection });
+      if (loanAccountInstance) {
+        const branchCode = branch_code || '001';
+        await createLoanProvision({
+          loanAccount: loanAccountInstance,
+          branchCode: branchCode,
+          disbursedAmount: principal,
+          createdBy: createdBy,
+          transaction: connection
+        });
+        console.log(`✅ Loan provision created for ${loanAccNo}`);
+      } else {
+        console.warn(`⚠️ Could not fetch loan account instance for provision (ID: ${loanAccountId})`);
+      }
+    } catch (provisionError) {
+      console.warn(`⚠️ Provision creation failed for loan ${loanAccNo}: ${provisionError.message}`);
+      // Non‑critical – continue so the loan is still created
+    }
+
+    // ========== CREATE REPAYMENT SCHEDULE ==========
     await createRepaymentSchedule(
       loanAccountId, loanAccNo, customer_id, principal, flatRatePercent,
       termMonths, payment_frequency, emiCalc, totalInterest, totalRepayable,
       createdBy, connection, installmentsPaidCount, paymentDatesArray
     );
 
-    // ========== UPDATE LOAN PORTFOLIO TABLE ==========
+    // ========== UPDATE LOAN PORTFOLIO TABLE using Model ==========
     const currentMonth = new Date().getMonth() + 1;
     const currentYear = new Date().getFullYear();
     
-    const mapProductTypeForPortfolio = (type) => {
-      const typeMap = {
-        'BUSINESS_LOAN': 'BUSINESS_TERM_LOAN',
-        'INDIVIDUAL_LOAN': 'INDIVIDUAL_LOAN',
-        'PERSONAL_LOAN': 'PERSONAL_LOAN',
-        'GROUP_LOAN': 'GROUP_LOAN',
-        'SME_LOAN': 'SME_LOAN',
-        'STAFF_LOAN': 'STAFF_LOAN',
-        'CONSUMER_LOAN': 'CONSUMER_LOAN',
-        'MORTGAGE': 'MORTGAGE',
-        'AUTO_LOAN': 'AUTO_LOAN',
-        'EDUCATION_LOAN': 'EDUCATION_LOAN',
-        'CREDIT_CARD': 'CREDIT_CARD',
-        'LINE_OF_CREDIT': 'LINE_OF_CREDIT',
-        'GENERAL_LOAN': 'GENERAL_LOAN',
-        'MONTHLY_LOAN': 'MONTHLY_LOAN',
-        'ASSET_LOAN': 'ASSET_LOAN',
-        'RAPID_CASH_LOAN': 'RAPID_CASH_LOAN',
-        'STAFF_SALARY_ADVANCE': 'STAFF_SALARY_ADVANCE',
-        'GROUP_MONTHLY_LOAN': 'GROUP_MONTHLY_LOAN',
-        'SOLAR_LOAN': 'SOLAR_LOAN',
-        'DAILY_LOAN': 'DAILY_LOAN'
-      };
-      return typeMap[type] || 'INDIVIDUAL_LOAN';
-    };
+    const productType = loanProduct.product_type || 'INDIVIDUAL_LOAN';
+    const productCodeValue = loanProduct.product_code || String(loanProduct.prod_id);
+    const productName = loanProduct.name || loanProduct.product_short_name || productCodeValue;
 
-    const productType = mapProductTypeForPortfolio(loanProduct.PRODUCT_TYPE || loanProduct.p_r_o_d_u_c_t__t_y_p_e || 'INDIVIDUAL_LOAN');
-    const productCodeValue = loanProduct.productCode || loanProduct.product_code || String(loanProduct.PROD_ID);
-    const productName = loanProduct.name || loanProduct.PRODUCT_SHORT_NAME || productCodeValue;
-
-    const upsertPortfolioQuery = `
-      INSERT INTO loan_portfolio (
-        b_r_a_n_c_h__i_d, p_r_o_d__i_d, p_r_o_d_u_c_t__c_o_d_e, p_r_o_d_u_c_t__n_a_m_e,
-        p_r_o_d_u_c_t__t_y_p_e, m_o_n_t_h, y_e_a_r, c_u_r_r_e_n_c_y,
-        t_o_t_a_l__d_i_s_b_u_r_s_e_d, t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t,
-        t_o_t_a_l__p_r_i_n_c_i_p_a_l, o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l,
-        t_o_t_a_l__i_n_t_e_r_e_s_t__a_c_c_r_u_e_d, n_u_m_b_e_r__o_f__l_o_a_n_s,
-        a_c_t_i_v_e__l_o_a_n_s, d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t,
-        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e, s_t_a_t_u_s,
-        c_r_e_a_t_e_d__b_y, c_r_e_a_t_e_d__d_a_t_e, u_p_d_a_t_e_d__d_a_t_e
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-      ON DUPLICATE KEY UPDATE
-        t_o_t_a_l__d_i_s_b_u_r_s_e_d = t_o_t_a_l__d_i_s_b_u_r_s_e_d + VALUES(t_o_t_a_l__d_i_s_b_u_r_s_e_d),
-        t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t = t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t + VALUES(t_o_t_a_l__n_e_t__d_i_s_b_u_r_s_e_m_e_n_t),
-        t_o_t_a_l__p_r_i_n_c_i_p_a_l = t_o_t_a_l__p_r_i_n_c_i_p_a_l + VALUES(t_o_t_a_l__p_r_i_n_c_i_p_a_l),
-        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l + VALUES(o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l),
-        t_o_t_a_l__i_n_t_e_r_e_s_t__a_c_c_r_u_e_d = t_o_t_a_l__i_n_t_e_r_e_s_t__a_c_c_r_u_e_d + VALUES(t_o_t_a_l__i_n_t_e_r_e_s_t__a_c_c_r_u_e_d),
-        n_u_m_b_e_r__o_f__l_o_a_n_s = n_u_m_b_e_r__o_f__l_o_a_n_s + 1,
-        a_c_t_i_v_e__l_o_a_n_s = a_c_t_i_v_e__l_o_a_n_s + 1,
-        d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t = d_i_s_b_u_r_s_e_m_e_n_t__c_o_u_n_t + 1,
-        a_v_e_r_a_g_e__l_o_a_n__s_i_z_e = (t_o_t_a_l__p_r_i_n_c_i_p_a_l + VALUES(t_o_t_a_l__p_r_i_n_c_i_p_a_l)) / (n_u_m_b_e_r__o_f__l_o_a_n_s + 1),
-        u_p_d_a_t_e_d__d_a_t_e = NOW()
-    `;
-
-    const portfolioValues = [
-      branch_code,
-      loanProduct.PROD_ID,
-      productCodeValue,
-      productName,
-      productType,
-      currentMonth,
-      currentYear,
-      'NGN',
-      principal,
-      principal,
-      principal,
-      principal,
-      totalInterest,
-      1,
-      1,
-      1,
-      principal,
-      'ACTIVE',
-      createdBy
-    ];
-
-    await sequelize.query(upsertPortfolioQuery, {
-      replacements: portfolioValues,
+    let [portfolio, created] = await LoanPortfolio.findOrCreate({
+      where: {
+        BRANCH_ID: branch_code,
+        PROD_ID: loanProduct.prod_id,
+        YEAR: currentYear,
+        MONTH: currentMonth
+      },
+      defaults: {
+        BRANCH_ID: branch_code,
+        PROD_ID: loanProduct.prod_id,
+        PRODUCT_CODE: productCodeValue,
+        PRODUCT_NAME: productName,
+        PRODUCT_TYPE: productType,
+        MONTH: currentMonth,
+        YEAR: currentYear,
+        CURRENCY: 'NGN',
+        STATUS: 'ACTIVE',
+        CREATED_BY: createdBy,
+        UPDATED_BY: createdBy
+      },
       transaction: connection
     });
+
+    await portfolio.update({
+      TOTAL_DISBURSED: (parseFloat(portfolio.TOTAL_DISBURSED) || 0) + principal,
+      TOTAL_NET_DISBURSEMENT: (parseFloat(portfolio.TOTAL_NET_DISBURSEMENT) || 0) + principal,
+      TOTAL_PRINCIPAL: (parseFloat(portfolio.TOTAL_PRINCIPAL) || 0) + principal,
+      OUTSTANDING_PRINCIPAL: (parseFloat(portfolio.OUTSTANDING_PRINCIPAL) || 0) + principal,
+      TOTAL_INTEREST_ACCRUED: (parseFloat(portfolio.TOTAL_INTEREST_ACCRUED) || 0) + totalInterest,
+      NUMBER_OF_LOANS: (portfolio.NUMBER_OF_LOANS || 0) + 1,
+      ACTIVE_LOANS: (portfolio.ACTIVE_LOANS || 0) + 1,
+      DISBURSEMENT_COUNT: (portfolio.DISBURSEMENT_COUNT || 0) + 1,
+      UPDATED_BY: createdBy
+    }, { transaction: connection });
+
     console.log(`✅ Loan portfolio updated for product ${productCodeValue}`);
 
     // ========== CREATE DISBURSEMENT TRANSACTION ==========
@@ -688,16 +697,16 @@ async function processIndividualLoan(record, results, createdBy, connection) {
         totalAmountPaid += totalPortion;
       }
 
-      // Update loan account after prepaid installments
+      // ========== UPDATE LOAN ACCOUNT after prepaid installments ==========
       const newOutstandingPrincipal = principal - totalPrincipalPaid;
       const newOutstandingInterest = totalInterest - totalInterestPaid;
       const newTotalDue = newOutstandingPrincipal + newOutstandingInterest;
 
       const updateLoanQuery = `
         UPDATE loan_accounts SET
-          o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = ?,
-          a_c_c_r_u_e_d__i_n_t_e_r_e_s_t = ?,
-          l_o_a_n__s_t_a_t_u_s = ?,
+          OUTSTANDING_PRINCIPAL = ?,
+          accrued_interest = ?,
+          LOAN_STATUS = ?,
           updated_at = NOW()
         WHERE id = ?
       `;
@@ -963,45 +972,73 @@ export const bulkLoanRepayment = asyncHandler(async (req, res) => {
   }
 });
 
-// Helper for single repayment
+// Helper for single repayment (corrected – no underscores, proper column names)
 async function processSingleRepayment(record, results, createdBy, connection) {
   try {
-    const { loan_account_number, repayment_amount, payment_date, principal_paid, interest_paid, penalty_paid = 0, reference, narration } = record;
+    const { 
+      loan_account_number, 
+      repayment_amount, 
+      payment_date, 
+      principal_paid, 
+      interest_paid, 
+      penalty_paid = 0, 
+      reference, 
+      narration 
+    } = record;
+
     const amount = safeNumber(repayment_amount);
     if (amount <= 0) throw new Error(`Invalid amount: ${repayment_amount}`);
 
     const [loan] = await sequelize.query(
-      `SELECT id, CUST_ID, ACCT_NM, LOAN_STATUS, CURRENT_BALANCE, OUTSTANDING_PRINCIPAL, ACCRUED_INTEREST, TOTAL_REPAID_AMOUNT, PAYMENTS_MADE, BU_ID
-       FROM loan_accounts WHERE ACCT_NO = ? LIMIT 1`,
+      `SELECT 
+        id, 
+        CUST_ID, 
+        ACCT_NM, 
+        LOAN_STATUS, 
+        OUTSTANDING_PRINCIPAL, 
+        accrued_interest AS ACCRUED_INTEREST,
+        TOTAL_REPAID_AMOUNT, 
+        PAYMENTS_MADE
+       FROM loan_accounts 
+       WHERE ACCT_NO = ? 
+       LIMIT 1`,
       {
         replacements: [loan_account_number],
         type: sequelize.QueryTypes.SELECT,
         transaction: connection
       }
     );
+
     if (!loan) throw new Error(`Loan account ${loan_account_number} not found`);
     if (loan.LOAN_STATUS === 'CLOSED') throw new Error(`Loan already closed`);
 
-    const currentBalance = safeNumber(loan.CURRENT_BALANCE);
-    const outstanding = Math.abs(currentBalance);
-    if (amount > outstanding) throw new Error(`Repayment amount ${amount} exceeds outstanding ${outstanding}`);
+    const outstandingPrincipal = safeNumber(loan.OUTSTANDING_PRINCIPAL);
+    const outstandingInterest = safeNumber(loan.ACCRUED_INTEREST);
+    const outstandingBalance = outstandingPrincipal + outstandingInterest;
+
+    if (amount > outstandingBalance) {
+      throw new Error(`Repayment amount ${amount} exceeds outstanding ${outstandingBalance}`);
+    }
 
     let principalAlloc = safeNumber(principal_paid);
     let interestAlloc = safeNumber(interest_paid);
     let penaltyAlloc = safeNumber(penalty_paid);
+
     if (principalAlloc === 0 && interestAlloc === 0) {
-      const outstandingInterest = safeNumber(loan.ACCRUED_INTEREST);
       interestAlloc = Math.min(amount, outstandingInterest);
       principalAlloc = amount - interestAlloc;
     }
+
     const totalAlloc = principalAlloc + interestAlloc + penaltyAlloc;
-    if (Math.abs(totalAlloc - amount) > 0.01) throw new Error(`Allocation sum ${totalAlloc} != amount ${amount}`);
+    if (Math.abs(totalAlloc - amount) > 0.01) {
+      throw new Error(`Allocation sum ${totalAlloc} != amount ${amount}`);
+    }
 
     const paymentDateObj = new Date(payment_date);
     const txIds = generateTransactionId();
     const collectionId = await getOrCreateCollectionId(connection);
 
-    // Create repayment transaction
+    // ========== CREATE REPAYMENT TRANSACTION ==========
     const insertRepaymentQuery = `
       INSERT INTO transactions (
         account_number, account_id, bu_id, customer_id, account_name,
@@ -1013,12 +1050,28 @@ async function processSingleRepayment(record, results, createdBy, connection) {
     `;
 
     const repaymentTransValues = [
-      loan_account_number, String(loan.id), loan.BU_ID || '001',
-      loan.CUST_ID, loan.ACCT_NM,
-      amount, 'CREDIT', paymentDateObj, 'LOAN_REPAYMENT',
-      txIds.transactionIdentifier, txIds.eventId, txIds.journalId, reference || txIds.reference,
-      narration || 'Bulk loan repayment', 'NGN', createdBy, 'COMPLETED',
-      JSON.stringify({ purpose: 'LOAN_REPAYMENT', loanAccountId: loan.id, batchId: results.batchId })
+      loan_account_number, 
+      String(loan.id), 
+      '001',
+      loan.CUST_ID, 
+      loan.ACCT_NM,
+      amount, 
+      'CREDIT', 
+      paymentDateObj, 
+      'LOAN_REPAYMENT',
+      txIds.transactionIdentifier, 
+      txIds.eventId, 
+      txIds.journalId, 
+      reference || txIds.reference,
+      narration || 'Bulk loan repayment', 
+      'NGN', 
+      createdBy, 
+      'COMPLETED',
+      JSON.stringify({ 
+        purpose: 'LOAN_REPAYMENT', 
+        loanAccountId: loan.id, 
+        batchId: results.batchId 
+      })
     ];
 
     await sequelize.query(insertRepaymentQuery, {
@@ -1027,7 +1080,7 @@ async function processSingleRepayment(record, results, createdBy, connection) {
     });
     console.log(`✅ Repayment transaction created for ${loan_account_number}`);
 
-    // Insert into loan_repayment_history
+    // ========== INSERT INTO loan_repayment_history ==========
     const insertHistoryQuery = `
       INSERT INTO loan_repayment_history (
         loan_account_id, account_number, customer_id, repayment_date,
@@ -1037,14 +1090,21 @@ async function processSingleRepayment(record, results, createdBy, connection) {
     `;
     await sequelize.query(insertHistoryQuery, {
       replacements: [
-        loan.id, loan_account_number, loan.CUST_ID,
-        paymentDateObj, principalAlloc, interestAlloc, penaltyAlloc, amount,
-        reference || txIds.reference, createdBy
+        loan.id, 
+        loan_account_number, 
+        loan.CUST_ID,
+        paymentDateObj, 
+        principalAlloc, 
+        interestAlloc, 
+        penaltyAlloc, 
+        amount,
+        reference || txIds.reference, 
+        createdBy
       ],
       transaction: connection
     });
 
-    // Insert into loan_repayments
+    // ========== INSERT INTO loan_repayments ==========
     const insertLoanRepaymentQuery = `
       INSERT INTO loan_repayments (
         collection_id, loan_account_id, loan_account_number, customer_id, customer_name,
@@ -1055,34 +1115,45 @@ async function processSingleRepayment(record, results, createdBy, connection) {
     `;
     await sequelize.query(insertLoanRepaymentQuery, {
       replacements: [
-        collectionId, loan.id, loan_account_number, loan.CUST_ID, loan.ACCT_NM,
-        principalAlloc, interestAlloc, penaltyAlloc, amount,
-        paymentDateObj, reference || txIds.reference, 'COMPLETED'
+        collectionId, 
+        loan.id, 
+        loan_account_number, 
+        loan.CUST_ID, 
+        loan.ACCT_NM,
+        principalAlloc, 
+        interestAlloc, 
+        penaltyAlloc, 
+        amount,
+        paymentDateObj, 
+        reference || txIds.reference, 
+        'COMPLETED'
       ],
       transaction: connection
     });
 
-    // Update loan balances
-    const newOutstandingPrincipal = safeNumber(loan.OUTSTANDING_PRINCIPAL) - principalAlloc;
-    const newOutstandingInterest = safeNumber(loan.ACCRUED_INTEREST) - interestAlloc;
+    // ========== UPDATE LOAN ACCOUNT – CORRECT COLUMN NAMES ==========
+    const newOutstandingPrincipal = outstandingPrincipal - principalAlloc;
+    const newOutstandingInterest = outstandingInterest - interestAlloc;
     const newTotalDue = newOutstandingPrincipal + newOutstandingInterest;
-    const newBalance = -newTotalDue;
-    const newTotalRepaid = safeNumber(loan.TOTAL_REPAID_AMOUNT) + amount;
-    const newPaymentsMade = safeNumber(loan.PAYMENTS_MADE) + 1;
     const newLoanStatus = newTotalDue <= 0 ? 'CLOSED' : 'ACTIVE';
 
-    await sequelize.query(`
+    const updateLoanQuery = `
       UPDATE loan_accounts SET
-        o_u_t_s_t_a_n_d_i_n_g__p_r_i_n_c_i_p_a_l = ?,
-        a_c_c_r_u_e_d__i_n_t_e_r_e_s_t = ?,
-        l_o_a_n__s_t_a_t_u_s = ?,
+        OUTSTANDING_PRINCIPAL = ?,
+        accrued_interest = ?,
+        LOAN_STATUS = ?,
+        TOTAL_REPAID_AMOUNT = TOTAL_REPAID_AMOUNT + ?,
+        PAYMENTS_MADE = PAYMENTS_MADE + 1,
         updated_at = NOW()
       WHERE id = ?
-    `, {
+    `;
+
+    await sequelize.query(updateLoanQuery, {
       replacements: [
         newOutstandingPrincipal,
         newOutstandingInterest,
         newLoanStatus,
+        amount,
         loan.id
       ],
       transaction: connection
@@ -1093,9 +1164,15 @@ async function processSingleRepayment(record, results, createdBy, connection) {
     results.summary.totalInterestPaid += interestAlloc;
     results.summary.totalPenaltyPaid += penaltyAlloc;
 
-    results.successful.push({ loan_account_number, amount, remaining_balance: newTotalDue });
+    results.successful.push({ 
+      loan_account_number, 
+      amount, 
+      remaining_balance: newTotalDue 
+    });
+
     return true;
   } catch (error) {
+    console.error('Error processing single repayment:', error.message);
     results.failed.push({ record, error: error.message });
     return false;
   }
@@ -1171,5 +1248,5 @@ export const bulkLoanRoutes = (app) => {
   app.post('/api/bulk/individual/disburse', upload.single('file'), bulkIndividualLoanDisbursement);
   app.post('/api/bulk/individual/repay', upload.single('file'), bulkLoanRepayment);
   app.get('/api/bulk/individual/template', downloadTemplate);
-  app.get('/api/bulk/debug/products', debugLoanProducts); // Debug endpoint
+  app.get('/api/bulk/debug/products', debugLoanProducts);
 };

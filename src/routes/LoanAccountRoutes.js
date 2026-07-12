@@ -112,6 +112,24 @@ if (hasMethod('getAllLoans')) {
 }
 
 // =========================
+// WRITE-OFF FRACTIONAL BALANCES (NEW)
+// =========================
+if (hasMethod('writeOffFractionalBalances')) {
+  router.post('/writeoff-fractional', authenticate, LoanAccountController.writeOffFractionalBalances);
+} else {
+  router.post('/writeoff-fractional', authenticate, (req, res) => {
+    res.status(501).json({ success: false, message: 'writeOffFractionalBalances not implemented' });
+  });
+}
+
+if (hasMethod('writeOffBadDebt')) {
+  router.post('/writeoff-bad-debt', authenticate, authorize(['MANAGER', 'ADMIN', 'LOAN_OFFICER']), LoanAccountController.writeOffBadDebt);
+} else {
+  router.post('/writeoff-bad-debt', authenticate, (req, res) => {
+    res.status(501).json({ success: false, message: 'writeOffBadDebt not implemented' });
+  });
+}
+// =========================
 // LOANS DISBURSED BY USER (NEW)
 // =========================
 

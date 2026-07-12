@@ -145,7 +145,9 @@ const CHARGE_TX_TYPES = [
     ...PROCESSING_FEE_TYPES,
     ...SERVICE_FEE_TYPES,
     // From general
-    'FEE_CHARGE', 'INTEREST_CHARGE', 'PENALTY_CHARGE'
+    'FEE_CHARGE', 'INTEREST_CHARGE', 'PENALTY_CHARGE',
+    // ✅ Added: Transfer fee type
+    'TRANSFER_FEE'
   ])
 ];
 
@@ -186,7 +188,7 @@ export {
   INVESTMENT_ACCOUNT_TX_TYPES,
   LOAN_ACCOUNT_TX_TYPES,
   GENERAL_TX_TYPES,
-  CHARGE_TX_TYPES,               // ✅ new export
+  CHARGE_TX_TYPES,               // ✅ includes TRANSFER_FEE now
   getAllTransactionTypes,
   getThriftTransactionType
 };

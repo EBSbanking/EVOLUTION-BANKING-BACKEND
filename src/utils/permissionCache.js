@@ -1,6 +1,6 @@
 // src/utils/permissionCache.js - UPDATED to use roles_vw view
 import logger from './logger.js';
-import sequelize from '../config/db.js';
+import sequelize from '../../config/db.js'; // ✅ Correct path: config is at project root
 
 class PermissionCache {
   constructor() {
@@ -16,7 +16,6 @@ class PermissionCache {
     try {
       console.log('🔄 Loading roles from MySQL using roles_vw view...');
       
-      // ✅ Use the roles_vw view that already has correct column names
       const [rows] = await sequelize.query(`
         SELECT 
           role_id, 
@@ -141,7 +140,6 @@ class PermissionCache {
             if (Array.isArray(rolePermissions)) {
               rolePermissions.forEach(perm => permissions.add(perm));
             } else if (rolePermissions === '["*"]') {
-              // Admin has all permissions
               permissions.add('*');
             }
           } catch (error) {
@@ -160,12 +158,7 @@ class PermissionCache {
   async checkPermission(userId, permission) {
     try {
       const userPermissions = await this.getUserPermissions(userId);
-      
-      // Admin check
-      if (userPermissions.includes('*')) {
-        return true;
-      }
-      
+      if (userPermissions.includes('*')) return true;
       return userPermissions.includes(permission);
     } catch (error) {
       console.error('Permission check error:', error.message);
@@ -176,12 +169,7 @@ class PermissionCache {
   async checkAnyPermission(userId, permissions) {
     try {
       const userPermissions = await this.getUserPermissions(userId);
-      
-      // Admin check
-      if (userPermissions.includes('*')) {
-        return true;
-      }
-      
+      if (userPermissions.includes('*')) return true;
       return permissions.some(perm => userPermissions.includes(perm));
     } catch (error) {
       console.error('Any permission check error:', error.message);
@@ -192,12 +180,7 @@ class PermissionCache {
   async checkAllPermissions(userId, permissions) {
     try {
       const userPermissions = await this.getUserPermissions(userId);
-      
-      // Admin check
-      if (userPermissions.includes('*')) {
-        return true;
-      }
-      
+      if (userPermissions.includes('*')) return true;
       return permissions.every(perm => userPermissions.includes(perm));
     } catch (error) {
       console.error('All permissions check error:', error.message);
@@ -226,7 +209,6 @@ class PermissionCache {
     };
   }
 
-  // Debug method to show loaded roles
   debugRoles() {
     console.log('🔍 Loaded roles in cache:');
     Object.keys(this.roles).forEach(id => {
@@ -238,13 +220,11 @@ class PermissionCache {
 // Create singleton instance
 const permissionCache = new PermissionCache();
 
-// Auto-initialize on import
-if (process.env.NODE_ENV !== 'test') {
-  setTimeout(() => {
-    permissionCache.initializeCache().catch(error => {
-      console.error('Failed to auto-initialize permission cache:', error.message);
-    });
-  }, 1000); // Delay to ensure DB is connected
-}
+// Auto-initialize on import – always runs in development/production
+setTimeout(() => {
+  permissionCache.initializeCache().catch(error => {
+    console.error('Failed to auto-initialize permission cache:', error.message);
+  });
+}, 1000);
 
 export default permissionCache;

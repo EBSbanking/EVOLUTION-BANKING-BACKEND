@@ -6,7 +6,7 @@ import {
   fundAccount,
   withdrawFromAccount,
   getBalance
-} from '../controllers/cardSettlementConfigController.js';
+} from '../controllers/CardSettlementConfigController.js';
 import { protect } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();

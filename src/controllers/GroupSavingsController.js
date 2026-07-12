@@ -1527,17 +1527,15 @@ export const getAllGroupSavings = asyncHandler(async (req, res) => {
     console.log(`✅ Found ${groupSavings.length} group savings accounts (total: ${totalCount})`);
 
     // Calculate summary statistics
-    const summary = await GroupSavings.findAll({
-      where,
-      attributes: [
-        [sequelize.fn('COUNT', sequelize.col('id')), 'totalAccounts'],
-        [sequelize.fn('SUM', sequelize.col('currentBalance')), 'totalBalance'],
-        [sequelize.fn('AVG', sequelize.col('currentBalance')), 'averageBalance'],
-        [sequelize.fn('SUM', sequelize.col('targetAmount')), 'totalTargetAmount'],
-        [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('savingsType'))), 'uniqueSavingsTypes']
-      ],
-      raw: true
-    });
+   const stats = await GroupSavings.findOne({
+  attributes: [
+    [sequelize.fn('COUNT', sequelize.col('id')), 'totalAccounts'],
+    [sequelize.fn('SUM', sequelize.col('AVAILABLE_BALANCE')), 'totalBalance'],   // ✅ Fixed
+    [sequelize.fn('AVG', sequelize.col('AVAILABLE_BALANCE')), 'averageBalance'], // ✅ Fixed
+    [sequelize.fn('SUM', sequelize.col('targetAmount')), 'totalTargetAmount'],
+    [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('savingsType'))), 'uniqueSavingsTypes']
+  ]
+});
 
     // Get counts by status
     const activeCount = await GroupSavings.count({ 

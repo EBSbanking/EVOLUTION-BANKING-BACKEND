@@ -7,6 +7,130 @@ import { logger } from '../utils/logger.js';
 
 // ==================== MAIN CONTROLLER OBJECT ====================
 export const ProductsController = {
+  // ==================== CREATE GL ACCOUNTS FOR PRODUCT ====================
+  createGLAccountsForProduct: async function(product, transaction) {
+    try {
+      const glAccountsToCreate = [];
+      const glAccountMap = {
+        principalBalanceGLAccountNo: {
+          id: `GL_PRINCIPAL_${product.productCode || product.PROD_CD}`,
+          desc: `Principal Balance - ${product.productName || product.PROD_DESC}`,
+          category: 'LIABILITY',
+          type: 'TERM_DEPOSITS'
+        },
+        interestGLAccountNo: {
+          id: `GL_INTEREST_${product.productCode || product.PROD_CD}`,
+          desc: `Interest - ${product.productName || product.PROD_DESC}`,
+          category: 'EXPENSE',
+          type: 'INTEREST_EXPENSE_ON_DEPOSITS'
+        },
+        interestPayableGLAccountNo: {
+          id: `GL_INTEREST_PAYABLE_${product.productCode || product.PROD_CD}`,
+          desc: `Interest Payable - ${product.productName || product.PROD_DESC}`,
+          category: 'LIABILITY',
+          type: 'INTEREST_PAYABLE_ON_DEPOSITS'
+        },
+        withholdingTaxGLAccountNo: {
+          id: `GL_WITHHOLDING_TAX_${product.productCode || product.PROD_CD}`,
+          desc: `Withholding Tax - ${product.productName || product.PROD_DESC}`,
+          category: 'LIABILITY',
+          type: 'WITHHOLDING_TAX_PAYABLE'
+        },
+        interestIncomeGLAccountNo: {
+          id: `GL_INTEREST_INCOME_${product.productCode || product.PROD_CD}`,
+          desc: `Interest Income - ${product.productName || product.PROD_DESC}`,
+          category: 'REVENUE',
+          type: 'INTEREST_INCOME_ON_DEPOSITS'
+        },
+        interestExpenseGLAccountNo: {
+          id: `GL_INTEREST_EXPENSE_${product.productCode || product.PROD_CD}`,
+          desc: `Interest Expense - ${product.productName || product.PROD_DESC}`,
+          category: 'EXPENSE',
+          type: 'INTEREST_EXPENSE_ON_DEPOSITS'
+        },
+        interestReceivableGLAccountNo: {
+          id: `GL_INTEREST_RECEIVABLE_${product.productCode || product.PROD_CD}`,
+          desc: `Interest Receivable - ${product.productName || product.PROD_DESC}`,
+          category: 'ASSET',
+          type: 'INTEREST_RECEIVABLE'
+        },
+        depositChargeReceivableGLAccountNo: {
+          id: `GL_CHARGE_RECEIVABLE_${product.productCode || product.PROD_CD}`,
+          desc: `Charge Receivable - ${product.productName || product.PROD_DESC}`,
+          category: 'ASSET',
+          type: 'LOAN_ACCOUNT_CHARGE_RECEIVABLE'
+        },
+        settlementGLAccountNo: {
+          id: `GL_SETTLEMENT_${product.productCode || product.PROD_CD}`,
+          desc: `Settlement - ${product.productName || product.PROD_DESC}`,
+          category: 'ASSET',
+          type: 'SETTLEMENT_GL_ACCT_NO'
+        }
+      };
+
+      const userId = product.CREATED_BY || 'SYSTEM';
+
+      // Build GL accounts from product data
+      for (const [field, mapping] of Object.entries(glAccountMap)) {
+        const glAccountNo = product[field] || product[field.replace('GLAccountNo', '')];
+        
+        // Skip if empty or placeholder
+        if (!glAccountNo || glAccountNo === '0000000000' || glAccountNo === '0') {
+          continue;
+        }
+
+        glAccountsToCreate.push({
+          GL_ACCT_NO: glAccountNo,
+          GL_ACCT_ID: mapping.id,
+          ACCT_DESC: mapping.desc,
+          GL_ACCT_CAT: mapping.category,
+          accountType: mapping.type,
+          organizationCode: 1,
+          branchCode: '100',
+          CR_ALLOWED: 1,
+          DR_ALLOWED: 1,
+          REC_ST: 'Active',
+          CREATED_BY: userId,
+          CREATED_AT: new Date(),
+          UPDATED_AT: new Date()
+        });
+      }
+
+      // Insert all GL accounts
+      let createdCount = 0;
+      for (const glAccount of glAccountsToCreate) {
+        try {
+          // Check if GL account already exists
+          const [existing] = await sequelize.query(
+            `SELECT GL_ACCT_NO FROM gl_accounts WHERE GL_ACCT_NO = ?`,
+            { replacements: [glAccount.GL_ACCT_NO], transaction }
+          );
+
+          if (!existing || existing.length === 0) {
+            await sequelize.query(
+              `INSERT INTO gl_accounts SET ?`,
+              { replacements: [glAccount], transaction }
+            );
+            console.log(`✅ Created GL account: ${glAccount.GL_ACCT_NO} - ${glAccount.ACCT_DESC}`);
+            createdCount++;
+          } else {
+            console.log(`ℹ️ GL account already exists: ${glAccount.GL_ACCT_NO}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to create GL account ${glAccount.GL_ACCT_NO}:`, error.message);
+        }
+      }
+
+      console.log(`✅ Created ${createdCount} new GL accounts for product ${product.productCode || product.PROD_CD}`);
+      return createdCount;
+
+    } catch (error) {
+      console.error('❌ Error creating GL accounts for product:', error);
+      throw error;
+    }
+  },
+
+  // ==================== CREATE PRODUCT ====================
   createProduct: async (req, res) => {
     const transaction = await sequelize.transaction();
 
@@ -161,7 +285,7 @@ export const ProductsController = {
 
       const productData = {
         // Core identifiers
-        PROD_ID: PROD_ID ? Number(PROD_ID) : Math.floor(Date.now() / 1000), // Generate if not provided
+        PROD_ID: PROD_ID ? Number(PROD_ID) : Math.floor(Date.now() / 1000),
         PROD_CD: finalProductCode.toString(),
         PROD_DESC: finalProductDescription,
         PRODUCT_TYPE: finalProductType,
@@ -206,17 +330,21 @@ export const ProductsController = {
         interestExpenseGLAccountNo: '01001301304001',
         withholdingTaxGLAccountNo: '01001501601001',
         depositChargeReceivableGLAccountNo: '01001101101001',
-        settlementGLAccountNo: '01001999137001'
+        settlementGLAccountNo: '01001999137001',
+        interestGLAccountNo: '01001101101001'
       };
 
       // Use provided GL accounts or defaults
-      Object.entries(glDefaults).forEach(([key, defaultValue]) => {
-        if (glAccounts && glAccounts[key.replace('GLAccountNo', '')]) {
-          productData[key] = glAccounts[key.replace('GLAccountNo', '')];
-        } else {
+      if (glAccounts && typeof glAccounts === 'object') {
+        Object.entries(glDefaults).forEach(([key, defaultValue]) => {
+          const providedValue = glAccounts[key.replace('GLAccountNo', '')] || glAccounts[key];
+          productData[key] = providedValue || defaultValue;
+        });
+      } else {
+        Object.entries(glDefaults).forEach(([key, defaultValue]) => {
           productData[key] = defaultValue;
-        }
-      });
+        });
+      }
 
       // ==================== STEP 8: ADD RATE INFORMATION ====================
       if (rateInformation && typeof rateInformation === 'object') {
@@ -310,7 +438,17 @@ export const ProductsController = {
         productCode: newProduct.productCode
       });
 
-      // ==================== STEP 13: CREATE AUDIT TRAIL ====================
+      // ==================== STEP 13: CREATE GL ACCOUNTS ====================
+      console.log('🔧 Creating GL accounts for product...');
+      try {
+        const glCount = await ProductsController.createGLAccountsForProduct(newProduct, transaction);
+        console.log(`✅ Created ${glCount} GL accounts for product ${newProduct.productCode}`);
+      } catch (glError) {
+        console.warn('⚠️ GL account creation warning:', glError.message);
+        // Don't fail the product creation if GL accounts fail
+      }
+
+      // ==================== STEP 14: CREATE AUDIT TRAIL ====================
       try {
         const ipAddress = req.ip || req.headers['x-forwarded-for'] || 'unknown';
         
@@ -342,10 +480,10 @@ export const ProductsController = {
         });
       }
 
-      // ==================== STEP 14: COMMIT TRANSACTION ====================
+      // ==================== STEP 15: COMMIT TRANSACTION ====================
       await transaction.commit();
 
-      // ==================== STEP 15: SEND RESPONSE ====================
+      // ==================== STEP 16: SEND RESPONSE ====================
       let successMessage;
       if (hasGlobalWildcard) {
         successMessage = 'Product created successfully for ALL business units (global)';
@@ -365,7 +503,8 @@ export const ProductsController = {
           BU_ID: newProduct.BU_ID,
           isGlobalProduct: newProduct.isGlobalProduct,
           visibility: newProduct.visibility,
-          created: true
+          created: true,
+          glAccountsCreated: true
         },
         metadata: {
           total_bu_entries: buIds.length,
@@ -432,107 +571,105 @@ export const ProductsController = {
     }
   },
 
-  // ==================== HELPER FUNCTIONS ====================
+  // ==================== CREATE TABLE MANUALLY ====================
+  createTableManually: async function() {
+    try {
+      console.log('🛠️ Creating savings_products table manually...');
+      
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS savings_products (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          
+          -- Legacy system fields
+          PROD_ID INT NOT NULL UNIQUE,
+          PROD_CD VARCHAR(50) NOT NULL,
+          PROD_DESC VARCHAR(255) NOT NULL,
+          PRODUCT_TYPE VARCHAR(50) NOT NULL DEFAULT 'SAVINGS',
+          
+          -- New system fields
+          product_code VARCHAR(50) NOT NULL UNIQUE,
+          product_name VARCHAR(100) NOT NULL,
+          product_description TEXT,
+          product_type VARCHAR(50) NOT NULL DEFAULT 'SAVINGS',
+          crncy_id VARCHAR(10) DEFAULT 'NGN',
+          bu_id VARCHAR(50),
+          
+          -- GL Accounts
+          principal_balance_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
+          interest_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
+          interest_payable_gl_account_no VARCHAR(50) DEFAULT '01001101116001',
+          withholding_tax_gl_account_no VARCHAR(50) DEFAULT '01001501601001',
+          interest_income_gl_account_no VARCHAR(50) DEFAULT '01001301304001',
+          interest_receivable_gl_account_no VARCHAR(50) DEFAULT '01001101116001',
+          interest_expense_gl_account_no VARCHAR(50) DEFAULT '01001301304001',
+          deposit_charge_receivable_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
+          settlement_gl_account_no VARCHAR(50) DEFAULT '01001999137001',
+          
+          -- Rate fields
+          rate_type VARCHAR(50) DEFAULT 'FIXED',
+          fixed_rate DECIMAL(10,4) DEFAULT 0.0,
+          effective_rate DECIMAL(10,4) DEFAULT 0.0,
+          effective_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+          
+          -- Settlement fields
+          settlement_frequency VARCHAR(50) DEFAULT 'MONTHLY',
+          principal_settlement_method VARCHAR(50) DEFAULT 'ACCOUNT',
+          interest_settlement_method VARCHAR(50) DEFAULT 'ACCOUNT',
+          
+          -- Accrual fields
+          accrual_frequency VARCHAR(50) DEFAULT 'DAILY',
+          accrual_basis VARCHAR(50) DEFAULT 'ACTUAL_DAYS/ACTUAL_DAYS',
+          
+          -- JSON fields
+          rate_information JSON,
+          settlement_information JSON,
+          accrual_information JSON,
+          charges_setup JSON,
+          metadata JSON,
+          
+          -- Business Unit fields
+          start_dt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          rec_st VARCHAR(20) DEFAULT 'A',
+          is_global_product BOOLEAN DEFAULT FALSE,
+          accessible_bus VARCHAR(500),
+          visibility VARCHAR(50) DEFAULT 'SPECIFIC_BRANCHES',
+          
+          -- Other legacy fields
+          prod_cat_ty VARCHAR(50),
+          prod_design_id INT,
+          min_age_year INT,
+          stmnt_freq_cd VARCHAR(50),
+          stmnt_freq_value INT,
+          acct_cycle_cd VARCHAR(50),
+          acct_cycle_value INT,
+          acct_auth_bus_prod_id INT,
+          version_no INT DEFAULT 1,
+          created_by VARCHAR(100) DEFAULT 'system',
+          user_id VARCHAR(100),
+          
+          -- Timestamps
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          
+          -- Indexes
+          INDEX idx_prod_id (PROD_ID),
+          INDEX idx_product_code (product_code),
+          INDEX idx_rec_st (rec_st),
+          INDEX idx_product_type (product_type),
+          INDEX idx_bu_id (bu_id),
+          INDEX idx_is_global (is_global_product)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+      
+      console.log('✅ Table created manually with snake_case columns');
+      return true;
+    } catch (error) {
+      console.error('❌ Manual table creation failed:', error.message);
+      throw error;
+    }
+  },
   
- // In ProductsController.createTableManually - UPDATED SCHEMA
-createTableManually: async function() {
-  try {
-    console.log('🛠️ Creating savings_products table manually...');
-    
-    await sequelize.query(`
-      CREATE TABLE IF NOT EXISTS savings_products (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        
-        -- Legacy system fields
-        PROD_ID INT NOT NULL UNIQUE,
-        PROD_CD VARCHAR(50) NOT NULL,
-        PROD_DESC VARCHAR(255) NOT NULL,
-        PRODUCT_TYPE VARCHAR(50) NOT NULL DEFAULT 'SAVINGS',
-        
-        -- New system fields (using snake_case for Sequelize compatibility)
-        product_code VARCHAR(50) NOT NULL UNIQUE,
-        product_name VARCHAR(100) NOT NULL,
-        product_description TEXT,
-        product_type VARCHAR(50) NOT NULL DEFAULT 'SAVINGS',
-        crncy_id VARCHAR(10) DEFAULT 'NGN',
-        bu_id VARCHAR(50),
-        
-        -- GL Accounts
-        principal_balance_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
-        interest_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
-        interest_payable_gl_account_no VARCHAR(50) DEFAULT '01001101116001',
-        withholding_tax_gl_account_no VARCHAR(50) DEFAULT '01001501601001',
-        interest_income_gl_account_no VARCHAR(50) DEFAULT '01001301304001',
-        interest_receivable_gl_account_no VARCHAR(50) DEFAULT '01001101116001',
-        interest_expense_gl_account_no VARCHAR(50) DEFAULT '01001301304001',
-        deposit_charge_receivable_gl_account_no VARCHAR(50) DEFAULT '01001101101001',
-        settlement_gl_account_no VARCHAR(50) DEFAULT '01001999137001',
-        
-        -- Rate fields
-        rate_type VARCHAR(50) DEFAULT 'FIXED',
-        fixed_rate DECIMAL(10,4) DEFAULT 0.0,
-        effective_rate DECIMAL(10,4) DEFAULT 0.0,
-        effective_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        
-        -- Settlement fields
-        settlement_frequency VARCHAR(50) DEFAULT 'MONTHLY',
-        principal_settlement_method VARCHAR(50) DEFAULT 'ACCOUNT',
-        interest_settlement_method VARCHAR(50) DEFAULT 'ACCOUNT',
-        
-        -- Accrual fields
-        accrual_frequency VARCHAR(50) DEFAULT 'DAILY',
-        accrual_basis VARCHAR(50) DEFAULT 'ACTUAL_DAYS/ACTUAL_DAYS',
-        
-        -- JSON fields
-        rate_information JSON,
-        settlement_information JSON,
-        accrual_information JSON,
-        charges_setup JSON,
-        metadata JSON,
-        
-        -- Business Unit fields
-        start_dt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        rec_st VARCHAR(20) DEFAULT 'A',
-        is_global_product BOOLEAN DEFAULT FALSE,
-        accessible_bus VARCHAR(500),
-        visibility VARCHAR(50) DEFAULT 'SPECIFIC_BRANCHES',
-        
-        -- Other legacy fields
-        prod_cat_ty VARCHAR(50),
-        prod_design_id INT,
-        min_age_year INT,
-        stmnt_freq_cd VARCHAR(50),
-        stmnt_freq_value INT,
-        acct_cycle_cd VARCHAR(50),
-        acct_cycle_value INT,
-        acct_auth_bus_prod_id INT,
-        version_no INT DEFAULT 1,
-        created_by VARCHAR(100) DEFAULT 'system',
-        user_id VARCHAR(100),
-        
-        -- Timestamps
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        
-        -- Indexes
-        INDEX idx_prod_id (PROD_ID),
-        INDEX idx_product_code (product_code),
-        INDEX idx_rec_st (rec_st),
-        INDEX idx_product_type (product_type),
-        INDEX idx_bu_id (bu_id),
-        INDEX idx_is_global (is_global_product)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-    
-    console.log('✅ Table created manually with snake_case columns');
-    return true;
-  } catch (error) {
-    console.error('❌ Manual table creation failed:', error.message);
-    throw error;
-  }
-},
-  
-  // Initialize table on app startup
+  // ==================== INITIALIZE ====================
   initialize: async function() {
     try {
       console.log('🚀 Initializing ProductsController...');

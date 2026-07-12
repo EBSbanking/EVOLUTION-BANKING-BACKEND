@@ -2,8 +2,8 @@ module.exports = {
   apps: [{
     name: 'evolution-backend',
     script: './server.js',
-    instances: 'max', // Use all CPU cores
-    exec_mode: 'cluster',
+    instances: 'max',                // Use all available CPU cores
+    exec_mode: 'cluster',            // Cluster mode for load balancing
     watch: false,
     max_memory_restart: '1G',
     env: {
@@ -23,16 +23,5 @@ module.exports = {
       '--max-http-header-size=16384',
       '--expose-gc'
     ]
-  }, {
-    name: 'metrics',
-    script: './scripts/metrics-server.js',
-    instances: 1,
-    exec_mode: 'fork',
-    env: {
-      NODE_ENV: 'production',
-      PORT: 9090
-    },
-    error_file: './logs/metrics-error.log',
-    out_file: './logs/metrics-out.log'
   }]
 };

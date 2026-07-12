@@ -1,7 +1,7 @@
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
 import { logger } from '../utils/logger.js';
-import Organization from '../models/organization.js';
+import Organization from '../models/Organization.js';
 
 export const createOrganization = async (req, res) => {
   const { organizationName, organizationCode, description, contactEmail, phoneNumber } = req.body;

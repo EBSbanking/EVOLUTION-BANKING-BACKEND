@@ -1,18 +1,34 @@
-// config/db.js - COMPLETE FIXED VERSION (Returns REAL Sequelize instance with backward compatibility)
+// config/db.js - OPTIMIZED for high concurrency (1000+ users)
 import { Sequelize } from 'sequelize';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// Fix __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Database configuration
+// Load .env from the project root (two levels up from /config)
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+// Database configuration – read from .env with fallbacks
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT, 10) || 3306,
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || process.env.DB_PASS || '',
+  // ✅ Ensure password is always a string (never undefined/null)
+  password: (process.env.DB_PASSWORD || process.env.DB_PASS || '').toString(),
   database: process.env.DB_NAME || 'core_banking',
-  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 20, // increased
+  dialect: process.env.DB_DIALECT || 'mysql',
+  timezone: process.env.DB_TIMEZONE || '+00:00',
+  poolMax: parseInt(process.env.DB_POOL_MAX, 10) || 50,
+  poolMin: parseInt(process.env.DB_POOL_MIN, 10) || 10,
+  poolAcquire: parseInt(process.env.DB_POOL_ACQUIRE, 10) || 30000,
+  poolIdle: parseInt(process.env.DB_POOL_IDLE, 10) || 10000,
+  poolEvict: parseInt(process.env.DB_POOL_EVICT, 10) || 1000,
+  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT, 10) || 100,
+  ssl: process.env.DB_SSL === 'true',
 };
 
 console.log('🔧 Database Configuration:', {
@@ -21,22 +37,25 @@ console.log('🔧 Database Configuration:', {
   database: dbConfig.database,
   user: dbConfig.user,
   password: dbConfig.password ? '*** (hidden)' : '(empty)',
+  passwordLength: dbConfig.password.length, // ✅ debug: show length (remove later)
+  poolMax: dbConfig.poolMax,
+  poolMin: dbConfig.poolMin,
   connectionLimit: dbConfig.connectionLimit,
 });
 
 // ============================================
 // ENSURE DATABASE EXISTS (with retry)
 // ============================================
-
 const ensureDatabaseExists = async (retries = 3) => {
   for (let i = 0; i < retries; i++) {
     let tempConnection;
     try {
+      // ✅ Explicitly pass password as string (already done)
       tempConnection = await mysql.createConnection({
         host: dbConfig.host,
         port: dbConfig.port,
         user: dbConfig.user,
-        password: dbConfig.password,
+        password: dbConfig.password, // now guaranteed string
         charset: 'utf8mb4',
         connectTimeout: 10000,
       });
@@ -72,21 +91,19 @@ const ensureDatabaseExists = async (retries = 3) => {
 // CREATE REAL SEQUELIZE INSTANCE
 // ============================================
 
-// Ensure database exists before creating Sequelize instance
 await ensureDatabaseExists();
 
-// Create the REAL Sequelize instance
 const sequelize = new Sequelize(dbConfig.database, dbConfig.user, dbConfig.password, {
   host: dbConfig.host,
   port: dbConfig.port,
-  dialect: 'mysql',
+  dialect: dbConfig.dialect,
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
-    max: dbConfig.connectionLimit,      // maximum connections in pool
-    min: 2,                              // keep at least 2 connections alive
-    acquire: 60000,                      // increase acquire timeout
-    idle: 60000,                         // keep idle connections for 60 seconds
-    evict: 1000,                         // check for idle connections every second
+    max: dbConfig.poolMax,
+    min: dbConfig.poolMin,
+    acquire: dbConfig.poolAcquire,
+    idle: dbConfig.poolIdle,
+    evict: dbConfig.poolEvict,
   },
   dialectOptions: {
     connectTimeout: 30000,
@@ -94,16 +111,20 @@ const sequelize = new Sequelize(dbConfig.database, dbConfig.user, dbConfig.passw
     charset: 'utf8mb4',
     supportBigNumbers: true,
     bigNumberStrings: true,
-    // Enable keep-alive to prevent ECONNRESET
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
+    ...(dbConfig.ssl && {
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    }),
   },
   define: {
     timestamps: true,
     underscored: true,
     freezeTableName: true,
   },
-  timezone: '+00:00',
+  timezone: dbConfig.timezone,
   retry: {
     max: 5,
     match: [
@@ -133,10 +154,10 @@ for (let i = 0; i < 3; i++) {
 }
 if (!connected) process.exit(1);
 
-console.log('✅ Sequelize instance created');
+console.log('✅ Sequelize instance created (optimized pool)');
 
 // ============================================
-// MYSQL2 POOL (with keep-alive)
+// MYSQL2 POOL (same credentials)
 // ============================================
 
 let mysqlPoolInstance = null;
@@ -161,14 +182,10 @@ const createMySQLPool = () => {
       decimalNumbers: true,
       connectTimeout: 30000,
     });
-    console.log('✅ MySQL2 pool created');
+    console.log('✅ MySQL2 pool created (limit: ' + dbConfig.connectionLimit + ')');
   }
   return mysqlPoolInstance;
 };
-
-// ============================================
-// EXPORT FUNCTIONS
-// ============================================
 
 export const getPool = () => {
   if (!mysqlPoolInstance) {
@@ -254,17 +271,10 @@ export const initializeDatabase = async () => {
   return { sequelize, mysqlPool: mysqlPoolInstance };
 };
 
-// ============================================
-// EXPORT THE REAL SEQUELIZE INSTANCE (DEFAULT)
-// ============================================
-
 export default sequelize;
 export { sequelize };
 
-// ============================================
-// BACKWARD COMPATIBILITY EXPORTS
-// ============================================
-
+// Backward compatibility exports
 export const getSequelize = async () => {
   if (!sequelize) {
     throw new Error('Sequelize not initialized. Call initializeDatabase() first.');
@@ -280,20 +290,9 @@ export const getSequelizeInstance = async () => {
 };
 
 export const sequelizeInstance = sequelize;
-
-export const query = async (sql, options = {}) => {
-  return sequelize.query(sql, options);
-};
-
-export const authenticate = async () => {
-  return sequelize.authenticate();
-};
-
-export const sync = async (options = {}) => {
-  return sequelize.sync(options);
-};
-
+export const query = async (sql, options = {}) => sequelize.query(sql, options);
+export const authenticate = async () => sequelize.authenticate();
+export const sync = async (options = {}) => sequelize.sync(options);
 export const models = () => sequelize.models;
 
 console.log('✅ db.js exports configured with backward compatibility');
-console.log('   Available exports: default, sequelize, getSequelize, getSequelizeInstance, query, authenticate, sync, models');

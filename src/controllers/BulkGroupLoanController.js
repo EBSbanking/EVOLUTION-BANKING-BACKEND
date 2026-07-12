@@ -23,6 +23,8 @@ import Customer from '../models/Customer.js';
 import LoanRepaymentHistory from '../models/LoanRepaymentHistory.js';
 import LoanRepayment from '../models/LoanRepayment.js';
 import { generateLoanAccountNumberByProdId } from '../utils/generateLoanAccountId.js';
+import { createLoanProvision } from '../utils/provisionHelper.js';
+import LoanProvision from '../models/LoanProvision.js'; 
 
 // ========== CONFIGURATION ==========
 const DAYS_PER_MONTH = 30; // Number of days used to convert a daily loan term to months
@@ -281,12 +283,19 @@ const parseGLAccountsFromProduct = (loanProduct, branchId = '001') => {
   const interestIncomeGL = defaultGLAccounts.interestPayableGLAccountNo ||
                            defaultGLAccounts.interest_payable_g_l_account_no ||
                            interestReceivableGL;
-  
+
+  // ✨ NEW: Extract provision GL account (with fallback)
+  const provisionGLAccount = branchConfig?.provisionGLAccount ||
+                             branchConfig?.provision_g_l_account ||
+                             defaultGLAccounts.provisionGLAccount ||
+                             defaultGLAccounts.provision_g_l_account;
+
   return {
     loanGLAccount,
     customerGLAccount,
     interestReceivableGL,
-    interestIncomeGL
+    interestIncomeGL,
+    provisionGLAccount  // ← now available
   };
 };
 
@@ -879,9 +888,8 @@ async function processGroupLoan(groupLoanId, members, results, fileName, created
       error: `Group loan processing failed: ${error.message}`
     });
   }
-}
+};
 
-// Updated processMember function with automatic repayment recording
 async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, interestRate, productType, paymentFrequency, branchId, glAccounts, createdBy, connection, results) {
   try {
     const {
@@ -1015,14 +1023,12 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
     let outstandingInterest = totalInterest;
     let totalAmountPaid = parseFloat(paid_amount) || 0;
     
-    // If installments were prepaid, calculate actual outstanding
     if (installmentsPaidCount > 0) {
       const paidInstallmentsTotal = installmentAmount * installmentsPaidCount;
       if (totalAmountPaid === 0) {
         totalAmountPaid = paidInstallmentsTotal;
       }
       
-      // Calculate how much principal and interest was paid
       const totalPrincipalPaid = (principalAmount / totalRepayable) * totalAmountPaid;
       const totalInterestPaid = (totalInterest / totalRepayable) * totalAmountPaid;
       
@@ -1097,6 +1103,23 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
     
     console.log(`✅ Created loan account ${loanAccNo} for ${customer_name}`);
     
+    // ============================================================
+    // ⭐ LOAN PROVISION (1% of disbursed amount) – NEW
+    // ============================================================
+    try {
+      const branchCode = branch_code || '001';
+      await createLoanProvision({
+        loanAccount: newLoanAcc,         // pass the just-created loan account object
+        branchCode: branchCode,
+        disbursedAmount: principalAmount,
+        createdBy: createdBy,
+        transaction: connection
+      });
+    } catch (provisionError) {
+      console.warn(`⚠️ Provision creation failed for loan ${loanAccNo}: ${provisionError.message}`);
+      // Non‑critical – continue so the loan is still created
+    }
+    
     // Create disbursement transaction
     const disbursementIds = generateTransactionId();
     
@@ -1136,7 +1159,6 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
     // AUTOMATIC REPAYMENT RECORDING FOR PREPAID INSTALLMENTS
     // =====================================================
     
-    // Create repayment schedule and record prepaid installments
     const memberInstallments = [];
     
     for (let i = 1; i <= numberOfInstallments; i++) {
@@ -1164,12 +1186,10 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
         isBackdated: isPrepaid
       });
       
-      // If this installment was prepaid, create the repayment record immediately
       if (isPrepaid) {
         const repaymentRef = `PREPAID_${groupLoanId}_${customer_id}_${i}`;
         const actualPaymentDate = paymentDate || dueDate;
         
-        // Create repayment history record
         await LoanRepaymentHistory.create({
           loan_account_id: newLoanAcc.id,
           account_number: loanAccNo,
@@ -1184,7 +1204,6 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
           created_at: new Date()
         }, { transaction: connection });
         
-        // Create loan repayment record
         await LoanRepayment.create({
           loan_account_id: newLoanAcc.id,
           loan_account_number: loanAccNo,
@@ -1201,7 +1220,6 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
         }, { transaction: connection });
         
         results.summary.totalRepaymentsRecorded++;
-        
         console.log(`✅ Recorded prepaid installment ${i}/${numberOfInstallments} for ${customer_name} - Amount: ₦${installmentAmount.toLocaleString()}`);
       }
     }
@@ -1285,7 +1303,7 @@ async function processMember(member, groupLoanId, groupLoanRecord, loanProduct, 
     });
     return null;
   }
-}
+};
 
 // Helper function to get term code from payment frequency
 function getTermCode(paymentFrequency) {

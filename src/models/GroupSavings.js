@@ -1,12 +1,10 @@
-﻿// models/GroupSavings.js - UPDATED VERSION with improved members handling and associations
+﻿// models/GroupSavings.js - UPDATED with automatic column creation
 
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
-
-// Import Group model for association
 import Group from './Group.js';
 
-// SAFE UTILITY FUNCTIONS FOR THE MODEL
+// SAFE UTILITY FUNCTIONS
 const safeParseFloat = (value, defaultValue = 0) => {
   if (!value && value !== 0) return defaultValue;
   try {
@@ -29,7 +27,38 @@ const safeString = (value, defaultValue = '') => {
 };
 
 class GroupSavings extends Model {
+  // ============================================
+  // 🔧 AUTO‑FIX MISSING COLUMNS
+  // ============================================
+  static async ensureColumns() {
+    const columns = ['LEDGER_BAL', 'CLEARED_BAL', 'AVAILABLE_BALANCE'];
+    const tableName = 'GroupSavings';
+    
+    for (const col of columns) {
+      try {
+        // Check if column exists
+        const [results] = await sequelize.query(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+          { replacements: [tableName, col] }
+        );
+        if (results.length === 0) {
+          // Column missing – add it
+          console.log(`🔧 Adding missing column ${col} to ${tableName}...`);
+          await sequelize.query(
+            `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col}\` DECIMAL(15,2) DEFAULT 0`
+          );
+          console.log(`✅ Column ${col} added successfully.`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to ensure column ${col}:`, error.message);
+      }
+    }
+  }
+
+  // ============================================
   // STATIC METHODS
+  // ============================================
   static async initializeBalances() {
     try {
       const docs = await GroupSavings.findAll({
@@ -87,7 +116,9 @@ class GroupSavings extends Model {
     });
   }
 
+  // ============================================
   // INSTANCE METHODS
+  // ============================================
   async updateBalance(amount, balanceType = 'AVAILABLE_BALANCE') {
     try {
       const currentBalance = safeParseFloat(this[balanceType], 0);
@@ -97,7 +128,6 @@ class GroupSavings extends Model {
         [balanceType]: newBalance.toFixed(2)
       };
       
-      // Sync all balances if updating available balance
       if (balanceType === 'AVAILABLE_BALANCE') {
         updateData.LEDGER_BAL = newBalance.toFixed(2);
         updateData.CLEARED_BAL = newBalance.toFixed(2);
@@ -105,7 +135,7 @@ class GroupSavings extends Model {
       }
       
       await this.update(updateData);
-      await this.reload(); // Reload to get updated values
+      await this.reload();
       return this;
     } catch (error) {
       console.error('Error in updateBalance:', error);
@@ -155,7 +185,6 @@ class GroupSavings extends Model {
     };
   }
 
-  // GETTERS (Virtual fields equivalent)
   get ledgerBalanceVirtual() {
     try {
       if (!this.LEDGER_BAL) return '0.00';
@@ -219,113 +248,72 @@ GroupSavings.init({
     autoIncrement: true
   },
   
-  // GROUP IDENTIFICATION
   groupId: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'Groups',
-      key: 'id'
-    }
+    references: { model: 'Groups', key: 'id' }
   },
   groupCode: {
     type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
-    set(value) {
-      this.setDataValue('groupCode', value.trim().toUpperCase());
-    },
-    validate: {
-      notEmpty: true,
-      len: [1, 50]
-    }
+    set(value) { this.setDataValue('groupCode', value.trim().toUpperCase()); },
+    validate: { notEmpty: true, len: [1, 50] }
   },
   groupName: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    set(value) {
-      this.setDataValue('groupName', value.trim());
-    },
-    validate: {
-      notEmpty: true,
-      len: [1, 100]
-    }
+    set(value) { this.setDataValue('groupName', value.trim()); },
+    validate: { notEmpty: true, len: [1, 100] }
   },
   
-  // SAVINGS CONFIGURATION
   savingsType: {
     type: DataTypes.ENUM('union_purse', 'emergency_fund', 'project_fund', 'general_savings', 'project_savings'),
     defaultValue: 'union_purse',
     allowNull: false
   },
   
-  // ACCOUNT INFORMATION
   accountNumber: {
     type: DataTypes.STRING(10),
     allowNull: false,
     unique: true,
-    validate: {
-      is: /^\d{10}$/, // Ensure 10-digit account number
-      notEmpty: true
-    }
+    validate: { is: /^\d{10}$/, notEmpty: true }
   },
   
-  // FINANCIAL FIELDS - WITH SAFE DEFAULTS
   targetAmount: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
   minimumContribution: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
   
-  // BALANCE FIELDS - COMPREHENSIVE WITH SAFE HANDLING
   LEDGER_BAL: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
   CLEARED_BAL: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
   AVAILABLE_BALANCE: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
-  // Backward compatibility field
   currentBalance: {
     type: DataTypes.DECIMAL(15, 2),
     defaultValue: 0.00,
-    validate: {
-      isDecimal: true,
-      min: 0
-    }
+    validate: { isDecimal: true, min: 0 }
   },
   
-  // CONTRIBUTION SETTINGS
   contributionFrequency: {
     type: DataTypes.ENUM('daily', 'weekly', 'monthly', 'quarterly', 'custom'),
     allowNull: false,
@@ -336,64 +324,21 @@ GroupSavings.init({
     defaultValue: DataTypes.NOW
   },
   
-  // MANAGEMENT & ACCESS CONTROL
   managedBy: {
     type: DataTypes.JSON,
     allowNull: false,
     defaultValue: [],
-    validate: {
-      isValidArray(value) {
-        let arrayValue = value;
-        
-        // Handle string input
-        if (typeof value === 'string') {
-          try {
-            arrayValue = JSON.parse(value);
-          } catch (e) {
-            arrayValue = [];
-          }
-        }
-        
-        if (!Array.isArray(arrayValue)) {
-          arrayValue = [];
-        }
-        
-        // Filter and validate
-        const validManagers = arrayValue
-          .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
-          .map(v => String(v).padStart(10, '0'));
-        
-        if (validManagers.length < 1 || validManagers.length > 50) {
-          throw new Error('ManagedBy must have 1-50 managers');
-        }
-      }
-    },
-    // Add getter to ensure array is returned
     get() {
-      const rawValue = this.getDataValue('managedBy');
-      if (!rawValue) return [];
-      if (Array.isArray(rawValue)) return rawValue;
-      try {
-        const parsed = JSON.parse(rawValue);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
+      const raw = this.getDataValue('managedBy');
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw;
+      try { return JSON.parse(raw) || []; } catch { return []; }
     },
-    // Add setter to ensure proper storage
     set(value) {
-      let arrayValue = [];
-      if (Array.isArray(value)) {
-        arrayValue = value;
-      } else if (typeof value === 'string') {
-        try {
-          const parsed = JSON.parse(value);
-          arrayValue = Array.isArray(parsed) ? parsed : [];
-        } catch {
-          arrayValue = [];
-        }
-      }
-      this.setDataValue('managedBy', arrayValue);
+      let arr = [];
+      if (Array.isArray(value)) arr = value;
+      else if (typeof value === 'string') try { arr = JSON.parse(value); } catch { arr = []; }
+      this.setDataValue('managedBy', arr);
     }
   },
   
@@ -401,174 +346,76 @@ GroupSavings.init({
     type: DataTypes.JSON,
     allowNull: false,
     defaultValue: [],
-    // Getter to ensure array is returned
     get() {
-      const rawValue = this.getDataValue('members');
-      if (!rawValue) return [];
-      
-      // If it's already an array, return it
-      if (Array.isArray(rawValue)) return rawValue;
-      
-      // If it's a string, try to parse it
-      if (typeof rawValue === 'string') {
-        try {
-          const parsed = JSON.parse(rawValue);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-          // If parsing fails, extract numbers
-          const numbers = rawValue.match(/\d+/g);
-          return numbers ? numbers.map(n => n.padStart(10, '0')) : [];
+      const raw = this.getDataValue('members');
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') {
+        try { return JSON.parse(raw); } catch { 
+          const nums = raw.match(/\d+/g);
+          return nums ? nums.map(n => n.padStart(10, '0')) : [];
         }
       }
-      
       return [];
     },
-    // Setter to ensure proper storage
     set(value) {
-      let arrayValue = [];
-      
-      if (Array.isArray(value)) {
-        arrayValue = value;
-      } else if (typeof value === 'string') {
-        try {
-          const parsed = JSON.parse(value);
-          arrayValue = Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-          // If parsing fails, extract numbers
-          const numbers = value.match(/\d+/g);
-          arrayValue = numbers ? numbers : [];
-        }
+      let arr = [];
+      if (Array.isArray(value)) arr = value;
+      else if (typeof value === 'string') try { arr = JSON.parse(value); } catch { 
+        const nums = value.match(/\d+/g);
+        arr = nums || [];
       }
-      
-      // Filter, pad, and deduplicate values
-      arrayValue = arrayValue
+      arr = arr
         .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
         .map(v => String(v).padStart(10, '0'))
-        .filter((v, i, a) => a.indexOf(v) === i); // Remove duplicates
-      
-      this.setDataValue('members', arrayValue);
-    },
-    // Validation
-    validate: {
-      isValidArray(value) {
-        // Get the actual array value (could be string or array)
-        let arrayValue = value;
-        
-        if (typeof value === 'string') {
-          try {
-            arrayValue = JSON.parse(value);
-          } catch (e) {
-            arrayValue = [];
-          }
-        }
-        
-        if (!Array.isArray(arrayValue)) {
-          arrayValue = [];
-        }
-        
-        // Filter valid members
-        const validMembers = arrayValue
-          .filter(v => v && /^\d+$/.test(String(v)) && String(v) !== '0')
-          .map(v => String(v).padStart(10, '0'));
-        
-        if (validMembers.length < 1 || validMembers.length > 100) {
-          throw new Error('Members must have 1-100 members');
-        }
-      }
+        .filter((v, i, a) => a.indexOf(v) === i);
+      this.setDataValue('members', arr);
     }
   },
   
-  // WITHDRAWAL RULES
   withdrawalRules: {
     type: DataTypes.JSON,
     defaultValue: {
-      minWithdrawal: 0.00,
-      maxWithdrawal: 0.00,
+      minWithdrawal: 0,
+      maxWithdrawal: 0,
       approvalRequired: true,
       minApprovers: 1,
       withdrawalFrequency: 'anytime'
     },
-    validate: {
-      isValidRules(value) {
-        if (!value || typeof value !== 'object') {
-          throw new Error('Withdrawal rules must be an object');
-        }
-      }
-    },
     get() {
-      const rawValue = this.getDataValue('withdrawalRules');
-      if (!rawValue) return {};
-      if (typeof rawValue === 'object') return rawValue;
-      try {
-        return JSON.parse(rawValue);
-      } catch {
-        return {};
-      }
+      const raw = this.getDataValue('withdrawalRules');
+      if (!raw) return {};
+      if (typeof raw === 'object') return raw;
+      try { return JSON.parse(raw); } catch { return {}; }
     },
-    set(value) {
-      this.setDataValue('withdrawalRules', value || {});
-    }
+    set(value) { this.setDataValue('withdrawalRules', value || {}); }
   },
   
-  // PRODUCT LINKING (OPTIONAL)
-  linkedProductId: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    validate: {
-      isInt: true,
-      min: 1
-    }
-  },
-  linkedProductCode: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    set(value) {
-      if (value) {
-        this.setDataValue('linkedProductCode', value.trim());
-      }
-    }
-  },
+  linkedProductId: { type: DataTypes.INTEGER, allowNull: true },
+  linkedProductCode: { type: DataTypes.STRING(50), allowNull: true },
   
-  // STATUS & AUDIT FIELDS
   status: {
     type: DataTypes.ENUM('active', 'inactive', 'closed', 'suspended'),
     defaultValue: 'active',
     allowNull: false
   },
-  isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
-  },
+  isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   
-  // AUDIT FIELDS
   createdById: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
+    references: { model: 'Users', key: 'id' }
   },
-  closedAt: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
+  closedAt: { type: DataTypes.DATE, allowNull: true },
   closedById: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    references: {
-      model: 'Users',
-      key: 'id'
-    }
+    references: { model: 'Users', key: 'id' }
   },
   closureReason: {
     type: DataTypes.STRING(500),
     allowNull: true,
-    set(value) {
-      if (value) {
-        this.setDataValue('closureReason', value.trim());
-      }
-    }
+    set(value) { if (value) this.setDataValue('closureReason', value.trim()); }
   }
 }, {
   sequelize,
@@ -578,43 +425,35 @@ GroupSavings.init({
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   hooks: {
-    beforeSave: async (groupSavings, options) => {
+    beforeSave: async (groupSavings) => {
       try {
-        // Sync status with isActive
         if (groupSavings.status === 'active') {
           groupSavings.isActive = true;
         } else if (['inactive', 'closed', 'suspended'].includes(groupSavings.status)) {
           groupSavings.isActive = false;
         }
         
-        // SAFE BALANCE INITIALIZATION
         const currentBal = safeParseFloat(groupSavings.currentBalance, 0);
         const defaultBalance = currentBal.toFixed(2);
         
-        // Initialize balance fields safely
         if (!groupSavings.LEDGER_BAL || groupSavings.changed('currentBalance')) {
           groupSavings.LEDGER_BAL = defaultBalance;
         }
-        
         if (!groupSavings.CLEARED_BAL || groupSavings.changed('currentBalance')) {
           groupSavings.CLEARED_BAL = defaultBalance;
         }
-        
         if (!groupSavings.AVAILABLE_BALANCE || groupSavings.changed('currentBalance')) {
           groupSavings.AVAILABLE_BALANCE = defaultBalance;
         }
         
-        // Sync currentBalance with AVAILABLE_BALANCE for backward compatibility
         if (groupSavings.AVAILABLE_BALANCE && groupSavings.changed('AVAILABLE_BALANCE')) {
           groupSavings.currentBalance = safeParseFloat(groupSavings.AVAILABLE_BALANCE);
         }
         
-        // Set closure timestamp if status changed to closed
         if (groupSavings.changed('status') && groupSavings.status === 'closed' && !groupSavings.closedAt) {
           groupSavings.closedAt = new Date();
         }
         
-        // Deduplicate arrays (using getters to ensure we have arrays)
         if (groupSavings.managedBy && Array.isArray(groupSavings.managedBy)) {
           groupSavings.managedBy = [...new Set(groupSavings.managedBy)];
         }
@@ -622,52 +461,34 @@ GroupSavings.init({
           groupSavings.members = [...new Set(groupSavings.members)];
         }
         
-        // Generate accountNumber if not provided
         if (!groupSavings.accountNumber) {
           const timestamp = Date.now() % 1000000000;
           groupSavings.accountNumber = `GS${timestamp}`.padStart(10, '0').slice(-10);
         }
         
-        // Calculate next contribution date if not set
         if (!groupSavings.nextContributionDate) {
           const now = new Date();
           const freq = groupSavings.contributionFrequency || 'monthly';
           let futureDate = new Date(now);
-          
           switch (freq) {
-            case 'daily': 
-              futureDate.setDate(now.getDate() + 1);
-              break;
-            case 'weekly': 
-              futureDate.setDate(now.getDate() + 7);
-              break;
-            case 'monthly': 
-              futureDate.setMonth(now.getMonth() + 1);
-              break;
-            case 'quarterly': 
-              futureDate.setMonth(now.getMonth() + 3);
-              break;
-            default: 
-              futureDate.setMonth(now.getMonth() + 1);
+            case 'daily': futureDate.setDate(now.getDate() + 1); break;
+            case 'weekly': futureDate.setDate(now.getDate() + 7); break;
+            case 'monthly': futureDate.setMonth(now.getMonth() + 1); break;
+            case 'quarterly': futureDate.setMonth(now.getMonth() + 3); break;
+            default: futureDate.setMonth(now.getMonth() + 1);
           }
-          
           groupSavings.nextContributionDate = futureDate;
         }
-        
       } catch (error) {
         console.error('Error in beforeSave hook:', error);
-        // Ensure we don't block the save operation
       }
     }
-  },
-  
+  }
 });
 
 // ============================================
-// DEFINE ASSOCIATIONS
+// ASSOCIATIONS
 // ============================================
-
-// GroupSavings belongs to Group
 GroupSavings.belongsTo(Group, {
   foreignKey: 'groupId',
   as: 'group',
@@ -675,7 +496,6 @@ GroupSavings.belongsTo(Group, {
   onUpdate: 'CASCADE'
 });
 
-// GroupSavings has many contributions
 GroupSavings.hasMany(Group, {
   foreignKey: 'groupId',
   as: 'savingsAccounts'

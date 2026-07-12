@@ -1,4 +1,4 @@
-// routes/groupSavingsRoutes.js - Updated
+// routes/groupSavingsRoutes.js - Updated with correct order
 import express from 'express';
 import {
   createGroupSavings,
@@ -20,74 +20,81 @@ import {
   getGroupSavingsBalanceByGroupCode,
   searchGroupSavingsByGroupName,
   searchGroupSavings,
-    getAllGroupSavings,
+  getAllGroupSavings,
   getAllGroupSavingsSimple
 } from '../controllers/GroupSavingsController.js';
 import { authenticate } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-// 🏦 GROUP SAVINGS ACCOUNT MANAGEMENT ROUTES
+// ============================================
+// 🏦 GROUP SAVINGS ACCOUNT MANAGEMENT
+// ============================================
+
 router.post('/create', authenticate, createGroupSavings);
 router.get('/account/:accountNumber', authenticate, getAccountByNumber);
 router.get('/id/:groupSavingsId', authenticate, getGroupSavingsById);
 router.get('/account-number/:accountNumber/details', authenticate, getGroupSavingsByAccountNumber);
 router.put('/:groupSavingsId/update', authenticate, updateGroupSavings);
 
-// Group-based queries
+// ============================================
+// 🔍 GROUP-SPECIFIC QUERIES (ORDER MATTERS!)
+// ============================================
+
+// ✅ GET savings by group code – this is the one your frontend calls
+//    Example: /api/group-savings/DEFAULT_GROUP/savings
+router.get('/:groupCode/savings', authenticate, (req, res, next) => {
+  console.log('🔍 Route /:groupCode/savings hit with groupCode:', req.params.groupCode);
+  next();
+}, getGroupSavingsByGroupCode);
+
+// Get all savings accounts for a group (returns list)
 router.get('/group/:groupCode/all', authenticate, getGroupSavingsByGroup);
-router.get('/:groupCode/savings', authenticate, getGroupSavingsByGroupCode);
+
+// Get member savings for a group (alternative)
 router.get('/:groupCode/member-savings', authenticate, getGroupSavings);
 
+// ============================================
 // 💰 BALANCE QUERIES
-router.get('/balance/account/:accountNumber', authenticate, getGroupSavingsBalanceByAccountNumber);
-router.get('/balance/group/:groupCode', authenticate, getGroupSavingsBalanceByGroupCode);
-router.get('/balance/group/:groupCode/:savingsType', authenticate, getGroupSavingsBalanceByGroupCode);
+// ============================================
 
+router.get('/balance/account/:accountNumber', authenticate, getGroupSavingsBalanceByAccountNumber);
+router.get('/balance/group/:groupCode/:savingsType?', authenticate, getGroupSavingsBalanceByGroupCode);
+
+// ============================================
 // 🔍 SEARCH ROUTES
+// ============================================
+
 router.get('/search', authenticate, searchGroupSavings);
 router.get('/search/name/:groupName', authenticate, searchGroupSavingsByGroupName);
 
-// 💰 CONTRIBUTION MANAGEMENT ROUTES
+// ============================================
+// 💰 CONTRIBUTION MANAGEMENT
+// ============================================
+
 router.post('/contributions/add', authenticate, addContribution);
 router.post('/contributions/bulk-detailed', authenticate, addBulkContributionsWithIndividualTransactions);
 router.get('/contributions/:accountNumber/history', authenticate, getGroupContributions);
 
-// 💳 WITHDRAWAL MANAGEMENT ROUTES
+// ============================================
+// 💳 WITHDRAWAL MANAGEMENT
+// ============================================
+
 router.post('/withdrawals/request/:accountNumber', authenticate, requestWithdrawal);
 router.put('/withdrawals/:withdrawalRequestId/approve', authenticate, processWithdrawalApproval);
 router.put('/withdrawals/:withdrawalRequestId/disburse', authenticate, disburseWithdrawal);
 
-// 🔄 SYNC ROUTES
+// ============================================
+// 🔄 SYNC & UTILITY
+// ============================================
+
 router.post('/:groupSavingsId/sync-balance', authenticate, syncGroupSavingsBalance);
 
+// ============================================
+// 📋 LIST ALL SAVINGS ACCOUNTS
+// ============================================
 
-// Routes configuration
-router.get('/balance/search', searchGroupSavings); // Universal search with query params
-router.get('/balance/account/:accountNumber', getGroupSavingsBalanceByAccountNumber);
-router.get('/balance/group/:groupCode/:savingsType?', getGroupSavingsBalanceByGroupCode);
-router.get('/search/name/:groupName', searchGroupSavingsByGroupName);
-
-// Keep original routes for backward compatibility
-
-router.get('/group/:groupCode', getGroupSavingsByGroupCode); // Get detailed info by group code
-router.get('/group/:groupCode/all', getGroupSavingsByGroup); // Get all savings for a group
-
-
-/**
- * @route   GET /api/group-savings/all
- * @desc    Get all group savings accounts with pagination and filters
- * @access  Private
- */
 router.get('/all', authenticate, getAllGroupSavings);
-
-/**
- * @route   GET /api/group-savings/all/simple
- * @desc    Get simplified list of all group savings accounts (for dropdowns)
- * @access  Private
- */
 router.get('/all/simple', authenticate, getAllGroupSavingsSimple);
-
-
 
 export default router;

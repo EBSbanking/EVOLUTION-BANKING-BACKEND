@@ -1,4 +1,4 @@
-// src/models/index.js – FINAL STABLE VERSION (includes InterestAccrual)
+// src/models/index.js – COMPLETE WITH ALL VAULT MODELS & PENALTY RULE
 import sequelize from '../../config/db.js';
 import { DataTypes, Op, QueryTypes } from 'sequelize';
 
@@ -7,6 +7,8 @@ console.log('📦 Starting model imports (static)...');
 // ========== STATIC IMPORTS ==========
 import Account from './Accounts.js';
 import AccountApplication from './AccountApplication.js';
+import AdminUser from './AdminUser.js';
+import AdminService from './AdminService.js';
 import AML from './AML.js';
 import AMLThreshold from './AMLThreshold.js';
 import AuditTrail from './AuditTrail.js';
@@ -20,6 +22,7 @@ import CardCounter from './CardCounter.js';
 import CardSettlementConfig from './CardSettlementConfig.js';
 import CashWithdrawalTransaction from './CashWithdrawalTransaction.js';
 import Charge from './Charge.js';
+import ChargeTier from './ChargeTier.js';
 import ChartofAccount from './ChartofAccount.js';
 import Collection from './Collection.js';
 import ConfigurationService from './ConfigurationService.js';
@@ -33,6 +36,7 @@ import DebitCard from './DebitCard.js';
 import Deposit from './Deposit.js';
 import DepositAccountApplication from './DepositAccountApplication.js';
 import DepositAccountInterest from './DepositAccountInterest.js';
+import DepositAccountInterest_Tier from './DepositAccountInterest_Tier.js';
 import DepositTransaction from './DepositTransaction.js';
 import DirectDebit from './DirectDebit.js';
 import DirectDebitRequest from './DirectDebitRequest.js';
@@ -52,7 +56,7 @@ import Guarantor from './Guarantor.js';
 import GuarantorAudit from './GuarantorAudit.js';
 import Holiday from './Holiday.js';
 import IdentificationInformation from './IdentificationInformation.js';
-import InterestAccrual from './InterestAccrual.js';      // ✅ ADDED
+import InterestAccrual from './InterestAccrual.js';
 import License from './License.js';
 import LoanAccount from './LoanAccount.js';
 import LoanAccountSummary from './LoanAccountSummary.js';
@@ -69,6 +73,7 @@ import LoginPolicy from './LoginPolicy.js';
 import NextOfKin from './NextOfKin.js';
 import Organization from './Organization.js';
 import OverdueLoan from './OverdueLoan.js';
+import PenaltyRule from './PenaltyRule.js';
 import Permissions from './Permissions.js';
 import ProductTypeMapping from './ProductTypeMapping.js';
 import RateIndex from './Rate-Index.js';
@@ -95,7 +100,35 @@ import LoanDisbursement from './Disbursement.js';
 import Ledger from './Ledger.js';
 import LoanEvent from './LoanEvent.js';
 
-// ========== initModel helper (unchanged) ==========
+// ===== MODULE & ROLE MANAGEMENT =====
+import Module from './Module.js';
+import RoleModule from './RoleModule.js';
+
+// ===== LOAN PROVISION =====
+import LoanProvision from './LoanProvision.js';
+
+// ===== INTEREST DISTRIBUTION (for Term Deposits) =====
+import InterestDistribution from './InterestDistribution.js';
+
+// ================================================================
+// ✅ VAULT MODELS - Class-based only
+// ================================================================
+import Vault from './Vault.js';
+import VaultPersonnel from './VaultPersonnel.js';
+import VaultApprovalRequest from './VaultApprovalRequest.js';
+import VaultAuditLog from './VaultAuditLog.js';
+import VaultMaintenanceLog from './VaultMaintenanceLog.js';
+import VaultConfiguration from './VaultConfiguration.js';
+import VaultAccessAttempt from './VaultAccessAttempt.js';
+import VaultAuthorizedPersonnel from './VaultAuthorizedPersonnel.js';
+import VaultTransaction from './VaultTransaction.js';
+import VaultPendingApproval from './VaultPendingApproval.js';
+import VaultApprovalRequiredRole from './VaultApprovalRequiredRole.js';
+import VaultCurrentApprover from './VaultCurrentApprover.js';
+import VaultEscalationHierarchy from './VaultEscalationHierarchy.js';
+import VaultRoleAccessMatrix from './VaultRoleAccessMatrix.js';
+
+// ========== initModel helper ==========
 const initModel = (ModelDef, sequelize, DataTypes) => {
   if (!ModelDef) return null;
   if (ModelDef.sequelize && typeof ModelDef.init === 'function') return ModelDef;
@@ -117,6 +150,8 @@ const models = {};
 const modelDefinitions = [
   { key: 'Account', def: Account },
   { key: 'AccountApplication', def: AccountApplication },
+  { key: 'AdminUser', def: AdminUser },
+  { key: 'AdminService', def: AdminService },
   { key: 'AML', def: AML },
   { key: 'AMLThreshold', def: AMLThreshold },
   { key: 'AuditTrail', def: AuditTrail },
@@ -130,6 +165,7 @@ const modelDefinitions = [
   { key: 'CardSettlementConfig', def: CardSettlementConfig },
   { key: 'CashWithdrawalTransaction', def: CashWithdrawalTransaction },
   { key: 'Charge', def: Charge },
+  { key: 'ChargeTier', def: ChargeTier },
   { key: 'ChartofAccount', def: ChartofAccount },
   { key: 'Collection', def: Collection },
   { key: 'ConfigurationService', def: ConfigurationService },
@@ -143,6 +179,7 @@ const modelDefinitions = [
   { key: 'Deposit', def: Deposit },
   { key: 'DepositAccountApplication', def: DepositAccountApplication },
   { key: 'DepositAccountInterest', def: DepositAccountInterest },
+  { key: 'DepositAccountInterest_Tier', def: DepositAccountInterest_Tier },
   { key: 'DepositTransaction', def: DepositTransaction },
   { key: 'DirectDebit', def: DirectDebit },
   { key: 'DirectDebitRequest', def: DirectDebitRequest },
@@ -162,7 +199,7 @@ const modelDefinitions = [
   { key: 'GuarantorAudit', def: GuarantorAudit },
   { key: 'Holiday', def: Holiday },
   { key: 'IdentificationInformation', def: IdentificationInformation },
-  { key: 'InterestAccrual', def: InterestAccrual },          // ✅ ADDED
+  { key: 'InterestAccrual', def: InterestAccrual },
   { key: 'License', def: License },
   { key: 'LoanAccount', def: LoanAccount },
   { key: 'LoanAccountSummary', def: LoanAccountSummary },
@@ -172,6 +209,8 @@ const modelDefinitions = [
   { key: 'LoanPenalty', def: LoanPenalty },
   { key: 'LoanPortfolio', def: LoanPortfolio },
   { key: 'LoanProduct', def: LoanProduct },
+  { key: 'LoanProvision', def: LoanProvision },
+  { key: 'InterestDistribution', def: InterestDistribution },
   { key: 'LoanRepayment', def: LoanRepayment },
   { key: 'LoanRepaymentHistory', def: LoanRepaymentHistory },
   { key: 'LoanRepaymentTransaction', def: LoanRepaymentTransaction },
@@ -179,6 +218,7 @@ const modelDefinitions = [
   { key: 'NextOfKin', def: NextOfKin },
   { key: 'Organization', def: Organization },
   { key: 'OverdueLoan', def: OverdueLoan },
+  { key: 'PenaltyRule', def: PenaltyRule },
   { key: 'Permissions', def: Permissions },
   { key: 'ProductTypeMapping', def: ProductTypeMapping },
   { key: 'RateIndex', def: RateIndex },
@@ -204,6 +244,26 @@ const modelDefinitions = [
   { key: 'LoanDisbursement', def: LoanDisbursement },
   { key: 'Ledger', def: Ledger },
   { key: 'LoanEvent', def: LoanEvent },
+  // Module Management
+  { key: 'Module', def: Module },
+  { key: 'RoleModule', def: RoleModule },
+  // ================================================================
+  // ✅ VAULT MODELS - Class-based only
+  // ================================================================
+  { key: 'Vault', def: Vault },
+  { key: 'VaultPersonnel', def: VaultPersonnel },
+  { key: 'VaultApprovalRequest', def: VaultApprovalRequest },
+  { key: 'VaultAuditLog', def: VaultAuditLog },
+  { key: 'VaultMaintenanceLog', def: VaultMaintenanceLog },
+  { key: 'VaultConfiguration', def: VaultConfiguration },
+  { key: 'VaultAccessAttempt', def: VaultAccessAttempt },
+  { key: 'VaultAuthorizedPersonnel', def: VaultAuthorizedPersonnel },
+  { key: 'VaultTransaction', def: VaultTransaction },
+  { key: 'VaultPendingApproval', def: VaultPendingApproval },
+  { key: 'VaultApprovalRequiredRole', def: VaultApprovalRequiredRole },
+  { key: 'VaultCurrentApprover', def: VaultCurrentApprover },
+  { key: 'VaultEscalationHierarchy', def: VaultEscalationHierarchy },
+  { key: 'VaultRoleAccessMatrix', def: VaultRoleAccessMatrix },
 ];
 
 for (const { key, def } of modelDefinitions) {
@@ -224,35 +284,684 @@ models.QueryTypes = QueryTypes;
 // ========== ASSOCIATIONS ==========
 function setupAssociations() {
   console.log('🔗 Setting up model associations...');
-  const { StandingOrder, CustomerAccount, DebitCard, Account, CardSettlementConfig, LoanEvent } = models;
+  const { 
+    StandingOrder, 
+    CustomerAccount, 
+    DebitCard, 
+    Account, 
+    CardSettlementConfig, 
+    LoanEvent, 
+    Charge, 
+    ChargeTier, 
+    Role, 
+    Module, 
+    RoleModule,
+    LoanProvision,
+    LoanAccount,
+    TermDeposit,
+    InterestDistribution,
+    Customer,
+    DepositAccountInterest_Tier,
+    SavingsProduct,
+    LoanPenalty,
+    PenaltyRule,
+    // ================================================================
+    // ✅ VAULT MODELS
+    // ================================================================
+    Vault,
+    VaultPersonnel,
+    VaultApprovalRequest,
+    VaultAuditLog,
+    VaultMaintenanceLog,
+    VaultConfiguration,
+    VaultAccessAttempt,
+    VaultAuthorizedPersonnel,
+    VaultTransaction,
+    VaultPendingApproval,
+    VaultApprovalRequiredRole,
+    VaultCurrentApprover,
+    VaultEscalationHierarchy,
+    VaultRoleAccessMatrix,
+    Drawer,
+    Branch,
+    User,
+    Transaction: TransactionModel,
+    RepaymentSchedule
+  } = models;
 
+  // StandingOrder ↔ CustomerAccount
   if (StandingOrder && CustomerAccount) {
     StandingOrder.belongsTo(CustomerAccount, { foreignKey: 'customerAcctNo', targetKey: 'account_number', as: 'customerAccount' });
     CustomerAccount.hasMany(StandingOrder, { foreignKey: 'customerAcctNo', sourceKey: 'account_number', as: 'standingOrders' });
     console.log('✅ StandingOrder ↔ CustomerAccount');
   }
+
+  // DebitCard ↔ CustomerAccount
   if (DebitCard && CustomerAccount) {
     DebitCard.belongsTo(CustomerAccount, { foreignKey: 'account_id', as: 'customerAccount' });
     CustomerAccount.hasMany(DebitCard, { foreignKey: 'account_id', as: 'debitCards' });
     console.log('✅ DebitCard ↔ CustomerAccount');
   }
+
+  // DebitCard ↔ Account
   if (DebitCard && Account) {
     DebitCard.belongsTo(Account, { foreignKey: 'account_id', as: 'operationalAccount' });
     console.log('✅ DebitCard ↔ Account');
   }
+
+  // CardSettlementConfig ↔ Account
   if (CardSettlementConfig && Account) {
     CardSettlementConfig.belongsTo(Account, { as: 'operationalAccount', foreignKey: 'operational_account_id' });
     Account.hasOne(CardSettlementConfig, { foreignKey: 'operational_account_id', as: 'settlementConfig' });
     console.log('✅ CardSettlementConfig ↔ Account');
   }
+
+  // LoanEvent associations
   if (LoanEvent && typeof LoanEvent.associate === 'function') LoanEvent.associate(models);
+
+  // Charge ↔ ChargeTier
+  if (Charge && ChargeTier) {
+    if (typeof Charge.associate === 'function') {
+      Charge.associate({ ChargeTier });
+    } else {
+      Charge.hasMany(ChargeTier, { foreignKey: 'charge_id', as: 'tiers', onDelete: 'CASCADE' });
+    }
+    ChargeTier.belongsTo(Charge, { foreignKey: 'charge_id', as: 'charge' });
+    console.log('✅ Charge ↔ ChargeTier');
+  }
+
+  // Module ↔ Role (many-to-many via RoleModule)
+  if (Module && Role && RoleModule) {
+    Module.belongsToMany(Role, {
+      through: RoleModule,
+      foreignKey: 'moduleId',
+      otherKey: 'roleId',
+      targetKey: 'role_id',
+      as: 'roles',
+    });
+    Role.belongsToMany(Module, {
+      through: RoleModule,
+      foreignKey: 'roleId',
+      otherKey: 'moduleId',
+      as: 'modules',
+    });
+    console.log('✅ Module ↔ Role (via RoleModule)');
+  }
+
+  // ===== LOAN PROVISION ASSOCIATIONS =====
+  if (LoanProvision && LoanAccount) {
+    LoanProvision.belongsTo(LoanAccount, { foreignKey: 'loan_account_id', as: 'loanAccount' });
+    LoanAccount.hasMany(LoanProvision, { foreignKey: 'loan_account_id', as: 'provisions' });
+    console.log('✅ LoanProvision ↔ LoanAccount');
+  }
+
+  // ===== DEPOSIT ACCOUNT INTEREST TIER ASSOCIATIONS =====
+  if (DepositAccountInterest_Tier && SavingsProduct) {
+    DepositAccountInterest_Tier.belongsTo(SavingsProduct, {
+      foreignKey: 'product_type',
+      targetKey: 'PRODUCT_TYPE',
+      as: 'product'
+    });
+    SavingsProduct.hasMany(DepositAccountInterest_Tier, {
+      foreignKey: 'product_type',
+      sourceKey: 'PRODUCT_TYPE',
+      as: 'interestTiers'
+    });
+    console.log('✅ DepositAccountInterest_Tier ↔ SavingsProduct');
+  }
+
+  // ===== TERM DEPOSIT ASSOCIATIONS =====
+  if (TermDeposit && CustomerAccount) {
+    TermDeposit.belongsTo(CustomerAccount, { 
+      foreignKey: 'sourceAccountId', 
+      as: 'sourceAccount' 
+    });
+    TermDeposit.belongsTo(CustomerAccount, { 
+      foreignKey: 'principalDispositionAccountId', 
+      as: 'dispositionAccount' 
+    });
+    console.log('✅ TermDeposit ↔ CustomerAccount (source & disposition)');
+  }
+
+  if (TermDeposit && Customer) {
+    TermDeposit.belongsTo(Customer, { 
+      foreignKey: 'customerId', 
+      targetKey: 'CUST_ID', 
+      as: 'customer' 
+    });
+    Customer.hasMany(TermDeposit, { 
+      foreignKey: 'customerId', 
+      sourceKey: 'CUST_ID', 
+      as: 'termDeposits' 
+    });
+    console.log('✅ TermDeposit ↔ Customer');
+  }
+
+  // ===== INTEREST DISTRIBUTION ASSOCIATIONS =====
+  if (InterestDistribution && TermDeposit) {
+    InterestDistribution.belongsTo(TermDeposit, { 
+      foreignKey: 'termDepositId', 
+      as: 'termDeposit' 
+    });
+    TermDeposit.hasMany(InterestDistribution, { 
+      foreignKey: 'termDepositId', 
+      as: 'interestDistributions' 
+    });
+    console.log('✅ InterestDistribution ↔ TermDeposit');
+  }
+
+  if (InterestDistribution && CustomerAccount) {
+    InterestDistribution.belongsTo(CustomerAccount, { 
+      foreignKey: 'targetAccountId', 
+      as: 'targetAccount' 
+    });
+    CustomerAccount.hasMany(InterestDistribution, { 
+      foreignKey: 'targetAccountId', 
+      as: 'interestDistributions' 
+    });
+    console.log('✅ InterestDistribution ↔ CustomerAccount');
+  }
+
+  // ================================================================
+  // ✅ LOAN PENALTY & PENALTY RULE ASSOCIATIONS
+  // ================================================================
+  
+  // LoanPenalty ↔ LoanAccount
+  if (LoanPenalty && LoanAccount) {
+    LoanPenalty.belongsTo(LoanAccount, { 
+      foreignKey: 'loan_id', 
+      as: 'loan' 
+    });
+    LoanAccount.hasMany(LoanPenalty, { 
+      foreignKey: 'loan_id', 
+      as: 'penalties' 
+    });
+    console.log('✅ LoanPenalty ↔ LoanAccount');
+  }
+
+  // LoanPenalty ↔ PenaltyRule
+  if (LoanPenalty && PenaltyRule) {
+    LoanPenalty.belongsTo(PenaltyRule, { 
+      foreignKey: 'penalty_rule_id', 
+      as: 'penaltyRule' 
+    });
+    PenaltyRule.hasMany(LoanPenalty, { 
+      foreignKey: 'penalty_rule_id', 
+      as: 'penalties' 
+    });
+    console.log('✅ LoanPenalty ↔ PenaltyRule');
+  }
+
+  // LoanAccount ↔ PenaltyRule
+  if (LoanAccount && PenaltyRule) {
+    LoanAccount.belongsTo(PenaltyRule, { 
+      foreignKey: 'penalty_rule_id', 
+      as: 'penaltyRule' 
+    });
+    PenaltyRule.hasMany(LoanAccount, { 
+      foreignKey: 'penalty_rule_id', 
+      as: 'loans' 
+    });
+    console.log('✅ LoanAccount ↔ PenaltyRule');
+  }
+
+  // LoanAccount ↔ RepaymentSchedule
+  if (LoanAccount && RepaymentSchedule) {
+    LoanAccount.hasMany(RepaymentSchedule, { 
+      foreignKey: 'loan_id', 
+      as: 'repayment_schedules' 
+    });
+    RepaymentSchedule.belongsTo(LoanAccount, { 
+      foreignKey: 'loan_id', 
+      as: 'loan' 
+    });
+    console.log('✅ LoanAccount ↔ RepaymentSchedule');
+  }
+
+  // ================================================================
+  // ✅ VAULT ASSOCIATIONS
+  // ================================================================
+  
+  // Vault ↔ Drawer
+  if (Vault && Drawer) {
+    Vault.belongsTo(Drawer, { 
+      foreignKey: 'drawer_id', 
+      targetKey: 'DRAWER_ID',
+      as: 'drawer' 
+    });
+    Drawer.hasOne(Vault, { 
+      foreignKey: 'drawer_id', 
+      sourceKey: 'DRAWER_ID',
+      as: 'vault' 
+    });
+    console.log('✅ Vault ↔ Drawer');
+  }
+
+  // Vault ↔ Branch
+  if (Vault && Branch) {
+    Vault.belongsTo(Branch, { 
+      foreignKey: 'branch_code', 
+      targetKey: 'branchCode',
+      as: 'branch' 
+    });
+    Branch.hasMany(Vault, { 
+      foreignKey: 'branch_code', 
+      sourceKey: 'branchCode',
+      as: 'vaults' 
+    });
+    console.log('✅ Vault ↔ Branch');
+  }
+
+  // Vault ↔ User (created_by)
+  if (Vault && User) {
+    Vault.belongsTo(User, { 
+      foreignKey: 'created_by', 
+      targetKey: 'username',
+      as: 'creator' 
+    });
+    User.hasMany(Vault, { 
+      foreignKey: 'created_by', 
+      sourceKey: 'username',
+      as: 'createdVaults' 
+    });
+    console.log('✅ Vault ↔ User (creator)');
+  }
+
+  // VaultPersonnel ↔ Vault
+  if (VaultPersonnel && Vault) {
+    VaultPersonnel.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultPersonnel, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'personnel' 
+    });
+    console.log('✅ VaultPersonnel ↔ Vault');
+  }
+
+  // VaultPersonnel ↔ User
+  if (VaultPersonnel && User) {
+    VaultPersonnel.belongsTo(User, { 
+      foreignKey: 'user_id', 
+      targetKey: 'username',
+      as: 'user' 
+    });
+    User.hasMany(VaultPersonnel, { 
+      foreignKey: 'user_id', 
+      sourceKey: 'username',
+      as: 'vaultAssignments' 
+    });
+    console.log('✅ VaultPersonnel ↔ User');
+  }
+
+  // VaultApprovalRequest ↔ Vault
+  if (VaultApprovalRequest && Vault) {
+    VaultApprovalRequest.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultApprovalRequest, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'approvalRequests' 
+    });
+    console.log('✅ VaultApprovalRequest ↔ Vault');
+  }
+
+  // VaultApprovalRequest ↔ User (requester)
+  if (VaultApprovalRequest && User) {
+    VaultApprovalRequest.belongsTo(User, { 
+      foreignKey: 'requested_by', 
+      targetKey: 'username',
+      as: 'requester' 
+    });
+    User.hasMany(VaultApprovalRequest, { 
+      foreignKey: 'requested_by', 
+      sourceKey: 'username',
+      as: 'vaultRequests' 
+    });
+    console.log('✅ VaultApprovalRequest ↔ User (requester)');
+  }
+
+  // VaultApprovalRequest ↔ User (approver)
+  if (VaultApprovalRequest && User) {
+    VaultApprovalRequest.belongsTo(User, { 
+      foreignKey: 'approved_by', 
+      targetKey: 'username',
+      as: 'approver' 
+    });
+    console.log('✅ VaultApprovalRequest ↔ User (approver)');
+  }
+
+  // VaultAuditLog ↔ Vault
+  if (VaultAuditLog && Vault) {
+    VaultAuditLog.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultAuditLog, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'auditLogs' 
+    });
+    console.log('✅ VaultAuditLog ↔ Vault');
+  }
+
+  // VaultMaintenanceLog ↔ Vault
+  if (VaultMaintenanceLog && Vault) {
+    VaultMaintenanceLog.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultMaintenanceLog, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'maintenanceLogs' 
+    });
+    console.log('✅ VaultMaintenanceLog ↔ Vault');
+  }
+
+  // VaultConfiguration ↔ Vault
+  if (VaultConfiguration && Vault) {
+    VaultConfiguration.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasOne(VaultConfiguration, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'configuration' 
+    });
+    console.log('✅ VaultConfiguration ↔ Vault');
+  }
+
+  // VaultAccessAttempt ↔ Vault
+  if (VaultAccessAttempt && Vault) {
+    VaultAccessAttempt.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultAccessAttempt, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'accessAttempts' 
+    });
+    console.log('✅ VaultAccessAttempt ↔ Vault');
+  }
+
+  // VaultAuthorizedPersonnel ↔ Vault
+  if (VaultAuthorizedPersonnel && Vault) {
+    VaultAuthorizedPersonnel.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultAuthorizedPersonnel, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'authorizedPersonnel' 
+    });
+    console.log('✅ VaultAuthorizedPersonnel ↔ Vault');
+  }
+
+  // VaultAuthorizedPersonnel ↔ User
+  if (VaultAuthorizedPersonnel && User) {
+    VaultAuthorizedPersonnel.belongsTo(User, { 
+      foreignKey: 'user_id', 
+      targetKey: 'username',
+      as: 'authorizedUser' 
+    });
+    User.hasMany(VaultAuthorizedPersonnel, { 
+      foreignKey: 'user_id', 
+      sourceKey: 'username',
+      as: 'vaultAuthorizations' 
+    });
+    console.log('✅ VaultAuthorizedPersonnel ↔ User');
+  }
+
+  // VaultTransaction ↔ Transaction
+  if (VaultTransaction && TransactionModel) {
+    VaultTransaction.belongsTo(TransactionModel, { 
+      foreignKey: 'TRANSACTION_ID', 
+      targetKey: 'id',
+      as: 'transaction' 
+    });
+    TransactionModel.hasOne(VaultTransaction, { 
+      foreignKey: 'TRANSACTION_ID', 
+      sourceKey: 'id',
+      as: 'vaultTransaction' 
+    });
+    console.log('✅ VaultTransaction ↔ Transaction');
+  }
+
+  // VaultTransaction ↔ Drawer (vault drawer)
+  if (VaultTransaction && Drawer) {
+    VaultTransaction.belongsTo(Drawer, { 
+      foreignKey: 'VAULT_DRAWER_ID', 
+      targetKey: 'DRAWER_ID',
+      as: 'vaultDrawer' 
+    });
+    Drawer.hasMany(VaultTransaction, { 
+      foreignKey: 'VAULT_DRAWER_ID', 
+      sourceKey: 'DRAWER_ID',
+      as: 'vaultTransactions' 
+    });
+    console.log('✅ VaultTransaction ↔ Drawer (vault drawer)');
+  }
+
+  // VaultTransaction ↔ Drawer (teller drawer)
+  if (VaultTransaction && Drawer) {
+    VaultTransaction.belongsTo(Drawer, { 
+      foreignKey: 'TELLER_DRAWER_ID', 
+      targetKey: 'DRAWER_ID',
+      as: 'tellerDrawer' 
+    });
+    Drawer.hasMany(VaultTransaction, { 
+      foreignKey: 'TELLER_DRAWER_ID', 
+      sourceKey: 'DRAWER_ID',
+      as: 'tellerVaultTransactions' 
+    });
+    console.log('✅ VaultTransaction ↔ Drawer (teller drawer)');
+  }
+
+  // VaultTransaction ↔ User (created_by)
+  if (VaultTransaction && User) {
+    VaultTransaction.belongsTo(User, { 
+      foreignKey: 'CREATED_BY', 
+      targetKey: 'username',
+      as: 'creator' 
+    });
+    User.hasMany(VaultTransaction, { 
+      foreignKey: 'CREATED_BY', 
+      sourceKey: 'username',
+      as: 'vaultTransactions' 
+    });
+    console.log('✅ VaultTransaction ↔ User (creator)');
+  }
+
+  // VaultTransaction ↔ User (authorized_by)
+  if (VaultTransaction && User) {
+    VaultTransaction.belongsTo(User, { 
+      foreignKey: 'VAULT_AUTHORIZED_BY', 
+      targetKey: 'username',
+      as: 'authorizer' 
+    });
+    console.log('✅ VaultTransaction ↔ User (authorizer)');
+  }
+
+  // VaultPendingApproval ↔ Vault
+  if (VaultPendingApproval && Vault) {
+    VaultPendingApproval.belongsTo(Vault, { 
+      foreignKey: 'vault_id', 
+      targetKey: 'id',
+      as: 'vault' 
+    });
+    Vault.hasMany(VaultPendingApproval, { 
+      foreignKey: 'vault_id', 
+      sourceKey: 'id',
+      as: 'pendingApprovals' 
+    });
+    console.log('✅ VaultPendingApproval ↔ Vault');
+  }
+
+  // VaultPendingApproval ↔ User (requested_by)
+  if (VaultPendingApproval && User) {
+    VaultPendingApproval.belongsTo(User, { 
+      foreignKey: 'requested_by', 
+      targetKey: 'username',
+      as: 'requester' 
+    });
+    User.hasMany(VaultPendingApproval, { 
+      foreignKey: 'requested_by', 
+      sourceKey: 'username',
+      as: 'pendingApprovalRequests' 
+    });
+    console.log('✅ VaultPendingApproval ↔ User (requester)');
+  }
+
+  // VaultPendingApproval ↔ User (approved_by)
+  if (VaultPendingApproval && User) {
+    VaultPendingApproval.belongsTo(User, { 
+      foreignKey: 'approved_by', 
+      targetKey: 'username',
+      as: 'approver' 
+    });
+    console.log('✅ VaultPendingApproval ↔ User (approver)');
+  }
+
+  // VaultApprovalRequiredRole ↔ VaultPendingApproval
+  if (VaultApprovalRequiredRole && VaultPendingApproval) {
+    VaultApprovalRequiredRole.belongsTo(VaultPendingApproval, {
+      foreignKey: 'approval_id',
+      targetKey: 'approval_id',
+      as: 'approval'
+    });
+    VaultPendingApproval.hasMany(VaultApprovalRequiredRole, {
+      foreignKey: 'approval_id',
+      sourceKey: 'approval_id',
+      as: 'requiredRoles'
+    });
+    console.log('✅ VaultApprovalRequiredRole ↔ VaultPendingApproval');
+  }
+
+  // VaultCurrentApprover ↔ VaultPendingApproval
+  if (VaultCurrentApprover && VaultPendingApproval) {
+    VaultCurrentApprover.belongsTo(VaultPendingApproval, {
+      foreignKey: 'approval_id',
+      targetKey: 'approval_id',
+      as: 'approval'
+    });
+    VaultPendingApproval.hasMany(VaultCurrentApprover, {
+      foreignKey: 'approval_id',
+      sourceKey: 'approval_id',
+      as: 'currentApprovers'
+    });
+    console.log('✅ VaultCurrentApprover ↔ VaultPendingApproval');
+  }
+
+  // VaultCurrentApprover ↔ User
+  if (VaultCurrentApprover && User) {
+    VaultCurrentApprover.belongsTo(User, {
+      foreignKey: 'approver_id',
+      targetKey: 'username',
+      as: 'approver'
+    });
+    User.hasMany(VaultCurrentApprover, {
+      foreignKey: 'approver_id',
+      sourceKey: 'username',
+      as: 'vaultApprovals'
+    });
+    console.log('✅ VaultCurrentApprover ↔ User');
+  }
+
+  // VaultEscalationHierarchy ↔ Vault
+  if (VaultEscalationHierarchy && Vault) {
+    VaultEscalationHierarchy.belongsTo(Vault, {
+      foreignKey: 'vault_id',
+      targetKey: 'id',
+      as: 'vault'
+    });
+    Vault.hasMany(VaultEscalationHierarchy, {
+      foreignKey: 'vault_id',
+      sourceKey: 'id',
+      as: 'escalationHierarchy'
+    });
+    console.log('✅ VaultEscalationHierarchy ↔ Vault');
+  }
+
+  // VaultRoleAccessMatrix ↔ Vault
+  if (VaultRoleAccessMatrix && Vault) {
+    VaultRoleAccessMatrix.belongsTo(Vault, {
+      foreignKey: 'vault_id',
+      targetKey: 'id',
+      as: 'vault'
+    });
+    Vault.hasMany(VaultRoleAccessMatrix, {
+      foreignKey: 'vault_id',
+      sourceKey: 'id',
+      as: 'roleAccessMatrix'
+    });
+    console.log('✅ VaultRoleAccessMatrix ↔ Vault');
+  }
+
+  console.log('✅ All associations setup complete!');
 }
 setupAssociations();
 
 // ========== GETTERS ==========
 export const getModel = (modelName) => models[modelName];
-export const getInterestAccrual = () => models.InterestAccrual;   // ✅ ADDED
-// other getters are unchanged and already defined below
+
+// Admin
+export const getAdminUser = () => models.AdminUser;
+export const getAdminService = () => models.AdminService;
+
+// Module Management
+export const getModule = () => models.Module;
+export const getRoleModule = () => models.RoleModule;
+
+// Loan Provision
+export const getLoanProvision = () => models.LoanProvision;
+
+// Interest Distribution
+export const getInterestDistribution = () => models.InterestDistribution;
+
+// Term Deposit
+export const getTermDeposit = () => models.TermDeposit;
+
+// Deposit Account Interest Tier
+export const getDepositAccountInterestTier = () => models.DepositAccountInterest_Tier;
+
+// Penalty
+export const getPenaltyRule = () => models.PenaltyRule;
+export const getLoanPenalty = () => models.LoanPenalty;
+
+// ================================================================
+// ✅ VAULT GETTERS
+// ================================================================
+export const getVault = () => models.Vault;
+export const getVaultPersonnel = () => models.VaultPersonnel;
+export const getVaultApprovalRequest = () => models.VaultApprovalRequest;
+export const getVaultAuditLog = () => models.VaultAuditLog;
+export const getVaultMaintenanceLog = () => models.VaultMaintenanceLog;
+export const getVaultConfiguration = () => models.VaultConfiguration;
+export const getVaultAccessAttempt = () => models.VaultAccessAttempt;
+export const getVaultAuthorizedPersonnel = () => models.VaultAuthorizedPersonnel;
+export const getVaultTransaction = () => models.VaultTransaction;
+export const getVaultPendingApproval = () => models.VaultPendingApproval;
+export const getVaultApprovalRequiredRole = () => models.VaultApprovalRequiredRole;
+export const getVaultCurrentApprover = () => models.VaultCurrentApprover;
+export const getVaultEscalationHierarchy = () => models.VaultEscalationHierarchy;
+export const getVaultRoleAccessMatrix = () => models.VaultRoleAccessMatrix;
+
+// Existing getters (partial list – all remain)
 export const getAccount = () => models.Account;
 export const getAccountApplication = () => models.AccountApplication;
 export const getAML = () => models.AML;
@@ -267,7 +976,6 @@ export const getBusinessUnit = () => models.BusinessUnit;
 export const getCardCounter = () => models.CardCounter;
 export const getCardSettlementConfig = () => models.CardSettlementConfig;
 export const getCashWithdrawalTransaction = () => models.CashWithdrawalTransaction;
-export const getCharge = () => models.Charge;
 export const getChartofAccount = () => models.ChartofAccount;
 export const getCollection = () => models.Collection;
 export const getConfigurationService = () => models.ConfigurationService;
@@ -308,7 +1016,6 @@ export const getLoanContractForm = () => models.LoanContractForm;
 export const getLoanDisbursement = () => models.LoanDisbursement;
 export const getLoanFee = () => models.LoanFee;
 export const getLoanInterestRate = () => models.LoanInterestRate;
-export const getLoanPenalty = () => models.LoanPenalty;
 export const getLoanPortfolio = () => models.LoanPortfolio;
 export const getLoanProduct = () => models.LoanProduct;
 export const getLoanRepayment = () => models.LoanRepayment;
@@ -332,7 +1039,6 @@ export const getState = () => models.State;
 export const getSubfolder = () => models.Subfolder;
 export const getSystemConfig = () => models.SystemConfig;
 export const getSystemDate = () => models.SystemDate;
-export const getTermDeposit = () => models.TermDeposit;
 export const getThrift = () => models.Thrift;
 export const getThriftSettings = () => models.ThriftSettings;
 export const getTransaction = () => models.Transaction;
@@ -341,6 +1047,7 @@ export const getUser = () => models.User;
 export const getUserRole = () => models.UserRole;
 export const getWF_WORK_ITEM = () => models.WF_WORK_ITEM;
 export const getLoanEvent = () => models.LoanEvent;
+export const getCharge = () => models.Charge;
 
 // ========== INITIALISE ==========
 let initialized = false;
@@ -362,6 +1069,8 @@ export const initializeModels = async () => {
 export {
   Account,
   AccountApplication,
+  AdminUser,
+  AdminService,
   AML,
   AMLThreshold,
   AuditTrail,
@@ -375,6 +1084,7 @@ export {
   CardSettlementConfig,
   CashWithdrawalTransaction,
   Charge,
+  ChargeTier,
   ChartofAccount,
   Collection,
   ConfigurationService,
@@ -388,6 +1098,7 @@ export {
   Deposit,
   DepositAccountApplication,
   DepositAccountInterest,
+  DepositAccountInterest_Tier,
   DepositTransaction,
   DirectDebit,
   DirectDebitRequest,
@@ -407,7 +1118,8 @@ export {
   GuarantorAudit,
   Holiday,
   IdentificationInformation,
-  InterestAccrual,      // ✅ EXPORTED
+  InterestAccrual,
+  InterestDistribution,
   License,
   LoanAccount,
   LoanAccountSummary,
@@ -418,6 +1130,7 @@ export {
   LoanPenalty,
   LoanPortfolio,
   LoanProduct,
+  LoanProvision,
   LoanRepayment,
   LoanRepaymentHistory,
   LoanRepaymentTransaction,
@@ -425,6 +1138,7 @@ export {
   NextOfKin,
   Organization,
   OverdueLoan,
+  PenaltyRule,
   Permissions,
   ProductTypeMapping,
   RateIndex,
@@ -449,6 +1163,25 @@ export {
   WF_WORK_ITEM,
   LoanEvent,
   Ledger,
+  Module,
+  RoleModule,
+  // ================================================================
+  // ✅ VAULT EXPORTS - All class-based models
+  // ================================================================
+  Vault,
+  VaultPersonnel,
+  VaultApprovalRequest,
+  VaultAuditLog,
+  VaultMaintenanceLog,
+  VaultConfiguration,
+  VaultAccessAttempt,
+  VaultAuthorizedPersonnel,
+  VaultTransaction,
+  VaultPendingApproval,
+  VaultApprovalRequiredRole,
+  VaultCurrentApprover,
+  VaultEscalationHierarchy,
+  VaultRoleAccessMatrix,
 };
 
 export default models;

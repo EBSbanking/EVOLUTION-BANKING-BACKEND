@@ -1,5 +1,5 @@
 // controllers/BinCardCounterController.js
-import { logAuditTrail } from '../utils/auditLogger.js';
+import { logAuditTrail } from '../utils/AuditLogger.js';
 import { getModel } from '../models/index.js';
 import sequelize from '../../config/db.js';
 

@@ -1,0 +1,2638 @@
+{
+  "roles": {
+    "Administrator": 1,
+    "Teller": 29,
+    "Customer Service Officer": 28,
+    "Chief Executive Officer": 15,
+    "Branch Manager": 19,
+    "Head of Digital Banking": 35
+  },
+  "modules": [
+    {
+      "title": "BVN VALIDATION",
+      "items": [
+        {
+          "label": "BVN Validation & Verification",
+          "actionKey": "bvnValidation",
+          "permission": "BVN_VALIDATE",
+          "icon": "SwapHoriz",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "AML Module",
+      "items": [
+        {
+          "label": "AML Approval",
+          "actionKey": "amlApproval",
+          "permission": "APPROVE_AML",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "AML Threshold",
+          "actionKey": "amlThreshold",
+          "permission": "VIEW_AML_THRESHOLD",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Configure AML",
+          "actionKey": "configureAML",
+          "permission": "CONFIGURE_AML",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Configuration AML",
+          "actionKey": "amlConfiguration",
+          "permission": "CONFIGURE_AML",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Monitor AML",
+          "actionKey": "monitorAML",
+          "permission": "MONITOR_AML",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Generate AML Report",
+          "actionKey": "generateAMLReport",
+          "permission": "BACKEND_PERMISSIONS.VIEW_REPORTS",
+          "icon": "BarChart",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Suspend AML Transaction",
+          "actionKey": "suspendAMLTransaction",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_LOAN_REPAYMENT",
+          "icon": "Block",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Audit Trail",
+      "items": [
+        {
+          "label": "Audit Trail",
+          "actionKey": "auditTrail",
+          "permission": "VIEW_AUDIT_LOGS",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Business Role",
+      "items": [
+        {
+          "label": "Business Role",
+          "actionKey": "businessRole",
+          "permission": "MANAGE_BUSINESS_ROLE",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Business Role List",
+          "actionKey": "businessRoleList",
+          "permission": "VIEW_BUSINESS_ROLE_LIST",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BU Role Creation",
+          "actionKey": "buRoleCreation",
+          "permission": "CREATE_BUSINESS_ROLE",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Business Role Queue",
+          "actionKey": "businessRoleQueue",
+          "permission": "VIEW_BUSINESS_ROLE_QUEUE",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Role Permission",
+          "actionKey": "rolePermission",
+          "permission": "VIEW_BUSINESS_ROLE_QUEUE",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Transaction Policies",
+      "items": [
+        {
+          "label": "Cash Policies",
+          "actionKey": "cashPolicies",
+          "permission": "MANAGE_POLICIES",
+          "icon": "Policy",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Business Unit",
+      "items": [
+        {
+          "label": "Create Business Unit",
+          "actionKey": "createBusinessUnit",
+          "permission": "CREATE_BUSINESS_UNIT",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Security Profile",
+      "items": [
+        {
+          "label": "Add User",
+          "actionKey": "addUser",
+          "permission": "ADD_USER",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Assign CSO Right",
+          "actionKey": "assignCsoRight",
+          "permission": "ASSIGN_CSO_RIGHT",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Password Reset",
+          "actionKey": "passwordReset",
+          "permission": "RESET_PASSWORD",
+          "icon": "Settings",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Security Console",
+          "actionKey": "securityConsole",
+          "permission": "VIEW_SECURITY_CONSOLE",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Login Policy Settings",
+          "actionKey": "loginPolicySettings",
+          "permission": "VIEW_SECURITY_CONSOLE",
+          "icon": "Security",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Create Role",
+          "actionKey": "assignRole",
+          "permission": "ASSIGN_ROLES",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Activate User",
+          "actionKey": "activateUser",
+          "permission": "ACTIVATE_USER",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Security Setup",
+      "items": [
+        {
+          "label": "WorkFlow Setup",
+          "actionKey": "workflowSetup",
+          "permission": "CONFIGURE_WORKFLOW",
+          "icon": "Settings",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "WorkFlow Sub Process",
+          "actionKey": "workflowItemDetails",
+          "permission": "MANAGE_WORKFLOW_SUBPROCESS",
+          "icon": "Settings",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Drawer Module",
+      "items": [
+        {
+          "label": "Create Drawer",
+          "actionKey": "createDrawer",
+          "permission": "CREATE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Drawer Operation",
+          "actionKey": "drawerOperation",
+          "permission": "MANAGE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Drawer Reassign",
+          "actionKey": "drawerReassign",
+          "permission": "MANAGE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Vault Creation",
+          "actionKey": "vaultCreation",
+          "permission": "CREATE_VAULT",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Drawer To Vault Transaction",
+          "actionKey": "drawerToVaultTransaction",
+          "permission": "MANAGE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Vault Details",
+          "actionKey": "viewVaultDetails",
+          "permission": "VIEW_VAULTS",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Drawer Transaction",
+          "actionKey": "drawerTransaction",
+          "permission": "MANAGE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Drawer To Drawer Transaction",
+          "actionKey": "drawerToDrawerTransaction",
+          "permission": "MANAGE_DRAWER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Open Drawer",
+          "actionKey": "openDrawer",
+          "permission": "BACKEND_PERMISSIONS.OPEN_VAULT",
+          "icon": "AddCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Close Drawer",
+          "actionKey": "closeDrawer",
+          "permission": "BACKEND_PERMISSIONS.CLOSE_VAULT",
+          "icon": "Block",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Drawer Balance",
+          "actionKey": "viewDrawerBalance",
+          "permission": "BACKEND_PERMISSIONS.VIEW_VAULT_BALANCE",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Reconcile Drawer",
+          "actionKey": "reconcileDrawer",
+          "permission": "BACKEND_PERMISSIONS.VAULT_RECONCILIATION",
+          "icon": "CompareArrows",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Deposit Interest Setup Module",
+      "items": [
+        {
+          "label": "Deposit Interest Setup",
+          "actionKey": "depositInterestSetup",
+          "permission": "SETUP_DEPOSIT_INTEREST",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Rate Module",
+      "items": [
+        {
+          "label": "Loan Interest",
+          "actionKey": "loanInterest",
+          "permission": "SETUP_LOAN_INTEREST",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Interest Setup",
+          "actionKey": "loanInterestSetup",
+          "permission": "SETUP_LOAN_INTEREST",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Interest Capitalization",
+          "actionKey": "loanInterestCapitalization",
+          "permission": "SETUP_LOAN_INTEREST",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Charge Configuration",
+          "actionKey": "chargeConfig",
+          "permission": "SETUP_CHARGES",
+          "icon": "Payment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Index Rate",
+          "actionKey": "indexRate",
+          "permission": "SETUP_INDEX_RATE",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Fee Setup",
+          "actionKey": "loanFeeSetup",
+          "permission": "SETUP_LOAN_FEE",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Report Module",
+      "items": [
+        {
+          "label": "Consolidated Account Report",
+          "actionKey": "customerReport",
+          "permission": "VIEW_CUSTOMER_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Generated Report All",
+          "actionKey": "reports",
+          "permission": "VIEW_ALL_REPORTS",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Term Deposit Report",
+          "actionKey": "termDepositReports",
+          "permission": "VIEW_TERM_DEPOSIT_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Inward Payment Report",
+          "actionKey": "inwardPayment",
+          "permission": "VIEW_REPORTS",
+          "icon": "Payment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Account Statement Report",
+          "actionKey": "accountStatementReport",
+          "permission": "VIEW_ACCOUNT_STATEMENT_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Consolidated Trial Balance Report",
+          "actionKey": "trialBalanceReport",
+          "permission": "VIEW_TRIAL_BALANCE_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Provision Report",
+          "actionKey": "loanProvision",
+          "permission": "VIEW_LOAN_PROVISION_REPORT",
+          "icon": "Receipt",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Income & Expense Report",
+          "actionKey": "incomeExpenseReport",
+          "permission": "VIEW_INCOME_EXPENSE_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Loan Report",
+          "actionKey": "groupLoanReport",
+          "permission": "VIEW_GROUP_LOAN_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Collection Sheet",
+          "actionKey": "groupCollectionSheet",
+          "permission": "VIEW_GROUP_REPORTS",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Con Customer Savings Balance Report",
+          "actionKey": "customerSavingBalanceReport",
+          "permission": "VIEW_CUSTOMER_BALANCE_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Generate Loan Repayment Schedule",
+          "actionKey": "loanRepaymentSchedule",
+          "permission": "GENERATE_REPAYMENT_SCHEDULE_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan & Savings Combined Report",
+          "actionKey": "loansSavingsCombinedReport",
+          "permission": "VIEW_REPORTS",
+          "icon": "Assessment",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Disbursement Report",
+          "actionKey": "loanDisbursementReport",
+          "permission": "VIEW_REPORTS",
+          "icon": "AttachMoney",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Thrift Consolidated Report",
+          "actionKey": "thriftConsolidatedReport",
+          "permission": "VIEW_THRIFT_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Repayment Dashboard",
+          "actionKey": "loanRepaymentDashboard",
+          "permission": "VIEW_LOAN_REPAYMENT_DASHBOARD",
+          "icon": "Dashboard",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Installment Report",
+          "actionKey": "loanInstallmentReport",
+          "permission": "VIEW_LOAN_INSTALLMENT_REPORT",
+          "icon": "Receipt",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Generate Repayment Schedule Report",
+          "actionKey": "generateRepaymentScheduleReport",
+          "permission": "GENERATE_REPAYMENT_SCHEDULE",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Repayment History",
+          "actionKey": "loanRepaymentHistory",
+          "permission": "VIEW_LOAN_REPAYMENT_HISTORY",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Generate Loan Contract",
+          "actionKey": "generateLoanContract",
+          "permission": "GENERATE_LOAN_CONTRACT",
+          "icon": "Description",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Export Loan Data",
+          "actionKey": "exportLoanData",
+          "permission": "EXPORT_LOAN_DATA",
+          "icon": "Download",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Reports",
+          "actionKey": "viewReports",
+          "permission": "BACKEND_PERMISSIONS.VIEW_REPORTS",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Export Reports",
+          "actionKey": "exportReports",
+          "permission": "BACKEND_PERMISSIONS.EXPORT_REPORTS",
+          "icon": "CloudDownload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Export PDF Report",
+          "actionKey": "exportPdfReport",
+          "permission": "EXPORT_REPORTS",
+          "icon": null,
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Export Excel Report",
+          "actionKey": "exportExcelReport",
+          "permission": "EXPORT_REPORTS",
+          "icon": null,
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Financial Summary",
+          "actionKey": "financialSummary",
+          "permission": "VIEW_REPORTS",
+          "icon": null,
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Portfolio Analysis",
+          "actionKey": "portfolioAnalysis",
+          "permission": "VIEW_REPORTS",
+          "icon": null,
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Teller Summary Report",
+          "actionKey": "tellerSummaryReport",
+          "permission": "BACKEND_PERMISSIONS.VIEW_REPORTS",
+          "icon": "Summarize",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "CARD MANAGEMENT",
+      "items": [
+        {
+          "label": "Issue Debit Card",
+          "actionKey": "cardIssuer",
+          "permission": "debit_card.issue",
+          "icon": "CreditCard",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View My Cards",
+          "actionKey": "viewCards",
+          "permission": "debit_card.view",
+          "icon": "CreditCard",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Set Daily Limit",
+          "actionKey": "setDailyLimit",
+          "permission": "debit_card.update_limits",
+          "icon": "Speed",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Set Per‑Transaction Limit",
+          "actionKey": "setPerTxLimit",
+          "permission": "debit_card.update_limits",
+          "icon": "LocalAtm",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Set/Change PIN",
+          "actionKey": "setPin",
+          "permission": "debit_card.update_limits",
+          "icon": "Lock",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Block Card",
+          "actionKey": "blockCard",
+          "permission": "debit_card.block",
+          "icon": "Block",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Unblock Card",
+          "actionKey": "unblockCard",
+          "permission": "debit_card.unblock",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Card Transaction History",
+          "actionKey": "cardTransactions",
+          "permission": "debit_card.view_transactions",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Outward Transfer",
+      "items": [
+        {
+          "label": "Outward Transfer",
+          "actionKey": "outwardTransfer",
+          "permission": "debit_card.issue",
+          "icon": "CreditCard",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Outward Transfer Approval",
+          "actionKey": "outwardTransferApproval",
+          "permission": "debit_card.issue",
+          "icon": "CreditCard",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Product Module",
+      "items": [
+        {
+          "label": "Loan Product Setup",
+          "actionKey": "loanProductManager",
+          "permission": "SETUP_LOAN_PRODUCT",
+          "icon": "Inventory",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Product Mapping",
+          "actionKey": "productMapping",
+          "permission": "MANAGE_PRODUCT_MAPPING",
+          "icon": "Inventory",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Saving Product Setup",
+          "actionKey": "savingsProductSetup",
+          "permission": "SETUP_SAVING_PRODUCT",
+          "icon": "Inventory",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "GL Account Module",
+      "items": [
+        {
+          "label": "Chart of Account",
+          "actionKey": "chartOfAccount",
+          "permission": "VIEW_CHART_OF_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Chart of Accounts",
+          "actionKey": "viewChartOfAccounts",
+          "permission": "VIEW_CHART_OF_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Process Pending Transactions",
+          "actionKey": "processPendingTransaction",
+          "permission": "VIEW_CHART_OF_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Add Branch",
+          "actionKey": "department",
+          "permission": "MANAGE_DEPARTMENT",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "GL Subfolder",
+          "actionKey": "glaSubfolderAccount",
+          "permission": "VIEW_GL_SUBFOLDER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Subfolder",
+          "actionKey": "viewSubfolderAccount",
+          "permission": "VIEW_SUBFOLDER_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Holiday Management",
+      "items": [
+        {
+          "label": "Holiday Calendar",
+          "actionKey": "holidayManagement",
+          "permission": "MANAGE_HOLIDAY_CALENDAR",
+          "icon": "Event",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "System Utilities",
+      "items": [
+        {
+          "label": "License Details",
+          "actionKey": "licenseDetails",
+          "permission": "VIEW_LICENSE_DETAILS",
+          "icon": "Build",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "System Date",
+          "actionKey": "systemDate",
+          "permission": "VIEW_SYSTEM_DATE",
+          "icon": "Build",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "OS Trigger",
+          "actionKey": "osTrigger",
+          "permission": "TRIGGER_OS_OPERATIONS",
+          "icon": "Build",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "EoD Status",
+          "actionKey": "eodStatus",
+          "permission": "VIEW_EOD_STATUS",
+          "icon": "Build",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Organization",
+          "actionKey": "organization",
+          "permission": "MANAGE_SYSTEM_CONFIG",
+          "icon": "Business",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Customer Module",
+      "items": [
+        {
+          "label": "Create Customer",
+          "actionKey": "createCustomer",
+          "permission": "CREATE_CUSTOMER",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer Profile",
+          "actionKey": "customerProfile",
+          "permission": "VIEW_CUSTOMER",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Batch Customer Onboarding",
+          "actionKey": "customerBatchCreation",
+          "permission": "BATCH_CUSTOMER_CREATE",
+          "icon": "Group",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Pending Customer",
+          "actionKey": "pendingCustomer",
+          "permission": "VIEW_PENDING_CUSTOMERS",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer Identification",
+          "actionKey": "customerIdentification",
+          "permission": "VIEW_CUSTOMER_IDENTIFICATION",
+          "icon": "VerifiedUser",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Term Deposit",
+          "actionKey": "termDeposit",
+          "permission": "MANAGE_TERM_DEPOSIT",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Customer",
+          "actionKey": "viewCustomer",
+          "permission": "BACKEND_PERMISSIONS.VIEW_CUSTOMER",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Update Customer",
+          "actionKey": "updateCustomer",
+          "permission": "BACKEND_PERMISSIONS.UPDATE_CUSTOMER",
+          "icon": "ManageAccounts",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer BVN Validate",
+          "actionKey": "customerBvnValidate",
+          "permission": "BACKEND_PERMISSIONS.CUSTOMER_BVN_VALIDATE",
+          "icon": "Badge",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer BVN View",
+          "actionKey": "customerBvnView",
+          "permission": "BACKEND_PERMISSIONS.CUSTOMER_BVN_VIEW",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer ID Verify",
+          "actionKey": "customerIdVerify",
+          "permission": "BACKEND_PERMISSIONS.CUSTOMER_ID_VERIFY",
+          "icon": "VerifiedUser",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer Image Approval",
+          "actionKey": "customerImageApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_IDENTIFICATION",
+          "icon": "Approval",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Update Customer",
+          "actionKey": "customerModification",
+          "permission": "BACKEND_PERMISSIONS.UPDATE_CUSTOMER",
+          "icon": "ManageAccounts",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer KYC Verify",
+          "actionKey": "customerKycVerify",
+          "permission": "BACKEND_PERMISSIONS.CUSTOMER_KYC_VERIFY",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Account Module",
+      "items": [
+        {
+          "label": "Account Opening",
+          "actionKey": "accountOpening",
+          "permission": "OPEN_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Account Update",
+          "actionKey": "accountUpdate",
+          "permission": "UPDATE_ACCOUNT",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Account Approval",
+          "actionKey": "accountApproval",
+          "permission": "APPROVE_ACCOUNT",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Modify Customer Account",
+          "actionKey": "modifyCustomerAccount",
+          "permission": "MODIFY_ACCOUNT",
+          "icon": "Edit",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Deposit 101",
+          "actionKey": "deposit101",
+          "permission": "MAKE_DEPOSIT",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Withdrawal 102",
+          "actionKey": "withdrawal102",
+          "permission": "MAKE_WITHDRAWAL",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Savings Account Statement",
+          "actionKey": "savingsAccountStatement",
+          "permission": "VIEW_ACCOUNT_STATEMENT",
+          "icon": "ReceiptLong",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Account Balance",
+          "actionKey": "viewAccountBalance",
+          "permission": "BACKEND_PERMISSIONS.VIEW_ACCOUNT_BALANCE",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Account Statement",
+          "actionKey": "viewAccountStatement",
+          "permission": "BACKEND_PERMISSIONS.VIEW_ACCOUNT_STATEMENT",
+          "icon": "ReceiptLong",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Loan Module",
+      "items": [
+        {
+          "label": "Credit Application",
+          "actionKey": "creditApplication",
+          "permission": "APPLY_LOAN",
+          "icon": "Description",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Credit Application Approval",
+          "actionKey": "creditApplicationApproval",
+          "permission": "APPROVE_LOAN",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Credit Application Details",
+          "actionKey": "loanApplicationDetails",
+          "permission": "VIEW_LOAN_DETAILS",
+          "icon": "Description",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Details",
+          "actionKey": "loanDetails",
+          "permission": "VIEW_LOAN_DETAILS",
+          "icon": "Description",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Disbursement",
+          "actionKey": "loanDisbursement",
+          "permission": "DISBURSE_LOAN",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Individual Bulk Disbursement",
+          "actionKey": "individualBulkDisbursement",
+          "permission": "BULK_DISBURSE_LOAN",
+          "icon": "CloudUpload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Repayment",
+          "actionKey": "loanRepayment",
+          "permission": "REPAY_LOAN",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Write Off",
+          "actionKey": "loanWriteOff",
+          "permission": "BACKEND_PERMISSIONS.WRITE_OFF_LOAN",
+          "icon": "Delete",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Bulk Loan Repayment",
+          "actionKey": "bulkLoanRepayment",
+          "permission": "BULK_REPAY_LOAN",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Calculator",
+          "actionKey": "loanCalculator",
+          "permission": "USE_LOAN_CALCULATOR",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Calculate EMI",
+          "actionKey": "emiCalculate",
+          "permission": "USE_LOAN_CALCULATOR",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Contract",
+          "actionKey": "loanMontract",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN",
+          "icon": "Description",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Approval",
+          "actionKey": "loanApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_LOAN",
+          "icon": "ThumbUp",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Loan Applications",
+          "actionKey": "viewLoanApplications",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Process Loan Application",
+          "actionKey": "processLoanApplication",
+          "permission": "BACKEND_PERMISSIONS.PROCESS_LOAN",
+          "icon": "Assignment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Collection",
+          "actionKey": "loanCollection",
+          "permission": "BACKEND_PERMISSIONS.COLLECT_LOAN",
+          "icon": "Payments",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Manual Loan Repayment",
+          "actionKey": "manualLoanRepayment",
+          "permission": "BACKEND_PERMISSIONS.MANUAL_LOAN_REPAYMENT",
+          "icon": "Payments",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Loan Details",
+          "actionKey": "viewLoanDetails",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Group Module",
+      "items": [
+        {
+          "label": "Group Creation",
+          "actionKey": "groupCreation",
+          "permission": "CREATE_GROUP",
+          "icon": "Group",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Loan Application",
+          "actionKey": "groupLoanApplication",
+          "permission": "APPLY_GROUP_LOAN",
+          "icon": "Description",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Loan Disbursement",
+          "actionKey": "groupDisbursement",
+          "permission": "DISBURSE_GROUP_LOAN",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Bulk Group Loan Upload",
+          "actionKey": "bulkGroupLoanUpload",
+          "permission": "BULK_GROUP_UPLOAD",
+          "icon": "CloudUpload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Loan Management",
+          "actionKey": "groupLoanManagement",
+          "permission": "MANAGE_GROUP_LOAN",
+          "icon": "Group",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Savings Management",
+          "actionKey": "groupSavingsManagement",
+          "permission": "MANAGE_GROUP_SAVINGS",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Group Collection",
+          "actionKey": "groupCollection",
+          "permission": "COLLECT_GROUP_PAYMENT",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Union Purse Single Posting",
+          "actionKey": "unionPurseSinglePosting",
+          "permission": "UNION_PURSE_POSTING",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Union Purse Bulk Posting",
+          "actionKey": "unionPurseBulkPosting",
+          "permission": "UNION_PURSE_POSTING",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Field Collection Sheet",
+          "actionKey": "fieldCollectionSheet",
+          "permission": "VIEW_GROUP_LOAN",
+          "icon": "Assignment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Group Loan",
+          "actionKey": "viewGroupLoan",
+          "permission": "BACKEND_PERMISSIONS.VIEW_GROUP_LOAN",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Manage Group Members",
+          "actionKey": "manageGroupMembers",
+          "permission": "BACKEND_PERMISSIONS.MANAGE_GROUP_LOAN_MEMBERS",
+          "icon": "Group",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Process Group Repayment",
+          "actionKey": "processGroupRepayment",
+          "permission": "BACKEND_PERMISSIONS.PROCESS_GROUP_LOAN_REPAYMENT",
+          "icon": "Payments",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Group Schedule",
+          "actionKey": "viewGroupSchedule",
+          "permission": "BACKEND_PERMISSIONS.VIEW_GROUP_LOAN_SCHEDULE",
+          "icon": "CalendarToday",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Cash Module",
+      "items": [
+        {
+          "label": "Cash Deposit",
+          "actionKey": "cashDeposit",
+          "permission": "MAKE_CASH_DEPOSIT",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Cash Deposit Approval",
+          "actionKey": "cashDepositApproval",
+          "permission": "APPROVE_CASH_DEPOSIT",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Cash Withdrawal",
+          "actionKey": "cashWithdrawal",
+          "permission": "MAKE_CASH_WITHDRAWAL",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Manager Module",
+      "items": [
+        {
+          "label": "Manager Approval",
+          "actionKey": "managerApproval",
+          "permission": "MANAGER_APPROVAL",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "GL Transaction Approval",
+          "actionKey": "glTransactionApproval",
+          "permission": "APPROVE_GL_TRANSACTION",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "GL Transaction Module",
+      "items": [
+        {
+          "label": "GL to GL Transaction",
+          "actionKey": "glToGlTransaction",
+          "permission": "MAKE_GL_TRANSFER",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Credit GL Transaction",
+          "actionKey": "creditGlTransaction",
+          "permission": "MAKE_GL_TRANSACTION",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Debit GL Transaction",
+          "actionKey": "debitGlTransaction",
+          "permission": "MAKE_GL_TRANSACTION",
+          "icon": "AccountBalance",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Opening Deposit",
+          "actionKey": "openingDeposit",
+          "permission": "MAKE_OPENING_DEPOSIT",
+          "icon": "AttachMoney",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Guarantor Module",
+      "items": [
+        {
+          "label": "Create Guarantor",
+          "actionKey": "createGuarantor",
+          "permission": "CREATE_GUARANTOR",
+          "icon": "Person",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Guarantor",
+          "actionKey": "viewGuarantor",
+          "permission": "BACKEND_PERMISSIONS.VIEW_GUARANTOR",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Approve Guarantor",
+          "actionKey": "approveGuarantor",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_GUARANTOR",
+          "icon": "ThumbUp",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Search Guarantor",
+          "actionKey": "searchGuarantor",
+          "permission": "BACKEND_PERMISSIONS.SEARCH_GUARANTOR",
+          "icon": "Search",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Update Guarantor",
+          "actionKey": "updateGuarantor",
+          "permission": "BACKEND_PERMISSIONS.UPDATE_GUARANTOR",
+          "icon": "ManageAccounts",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Verify Guarantor",
+          "actionKey": "verifyGuarantor",
+          "permission": "BACKEND_PERMISSIONS.VERIFY_GUARANTOR",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Approval Module",
+      "items": [
+        {
+          "label": "Loan Application Approval",
+          "actionKey": "loanApplicationApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_LOAN",
+          "icon": "AccountBalanceOutlined",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer Approval",
+          "actionKey": "customerApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_BVN_VALIDATION",
+          "icon": "VerifiedUser",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Account Opening Approval",
+          "actionKey": "accountOpeningApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_BVN_VALIDATION",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Customer Modification Approval",
+          "actionKey": "customerModificationApproval",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_BVN_VALIDATION",
+          "icon": "VerifiedUser",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Approve Loan Repayment",
+          "actionKey": "approveLoanRepayment",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_LOAN_REPAYMENT",
+          "icon": "ThumbUp",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Approve Group Loan",
+          "actionKey": "approveGroupLoan",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_GROUP_LOAN",
+          "icon": "ThumbUp",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Approve BVN Validation",
+          "actionKey": "approveBvnValidation",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_BVN_VALIDATION",
+          "icon": "ThumbUp",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Vault Module",
+      "items": [
+        {
+          "label": "Create Vault",
+          "actionKey": "createVault",
+          "permission": "BACKEND_PERMISSIONS.CREATE_VAULT",
+          "icon": "CreateNewFolder",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Vaults",
+          "actionKey": "viewVaults",
+          "permission": "BACKEND_PERMISSIONS.VIEW_VAULTS",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Configure Vault",
+          "actionKey": "configureVault",
+          "permission": "BACKEND_PERMISSIONS.CONFIGURE_VAULT",
+          "icon": "Settings",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Authorize Personnel",
+          "actionKey": "authorizePersonnel",
+          "permission": "BACKEND_PERMISSIONS.AUTHORIZE_PERSONNEL",
+          "icon": "VerifiedUser",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Access Logs",
+          "actionKey": "viewAccessLogs",
+          "permission": "BACKEND_PERMISSIONS.VIEW_ACCESS_LOGS",
+          "icon": "Checklist",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Vault Deposit",
+          "actionKey": "vaultDeposit",
+          "permission": "BACKEND_PERMISSIONS.VAULT_DEPOSIT",
+          "icon": "CloudUpload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Vault Withdrawal",
+          "actionKey": "vaultWithdrawal",
+          "permission": "BACKEND_PERMISSIONS.VAULT_WITHDRAWAL",
+          "icon": "CloudDownload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Vault Transfer",
+          "actionKey": "vaultTransfer",
+          "permission": "BACKEND_PERMISSIONS.VAULT_TRANSFER",
+          "icon": "SwapHoriz",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Vault Reconciliation",
+          "actionKey": "vaultReconciliation",
+          "permission": "BACKEND_PERMISSIONS.VAULT_RECONCILIATION",
+          "icon": "CompareArrows",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "BVN Module",
+      "items": [
+        {
+          "label": "BVN View",
+          "actionKey": "bvnView",
+          "permission": "BACKEND_PERMISSIONS.BVN_VIEW",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Update",
+          "actionKey": "bvnUpdate",
+          "permission": "BACKEND_PERMISSIONS.BVN_UPDATE",
+          "icon": "ManageAccounts",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN History",
+          "actionKey": "bvnHistory",
+          "permission": "BACKEND_PERMISSIONS.BVN_HISTORY",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Export",
+          "actionKey": "bvnExport",
+          "permission": "BACKEND_PERMISSIONS.BVN_EXPORT",
+          "icon": "CloudDownload",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Report",
+          "actionKey": "bvnReport",
+          "permission": "BACKEND_PERMISSIONS.BVN_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Validate",
+          "actionKey": "bvnValidate",
+          "permission": "BACKEND_PERMISSIONS.BVN_VALIDATE",
+          "icon": "Badge",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Deposit Module",
+      "items": [
+        {
+          "label": "Deposit Application",
+          "actionKey": "depositApplication",
+          "permission": "BACKEND_PERMISSIONS.ACCOUNT_DEPOSIT",
+          "icon": "AccountBalanceOutlined",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Deposit Application Details",
+          "actionKey": "depositApplicationDetails",
+          "permission": "BACKEND_PERMISSIONS.VIEW_ACCOUNT",
+          "icon": "Checklist",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Standing Order Module",
+      "items": [
+        {
+          "label": "Approve Standing Order",
+          "actionKey": "approveStandingOrder",
+          "permission": "BACKEND_PERMISSIONS.CREATE_THRIFT",
+          "icon": "CreateNewFolder",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Create Standing Order",
+          "actionKey": "standingOrder",
+          "permission": "BACKEND_PERMISSIONS.CREATE_THRIFT",
+          "icon": "CreateNewFolder",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Thrift Module",
+      "items": [
+        {
+          "label": "Thrift Withdrawal Approval",
+          "actionKey": "thriftWithdrawalApprove",
+          "permission": "BACKEND_PERMISSIONS.APPROVE_LOAN_REPAYMENT",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Thrift Transaction History",
+          "actionKey": "thriftTransactionHistory",
+          "permission": "BACKEND_PERMISSIONS.VIEW_THRIFT_TRANSACTIONS",
+          "icon": "HistoryIcon",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Thrift Collection",
+          "actionKey": "thriftCollection",
+          "permission": "BACKEND_PERMISSIONS.COLLECT_THRIFT",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Create Thrift",
+          "actionKey": "createThrift",
+          "permission": "BACKEND_PERMISSIONS.CREATE_THRIFT",
+          "icon": "CreateNewFolder",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Thrift Customer",
+          "actionKey": "viewThriftCustomer",
+          "permission": "BACKEND_PERMISSIONS.VIEW_THRIFT",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Thrift Withdrawal",
+          "actionKey": "thriftWithdrawal",
+          "permission": "BACKEND_PERMISSIONS.WITHDRAWAL_THRIFT",
+          "icon": "AccountBalanceWallet",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Thrift Customer Onboarding",
+          "actionKey": "thriftCustomerOnboarding",
+          "permission": "BACKEND_PERMISSIONS.CREATE_THRIFT",
+          "icon": "PersonAdd",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Dashboard",
+      "items": [
+        {
+          "label": "Manager Dashboard",
+          "actionKey": "managerDashboard",
+          "permission": "BACKEND_PERMISSIONS.VIEW_DASHBOARD",
+          "icon": "BarChart",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Transaction Overview",
+          "actionKey": "transactionOverview",
+          "permission": "BACKEND_PERMISSIONS.VIEW_DASHBOARD",
+          "icon": "InsertChart",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BU Performance",
+          "actionKey": "buPerformance",
+          "permission": "BACKEND_PERMISSIONS.VIEW_PERFORMANCE_METRICS",
+          "icon": "TrendingUp",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Repayment Stats",
+          "actionKey": "loanRepaymentStats",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN_REPAYMENT_STATS",
+          "icon": "TrendingUp",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Validation Stats",
+          "actionKey": "bvnValidationStats",
+          "permission": "BACKEND_PERMISSIONS.VIEW_BVN_VALIDATION_STATS",
+          "icon": "Badge",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Quick Actions",
+          "actionKey": "quickActions",
+          "permission": "BACKEND_PERMISSIONS.VIEW_QUICK_ACTIONS",
+          "icon": "Checklist",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Credit Officer Dashboard",
+          "actionKey": "creditOfficerDashboard",
+          "permission": "BACKEND_PERMISSIONS.VIEW_CREDIT_OFFICER_DASHBOARD",
+          "icon": "BarChart",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Teller Dashboard",
+          "actionKey": "tellerDashboard",
+          "permission": "BACKEND_PERMISSIONS.VIEW_DASHBOARD",
+          "icon": "BarChart",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Real Time Stats",
+          "actionKey": "realTimeStats",
+          "permission": "BACKEND_PERMISSIONS.VIEW_REAL_TIME_STATS",
+          "icon": "ShowChart",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Loan Repayment Module",
+      "items": [
+        {
+          "label": "Process Loan Repayment",
+          "actionKey": "processLoanRepayment",
+          "permission": "BACKEND_PERMISSIONS.PROCESS_LOAN_REPAYMENT",
+          "icon": "Payments",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Repayment Schedule",
+          "actionKey": "viewRepaymentSchedule",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN_REPAYMENT_SCHEDULE",
+          "icon": "CalendarToday",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Repayment History",
+          "actionKey": "viewRepaymentHistory",
+          "permission": "BACKEND_PERMISSIONS.VIEW_REPAYMENT_HISTORY",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Print Repayment Receipt",
+          "actionKey": "printRepaymentReceipt",
+          "permission": "BACKEND_PERMISSIONS.PRINT_REPAYMENT_RECEIPT",
+          "icon": "Receipt",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Collection Module",
+      "items": [
+        {
+          "label": "Create Collection",
+          "actionKey": "createCollection",
+          "permission": "BACKEND_PERMISSIONS.CREATE_COLLECTION",
+          "icon": "CreateNewFolder",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "View Collection",
+          "actionKey": "viewCollection",
+          "permission": "BACKEND_PERMISSIONS.VIEW_COLLECTION",
+          "icon": "Visibility",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Process Collection",
+          "actionKey": "processCollection",
+          "permission": "BACKEND_PERMISSIONS.PROCESS_COLLECTION",
+          "icon": "Payments",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Verify Collection",
+          "actionKey": "verifyCollection",
+          "permission": "BACKEND_PERMISSIONS.VERIFY_COLLECTION",
+          "icon": "CheckCircle",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Loan Portfolio",
+      "items": [
+        {
+          "label": "View Loan Portfolio",
+          "actionKey": "viewLoanPortfolio",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN_PORTFOLIO",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Manage Loan Portfolio",
+          "actionKey": "manageLoanPortfolio",
+          "permission": "BACKEND_PERMISSIONS.MANAGE_LOAN_PORTFOLIO",
+          "icon": "ManageAccounts",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Reports",
+      "items": [
+        {
+          "label": "Loan Report",
+          "actionKey": "loanReport",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Loan Repayment Report",
+          "actionKey": "loanRepaymentReport",
+          "permission": "BACKEND_PERMISSIONS.VIEW_LOAN_REPAYMENT_REPORT",
+          "icon": "Assessment",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "BVN Validation Report",
+          "actionKey": "bvnValidationReport",
+          "permission": "BACKEND_PERMISSIONS.VIEW_BVN_VALIDATION_REPORT",
+          "icon": "Badge",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Transaction Module",
+      "items": [
+        {
+          "label": "View Recent Transactions",
+          "actionKey": "viewRecentTransactions",
+          "permission": "BACKEND_PERMISSIONS.VIEW_ACCOUNT_STATEMENT",
+          "icon": "History",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        },
+        {
+          "label": "Reprint Receipt",
+          "actionKey": "reprintReceipt",
+          "permission": "BACKEND_PERMISSIONS.PRINT_RECEIPT",
+          "icon": "Receipt",
+          "isModal": true,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    },
+    {
+      "title": "Performance",
+      "items": [
+        {
+          "label": "View Teller Performance",
+          "actionKey": "viewTellerPerformance",
+          "permission": "BACKEND_PERMISSIONS.VIEW_TELLER_PERFORMANCE",
+          "icon": "TrendingUp",
+          "isModal": false,
+          "category": "all",
+          "description": ""
+        }
+      ]
+    }
+  ],
+  "roleModules": {
+    "Administrator": [
+      "bvnValidation",
+      "amlApproval",
+      "amlThreshold",
+      "configureAML",
+      "amlConfiguration",
+      "monitorAML",
+      "auditTrail",
+      "businessRole",
+      "businessRoleList",
+      "buRoleCreation",
+      "businessRoleQueue",
+      "rolePermission",
+      "cashPolicies",
+      "createBusinessUnit",
+      "addUser",
+      "assignCsoRight",
+      "passwordReset",
+      "securityConsole",
+      "loginPolicySettings",
+      "assignRole",
+      "activateUser",
+      "workflowSetup",
+      "workflowItemDetails",
+      "createDrawer",
+      "drawerOperation",
+      "drawerReassign",
+      "vaultCreation",
+      "drawerToVaultTransaction",
+      "viewVaultDetails",
+      "drawerTransaction",
+      "drawerToDrawerTransaction",
+      "depositInterestSetup",
+      "loanInterest",
+      "loanInterestSetup",
+      "loanInterestCapitalization",
+      "chargeConfig",
+      "depositInterestSetup",
+      "indexRate",
+      "loanFeeSetup",
+      "customerReport",
+      "reports",
+      "termDepositReports",
+      "inwardPayment",
+      "accountStatementReport",
+      "trialBalanceReport",
+      "loanProvision",
+      "incomeExpenseReport",
+      "groupLoanReport",
+      "groupCollectionSheet",
+      "customerSavingBalanceReport",
+      "loanRepaymentSchedule",
+      "loansSavingsCombinedReport",
+      "loanDisbursementReport",
+      "thriftConsolidatedReport",
+      "loanRepaymentDashboard",
+      "loanInstallmentReport",
+      "generateRepaymentScheduleReport",
+      "loanRepaymentHistory",
+      "generateLoanContract",
+      "exportLoanData",
+      "cardIssuer",
+      "viewCards",
+      "setDailyLimit",
+      "setPerTxLimit",
+      "setPin",
+      "blockCard",
+      "unblockCard",
+      "cardTransactions",
+      "outwardTransfer",
+      "outwardTransferApproval",
+      "loanProductManager",
+      "productMapping",
+      "savingsProductSetup",
+      "chartOfAccount",
+      "viewChartOfAccounts",
+      "viewChartOfAccounts",
+      "processPendingTransaction",
+      "holidayManagement",
+      "licenseDetails",
+      "systemDate",
+      "osTrigger",
+      "eodStatus",
+      "organization",
+      "createCustomer",
+      "customerProfile",
+      "customerBatchCreation",
+      "pendingCustomer",
+      "customerIdentification",
+      "termDeposit",
+      "accountOpening",
+      "accountUpdate",
+      "accountApproval",
+      "modifyCustomerAccount",
+      "deposit101",
+      "withdrawal102",
+      "savingsAccountStatement",
+      "creditApplication",
+      "creditApplicationApproval",
+      "loanApplicationDetails",
+      "loanDetails",
+      "loanDisbursement",
+      "individualBulkDisbursement",
+      "loanRepayment",
+      "loanWriteOff",
+      "bulkLoanRepayment",
+      "loanCalculator",
+      "emiCalculate",
+      "generateLoanContract",
+      "loanRepaymentHistory",
+      "groupCreation",
+      "groupLoanApplication",
+      "groupDisbursement",
+      "bulkGroupLoanUpload",
+      "groupLoanManagement",
+      "groupSavingsManagement",
+      "groupCollection",
+      "unionPurseSinglePosting",
+      "unionPurseBulkPosting",
+      "fieldCollectionSheet",
+      "cashDeposit",
+      "cashDepositApproval",
+      "cashWithdrawal",
+      "managerApproval",
+      "glTransactionApproval",
+      "glToGlTransaction",
+      "creditGlTransaction",
+      "debitGlTransaction",
+      "openingDeposit",
+      "createGuarantor"
+    ],
+    "Branch Manager": [
+      "managerApproval",
+      "cashDepositApproval",
+      "glTransactionApproval",
+      "loanApplicationApproval",
+      "customerApproval",
+      "accountOpeningApproval",
+      "customerModificationApproval",
+      "approveLoanRepayment",
+      "approveGroupLoan",
+      "approveBvnValidation",
+      "amlApproval",
+      "generateAMLReport",
+      "suspendAMLTransaction",
+      "auditTrail",
+      "creditApplicationApproval",
+      "individualBulkDisbursement",
+      "loanApplicationDetails",
+      "loanMontract",
+      "loanDetails",
+      "loanApproval",
+      "loanDisbursement",
+      "loanCalculator",
+      "loanRepaymentHistory",
+      "drawerToVaultTransaction",
+      "viewVaultDetails",
+      "drawerTransaction",
+      "drawerToDrawerTransaction",
+      "createVault",
+      "viewVaults",
+      "configureVault",
+      "authorizePersonnel",
+      "viewAccessLogs",
+      "vaultDeposit",
+      "vaultWithdrawal",
+      "vaultTransfer",
+      "vaultReconciliation",
+      "viewCustomer",
+      "updateCustomer",
+      "customerProfile",
+      "customerBvnValidate",
+      "customerBvnView",
+      "customerIdVerify",
+      "termDeposit",
+      "customerIdentification",
+      "savingsAccountStatement",
+      "customerImageApproval",
+      "bvnValidation",
+      "bvnView",
+      "bvnUpdate",
+      "bvnHistory",
+      "bvnExport",
+      "bvnReport",
+      "accountOpeningApproval",
+      "depositApplication",
+      "viewGuarantor",
+      "approveGuarantor",
+      "viewGroupLoan",
+      "approveGroupLoan",
+      "manageGroupMembers",
+      "groupCollection",
+      "approveStandingOrder",
+      "outwardTransferApproval",
+      "thriftWithdrawalApprove",
+      "thriftTransactionHistory",
+      "thriftCollection",
+      "viewReports",
+      "inwardPayment",
+      "exportReports",
+      "loanProvision",
+      "customerReport",
+      "reports",
+      "generateLoanContract",
+      "termDepositReports",
+      "accountStatementReport",
+      "trialBalanceReport",
+      "incomeExpenseReport",
+      "groupLoanReport",
+      "groupCollectionSheet",
+      "loansSavingsCombinedReport",
+      "loanDisbursementReport",
+      "customerSavingBalanceReport",
+      "loanRepaymentSchedule",
+      "thriftConsolidatedReport",
+      "loanRepaymentDashboard",
+      "loanInstallmentReport",
+      "generateRepaymentScheduleReport",
+      "loanRepaymentHistory",
+      "exportLoanData",
+      "managerDashboard",
+      "transactionOverview",
+      "buPerformance",
+      "loanRepaymentStats",
+      "bvnValidationStats",
+      "quickActions",
+      "loanProductManager",
+      "productMapping",
+      "savingsProductSetup",
+      "chartOfAccount",
+      "department",
+      "glaSubfolderAccount",
+      "viewSubfolderAccount"
+    ],
+    "Chief Executive Officer": [
+      "customerReport",
+      "termDepositReports",
+      "accountStatementReport",
+      "trialBalanceReport",
+      "incomeExpenseReport",
+      "groupLoanReport",
+      "groupCollectionSheet",
+      "loansSavingsCombinedReport",
+      "loanDisbursementReport",
+      "customerSavingBalanceReport",
+      "generateLoanContract",
+      "thriftConsolidatedReport",
+      "loanRepaymentDashboard",
+      "loanInstallmentReport",
+      "generateRepaymentScheduleReport",
+      "loanRepaymentHistory",
+      "exportLoanData",
+      "inwardPayment",
+      "exportPdfReport",
+      "exportExcelReport",
+      "financialSummary",
+      "portfolioAnalysis"
+    ],
+    "Customer Service Officer": [
+      "creditApplication",
+      "viewLoanApplications",
+      "processLoanApplication",
+      "loanCalculator",
+      "emiCalculate",
+      "generateLoanContract",
+      "loanRepayment",
+      "processLoanRepayment",
+      "viewRepaymentSchedule",
+      "loanWriteOff",
+      "viewRepaymentHistory",
+      "printRepaymentReceipt",
+      "createCustomer",
+      "viewCustomer",
+      "customerModification",
+      "customerKycVerify",
+      "customerBvnValidate",
+      "customerBvnView",
+      "customerIdVerify",
+      "customerProfile",
+      "customerIdentification",
+      "accountOpening",
+      "viewAccountBalance",
+      "viewAccountStatement",
+      "deposit101",
+      "accountUpdate",
+      "savingsAccountStatement",
+      "bvnValidate",
+      "bvnView",
+      "bvnHistory",
+      "createGuarantor",
+      "viewGuarantor",
+      "searchGuarantor",
+      "updateGuarantor",
+      "verifyGuarantor",
+      "viewGroupLoan",
+      "processGroupRepayment",
+      "viewGroupSchedule",
+      "groupCreation",
+      "fieldCollectionSheet",
+      "createThrift",
+      "thriftTransactionHistory",
+      "viewThriftCustomer",
+      "thriftCollection",
+      "thriftWithdrawal",
+      "thriftCustomerOnboarding",
+      "createCollection",
+      "viewCollection",
+      "processCollection",
+      "verifyCollection",
+      "viewLoanPortfolio",
+      "manageLoanPortfolio",
+      "viewReports",
+      "customerReport",
+      "loanReport",
+      "loanRepaymentReport",
+      "bvnValidationReport",
+      "groupLoanReport",
+      "thriftConsolidatedReport",
+      "loansSavingsCombinedReport",
+      "loanDisbursementReport",
+      "loanRepaymentDashboard",
+      "loanInstallmentReport",
+      "generateRepaymentScheduleReport",
+      "loanRepaymentHistory",
+      "exportLoanData",
+      "standingOrder",
+      "creditOfficerDashboard",
+      "loanRepaymentStats",
+      "bvnValidationStats"
+    ],
+    "Head of Digital Banking": [
+      "cardIssuer",
+      "viewCards",
+      "setDailyLimit",
+      "setPerTxLimit",
+      "setPin",
+      "blockCard",
+      "unblockCard",
+      "cardTransactions"
+    ],
+    "Teller": [
+      "deposit101",
+      "withdrawal102",
+      "accountUpdate",
+      "viewAccountBalance",
+      "viewAccountStatement",
+      "accountOpening",
+      "savingsAccountStatement",
+      "modifyCustomerAccount",
+      "cashWithdrawal",
+      "cashDeposit",
+      "openingDeposit",
+      "loanRepayment",
+      "viewRecentTransactions",
+      "reprintReceipt",
+      "loanCollection",
+      "manualLoanRepayment",
+      "processLoanRepayment",
+      "printRepaymentReceipt",
+      "viewLoanDetails",
+      "loanCalculator",
+      "loanRepaymentHistory",
+      "openDrawer",
+      "closeDrawer",
+      "drawerTransaction",
+      "drawerToVaultTransaction",
+      "drawerToDrawerTransaction",
+      "viewVaultDetails",
+      "viewDrawerBalance",
+      "reconcileDrawer",
+      "viewCustomer",
+      "customerModification",
+      "customerProfile",
+      "customerBvnView",
+      "termDeposit",
+      "customerIdentification",
+      "depositApplication",
+      "depositApplicationDetails",
+      "thriftCollection",
+      "thriftTransactionHistory",
+      "thriftWithdrawal",
+      "groupCollection",
+      "unionPurseSinglePosting",
+      "fieldCollectionSheet",
+      "viewReports",
+      "tellerSummaryReport",
+      "accountStatementReport",
+      "customerSavingBalanceReport",
+      "loanProvision",
+      "loanRepaymentSchedule",
+      "thriftConsolidatedReport",
+      "loansSavingsCombinedReport",
+      "loanDisbursementReport",
+      "loanRepaymentDashboard",
+      "loanInstallmentReport",
+      "generateRepaymentScheduleReport",
+      "loanRepaymentHistory",
+      "exportLoanData",
+      "tellerDashboard",
+      "transactionOverview",
+      "realTimeStats",
+      "quickActions",
+      "viewTellerPerformance"
+    ]
+  }
+}

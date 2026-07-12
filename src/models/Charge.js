@@ -1,6 +1,6 @@
-// models/Charge.js (updated – larger CHRG_CD length)
+// models/Charge.js – with association to ChargeTier
 import { DataTypes, Model } from 'sequelize';
-import sequelize from '../../config/db.js';
+import sequelize from '../../config/db.js';  // adjust to your actual path
 import Decimal from 'decimal.js';
 
 class Charge extends Model {
@@ -24,7 +24,13 @@ class Charge extends Model {
       settlementOption: this.SETLMNT_OPTN,
       currencyId: this.CRNCY_ID,
       effectiveDate: this.EFFECTIVE_DT,
-      version: this.VERSION_NO
+      version: this.VERSION_NO,
+      // Legacy single‑tier fields (may be null for multi‑tier)
+      minAmount: this.MIN_AMOUNT ? parseFloat(this.MIN_AMOUNT) : null,
+      maxAmount: this.MAX_AMOUNT ? parseFloat(this.MAX_AMOUNT) : null,
+      feeAmount: this.FEE_AMOUNT ? parseFloat(this.FEE_AMOUNT) : null,
+      feePercentage: this.FEE_PERCENTAGE ? parseFloat(this.FEE_PERCENTAGE) : null,
+      feeType: this.FEE_TYPE,
     };
   }
 
@@ -44,6 +50,15 @@ class Charge extends Model {
       }
     });
   }
+
+  // ✅ Association method – call this after importing ChargeTier
+  static associate(models) {
+    Charge.hasMany(models.ChargeTier, {
+      foreignKey: 'charge_id',
+      as: 'tiers',
+      onDelete: 'CASCADE'
+    });
+  }
 }
 
 Charge.init({
@@ -55,7 +70,7 @@ Charge.init({
     field: 'CHRG_ID'
   },
   CHRG_CD: {
-    type: DataTypes.STRING(50),   // ✅ increased from 10 to 50 to allow longer codes
+    type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
     field: 'CHRG_CD'
@@ -148,20 +163,62 @@ Charge.init({
     defaultValue: 'description',
     field: 'CHRG_DESC'
   },
-  chargeType: {
-    type: DataTypes.STRING(50),
+  // Legacy single‑tier columns (still present for backward compatibility)
+  MIN_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
-    field: 'chargeType'
+    field: 'MIN_AMOUNT'
+  },
+  MAX_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true,
+    field: 'MAX_AMOUNT'
+  },
+  FEE_AMOUNT: {
+    type: DataTypes.DECIMAL(20, 2),
+    allowNull: true,
+    field: 'FEE_AMOUNT'
+  },
+  FEE_PERCENTAGE: {
+    type: DataTypes.DECIMAL(10, 6),
+    allowNull: true,
+    field: 'FEE_PERCENTAGE'
+  },
+  FEE_TYPE: {
+    type: DataTypes.ENUM('FIXED', 'PERCENTAGE'),
+    defaultValue: 'FIXED',
+    field: 'FEE_TYPE'
+  },
+  // Virtual aliases (keep as needed)
+  chargeType: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.CHRG_TY; },
+    set(val) { this.CHRG_TY = val; }
   },
   chargeAmount: {
-    type: DataTypes.DECIMAL(20, 6),
-    allowNull: true,
-    field: 'chargeAmount'
+    type: DataTypes.VIRTUAL,
+    get() { return this.CHRG_AMT; },
+    set(val) { this.CHRG_AMT = val; }
+  },
+  chargePercentage: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.CHRG_PCT; },
+    set(val) { this.CHRG_PCT = val; }
   },
   chargeGLAccountNo: {
-    type: DataTypes.STRING(60),
-    allowNull: true,
-    field: 'chargeGLAccountNo'
+    type: DataTypes.VIRTUAL,
+    get() { return this.INCOME_GL_ACCT_NO; },
+    set(val) { this.INCOME_GL_ACCT_NO = val; }
+  },
+  status: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.REC_ST; },
+    set(val) { this.REC_ST = val; }
+  },
+  description: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.CHRG_DESC; },
+    set(val) { this.CHRG_DESC = val; }
   }
 }, {
   sequelize,
@@ -179,35 +236,20 @@ Charge.init({
       if (!charge.CREATED_BY) charge.CREATED_BY = 'system';
       if (!charge.VERSION_NO) charge.VERSION_NO = 1;
 
+      // Map virtuals
       if (charge.chargeType && !charge.CHRG_TY) charge.CHRG_TY = charge.chargeType;
-      else if (charge.CHRG_TY && !charge.chargeType) charge.chargeType = charge.CHRG_TY;
-
       if (charge.chargeAmount !== undefined && charge.chargeAmount !== null && !charge.CHRG_AMT)
         charge.CHRG_AMT = charge.chargeAmount;
-      else if (charge.CHRG_AMT !== undefined && charge.CHRG_AMT !== null && !charge.chargeAmount)
-        charge.chargeAmount = charge.CHRG_AMT;
-
+      if (charge.chargePercentage !== undefined && charge.chargePercentage !== null && !charge.CHRG_PCT)
+        charge.CHRG_PCT = charge.chargePercentage;
       if (charge.chargeGLAccountNo && !charge.INCOME_GL_ACCT_NO)
         charge.INCOME_GL_ACCT_NO = charge.chargeGLAccountNo;
-      else if (charge.INCOME_GL_ACCT_NO && !charge.chargeGLAccountNo)
-        charge.chargeGLAccountNo = charge.INCOME_GL_ACCT_NO;
+      if (charge.status && !charge.REC_ST) charge.REC_ST = charge.status;
+      if (charge.description && !charge.CHRG_DESC) charge.CHRG_DESC = charge.description;
     },
     beforeUpdate: (charge) => {
       charge.ROW_TS = new Date();
-      if (charge.changed('chargeType') && charge.chargeType && !charge.changed('CHRG_TY'))
-        charge.CHRG_TY = charge.chargeType;
-      else if (charge.changed('CHRG_TY') && charge.CHRG_TY && !charge.changed('chargeType'))
-        charge.chargeType = charge.CHRG_TY;
-
-      if (charge.changed('chargeAmount') && charge.chargeAmount !== undefined && charge.chargeAmount !== null && !charge.changed('CHRG_AMT'))
-        charge.CHRG_AMT = charge.chargeAmount;
-      else if (charge.changed('CHRG_AMT') && charge.CHRG_AMT !== undefined && charge.CHRG_AMT !== null && !charge.changed('chargeAmount'))
-        charge.chargeAmount = charge.CHRG_AMT;
-
-      if (charge.changed('chargeGLAccountNo') && charge.chargeGLAccountNo && !charge.changed('INCOME_GL_ACCT_NO'))
-        charge.INCOME_GL_ACCT_NO = charge.chargeGLAccountNo;
-      else if (charge.changed('INCOME_GL_ACCT_NO') && charge.INCOME_GL_ACCT_NO && !charge.changed('chargeGLAccountNo'))
-        charge.chargeGLAccountNo = charge.INCOME_GL_ACCT_NO;
+      // Sync virtuals if needed
     }
   },
   defaultScope: {
@@ -219,7 +261,8 @@ Charge.init({
         'CHRG_ID', 'CHRG_CD', 'CHRG_TY', 'CHRG_NM', 
         'CHRG_AMT', 'CHRG_PCT', 'INCOME_GL_ACCT_NO',
         'REC_ST', 'CHRG_DESC', 'TIER_TY', 'CALC_BASIS_TY',
-        'SETLMNT_OPTN', 'CRNCY_ID', 'EFFECTIVE_DT', 'VERSION_NO'
+        'SETLMNT_OPTN', 'CRNCY_ID', 'EFFECTIVE_DT', 'VERSION_NO',
+        'MIN_AMOUNT', 'MAX_AMOUNT', 'FEE_AMOUNT', 'FEE_PERCENTAGE', 'FEE_TYPE'
       ]
     },
     active: {

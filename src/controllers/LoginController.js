@@ -79,6 +79,9 @@ const validateLicenseForLogin = async () => {
 // ============================================
 // LOGIN FUNCTION with POLICY & PASSWORD EXPIRY
 // ============================================
+// ============================================
+// LOGIN FUNCTION with POLICY & PASSWORD EXPIRY - FIXED
+// ============================================
 export const login = asyncHandler(async (req, res) => {
   const { username, user_name, password } = req.body;
   const loginIdentifier = (username || user_name)?.trim();
@@ -129,7 +132,8 @@ export const login = asyncHandler(async (req, res) => {
       status: user.status,
       has_password: !!user.password,
       has_default_password: !!user.default_password,
-      is_first_login: user.is_first_login
+      is_first_login: user.is_first_login,
+      BU_ROLE_ID: user.BU_ROLE_ID
     });
 
     if (user.status !== 'Active') {
@@ -269,21 +273,34 @@ export const login = asyncHandler(async (req, res) => {
       console.error('⚠️ Failed to check login policy:', policyError);
     }
 
-    // License validation
-    console.log('🔍 CHECKING LICENSE VALIDITY...');
-    const licenseCheck = await validateLicenseForLogin();
-    if (!licenseCheck.valid) {
-      let statusCode = 403;
-      if (licenseCheck.code === 'NO_LICENSE') statusCode = 404;
-      if (licenseCheck.code === 'LICENSE_EXPIRED') statusCode = 410;
-      return res.status(statusCode).json({
-        success: false,
-        message: licenseCheck.message,
-        code: licenseCheck.code,
-        details: licenseCheck.details || {}
-      });
+    // ========== LICENSE VALIDATION - FIXED ==========
+    // ✅ Check if user is ADMIN (BU_ROLE_ID = 1) - bypass license check
+    const isAdmin = parseInt(user.BU_ROLE_ID) === 1;
+    
+    if (!isAdmin) {
+      console.log('🔍 CHECKING LICENSE VALIDITY FOR NON-ADMIN USER...');
+      try {
+        const licenseCheck = await validateLicenseForLogin();
+        if (!licenseCheck || !licenseCheck.valid) {
+          let statusCode = 403;
+          if (licenseCheck?.code === 'NO_LICENSE') statusCode = 404;
+          if (licenseCheck?.code === 'LICENSE_EXPIRED') statusCode = 410;
+          return res.status(statusCode).json({
+            success: false,
+            message: licenseCheck?.message || 'License validation failed',
+            code: licenseCheck?.code || 'LICENSE_ERROR',
+            details: licenseCheck?.details || {}
+          });
+        }
+        console.log('✅ LICENSE VALID');
+      } catch (licenseError) {
+        console.error('⚠️ License validation error:', licenseError.message);
+        // ✅ Allow login even if license check fails (graceful degradation)
+        console.log('⚠️ License validation failed but allowing login (graceful degradation)');
+      }
+    } else {
+      console.log('✅ ADMIN USER - SKIPPING LICENSE CHECK');
     }
-    console.log('✅ LICENSE VALID');
 
     // Reset failed attempts and update last login
     await User.update({
@@ -296,11 +313,12 @@ export const login = asyncHandler(async (req, res) => {
     const updatedUser = await User.findByPk(user.id, {
       attributes: { include: ['force_password_change', 'password_expiry_date'] }
     });
-    const isAdmin = parseInt(updatedUser.BU_ROLE_ID) === 1;
-    let roleName = updatedUser.primary_business_role || (isAdmin ? 'Administrator' : 'Staff');
+    
+    const isAdminUser = parseInt(updatedUser.BU_ROLE_ID) === 1;
+    let roleName = updatedUser.primary_business_role || (isAdminUser ? 'Administrator' : 'Staff');
 
     let permissions = [];
-    if (isAdmin) {
+    if (isAdminUser) {
       permissions = Object.values(PERMISSIONS).flatMap(g => typeof g === 'object' ? Object.values(g) : []);
     } else {
       const roleKey = updatedUser.BU_ROLE_ID?.toString();
@@ -319,7 +337,7 @@ export const login = asyncHandler(async (req, res) => {
     // Check if password change is required (forced flag, or expired)
     let requiresPasswordChange = false;
     let tempToken = null;
-    if (!isAdmin) {
+    if (!isAdminUser) {
       const isExpired = updatedUser.password_expiry_date && new Date() > new Date(updatedUser.password_expiry_date);
       requiresPasswordChange = updatedUser.force_password_change || isExpired;
       console.log('🔍 DEBUG requiresPasswordChange:', requiresPasswordChange);
@@ -368,7 +386,7 @@ export const login = asyncHandler(async (req, res) => {
         role: roleName,
         roleId: updatedUser.BU_ROLE_ID,
         BU_ROLE_ID: updatedUser.BU_ROLE_ID,
-        isAdmin: isAdmin,
+        isAdmin: isAdminUser,
         businessUnit: updatedUser.main_business_unit || 'Wethral',
         accessibleBusinessUnits: [updatedUser.main_business_unit || 'Wethral'],
         iat: Math.floor(Date.now() / 1000)
@@ -378,7 +396,7 @@ export const login = asyncHandler(async (req, res) => {
     );
 
     let redirectTo = '/business-role';
-    if (!isAdmin && requiresPasswordChange) redirectTo = '/change-password';
+    if (!isAdminUser && requiresPasswordChange) redirectTo = '/change-password';
 
     const response = {
       success: true,
@@ -392,7 +410,7 @@ export const login = asyncHandler(async (req, res) => {
         BU_ROLE_ID: updatedUser.BU_ROLE_ID,
         primary_business_role: updatedUser.primary_business_role || roleName,
         businessUnit: updatedUser.main_business_unit || 'Wethral',
-        isAdmin: isAdmin,
+        isAdmin: isAdminUser,
         is_first_login: updatedUser.is_first_login,
         force_password_change: updatedUser.force_password_change,
         requiresPasswordChange: requiresPasswordChange,
@@ -401,7 +419,7 @@ export const login = asyncHandler(async (req, res) => {
         tokenIssuedAt: new Date().toISOString(),
         tokenExpiresAt: new Date(Date.now() + 7*24*60*60*1000).toISOString()
       },
-      license: licenseCheck.license,
+      license: null, // License info removed for admin
       redirectTo: redirectTo,
       message: 'Login successful'
     };

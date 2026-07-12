@@ -18,6 +18,13 @@ export const STANDING_ORDER_STATUS = {
 };
 
 class StandingOrderExecution extends Model {
+  static associate(models) {
+    this.belongsTo(models.StandingOrder, {
+      foreignKey: 'standingOrderId',
+      as: 'standingOrder'
+    });
+  }
+
   static async findByStandingOrderId(standingOrderId, options = {}) {
     return await this.findAll({
       where: { standingOrderId },
@@ -103,20 +110,19 @@ StandingOrderExecution.init(
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true,
-      field: 'id',
-      comment: 'Auto-increment primary key'
+      autoIncrement: true
     },
     standingOrderId: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      field: 'standingOrderId',   // exact column name from DESCRIBE
+      field: 'standing_order_id',
+      references: { model: 'standing_orders', key: 'id' },
       comment: 'Reference to standing order'
     },
     executionDate: {
       type: DataTypes.DATE,
       allowNull: false,
-      field: 'executionDate',     // exact column name
+      field: 'execution_date',
       comment: 'Scheduled execution date'
     },
     amount: {
@@ -148,7 +154,7 @@ StandingOrderExecution.init(
     failureReason: {
       type: DataTypes.STRING(500),
       allowNull: true,
-      field: 'failureReason',     // exact column name (camelCase)
+      field: 'failure_reason',
       comment: 'Reason for failure'
     },
     standingOrderStatusAtExecution: {
@@ -160,23 +166,29 @@ StandingOrderExecution.init(
         STANDING_ORDER_STATUS.EXPIRED
       ),
       allowNull: false,
-      field: 'standingOrderStatusAtExecution', // exact column name
+      field: 'standing_order_status_at_execution',
       comment: 'Standing order status at execution time'
     },
     executionNotes: {
       type: DataTypes.STRING(500),
       allowNull: true,
-      field: 'executionNotes',    // exact column name
+      field: 'execution_notes',
       comment: 'Execution notes'
+    },
+    processedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'processed_at',
+      comment: 'Timestamp when execution was processed'
     },
     createdAt: {
       type: DataTypes.DATE,
-      field: 'CREATED_AT',        // uppercase as in your table
+      field: 'created_at',
       defaultValue: DataTypes.NOW
     },
     updatedAt: {
       type: DataTypes.DATE,
-      field: 'UPDATED_AT',        // uppercase as in your table
+      field: 'updated_at',
       defaultValue: DataTypes.NOW
     }
   },
@@ -185,14 +197,15 @@ StandingOrderExecution.init(
     modelName: 'StandingOrderExecution',
     tableName: 'standing_order_executions',
     timestamps: true,
-    createdAt: 'createdAt',   // maps to CREATED_AT via field
-    updatedAt: 'updatedAt',   // maps to UPDATED_AT via field
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
     underscored: false,
     indexes: [
-      { name: 'idx_standing_order_id', fields: ['standingOrderId'] },
-      { name: 'idx_execution_date', fields: ['executionDate'] },
+      { name: 'idx_standing_order_id', fields: ['standing_order_id'] },
+      { name: 'idx_execution_date', fields: ['execution_date'] },
       { name: 'idx_status', fields: ['status'] },
-      { name: 'idx_composite_order_execution', fields: ['standingOrderId', 'executionDate'] }
+      { name: 'idx_composite_order_execution', fields: ['standing_order_id', 'execution_date'] },
+      { name: 'idx_processed_at', fields: ['processed_at'] }
     ],
     hooks: {
       beforeValidate: (execution) => {
@@ -225,6 +238,13 @@ StandingOrderExecution.init(
           execution.failureReason = `Error fetching standing order: ${error.message}`;
           execution.standingOrderStatusAtExecution = STANDING_ORDER_STATUS.CANCELLED;
           logger.error(`Error in beforeCreate for execution ${execution.standingOrderId}:`, error);
+        }
+      },
+      beforeUpdate: async (execution) => {
+        // Set processed_at when status changes to SUCCESS, FAILED, or SKIPPED
+        if (execution.changed('status') && 
+            [EXECUTION_STATUS.SUCCESS, EXECUTION_STATUS.FAILED, EXECUTION_STATUS.SKIPPED].includes(execution.status)) {
+          execution.processedAt = new Date();
         }
       },
       afterCreate: (execution) => {

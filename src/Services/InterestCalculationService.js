@@ -1,11 +1,232 @@
-// src/services/InterestCalculationService.js - MYSQL VERSION
+// src/services/InterestCalculationService.js - COMPLETE VERSION
 import { Decimal } from 'decimal.js';
 import sequelize from '../../config/db.js';
 
 export default class InterestCalculationService {
   constructor() {
     console.log('InterestCalculationService initialized (MySQL)');
+    this.rateCache = new Map();
+    this.cacheTimeout = 300000; // 5 minutes
   }
+
+  // ============================================================
+  // RATE LOOKUP METHODS
+  // ============================================================
+
+  /**
+   * Get rate from database by code
+   */
+  async getRate(rateCode = 'FLAT', currency = 'NGN') {
+    try {
+      // Check cache first
+      const cacheKey = `${rateCode}_${currency}`;
+      const cached = this.rateCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+        console.log(`✅ Using cached rate: ${rateCode}`);
+        return cached.data;
+      }
+
+      console.log(`🔍 Looking for rate: ${rateCode} in ${currency}`);
+
+      // Try to find by INDEX_CD first
+      const [rates] = await sequelize.query(
+        `SELECT * FROM rate_index 
+         WHERE INDEX_CD = ? 
+         AND CRNCY_ID = ? 
+         AND STATUS = 'ACTIVE' 
+         AND IS_ACTIVE = 1 
+         LIMIT 1`,
+        { replacements: [rateCode.toUpperCase(), currency.toUpperCase()] }
+      );
+
+      let rate = rates && rates.length > 0 ? rates[0] : null;
+
+      // If not found by code, try to find the default rate
+      if (!rate) {
+        console.log(`⚠️ Rate ${rateCode} not found, looking for default rate...`);
+        const [defaultRates] = await sequelize.query(
+          `SELECT * FROM rate_index 
+           WHERE IS_DEFAULT = 1 
+           AND STATUS = 'ACTIVE' 
+           AND IS_ACTIVE = 1 
+           LIMIT 1`
+        );
+        rate = defaultRates && defaultRates.length > 0 ? defaultRates[0] : null;
+      }
+
+      // If still not found, create a default rate
+      if (!rate) {
+        console.warn(`⚠️ No rate found, creating default rate...`);
+        rate = await this.createDefaultRate(currency);
+      }
+
+      // Cache the result
+      this.rateCache.set(cacheKey, {
+        data: rate,
+        timestamp: Date.now()
+      });
+
+      return rate;
+
+    } catch (error) {
+      console.error('Error getting rate:', error);
+      return this.getFallbackRate();
+    }
+  }
+
+  /**
+   * Create default rate if none exists
+   */
+  async createDefaultRate(currency = 'NGN') {
+    try {
+      // Check if FLAT rate already exists
+      const [existing] = await sequelize.query(
+        `SELECT * FROM rate_index WHERE INDEX_CD = 'FLAT' AND CRNCY_ID = ?`,
+        { replacements: [currency.toUpperCase()] }
+      );
+
+      if (existing && existing.length > 0) {
+        return existing[0];
+      }
+
+      // Get max INDEX_RATE_ID
+      const [maxId] = await sequelize.query(
+        `SELECT MAX(INDEX_RATE_ID) as max_id FROM rate_index`
+      );
+      const nextId = (maxId[0]?.max_id || 0) + 1;
+
+      // Insert default rate
+      await sequelize.query(
+        `INSERT INTO rate_index (
+          INDEX_RATE_ID, INDEX_CD, INDEX_NM, INDEX_RATE, RATE_PRECISION,
+          RATE_TYPE, CRNCY_ID, EFFECTIVE_DT, DAY_COUNT_CONVENTION,
+          IS_DEFAULT, STATUS, IS_ACTIVE, DESCRIPTION, SOURCE, VERSION,
+          CREATED_BY, UPDATED_BY, CREATED_AT, UPDATED_AT
+        ) VALUES (?, 'FLAT', 'Default Flat Rate', 5.0000, 4, 'FIXED', ?, 
+          NOW(), 'ACTUAL/365', 1, 'ACTIVE', 1, 'Default flat interest rate', 
+          'SYSTEM', '1.0', 'SYSTEM', 'SYSTEM', NOW(), NOW())`,
+        { replacements: [nextId, currency.toUpperCase()] }
+      );
+
+      // Get the created rate
+      const [newRate] = await sequelize.query(
+        `SELECT * FROM rate_index WHERE INDEX_RATE_ID = ?`,
+        { replacements: [nextId] }
+      );
+
+      console.log(`✅ Created default rate: FLAT (${currency}) with ID: ${nextId}`);
+      return newRate[0];
+
+    } catch (error) {
+      console.error('Error creating default rate:', error);
+      return this.getFallbackRate();
+    }
+  }
+
+  /**
+   * Fallback rate (hardcoded)
+   */
+  getFallbackRate() {
+    return {
+      INDEX_RATE: 5.0,
+      RATE_PRECISION: 4,
+      INDEX_CD: 'FLAT',
+      INDEX_NM: 'Fallback Flat Rate',
+      DAY_COUNT_CONVENTION: 'ACTUAL/365',
+      RATE_TYPE: 'FIXED',
+      CRNCY_ID: 'NGN',
+      IS_DEFAULT: true,
+      INDEX_RATE_ID: 1
+    };
+  }
+
+  /**
+   * Get rate and calculate interest in one call
+   */
+  async getRateAndCalculateInterest(principal, term, termType = 'MONTHS', rateCode = 'FLAT', currency = 'NGN') {
+    try {
+      const rate = await this.getRate(rateCode, currency);
+      const ratePercent = rate.INDEX_RATE;
+      
+      const interestResult = this.calculateInterestAndEMIEnhanced(
+        principal,
+        { 
+          ABSOLUTE_RATE: ratePercent,
+          RATE_TYPE: rate.RATE_TYPE || 'FIXED',
+          INTEREST_TYPE: rate.RATE_TYPE === 'FIXED' ? 'SIMPLE' : 'COMPOUND'
+        },
+        term,
+        termType === 'MONTHS' ? 'M' : termType,
+        'MONTHLY',
+        new Date().toISOString().split('T')[0]
+      );
+      
+      return {
+        success: true,
+        rate,
+        interestAmount: interestResult.totalInterest,
+        emi: interestResult.emi,
+        principal: parseFloat(principal),
+        term,
+        termType,
+        totalAmount: parseFloat(principal) + interestResult.totalInterest,
+        installments: interestResult.installments
+      };
+    } catch (error) {
+      console.error('Error in getRateAndCalculateInterest:', error);
+      // Use fallback rate
+      const fallbackRate = this.getFallbackRate();
+      
+      const interestResult = this.calculateInterestAndEMIEnhanced(
+        principal,
+        { ABSOLUTE_RATE: fallbackRate.INDEX_RATE, RATE_TYPE: 'FIXED', INTEREST_TYPE: 'SIMPLE' },
+        term,
+        termType === 'MONTHS' ? 'M' : termType,
+        'MONTHLY',
+        new Date().toISOString().split('T')[0]
+      );
+      
+      return {
+        success: true,
+        rate: fallbackRate,
+        interestAmount: interestResult.totalInterest,
+        emi: interestResult.emi,
+        principal: parseFloat(principal),
+        term,
+        termType,
+        totalAmount: parseFloat(principal) + interestResult.totalInterest,
+        isFallback: true,
+        installments: interestResult.installments
+      };
+    }
+  }
+
+  /**
+   * Get all active rates
+   */
+  async getAllActiveRates(currency = null) {
+    try {
+      let query = `SELECT * FROM rate_index WHERE STATUS = 'ACTIVE' AND IS_ACTIVE = 1`;
+      const replacements = [];
+      
+      if (currency) {
+        query += ` AND CRNCY_ID = ?`;
+        replacements.push(currency.toUpperCase());
+      }
+      
+      query += ` ORDER BY IS_DEFAULT DESC, INDEX_RATE_ID ASC`;
+      
+      const [rates] = await sequelize.query(query, { replacements });
+      return rates;
+    } catch (error) {
+      console.error('Error getting all active rates:', error);
+      return [];
+    }
+  }
+
+  // ============================================================
+  // UTILITY METHODS
+  // ============================================================
 
   /**
    * Convert value to MySQL-safe decimal
@@ -99,6 +320,10 @@ export default class InterestCalculationService {
     return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
   }
 
+  // ============================================================
+  // INTEREST CALCULATION METHODS
+  // ============================================================
+
   /**
    * Calculate FIXED RATE / SIMPLE INTEREST EMI
    * Used for flat rate loans where interest is calculated on original principal
@@ -161,7 +386,7 @@ export default class InterestCalculationService {
       emi: this.toMySQLDecimal(emi),
       totalInterest: this.toMySQLDecimal(totalInterest),
       totalRepayable: this.toMySQLDecimal(totalRepayable),
-      totalPayment: this.toMySQLDecimal(totalRepayable), // Added for compatibility
+      totalPayment: this.toMySQLDecimal(totalRepayable),
       installments,
       calculationMethod: 'FIXED_RATE_SIMPLE',
       interestType: 'SIMPLE',
@@ -238,7 +463,7 @@ export default class InterestCalculationService {
       emi: this.toMySQLDecimal(emi),
       totalInterest: this.toMySQLDecimal(totalInterest),
       totalRepayable: this.toMySQLDecimal(totalRepayable),
-      totalPayment: this.toMySQLDecimal(totalRepayable), // Added for compatibility
+      totalPayment: this.toMySQLDecimal(totalRepayable),
       installments,
       calculationMethod: 'REDUCING_BALANCE_COMPOUND',
       interestType: 'COMPOUND',
@@ -290,7 +515,6 @@ export default class InterestCalculationService {
 
   /**
    * ENHANCED EMI CALCULATION - Main entry point for loan application
-   * Aligns with applyForLoan function requirements
    */
   calculateInterestAndEMIEnhanced(principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate) {
     console.log('=== ENHANCED EMI CALCULATION STARTED (MySQL) ===');
@@ -300,7 +524,6 @@ export default class InterestCalculationService {
     // Extract rate - prefer ABSOLUTE_RATE, fallback to FIXED_RATE
     let ratePercent = loanInterestRate.ABSOLUTE_RATE || loanInterestRate.FIXED_RATE || loanInterestRate.DEFAULT_RATE_PER_MONTH || 0;
     
-    // Log the rate type to understand what we're dealing with
     console.log(`Rate Type: ${loanInterestRate.RATE_TYPE}, Interest Type: ${loanInterestRate.INTEREST_TYPE}`);
     console.log(`Extracted Rate: ${ratePercent}%`);
 
@@ -309,9 +532,6 @@ export default class InterestCalculationService {
     
     if (isFixedOrSimple) {
       console.log('Using FIXED RATE / SIMPLE INTEREST method');
-      
-      // For fixed rate loans, the rate is usually for the entire term
-      // Example: 74.4% for 6 months = total interest over the term
       return this.calculateFixedRateEMI(
         principalAmount, 
         ratePercent, 
@@ -319,11 +539,10 @@ export default class InterestCalculationService {
         termCode, 
         paymentFrequency, 
         startDate, 
-        true
+        true // Rate is for the entire term
       );
     } else {
       console.log('Using REDUCING BALANCE / COMPOUND method');
-      
       // For reducing balance, check if rate is monthly
       const isMonthlyRate = ratePercent < 20; // Rates < 20% are likely monthly
       if (isMonthlyRate) {
@@ -343,22 +562,15 @@ export default class InterestCalculationService {
   }
 
   /**
-   * Calculate EMI with chosen method - For applyForLoan compatibility
+   * Calculate EMI with chosen method
    */
   calculateEMIWithChosenMethod(principal, ratePercent, termValue, termCode, paymentFrequency, startDate, calculationMethod, isFixedTermRate = false) {
     console.log('=== CALCULATING EMI WITH CHOSEN METHOD (MySQL) ===');
     console.log(`Method: ${calculationMethod}, Rate: ${ratePercent}%`);
     console.log(`Is rate for term duration? ${isFixedTermRate}`);
     
-    // Force the calculation method based on user choice
     if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
       console.log('Using FLAT RATE (Simple Interest) calculation');
-      
-      // For flat rate loans, we need to know if the rate is for term or annual
-      if (isFixedTermRate || ratePercent > 50) {
-        console.log(`Rate ${ratePercent}% is for the entire ${termValue} ${termCode} term`);
-      }
-      
       return this.calculateFixedRateEMI(
         principal, 
         ratePercent, 
@@ -370,13 +582,6 @@ export default class InterestCalculationService {
       );
     } else if (calculationMethod === 'REDUCING_BALANCE' || calculationMethod === 'EMI') {
       console.log('Using REDUCING BALANCE (Compound Interest) calculation');
-      
-      // For reducing balance, assume rate is annual
-      // If rate seems too high for annual (> 50%), it might be for term
-      if (ratePercent > 50) {
-        console.warn(`⚠️ WARNING: Rate ${ratePercent}% seems high for annual rate in reducing balance method`);
-      }
-      
       return this.calculateReducingBalanceEMI(
         principal, 
         ratePercent, 
@@ -399,26 +604,22 @@ export default class InterestCalculationService {
   }
 
   /**
-   * Calculate total interest for loan
+   * Calculate total interest for loan (simplified)
    */
   calculateTotalInterest(principal, ratePercent, termValue, termCode, calculationMethod, isFixedTermRate = false) {
     const termMonths = this.convertTermToMonths(termValue, termCode);
     
     if (calculationMethod === 'FLAT_RATE' || calculationMethod === 'FIXED_RATE') {
       if (isFixedTermRate || ratePercent > 50) {
-        // Rate is for the entire term
         return principal * (ratePercent / 100);
       } else {
-        // Rate is annual
         const timeInYears = termMonths / 12;
         return principal * (ratePercent / 100) * timeInYears;
       }
     } else {
-      // For reducing balance, we need to calculate the full schedule
-      // For simplicity, use an approximation
       const annualRate = ratePercent / 100;
       const timeInYears = termMonths / 12;
-      return principal * annualRate * timeInYears * 0.6; // Approximation factor for reducing balance
+      return principal * annualRate * timeInYears * 0.6; // Approximation factor
     }
   }
 
@@ -468,6 +669,92 @@ export default class InterestCalculationService {
   calculatePenaltyInterest(principal, penaltyRate, overdueDays) {
     const dailyPenaltyRate = penaltyRate / 100 / 365;
     return principal * dailyPenaltyRate * overdueDays;
+  }
+
+  /**
+   * Validate interest rate configuration
+   */
+  validateInterestRateConfig(loanInterestRate) {
+    const errors = [];
+    
+    if (!loanInterestRate) {
+      errors.push('Interest rate configuration is required');
+    }
+    
+    if (loanInterestRate) {
+      if (!loanInterestRate.DEFAULT_RATE_PER_MONTH && 
+          !loanInterestRate.ABSOLUTE_RATE && 
+          !loanInterestRate.FIXED_RATE) {
+        errors.push('No valid rate found in interest rate configuration');
+      }
+      
+      if (loanInterestRate.DEFAULT_RATE_PER_MONTH && 
+          (isNaN(loanInterestRate.DEFAULT_RATE_PER_MONTH) || loanInterestRate.DEFAULT_RATE_PER_MONTH < 0)) {
+        errors.push('Invalid DEFAULT_RATE_PER_MONTH value');
+      }
+      
+      if (loanInterestRate.ABSOLUTE_RATE && 
+          (isNaN(loanInterestRate.ABSOLUTE_RATE) || loanInterestRate.ABSOLUTE_RATE < 0)) {
+        errors.push('Invalid ABSOLUTE_RATE value');
+      }
+      
+      if (loanInterestRate.FIXED_RATE && 
+          (isNaN(loanInterestRate.FIXED_RATE) || loanInterestRate.FIXED_RATE < 0)) {
+        errors.push('Invalid FIXED_RATE value');
+      }
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors: errors.length > 0 ? errors : null
+    };
+  }
+
+  // ============================================================
+  // DATABASE METHODS
+  // ============================================================
+
+  /**
+   * Create loan accounts table if it doesn't exist
+   */
+  async createLoanAccountsTableIfNotExists() {
+    try {
+      await sequelize.query(`
+        CREATE TABLE IF NOT EXISTS loan_accounts (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          account_number VARCHAR(50) UNIQUE NOT NULL,
+          customer_id VARCHAR(50) NOT NULL,
+          product_type VARCHAR(100),
+          principal_amount DECIMAL(15,2) NOT NULL,
+          interest_rate DECIMAL(10,4) NOT NULL,
+          interest_type ENUM('SIMPLE', 'COMPOUND') DEFAULT 'SIMPLE',
+          calculation_method VARCHAR(50),
+          term_value INT NOT NULL,
+          term_code VARCHAR(10) DEFAULT 'M',
+          payment_frequency VARCHAR(20) DEFAULT 'MONTHLY',
+          start_date DATE NOT NULL,
+          maturity_date DATE,
+          emi_amount DECIMAL(15,2),
+          total_interest DECIMAL(15,2),
+          total_repayable DECIMAL(15,2),
+          outstanding_balance DECIMAL(15,2),
+          status ENUM('ACTIVE', 'CLOSED', 'DEFAULTED', 'WRITTEN_OFF') DEFAULT 'ACTIVE',
+          created_by INT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_account_number (account_number),
+          INDEX idx_customer_id (customer_id),
+          INDEX idx_status (status),
+          INDEX idx_maturity_date (maturity_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      
+      console.log('✅ Loan accounts table ready');
+      return true;
+    } catch (error) {
+      console.error('Error creating loan accounts table:', error.message);
+      return false;
+    }
   }
 
   /**
@@ -558,49 +845,6 @@ export default class InterestCalculationService {
   }
 
   /**
-   * Create loan accounts table if it doesn't exist
-   */
-  async createLoanAccountsTableIfNotExists() {
-    try {
-      await sequelize.query(`
-        CREATE TABLE IF NOT EXISTS loan_accounts (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          account_number VARCHAR(50) UNIQUE NOT NULL,
-          customer_id VARCHAR(50) NOT NULL,
-          product_type VARCHAR(100),
-          principal_amount DECIMAL(15,2) NOT NULL,
-          interest_rate DECIMAL(10,4) NOT NULL,
-          interest_type ENUM('SIMPLE', 'COMPOUND') DEFAULT 'SIMPLE',
-          calculation_method VARCHAR(50),
-          term_value INT NOT NULL,
-          term_code VARCHAR(10) DEFAULT 'M',
-          payment_frequency VARCHAR(20) DEFAULT 'MONTHLY',
-          start_date DATE NOT NULL,
-          maturity_date DATE,
-          emi_amount DECIMAL(15,2),
-          total_interest DECIMAL(15,2),
-          total_repayable DECIMAL(15,2),
-          outstanding_balance DECIMAL(15,2),
-          status ENUM('ACTIVE', 'CLOSED', 'DEFAULTED', 'WRITTEN_OFF') DEFAULT 'ACTIVE',
-          created_by INT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          INDEX idx_account_number (account_number),
-          INDEX idx_customer_id (customer_id),
-          INDEX idx_status (status),
-          INDEX idx_maturity_date (maturity_date)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-      `);
-      
-      console.log('✅ Loan accounts table ready');
-      return true;
-    } catch (error) {
-      console.error('Error creating loan accounts table:', error.message);
-      return false;
-    }
-  }
-
-  /**
    * Save loan calculation to database
    */
   async saveLoanCalculation(loanData, emiResult) {
@@ -659,45 +903,6 @@ export default class InterestCalculationService {
   }
 
   /**
-   * Validate interest rate configuration
-   */
-  validateInterestRateConfig(loanInterestRate) {
-    const errors = [];
-    
-    if (!loanInterestRate) {
-      errors.push('Interest rate configuration is required');
-    }
-    
-    if (loanInterestRate) {
-      if (!loanInterestRate.DEFAULT_RATE_PER_MONTH && 
-          !loanInterestRate.ABSOLUTE_RATE && 
-          !loanInterestRate.FIXED_RATE) {
-        errors.push('No valid rate found in interest rate configuration');
-      }
-      
-      if (loanInterestRate.DEFAULT_RATE_PER_MONTH && 
-          (isNaN(loanInterestRate.DEFAULT_RATE_PER_MONTH) || loanInterestRate.DEFAULT_RATE_PER_MONTH < 0)) {
-        errors.push('Invalid DEFAULT_RATE_PER_MONTH value');
-      }
-      
-      if (loanInterestRate.ABSOLUTE_RATE && 
-          (isNaN(loanInterestRate.ABSOLUTE_RATE) || loanInterestRate.ABSOLUTE_RATE < 0)) {
-        errors.push('Invalid ABSOLUTE_RATE value');
-      }
-      
-      if (loanInterestRate.FIXED_RATE && 
-          (isNaN(loanInterestRate.FIXED_RATE) || loanInterestRate.FIXED_RATE < 0)) {
-        errors.push('Invalid FIXED_RATE value');
-      }
-    }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors.length > 0 ? errors : null
-    };
-  }
-
-  /**
    * Get loan calculations by customer
    */
   async getLoanCalculationsByCustomer(customerId) {
@@ -736,7 +941,25 @@ export default class InterestCalculationService {
   }
 }
 
-// Export standalone functions for backward compatibility
+// ============================================================
+// EXPORT STANDALONE FUNCTIONS FOR BACKWARD COMPATIBILITY
+// ============================================================
+
+export const getRate = async (rateCode = 'FLAT', currency = 'NGN') => {
+  const service = new InterestCalculationService();
+  return await service.getRate(rateCode, currency);
+};
+
+export const getRateAndCalculateInterest = async (principal, term, termType = 'MONTHS', rateCode = 'FLAT', currency = 'NGN') => {
+  const service = new InterestCalculationService();
+  return await service.getRateAndCalculateInterest(principal, term, termType, rateCode, currency);
+};
+
+export const getAllActiveRates = async (currency = null) => {
+  const service = new InterestCalculationService();
+  return await service.getAllActiveRates(currency);
+};
+
 export const calculateInterestAndEMIEnhanced = (principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate) => {
   const service = new InterestCalculationService();
   return service.calculateInterestAndEMIEnhanced(principalAmount, loanInterestRate, termValue, termCode, paymentFrequency, startDate);
@@ -762,7 +985,31 @@ export const calculateInterestByProductType = (productType, principal, ratePerce
   return service.calculateInterestByProductType(productType, principal, ratePercent, termValue, termCode, paymentFrequency, startDate);
 };
 
-// MySQL-specific exports
+export const calculateTotalInterest = (principal, ratePercent, termValue, termCode, calculationMethod, isFixedTermRate = false) => {
+  const service = new InterestCalculationService();
+  return service.calculateTotalInterest(principal, ratePercent, termValue, termCode, calculationMethod, isFixedTermRate);
+};
+
+export const calculateAPR = (principal, totalInterest, termMonths, fees = 0) => {
+  const service = new InterestCalculationService();
+  return service.calculateAPR(principal, totalInterest, termMonths, fees);
+};
+
+export const calculateDailyAccruedInterest = (principal, annualRate, days) => {
+  const service = new InterestCalculationService();
+  return service.calculateDailyAccruedInterest(principal, annualRate, days);
+};
+
+export const calculatePenaltyInterest = (principal, penaltyRate, overdueDays) => {
+  const service = new InterestCalculationService();
+  return service.calculatePenaltyInterest(principal, penaltyRate, overdueDays);
+};
+
+export const validateInterestRateConfig = (loanInterestRate) => {
+  const service = new InterestCalculationService();
+  return service.validateInterestRateConfig(loanInterestRate);
+};
+
 export const saveLoanCalculation = async (loanData, emiResult) => {
   const service = new InterestCalculationService();
   return await service.saveLoanCalculation(loanData, emiResult);

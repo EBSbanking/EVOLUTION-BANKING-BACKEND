@@ -1,11 +1,11 @@
 // controllers/DebitCardController.js
-import { processCardTransaction } from '../services/cardTransactionService.js';
+import { processCardTransaction } from '../Services/CardTransactionService.js';
 import DebitCard from '../models/DebitCard.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import Charge from '../models/Charge.js';
 import { generateCardNumber } from '../utils/cardGenerator.js';
 import crypto from 'crypto';
-import { logAuditTrail } from '../utils/auditLogger.js';
+import { logAuditTrail } from '../utils/AuditLogger.js';
 import sequelize from '../../config/db.js';
 import Transaction from '../models/Transaction.js';
 import { getModel } from '../models/index.js';

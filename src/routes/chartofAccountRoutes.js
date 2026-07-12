@@ -5,26 +5,49 @@ import { chartofAccountController } from '../controllers/chartofAccountControlle
 const router = express.Router();
 
 // ============================================
-// CRUD Routes
+// 🔥 NEW: Specific routes (must come before /:id)
 // ============================================
-router.post('/', chartofAccountController.createAccount);
-router.get('/', chartofAccountController.getAccounts);
+
+// Get the full hierarchical tree
+router.get('/tree', chartofAccountController.getTree);
+
+// Summary and analytics
 router.get('/summary/balance', chartofAccountController.getBalanceSummary);
 router.get('/summary/mapping', chartofAccountController.getMappingStatistics);
-router.get('/:id', chartofAccountController.getAccount);
-router.put('/:id', chartofAccountController.updateAccount);
-router.delete('/:id', chartofAccountController.deleteAccount);
+
+// Clone COA for new branch
+router.post('/clone-branch', chartofAccountController.cloneCOAForBranch);
 
 // ============================================
-// 🔥 NEW: Clone Routes
+// CRUD Routes (generic)
 // ============================================
-router.post('/clone-branch', chartofAccountController.cloneCOAForBranch);
+
+// Create account
+router.post('/', chartofAccountController.createAccount);
+
+// Get all accounts (flat list with pagination)
+router.get('/', chartofAccountController.getAccounts);
+
+// Get single account by ID (must come after specific routes)
+router.get('/:id', chartofAccountController.getAccount);
+
+// Update account
+router.put('/:id', chartofAccountController.updateAccount);
+
+// Delete account (soft delete)
+router.delete('/:id', chartofAccountController.deleteAccount);
 
 // ============================================
 // Special Operations
 // ============================================
+
+// Update balance
 router.post('/:id/balance', chartofAccountController.updateBalance);
+
+// Map to GL account
 router.post('/:id/map-gl', chartofAccountController.mapToGLAccount);
+
+// Bulk create accounts
 router.post('/bulk/create', chartofAccountController.bulkCreateAccounts);
 
 export default router;

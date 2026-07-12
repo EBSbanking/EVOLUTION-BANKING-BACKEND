@@ -1,10 +1,8 @@
-// models/Penalty.js
-import { DataTypes, Model } from 'sequelize';
+// src/models/LoanPenalty.js
+import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-class Penalty extends Model {}
-
-Penalty.init({
+const LoanPenalty = sequelize.define('LoanPenalty', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
@@ -13,198 +11,82 @@ Penalty.init({
   loan_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Reference to loan/overdue loan'
+    references: {
+      model: 'loan_accounts',
+      key: 'id'
+    }
+  },
+  loan_account_no: {
+    type: DataTypes.STRING(50),
+    allowNull: false
+  },
+  customer_id: {
+    type: DataTypes.STRING(255), // Match cust_id type in loan_accounts
+    allowNull: true
   },
   penalty_type: {
-    type: DataTypes.ENUM('LATE_PAYMENT', 'PROCESSING_FEE', 'ADMINISTRATIVE', 'LEGAL', 'OTHER'),
-    defaultValue: 'LATE_PAYMENT',
-    comment: 'Type of penalty'
+    type: DataTypes.ENUM('LATE_PAYMENT', 'DEFAULT', 'ADMINISTRATIVE', 'OTHER'),
+    defaultValue: 'LATE_PAYMENT'
   },
   amount: {
-    type: DataTypes.DECIMAL(15, 2),
+    type: DataTypes.DECIMAL(20, 2), // Match decimal precision
     allowNull: false,
-    validate: {
-      min: 0
-    },
-    comment: 'Penalty amount'
+    defaultValue: 0.00
   },
-  rate: {
-    type: DataTypes.DECIMAL(5, 3),
-    allowNull: true,
-    comment: 'Penalty rate (percentage)'
+  amount_paid: {
+    type: DataTypes.DECIMAL(20, 2),
+    defaultValue: 0.00
+  },
+  days_overdue: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
   },
   calculation_basis: {
-    type: DataTypes.ENUM('PRINCIPAL', 'OUTSTANDING', 'FIXED_AMOUNT', 'DAILY_RATE'),
-    defaultValue: 'OUTSTANDING',
-    comment: 'Basis for penalty calculation'
+    type: DataTypes.STRING(50),
+    defaultValue: 'DAILY_RATE'
   },
-  period_start: {
+  accrual_date: {
+    type: DataTypes.DATEONLY,
+    allowNull: false
+  },
+  due_date: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
+  payment_date: {
     type: DataTypes.DATE,
-    allowNull: false,
-    comment: 'Start date for penalty calculation'
+    allowNull: true
   },
-  period_end: {
-    type: DataTypes.DATE,
-    allowNull: true,
-    comment: 'End date for penalty calculation'
-  },
-  days_count: {
-    type: DataTypes.INTEGER,
-    defaultValue: 0,
-    comment: 'Number of days penalty applies'
+  status: {
+    type: DataTypes.ENUM('PENDING', 'PARTIALLY_PAID', 'PAID', 'WAIVED'),
+    defaultValue: 'PENDING'
   },
   description: {
     type: DataTypes.TEXT,
-    allowNull: true,
-    comment: 'Penalty description'
+    allowNull: true
   },
-  status: {
-    type: DataTypes.ENUM('ACTIVE', 'WAIVED', 'PAID', 'CANCELLED', 'PENDING'),
-    defaultValue: 'ACTIVE',
-    comment: 'Penalty status'
-  },
-  applied_by: {
+  penalty_rule_id: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    comment: 'User ID who applied the penalty'
+    references: {
+      model: 'penalty_rules',
+      key: 'id'
+    }
   },
-  applied_date: {
+  created_at: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    comment: 'Date penalty was applied'
+    defaultValue: DataTypes.NOW
   },
-  waived_by: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    comment: 'User ID who waived the penalty'
-  },
-  waived_date: {
+  updated_at: {
     type: DataTypes.DATE,
-    allowNull: true,
-    comment: 'Date penalty was waived'
-  },
-  waived_reason: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    comment: 'Reason for waiving penalty'
-  },
-  paid_date: {
-    type: DataTypes.DATE,
-    allowNull: true,
-    comment: 'Date penalty was paid'
-  },
-  reference_number: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    comment: 'Payment/reference number'
-  },
-  metadata: {
-    type: DataTypes.JSON,
-    defaultValue: {},
-    comment: 'Additional metadata'
+    defaultValue: DataTypes.NOW
   }
 }, {
-  sequelize,
-  modelName: 'Penalty',
-  tableName: 'penalties',
+  tableName: 'loan_penalties',
   timestamps: true,
-  indexes: [
-    {
-      name: 'idx_loan_id',
-      fields: ['loan_id']
-    },
-    {
-      name: 'idx_status',
-      fields: ['status']
-    },
-    {
-      name: 'idx_penalty_type',
-      fields: ['penalty_type']
-    },
-    {
-      name: 'idx_applied_date',
-      fields: ['applied_date']
-    },
-    {
-      name: 'idx_loan_status',
-      fields: ['loan_id', 'status']
-    },
-    {
-      name: 'idx_period_start',
-      fields: ['period_start']
-    },
-    {
-      name: 'idx_period_end',
-      fields: ['period_end']
-    }
-  ]
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  underscored: false
 });
 
-// Static methods
-Penalty.findByLoanId = async function(loanId, options = {}) {
-  const { status } = options;
-  
-  const where = { loan_id: loanId };
-  if (status) where.status = status;
-  
-  return await this.findAll({
-    where,
-    order: [['applied_date', 'DESC']]
-  });
-};
-
-Penalty.calculateLatePayment = async function(loanId, overdueDays, principalAmount, penaltyRate = 0.005) {
-  // Default: 0.5% per day
-  const penaltyAmount = principalAmount * penaltyRate * overdueDays;
-  
-  return await this.create({
-    loan_id: loanId,
-    penalty_type: 'LATE_PAYMENT',
-    amount: penaltyAmount,
-    rate: penaltyRate * 100, // Store as percentage
-    calculation_basis: 'DAILY_RATE',
-    period_start: new Date(),
-    days_count: overdueDays,
-    description: `Late payment penalty for ${overdueDays} days overdue`
-  });
-};
-
-Penalty.getTotalActiveByLoan = async function(loanId) {
-  const total = await this.sum('amount', {
-    where: { 
-      loan_id: loanId,
-      status: 'ACTIVE'
-    }
-  });
-  
-  return total || 0;
-};
-
-// Instance methods
-Penalty.prototype.waive = async function(userId, reason = null) {
-  this.status = 'WAIVED';
-  this.waived_by = userId;
-  this.waived_date = new Date();
-  this.waived_reason = reason;
-  
-  return await this.save();
-};
-
-Penalty.prototype.markAsPaid = async function(referenceNumber = null) {
-  this.status = 'PAID';
-  this.paid_date = new Date();
-  this.reference_number = referenceNumber;
-  
-  return await this.save();
-};
-
-Penalty.prototype.getCalculatedAmount = function() {
-  // For dynamic calculation if needed
-  if (this.calculation_basis === 'DAILY_RATE' && this.rate && this.days_count) {
-    const dailyRate = this.rate / 100 / 30; // Assuming monthly calculation
-    return this.amount; // Or recalculate: principal * dailyRate * days_count
-  }
-  return this.amount;
-};
-
-export default Penalty;
+export default LoanPenalty;

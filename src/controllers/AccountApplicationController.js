@@ -6,8 +6,9 @@ import Customer from '../models/Customer.js';
 import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import AuditTrail from '../models/AuditTrail.js';
 import SavingsProduct from '../models/SavingsProduct.js';
-import sequelize from '../../config/db.js';
 import smsService from '../utils/smsService.js';
+import SMS from '../models/SMS.js';
+import sequelize from '../../config/db.js';
 import { v2 as cloudinaryV2 } from 'cloudinary';
 import multer from 'multer';
 import { Op } from 'sequelize';
@@ -1050,6 +1051,14 @@ export const approveApplicationByCustomer = async (req, res) => {
       } catch (e) { console.warn('Deposit transaction not created:', e.message); }
     }
 
+    // ========== ✅ WORKFLOW UPDATE (fixed column) ==========
+    try {
+      await sequelize.query(
+        `UPDATE wf_work_items SET STATUS = 'COMPLETED', UPDATED_AT = NOW() WHERE ITEM_REF_NO = ? AND ITEM_TYPE = 'AccountApplication'`,
+        { replacements: [application.account_number], transaction }
+      );
+    } catch (e) { console.warn('Workflow update failed:', e.message); }
+
     // ========== NEW: Create audit trail for the opening deposit (credit transaction) ==========
     if (openingAmount > 0 && mainAccountId) {
       try {
@@ -1066,7 +1075,7 @@ export const approveApplicationByCustomer = async (req, res) => {
           },
           ip_address: req.ip || '127.0.0.1',
           entity_type: 'CustomerAccount',
-          entity_id: mainAccountId,        // the id of the newly created account record
+          entity_id: mainAccountId,
           status: 'SUCCESS',
           account_no: application.account_number,
           description: `Opening deposit of ₦${openingAmount} for account ${application.account_number}`,
@@ -1090,6 +1099,65 @@ export const approveApplicationByCustomer = async (req, res) => {
     } catch (e) { console.warn('Audit trail (approval) failed:', e.message); }
 
     await transaction.commit();
+
+    // ========== SEND SMS ALERT FOR INITIAL DEPOSIT ==========
+    const customerPhone = customer.PHONE_NO;
+    const customerFullName = `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim() || customer.CUST_NM;
+    const accountNumber = application.account_number;
+    const amount = openingAmount;
+    const newBalance = openingAmount;
+    const referenceNo = `APP-${application.id}-${Date.now()}`;
+
+    if (customerPhone && customerPhone.trim()) {
+      const formattedAmount = new Intl.NumberFormat('en-NG', {
+        style: 'currency',
+        currency: 'NGN',
+      }).format(amount);
+      const formattedBalance = new Intl.NumberFormat('en-NG', {
+        style: 'currency',
+        currency: 'NGN',
+      }).format(newBalance);
+
+      const messageContent = `${customerFullName}, your account ${accountNumber} has been opened with an initial deposit of ${formattedAmount}. New balance: ${formattedBalance}. Ref: ${referenceNo}. Thank you for banking with us.`;
+
+      try {
+        await SMS.create({
+          EXTERNAL_SMS_ID: `SMS_${Date.now()}_${Math.random()}`,
+          RECIPIENT_PHONE_NUMBER: customerPhone,
+          REC_ST: 'A',
+          USER_ID: approvedBy || userId,
+          MESSAGE_CONTENT: messageContent,
+          CREATE_DT: new Date(),
+          CREATED_BY: approvedBy || userId,
+          ACCT_BALANCE: newBalance,
+          DISP_AVAIL_BAL: newBalance,
+          TXN_AMT: amount,
+          ACCT_NO: accountNumber,
+          DR_CR_IND: 'C',
+          TXN_DATE: new Date(),
+          DEPOSITOR_PAYEE_NM: customerFullName,
+        });
+        console.log(`✅ SMS record created for account opening: ${accountNumber}`);
+
+        setImmediate(async () => {
+          try {
+            const result = await smsService.sendSMS(customerPhone, messageContent);
+            if (!result.success) {
+              console.error(`❌ SMS sending failed for ${customerPhone}:`, result.error);
+            } else {
+              console.log(`✅ SMS sent to ${customerPhone} for account opening`);
+            }
+          } catch (err) {
+            console.error(`❌ Error sending SMS to ${customerPhone}:`, err.message);
+          }
+        });
+      } catch (smsError) {
+        console.error(`❌ Failed to create SMS record for account ${accountNumber}:`, smsError.message);
+      }
+    } else {
+      console.warn(`⚠️ No phone number for customer ${normalizedCustomerId}, skipping SMS alert`);
+    }
+
     return res.json({
       success: true,
       message: 'Application approved and accounts created',
@@ -1176,10 +1244,10 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
       } catch (e) { console.warn('Deposit transaction not created:', e.message); }
     }
 
-    // Update workflow item
+    // ========== ✅ WORKFLOW UPDATE (fixed column) ==========
     try {
       await sequelize.query(
-        `UPDATE wf_work_items SET STATUS = 'COMPLETED', UPDATED_AT = NOW() WHERE ENTITY_REF = ? AND WORK_ITEM_TYPE = 'AccountApplication'`,
+        `UPDATE wf_work_items SET STATUS = 'COMPLETED', UPDATED_AT = NOW() WHERE ITEM_REF_NO = ? AND ITEM_TYPE = 'AccountApplication'`,
         { replacements: [application.account_number], transaction }
       );
     } catch (e) { console.warn('Workflow update failed:', e.message); }
@@ -1194,6 +1262,61 @@ export const approveApplicationAndCreateAccount = async (req, res) => {
     } catch (e) { console.warn('Audit trail failed:', e.message); }
 
     await transaction.commit();
+
+    // ========== SEND SMS ALERT FOR INITIAL DEPOSIT ==========
+    const customerPhone = customer.PHONE_NO;
+    const customerFullName = `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim() || customer.CUST_NM;
+    const accountNumber = application.account_number;
+    const amount = openingAmount;
+    const newBalance = openingAmount;
+    const referenceNo = `APP-${application.id}-${Date.now()}`;
+
+    if (customerPhone && customerPhone.trim()) {
+      const formattedAmount = new Intl.NumberFormat('en-NG', {
+        style: 'currency',
+        currency: 'NGN',
+      }).format(amount);
+      const formattedBalance = new Intl.NumberFormat('en-NG', {
+        style: 'currency',
+        currency: 'NGN',
+      }).format(newBalance);
+
+      const messageContent = `${customerFullName}, your account ${accountNumber} has been opened with an initial deposit of ${formattedAmount}. New balance: ${formattedBalance}. Ref: ${referenceNo}. Thank you for banking with us.`;
+
+      try {
+        await SMS.create({
+          EXTERNAL_SMS_ID: `SMS_${Date.now()}_${Math.random()}`,
+          RECIPIENT_PHONE_NUMBER: customerPhone,
+          REC_ST: 'A',
+          USER_ID: approvedBy || userId,
+          MESSAGE_CONTENT: messageContent,
+          CREATE_DT: new Date(),
+          CREATED_BY: approvedBy || userId,
+          ACCT_BALANCE: newBalance,
+          DISP_AVAIL_BAL: newBalance,
+          TXN_AMT: amount,
+          ACCT_NO: accountNumber,
+          DR_CR_IND: 'C',
+          TXN_DATE: new Date(),
+          DEPOSITOR_PAYEE_NM: customerFullName,
+        });
+        console.log(`✅ SMS record created for account opening: ${accountNumber}`);
+
+        setImmediate(async () => {
+          try {
+            const result = await smsService.sendSMS(customerPhone, messageContent);
+            if (!result.success) console.error(`SMS failed: ${result.error}`);
+          } catch (err) {
+            console.error(`SMS error: ${err.message}`);
+          }
+        });
+      } catch (smsError) {
+        console.error(`Failed to create SMS record: ${smsError.message}`);
+      }
+    } else {
+      console.warn(`No phone number for customer ${normalizedCustomerId}, skipping SMS`);
+    }
+
     return res.json({
       success: true,
       message: 'Application approved and accounts created',

@@ -1,3 +1,4 @@
+// models/AuditTrail.js – Updated with proper timestamp handling
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 import moment from 'moment-timezone';
@@ -41,6 +42,16 @@ class AuditTrail extends Model {
       
       const existingColumns = results.map(row => row.COLUMN_NAME);
       let columnsAdded = 0;
+      
+      // ✅ Add timestamp if missing
+      if (!existingColumns.includes('timestamp')) {
+        await sequelize.query(`
+          ALTER TABLE \`${tableName}\` 
+          ADD COLUMN timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        `);
+        console.log(`✅ Added timestamp column to ${tableName}`);
+        columnsAdded++;
+      }
       
       // Add description if missing
       if (!existingColumns.includes('description')) {
@@ -87,7 +98,7 @@ class AuditTrail extends Model {
 
 AuditTrail.init(
   {
-    // ✅ ONLY ONE PRIMARY KEY: event_id (auto-increment)
+    // ✅ PRIMARY KEY: event_id (auto-increment)
     event_id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
@@ -97,7 +108,7 @@ AuditTrail.init(
     user_id: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      field: 'user_id',
+      field: 'USER_ID',
     },
     user_role: {
       type: DataTypes.STRING(50),
@@ -106,31 +117,33 @@ AuditTrail.init(
     event_type: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      field: 'event_type',
+      field: 'EVENT_TYPE',
     },
     action: {
       type: DataTypes.STRING(200),
       allowNull: false,
-      field: 'action',
+      field: 'ACTION',
     },
     old_value: {
       type: DataTypes.JSON,
-      field: 'old_value',
+      field: 'OLD_VALUE',
     },
     new_value: {
       type: DataTypes.JSON,
       allowNull: true,
-      field: 'new_value',
+      field: 'NEW_VALUE',
     },
+    // ✅ entity_type is now nullable
     entity_type: {
       type: DataTypes.STRING(50),
-      allowNull: false,
-      field: 'entity_type',
+      allowNull: true,
+      field: 'ENTITY_TYPE',
     },
+    // ✅ entity_id is now nullable and STRING
     entity_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      field: 'entity_id',
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'ENTITY_ID',
     },
     description: {
       type: DataTypes.TEXT,
@@ -142,12 +155,12 @@ AuditTrail.init(
     },
     additional_info: {
       type: DataTypes.JSON,
-      field: 'additional_info',
+      field: 'ADDITIONAL_INFO',
     },
     ip_address: {
       type: DataTypes.STRING(45),
       allowNull: false,
-      field: 'ip_address',
+      field: 'IP_ADDRESS',
     },
     user_agent: {
       type: DataTypes.TEXT,
@@ -178,6 +191,7 @@ AuditTrail.init(
       type: DataTypes.STRING(10),
       field: 'method',
     },
+    // ✅ timestamp with default value
     timestamp: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
@@ -196,18 +210,25 @@ AuditTrail.init(
       defaultValue: DataTypes.NOW,
       field: 'updated_at',
     },
+    // ✅ branch column
+    branch: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 1,
+      field: 'branch',
+    },
   },
   {
     sequelize,
     modelName: 'AuditTrail',
-    tableName: 'audit_trail',           // matches your actual table name
-    timestamps: false,                  // we manage created_at/updated_at manually
+    tableName: 'audit_trail',
+    timestamps: false,
     underscored: false,
     hooks: {
       beforeCreate: async (audit, options) => {
-        // Set created_at/updated_at if not provided
         if (!audit.created_at) audit.created_at = new Date();
         if (!audit.updated_at) audit.updated_at = new Date();
+        if (!audit.timestamp) audit.timestamp = new Date();
       },
       beforeUpdate: async (audit, options) => {
         audit.updated_at = new Date();
@@ -216,7 +237,7 @@ AuditTrail.init(
   }
 );
 
-// ========== HELPER FUNCTIONS (unchanged) ==========
+// ========== HELPER FUNCTIONS ==========
 export const addAuditTrail = async (auditData, transaction = null) => {
   try {
     const {
@@ -240,51 +261,65 @@ export const addAuditTrail = async (auditData, transaction = null) => {
       METHOD,
       ADDITIONAL_INFO,
       timestamp = new Date(),
+      BRANCH = 1,
     } = auditData;
 
-    if (!EVENT_TYPE || !USER_ID || !ACTION || !ENTITY_ID || !ENTITY_TYPE) {
+    // ✅ Only require essential fields - ENTITY_ID and ENTITY_TYPE are now optional
+    if (!EVENT_TYPE || !USER_ID || !ACTION) {
       console.warn('Skipping audit trail: missing required fields', {
-        EVENT_TYPE, USER_ID, ACTION, ENTITY_ID, ENTITY_TYPE
+        EVENT_TYPE, USER_ID, ACTION
       });
       return null;
     }
 
     const now = new Date();
+    
+    // ✅ Build audit data with optional fields
+    const auditPayload = {
+      event_type: EVENT_TYPE,
+      user_id: USER_ID,
+      user_role: USER_ROLE || null,
+      action: ACTION,
+      new_value: NEW_VALUE || null,
+      old_value: OLD_VALUE || null,
+      ip_address: String(IP_ADDRESS || '127.0.0.1'),
+      user_agent: USER_AGENT || null,
+      status: STATUS || 'SUCCESS',
+      description: DESCRIPTION || null,
+      reference_no: REFERENCE_NO || null,
+      account_no: ACCOUNT_NO || null,
+      session_id: SESSION_ID || null,
+      request_id: REQUEST_ID || null,
+      endpoint: ENDPOINT || null,
+      method: METHOD || null,
+      additional_info: ADDITIONAL_INFO || null,
+      branch: BRANCH || 1,
+      timestamp: timestamp || now,
+      created_at: now,
+      updated_at: now,
+    };
+
+    // ✅ Only add ENTITY_ID and ENTITY_TYPE if they are provided
+    if (ENTITY_ID) {
+      auditPayload.entity_id = ENTITY_ID;
+    }
+    if (ENTITY_TYPE) {
+      auditPayload.entity_type = ENTITY_TYPE;
+    }
+
     const auditTrail = await AuditTrail.create(
-      {
-        event_type: EVENT_TYPE,
-        user_id: USER_ID,
-        user_role: USER_ROLE,
-        action: ACTION,
-        new_value: NEW_VALUE || null,
-        old_value: OLD_VALUE,
-        ip_address: String(IP_ADDRESS || '127.0.0.1'),
-        user_agent: USER_AGENT,
-        entity_id: ENTITY_ID,
-        entity_type: ENTITY_TYPE,
-        status: STATUS,
-        description: DESCRIPTION,
-        reference_no: REFERENCE_NO,
-        account_no: ACCOUNT_NO,
-        session_id: SESSION_ID,
-        request_id: REQUEST_ID,
-        endpoint: ENDPOINT,
-        method: METHOD,
-        additional_info: ADDITIONAL_INFO,
-        timestamp: timestamp,
-        created_at: now,
-        updated_at: now,
-      },
+      auditPayload,
       { transaction }
     );
 
     console.log('✅ Audit trail created:', {
       event_id: auditTrail.event_id,
       event_type: EVENT_TYPE,
-      entity_type: ENTITY_TYPE,
-      entity_id: ENTITY_ID,
+      entity_type: ENTITY_TYPE || 'N/A',
+      entity_id: ENTITY_ID || 'N/A',
+      timestamp: auditTrail.timestamp,
+      branch: auditTrail.branch,
       created_at: auditTrail.created_at,
-      updated_at: auditTrail.updated_at,
     });
 
     return auditTrail;
@@ -302,6 +337,7 @@ export const addAuditTrail = async (auditData, transaction = null) => {
   }
 };
 
+// Export drawer helper functions
 export const drawerAuditHelper = {
   drawerOpened: (userId, drawerId, drawerNo, openingCurrency, ipAddress, additionalData = {}) =>
     addAuditTrail({

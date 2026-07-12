@@ -2342,26 +2342,20 @@ export const approveCustomer = async (req, res) => {
       throw new Error('Models not initialized properly');
     }
     
-    // First, try to find the customer directly by CUST_ID (which is the most likely identifier)
-    console.log(`🔍 Searching for customer with CUST_ID: ${customerId}`);
-    
+    // Search for customer by CUST_ID, id, or CUST_NO
     let customer = await custModel.findOne({
       where: { CUST_ID: customerId },
       attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
     });
     
-    // If not found by CUST_ID, try by id
     if (!customer && !isNaN(parseInt(customerId))) {
-      console.log(`🔍 Searching for customer with id: ${customerId}`);
       customer = await custModel.findOne({
         where: { id: parseInt(customerId) },
         attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
       });
     }
     
-    // If still not found, try by CUST_NO
     if (!customer) {
-      console.log(`🔍 Searching for customer with CUST_NO: ${customerId}`);
       customer = await custModel.findOne({
         where: { CUST_NO: customerId },
         attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
@@ -2385,22 +2379,21 @@ export const approveCustomer = async (req, res) => {
       groupId: customer.groupId
     });
     
-    // Check if already approved
-    if (customer.REC_ST === 'APPROVED' || customer.status === 'Approved') {
+    // Check if already active or approved
+    if (customer.REC_ST === 'ACTIVE' || customer.status === 'Approved') {
       return res.status(400).json({
         success: false,
         message: 'Customer is already approved'
       });
     }
     
-    // Use a transaction to ensure data consistency
     const transaction = await db.transaction();
     
     try {
-      // Update customer status using raw query to avoid model issues
+      // ✅ Update: set REC_ST = 'ACTIVE', status = 'Approved'
       const [updateResult] = await db.query(
         `UPDATE customers 
-         SET REC_ST = 'APPROVED', 
+         SET REC_ST = 'ACTIVE', 
              status = 'Approved', 
              APPROVED_BY = ?, 
              APPROVED_DT = NOW(),
@@ -2418,11 +2411,10 @@ export const approveCustomer = async (req, res) => {
         throw new Error('No rows were updated');
       }
       
-      // Commit transaction
       await transaction.commit();
       console.log('✅ Transaction committed successfully');
       
-      // Fetch the updated customer to confirm
+      // Fetch the updated customer
       const [updatedRows] = await db.query(
         `SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, APPROVED_BY, APPROVED_DT, group_id as groupId 
          FROM customers 
@@ -2434,7 +2426,7 @@ export const approveCustomer = async (req, res) => {
       
       const updatedCustomer = updatedRows[0];
       
-      console.log('✅ Customer approved successfully. New status:', updatedCustomer.status);
+      console.log('✅ Customer approved successfully. REC_ST:', updatedCustomer.REC_ST, 'status:', updatedCustomer.status);
       
       res.json({
         success: true,
@@ -2453,7 +2445,6 @@ export const approveCustomer = async (req, res) => {
       });
       
     } catch (updateError) {
-      // Rollback transaction on error
       await transaction.rollback();
       console.error('❌ Update error, transaction rolled back:', updateError);
       throw updateError;
@@ -2492,63 +2483,115 @@ export const rejectCustomer = async (req, res) => {
     // Initialize models
     const { Customer: custModel, sequelize: db } = await initModels();
     
-    // Find customer by multiple possible fields
-    const customer = await custModel.findOne({
-      where: {
-        [Op.or]: [
-          { id: customerId },
-          { CUST_ID: customerId },
-          { CUST_NO: customerId }
-        ]
-      }
+    if (!custModel || !db) {
+      throw new Error('Models not initialized properly');
+    }
+    
+    // Search for customer by multiple identifiers
+    let customer = await custModel.findOne({
+      where: { CUST_ID: customerId }
     });
     
+    if (!customer && !isNaN(parseInt(customerId))) {
+      customer = await custModel.findOne({
+        where: { id: parseInt(customerId) }
+      });
+    }
+    
     if (!customer) {
-      console.log('❌ Customer not found with ID:', customerId);
+      customer = await custModel.findOne({
+        where: { CUST_NO: customerId }
+      });
+    }
+    
+    if (!customer) {
+      console.log('❌ Customer not found with any identifier:', customerId);
       return res.status(404).json({
         success: false,
         message: 'Customer not found'
       });
     }
     
-    // Use a transaction
+    console.log('✅ Customer found:', {
+      id: customer.id,
+      CUST_ID: customer.CUST_ID,
+      CUST_NO: customer.CUST_NO,
+      currentStatus: customer.status,
+      currentREC_ST: customer.REC_ST
+    });
+    
+    // Check if already rejected
+    if (customer.REC_ST === 'REJECTED' || customer.status === 'Rejected') {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer is already rejected'
+      });
+    }
+    
     const transaction = await db.transaction();
     
     try {
-      // Update customer status
-      await customer.update({
-        REC_ST: 'REJECTED',
-        status: 'Rejected',
-        REJECTED_BY: rejectedBy || 'system',
-        REJECTED_DT: new Date(),
-        REJECTION_REASON: rejectionReason || 'No reason provided'
-      }, { transaction });
+      // Update customer: set REC_ST to 'REJECTED', status to 'Rejected'
+      const [updateResult] = await db.query(
+        `UPDATE customers 
+         SET REC_ST = 'REJECTED', 
+             status = 'Rejected', 
+             REJECTED_BY = ?, 
+             REJECTED_DT = NOW(), 
+             REJECTION_REASON = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        {
+          replacements: [rejectedBy || 'system', rejectionReason || 'No reason provided', customer.id],
+          transaction
+        }
+      );
+      
+      if (updateResult.affectedRows === 0) {
+        throw new Error('No rows were updated');
+      }
       
       await transaction.commit();
       
       console.log('✅ Customer rejected successfully');
       
+      // Fetch updated customer
+      const [updatedRows] = await db.query(
+        `SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, REJECTED_BY, REJECTED_DT, REJECTION_REASON, group_id as groupId 
+         FROM customers 
+         WHERE id = ?`,
+        { replacements: [customer.id] }
+      );
+      
+      const updatedCustomer = updatedRows[0];
+      
       res.json({
         success: true,
-        message: 'Customer rejected successfully',
+        message: 'Customer rejected',
         customer: {
-          id: customer.id,
-          CUST_ID: customer.CUST_ID,
-          CUST_NO: customer.CUST_NO,
-          CUST_NM: customer.CUST_NM,
-          status: 'Rejected',
-          REC_ST: 'REJECTED',
-          groupId: customer.groupId
+          id: updatedCustomer.id,
+          CUST_ID: updatedCustomer.CUST_ID,
+          CUST_NO: updatedCustomer.CUST_NO,
+          CUST_NM: updatedCustomer.CUST_NM,
+          status: updatedCustomer.status,
+          REC_ST: updatedCustomer.REC_ST,
+          rejectedBy: updatedCustomer.REJECTED_BY,
+          rejectedAt: updatedCustomer.REJECTED_DT,
+          rejectionReason: updatedCustomer.REJECTION_REASON,
+          groupId: updatedCustomer.groupId
         }
       });
       
     } catch (updateError) {
       await transaction.rollback();
+      console.error('❌ Update error, transaction rolled back:', updateError);
       throw updateError;
     }
     
   } catch (error) {
     console.error('❌ Error rejecting customer:', error);
+    console.error('❌ Error stack:', error.stack);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to reject customer',

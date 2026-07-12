@@ -227,6 +227,12 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     field: 'PARENT_WORK_ITEM_ID',
     comment: 'Parent Work Item ID'
   },
+  ENTITY_REF: {
+  type: DataTypes.STRING(100),
+  allowNull: true,
+  field: 'ENTITY_REF',
+  comment: 'Entity Reference (e.g., account number)'
+},
   slaBreach: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

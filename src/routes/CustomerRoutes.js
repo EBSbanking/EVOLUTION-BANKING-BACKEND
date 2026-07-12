@@ -985,6 +985,46 @@ router.patch('/customers/:CUST_ID/deactivate', (req, res) => {
   deactivateCustomer(req, res);
 });
 
+// ============================================
+// CUSTOMER SUMMARY (for dashboard)
+// ============================================
+router.get('/summary', async (req, res) => {
+  try {
+    const userId = req.query.userId; // e.g., ?userId=PCO02
+
+    let whereClause = {};
+    if (userId) {
+      // Filter by the user who created the customer (or associated user)
+      whereClause = { CREATED_BY: userId };
+      // If your Customer model has a different field, adjust accordingly.
+      // For example, if you store USER_ID, use { USER_ID: userId }
+    }
+
+    const total = await Customer.count({ where: whereClause });
+    const active = await Customer.count({ where: { ...whereClause, STATUS: 'Active' } });
+    const pending = await Customer.count({ where: { ...whereClause, STATUS: 'Pending' } });
+
+    res.json({
+      success: true,
+      data: {
+        userId: userId || 'all',
+        count: total,
+        active,
+        pending,
+        summary: { total, active, pending }
+      }
+    });
+  } catch (error) {
+    console.error('Error in customer summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch customer summary',
+      error: error.message
+    });
+  }
+});
+
+
 // 🔥 FIXED: Use the imported generateCustomerNumber function
 // This endpoint generates a new customer number
 /**
@@ -1041,6 +1081,7 @@ console.log('🔍 Registered routes:');
 console.log('  - GET    /search                    (Search customers)');
 console.log('  - POST   /search/advanced            (Advanced search with pagination)');
 console.log('  - GET    /search/quick                (Quick search for autocomplete)');
+console.log('  - GET    /teller-summary             (Teller dashboard summary)');
 console.log('  - POST   /debug-file-structure');
 console.log('  - POST   /test-upload');
 console.log('  - POST   /batch-upload');
@@ -1053,6 +1094,7 @@ console.log('  - PUT    /customers/:CUST_ID');
 console.log('  - PUT    /approve/:customerId');
 console.log('  - PUT    /reject/:customerId');
 console.log('  - PATCH  /customers/:CUST_ID/deactivate');
+console.log('  - GET    /generate-customer-number    (Generate customer number)');
 console.log('  - GET    /generate-customer-number    (Generate customer number)');
 
 export default router;

@@ -1,7 +1,7 @@
-// src/controllers/AudiTrailController.js – CORRECTED VERSION (audit trail in getAllAuditTrails disabled)
+// src/controllers/AudiTrailController.js – FIXED (removed problematic auditLogger call)
 import AuditTrail from '../models/AuditTrail.js';
 import logger from '../utils/logger.js';
-import auditLogger from '../utils/AuditLogger.js';
+// import auditLogger from '../utils/AuditLogger.js'; // ❌ removed – causing warning
 import Branch from '../models/Branch.js';
 import { Op } from 'sequelize';
 
@@ -129,10 +129,9 @@ export const addAuditTrail = async (auditData, transaction = null) => {
       METHOD,
       ADDITIONAL_INFO,
       timestamp = new Date(),
-      BRANCH = 1,        // ✅ default branch
+      BRANCH = 1,
     } = auditData;
 
-    // Validate required fields – only EVENT_TYPE, USER_ID, ACTION, ENTITY_ID, ENTITY_TYPE are mandatory
     if (!EVENT_TYPE || !USER_ID || !ACTION || !ENTITY_ID || !ENTITY_TYPE) {
       console.warn('Skipping audit trail: missing required fields', {
         EVENT_TYPE, USER_ID, ACTION, ENTITY_ID, ENTITY_TYPE,
@@ -162,7 +161,7 @@ export const addAuditTrail = async (auditData, transaction = null) => {
         endpoint: ENDPOINT,
         method: METHOD,
         additional_info: ADDITIONAL_INFO,
-        branch: BRANCH,   // ✅ include branch
+        branch: BRANCH,
         timestamp: timestamp,
         created_at: now,
         updated_at: now,
@@ -179,7 +178,11 @@ export const addAuditTrail = async (auditData, transaction = null) => {
       updated_at: auditTrail.updated_at,
     });
 
-    // Fire‑and‑forget auditLogger (optional)
+    // ========== REMOVED problematic auditLogger call ==========
+    // The auditLogger.info(...).catch error was caused by using a non‑Promise logger with `.catch`.
+    // Since the Sequelize audit_trail already records everything, this external log is redundant.
+    // If you still need a separate log, replace it with a simple try/catch.
+    /*
     try {
       auditLogger.info('Audit Event', {
         entity_type: ENTITY_TYPE || 'general',
@@ -192,13 +195,11 @@ export const addAuditTrail = async (auditData, transaction = null) => {
         ip_address: IP_ADDRESS || '0.0.0.0',
         event_type: EVENT_TYPE,
         ...(ADDITIONAL_INFO || {}),
-      }, (err, result) => {
-        if (err) console.error('❌ auditLogger callback error:', err);
-        else console.log('✅ auditLogger callback result:', result);
       });
     } catch (logError) {
-      console.warn('⚠️ auditLogger failed, continuing anyway:', logError.message);
+      console.warn('⚠️ External auditLogger failed:', logError.message);
     }
+    */
 
     return auditTrail;
   } catch (error) {

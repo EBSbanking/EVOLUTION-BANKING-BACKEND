@@ -3,6 +3,7 @@ import {calculateAndPostDailyInterest}  from '../controllers/Deposit_Account_INT
 import { calculateTieredInterest } from '../controllers/DepositAccountInterest_TierController.js'; // Import tiered interest calculation
 import CustomerAccount from '../models/CustomerAccount.js'; // Import the CustomerAccount model
 
+
 // Run the task at midnight on the last day of every month
 cron.schedule('59 23 28-31 * *', async () => {
   const today = moment();
