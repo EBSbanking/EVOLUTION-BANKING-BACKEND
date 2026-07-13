@@ -1,3 +1,4 @@
+// admin-ui/src/pages/Server/ServerList.js
 import React from 'react';
 import {
   List,
@@ -6,6 +7,7 @@ import {
   FunctionField,
   useListContext,
   Pagination,
+  ShowButton,
 } from 'react-admin';
 import {
   Box,
@@ -35,10 +37,11 @@ const SystemStatusSummary = () => {
   const { data } = useListContext();
   if (!data || data.length === 0) return null;
 
-  const counts = { OK: 0, WARNING: 0, CRITICAL: 0, FAILED: 0 };
+  const counts = { OK: 0, WARNING: 0, CRITICAL: 0, FAILED: 0, UNKNOWN: 0 };
   data.forEach(server => {
     const h = server.health || 'UNKNOWN';
     if (counts.hasOwnProperty(h)) counts[h]++;
+    else counts.UNKNOWN++;
   });
 
   const total = data.length;
@@ -58,6 +61,16 @@ const SystemStatusSummary = () => {
               </Box>
             </Grid>
           ))}
+          {counts.UNKNOWN > 0 && (
+            <Grid item>
+              <Box display="flex" alignItems="center">
+                <Chip label="?" size="small" />
+                <Typography variant="body2" sx={{ ml: 0.5 }}>
+                  Unknown <strong>({counts.UNKNOWN})</strong>
+                </Typography>
+              </Box>
+            </Grid>
+          )}
           <Grid item>
             <Divider orientation="vertical" flexItem />
           </Grid>
@@ -101,14 +114,12 @@ export const ServerList = props => (
         <TextField source="name" label="Name" sortable />
         <TextField source="type" label="Type" />
 
-        {/* 🆕 Cluster: show "Standalone" if null */}
         <FunctionField
           label="Cluster"
           sortBy="cluster"
           render={record => record?.cluster || 'Standalone'}
         />
 
-        {/* 🆕 Machine: show "-" if null */}
         <FunctionField
           label="Machine"
           sortBy="machine"
@@ -120,9 +131,16 @@ export const ServerList = props => (
           sortBy="state"
           render={record => {
             const state = record?.state || 'UNKNOWN';
-            return <Chip label={state} color={state === 'RUNNING' ? 'success' : 'default'} size="small" />;
+            return (
+              <Chip 
+                label={state} 
+                color={state === 'RUNNING' ? 'success' : state === 'DEGRADED' ? 'warning' : 'default'} 
+                size="small" 
+              />
+            );
           }}
         />
+        
         <FunctionField
           label="Health"
           sortBy="health"
@@ -132,7 +150,9 @@ export const ServerList = props => (
             return <Chip label={health} color={color} icon={icon} size="small" variant="outlined" />;
           }}
         />
+        
         <TextField source="listenPort" label="Listen Port" />
+        <ShowButton />
       </Datagrid>
     </Box>
   </List>

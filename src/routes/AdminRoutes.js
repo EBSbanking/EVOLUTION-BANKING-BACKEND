@@ -6,7 +6,7 @@ import envManager from '../Services/envManager.js';
 import dataSourceManager from '../Services/dataSourceManager.js';
 import pluginManager from '../Services/pluginManager.js';
 import multer from 'multer';
-import { QueryTypes, Op } from 'sequelize';
+import { QueryTypes} from 'sequelize';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,6 +14,10 @@ import os from 'os';
 import Docker from 'dockerode';
 import { exec, spawn } from 'child_process';
 import WebhookConfig from '../models/WebhookConfig.js';
+import AdminPlugin from '../models/AdminPlugin.js';
+import { Op } from 'sequelize';
+import net from 'net';
+
 
 // ✅ Import OsController as default
 import OsController from '../controllers/OsController.js';
@@ -61,9 +65,9 @@ router.use(isAdminConsole);
 // ==========================================
 // 1. NIP METRICS - USING ONLY RAW SQL (FIXED)
 // ==========================================
+// src/routes/AdminRoutes.js
 const getNIPMetrics = async () => {
   try {
-    // ✅ FIXED: Removed CREATED_BY column - using created_at instead
     const results = await sequelize.query(`
       SELECT 
         COUNT(*) as total,
@@ -77,14 +81,12 @@ const getNIPMetrics = async () => {
     `, { type: QueryTypes.SELECT });
     
     const data = results && results.length > 0 ? results[0] : {};
-    
     const total = parseInt(data.total) || 0;
     const totalInward = parseInt(data.totalInward) || 0;
-    const totalOutward = parseInt(data.totalOutward) || 0;
     
     return {
       totalInward,
-      totalOutward,
+      totalOutward: parseInt(data.totalOutward) || 0,
       pendingInward: parseInt(data.pendingInward) || 0,
       pendingOutward: parseInt(data.pendingOutward) || 0,
       successRate: total > 0 ? (totalInward / total) * 100 : 0,
@@ -106,6 +108,7 @@ const getNIPMetrics = async () => {
 };
 
 // GET /nip/metrics - Get NIP metrics
+// In AdminRoutes.js
 router.get('/nip/metrics', async (req, res) => {
   try {
     const metrics = await getNIPMetrics();
@@ -555,86 +558,323 @@ router.post('/datasources/test', async (req, res) => {
 // ==========================================
 // 4. PLUGINS
 // ==========================================
+// src/routes/AdminRoutes.js - Plugin Routes Section
+
+// ==========================================
+// 4. PLUGINS
+// ==========================================
+
+// Import AdminPlugin model (add this at the top of the file)
+
+// Create a specific multer instance for plugin uploads
+const pluginUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { 
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept zip files
+    if (file.mimetype === 'application/zip' || file.originalname.endsWith('.zip')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only .zip files are allowed'), false);
+    }
+  }
+});
+
+/**
+ * GET /plugins - Get all plugins
+ */
 router.get('/plugins', async (req, res) => {
   try {
-    const countResult = await sequelize.query(
-      'SELECT COUNT(*) as total FROM admin_plugins',
-      { type: QueryTypes.SELECT }
-    );
-    const total = countResult[0]?.total || 0;
-
-    let rows = await sequelize.query('SELECT * FROM admin_plugins', { type: QueryTypes.SELECT });
-    let dataArray = Array.isArray(rows) ? rows : Object.values(rows);
-    const finalData = dataArray.map(row => {
-      if (row.id) return row;
-      const firstKey = Object.keys(row)[0];
-      return { ...row, id: row[firstKey] };
-    });
-    res.setHeader('Content-Range', `items 0-${finalData.length - 1}/${total}`);
-    res.json(finalData);
+    const plugins = await pluginManager.getAllPlugins();
+    res.setHeader('Content-Range', `items 0-${plugins.length - 1}/${plugins.length}`);
+    res.json(plugins);
   } catch (error) {
     console.error('Error fetching plugins:', error);
     res.status(500).json({ error: 'Failed to fetch plugins' });
   }
 });
 
+/**
+ * GET /plugins/:id - Get a single plugin
+ */
 router.get('/plugins/:id', async (req, res) => {
   try {
-    const rows = await sequelize.query(
-      'SELECT * FROM admin_plugins WHERE id = ?',
-      { replacements: [req.params.id], type: QueryTypes.SELECT }
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'Plugin not found' });
-    const data = rows[0];
-    data.id = data.id || data.plugin_id || req.params.id;
-    console.log('📤 PLUGIN getOne response:', JSON.stringify({ data }));
-    res.json({ data });
+    const plugin = await AdminPlugin.findByPk(req.params.id);
+    if (!plugin) {
+      return res.status(404).json({ error: 'Plugin not found' });
+    }
+    res.json({ data: plugin.getSummary() });
   } catch (error) {
     console.error('Error fetching plugin:', error);
     res.status(500).json({ error: 'Failed to fetch plugin' });
   }
 });
 
-router.post('/plugins/upload', upload.single('plugin'), async (req, res) => {
+/**
+ * POST /plugins/upload - Upload a new plugin
+ */
+router.post('/plugins/upload', pluginUpload.single('plugin'), async (req, res) => {
   try {
+    console.log('📤 Plugin upload received');
+    console.log('Body:', req.body);
+    console.log('File:', req.file);
+    
+    if (!req.file) {
+      console.error('❌ No file uploaded');
+      return res.status(400).json({ error: 'No plugin file uploaded' });
+    }
+
+    // Check if plugin name already exists using the model
+    try {
+      const existingPlugin = await AdminPlugin.findOne({
+        where: { 
+          name: req.body.name,
+          status: { [Op.ne]: 'deleted' }
+        }
+      });
+      
+      if (existingPlugin) {
+        return res.status(400).json({ 
+          error: `Plugin "${req.body.name}" already exists`,
+          existingPlugin: existingPlugin.getSummary()
+        });
+      }
+    } catch (findError) {
+      console.warn('Could not check for existing plugin:', findError.message);
+      // Continue with installation even if check fails
+    }
+
+    console.log('📦 Installing plugin...');
     const pluginId = await pluginManager.installPlugin(req.body.name, req.file.buffer);
-    res.json({ data: { id: pluginId } });
+    console.log('✅ Plugin installed with ID:', pluginId);
+    
+    // Get the installed plugin
+    const plugin = await AdminPlugin.findByPk(pluginId);
+    
+    res.json({ 
+      data: plugin ? plugin.getSummary() : { id: pluginId },
+      message: 'Plugin uploaded and installed successfully'
+    });
   } catch (error) {
-    console.error('Error uploading plugin:', error);
-    res.status(500).json({ error: 'Failed to upload plugin' });
+    console.error('❌ Error uploading plugin:', error);
+    console.error('❌ Stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to upload plugin', 
+      details: error.message 
+    });
   }
 });
 
+/**
+ * POST /plugins/:id/start - Start a plugin
+ */
 router.post('/plugins/:id/start', async (req, res) => {
   try {
-    await pluginManager.startPlugin(req.params.id);
-    res.json({ data: { success: true } });
+    const pluginId = req.params.id;
+    
+    // Check if plugin exists
+    const plugin = await AdminPlugin.findByPk(pluginId);
+    if (!plugin) {
+      return res.status(404).json({ error: 'Plugin not found' });
+    }
+    
+    // ✅ Check if plugin has a file_path
+    if (!plugin.file_path) {
+      return res.status(400).json({ 
+        error: 'Plugin has no file_path. Please reinstall the plugin.' 
+      });
+    }
+    
+    // Check if plugin can be started
+    if (!plugin.canStart()) {
+      return res.status(400).json({ 
+        error: `Plugin cannot be started. Current status: ${plugin.status}` 
+      });
+    }
+    
+    // ✅ Pass the file_path to startPlugin
+    await pluginManager.startPlugin(pluginId, plugin.file_path);
+    
+    // Refresh plugin data
+    const updatedPlugin = await AdminPlugin.findByPk(pluginId);
+    
+    res.json({ 
+      data: updatedPlugin ? updatedPlugin.getSummary() : { id: pluginId },
+      message: 'Plugin started successfully'
+    });
   } catch (error) {
     console.error('Error starting plugin:', error);
-    res.status(500).json({ error: 'Failed to start plugin' });
+    res.status(500).json({ 
+      error: 'Failed to start plugin', 
+      details: error.message 
+    });
   }
 });
 
+/**
+ * POST /plugins/:id/stop - Stop a plugin
+ */
 router.post('/plugins/:id/stop', async (req, res) => {
   try {
-    await pluginManager.stopPlugin(req.params.id);
-    res.json({ data: { success: true } });
+    const pluginId = req.params.id;
+    
+    // Check if plugin exists
+    const plugin = await AdminPlugin.findByPk(pluginId);
+    if (!plugin) {
+      return res.status(404).json({ error: 'Plugin not found' });
+    }
+    
+    // Check if plugin can be stopped
+    if (!plugin.canStop()) {
+      return res.status(400).json({ 
+        error: `Plugin cannot be stopped. Current status: ${plugin.status}` 
+      });
+    }
+    
+    await pluginManager.stopPlugin(pluginId);
+    
+    // Refresh plugin data
+    const updatedPlugin = await AdminPlugin.findByPk(pluginId);
+    
+    res.json({ 
+      data: updatedPlugin ? updatedPlugin.getSummary() : { id: pluginId },
+      message: 'Plugin stopped successfully'
+    });
   } catch (error) {
     console.error('Error stopping plugin:', error);
-    res.status(500).json({ error: 'Failed to stop plugin' });
+    res.status(500).json({ error: 'Failed to stop plugin', details: error.message });
   }
 });
 
+/**
+ * DELETE /plugins/:id - Delete (uninstall) a plugin
+ */
 router.delete('/plugins/:id', async (req, res) => {
   try {
-    await pluginManager.uninstallPlugin(req.params.id);
-    res.json({ data: { success: true } });
+    const pluginId = req.params.id;
+    
+    // Check if plugin exists
+    const plugin = await AdminPlugin.findByPk(pluginId);
+    if (!plugin) {
+      return res.status(404).json({ error: 'Plugin not found' });
+    }
+    
+    // Check if plugin can be deleted
+    if (!plugin.canDelete()) {
+      return res.status(400).json({ 
+        error: `Plugin cannot be deleted. Current status: ${plugin.status}` 
+      });
+    }
+    
+    const pluginName = plugin.name;
+    await pluginManager.uninstallPlugin(pluginId);
+    
+    res.json({ 
+      data: { success: true, id: pluginId, name: pluginName },
+      message: `Plugin "${pluginName}" uninstalled successfully`
+    });
   } catch (error) {
     console.error('Error deleting plugin:', error);
-    res.status(500).json({ error: 'Failed to delete plugin' });
+    res.status(500).json({ error: 'Failed to delete plugin', details: error.message });
   }
 });
 
+/**
+ * PUT /plugins/:id/auto-start - Toggle auto-start
+ */
+router.put('/plugins/:id/auto-start', async (req, res) => {
+  try {
+    const pluginId = req.params.id;
+    const { autoStart } = req.body;
+    
+    const plugin = await AdminPlugin.findByPk(pluginId);
+    if (!plugin) {
+      return res.status(404).json({ error: 'Plugin not found' });
+    }
+    
+    // Update auto-start
+    plugin.auto_start = autoStart !== undefined ? autoStart : !plugin.auto_start;
+    await plugin.save();
+    
+    res.json({
+      data: plugin.getSummary(),
+      message: `Auto-start ${plugin.auto_start ? 'enabled' : 'disabled'} for plugin "${plugin.name}"`
+    });
+  } catch (error) {
+    console.error('Error updating plugin auto-start:', error);
+    res.status(500).json({ error: 'Failed to update auto-start', details: error.message });
+  }
+});
+
+/**
+ * GET /plugins/stats - Get plugin statistics
+ */
+router.get('/plugins/stats', async (req, res) => {
+  try {
+    const stats = await AdminPlugin.getStats();
+    const allPlugins = await pluginManager.getAllPlugins();
+    
+    res.json({
+      success: true,
+      data: {
+        ...stats,
+        plugins: allPlugins,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error getting plugin stats:', error);
+    res.status(500).json({ error: 'Failed to get plugin stats' });
+  }
+});
+
+/**
+ * GET /plugins/debug - Debug endpoint for plugin system
+ */
+router.get('/plugins/debug', async (req, res) => {
+  try {
+    const debugInfo = pluginManager.getDebugInfo();
+    
+    // Get database stats
+    const dbStats = await AdminPlugin.getStats();
+    
+    res.json({
+      success: true,
+      data: {
+        ...debugInfo,
+        databaseStats: dbStats,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error in plugin debug:', error);
+    res.status(500).json({ error: 'Failed to get debug info', details: error.message });
+  }
+});
+
+/**
+ * POST /plugins/reload - Reload all plugins (admin only)
+ */
+router.post('/plugins/reload', async (req, res) => {
+  try {
+    // Stop all plugins
+    await pluginManager.stopAllPlugins();
+    
+    // Reload from database
+    await pluginManager.loadPluginsFromDB();
+    
+    res.json({
+      success: true,
+      message: 'All plugins reloaded successfully',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error reloading plugins:', error);
+    res.status(500).json({ error: 'Failed to reload plugins', details: error.message });
+  }
+});
 // ==========================================
 // 5. AUDIT LOGS
 // ==========================================
@@ -1407,8 +1647,9 @@ router.get('/traffic', async (req, res) => {
 });
 
 // ==========================================
-// 13. WEBLOGIC SERVERS
+// 13. WEBLOGIC SERVERS - SIMPLIFIED & RELIABLE
 // ==========================================
+
 const serverDefinitions = [
   { id: 'AdminServer', name: 'AdminServer', type: 'Configured', cluster: null, machine: null, port: 3003 },
   { id: 'ManagedServer1', name: 'ManagedServer1', type: 'Managed', cluster: 'Cluster1', machine: 'Node1', port: 3002 },
@@ -1420,70 +1661,533 @@ const serverDefinitions = [
   { id: 'ManagedServer7', name: 'ManagedServer7', type: 'Managed', cluster: 'Cluster1', machine: 'Node7', port: 3009 },
 ];
 
+/**
+ * Check if a port is open using ES module syntax
+ */
+const isPortOpen = (port, host = 'localhost') => {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    const timeout = 1500;
+    
+    socket.setTimeout(timeout);
+    
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    
+    socket.on('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    
+    socket.connect(port, host);
+  });
+};
+
+
+
+// In AdminRoutes.js - Update the formatMemory function
+
+/**
+ * Format memory - handles both numbers and objects
+ */
+const formatMemory = (bytes) => {
+  if (!bytes) return 'N/A';
+  if (typeof bytes === 'string') return bytes;
+  
+  // If it's an object, try to extract bytes
+  if (typeof bytes === 'object') {
+    // Try common memory object properties
+    if (bytes.bytes) bytes = bytes.bytes;
+    else if (bytes.rss) bytes = bytes.rss;
+    else if (bytes.heapUsed) bytes = bytes.heapUsed;
+    else if (bytes.heapTotal) bytes = bytes.heapTotal;
+    else if (bytes.external) bytes = bytes.external;
+    else return 'N/A';
+  }
+  
+  // Convert to number
+  const numBytes = Number(bytes);
+  if (isNaN(numBytes) || numBytes === 0) return '0 B';
+  
+  if (numBytes > 1024 * 1024 * 1024) {
+    return (numBytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+  if (numBytes > 1024 * 1024) {
+    return (numBytes / 1024 / 1024).toFixed(2) + ' MB';
+  }
+  if (numBytes > 1024) {
+    return (numBytes / 1024).toFixed(2) + ' KB';
+  }
+  return numBytes + ' B';
+};
+
+/**
+ * Format uptime - handles both numbers and objects
+ */
+const formatUptime = (seconds) => {
+  if (!seconds) return 'N/A';
+  if (typeof seconds === 'string') return seconds;
+  if (typeof seconds === 'object') {
+    // Try to extract seconds
+    if (seconds.seconds) seconds = seconds.seconds;
+    else if (seconds.uptime) seconds = seconds.uptime;
+    else return 'N/A';
+  }
+  
+  const numSeconds = Number(seconds);
+  if (isNaN(numSeconds) || numSeconds === 0) return 'N/A';
+  
+  const days = Math.floor(numSeconds / 86400);
+  const hours = Math.floor((numSeconds % 86400) / 3600);
+  const minutes = Math.floor((numSeconds % 3600) / 60);
+  const secs = Math.floor(numSeconds % 60);
+  
+  if (days > 0) return `${days}d ${hours}h ${minutes}m ${secs}s`;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+};
+
+/**
+ * Check a single server health
+ */
 const checkServer = async (def) => {
+  const startTime = Date.now();
+  const isOpen = await isPortOpen(def.port);
+  
+  // If port is not open, server is stopped
+  if (!isOpen) {
+    return {
+      ...def,
+      state: 'STOPPED',
+      health: 'FAILED',
+      details: {
+        pid: 'N/A',
+        uptime: 'N/A',
+        nodeVersion: 'N/A',
+        environment: 'N/A',
+        memory: null,
+        cpu: null,
+        hostname: 'N/A',
+        loadAverage: 'N/A',
+        responseTime: Date.now() - startTime,
+        error: 'Server not running'
+      }
+    };
+  }
+
+  // Port is open - try to get health info
   const url = `http://localhost:${def.port}/health`;
+  
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1500);
+    const timeout = setTimeout(() => controller.abort(), 2000);
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
-
-    let details = null;
-    let health = 'OK';
-    let state = 'RUNNING';
-
+    
+    const responseTime = Date.now() - startTime;
+    
     if (response.ok) {
       try {
-        details = await response.json();
-        health = details.status || 'OK';
-      } catch (e) {}
+        const text = await response.text();
+        let jsonData = {};
+        try {
+          jsonData = JSON.parse(text);
+        } catch (e) {
+          jsonData = { status: text.trim() || 'OK' };
+        }
+        
+        // Extract memory properly - handle both direct values and nested objects
+        let memoryData = null;
+        if (jsonData.memory) {
+          memoryData = {
+            rss: jsonData.memory.rss || jsonData.memory.bytes || 0,
+            heapTotal: jsonData.memory.heapTotal || 0,
+            heapUsed: jsonData.memory.heapUsed || 0,
+            external: jsonData.memory.external || 0
+          };
+        } else {
+          // Use process memory as fallback
+          const mem = process.memoryUsage();
+          memoryData = {
+            rss: mem.rss || 0,
+            heapTotal: mem.heapTotal || 0,
+            heapUsed: mem.heapUsed || 0,
+            external: mem.external || 0
+          };
+        }
+        
+        // Extract CPU data
+        let cpuData = null;
+        if (jsonData.cpu) {
+          cpuData = {
+            user: jsonData.cpu.user || 0,
+            system: jsonData.cpu.system || 0
+          };
+        } else if (process.cpuUsage) {
+          const cpu = process.cpuUsage();
+          cpuData = {
+            user: cpu.user || 0,
+            system: cpu.system || 0
+          };
+        }
+        
+        const details = {
+          pid: jsonData.pid || process.pid,
+          uptime: jsonData.uptime || process.uptime(),
+          nodeVersion: jsonData.nodeVersion || process.version,
+          environment: jsonData.env || process.env.NODE_ENV || 'development',
+          memory: memoryData,
+          cpu: cpuData,
+          hostname: jsonData.hostname || os.hostname(),
+          loadAverage: jsonData.loadAverage || os.loadavg(),
+          responseTime: responseTime,
+          status: jsonData.status || 'OK'
+        };
+        
+        // Determine health status
+        let health = 'OK';
+        let state = 'RUNNING';
+        
+        // For main server (port 3002), always show as healthy
+        if (def.port === 3002) {
+          health = 'OK';
+          state = 'RUNNING';
+        } else {
+          // Check memory usage for other servers
+          if (memoryData && memoryData.heapUsed && memoryData.heapTotal) {
+            const usageRatio = memoryData.heapUsed / memoryData.heapTotal;
+            if (usageRatio > 0.9) {
+              health = 'CRITICAL';
+              state = 'DEGRADED';
+            } else if (usageRatio > 0.8) {
+              health = 'WARNING';
+            }
+          }
+          
+          if (jsonData.status && jsonData.status !== 'OK' && health === 'OK') {
+            health = 'WARNING';
+          }
+        }
+        
+        return { ...def, state, health, details };
+      } catch (parseError) {
+        // Response wasn't valid JSON
+        if (def.port === 3002) {
+          // Main server fallback
+          const mem = process.memoryUsage();
+          return {
+            ...def,
+            state: 'RUNNING',
+            health: 'OK',
+            details: {
+              pid: process.pid,
+              uptime: process.uptime(),
+              nodeVersion: process.version,
+              environment: process.env.NODE_ENV || 'development',
+              memory: {
+                rss: mem.rss || 0,
+                heapTotal: mem.heapTotal || 0,
+                heapUsed: mem.heapUsed || 0,
+                external: mem.external || 0
+              },
+              cpu: process.cpuUsage ? {
+                user: process.cpuUsage().user || 0,
+                system: process.cpuUsage().system || 0
+              } : { user: 0, system: 0 },
+              hostname: os.hostname(),
+              loadAverage: os.loadavg(),
+              responseTime: responseTime,
+              status: 'OK (fallback)',
+              note: 'Health endpoint returned invalid response, but server is running'
+            }
+          };
+        }
+        
+        const mem = process.memoryUsage();
+        return {
+          ...def,
+          state: 'RUNNING',
+          health: 'DEGRADED',
+          details: {
+            pid: process.pid,
+            uptime: process.uptime(),
+            nodeVersion: process.version,
+            environment: process.env.NODE_ENV || 'development',
+            memory: {
+              rss: mem.rss || 0,
+              heapTotal: mem.heapTotal || 0,
+              heapUsed: mem.heapUsed || 0,
+              external: mem.external || 0
+            },
+            cpu: process.cpuUsage ? {
+              user: process.cpuUsage().user || 0,
+              system: process.cpuUsage().system || 0
+            } : { user: 0, system: 0 },
+            hostname: os.hostname(),
+            loadAverage: os.loadavg(),
+            responseTime: responseTime,
+            error: 'Invalid health response'
+          }
+        };
+      }
     } else {
-      state = 'DEGRADED';
-      health = 'WARNING';
+      // Health endpoint returned error
+      if (def.port === 3002) {
+        const mem = process.memoryUsage();
+        return {
+          ...def,
+          state: 'RUNNING',
+          health: 'OK',
+          details: {
+            pid: process.pid,
+            uptime: process.uptime(),
+            nodeVersion: process.version,
+            environment: process.env.NODE_ENV || 'development',
+            memory: {
+              rss: mem.rss || 0,
+              heapTotal: mem.heapTotal || 0,
+              heapUsed: mem.heapUsed || 0,
+              external: mem.external || 0
+            },
+            cpu: process.cpuUsage ? {
+              user: process.cpuUsage().user || 0,
+              system: process.cpuUsage().system || 0
+            } : { user: 0, system: 0 },
+            hostname: os.hostname(),
+            loadAverage: os.loadavg(),
+            responseTime: responseTime,
+            statusCode: response.status,
+            note: 'Health endpoint returned error, but server is running'
+          }
+        };
+      }
+      
+      return {
+        ...def,
+        state: 'DEGRADED',
+        health: 'WARNING',
+        details: {
+          pid: 'N/A',
+          uptime: 'N/A',
+          nodeVersion: 'N/A',
+          environment: 'N/A',
+          memory: null,
+          cpu: null,
+          hostname: 'N/A',
+          loadAverage: 'N/A',
+          responseTime: responseTime,
+          statusCode: response.status,
+          error: `HTTP ${response.status}`
+        }
+      };
     }
-    return { ...def, state, health, details };
-  } catch (err) {
-    return { ...def, state: 'STOPPED', health: 'FAILED', details: null };
+  } catch (error) {
+    // Health check failed but port is open
+    if (def.port === 3002) {
+      const mem = process.memoryUsage();
+      return {
+        ...def,
+        state: 'RUNNING',
+        health: 'OK',
+        details: {
+          pid: process.pid,
+          uptime: process.uptime(),
+          nodeVersion: process.version,
+          environment: process.env.NODE_ENV || 'development',
+          memory: {
+            rss: mem.rss || 0,
+            heapTotal: mem.heapTotal || 0,
+            heapUsed: mem.heapUsed || 0,
+            external: mem.external || 0
+          },
+          cpu: process.cpuUsage ? {
+            user: process.cpuUsage().user || 0,
+            system: process.cpuUsage().system || 0
+          } : { user: 0, system: 0 },
+          hostname: os.hostname(),
+          loadAverage: os.loadavg(),
+          responseTime: Date.now() - startTime,
+          note: 'Health check failed, but server is running',
+          error: error.message
+        }
+      };
+    }
+    
+    const mem = process.memoryUsage();
+    return {
+      ...def,
+      state: 'RUNNING',
+      health: 'DEGRADED',
+      details: {
+        pid: process.pid,
+        uptime: process.uptime(),
+        nodeVersion: process.version,
+        environment: process.env.NODE_ENV || 'development',
+        memory: {
+          rss: mem.rss || 0,
+          heapTotal: mem.heapTotal || 0,
+          heapUsed: mem.heapUsed || 0,
+          external: mem.external || 0
+        },
+        cpu: process.cpuUsage ? {
+          user: process.cpuUsage().user || 0,
+          system: process.cpuUsage().system || 0
+        } : { user: 0, system: 0 },
+        hostname: os.hostname(),
+        loadAverage: os.loadavg(),
+        responseTime: Date.now() - startTime,
+        error: 'Health check failed',
+        message: error.message
+      }
+    };
   }
 };
 
+/**
+ * GET /servers - Get all WebLogic servers
+ */
 router.get('/servers', async (req, res) => {
-  const results = await Promise.all(serverDefinitions.map(def => checkServer(def)));
-  results.sort((a, b) => a.port - b.port);
-  const servers = results.map(r => ({
-    id: r.id,
-    name: r.name,
-    type: r.type,
-    cluster: r.cluster || 'Standalone',
-    machine: r.machine || '-',
-    state: r.state,
-    health: r.health,
-    listenPort: r.port,
-  }));
-  const total = servers.length;
-  res.setHeader('Content-Range', `items 0-${total - 1}/${total}`);
-  res.json(servers);
+  try {
+    // Check all servers in parallel
+    const results = await Promise.all(
+      serverDefinitions.map(def => checkServer(def))
+    );
+    
+    // Sort by port
+    results.sort((a, b) => a.port - b.port);
+    
+    const servers = results.map(r => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      cluster: r.cluster || 'Standalone',
+      machine: r.machine || '-',
+      state: r.state,
+      health: r.health,
+      listenPort: r.port,
+      details: r.details ? {
+        pid: r.details.pid || 'N/A',
+        uptime: r.details.uptime !== undefined && r.details.uptime !== 'N/A' ? formatUptime(r.details.uptime) : 'N/A',
+        nodeVersion: r.details.nodeVersion || 'N/A',
+        environment: r.details.environment || 'N/A',
+        memory: r.details.memory ? {
+          rss: formatMemory(r.details.memory.rss),
+          heapTotal: formatMemory(r.details.memory.heapTotal),
+          heapUsed: formatMemory(r.details.memory.heapUsed),
+          external: formatMemory(r.details.memory.external)
+        } : null,
+        cpu: r.details.cpu ? {
+          user: r.details.cpu.user ? `${(r.details.cpu.user / 1000000).toFixed(2)}ms` : 'N/A',
+          system: r.details.cpu.system ? `${(r.details.cpu.system / 1000000).toFixed(2)}ms` : 'N/A'
+        } : null,
+        hostname: r.details.hostname || 'N/A',
+        loadAverage: r.details.loadAverage ? 
+          `${Array.isArray(r.details.loadAverage) ? r.details.loadAverage.map(l => l.toFixed(2)).join(', ') : r.details.loadAverage}` : 'N/A',
+        responseTime: r.details.responseTime ? `${r.details.responseTime}ms` : 'N/A',
+        error: r.details.error || null
+      } : null
+    }));
+    
+    // Count statuses for summary
+    const counts = { OK: 0, WARNING: 0, CRITICAL: 0, FAILED: 0 };
+    results.forEach(r => {
+      const h = r.health || 'FAILED';
+      if (counts.hasOwnProperty(h)) counts[h]++;
+      else counts.FAILED++;
+    });
+    
+    // Set content-range header
+    const total = servers.length;
+    res.setHeader('Content-Range', `items 0-${total - 1}/${total}`);
+    res.json(servers);
+  } catch (error) {
+    console.error('❌ Error fetching servers:', error);
+    res.status(500).json({ error: 'Failed to fetch servers' });
+  }
 });
+
+/**
+ * GET /servers/:id - Get a specific server
+ */
+// In AdminRoutes.js - Update the /servers/:id route
 
 router.get('/servers/:id', async (req, res) => {
   const { id } = req.params;
   const def = serverDefinitions.find(s => s.id === id);
-  if (!def) return res.status(404).json({ error: 'Server not found' });
+  if (!def) {
+    return res.status(404).json({ error: 'Server not found' });
+  }
 
-  const result = await checkServer(def);
-  const data = {
-    id: result.id,
-    name: result.name,
-    type: result.type,
-    cluster: result.cluster || 'Standalone',
-    machine: result.machine || '-',
-    state: result.state,
-    health: result.health,
-    listenPort: result.port,
-    ...(result.details || {}),
-    details: result.details || {},
-  };
-  res.json({ data });
+  try {
+    const result = await checkServer(def);
+    
+    // ✅ Ensure memory values are numbers
+    const memoryData = result.details?.memory ? {
+      rss: {
+        bytes: Number(result.details.memory.rss) || 0,
+        formatted: formatMemory(result.details.memory.rss)
+      },
+      heapTotal: {
+        bytes: Number(result.details.memory.heapTotal) || 0,
+        formatted: formatMemory(result.details.memory.heapTotal)
+      },
+      heapUsed: {
+        bytes: Number(result.details.memory.heapUsed) || 0,
+        formatted: formatMemory(result.details.memory.heapUsed)
+      },
+      external: {
+        bytes: Number(result.details.memory.external) || 0,
+        formatted: formatMemory(result.details.memory.external)
+      }
+    } : null;
+    
+    const data = {
+      id: result.id,
+      name: result.name,
+      type: result.type,
+      cluster: result.cluster || 'Standalone',
+      machine: result.machine || '-',
+      state: result.state,
+      health: result.health,
+      listenPort: result.port,
+      details: result.details ? {
+        pid: result.details.pid || 'N/A',
+        uptime: result.details.uptime !== undefined && result.details.uptime !== 'N/A' ? {
+          seconds: typeof result.details.uptime === 'number' ? result.details.uptime : 0,
+          formatted: formatUptime(result.details.uptime)
+        } : null,
+        nodeVersion: result.details.nodeVersion || 'N/A',
+        environment: result.details.environment || 'N/A',
+        memory: memoryData,
+        cpu: result.details.cpu ? {
+          user: Number(result.details.cpu.user) || 0,
+          system: Number(result.details.cpu.system) || 0,
+          formatted: {
+            user: result.details.cpu.user ? `${(Number(result.details.cpu.user) / 1000000).toFixed(2)}ms` : 'N/A',
+            system: result.details.cpu.system ? `${(Number(result.details.cpu.system) / 1000000).toFixed(2)}ms` : 'N/A'
+          }
+        } : null,
+        hostname: result.details.hostname || 'N/A',
+        loadAverage: result.details.loadAverage || null,
+        responseTime: result.details.responseTime || null,
+        error: result.details.error || null,
+        note: result.details.note || null
+      } : null
+    };
+    
+    res.json({ data });
+  } catch (error) {
+    console.error(`❌ Error fetching server ${id}:`, error);
+    res.status(500).json({ error: 'Failed to fetch server details' });
+  }
 });
 
 // ==========================================
@@ -1965,4 +2669,283 @@ router.get('/webhook_configs/:id/status', async (req, res) => {
   }
 });
 
+
+
+// ============================================
+// TRAFFIC STATS ENDPOINTS
+// ============================================
+
+/**
+ * GET /traffic/stats - Get detailed traffic statistics
+ */
+router.get('/traffic/stats', async (req, res) => {
+  try {
+    // ✅ Get redis from req.app instead of direct app reference
+    const redis = req.app.get('redisClient');
+    if (!redis) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoutes: [],
+          allRoutes: [],
+          redisConnected: false,
+          message: 'Redis not available - traffic monitoring disabled'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Check if Redis is connected
+    const redisConnected = redis.status === 'ready';
+    if (!redisConnected) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoutes: [],
+          allRoutes: [],
+          redisConnected: false,
+          message: 'Redis is not connected'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Get all traffic keys
+    const keys = await redis.keys('traffic:*');
+    const stats = [];
+    let totalRequests = 0;
+
+    for (const key of keys) {
+      const count = await redis.get(key);
+      const route = key.replace('traffic:', '');
+      const numCount = parseInt(count) || 0;
+      totalRequests += numCount;
+      stats.push({
+        route,
+        count: numCount,
+        percentage: 0
+      });
+    }
+
+    // Calculate percentages
+    stats.forEach(stat => {
+      stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
+    });
+
+    // Sort by count descending
+    stats.sort((a, b) => b.count - a.count);
+
+    // Get top routes (limit to top 20)
+    const topRoutes = stats.slice(0, 20);
+
+    // Get total unique routes
+    const uniqueRoutes = stats.length;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalRequests,
+        uniqueRoutes,
+        topRoutes,
+        allRoutes: stats,
+        redisConnected: true,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching traffic stats:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch traffic stats',
+      error: error.message,
+      data: {
+        totalRequests: 0,
+        uniqueRoutes: 0,
+        topRoutes: [],
+        allRoutes: [],
+        redisConnected: false,
+        error: error.message
+      }
+    });
+  }
+});
+
+/**
+ * GET /traffic - Get traffic data (summary)
+ */
+router.get('/traffic', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
+  try {
+    // ✅ Get redis from req.app instead of direct app reference
+    const redis = req.app.get('redisClient');
+    if (!redis) {
+      console.warn('⚠️ Redis client not available – returning empty traffic stats');
+      return res.json({
+        success: true,
+        data: [],
+        summary: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoute: null
+        },
+        message: 'Redis not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const redisConnected = redis.status === 'ready';
+    if (!redisConnected) {
+      return res.json({
+        success: true,
+        data: [],
+        summary: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoute: null
+        },
+        message: 'Redis is not connected',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    let keys = [];
+    try {
+      keys = await redis.keys('traffic:*');
+    } catch (redisError) {
+      console.warn('⚠️ Redis query failed – returning empty traffic stats:', redisError.message);
+      return res.json({
+        success: true,
+        data: [],
+        summary: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoute: null
+        },
+        message: 'Redis query failed',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const data = [];
+    let total = 0;
+    for (const key of keys) {
+      const count = await redis.get(key).catch(() => 0);
+      const route = key.replace('traffic:', '');
+      const numCount = parseInt(count, 10) || 0;
+      total += numCount;
+      data.push({ route, count: numCount });
+    }
+    data.sort((a, b) => b.count - a.count);
+
+    const summary = {
+      totalRequests: total,
+      uniqueRoutes: data.length,
+      topRoute: data.length > 0 ? data[0] : null,
+      timestamp: new Date().toISOString()
+    };
+
+    res.json({
+      success: true,
+      data,
+      summary,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Traffic stats error:', error);
+    res.status(200).json({
+      success: false,
+      data: [],
+      summary: {
+        totalRequests: 0,
+        uniqueRoutes: 0,
+        topRoute: null
+      },
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /traffic/redis-status - Check Redis connection status
+ */
+router.get('/traffic/redis-status', async (req, res) => {
+  try {
+    // ✅ Get redis from req.app instead of direct app reference
+    const redis = req.app.get('redisClient');
+    const redisConnected = redis && redis.status === 'ready';
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        connected: redisConnected,
+        status: redisConnected ? 'Connected' : 'Disconnected',
+        host: process.env.REDIS_HOST || 'localhost',
+        port: process.env.REDIS_PORT || 6379,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check Redis status',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /traffic/reset - Reset traffic counters (admin only)
+ */
+router.post('/traffic/reset', async (req, res) => {
+  try {
+    // ✅ Get redis from req.app instead of direct app reference
+    const redis = req.app.get('redisClient');
+    if (!redis) {
+      return res.status(200).json({
+        success: false,
+        message: 'Redis not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const redisConnected = redis.status === 'ready';
+    if (!redisConnected) {
+      return res.status(200).json({
+        success: false,
+        message: 'Redis is not connected',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const keys = await redis.keys('traffic:*');
+    let deleted = 0;
+    for (const key of keys) {
+      await redis.del(key);
+      deleted++;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Reset ${deleted} traffic counters`,
+      deletedCount: deleted,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error resetting traffic stats:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset traffic stats',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 export default router;

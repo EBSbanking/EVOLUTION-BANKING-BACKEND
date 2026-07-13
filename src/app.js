@@ -92,9 +92,8 @@ const corsOptions = {
     'http://localhost:3000',
     'http://localhost:3002',
     'http://127.0.0.1:3000',
-    'http://localhost:3001' ,  // ✅ If you run admin-ui on 3001, include it
+    'http://localhost:3001',
     'http://localhost:4000'
-
   ],
   credentials: true,
   optionsSuccessStatus: 200,
@@ -108,9 +107,9 @@ const corsOptions = {
     'x-nip-signature', 
     'x-encryption-metadata', 
     'range',
-    'cache-control',   // ✅ ADD THIS
-     'pragma',
-     'expires'  
+    'cache-control',
+    'pragma',
+    'expires'  
   ],
   exposedHeaders: ['Content-Range', 'X-Total-Count'],
 };
@@ -143,52 +142,302 @@ console.log('✅ Identification upload route mounted (before body parsers)');
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
+// app.js - Traffic section
+
 // ============================================
-// REDIS TRAFFIC MONITORING (shared across PM2 workers)
+// REDIS TRAFFIC MONITORING
 // ============================================
 
-// ✅ Handle misconfigured REDIS_HOST (like 'disabled')
 const redisHost = (process.env.REDIS_HOST && process.env.REDIS_HOST !== 'disabled') 
   ? process.env.REDIS_HOST 
   : 'localhost';
 
+const redisPort = process.env.REDIS_PORT || 6379;
+
 const redis = new Redis({
   host: redisHost,
-  port: process.env.REDIS_PORT || 6379,
+  port: redisPort,
   maxRetriesPerRequest: 3,
-});
-
-// ✅ Suppress connection errors to avoid log spam
-redis.on('error', (err) => {
-  if (!redis._errorLogged) {
-    console.warn('⚠️ Redis connection error (traffic monitoring will fallback gracefully):', err.message);
-    redis._errorLogged = true;
+  connectTimeout: 5000,
+  retryStrategy: (times) => {
+    if (times > 3) {
+      console.warn('⚠️ Redis connection failed after 3 retries, traffic monitoring disabled');
+      return null;
+    }
+    return Math.min(times * 100, 3000);
   }
 });
 
-// Make redis available to other modules (e.g., AdminRoutes)
+let redisConnected = false;
+let redisErrorLogged = false;
+
+redis.on('connect', () => {
+  console.log('✅ Redis connected for traffic monitoring on port', redisPort);
+  redisConnected = true;
+  redisErrorLogged = false;
+});
+
+redis.on('error', (err) => {
+  if (!redisErrorLogged) {
+    console.warn('⚠️ Redis connection error:', err.message);
+    redisErrorLogged = true;
+    redisConnected = false;
+  }
+});
+
 app.set('redisClient', redis);
 
-// Non-blocking traffic counter middleware using Redis
+// Traffic counter middleware
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api') || 
       req.path === '/api/health' || 
-      req.path === '/api/admin/traffic' ||
-      req.path === '/api/traffic') {
+      req.path === '/api/traffic' ||
+      req.path === '/api/traffic/stats' ||
+      req.path === '/api/traffic/status' ||
+      req.path === '/api/traffic-test') {
+    return next();
+  }
+
+  if (!redisConnected) {
     return next();
   }
 
   const pathParts = req.path.split('/').filter(Boolean);
   let baseRoute = '/api';
-  if (pathParts.length >= 2) baseRoute = `/${pathParts[0]}/${pathParts[1]}`;
-  else if (pathParts.length === 1) baseRoute = `/${pathParts[0]}`;
+  if (pathParts.length >= 2) {
+    baseRoute = `/${pathParts[0]}/${pathParts[1]}`;
+  } else if (pathParts.length === 1) {
+    baseRoute = `/${pathParts[0]}`;
+  }
   const key = `traffic:${baseRoute}`;
 
-  // Fire-and-forget – no await, no blocking
   redis.incr(key).catch(() => {});
   redis.expire(key, 60).catch(() => {});
 
   next();
+});
+
+// ============================================
+// PUBLIC TRAFFIC ENDPOINTS (NO AUTH REQUIRED)
+// ============================================
+
+app.get('/api/traffic/status', (req, res) => {
+  res.json({
+    success: true,
+    redisConnected: redisConnected || false,
+    redisStatus: redisConnected ? 'Connected' : 'Disconnected',
+    redisHost: redisHost,
+    redisPort: redisPort,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/api/traffic/stats', async (req, res) => {
+  try {
+    if (!redisConnected) {
+      return res.json({
+        success: true,
+        data: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoutes: [],
+          allRoutes: [],
+          redisConnected: false,
+          message: 'Redis not connected'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const keys = await redis.keys('traffic:*');
+    const stats = [];
+    let totalRequests = 0;
+
+    for (const key of keys) {
+      const count = await redis.get(key);
+      const route = key.replace('traffic:', '');
+      const numCount = parseInt(count) || 0;
+      totalRequests += numCount;
+      stats.push({ route, count: numCount, percentage: 0 });
+    }
+
+    stats.forEach(stat => {
+      stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
+    });
+
+    stats.sort((a, b) => b.count - a.count);
+    const topRoutes = stats.slice(0, 20);
+
+    res.json({
+      success: true,
+      data: {
+        totalRequests,
+        uniqueRoutes: stats.length,
+        topRoutes,
+        allRoutes: stats,
+        redisConnected: true,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Traffic stats error:', error);
+    res.json({
+      success: false,
+      data: {
+        totalRequests: 0,
+        uniqueRoutes: 0,
+        topRoutes: [],
+        allRoutes: [],
+        redisConnected: false,
+        error: error.message
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+app.get('/api/traffic-test', (req, res) => {
+  res.json({
+    success: true,
+    redisConnected: redisConnected || false,
+    redisStatus: redisConnected ? 'Connected' : 'Disconnected',
+    message: redisConnected ? 'Redis is running' : 'Redis is not running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ============================================
+// ✅ PUBLIC TRAFFIC ENDPOINTS (NO AUTH REQUIRED)
+// ============================================
+
+/**
+ * GET /api/traffic - Simple traffic stats (public)
+ */
+app.get('/api/traffic', async (req, res) => {
+  try {
+    const redisClient = req.app.get('redisClient');
+    if (!redisClient || !redisConnected) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        message: 'Redis not available',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const keys = await redisClient.keys('traffic:*');
+    const data = [];
+    let total = 0;
+
+    for (const key of keys) {
+      const count = await redisClient.get(key);
+      const route = key.replace('traffic:', '');
+      const numCount = parseInt(count) || 0;
+      total += numCount;
+      data.push({ route, count: numCount });
+    }
+
+    data.sort((a, b) => b.count - a.count);
+
+    res.json({
+      success: true,
+      data,
+      total,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Traffic stats error:', error);
+    res.status(200).json({
+      success: false,
+      data: [],
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /api/traffic/stats - Detailed traffic stats (public)
+ */
+app.get('/api/traffic/stats', async (req, res) => {
+  try {
+    const redisClient = req.app.get('redisClient');
+    if (!redisClient || !redisConnected) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          totalRequests: 0,
+          uniqueRoutes: 0,
+          topRoutes: [],
+          redisConnected: false,
+          message: 'Redis not available'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const keys = await redisClient.keys('traffic:*');
+    const stats = [];
+    let totalRequests = 0;
+
+    for (const key of keys) {
+      const count = await redisClient.get(key);
+      const route = key.replace('traffic:', '');
+      const numCount = parseInt(count) || 0;
+      totalRequests += numCount;
+      stats.push({ route, count: numCount });
+    }
+
+    // Sort by count descending
+    stats.sort((a, b) => b.count - a.count);
+
+    // Calculate percentages
+    stats.forEach(stat => {
+      stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
+    });
+
+    // Get top routes (limit to top 20)
+    const topRoutes = stats.slice(0, 20);
+
+    res.json({
+      success: true,
+      data: {
+        totalRequests,
+        uniqueRoutes: stats.length,
+        topRoutes,
+        allRoutes: stats,
+        redisConnected: true,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('❌ Traffic stats error:', error);
+    res.status(200).json({
+      success: false,
+      data: {
+        totalRequests: 0,
+        uniqueRoutes: 0,
+        topRoutes: [],
+        error: error.message,
+        redisConnected: false
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /api/traffic-test - Check Redis status (public)
+ */
+app.get('/api/traffic-test', (req, res) => {
+  res.json({
+    success: true,
+    redisConnected,
+    redisStatus: redisConnected ? 'Connected' : 'Disconnected',
+    redisHost: process.env.REDIS_HOST || 'localhost',
+    redisPort: process.env.REDIS_PORT || 6379,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ============================================
@@ -384,15 +633,17 @@ if (!fs.existsSync(bulkLoansDir)) {
 }
 
 // ============================================
-// CONDITIONAL FILE UPLOAD – SKIP FOR JSON AND BULK MULTIPART
+// CONDITIONAL FILE UPLOAD – SKIP FOR JSON, BULK MULTIPART, AND PLUGIN UPLOADS
 // ============================================
 app.use((req, res, next) => {
   const isBulkRoute = req.url.includes('/bulk/group-loans') || req.url.includes('/bulk/individual');
+  const isPluginRoute = req.url.includes('/plugins/upload'); // ✅ ADD THIS
   const isMultipart = req.headers['content-type']?.includes('multipart/form-data');
   const isJson = req.headers['content-type']?.includes('application/json');
+  const isWebhook = req.url.includes('/webhook'); // Also skip webhooks
   
-  // Skip fileUpload for JSON requests OR bulk multipart routes
-  if (isJson || (isBulkRoute && isMultipart)) {
+  // Skip fileUpload for JSON requests, bulk multipart routes, plugin uploads, and webhooks
+  if (isJson || isPluginRoute || isWebhook || (isBulkRoute && isMultipart)) {
     console.log('🔧 Skipping fileUpload for route:', req.url);
     return next();
   }
@@ -609,8 +860,6 @@ console.log('✅ Bank routes registered directly');
 const lazyLoadRoute = (routePath) => {
   return async (req, res, next) => {
     const skipRoutes = [
-      // './routes/TransactionRoutes.js',   // ✅ REMOVED so it gets loaded
-      
       './routes/QueueRoutes.js',
       './routes/OrganizationRoutes.js'
     ];
@@ -661,7 +910,6 @@ app.use('/api/deposit-account-interest-tier', lazyLoadRoute('./routes/DepositAcc
 app.use('/api/deposit-account-monthly-stat', lazyLoadRoute('./routes/DepositAccountMonthlyStatRoute.js'));
 app.use('/api/deposit-search', lazyLoadRoute('./routes/DepositSearchRoutes.js'));
 app.use('/api/term-deposit', lazyLoadRoute('./routes/TermDepositRoutes.js'));
-// app.use('/api/transaction', lazyLoadRoute('./routes/TransactionRoutes.js'));
 app.use('/api/cash-withdrawals', lazyLoadRoute('./routes/CashWithdrawalTransactionRoutes.js'));
 app.use('/api/withdrawals', lazyLoadRoute('./routes/withdrawalRoutes.js'));
 app.use('/api/loans', lazyLoadRoute('./routes/LoanAccountRoutes.js'));

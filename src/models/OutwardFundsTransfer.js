@@ -354,7 +354,7 @@ OutwardFundsTransfer.init(
     modelName: 'OutwardFundsTransfer',
     tableName: 'OUTWARD_FUNDS_TRANSFERS',
     timestamps: false,
-    underscored: true,
+    underscored: false,
     hooks: {
       beforeCreate: (transfer) => {
         if (!transfer.netAmtXfered) {

@@ -1,6 +1,7 @@
-// admin-ui/src/components/PluginUploadButton.js
+// admin-ui/src/pages/Plugins/PluginUploadButton.js
 import { Button, useNotify, useRefresh } from 'react-admin';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import { API_BASE_URL } from '../../config';
 
 const PluginUploadButton = () => {
   const notify = useNotify();
@@ -19,24 +20,29 @@ const PluginUploadButton = () => {
       formData.append('name', file.name.replace(/\.zip$/, ''));
 
       try {
-        const response = await fetch('/admin/plugins/upload', {
+        const token = localStorage.getItem('token');
+        // ✅ Use /plugins/upload (not /admin/plugins/upload) 
+        // because API_BASE_URL already ends with /admin
+        const response = await fetch(`${API_BASE_URL}/plugins/upload`, {
           method: 'POST',
-          body: formData,
           headers: {
-            // Include your auth token if required
-            Authorization: `Bearer ${localStorage.getItem('token')}`,
+            'Authorization': `Bearer ${token}`,
           },
+          body: formData,
         });
+
+        const result = await response.json();
 
         if (response.ok) {
           notify('Plugin uploaded successfully', { type: 'success' });
-          refresh(); // reload the list
+          refresh();
         } else {
-          const error = await response.json();
-          notify(`Upload failed: ${error.message || 'Unknown error'}`, { type: 'error' });
+          const errorMsg = result.error || result.details || result.message || 'Unknown error';
+          notify(`Upload failed: ${errorMsg}`, { type: 'error' });
         }
       } catch (error) {
-        notify('Network error while uploading', { type: 'error' });
+        console.error('Upload error:', error);
+        notify(`Upload failed: ${error.message || 'Network error'}`, { type: 'error' });
       }
     };
     input.click();

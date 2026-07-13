@@ -1,4 +1,4 @@
-// admin-ui/src/App.js
+// admin-ui/src/App.js - COMPLETE FIXED VERSION
 
 import { Admin, Resource, fetchUtils, Layout } from 'react-admin';
 import simpleRestProvider from 'ra-data-simple-rest';
@@ -21,9 +21,10 @@ import { WebhookList, WebhookShow, WebhookEdit } from './pages/Webhooks';
 import { EnvList, EnvEdit, EnvCreate } from './pages/Environment/EnvEditor';
 import { ServicesList, ServicesCreate, ServicesEdit, ServicesShow } from './pages/Services';
 import SchedulerStatusWrapper from './pages/Scheduler/SchedulerStatusWrapper';
+import TrafficStats from './pages/TrafficStats/TrafficStats';
 
 import { Box, Typography } from '@mui/material';
-import { ThemeProvider, createTheme, StyledEngineProvider } from '@mui/material/styles';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import SpeedIcon from '@mui/icons-material/Speed';
 import PublicIcon from '@mui/icons-material/Public';
@@ -35,6 +36,8 @@ import BuildIcon from '@mui/icons-material/Build';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import BarChartIcon from '@mui/icons-material/BarChart';
+import MemoryIcon from '@mui/icons-material/Memory';
 
 import { API_BASE_URL } from './config';
 
@@ -61,28 +64,22 @@ export const httpClient = (url, options = {}) => {
   return fetchUtils.fetchJson(url, { ...options, headers });
 };
 
+// ✅ API_BASE_URL already includes /admin
 const baseDataProvider = simpleRestProvider(API_BASE_URL, httpClient);
 
 // =============================================
-// HELPER FUNCTIONS TO ENSURE ID EXISTS
+// HELPER FUNCTIONS
 // =============================================
 
-/**
- * Ensures an item has an 'id' property
- * Checks for common ID field names and adds 'id' if missing
- */
 const ensureId = (item, fallbackId = null) => {
-  // If item is null/undefined, return empty object with id
   if (!item || typeof item !== 'object') {
     return { id: fallbackId || Date.now() };
   }
 
-  // If item already has an id, return it
   if (item.id !== undefined && item.id !== null) {
     return item;
   }
 
-  // Check for common ID field names
   const idFields = [
     'role_id', 'BU_ROLE_ID', 'data_source_id', 'plugin_id', 
     'event_id', 'userId', 'user_id', 'webhook_name',
@@ -95,7 +92,6 @@ const ensureId = (item, fallbackId = null) => {
     }
   }
 
-  // Check if any key contains 'id' (case insensitive)
   const keys = Object.keys(item);
   for (const key of keys) {
     if (key.toLowerCase().includes('id') && item[key] !== undefined && item[key] !== null) {
@@ -103,16 +99,11 @@ const ensureId = (item, fallbackId = null) => {
     }
   }
 
-  // If no ID found, use fallback
   return { ...item, id: fallbackId || Date.now() + Math.random() };
 };
 
-/**
- * Ensures all items in an array have an 'id' property
- */
 const ensureIds = (data, fallbackId = null) => {
   if (!Array.isArray(data)) {
-    // If it's an object with numeric keys, convert to array
     if (typeof data === 'object' && data !== null) {
       const values = Object.values(data);
       if (values.length > 0 && typeof values[0] === 'object') {
@@ -132,9 +123,6 @@ const ensureIds = (data, fallbackId = null) => {
 const dataProvider = {
   ...baseDataProvider,
 
-  // ===========================================
-  // GET LIST
-  // ===========================================
   getList: async (resource, params) => {
     try {
       // Handle special resources
@@ -146,9 +134,7 @@ const dataProvider = {
         if (!Array.isArray(data)) {
           data = Object.values(data);
         }
-        // Ensure all items have IDs
         data = ensureIds(data);
-        console.log('📦 Raw middlewares response:', data);
         return { data, total: data.length };
       }
 
@@ -160,13 +146,37 @@ const dataProvider = {
         if (!Array.isArray(data)) {
           data = Object.values(data);
         }
-        // Ensure all items have IDs
         data = ensureIds(data);
-        console.log('📦 Raw env response:', data);
         return { data, total: data.length };
       }
 
-      // For webhook_configs, ensure IDs
+      // ✅ FIXED: plugins - API_BASE_URL already has /admin
+      if (resource === 'plugins') {
+        const response = await httpClient(`${API_BASE_URL}/plugins`, {
+          method: 'GET',
+        });
+        let data = response.json || [];
+        if (!Array.isArray(data)) {
+          data = Object.values(data);
+        }
+        data = ensureIds(data);
+        console.log('📦 Raw plugins response:', data);
+        return { data, total: data.length };
+      }
+
+      // ✅ FIXED: servers - API_BASE_URL already has /admin
+      if (resource === 'servers') {
+        const response = await httpClient(`${API_BASE_URL}/servers`, {
+          method: 'GET',
+        });
+        let data = response.json || [];
+        if (!Array.isArray(data)) {
+          data = Object.values(data);
+        }
+        data = ensureIds(data);
+        return { data, total: data.length };
+      }
+
       if (resource === 'webhook_configs') {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs`, {
           method: 'GET',
@@ -179,7 +189,59 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
-      // Default getList
+      if (resource === 'traffic-stats') {
+        try {
+          const response = await fetch(`${API_BASE_URL}/traffic/stats`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          const result = await response.json();
+          const data = result?.data || result || { totalRequests: 0, uniqueRoutes: 0, topRoutes: [] };
+          return { 
+            data: [ensureId(data, 'traffic-stats')], 
+            total: 1 
+          };
+        } catch (error) {
+          console.error('Error fetching traffic stats:', error.message);
+          return { 
+            data: [{ 
+              id: 'traffic-stats', 
+              totalRequests: 0, 
+              uniqueRoutes: 0, 
+              topRoutes: [], 
+              error: error.message,
+              redisConnected: false 
+            }], 
+            total: 1 
+          };
+        }
+      }
+
+      if (resource === 'traffic-status') {
+        try {
+          const response = await fetch(`${API_BASE_URL}/traffic/status`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          const result = await response.json();
+          const data = result || { redisConnected: false, redisStatus: 'Disconnected' };
+          return { 
+            data: [ensureId(data, 'redis-status')], 
+            total: 1 
+          };
+        } catch (error) {
+          return { 
+            data: [{ 
+              id: 'redis-status', 
+              redisConnected: false, 
+              redisStatus: 'Error', 
+              error: error.message 
+            }], 
+            total: 1 
+          };
+        }
+      }
+
       const response = await baseDataProvider.getList(resource, params);
       console.log('📦 Raw response:', response);
 
@@ -206,11 +268,8 @@ const dataProvider = {
         total = 1;
       }
 
-      // Ensure all items have IDs
       data = ensureIds(data);
-
       console.log('📊 Final data array:', data);
-      console.log(`✅ getList for "${resource}" returning:`, { data, total });
       return { data, total };
     } catch (error) {
       console.error('❌ getList error:', error);
@@ -218,16 +277,12 @@ const dataProvider = {
     }
   },
 
-  // ===========================================
-  // GET ONE - FIXED
-  // ===========================================
   getOne: async (resource, params) => {
     if (!params || params.id === undefined) {
       return { data: { id: null } };
     }
 
     try {
-      // Handle special resources
       if (resource === 'services') {
         try {
           const response = await httpClient(`${API_BASE_URL}/services/${params.id}`, {
@@ -235,15 +290,10 @@ const dataProvider = {
           });
           
           let responseData = response.json.data || response.json;
-          
-          // Ensure the response has an ID
           responseData = ensureId(responseData, params.id);
-          
-          console.log(`✅ getOne for "${resource}" returning:`, responseData);
           return { data: responseData };
         } catch (error) {
           console.error('Error fetching service:', error);
-          // Fallback: try to get from list
           const listResponse = await httpClient(`${API_BASE_URL}/services`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
@@ -264,8 +314,6 @@ const dataProvider = {
           
           let responseData = response.json.data || response.json;
           responseData = ensureId(responseData, params.id);
-          
-          console.log(`✅ getOne for "${resource}" returning:`, responseData);
           return { data: responseData };
         } catch (error) {
           console.error('Error fetching middleware:', error);
@@ -289,8 +337,6 @@ const dataProvider = {
           
           let responseData = response.json.data || response.json;
           responseData = ensureId(responseData, params.id);
-          
-          console.log(`✅ getOne for "${resource}" returning:`, responseData);
           return { data: responseData };
         } catch (error) {
           console.error('Error fetching env var:', error);
@@ -306,7 +352,6 @@ const dataProvider = {
         }
       }
 
-      // For webhook_configs
       if (resource === 'webhook_configs') {
         try {
           const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -315,8 +360,6 @@ const dataProvider = {
           
           let responseData = response.json.data || response.json;
           responseData = ensureId(responseData, params.id);
-          
-          console.log(`✅ getOne for "${resource}" returning:`, responseData);
           return { data: responseData };
         } catch (error) {
           console.error('Error fetching webhook config:', error);
@@ -324,7 +367,6 @@ const dataProvider = {
         }
       }
 
-      // For datasources
       if (resource === 'datasources') {
         try {
           const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -333,8 +375,6 @@ const dataProvider = {
           
           let responseData = response.json.data || response.json;
           responseData = ensureId(responseData, params.id);
-          
-          console.log(`✅ getOne for "${resource}" returning:`, responseData);
           return { data: responseData };
         } catch (error) {
           console.error('Error fetching data source:', error);
@@ -342,32 +382,93 @@ const dataProvider = {
         }
       }
 
-      // Default getOne
+      // ✅ FIXED: plugins - API_BASE_URL already has /admin
+      if (resource === 'plugins') {
+        try {
+          const response = await httpClient(`${API_BASE_URL}/plugins/${params.id}`, {
+            method: 'GET',
+          });
+          
+          let responseData = response.json.data || response.json;
+          responseData = ensureId(responseData, params.id);
+          return { data: responseData };
+        } catch (error) {
+          console.error('Error fetching plugin:', error);
+          const listResponse = await httpClient(`${API_BASE_URL}/plugins`);
+          const listData = listResponse.json || listResponse;
+          if (Array.isArray(listData)) {
+            const found = listData.find(item => item.id == params.id);
+            if (found) {
+              return { data: ensureId(found, params.id) };
+            }
+          }
+          throw error;
+        }
+      }
+
+      // ✅ FIXED: servers - API_BASE_URL already has /admin
+      if (resource === 'servers') {
+        try {
+          const response = await httpClient(`${API_BASE_URL}/servers/${params.id}`, {
+            method: 'GET',
+          });
+          
+          let responseData = response.json.data || response.json;
+          responseData = ensureId(responseData, params.id);
+          return { data: responseData };
+        } catch (error) {
+          console.error('Error fetching server:', error);
+          const listResponse = await httpClient(`${API_BASE_URL}/servers`);
+          const listData = listResponse.json || listResponse;
+          if (Array.isArray(listData)) {
+            const found = listData.find(item => item.id == params.id);
+            if (found) {
+              return { data: ensureId(found, params.id) };
+            }
+          }
+          throw error;
+        }
+      }
+
+      if (resource === 'traffic-stats') {
+        try {
+          const response = await fetch(`${API_BASE_URL}/traffic/stats`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          const result = await response.json();
+          let responseData = result?.data || result || { totalRequests: 0, uniqueRoutes: 0, topRoutes: [] };
+          responseData = ensureId(responseData, params.id || 'traffic-stats');
+          return { data: responseData };
+        } catch (error) {
+          return { data: { 
+            id: params.id || 'traffic-stats', 
+            totalRequests: 0, 
+            uniqueRoutes: 0, 
+            topRoutes: [], 
+            error: error.message 
+          } };
+        }
+      }
+
       const response = await baseDataProvider.getOne(resource, params);
       
-      // Ensure the response has an ID
       if (response && response.data) {
         response.data = ensureId(response.data, params.id);
       }
       
-      console.log(`✅ getOne for "${resource}" returning:`, response);
       return response;
     } catch (error) {
       console.error('❌ getOne error for', resource, ':', error);
-      // Return a fallback object with the requested ID
       return { data: { id: params.id } };
     }
   },
 
-  // ===========================================
-  // GET MANY - FIXED
-  // ===========================================
   getMany: async (resource, params) => {
     const { ids } = params;
     console.log(`📤 getMany: ${resource} with ids:`, ids);
 
     try {
-      // Special handling for env
       if (resource === 'env') {
         const response = await httpClient(`${API_BASE_URL}/env`, {
           method: 'GET',
@@ -376,14 +477,12 @@ const dataProvider = {
         if (!Array.isArray(data)) {
           data = Object.values(data);
         }
-        // Filter by ids and ensure IDs
         const filtered = data
           .filter(item => ids.includes(item.id) || ids.includes(item.key))
           .map(item => ensureId(item));
         return { data: filtered };
       }
 
-      // Special handling for webhook_configs
       if (resource === 'webhook_configs') {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs`, {
           method: 'GET',
@@ -398,7 +497,6 @@ const dataProvider = {
         return { data: filtered };
       }
 
-      // Default getMany
       const response = await baseDataProvider.getMany(resource, params);
       
       if (response && response.data) {
@@ -412,10 +510,41 @@ const dataProvider = {
     }
   },
 
-  // ===========================================
-  // CREATE
-  // ===========================================
+  // ✅ FIXED: CREATE for plugins
   create: async (resource, params) => {
+    if (resource === 'plugins' && params.data?.file) {
+      const formData = new FormData();
+      const { file, ...rest } = params.data;
+      
+      for (let key in rest) {
+        if (rest[key] !== undefined && rest[key] !== null) {
+          formData.append(key, rest[key]);
+        }
+      }
+      
+      if (file.rawFile) {
+        formData.append('plugin', file.rawFile);
+      } else if (file instanceof File) {
+        formData.append('plugin', file);
+      } else {
+        formData.append('plugin', file);
+      }
+      
+      // ✅ API_BASE_URL already has /admin
+      const response = await fetch(`${API_BASE_URL}/plugins/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: formData,
+      });
+      
+      const result = await response.json();
+      let responseData = result.data || result;
+      responseData = ensureId(responseData);
+      return { data: responseData };
+    }
+
     if (resource === 'services' && params.data?.file) {
       const formData = new FormData();
       const { file, ...rest } = params.data;
@@ -455,12 +584,10 @@ const dataProvider = {
         return { data: responseData };
       } catch (error) {
         console.error('Error creating env var:', error);
-        // Return a fallback with the data
         return { data: ensureId({ ...params.data }, Date.now()) };
       }
     }
 
-    // For webhook_configs
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs`, {
@@ -483,9 +610,7 @@ const dataProvider = {
     return response;
   },
 
-  // ===========================================
-  // UPDATE
-  // ===========================================
+  // ... rest of update, delete, deleteMany remain the same
   update: async (resource, params) => {
     if (resource === 'env') {
       try {
@@ -517,7 +642,6 @@ const dataProvider = {
       }
     }
 
-    // For webhook_configs
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -533,7 +657,6 @@ const dataProvider = {
       }
     }
 
-    // For datasources
     if (resource === 'datasources') {
       try {
         const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -561,9 +684,6 @@ const dataProvider = {
     }
   },
 
-  // ===========================================
-  // DELETE
-  // ===========================================
   delete: async (resource, params) => {
     if (resource === 'env') {
       try {
@@ -593,7 +713,6 @@ const dataProvider = {
       }
     }
 
-    // For webhook_configs
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -608,7 +727,6 @@ const dataProvider = {
       }
     }
 
-    // For datasources
     if (resource === 'datasources') {
       try {
         const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -635,14 +753,10 @@ const dataProvider = {
     }
   },
 
-  // ===========================================
-  // DELETE MANY
-  // ===========================================
   deleteMany: async (resource, params) => {
     const { ids } = params;
     console.log(`📤 deleteMany: ${resource} with ids:`, ids);
     
-    // Sequential deletion
     const results = [];
     for (const id of ids) {
       try {
@@ -650,7 +764,6 @@ const dataProvider = {
         results.push(result.data);
       } catch (error) {
         console.error(`Failed to delete ${id}:`, error);
-        // Continue with other deletions
       }
     }
     
@@ -738,7 +851,7 @@ function App() {
         icon={ExtensionIcon}
       />
 
-      {/* Environment Variables - Updated with full CRUD */}
+      {/* Environment Variables */}
       <Resource 
         name="env" 
         list={EnvList} 
@@ -795,11 +908,21 @@ function App() {
         options={{ label: 'Webhook Configs' }} 
         icon={WebhookIcon} 
       />
+
+      {/* Scheduler Status Wrapper */}
       <Resource 
         name="scheduler-status" 
         list={SchedulerStatusWrapper} 
         options={{ label: 'Scheduler Status' }} 
         icon={ScheduleIcon}
+      />
+
+      {/* Traffic Stats */}
+      <Resource 
+        name="traffic-stats" 
+        list={TrafficStats} 
+        icon={BarChartIcon}
+        options={{ label: 'Traffic Analytics' }}
       />
     </Admin>
   );

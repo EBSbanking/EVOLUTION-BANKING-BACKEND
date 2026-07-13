@@ -1,0 +1,7 @@
+{
+  "name": "Test Plugin",
+  "version": "1.0.0",
+  "description": "Test plugin for verification",
+  "main": "index.js",
+  "author": "Warelogtech"
+}

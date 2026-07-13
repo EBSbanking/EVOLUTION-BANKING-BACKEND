@@ -109,6 +109,7 @@ import LoanProvision from './LoanProvision.js';
 
 // ===== INTEREST DISTRIBUTION (for Term Deposits) =====
 import InterestDistribution from './InterestDistribution.js';
+import AdminPlugin from './AdminPlugin.js';
 
 // ================================================================
 // ✅ VAULT MODELS - Class-based only
@@ -247,6 +248,7 @@ const modelDefinitions = [
   // Module Management
   { key: 'Module', def: Module },
   { key: 'RoleModule', def: RoleModule },
+  { key: 'AdminPlugin', def: AdminPlugin },
   // ================================================================
   // ✅ VAULT MODELS - Class-based only
   // ================================================================
@@ -1048,6 +1050,7 @@ export const getUserRole = () => models.UserRole;
 export const getWF_WORK_ITEM = () => models.WF_WORK_ITEM;
 export const getLoanEvent = () => models.LoanEvent;
 export const getCharge = () => models.Charge;
+export const getAdminPlugin = () => models.AdminPlugin;
 
 // ========== INITIALISE ==========
 let initialized = false;
@@ -1165,6 +1168,7 @@ export {
   Ledger,
   Module,
   RoleModule,
+   AdminPlugin,
   // ================================================================
   // ✅ VAULT EXPORTS - All class-based models
   // ================================================================

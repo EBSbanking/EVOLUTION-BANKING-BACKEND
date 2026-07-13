@@ -1,6 +1,6 @@
-// webhooks/nipWebhook.js - UPDATED to work with webhookController
+// webhooks/NipWebhook.js - CORRECTED VERSION
 import crypto from 'crypto';
-import { Sequelize } from 'sequelize';
+import { Sequelize, Op } from 'sequelize';
 import InwardFundsTransfer, { RECORD_STATUS } from '../../src/models/InwardFundsTransfer.js';
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
@@ -8,6 +8,9 @@ import axios from 'axios';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+
+// ✅ Import webhookController
+import webhookController from '../controllers/WebhookController.js';
 
 /**
  * NIP (Nigeria Inter-Bank Settlement) Webhook Handler
@@ -407,7 +410,7 @@ class NIPWebhook {
       // Check if transfer already exists
       const existingTransfer = await InwardFundsTransfer.findOne({
         where: { 
-          [Sequelize.Op.or]: [
+          [Op.or]: [
             { XFER_REF: PaymentReference },
             { NIP_SESSION_ID: SessionID }
           ]
@@ -621,7 +624,7 @@ class NIPWebhook {
       // Find the original transaction
       const transfer = await InwardFundsTransfer.findOne({
         where: {
-          [Sequelize.Op.or]: [
+          [Op.or]: [
             { NIP_SESSION_ID: OriginalSessionID },
             { XFER_REF: OriginalPaymentReference }
           ]
@@ -708,7 +711,7 @@ class NIPWebhook {
       // Find original transaction
       const originalTransfer = await InwardFundsTransfer.findOne({
         where: {
-          [Sequelize.Op.or]: [
+          [Op.or]: [
             { NIP_SESSION_ID: OriginalSessionID },
             { XFER_REF: OriginalPaymentReference }
           ]
@@ -957,32 +960,67 @@ class NIPWebhook {
 
   /**
    * Get metrics (for monitoring)
+   * ✅ FIXED: Removed CREATED_BY - using status and other existing columns
    */
   async getMetrics() {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // ✅ FIXED: Use existing columns instead of CREATED_BY
       const metrics = {
-        totalTransactions: await InwardFundsTransfer.count({ where: { CREATED_BY: 'NIP' } }),
+        // Total transactions - count all records
+        totalTransactions: await InwardFundsTransfer.count(),
+        
+        // Today's transactions - using created_at
         todayTransactions: await InwardFundsTransfer.count({ 
           where: { 
-            CREATED_BY: 'NIP',
-            CREATE_DT: { [Sequelize.Op.gte]: today }
+            created_at: { [Op.gte]: today }
           } 
         }),
+        
+        // Successful transactions - using status
         successfulTransactions: await InwardFundsTransfer.count({ 
           where: { 
-            CREATED_BY: 'NIP',
-            REC_ST: RECORD_STATUS.ACTIVE 
+            status: 'COMPLETED'
           } 
         }),
+        
+        // Pending transactions - using status
+        pendingTransactions: await InwardFundsTransfer.count({ 
+          where: { 
+            status: 'PENDING'
+          } 
+        }),
+        
+        // Failed transactions - using status
+        failedTransactions: await InwardFundsTransfer.count({ 
+          where: { 
+            status: 'FAILED'
+          } 
+        }),
+        
+        // Reversed transactions - using status
         reversedTransactions: await InwardFundsTransfer.count({ 
           where: { 
-            CREATED_BY: 'NIP',
-            REC_ST: RECORD_STATUS.INACTIVE 
+            status: 'REVERSED'
           } 
         }),
+        
+        // Inward transactions - using direction
+        inwardTransactions: await InwardFundsTransfer.count({ 
+          where: { 
+            direction: 'INWARD'
+          } 
+        }),
+        
+        // Outward transactions - using direction
+        outwardTransactions: await InwardFundsTransfer.count({ 
+          where: { 
+            direction: 'OUTWARD'
+          } 
+        }),
+        
         timestamp: new Date().toISOString()
       };
 

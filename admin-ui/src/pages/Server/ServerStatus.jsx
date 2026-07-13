@@ -1,3 +1,4 @@
+// admin-ui/src/pages/Server/ServerStatus.js
 import React, { useState, useEffect } from 'react';
 import {
   Card,
@@ -10,6 +11,8 @@ import {
   Grid,
   Chip,
   Divider,
+  LinearProgress,
+  Paper,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -23,6 +26,17 @@ import { useNavigate } from 'react-router-dom';
 import { httpClient } from '../../App';
 import { API_BASE_URL } from '../../config';
 
+const MetricCard = ({ label, value }) => (
+  <Paper sx={{ p: 2, textAlign: 'center', bgcolor: '#f8f9fa', height: '100%' }}>
+    <Typography variant="caption" color="textSecondary" display="block" sx={{ fontWeight: 600 }}>
+      {label}
+    </Typography>
+    <Typography variant="body1" sx={{ fontWeight: 700, color: '#1e3a5f' }}>
+      {value || 'N/A'}
+    </Typography>
+  </Paper>
+);
+
 const ServerStatus = () => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -31,7 +45,6 @@ const ServerStatus = () => {
   const notify = useNotify();
   const navigate = useNavigate();
 
-  // ---------- FETCH STATUS (with correct extraction) ----------
   const fetchStatus = async () => {
     setLoading(true);
     setError(null);
@@ -46,7 +59,6 @@ const ServerStatus = () => {
 
     try {
       const response = await httpClient(`${API_BASE_URL}/server/status`);
-      // The httpClient wrapper has { status, headers, body, json: { data: ... } }
       const statusData = response.json?.data || response.json || response;
       setStatus(statusData);
     } catch (err) {
@@ -58,7 +70,6 @@ const ServerStatus = () => {
     }
   };
 
-  // ---------- POLLING FUNCTIONS (also corrected) ----------
   const pollUntilRunning = async () => {
     let attempts = 0;
     const maxAttempts = 15;
@@ -109,14 +120,12 @@ const ServerStatus = () => {
     });
   };
 
-  // ---------- EFFECTS ----------
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(fetchStatus, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // ---------- HANDLERS ----------
   const handleRestart = async () => {
     if (!window.confirm('⚠️ Are you sure you want to restart the server?')) return;
     setActionLoading(true);
@@ -145,24 +154,28 @@ const ServerStatus = () => {
     }
   };
 
-  // ---------- HELPERS ----------
   const formatUptime = (seconds) => {
     if (!seconds || isNaN(seconds)) return 'N/A';
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    return `${days}d ${hours}h ${minutes}m ${secs}s`;
+    if (days > 0) return `${days}d ${hours}h ${minutes}m ${secs}s`;
+    if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
   };
 
   const formatMemory = (bytes) => {
     if (!bytes) return '0 MB';
+    if (bytes > 1024 * 1024 * 1024) {
+      return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    }
     return (bytes / 1024 / 1024).toFixed(2) + ' MB';
   };
 
   const isRunning = status?.status === 'Running';
 
-  // ---------- RENDER ----------
   return (
     <Box sx={{ p: 3, maxWidth: 1200, mx: 'auto' }}>
       <Typography variant="h4" gutterBottom fontWeight="bold">
@@ -177,7 +190,7 @@ const ServerStatus = () => {
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={7}>
-          <Card sx={{ height: '100%' }}>
+          <Card sx={{ height: '100%', borderRadius: 3 }}>
             <CardContent>
               <Box display="flex" alignItems="center" justifyContent="space-between">
                 <Typography variant="h6" fontWeight="bold">Health</Typography>
@@ -196,43 +209,28 @@ const ServerStatus = () => {
                   <CircularProgress />
                 </Box>
               ) : status ? (
-                <Grid container spacing={1}>
+                <Grid container spacing={2}>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">PID</Typography>
-                    <Typography variant="body1">{status.pid || 'N/A'}</Typography>
+                    <MetricCard label="PID" value={status.pid} />
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">Uptime</Typography>
-                    <Typography variant="body1">{formatUptime(status.uptime)}</Typography>
+                    <MetricCard label="Uptime" value={formatUptime(status.uptime)} />
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">Node Version</Typography>
-                    <Typography variant="body1">{status.nodeVersion || 'N/A'}</Typography>
+                    <MetricCard label="Node Version" value={status.nodeVersion} />
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">Environment</Typography>
-                    <Typography variant="body1">{status.env || 'N/A'}</Typography>
+                    <MetricCard label="Environment" value={status.env} />
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">Memory (RSS)</Typography>
-                    <Typography variant="body1">{formatMemory(status.memory?.rss)}</Typography>
+                    <MetricCard label="Memory (RSS)" value={formatMemory(status.memory?.rss)} />
                   </Grid>
                   <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">CPU Load</Typography>
-                    <Typography variant="body1">{status.cpu ? status.cpu.map(v => v.toFixed(2)).join(', ') : 'N/A'}</Typography>
+                    <MetricCard label="CPU Load" value={status.cpu ? status.cpu.map(v => v.toFixed(2)).join(', ') : 'N/A'} />
                   </Grid>
                   <Grid item xs={12}>
-                    <Typography variant="caption" color="textSecondary" fontWeight="bold">Hostname</Typography>
-                    <Typography variant="body1">{status.hostname || 'N/A'}</Typography>
+                    <MetricCard label="Hostname" value={status.hostname} />
                   </Grid>
-                  {status.health && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary" fontWeight="bold">Health Details</Typography>
-                      <pre style={{ fontSize: '0.8rem', background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
-                        {JSON.stringify(status.health, null, 2)}
-                      </pre>
-                    </Grid>
-                  )}
                 </Grid>
               ) : (
                 <Alert severity="info">Server is currently stopped.</Alert>
@@ -252,7 +250,7 @@ const ServerStatus = () => {
         </Grid>
 
         <Grid item xs={12} md={5}>
-          <Card sx={{ height: '100%' }}>
+          <Card sx={{ height: '100%', borderRadius: 3 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom fontWeight="bold">Server Controls</Typography>
               <Divider sx={{ my: 2 }} />
@@ -263,6 +261,7 @@ const ServerStatus = () => {
                   startIcon={<RestartIcon />}
                   onClick={handleRestart}
                   disabled={actionLoading || loading || !isRunning}
+                  fullWidth
                 >
                   Restart Server
                 </Button>
@@ -272,6 +271,7 @@ const ServerStatus = () => {
                   startIcon={<StopIcon />}
                   onClick={handleStop}
                   disabled={actionLoading || loading || !isRunning}
+                  fullWidth
                 >
                   Stop Server
                 </Button>

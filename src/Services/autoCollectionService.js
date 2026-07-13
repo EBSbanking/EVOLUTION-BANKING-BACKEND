@@ -4,7 +4,9 @@ import {
   getLoanAccount, 
   getCustomerAccount, 
   getLoanRepayment, 
-  initializeModels 
+  initializeModels,
+  getPenaltyRule,
+  getLoanPenalty
 } from '../models/index.js';
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
@@ -230,7 +232,23 @@ export const processAutoCollections = async (options = {}) => {
       group: { processed: 0, overdueMarked: 0, failed: 0, totalDue: 0, membersProcessed: 0, membersFailed: 0, collections: [] },
     };
 
-    const dueIndividualLoans = await LoanAccount.findAll({
+    // ✅ FIXED: Use .unscoped() and specify only columns that exist in loan_accounts
+    const dueIndividualLoans = await LoanAccount.unscoped().findAll({
+      attributes: [
+        'id',
+        'ACCT_NO',
+        'CUST_ID',
+        'OUTSTANDING_PRINCIPAL',
+        'LOAN_STATUS',
+        'NEXT_PAYMENT_DATE',
+        'MATURITY_DT',
+        'PENALTY_AMOUNT',
+        'ACCRUED_INTEREST',
+        'INTEREST_RATE',
+        'TERM_VALUE',
+        'LAST_REPAYMENT_DATE'
+        // ✅ DO NOT include penalty_rule_id - it doesn't exist in loan_accounts
+      ],
       where: {
         LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },
         OUTSTANDING_PRINCIPAL: { [Op.gt]: 0 },
@@ -240,7 +258,8 @@ export const processAutoCollections = async (options = {}) => {
         ]
       },
       transaction,
-      limit: 1000
+      limit: 1000,
+      logging: (sql) => logger.debug(`📝 SQL: ${sql}`)
     });
 
     results.individual.totalDue = dueIndividualLoans.length;
@@ -302,7 +321,12 @@ export const processAutoCollections = async (options = {}) => {
     const executionTime = Date.now() - startTime;
     const totalCollected = results.individual.collections.reduce((sum, coll) => sum + (coll.amount || 0), 0);
     
-    logger.info('✅ Auto-collection processing completed successfully', { results, totalCollected, executionTime: `${executionTime}ms`, batchId });
+    logger.info('✅ Auto-collection processing completed successfully', { 
+      results, 
+      totalCollected, 
+      executionTime: `${executionTime}ms`, 
+      batchId 
+    });
 
     return {
       success: true,
@@ -321,8 +345,20 @@ export const processAutoCollections = async (options = {}) => {
     };
   } catch (error) {
     if (transaction) await transaction.rollback();
-    logger.error('❌ Auto-collection processing failed', { batchId, error: error.message, stack: error.stack });
-    return { success: false, batchId, error: error.message, results: { individual: { processed: 0, overdueMarked: 0, failed: 0, totalDue: 0, collections: [] }, group: {} } };
+    logger.error('❌ Auto-collection processing failed', { 
+      batchId, 
+      error: error.message, 
+      stack: error.stack 
+    });
+    return { 
+      success: false, 
+      batchId, 
+      error: error.message, 
+      results: { 
+        individual: { processed: 0, overdueMarked: 0, failed: 0, totalDue: 0, collections: [] }, 
+        group: {} 
+      } 
+    };
   }
 };
 
@@ -341,7 +377,19 @@ export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 
     while (hasMore) {
       const transaction = await sequelize.transaction();
       try {
-        const dueLoans = await LoanAccount.findAll({
+        // ✅ FIXED: Use .unscoped() and specify attributes
+        const dueLoans = await LoanAccount.unscoped().findAll({
+          attributes: [
+            'id',
+            'ACCT_NO',
+            'CUST_ID',
+            'OUTSTANDING_PRINCIPAL',
+            'LOAN_STATUS',
+            'NEXT_PAYMENT_DATE',
+            'MATURITY_DT',
+            'PENALTY_AMOUNT',
+            'ACCRUED_INTEREST'
+          ],
           where: {
             LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },
             OUTSTANDING_PRINCIPAL: { [Op.gt]: 0 },
@@ -355,7 +403,12 @@ export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 
           order: [['NEXT_PAYMENT_DATE', 'ASC']],
           transaction,
         });
-        if (dueLoans.length === 0) { hasMore = false; await transaction.commit(); continue; }
+        
+        if (dueLoans.length === 0) { 
+          hasMore = false; 
+          await transaction.commit(); 
+          continue; 
+        }
 
         for (const loan of dueLoans) {
           let attempts = 0, processed = false;
@@ -363,12 +416,33 @@ export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 
           while (attempts < maxRetries && !processed) {
             try {
               const res = await processLoanViaAutoDebit(loan, new Date(), batchId, transaction, CustomerAccount);
-              if (res.success) { results.successful++; processed = true; }
-              else { attempts++; if (attempts < maxRetries) { results.retried++; await new Promise(r => setTimeout(r, 1000 * attempts)); } else { results.failed++; processed = true; } }
+              if (res.success) { 
+                results.successful++; 
+                processed = true; 
+              } else { 
+                attempts++; 
+                if (attempts < maxRetries) { 
+                  results.retried++; 
+                  await new Promise(r => setTimeout(r, 1000 * attempts)); 
+                } else { 
+                  results.failed++; 
+                  processed = true; 
+                } 
+              }
             } catch (err) {
               attempts++;
-              results.errors.push({ loanId: loan.id, accountNo: loan.ACCT_NO || loan.acctNo, error: err.message });
-              if (attempts >= maxRetries) { results.failed++; processed = true; } else { results.retried++; await new Promise(r => setTimeout(r, 1000 * attempts)); }
+              results.errors.push({ 
+                loanId: loan.id, 
+                accountNo: loan.ACCT_NO || loan.acctNo, 
+                error: err.message 
+              });
+              if (attempts >= maxRetries) { 
+                results.failed++; 
+                processed = true; 
+              } else { 
+                results.retried++; 
+                await new Promise(r => setTimeout(r, 1000 * attempts)); 
+              }
             }
           }
           results.totalProcessed++;
@@ -376,10 +450,17 @@ export const processBatchAutoCollections = async (batchSize = 100, maxRetries = 
         await transaction.commit();
         offset += batchSize;
         logger.info(`Batch processed – offset: ${offset}, successful: ${results.successful}, failed: ${results.failed}`);
-      } catch (err) { await transaction.rollback(); logger.error(`Batch failed at offset ${offset}`, { error: err.message }); throw err; }
+      } catch (err) { 
+        await transaction.rollback(); 
+        logger.error(`Batch failed at offset ${offset}`, { error: err.message }); 
+        throw err; 
+      }
     }
     return results;
-  } catch (error) { logger.error('Error in processBatchAutoCollections:', error); throw error; }
+  } catch (error) { 
+    logger.error('Error in processBatchAutoCollections:', error); 
+    throw error; 
+  }
 };
 
 // ----------------------------------------------------------------------
@@ -410,8 +491,19 @@ export const getAutoCollectionStats = async (startDate, endDate) => {
     
     const totalTransactions = stats.reduce((sum, row) => sum + parseInt(row.get('count') || 0), 0);
     const totalAmount = stats.reduce((sum, row) => sum + parseFloat(row.get('totalAmount') || 0), 0);
-    return { success: true, stats: { byMethod: stats, totalTransactions, totalAmount, period: { startDate, endDate } } };
-  } catch (error) { logger.error('Failed to retrieve auto-collection stats', { error: error.message }); return { success: false, error: error.message }; }
+    return { 
+      success: true, 
+      stats: { 
+        byMethod: stats, 
+        totalTransactions, 
+        totalAmount, 
+        period: { startDate, endDate } 
+      } 
+    };
+  } catch (error) { 
+    logger.error('Failed to retrieve auto-collection stats', { error: error.message }); 
+    return { success: false, error: error.message }; 
+  }
 };
 
 export const getCollectionStatistics = getAutoCollectionStats;
