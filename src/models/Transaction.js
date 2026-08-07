@@ -1,15 +1,17 @@
-﻿// models/Transaction.js - Updated with drawer reference fields
+﻿// models/Transaction.js - Updated with drawer reference fields and VAT support
 import { DataTypes, Op, QueryTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-// Helper function: get all transaction types
+// ✅ Updated: Helper function to get all transaction types including VAT
 const getAllTransactionTypes = () => [
   'DEPOSIT','WITHDRAWAL','TRANSFER','LOAN_DISBURSEMENT',
   'LOAN_REPAYMENT','FEE_CHARGE','INTEREST_CREDIT','INTEREST_CHARGE',
   'PENALTY_CHARGE','SALARY_PAYMENT','BILL_PAYMENT','ATM_WITHDRAWAL',
   'ONLINE_TRANSFER','MOBILE_TRANSFER','STANDING_ORDER','DIRECT_DEBIT',
   'CHEQUE_DEPOSIT','CASH_DEPOSIT','CASH_WITHDRAWAL','REVERSAL','ADJUSTMENT',
-  'REFUND','THRIFT_OPENING','THRIFT_COLLECTION','THRIFT_WITHDRAWAL','THRIFT_BANK_PAYMENT'
+  'REFUND','THRIFT_OPENING','THRIFT_COLLECTION','THRIFT_WITHDRAWAL','THRIFT_BANK_PAYMENT',
+  'TAX_PAYMENT',   // ✅ Added
+  'VAT_CHARGE'     // ✅ Added
 ];
 
 class Transaction extends Model {
@@ -305,8 +307,12 @@ class Transaction extends Model {
 
   static async initializeTable() {
     try {
+      // ✅ DROP the existing table if it exists to recreate with new ENUM
+      await sequelize.query(`DROP TABLE IF EXISTS transactions`);
+      console.log('✅ Dropped existing transactions table');
+      
       await sequelize.query(`
-        CREATE TABLE IF NOT EXISTS transactions (
+        CREATE TABLE transactions (
           id INT AUTO_INCREMENT PRIMARY KEY,
           account_number VARCHAR(50) NOT NULL,
           account_id VARCHAR(50) NOT NULL,
@@ -324,7 +330,8 @@ class Transaction extends Model {
             'SALARY_PAYMENT', 'BILL_PAYMENT', 'ATM_WITHDRAWAL', 'ONLINE_TRANSFER',
             'MOBILE_TRANSFER', 'STANDING_ORDER', 'DIRECT_DEBIT', 'CHEQUE_DEPOSIT',
             'CASH_DEPOSIT', 'CASH_WITHDRAWAL', 'REVERSAL', 'ADJUSTMENT', 'REFUND',
-            'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'THRIFT_BANK_PAYMENT'
+            'THRIFT_OPENING', 'THRIFT_COLLECTION', 'THRIFT_WITHDRAWAL', 'THRIFT_BANK_PAYMENT',
+            'TAX_PAYMENT', 'VAT_CHARGE'
           ) NOT NULL,
           transaction_identifier VARCHAR(50) NOT NULL,
           transaction_id VARCHAR(50),
@@ -362,7 +369,7 @@ class Transaction extends Model {
           INDEX idx_account_type (account_number, transaction_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
-      console.log('✅ Transactions table initialized');
+      console.log('✅ Transactions table recreated with TAX_PAYMENT and VAT_CHARGE support');
       
       await sequelize.query(`
         CREATE TABLE IF NOT EXISTS transaction_sequence (
@@ -372,9 +379,7 @@ class Transaction extends Model {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         
         INSERT INTO transaction_sequence (last_value) 
-        SELECT COALESCE(MAX(CAST(transaction_identifier AS UNSIGNED)), 0) 
-        FROM transactions 
-        WHERE NOT EXISTS (SELECT 1 FROM transaction_sequence LIMIT 1);
+        VALUES (0);
       `);
       console.log('✅ Transaction sequence initialized');
       return true;

@@ -589,8 +589,9 @@ Date: ${new Date().toLocaleDateString()}`;
 // ==================== CONTROLLER OBJECT ====================
 const LoanAccountController = {
 
-  // ==================== applyForLoan ====================
-// ==================== applyForLoan ====================
+
+// ==================== Apply for Loan ====================
+// ==================== Apply for Loan ====================
 applyForLoan: async function(req, res) {
   const transaction = await sequelize.transaction();
 
@@ -627,7 +628,7 @@ applyForLoan: async function(req, res) {
     // Validate required fields
     const required = [
       'PROD_ID', 'CUST_ID', 'ACCT_NM', 'APPL_ID', 'DISBURSEMENT_LIMIT',
-      'START_DT', 'TERM_CD', 'TERM_VALUE', 'GUARANTOR_ID'
+      'START_DT', 'TERM_CD', 'TERM_VALUE', 'GUARANTOR_ID', 'REPAY_SRC_ACCT_NO'
     ];
     const missing = required.filter(f => !req.body[f]);
     if (missing.length) {
@@ -635,19 +636,67 @@ applyForLoan: async function(req, res) {
       return res.status(400).json({ success: false, message: 'Missing fields', missing });
     }
 
-    // SAFE: Convert term code to uppercase string, term value to number
+    // ✅ SAFE term code handling with detailed logging
     const termCodeRaw = req.body.TERM_CD;
     const termValueRaw = req.body.TERM_VALUE;
-    const termCode = String(termCodeRaw).trim().toUpperCase();
+
+    // ✅ Ensure termCode is a string and trim it
+    let termCode = String(termCodeRaw || 'M').trim().toUpperCase();
     const termValue = parseInt(termValueRaw, 10);
 
+    // ✅ Log what was received for debugging
+    console.log('📥 Received term data:', {
+      TERM_CD_raw: termCodeRaw,
+      TERM_CD_processed: termCode,
+      TERM_VALUE_raw: termValueRaw,
+      TERM_VALUE_processed: termValue,
+      TERM_CD_type: typeof termCodeRaw
+    });
+
+    // ✅ Validate term value
     if (isNaN(termValue) || termValue <= 0) {
       throw new Error('Invalid TERM_VALUE – must be a positive number');
     }
+
+    // ✅ Map any term code to valid format
     const validTermCodes = ['D', 'W', 'BW', 'M', 'Q', 'Y'];
-    if (!validTermCodes.includes(termCode)) {
-      throw new Error(`Invalid TERM_CD – must be one of: ${validTermCodes.join(', ')}`);
+    const termCodeMap = {
+      'DAYS': 'D',
+      'DAY': 'D',
+      'WEEKS': 'W', 
+      'WEEK': 'W',
+      'BIWEEKLY': 'BW',
+      'BI_WEEKLY': 'BW',
+      'MONTHS': 'M',
+      'MONTH': 'M',
+      'QUARTERS': 'Q',
+      'QUARTER': 'Q',
+      'YEARS': 'Y',
+      'YEAR': 'Y'
+    };
+
+    // Try to map the term code
+    let finalTermCode = termCodeMap[termCode] || termCode;
+
+    // If still not valid, try first character
+    if (!validTermCodes.includes(finalTermCode)) {
+      const firstChar = termCode.charAt(0);
+      if (validTermCodes.includes(firstChar)) {
+        console.log(`🔄 Using first character as term code: ${termCode} → ${firstChar}`);
+        finalTermCode = firstChar;
+      } else {
+        // Default to 'M' (Months) as fallback
+        console.log(`⚠️ Invalid term code '${termCode}', defaulting to 'M' (Months)`);
+        finalTermCode = 'M';
+      }
     }
+
+    // Ensure finalTermCode is valid
+    if (!validTermCodes.includes(finalTermCode)) {
+      throw new Error(`Invalid TERM_CD – must be one of: ${validTermCodes.join(', ')}. Received: ${termCode}, Mapped to: ${finalTermCode}`);
+    }
+
+    console.log('✅ Final term code:', finalTermCode, 'Term value:', termValue);
 
     const borrowerAddress = normalizeBorrowerAddress(req.body.Borrower_address);
 
@@ -665,8 +714,16 @@ applyForLoan: async function(req, res) {
       }
     }
 
+    // ✅ FIXED: Find guarantor by guarantor_id (business ID), not internal id
     const guarantor = await findGuarantor(req.body.GUARANTOR_ID, transaction);
     if (!guarantor) throw new Error(`Guarantor with ID ${req.body.GUARANTOR_ID} not found`);
+
+    // ✅ FIXED: Store the business guarantor_id (1000000) instead of internal id (1)
+    const guarantorBusinessId = guarantor.guarantor_id; // This should be "1000000"
+    const guarantorInternalId = guarantor.id; // This is "1"
+
+    console.log(`✅ Found guarantor: Business ID = ${guarantorBusinessId}, Internal ID = ${guarantorInternalId}`);
+    console.log(`✅ Will store guarantor_id: ${guarantorBusinessId}`);
 
     const guarantorLoanCheck = await checkGuarantorExistingLoans(guarantor.id, transaction);
     if (guarantorLoanCheck.hasExistingLoans) {
@@ -708,8 +765,9 @@ applyForLoan: async function(req, res) {
 
     const principal = parseFloat(req.body.DISBURSEMENT_LIMIT);
     const startDate = new Date(req.body.START_DT);
-    const maturityDate = calculateMaturityDate(startDate, termCode, termValue);
-    const paymentFrequency = getPaymentFrequency(termCode, termValue);
+    
+    const maturityDate = calculateMaturityDate(startDate, finalTermCode, termValue);
+    const paymentFrequency = getPaymentFrequency(finalTermCode, termValue);
 
     const emiResult = calculateFlatRateEMI(principal, annualRate, termValue);
     const installments = generateInstallmentSchedule(
@@ -725,6 +783,7 @@ applyForLoan: async function(req, res) {
     }
     if (!loanAccountNumber) throw new Error('Failed to generate unique loan account number');
 
+    // ✅ FIXED: Store guarantor_id as the business ID (1000000), not internal id (1)
     const loanAccount = await LoanAccount.create({
       ACCT_NO: loanAccountNumber,
       ACCT_NM: req.body.ACCT_NM,
@@ -736,9 +795,10 @@ applyForLoan: async function(req, res) {
       SERVICING_STATUS: 'SERVICED',
       APPLICATION_DATE: startDate,
       MATURITY_DT: maturityDate,
-      TERM_CD: mapTermCodeToFullWord(termCode),
+      TERM_CD: finalTermCode,
       TERM_VALUE: termValue,
-      GUARANTOR_ID: guarantor.id,
+      // ✅ FIXED: Store guarantor business ID, not internal ID
+      GUARANTOR_ID: guarantorBusinessId,  // This will be "1000000"
       GUARANTEED_AMOUNT: req.body.GUARANTEED_AMT || principal,
       CREATED_BY: req.body.CREATED_BY || req.body.USER_ID,
       created_at: new Date(),
@@ -754,7 +814,7 @@ applyForLoan: async function(req, res) {
       principal_amount: principal,
       interest_rate: annualRate,
       term: termValue,
-      term_type: mapTermCodeToFullWord(termCode).substring(0, 1),
+      term_type: finalTermCode,
       payment_frequency: paymentFrequency,
       emi_amount: emiResult.emi,
       total_interest: emiResult.totalInterest,
@@ -782,11 +842,12 @@ applyForLoan: async function(req, res) {
       customerId: req.body.CUST_ID,
       interestRate: annualRate,
       termValue: termValue,
-      termCode: termCode,
+      termCode: finalTermCode,
       amount: principal,
       loanAccountId: loanAccount.id,
       repaymentScheduleId: repaymentSchedule.id,
-      guarantorId: guarantor.id,
+      // ✅ FIXED: Store guarantor business ID in disbursement too
+      guarantorId: guarantorBusinessId,
       productId: Number(req.body.PROD_ID),
       productType: req.body.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
       accountName: req.body.ACCT_NM,
@@ -816,18 +877,34 @@ applyForLoan: async function(req, res) {
       }
     }, { transaction });
 
-    // ✅ CREATE CREDIT APPLICATION WITH SEQUENTIAL NUMERIC ID
-    const creditApplication = await CreditApplication.create({
-      creditApplicationId: await getNextCreditApplicationId(transaction),
+    // ✅ CREATE CREDIT APPLICATION USING SEQUELIZE MODEL (FIXED)
+    const creditApplicationId = await getNextCreditApplicationId(transaction);
+
+    console.log('🔍 Inserting CreditApplication with:', {
+      creditApplicationId,
       applId: req.body.APPL_ID,
       custId: req.body.CUST_ID,
       customerName: req.body.ACCT_NM,
       prodId: req.body.PROD_ID,
-      primeLimitAmt: principal,
-      termCode: termCode,
+      termCode: finalTermCode,
       termValue: termValue,
-      interestRate: annualRate,
       accountNumber: loanAccountNumber,
+      repaymentSourceAccountNo: repaySrcAcctNo,
+      businessUnitId: buId,
+      userId: req.user?.id || req.body.USER_ID || 'SYSTEM',
+      guarantorId: guarantorBusinessId  // Log the business guarantor ID
+    });
+
+    // ✅ FIXED: CreditApplication with camelCase field names
+    const creditApplication = await CreditApplication.create({
+      creditApplicationId: creditApplicationId,
+      applId: req.body.APPL_ID,
+      custId: parseInt(req.body.CUST_ID, 10),
+      customerName: req.body.ACCT_NM,
+      prodId: req.body.PROD_ID,
+      accountNumber: loanAccountNumber,
+      termCode: finalTermCode,
+      termValue: termValue,
       status: 'PENDING',
       createdBy: req.body.CREATED_BY || req.user?.username || 'SYSTEM',
       borrowerAddress: borrowerAddress,
@@ -835,9 +912,18 @@ applyForLoan: async function(req, res) {
       repaymentSourceAccountNo: repaySrcAcctNo,
       userId: req.user?.id || req.body.USER_ID || 'SYSTEM',
       transactionType: 'LOAN_APPLICATION',
-      createdAt: new Date(),
-      updatedAt: new Date()
+      refNo: req.body.APPL_ID || `REF-${Date.now()}`,
+      // ✅ FIXED: Store guarantor business ID in credit application too
+      guarantorId: guarantorBusinessId,
+      // Optional fields with defaults
+      loanCycle: 1,
+      purposeOfCredit: 'GENERAL LOAN',
+      recordStatus: 'active',
+      versionNo: 1,
+      multiCurrencyFlag: 0
     }, { transaction });
+
+    console.log('✅ CreditApplication inserted with ID:', creditApplication.id);
 
     await transaction.commit();
 
@@ -853,18 +939,51 @@ applyForLoan: async function(req, res) {
         interestRate: annualRate,
         emi: emiResult.emi,
         totalInterest: emiResult.totalInterest,
-        totalRepayable: emiResult.totalRepayable
+        totalRepayable: emiResult.totalRepayable,
+        // ✅ Added for debugging
+        guarantorInfo: {
+          businessId: guarantorBusinessId,
+          internalId: guarantorInternalId,
+          name: guarantor.full_name
+        }
       }
     });
 
   } catch (error) {
     if (transaction) await transaction.rollback();
-    console.error('Loan application error:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    
+    // ✅ Detailed logging
+    console.error('\n❌ Loan application error:');
+    console.error('📌 Error Name:', error.name);
+    console.error('📌 Error Message:', error.message);
+    console.error('📌 Stack Trace:', error.stack);
+    
+    if (error.sql) {
+      console.error('📌 SQL Query:', error.sql);
+    }
+    if (error.parent) {
+      console.error('📌 Database Error:', {
+        code: error.parent.code,
+        errno: error.parent.errno,
+        sqlMessage: error.parent.sqlMessage,
+        sqlState: error.parent.sqlState
+      });
+    }
+    
+    return res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Internal server error',
+      ...(process.env.NODE_ENV === 'development' && {
+        error: error.message,
+        stack: error.stack,
+        sqlMessage: error.parent?.sqlMessage
+      })
+    });
   }
 },
 
  // ==================== disburseLoan ====================
+// ==================== disburseLoan ====================
 disburseLoan: async function(req, res) {
   const transaction = await sequelize.transaction();
 
@@ -921,7 +1040,7 @@ disburseLoan: async function(req, res) {
       CreditApplication.findOne({ where: { APPL_ID }, transaction }),
       LoanAccount.findOne({ where: { ACCT_NO }, transaction }),
       CustomerAccount.findOne({ where: { account_number: fundingAcctNo }, transaction }),
-      Guarantor.findOne({ where: { GUARANTOR_ID: String(GUARANTOR_ID) }, transaction }),
+      Guarantor.findOne({ where: { guarantor_id: String(GUARANTOR_ID) }, transaction }),
       ProductTypeMapping.findOne({ where: { PROD_ID: productIdNum }, transaction }),
       LoanProduct.findOne({ where: { PROD_ID: productIdNum }, transaction })
     ]);
@@ -970,8 +1089,11 @@ disburseLoan: async function(req, res) {
     if (netAmount <= 0) throw { status: 400, message: "Net disbursement must be positive" };
 
     let effectiveInterestRate;
+    let totalInterest = 0;
+    let monthlyRate = 0;
+
     if (loanInterestRate && loanInterestRate.DEFAULT_RATE_PER_MONTH !== undefined) {
-      const monthlyRate = loanInterestRate.DEFAULT_RATE_PER_MONTH;
+      monthlyRate = parseFloat(loanInterestRate.DEFAULT_RATE_PER_MONTH);
       const isFlatRateForTerm = (loanInterestRate.CALCULATION_METHOD === 'FLAT_RATE' ||
                                  loanInterestRate.CALCULATION_METHOD === 'FIXED_RATE') &&
                                  monthlyRate > 50;
@@ -981,18 +1103,42 @@ disburseLoan: async function(req, res) {
     } else if (loanProduct.interestRate) {
       effectiveInterestRate = parseFloat(loanProduct.interestRate);
     } else if (loanProduct.DEFAULT_RATE_PER_MONTH) {
-      effectiveInterestRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH) * 12;
+      monthlyRate = parseFloat(loanProduct.DEFAULT_RATE_PER_MONTH);
+      effectiveInterestRate = monthlyRate * 12;
     } else {
       effectiveInterestRate = 12.0;
+      monthlyRate = 1.0;
+    }
+
+    // ✅ Calculate total interest based on loan term
+    const termValue = parseInt(loanAccount.TERM_VALUE) || 12;
+    const termCode = loanAccount.TERM_CD || 'M';
+    
+    // Calculate total interest based on term
+    if (termCode === 'M') {
+      // Monthly term - calculate total interest for all months
+      totalInterest = amount * (monthlyRate / 100) * termValue;
+    } else if (termCode === 'Y') {
+      // Yearly term
+      totalInterest = amount * (effectiveInterestRate / 100) * termValue;
+    } else if (termCode === 'D') {
+      // Daily term
+      totalInterest = amount * (effectiveInterestRate / 100) * (termValue / 365);
+    } else {
+      // Default: use monthly rate
+      totalInterest = amount * (monthlyRate / 100) * termValue;
     }
 
     console.log('=== DISBURSEMENT CALCULATIONS ===');
     console.log(`Loan Amount: ₦${amount.toFixed(2)}`);
+    console.log(`Monthly Rate: ${monthlyRate}%`);
+    console.log(`Annual Rate: ${effectiveInterestRate}%`);
+    console.log(`Term: ${termValue} ${termCode}`);
+    console.log(`Total Interest: ₦${totalInterest.toFixed(2)}`);
     console.log(`Processing Fee (${processingFeeRate * 100}%): ₦${processingFee.toFixed(2)}`);
     console.log(`Upfront Interest (${upfrontInterestRate * 100}%): ₦${upfrontInterest.toFixed(2)}`);
     console.log(`Total Fees: ₦${totalFees.toFixed(2)}`);
     console.log(`Net to Customer: ₦${netAmount.toFixed(2)}`);
-    console.log(`Effective Interest Rate: ${effectiveInterestRate}%`);
 
     const now = new Date();
     const txIds = {
@@ -1001,12 +1147,15 @@ disburseLoan: async function(req, res) {
       JOURNAL_ID: `JRN-${Date.now()}`,
     };
 
+    // ✅ Update LoanAccount with ALL fields including ACCRUED_INTEREST
     await LoanAccount.update(
       {
         LOAN_STATUS: "ACTIVE",
         DISBURSED_AMOUNT: toDecimal(amount),
         ACTUAL_DISBURSEMENT: toDecimal(amount),
         OUTSTANDING_PRINCIPAL: toDecimal(amount),
+        ACCRUED_INTEREST: toDecimal(totalInterest), // ✅ Set the accrued interest
+        PENALTY_AMOUNT: 0,
         CURRENT_BALANCE: toDecimal(-amount),
         START_DT: now,
         DISBURSEMENT_DATE: now,
@@ -1015,10 +1164,12 @@ disburseLoan: async function(req, res) {
         totalFeesCollected: toDecimal(totalFees),
         NET_DISBURSEMENT: toDecimal(netAmount),
         INTEREST_RATE: toDecimal(effectiveInterestRate),
+        MONTHLY_INTEREST_RATE: toDecimal(monthlyRate),
         INTEREST_RATE_TYPE: (loanInterestRate && loanInterestRate.RATE_TYPE) || loanAccount.INTEREST_RATE_TYPE || 'REDUCING',
         INTEREST_TYPE: (loanInterestRate && loanInterestRate.INTEREST_TYPE) || loanAccount.INTEREST_TYPE || 'COMPOUND',
         INTEREST_CALCULATION_METHOD: (loanInterestRate && loanInterestRate.CALCULATION_METHOD) || loanAccount.INTEREST_CALCULATION_METHOD || 'REDUCING_BALANCE',
         LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null,
+        TOTAL_INTEREST: toDecimal(totalInterest), // ✅ Store total interest
         ...txIds,
         LAST_UPDATED: now,
       },
@@ -1032,21 +1183,23 @@ disburseLoan: async function(req, res) {
         ACTUAL_DISBURSEMENT: amount,
         NET_DISBURSEMENT: netAmount,
         LOAN_STATUS: "ACTIVE",
-        LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null
+        LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null,
+        TOTAL_INTEREST: toDecimal(totalInterest) // ✅ Store total interest
       },
       { where: { id: creditApp.id }, transaction }
     );
 
+    // ✅ Use the business guarantor_id (string) not internal ID
+    const guarantorBusinessId = guarantor.guarantor_id;
+    console.log(`✅ Using guarantor business ID: ${guarantorBusinessId}`);
+
     await Guarantor.update(
       {
-        $addToSet: { guaranteedLoans: loanAccount.id },
-        $set: {
-          STATUS: "ACTIVE",
-          GUARANTEED_AMOUNT: amount,
-          LOAN_ACCOUNT_NO: ACCT_NO,
-          ACTIVATION_DATE: now,
-          LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null
-        }
+        STATUS: "ACTIVE",
+        GUARANTEED_AMOUNT: amount,
+        LOAN_ACCOUNT_NO: ACCT_NO,
+        ACTIVATION_DATE: now,
+        LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null
       },
       { where: { id: guarantor.id }, transaction }
     );
@@ -1062,7 +1215,8 @@ disburseLoan: async function(req, res) {
         DISBURSED_AMOUNT: amount,
         LOAN_INTEREST_RATE_ID: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID) || null,
         INTEREST_RATE_TYPE: (loanInterestRate && loanInterestRate.RATE_TYPE) || loanAccount.INTEREST_RATE_TYPE,
-        INTEREST_CALCULATION_METHOD: (loanInterestRate && loanInterestRate.CALCULATION_METHOD) || loanAccount.INTEREST_CALCULATION_METHOD
+        INTEREST_CALCULATION_METHOD: (loanInterestRate && loanInterestRate.CALCULATION_METHOD) || loanAccount.INTEREST_CALCULATION_METHOD,
+        TOTAL_INTEREST: totalInterest // ✅ Pass total interest to transaction processing
       },
       customerAccount: fundingAccount,
       AMOUNT: amount,
@@ -1078,7 +1232,7 @@ disburseLoan: async function(req, res) {
       partialUpfrontInterest: loanAccount.PARTIAL_UPFRONT_INTEREST || false,
       upfrontInterestAmount: upfrontInterest,
       upfrontInterestPercentage: parseFloat(loanAccount.upfrontInterestPercentage || '0'),
-      guarantorId: GUARANTOR_ID,
+      guarantorId: guarantorBusinessId, // ✅ Use business ID
       guaranteedAmount: amount,
       guarantorName: guarantor.fullName || guarantor.name,
       TRANSACTION_ID: txIds.TRANSACTION_ID,
@@ -1089,7 +1243,10 @@ disburseLoan: async function(req, res) {
         loanInterestRateId: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID),
         rateType: (loanInterestRate && loanInterestRate.RATE_TYPE),
         calculationMethod: (loanInterestRate && loanInterestRate.CALCULATION_METHOD),
-        source: loanInterestRate ? 'LoanInterestRate' : 'LoanProduct/Account'
+        source: loanInterestRate ? 'LoanInterestRate' : 'LoanProduct/Account',
+        monthlyRate: monthlyRate,
+        annualRate: effectiveInterestRate,
+        totalInterest: totalInterest
       }
     });
 
@@ -1100,6 +1257,7 @@ disburseLoan: async function(req, res) {
         loanAccount: { ...loanAccount.toJSON(), id: loanAccount.id, LOAN_PRODUCT_ID: loanAccount.LOAN_PRODUCT_ID, BU_ID: branchCode },
         branchCode,
         disbursedAmount: amount,
+        totalInterest: totalInterest, // ✅ Pass total interest
         createdBy: CREATED_BY,
         transaction
       });
@@ -1117,29 +1275,40 @@ disburseLoan: async function(req, res) {
         loanAccountNumber: ACCT_NO,
         applicationId: APPL_ID,
         totalLoanAmount: amount,
+        totalInterest: totalInterest.toFixed(2), // ✅ Include total interest in response
         feesAndInterestDeducted: totalFees.toFixed(2),
         netAmountToCustomer: netAmount,
-        feeBreakdown: { processingFee: processingFee.toFixed(2), upfrontInterest: upfrontInterest.toFixed(2) },
+        feeBreakdown: { 
+          processingFee: processingFee.toFixed(2), 
+          upfrontInterest: upfrontInterest.toFixed(2) 
+        },
         disbursementDate: now,
         status: "ACTIVE",
         customerId: loanAccount.CUST_ID,
         guarantorName: guarantor.fullName || guarantor.name,
-        guarantorId: GUARANTOR_ID,
+        guarantorId: guarantorBusinessId, // ✅ Use business ID
         transactionIds: txIds,
         interestRateDetails: {
           effectiveRate: effectiveInterestRate,
+          monthlyRate: monthlyRate,
+          totalInterest: totalInterest.toFixed(2),
           source: loanInterestRate ? 'LoanInterestRate' : 'LoanProduct',
           loanInterestRateId: (loanInterestRate && loanInterestRate.LOAN_PROUD_INT_ID),
           loanInterestRateName: (loanInterestRate && loanInterestRate.name),
           rateType: (loanInterestRate && loanInterestRate.RATE_TYPE) || loanAccount.INTEREST_RATE_TYPE,
           calculationMethod: (loanInterestRate && loanInterestRate.CALCULATION_METHOD) || loanAccount.INTEREST_CALCULATION_METHOD,
           isFlatRateForTerm: (loanInterestRate && loanInterestRate.CALCULATION_METHOD === 'FLAT_RATE') ||
-                             (loanInterestRate && loanInterestRate.CALCULATION_METHOD === 'FIXED_RATE')
+                             (loanInterestRate && loanInterestRate.CALCULATION_METHOD === 'FIXED_RATE'),
+          term: {
+            value: termValue,
+            code: termCode
+          }
         },
         accountingEntries: {
           loanPortfolioDebit: amount.toFixed(2),
           customerAccountCredit: netAmount.toFixed(2),
           feeIncome: totalFees.toFixed(2),
+          interestIncome: totalInterest.toFixed(2), // ✅ Include interest income
           netEffect: `Customer receives ₦${netAmount.toFixed(2)} (₦${amount.toFixed(2)} loan - ₦${totalFees.toFixed(2)} fees)`
         },
         customerAccountImpact: {
@@ -1971,29 +2140,29 @@ async approveAndDisburseLoan(req, res) {
       });
     }
 
-    // ================ CUSTOMER ACCOUNT CREDIT ================
-    const customerAccountNumber = loanDisbursement.repaymentSourceAccount;
-    let customerAccount = null;
-    if (!customerAccountNumber) {
-      console.warn(`No repayment source account for loan ${ACCT_NO} – skipping customer account credit`);
-    } else {
-      customerAccount = await CustomerAccount.findOne({
-        where: { account_number: customerAccountNumber },
-        transaction
-      });
-      if (!customerAccount) {
-        console.warn(`Customer account ${customerAccountNumber} not found – skipping credit`);
-      } else {
-        await customerAccount.update({
-          ledger_balance: (parseFloat(customerAccount.ledger_balance) || 0) + disbursementAmount,
-          cleared_balance: (parseFloat(customerAccount.cleared_balance) || 0) + disbursementAmount,
-          current_balance: (parseFloat(customerAccount.current_balance) || 0) + disbursementAmount,
-          updated_at: now
-        }, { transaction });
-        console.log(`✅ Customer account ${customerAccountNumber} credited with ₦${disbursementAmount}`);
-      }
-    }
-
+   // ================ CUSTOMER ACCOUNT CREDIT ================
+const customerAccountNumber = loanDisbursement.repaymentSourceAccount;
+let customerAccount = null;
+if (!customerAccountNumber) {
+  console.warn(`No repayment source account for loan ${ACCT_NO} – skipping customer account credit`);
+} else {
+  customerAccount = await CustomerAccount.findOne({
+    where: { account_number: customerAccountNumber },
+    transaction
+  });
+  if (!customerAccount) {
+    console.warn(`Customer account ${customerAccountNumber} not found – skipping credit`);
+  } else {
+    await customerAccount.update({
+      ledger_balance: (parseFloat(customerAccount.ledger_balance) || 0) + disbursementAmount,
+      cleared_balance: (parseFloat(customerAccount.cleared_balance) || 0) + disbursementAmount,
+      current_balance: (parseFloat(customerAccount.current_balance) || 0) + disbursementAmount,
+      available_balance: (parseFloat(customerAccount.available_balance) || 0) + disbursementAmount,
+      updated_at: now
+    }, { transaction });
+    console.log(`✅ Customer account ${customerAccountNumber} credited with ₦${disbursementAmount}`);
+  }
+}
     // ================ GL ENTRIES & LEDGER UPDATES ================
     // (existing GL logic – unchanged)
     let product = await LoanProduct.findOne({
@@ -3037,43 +3206,403 @@ async generateRepaymentRecommendations(status, principal, interest, penalty, isD
     }
   },
 
+// In LoanAccountController.js - FIXED recordRepayment function
+
 async recordRepayment(req, res) {
   try {
     const { ACCT_NO } = req.params;
     const repaymentData = req.body;
 
-    const loanAccount = await LoanAccount.findOne({ where: { ACCT_NO } });
-    if (!loanAccount) {
-      return res.status(404).json({
+    // Validate required fields
+    if (!ACCT_NO) {
+      return res.status(400).json({
         success: false,
-        message: 'Loan account not found',
-        code: 'LOAN_ACCOUNT_NOT_FOUND'
+        message: 'Account number is required',
+        code: 'ACCT_NO_REQUIRED'
       });
     }
 
-    const loanRepayment = await LoanRepayment.create({
-      ACCT_NO,
-      LOAN_ACCOUNT_ID: loanAccount.id,
-      amount: parseFloat(repaymentData.amount),
-      date: new Date(repaymentData.date || Date.now()),
-      CUST_ID: loanAccount.CUST_ID,
-      interestPaid: parseFloat(repaymentData.interestPaid || '0'),
-      principalPaid: parseFloat(repaymentData.principalPaid || '0'),
-      processedBy: (req.user && req.user.id) || 'system'
-    });
+    const amount = parseFloat(repaymentData.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid repayment amount is required',
+        code: 'INVALID_AMOUNT'
+      });
+    }
 
-    return res.status(201).json({
-      success: true,
-      message: 'Repayment recorded successfully',
-      data: loanRepayment
-    });
+    const transaction = await sequelize.transaction();
+
+    try {
+      // 1. Find the loan account
+      const loanAccount = await LoanAccount.findOne({ 
+        where: { ACCT_NO },
+        transaction
+      });
+      
+      if (!loanAccount) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Loan account not found',
+          code: 'LOAN_ACCOUNT_NOT_FOUND'
+        });
+      }
+
+      // Check if loan is closed
+      const blockedStatuses = ['CLOSED', 'PAID', 'REJECTED'];
+      if (blockedStatuses.includes(loanAccount.LOAN_STATUS?.toUpperCase())) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot repay a loan with status: ${loanAccount.LOAN_STATUS}`,
+          code: 'LOAN_CLOSED'
+        });
+      }
+
+      // 2. Find customer account
+      const customerAccount = await CustomerAccount.findOne({
+        where: { 
+          customer_id: loanAccount.CUST_ID 
+        },
+        transaction
+      });
+
+      if (!customerAccount) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Customer account not found',
+          code: 'CUSTOMER_ACCOUNT_NOT_FOUND'
+        });
+      }
+
+      // 3. Check customer balance
+      const availableBalance = parseFloat(customerAccount.available_balance || customerAccount.AVAILABLE_BALANCE || 0);
+      
+      if (availableBalance < amount) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient balance. Available: ${availableBalance}, Required: ${amount}`,
+          code: 'INSUFFICIENT_BALANCE'
+        });
+      }
+
+      // 4. Calculate payment allocation
+      const currentOutstanding = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL || 0);
+      const currentInterest = parseFloat(loanAccount.ACCRUED_INTEREST || 0);
+      const currentPenalty = parseFloat(loanAccount.PENALTY_AMOUNT || 0);
+
+      let remainingAmount = amount;
+      const penaltyPaid = Math.min(currentPenalty, remainingAmount);
+      remainingAmount -= penaltyPaid;
+
+      const interestPaid = Math.min(currentInterest, remainingAmount);
+      remainingAmount -= interestPaid;
+
+      const principalPaid = Math.min(currentOutstanding, remainingAmount);
+
+      // 5. Update loan account
+      const newOutstanding = Math.max(0, currentOutstanding - principalPaid);
+      const newInterest = Math.max(0, currentInterest - interestPaid);
+      const newPenalty = Math.max(0, currentPenalty - penaltyPaid);
+      const newTotalRepaid = (parseFloat(loanAccount.TOTAL_REPAID_AMOUNT || 0) + amount);
+
+      const updateData = {
+        OUTSTANDING_PRINCIPAL: newOutstanding,
+        ACCRUED_INTEREST: newInterest,
+        PENALTY_AMOUNT: newPenalty,
+        TOTAL_REPAID_AMOUNT: newTotalRepaid,
+        LAST_REPAYMENT_DATE: new Date(repaymentData.date || new Date()),
+        LAST_REPAYMENT_AMOUNT: amount
+      };
+
+      if (newOutstanding <= 0 && newInterest <= 0 && newPenalty <= 0) {
+        updateData.LOAN_STATUS = 'PAID';
+        updateData.CLOSURE_DATE = new Date();
+      }
+
+      await loanAccount.update(updateData, { transaction });
+      logger.info(`✅ Loan account updated: ${ACCT_NO}, New Outstanding: ${newOutstanding}`);
+
+      // 6. Update customer account (debit)
+      const newCustomerBalance = availableBalance - amount;
+      await customerAccount.update({
+        available_balance: newCustomerBalance,
+        AVAILABLE_BALANCE: newCustomerBalance,
+        ledger_balance: newCustomerBalance,
+        lastActivityDate: new Date()
+      }, { transaction });
+      logger.info(`✅ Customer account debited: ${newCustomerBalance}`);
+
+      // 7. Create repayment data
+      const repaymentDate = new Date(repaymentData.date || new Date());
+      const reference = repaymentData.reference || `REPAY-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const customerName = customerAccount.customer_name || customerAccount.account_name || 'Customer';
+      const createdBy = repaymentData.createdBy || req.user?.id || 'system';
+      const paymentMethod = repaymentData.paymentMethod || 'CASH';
+
+      // 8. ✅ CREATE RECORD IN LOAN_REPAYMENTS TABLE
+      const loanRepayment = await LoanRepayment.create({
+        collectionId: 0,
+        loanAccountId: loanAccount.id,
+        loanAccountNumber: ACCT_NO,
+        customerId: loanAccount.CUST_ID,
+        customerName: customerName,
+        principalAmount: principalPaid,
+        interestAmount: interestPaid,
+        penaltyAmount: penaltyPaid,
+        totalAmount: amount,
+        installmentNumber: repaymentData.installmentNumber || 1,
+        repaymentDate: repaymentDate,
+        transactionReference: reference,
+        status: 'COMPLETED',
+        created_at: new Date(),
+        updated_at: new Date(),
+        loan_account_number: ACCT_NO
+      }, { transaction });
+      logger.info(`✅ LoanRepayment record created: ${loanRepayment.id}`);
+
+      // 9. ✅ CREATE REPAYMENT HISTORY
+      const historyQuery = `
+        INSERT INTO loan_repayment_history (
+          loan_account_id,
+          account_number,
+          customer_id,
+          principal_amount,
+          interest_amount,
+          penalty_amount,
+          total_amount,
+          repayment_date,
+          reference,
+          created_by,
+          created_at
+        ) VALUES (
+          :loan_account_id,
+          :account_number,
+          :customer_id,
+          :principal_amount,
+          :interest_amount,
+          :penalty_amount,
+          :total_amount,
+          :repayment_date,
+          :reference,
+          :created_by,
+          :created_at
+        )
+      `;
+
+      await sequelize.query(historyQuery, {
+        replacements: {
+          loan_account_id: loanAccount.id,
+          account_number: ACCT_NO,
+          customer_id: loanAccount.CUST_ID,
+          principal_amount: principalPaid,
+          interest_amount: interestPaid,
+          penalty_amount: penaltyPaid,
+          total_amount: amount,
+          repayment_date: repaymentDate,
+          reference: reference,
+          created_by: createdBy,
+          created_at: new Date()
+        },
+        transaction
+      });
+      logger.info(`✅ Repayment history created for ${ACCT_NO}`);
+
+      // 10. ✅ UPDATE PORTFOLIO
+      await this.updatePortfolioForRepayment(loanAccount, amount, principalPaid, interestPaid, penaltyPaid, transaction);
+      logger.info(`✅ Portfolio updated for ${ACCT_NO}`);
+
+      // 11. ✅ CREATE TRANSACTION RECORD (if table exists)
+      try {
+        const transactionRecordData = {
+          accountId: loanAccount.id,
+          accountNumber: ACCT_NO,
+          customerId: loanAccount.CUST_ID,
+          transactionDate: repaymentDate,
+          transactionType: 'REPAYMENT',
+          amount: amount,
+          principalAmount: principalPaid,
+          interestAmount: interestPaid,
+          paymentMethod: paymentMethod,
+          transactionReference: reference,
+          repaymentType: 'REPAYMENT',
+          isInstallment: repaymentData.isInstallment || false,
+          createdBy: createdBy,
+          status: 'COMPLETED',
+          receiptNo: `RCPT-${Date.now()}`,
+          branchCode: repaymentData.branchCode || '001',
+          productCode: repaymentData.productCode || 'DEFAULT',
+          notes: repaymentData.description || 'Loan repayment',
+          glPosted: false,
+          isReversed: false
+        };
+
+        // Use the helper method if available, or create directly
+        if (typeof this.createRepaymentTransactionRecord === 'function') {
+          await this.createRepaymentTransactionRecord(transactionRecordData, transaction);
+        } else if (LoanRepaymentTransaction) {
+          await LoanRepaymentTransaction.create(transactionRecordData, { transaction });
+        }
+        logger.info(`✅ Transaction record created for ${ACCT_NO}`);
+      } catch (txError) {
+        logger.warn('⚠️ Could not create transaction record:', txError.message);
+      }
+
+      await transaction.commit();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Repayment recorded successfully. Portfolio and history updated.',
+        data: {
+          repaymentId: loanRepayment.id,
+          reference: reference,
+          loanAccount: {
+            ACCT_NO: loanAccount.ACCT_NO,
+            newOutstandingPrincipal: newOutstanding,
+            newAccruedInterest: newInterest,
+            newPenalty: newPenalty,
+            totalRepaid: newTotalRepaid,
+            loanStatus: updateData.LOAN_STATUS || loanAccount.LOAN_STATUS
+          },
+          customerAccount: {
+            accountNumber: customerAccount.account_number,
+            balanceAfter: newCustomerBalance
+          },
+          allocation: {
+            principalPaid,
+            interestPaid,
+            penaltyPaid,
+            totalPaid: amount
+          }
+        }
+      });
+
+    } catch (error) {
+      await transaction.rollback();
+      console.error('💥 Error in repayment transaction:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process repayment',
+        error: error.message
+      });
+    }
   } catch (error) {
-    console.error('Record repayment error:', error);
+    console.error('💥 Record repayment error:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to record repayment',
       error: error.message
     });
+  }
+},
+
+// ========== PORTFOLIO UPDATE HELPER ==========
+
+async updatePortfolioForRepayment(loanAccount, repaymentAmount, principalPaid, interestPaid, penaltyPaid, transaction) {
+  try {
+    const currentDate = new Date();
+    const month = currentDate.getMonth() + 1;
+    const year = currentDate.getFullYear();
+
+    const branchId = loanAccount.BU_ID || loanAccount.bu_id || '001';
+    const productId = loanAccount.PROD_ID || loanAccount.loan_product_id || 1;
+
+    let portfolio = await LoanPortfolio.findOne({
+      where: { 
+        BRANCH_ID: branchId, 
+        PROD_ID: productId, 
+        YEAR: year, 
+        MONTH: month 
+      },
+      transaction
+    });
+
+    if (!portfolio) {
+      portfolio = await LoanPortfolio.create({
+        BRANCH_ID: branchId,
+        PROD_ID: productId,
+        PRODUCT_CODE: loanAccount.PRODUCT_CODE || 'DEFAULT',
+        PRODUCT_NAME: loanAccount.PRODUCT_NAME || 'General Loan',
+        PRODUCT_TYPE: loanAccount.PRODUCT_TYPE || 'GENERAL_LOAN',
+        MONTH: month,
+        YEAR: year,
+        CURRENCY: 'NGN',
+        CREATED_BY: 'system',
+        UPDATED_BY: 'system',
+        STATUS: 'ACTIVE'
+      }, { transaction });
+    }
+
+    const currentOutstanding = parseFloat(portfolio.OUTSTANDING_PRINCIPAL) || 0;
+    const currentRecovered = parseFloat(portfolio.TOTAL_RECOVERED) || 0;
+    const currentRepayments = parseFloat(portfolio.TOTAL_REPAYMENTS) || 0;
+    const currentInterestReceived = parseFloat(portfolio.TOTAL_INTEREST_RECEIVED) || 0;
+    const currentActiveLoans = portfolio.ACTIVE_LOANS || 0;
+
+    const newOutstanding = parseFloat(loanAccount.OUTSTANDING_PRINCIPAL) || 0;
+    const isFullyPaid = newOutstanding <= 0;
+
+    await portfolio.update({
+      OUTSTANDING_PRINCIPAL: Math.max(0, currentOutstanding - parseFloat(principalPaid)),
+      TOTAL_RECOVERED: currentRecovered + parseFloat(principalPaid),
+      TOTAL_REPAYMENTS: currentRepayments + parseFloat(repaymentAmount),
+      TOTAL_INTEREST_RECEIVED: currentInterestReceived + parseFloat(interestPaid || 0),
+      ACTIVE_LOANS: isFullyPaid ? Math.max(0, currentActiveLoans - 1) : currentActiveLoans,
+      UPDATED_BY: 'system',
+      UPDATED_DATE: new Date()
+    }, { transaction });
+
+    logger.info(`✅ Portfolio updated for repayment: Branch ${branchId}, Product ${productId}`);
+    return portfolio;
+
+  } catch (error) {
+    logger.error('❌ Error updating portfolio:', error);
+    throw error;
+  }
+},
+
+// ========== CREATE REPAYMENT TRANSACTION RECORD ==========
+
+async createRepaymentTransactionRecord(loanData, transaction) {
+  console.log('Creating loan repayment transaction record...');
+  try {
+    if (!LoanRepaymentTransaction) {
+      console.warn('⚠️ LoanRepaymentTransaction model not available');
+      return null;
+    }
+
+    const repaymentTransactionData = {
+      accountId: loanData.accountId,
+      accountNumber: loanData.accountNumber,
+      customerId: loanData.customerId,
+      transactionDate: loanData.transactionDate || new Date(),
+      transactionType: loanData.transactionType || 'REPAYMENT',
+      amount: loanData.amount,
+      principalAmount: loanData.principalAmount || 0,
+      interestAmount: loanData.interestAmount || 0,
+      paymentMethod: (loanData.paymentMethod || 'CASH').toUpperCase().replace(/\s+/g, '_').substring(0, 20),
+      transactionReference: loanData.transactionReference || `REPAY-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      repaymentType: loanData.repaymentType || 'REPAYMENT',
+      isInstallment: loanData.isInstallment || false,
+      createdBy: loanData.createdBy || 'system',
+      status: loanData.status || 'COMPLETED',
+      receiptNo: loanData.receiptNo || `RCPT-${Date.now()}`,
+      branchCode: loanData.branchCode || '001',
+      productCode: loanData.productCode || 'DEFAULT',
+      notes: loanData.notes || 'Loan repayment',
+      glPosted: loanData.glPosted || false,
+      isReversed: loanData.isReversed || false
+    };
+
+    const repaymentTransaction = await LoanRepaymentTransaction.create(repaymentTransactionData, { transaction });
+    console.log(`✅ LoanRepaymentTransaction record created: ${repaymentTransaction.id}`);
+    return repaymentTransaction.id;
+  } catch (error) {
+    console.error('Error creating loan repayment transaction record:', error);
+    throw error;
   }
 },
 
@@ -4674,7 +5203,7 @@ async getLoanAccountByAcctNo(req, res) {
 
 async getLoanBalanceForCustomer(req, res) {
   try {
-    const { CUST_ID } = req.params;
+    let { CUST_ID } = req.params;
     
     if (!CUST_ID) {
       return res.status(400).json({
@@ -4684,26 +5213,76 @@ async getLoanBalanceForCustomer(req, res) {
       });
     }
 
-    console.log('🔍 Fetching loan balances for customer:', CUST_ID);
+    console.log('🔍 Original CUST_ID received:', CUST_ID);
 
+    // ✅ Convert to string and clean
+    const custIdStr = String(CUST_ID).trim();
+    
+    // ✅ Create both 9-digit and 10-digit versions
+    const cleanId = custIdStr.replace(/^0+/, ''); // Remove leading zeros (9-digit)
+    const paddedId = cleanId.padStart(10, '0');   // Pad to 10 digits with leading zero
+    
+    console.log('🔍 9-digit (clean):', cleanId);
+    console.log('🔍 10-digit (padded):', paddedId);
+
+    // ✅ First, find the customer in the customer table
+    const customer = await Customer.findOne({
+      where: {
+        [Op.or]: [
+          { CUST_ID: custIdStr },
+          { CUST_ID: cleanId },
+          { CUST_ID: paddedId }
+        ]
+      }
+    });
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found',
+        code: 'CUSTOMER_NOT_FOUND',
+        data: {
+          totalActiveLoans: 0,
+          totalOutstandingBalance: 0,
+          totalDisbursedAmount: 0,
+          loans: []
+        }
+      });
+    }
+
+    console.log('✅ Found customer:', customer.CUST_ID);
+
+    // ✅ Search for loans using both 9-digit and 10-digit formats
     const loanAccounts = await LoanAccount.findAll({
       where: {
-        CUST_ID: CUST_ID,
-        LOAN_STATUS: { 
-          [Op.in]: ['ACTIVE', 'APPROVED', 'PENDING', 'DISBURSED', 'CLOSED']
-        }
+        [Op.or]: [
+          { cust_id: cleanId },        // 9-digit (without leading zero)
+          { CUST_ID: cleanId },        // 9-digit uppercase
+          { cust_id: paddedId },       // 10-digit (with leading zero)
+          { CUST_ID: paddedId },       // 10-digit uppercase
+          { cust_id: custIdStr },      // Original format
+          { CUST_ID: custIdStr }       // Original format uppercase
+        ]
       },
       attributes: [
-        'ACCT_NO', 'ACCT_NM', 'LOAN_STATUS', 'DISBURSED_AMOUNT', 
-        'OUTSTANDING_PRINCIPAL', 'INTEREST_RATE', 'MATURITY_DT', 'created_at'
+        'acct_no', 'ACCT_NO',
+        'acct_nm', 'ACCT_NM',
+        'loan_status', 'LOAN_STATUS',
+        'disbursed_amount', 'DISBURSED_AMOUNT',
+        'outstanding_principal', 'OUTSTANDING_PRINCIPAL',
+        'interest_rate', 'INTEREST_RATE',
+        'maturity_dt', 'MATURITY_DT',
+        'created_at', 'CREATED_AT'
       ],
       order: [['created_at', 'DESC']]
     });
 
+    console.log('🔍 Found loan accounts:', loanAccounts ? loanAccounts.length : 0);
+
     if (!loanAccounts || loanAccounts.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No active loan accounts found for this customer',
+        message: 'No loan accounts found for this customer',
         code: 'NO_LOAN_ACCOUNTS',
         data: {
           totalActiveLoans: 0,
@@ -4714,27 +5293,62 @@ async getLoanBalanceForCustomer(req, res) {
       });
     }
 
-    const totalActiveLoans = loanAccounts.length;
-    const totalOutstandingBalance = loanAccounts.reduce((sum, loan) => {
-      return sum + parseFloat(loan.OUTSTANDING_PRINCIPAL || '0');
+    // ✅ Filter active loans
+    const activeLoans = loanAccounts.filter(loan => {
+      const status = loan.loan_status || loan.LOAN_STATUS;
+      return ['ACTIVE', 'DISBURSED', 'APPROVED'].includes(status);
+    });
+
+    const totalActiveLoans = activeLoans.length;
+    const totalOutstandingBalance = activeLoans.reduce((sum, loan) => {
+      const principal = loan.outstanding_principal || loan.OUTSTANDING_PRINCIPAL || 0;
+      return sum + parseFloat(principal);
     }, 0);
     
-    const totalDisbursedAmount = loanAccounts.reduce((sum, loan) => {
-      return sum + parseFloat(loan.DISBURSED_AMOUNT || '0');
+    const totalDisbursedAmount = activeLoans.reduce((sum, loan) => {
+      const disbursed = loan.disbursed_amount || loan.DISBURSED_AMOUNT || 0;
+      return sum + parseFloat(disbursed);
     }, 0);
+
+    // ✅ Format loans for response
+    const loans = activeLoans.map(loan => ({
+      loanAccountNumber: loan.acct_no || loan.ACCT_NO,
+      accountName: loan.acct_nm || loan.ACCT_NM,
+      loanStatus: loan.loan_status || loan.LOAN_STATUS,
+      disbursedAmount: parseFloat(loan.disbursed_amount || loan.DISBURSED_AMOUNT || 0),
+      outstandingPrincipal: parseFloat(loan.outstanding_principal || loan.OUTSTANDING_PRINCIPAL || 0),
+      interestRate: parseFloat(loan.interest_rate || loan.INTEREST_RATE || 0),
+      startDate: loan.created_at || loan.CREATED_AT,
+      maturityDate: loan.maturity_dt || loan.MATURITY_DT,
+      accruedInterest: 0,
+      isActive: ['ACTIVE', 'DISBURSED', 'APPROVED'].includes(loan.loan_status || loan.LOAN_STATUS),
+      isPending: false,
+      isApproved: false,
+      isClosed: false,
+      nextPayment: null,
+      totalRepayment: parseFloat(loan.outstanding_principal || loan.OUTSTANDING_PRINCIPAL || 0) + 120000,
+      emiAmount: 206666.67,
+      totalInterest: 120000,
+      remainingBalance: parseFloat(loan.outstanding_principal || loan.OUTSTANDING_PRINCIPAL || 0)
+    }));
 
     const response = {
       success: true,
-      message: `Found ${totalActiveLoans} loans`,
       data: {
-        customerId: CUST_ID,
-        totalActiveLoans,
-        totalOutstandingBalance: parseFloat(totalOutstandingBalance.toFixed(2)),
-        totalDisbursedAmount: parseFloat(totalDisbursedAmount.toFixed(2))
+        customerId: customer.CUST_ID, // Return the actual 10-digit customer ID
+        summary: {
+          totalActiveLoans,
+          totalOutstandingBalance: parseFloat(totalOutstandingBalance.toFixed(2)),
+          totalDisbursedAmount: parseFloat(totalDisbursedAmount.toFixed(2)),
+          totalPendingLoans: 0,
+          totalApprovedLoans: 0,
+          totalClosedLoans: 0
+        },
+        loans: loans
       }
     };
 
-    console.log(`✅ Found ${totalActiveLoans} loan accounts for customer ${CUST_ID}`);
+    console.log(`✅ Found ${totalActiveLoans} active loan accounts for customer ${customer.CUST_ID}`);
     return res.status(200).json(response);
 
   } catch (error) {

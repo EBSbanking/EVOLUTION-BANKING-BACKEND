@@ -10,6 +10,7 @@ import { normalizeRoleId } from '../utils/roleUtils.js';
 import logger from '../utils/logger.js';
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
+import { QueryTypes } from 'sequelize';
 
 // Async handler utility
 const asyncHandler = (fn) => (req, res, next) => {
@@ -1886,82 +1887,55 @@ export const checkUserRoles = asyncHandler(async (req, res) => {
   }
 });
 
-// Get All User Roles
-// Get All User Roles - UPDATED
 export const getAllUserRoles = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, sortBy = 'CREATE_DT', sortOrder = 'DESC' } = req.query;
-  const offset = (Number(page) - 1) * Number(limit);
+  const { page = 1, limit = 20, sortBy = 'CREATE_DT', sortOrder = 'DESC' } = req.query;
+  const offset = (page - 1) * limit;
+  const orderDir = sortOrder.toUpperCase();
 
-  try {
-    // Validate sortBy field
-    const validSortFields = ['role_id', 'CREATE_DT', 'ROLE_NM', 'SYSUSER_ID', 'BU_ID', 'user_id', 'ROW_TS'];
-    const sortField = validSortFields.includes(sortBy) ? sortBy : 'CREATE_DT';
-    const order = [[sortField, sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC']];
+  // Get the total count
+  const countResult = await sequelize.query(
+    `SELECT COUNT(*) as total FROM user_roles`,
+    { type: QueryTypes.SELECT }
+  );
+  const total = countResult[0]?.total || 0;
 
-    const { count, rows: userRoles } = await UserRole.findAndCountAll({
-      limit: Number(limit),
-      offset: offset,
-      order: order,
-      attributes: { 
-        exclude: [] // Include all fields
-      }
-    });
+  // Get the paginated data with user info
+  const rows = await sequelize.query(
+    `
+    SELECT 
+      ur.*,
+      u.user_name AS USER_NAME,
+      u.employer_number AS EMPLOYER_NUMBER
+    FROM user_roles ur
+    LEFT JOIN users u ON ur.user_id = u.id
+    ORDER BY ur.${sortBy} ${orderDir}
+    LIMIT :limit OFFSET :offset
+    `,
+    {
+      replacements: { limit: parseInt(limit), offset: parseInt(offset) },
+      type: QueryTypes.SELECT,
+    }
+  );
 
-    const updatedRoles = userRoles.map((role) => {
-      const roleIds = JSON.parse(role.USER_ROLE_IDS || '[]');
-      const roleNames = JSON.parse(role.ROLE_NMS || '[]') || 
-        roleIds.map(roleId => ROLE_NAMES[String(roleId)] || "Unknown Role");
+  // Transform to use username as USER_ID
+  const userRoles = rows.map(row => ({
+    ...row,
+    USER_ID: row.USER_NAME || row.EMPLOYER_NUMBER || row.user_id,
+    // parse JSON fields if needed
+    USER_ROLE_IDS: row.USER_ROLE_IDS ? JSON.parse(row.USER_ROLE_IDS) : [],
+    ROLE_NMS: row.ROLE_NMS ? JSON.parse(row.ROLE_NMS) : [],
+    // parse other JSON fields similarly if necessary
+  }));
 
-      // Parse all JSON fields
-      const parsedRole = {
-        ...role.toJSON(),
-        ROLE_NAMES: roleNames,
-        ROLES_COUNT: roleIds.length || 1,
-        // Parse all JSON fields if they exist
-        USER_ROLE_IDS: roleIds,
-        ROLE_NMS: roleNames,
-        VAULT_ACCESS_LEVEL: role.VAULT_ACCESS_LEVEL ? JSON.parse(role.VAULT_ACCESS_LEVEL) : ['BU'],
-        DRAWER_ACCESS_LEVEL: role.DRAWER_ACCESS_LEVEL ? JSON.parse(role.DRAWER_ACCESS_LEVEL) : ['BU'],
-        DASHBOARD_ACCESS_LEVEL: role.DASHBOARD_ACCESS_LEVEL ? JSON.parse(role.DASHBOARD_ACCESS_LEVEL) : ['BU'],
-        TXN_ENQUIRY_ACCESS_LVL: role.TXN_ENQUIRY_ACCESS_LVL ? JSON.parse(role.TXN_ENQUIRY_ACCESS_LVL) : ['BU'],
-        CREDIT_APPL_ACCESS_LEVEL: role.CREDIT_APPL_ACCESS_LEVEL ? JSON.parse(role.CREDIT_APPL_ACCESS_LEVEL) : ['BU'],
-        CUSTOMER_ACCESS_LEVEL: role.CUSTOMER_ACCESS_LEVEL ? JSON.parse(role.CUSTOMER_ACCESS_LEVEL) : ['BU'],
-        ACCOUNT_ACCESS_LEVEL: role.ACCOUNT_ACCESS_LEVEL ? JSON.parse(role.ACCOUNT_ACCESS_LEVEL) : ['BU'],
-        REPORT_ACCESS_LEVEL: role.REPORT_ACCESS_LEVEL ? JSON.parse(role.REPORT_ACCESS_LEVEL) : ['BU'],
-        CUST_POSTING_ACCESS_LEVEL: role.CUST_POSTING_ACCESS_LEVEL ? JSON.parse(role.CUST_POSTING_ACCESS_LEVEL) : ['BU'],
-        GL_POSTING_ACCESS_LEVEL: role.GL_POSTING_ACCESS_LEVEL ? JSON.parse(role.GL_POSTING_ACCESS_LEVEL) : ['BU'],
-        FIXED_ASSET_ACCESS_LEVEL: role.FIXED_ASSET_ACCESS_LEVEL ? JSON.parse(role.FIXED_ASSET_ACCESS_LEVEL) : ['BU'],
-        LOAN_FEE_ACCESS_LEVEL: role.LOAN_FEE_ACCESS_LEVEL ? JSON.parse(role.LOAN_FEE_ACCESS_LEVEL) : ['BU'],
-        LOAN_OPERATIONS_ACCESS_LEVEL: role.LOAN_OPERATIONS_ACCESS_LEVEL ? JSON.parse(role.LOAN_OPERATIONS_ACCESS_LEVEL) : ['BU'],
-        PERMISSION_MANAGEMENT_ACCESS_LEVEL: role.PERMISSION_MANAGEMENT_ACCESS_LEVEL ? JSON.parse(role.PERMISSION_MANAGEMENT_ACCESS_LEVEL) : ['BU'],
-        SYSTEM_ADMIN_ACCESS_LEVEL: role.SYSTEM_ADMIN_ACCESS_LEVEL ? JSON.parse(role.SYSTEM_ADMIN_ACCESS_LEVEL) : ['BU'],
-        WF_ITEM_ACCESS_LEVEL: role.WF_ITEM_ACCESS_LEVEL ? JSON.parse(role.WF_ITEM_ACCESS_LEVEL) : ['BU'],
-      };
-
-      return parsedRole;
-    });
-
-    const totalPages = Math.ceil(count / Number(limit));
-
-    console.log(`Fetched ${updatedRoles.length} user roles (page ${page}, limit ${limit}, sorted by ${sortField})`);
-
-    return res.status(200).json({
-      success: true,
-      total: count,
-      currentPage: Number(page),
-      totalPages,
-      sortBy: sortField,
-      sortOrder: order[0][1],
-      userRoles: updatedRoles,
-    });
-  } catch (error) {
-    console.error("Error fetching UserRoles:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Error fetching UserRoles",
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
+  res.status(200).json({
+    success: true,
+    total,
+    currentPage: parseInt(page),
+    totalPages: Math.ceil(total / limit),
+    sortBy,
+    sortOrder,
+    userRoles,
+  });
 });
 
 // Update User Role - UPDATED

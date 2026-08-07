@@ -336,7 +336,21 @@ GLAccount.init(
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
-    underscored: false // we already map fields explicitly
+    underscored: false, // This tells Sequelize to use snake_case for timestamps
+    // Add hooks to ensure dates are properly set
+    hooks: {
+      beforeCreate: (instance) => {
+        if (!instance.created_at) {
+          instance.created_at = new Date();
+        }
+        if (!instance.updated_at) {
+          instance.updated_at = new Date();
+        }
+      },
+      beforeUpdate: (instance) => {
+        instance.updated_at = new Date();
+      }
+    }
   }
 );
 
@@ -347,7 +361,7 @@ GLAccount.findByAccountType = async (accountType, options = {}) => {
   if (options.branchCode) whereClause.branchCode = options.branchCode;
   return await GLAccount.findAll({
     where: whereClause,
-    order: options.order || [['createdAt', 'DESC']],
+    order: options.order || [['created_at', 'DESC']],
     limit: options.limit
   });
 };
@@ -403,8 +417,8 @@ GLAccount.prototype.getFrontendData = function() {
     CURRENCY_CODE: this.CURRENCY_CODE,
     REC_ST: this.REC_ST,
     coaStructure: coaStructure,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt
+    createdAt: this.created_at || this.createdAt,
+    updatedAt: this.updated_at || this.updatedAt
   };
 };
 

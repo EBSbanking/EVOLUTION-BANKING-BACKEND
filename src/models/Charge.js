@@ -1,6 +1,6 @@
-// models/Charge.js – with association to ChargeTier
+// models/Charge.js – with VAT and WHT support
 import { DataTypes, Model } from 'sequelize';
-import sequelize from '../../config/db.js';  // adjust to your actual path
+import sequelize from '../../config/db.js';
 import Decimal from 'decimal.js';
 
 class Charge extends Model {
@@ -25,12 +25,18 @@ class Charge extends Model {
       currencyId: this.CRNCY_ID,
       effectiveDate: this.EFFECTIVE_DT,
       version: this.VERSION_NO,
-      // Legacy single‑tier fields (may be null for multi‑tier)
       minAmount: this.MIN_AMOUNT ? parseFloat(this.MIN_AMOUNT) : null,
       maxAmount: this.MAX_AMOUNT ? parseFloat(this.MAX_AMOUNT) : null,
       feeAmount: this.FEE_AMOUNT ? parseFloat(this.FEE_AMOUNT) : null,
       feePercentage: this.FEE_PERCENTAGE ? parseFloat(this.FEE_PERCENTAGE) : null,
       feeType: this.FEE_TYPE,
+      isVATApplicable: this.IS_VAT_APPLICABLE || false,
+      vatRate: this.VAT_RATE ? parseFloat(this.VAT_RATE) : 7.5,
+      vatGLAccountNo: this.VAT_GL_ACCOUNT_NO || null,
+      isWHTApplicable: this.IS_WHT_APPLICABLE || false,
+      whtRate: this.WHT_RATE ? parseFloat(this.WHT_RATE) : 5,
+      whtGLAccountNo: this.WHT_GL_ACCOUNT_NO || null,
+      whtType: this.WHT_TYPE || 'CORPORATE',
     };
   }
 
@@ -51,7 +57,6 @@ class Charge extends Model {
     });
   }
 
-  // ✅ Association method – call this after importing ChargeTier
   static associate(models) {
     Charge.hasMany(models.ChargeTier, {
       foreignKey: 'charge_id',
@@ -93,11 +98,13 @@ Charge.init({
   CHRG_AMT: {
     type: DataTypes.DECIMAL(20, 6),
     allowNull: true,
+    defaultValue: null,
     field: 'CHRG_AMT'
   },
   CHRG_PCT: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: true,
+    defaultValue: null,
     field: 'CHRG_PCT'
   },
   REC_ST: {
@@ -163,33 +170,94 @@ Charge.init({
     defaultValue: 'description',
     field: 'CHRG_DESC'
   },
-  // Legacy single‑tier columns (still present for backward compatibility)
+  
+  // ==================== LEGACY SINGLE-TIER COLUMNS ====================
   MIN_AMOUNT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
+    defaultValue: null,
     field: 'MIN_AMOUNT'
   },
   MAX_AMOUNT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
+    defaultValue: null,
     field: 'MAX_AMOUNT'
   },
   FEE_AMOUNT: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
+    defaultValue: null,
     field: 'FEE_AMOUNT'
   },
   FEE_PERCENTAGE: {
     type: DataTypes.DECIMAL(10, 6),
     allowNull: true,
+    defaultValue: null,
     field: 'FEE_PERCENTAGE'
   },
   FEE_TYPE: {
     type: DataTypes.ENUM('FIXED', 'PERCENTAGE'),
-    defaultValue: 'FIXED',
-    field: 'FEE_TYPE'
+    allowNull: true,
+    defaultValue: null,
+    field: 'FEE_TYPE',
+    // ✅ CRITICAL FIX: Prevent Sequelize from setting a default value
+    set(value) {
+      if (value === undefined || value === null) {
+        this.setDataValue('FEE_TYPE', null);
+      } else {
+        this.setDataValue('FEE_TYPE', value);
+      }
+    }
   },
-  // Virtual aliases (keep as needed)
+  
+  // ==================== VAT FIELDS ====================
+  IS_VAT_APPLICABLE: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'IS_VAT_APPLICABLE'
+  },
+  VAT_RATE: {
+    type: DataTypes.DECIMAL(5, 2),
+    allowNull: true,
+    defaultValue: 7.5,
+    field: 'VAT_RATE'
+  },
+  VAT_GL_ACCOUNT_NO: {
+    type: DataTypes.STRING(60),
+    allowNull: true,
+    defaultValue: null,
+    field: 'VAT_GL_ACCOUNT_NO'
+  },
+  
+  // ==================== WHT FIELDS ====================
+  IS_WHT_APPLICABLE: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'IS_WHT_APPLICABLE'
+  },
+  WHT_RATE: {
+    type: DataTypes.DECIMAL(5, 2),
+    allowNull: true,
+    defaultValue: 5,
+    field: 'WHT_RATE'
+  },
+  WHT_GL_ACCOUNT_NO: {
+    type: DataTypes.STRING(60),
+    allowNull: true,
+    defaultValue: null,
+    field: 'WHT_GL_ACCOUNT_NO'
+  },
+  WHT_TYPE: {
+    type: DataTypes.ENUM('CORPORATE', 'INDIVIDUAL', 'NON_RESIDENT', 'SME', 'GOVERNMENT', 'NGO'),
+    allowNull: true,
+    defaultValue: 'CORPORATE',
+    field: 'WHT_TYPE'
+  },
+
+  // ==================== VIRTUAL FIELDS ====================
   chargeType: {
     type: DataTypes.VIRTUAL,
     get() { return this.CHRG_TY; },
@@ -219,6 +287,41 @@ Charge.init({
     type: DataTypes.VIRTUAL,
     get() { return this.CHRG_DESC; },
     set(val) { this.CHRG_DESC = val; }
+  },
+  isVATApplicable: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.IS_VAT_APPLICABLE; },
+    set(val) { this.IS_VAT_APPLICABLE = val; }
+  },
+  vatRate: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.VAT_RATE; },
+    set(val) { this.VAT_RATE = val; }
+  },
+  vatGLAccountNo: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.VAT_GL_ACCOUNT_NO; },
+    set(val) { this.VAT_GL_ACCOUNT_NO = val; }
+  },
+  isWHTApplicable: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.IS_WHT_APPLICABLE; },
+    set(val) { this.IS_WHT_APPLICABLE = val; }
+  },
+  whtRate: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.WHT_RATE; },
+    set(val) { this.WHT_RATE = val; }
+  },
+  whtGLAccountNo: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.WHT_GL_ACCOUNT_NO; },
+    set(val) { this.WHT_GL_ACCOUNT_NO = val; }
+  },
+  whtType: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.WHT_TYPE; },
+    set(val) { this.WHT_TYPE = val; }
   }
 }, {
   sequelize,
@@ -227,6 +330,17 @@ Charge.init({
   timestamps: false,
   underscored: false,
   hooks: {
+    // ✅ CRITICAL FIX: Run before validation
+    beforeValidate: (charge) => {
+      // Force FEE_TYPE to null for FLAT and PERCENTAGE
+      if (charge.TIER_TY === 'FLAT' || charge.TIER_TY === 'PERCENTAGE') {
+        charge.FEE_TYPE = null;
+        charge.FEE_AMOUNT = null;
+        charge.FEE_PERCENTAGE = null;
+        charge.MIN_AMOUNT = null;
+        charge.MAX_AMOUNT = null;
+      }
+    },
     beforeCreate: (charge) => {
       const now = new Date();
       if (!charge.CREATE_DT) charge.CREATE_DT = now;
@@ -246,10 +360,42 @@ Charge.init({
         charge.INCOME_GL_ACCT_NO = charge.chargeGLAccountNo;
       if (charge.status && !charge.REC_ST) charge.REC_ST = charge.status;
       if (charge.description && !charge.CHRG_DESC) charge.CHRG_DESC = charge.description;
+      
+      if (charge.isVATApplicable !== undefined && charge.isVATApplicable !== null && !charge.IS_VAT_APPLICABLE)
+        charge.IS_VAT_APPLICABLE = charge.isVATApplicable;
+      if (charge.vatRate !== undefined && charge.vatRate !== null && !charge.VAT_RATE)
+        charge.VAT_RATE = charge.vatRate;
+      if (charge.vatGLAccountNo && !charge.VAT_GL_ACCOUNT_NO)
+        charge.VAT_GL_ACCOUNT_NO = charge.vatGLAccountNo;
+      
+      if (charge.isWHTApplicable !== undefined && charge.isWHTApplicable !== null && !charge.IS_WHT_APPLICABLE)
+        charge.IS_WHT_APPLICABLE = charge.isWHTApplicable;
+      if (charge.whtRate !== undefined && charge.whtRate !== null && !charge.WHT_RATE)
+        charge.WHT_RATE = charge.whtRate;
+      if (charge.whtGLAccountNo && !charge.WHT_GL_ACCOUNT_NO)
+        charge.WHT_GL_ACCOUNT_NO = charge.whtGLAccountNo;
+      if (charge.whtType && !charge.WHT_TYPE)
+        charge.WHT_TYPE = charge.whtType;
+
+      // ✅ Ensure FEE_TYPE is null for FLAT/PERCENTAGE
+      if (charge.TIER_TY === 'FLAT' || charge.TIER_TY === 'PERCENTAGE') {
+        charge.FEE_TYPE = null;
+        charge.FEE_AMOUNT = null;
+        charge.FEE_PERCENTAGE = null;
+        charge.MIN_AMOUNT = null;
+        charge.MAX_AMOUNT = null;
+      }
     },
     beforeUpdate: (charge) => {
       charge.ROW_TS = new Date();
-      // Sync virtuals if needed
+      // ✅ Ensure FEE_TYPE is null for FLAT/PERCENTAGE on update
+      if (charge.TIER_TY === 'FLAT' || charge.TIER_TY === 'PERCENTAGE') {
+        charge.FEE_TYPE = null;
+        charge.FEE_AMOUNT = null;
+        charge.FEE_PERCENTAGE = null;
+        charge.MIN_AMOUNT = null;
+        charge.MAX_AMOUNT = null;
+      }
     }
   },
   defaultScope: {
@@ -262,7 +408,9 @@ Charge.init({
         'CHRG_AMT', 'CHRG_PCT', 'INCOME_GL_ACCT_NO',
         'REC_ST', 'CHRG_DESC', 'TIER_TY', 'CALC_BASIS_TY',
         'SETLMNT_OPTN', 'CRNCY_ID', 'EFFECTIVE_DT', 'VERSION_NO',
-        'MIN_AMOUNT', 'MAX_AMOUNT', 'FEE_AMOUNT', 'FEE_PERCENTAGE', 'FEE_TYPE'
+        'MIN_AMOUNT', 'MAX_AMOUNT', 'FEE_AMOUNT', 'FEE_PERCENTAGE', 'FEE_TYPE',
+        'IS_VAT_APPLICABLE', 'VAT_RATE', 'VAT_GL_ACCOUNT_NO',
+        'IS_WHT_APPLICABLE', 'WHT_RATE', 'WHT_GL_ACCOUNT_NO', 'WHT_TYPE'
       ]
     },
     active: {

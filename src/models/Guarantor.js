@@ -1,5 +1,5 @@
-// models/Guarantor.js - MySQL/Sequelize Version (class pattern)
-import { DataTypes, Model } from 'sequelize';
+// models/Guarantor.js - MySQL/Sequelize Version (FIXED - Reduced Indexes)
+import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class Guarantor extends Model {
@@ -160,41 +160,40 @@ class Guarantor extends Model {
           guaranteed_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
           created_by VARCHAR(50) NOT NULL,
           relationship_officer_name VARCHAR(100) NOT NULL,
-          loan_id INT,
+          loan_id INT NULL,
           status ENUM('ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'DEACTIVATED') DEFAULT 'PENDING',
-          email VARCHAR(100),
-          address TEXT,
+          email VARCHAR(100) NULL,
+          address TEXT NULL,
           state VARCHAR(50) NOT NULL,
-          local_government VARCHAR(50),
+          local_government VARCHAR(50) NULL,
           bu_id VARCHAR(20) NOT NULL,
           country VARCHAR(50) DEFAULT 'Nigeria',
-          id_type VARCHAR(50),
-          id_number VARCHAR(50),
-          bvn VARCHAR(11),
-          date_of_birth DATE,
+          id_type VARCHAR(50) NULL,
+          id_number VARCHAR(50) NULL,
+          bvn VARCHAR(11) NULL,
+          date_of_birth DATE NULL,
           net_worth DECIMAL(15,2) DEFAULT 0.00,
           annual_income DECIMAL(15,2) DEFAULT 0.00,
-          occupation VARCHAR(100),
-          employment_type VARCHAR(50),
+          occupation VARCHAR(100) NULL,
+          employment_type VARCHAR(50) NULL,
           verification_status ENUM('Pending', 'Verified', 'Rejected', 'Expired') DEFAULT 'Pending',
-          verified_by VARCHAR(50),
-          verification_date DATETIME,
-          consent_date DATETIME,
+          verified_by VARCHAR(50) NULL,
+          verification_date DATETIME NULL,
+          consent_date DATETIME NULL,
           is_active BOOLEAN DEFAULT true,
-          removed_at DATETIME,
-          removal_reason VARCHAR(255),
-          updated_by VARCHAR(50),
-          removal_request JSON,
+          removed_at DATETIME NULL,
+          removal_reason VARCHAR(255) NULL,
+          updated_by VARCHAR(50) NULL,
+          removal_request JSON NULL,
+          version INT DEFAULT 1,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          -- ✅ REDUCED INDEXES - Only essential ones
           INDEX idx_guarantor_id (guarantor_id),
-          INDEX idx_full_name_id (full_name, id_number),
           INDEX idx_loan_active (loan_id, is_active),
           INDEX idx_bu_id (bu_id),
-          INDEX idx_verification_status (verification_status),
           INDEX idx_status (status),
-          INDEX idx_is_active (is_active),
-          INDEX idx_created_at (created_at),
+          INDEX idx_verification_status (verification_status),
           CONSTRAINT fk_guarantor_loan FOREIGN KEY (loan_id) REFERENCES loan_accounts(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
@@ -208,13 +207,66 @@ class Guarantor extends Model {
 
   static async syncTable() {
     try {
-      await Guarantor.sync({ alter: true });
+      // ✅ Use alter: false to avoid index issues
+      await Guarantor.sync({ alter: false });
       console.log('✅ Guarantor table synced');
       return true;
     } catch (error) {
       console.error('Error syncing Guarantor table:', error.message);
       return false;
     }
+  }
+
+  // ✅ Generate a unique 7-digit guarantor ID
+  static async generateGuarantorId() {
+    const lastGuarantor = await this.findOne({
+      order: [['id', 'DESC']],
+      attributes: ['guarantor_id']
+    });
+    
+    if (!lastGuarantor) {
+      return '1000001';
+    }
+    
+    const lastId = parseInt(lastGuarantor.guarantor_id);
+    const newId = lastId + 1;
+    return newId.toString().padStart(7, '0');
+  }
+
+  // ✅ Find guarantor by ID with active check
+  static async findActiveById(id) {
+    return await this.findOne({
+      where: { id, is_active: true }
+    });
+  }
+
+  // ✅ Search guarantors with filters
+  static async searchGuarantors({ search, status, verificationStatus, buId, limit = 10, offset = 0 }) {
+    const where = {};
+    
+    if (search) {
+      where[Op.or] = [
+        { full_name: { [Op.like]: `%${search}%` } },
+        { phone_number: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+        { guarantor_id: { [Op.like]: `%${search}%` } },
+        { state: { [Op.like]: `%${search}%` } },
+        { local_government: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    
+    if (status) where.status = status;
+    if (verificationStatus) where.verification_status = verificationStatus;
+    if (buId) where.bu_id = buId;
+    
+    const { count, rows } = await this.findAndCountAll({
+      where,
+      limit,
+      offset,
+      order: [['created_at', 'DESC']]
+    });
+    
+    return { count, rows };
   }
 }
 
@@ -230,6 +282,7 @@ Guarantor.init(
     guarantor_id: {
       type: DataTypes.STRING(7),
       allowNull: false,
+      // ✅ Keep unique: true - this is essential
       unique: true,
       validate: { is: /^\d{7}$/, len: [7, 7] },
       field: 'guarantor_id'
@@ -272,9 +325,8 @@ Guarantor.init(
       field: 'loan_id'
     },
     status: {
-      type: DataTypes.STRING(50),
+      type: DataTypes.ENUM('ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'DEACTIVATED'),
       defaultValue: 'PENDING',
-      validate: { isIn: [['ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'DEACTIVATED']] },
       field: 'status'
     },
     email: {
@@ -397,6 +449,12 @@ Guarantor.init(
       defaultValue: null,
       field: 'removal_request'
     },
+    version: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+      field: 'version'
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
@@ -417,13 +475,18 @@ Guarantor.init(
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     underscored: false,
+    // ✅ REDUCED INDEXES - Only essential ones
     indexes: [
-      { unique: true, fields: ['guarantor_id'] },
-      { fields: ['full_name', 'id_number'] },
-      { fields: ['loan_id', 'is_active'] },
-      { fields: ['bu_id'] },
-      { fields: ['verification_status'] },
-      { fields: ['status'] }
+      { unique: true, fields: ['guarantor_id'] },  // Essential - UNIQUE constraint
+      { fields: ['loan_id', 'is_active'] },        // Essential for queries
+      { fields: ['bu_id'] },                       // Essential for filtering
+      { fields: ['status'] },                      // Essential for status queries
+      { fields: ['verification_status'] }          // Essential for verification queries
+      // ✅ REMOVED: full_name & id_number (can use full-text search)
+      // ✅ REMOVED: bvn (not frequently queried alone)
+      // ✅ REMOVED: phone_number (not frequently queried alone)
+      // ✅ REMOVED: is_active (covered by composite with loan_id)
+      // ✅ REMOVED: created_at (not frequently queried alone)
     ]
   }
 );

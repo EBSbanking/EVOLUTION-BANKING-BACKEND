@@ -167,7 +167,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Destructure request body (frontend sends uppercase names)
+        // Destructure request body
         const {
             name,
             description,
@@ -210,7 +210,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             VERSION = '1.0'
         } = req.body;
 
-        // ========== VALIDATION (unchanged but ensure values exist) ==========
+        // ========== VALIDATION ==========
         if (INTEREST_TYPE.toUpperCase() !== 'SIMPLE') {
             await transaction.rollback();
             return res.status(400).json({
@@ -227,7 +227,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Validate rate values – they must be provided
+        // Validate rate values
         if (MIN_RATE_PER_MONTH === undefined || MAX_RATE_PER_MONTH === undefined || DEFAULT_RATE_PER_MONTH === undefined) {
             await transaction.rollback();
             return res.status(400).json({
@@ -250,7 +250,7 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
-        // Variables (declare before use)
+        // Variables
         let finalLoanProudIntId;
         let finalCode;
         let minRate, maxRate, defaultRate;
@@ -427,6 +427,28 @@ createInterestRate: asyncHandler(async (req, res) => {
             });
         }
 
+        // ✅ FIXED: Handle tags properly as an array
+        let tagsArray = [];
+        if (TAGS) {
+            if (Array.isArray(TAGS)) {
+                tagsArray = TAGS.map(tag => typeof tag === 'string' ? tag.trim() : String(tag));
+            } else if (typeof TAGS === 'string') {
+                try {
+                    const parsed = JSON.parse(TAGS);
+                    tagsArray = Array.isArray(parsed) ? parsed.map(t => t.trim()) : [TAGS.trim()];
+                } catch (e) {
+                    // If it's a comma-separated string
+                    if (TAGS.includes(',')) {
+                        tagsArray = TAGS.split(',').map(s => s.trim());
+                    } else {
+                        tagsArray = [TAGS.trim()];
+                    }
+                }
+            } else if (typeof TAGS === 'object') {
+                tagsArray = Array.isArray(TAGS) ? TAGS.map(t => String(t).trim()) : Object.values(TAGS).map(t => String(t).trim());
+            }
+        }
+
         // ✅ CRITICAL: Use snake_case keys matching the model columns
         const interestRateData = {
             loan_proud_int_id: finalLoanProudIntId,
@@ -467,7 +489,8 @@ createInterestRate: asyncHandler(async (req, res) => {
             created_by: CREATED_BY,
             effective_date: new Date(EFFECTIVE_DATE),
             expiry_date: EXPIRY_DATE ? new Date(EXPIRY_DATE) : null,
-            tags: Array.isArray(TAGS) ? JSON.stringify(TAGS.map(tag => tag.trim())) : JSON.stringify([]),
+            // ✅ FIXED: tags as array (NOT JSON string)
+            tags: tagsArray,
             notes: NOTES?.trim(),
             version: VERSION,
             created_at: new Date(),
@@ -490,7 +513,7 @@ createInterestRate: asyncHandler(async (req, res) => {
         await transaction.commit();
         committed = true;
 
-        // Audit trail (optional, keep as before)
+        // Audit trail (optional)
         try {
             const auditTrailData = {
                 event_id: generateEventId(),
@@ -512,7 +535,8 @@ createInterestRate: asyncHandler(async (req, res) => {
                     term_type: newInterestRate.term_type,
                     status: newInterestRate.status,
                     version: newInterestRate.version,
-                    is_flat_rate: newInterestRate.is_flat_rate
+                    is_flat_rate: newInterestRate.is_flat_rate,
+                    tags: newInterestRate.tags
                 },
                 ip_address: getClientIp(req),
                 entity_id: newInterestRate.id,
@@ -547,7 +571,8 @@ createInterestRate: asyncHandler(async (req, res) => {
                 term_range: `${MIN_TERM_VALUE} - ${MAX_TERM_VALUE} ${TERM_TYPE.toLowerCase()}`,
                 term_months: `${minTermMonths} - ${maxTermMonths} months`,
                 rate_range: `${minRate} - ${maxRate}% per month`,
-                annual_rate: `${(defaultRate * 12).toFixed(2)}% per year`
+                annual_rate: `${(defaultRate * 12).toFixed(2)}% per year`,
+                tags: tagsArray
             }
         });
 

@@ -1,4 +1,4 @@
-// routes/authRoutes.js - COMPLETE FIXED VERSION
+// routes/authRoutes.js - COMPLETE FIXED VERSION WITH 2FA SUPPORT & FORBIDDEN PASSWORDS
 import express from 'express';
 import asyncHandler from 'express-async-handler';
 import { 
@@ -8,10 +8,36 @@ import {
   testConfigService,
   clearUserSession,
   clearAllUserSessions,
-  changeFirstLoginPassword
+  changeFirstLoginPassword,
+  // 2FA Controllers
+  initiate2FA,
+  verify2FAToken,
+  verifyHardware2FA,
+  resend2FAToken,
+  get2FAStatus,
+  configure2FA,
+  testSMSConfig,
+  getSMSStatus,
+  get2FAStatistics,
+  // RFID Controllers
+  rfidLogin,
+  verifyRFID2FA,
+  getUserRFIDTokens,
+  deactivateRFIDToken,
+  getRFIDStatus,
+  initializeRFIDReader,
+  simulateRFIDCard,
+  // ✅ FORBIDDEN PASSWORDS CONTROLLERS
+  getForbiddenPasswords,
+  addForbiddenPassword,
+  removeForbiddenPassword,
+  deleteForbiddenPassword,
+  resetForbiddenPasswords,
+  updateForbiddenPasswords
 } from '../controllers/LoginController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { restrictToPermission } from '../middlewares/rbac.js';
+import { checkPermission } from '../middlewares/rolePermissionMiddleware.js';
 import User from '../models/User.js';
 import Permissions from '../models/Permissions.js';
 import { ROLE_MAPPING, getRoleWithPermissions } from '../constants/roleMapping.js';
@@ -153,10 +179,181 @@ router.post('/logout-protected', verifyToken, checkLicenseForRoute, async (req, 
   }
 });
 
+// ============================================
+// ✅ 2FA ROUTES - COMPLETE SET
+// ============================================
+
 /**
- * 👤 USER PROFILE & SESSION
+ * 🔐 2FA INITIATION & VERIFICATION
+ * These are called during the 2FA flow
  */
-// Get authenticated user details (/me)
+// Initiate 2FA - Send SMS/Email token
+router.post('/2fa/initiate', initiate2FA);
+
+// Verify 2FA token (Email/SMS)
+router.post('/2fa/verify', verify2FAToken);
+
+// Verify Hardware 2FA (RFID)
+router.post('/2fa/verify-hardware', verifyHardware2FA);
+
+// Resend 2FA token
+router.post('/2fa/resend', resend2FAToken);
+
+/**
+ * 🔐 2FA STATUS & CONFIGURATION (Authenticated)
+ */
+// Get user's 2FA status
+router.get('/2fa/status', verifyToken, checkLicenseForRoute, get2FAStatus);
+
+// Configure 2FA (Admin only)
+router.put(
+  '/2fa/configure',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
+  checkLicenseForRoute,
+  configure2FA
+);
+
+// Test SMS configuration (Admin only)
+router.post(
+  '/2fa/test-sms',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  testSMSConfig
+);
+
+// Get SMS delivery status (Authenticated)
+router.get('/2fa/sms-status/:smsId', verifyToken, checkLicenseForRoute, getSMSStatus);
+
+// Get 2FA statistics (Admin only)
+router.get(
+  '/2fa/statistics',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  get2FAStatistics
+);
+
+// ============================================
+// ✅ RFID ROUTES - COMPLETE SET
+// ============================================
+
+/**
+ * 🔐 RFID 2FA LOGIN (Public)
+ */
+// RFID login endpoint
+router.post('/rfid/login', rfidLogin);
+
+// Verify RFID 2FA token
+router.post('/rfid/verify', verifyRFID2FA);
+
+/**
+ * 🔐 RFID TOKEN MANAGEMENT (Authenticated)
+ */
+// Get user's RFID tokens
+router.get('/rfid/tokens', verifyToken, checkLicenseForRoute, getUserRFIDTokens);
+
+// Deactivate RFID token
+router.delete(
+  '/rfid/tokens/:tokenId',
+  verifyToken,
+  checkLicenseForRoute,
+  deactivateRFIDToken
+);
+
+// Get RFID reader status
+router.get('/rfid/status', verifyToken, checkLicenseForRoute, getRFIDStatus);
+
+// Initialize RFID reader (Admin only)
+router.post(
+  '/rfid/initialize',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  initializeRFIDReader
+);
+
+// Simulate RFID card (Admin only - for testing)
+router.post(
+  '/rfid/simulate',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  simulateRFIDCard
+);
+
+// ============================================
+// ✅ FORBIDDEN PASSWORDS ROUTES (Admin only)
+// ============================================
+
+/**
+ * 📋 FORBIDDEN PASSWORDS MANAGEMENT
+ * These routes allow administrators to manage the forbidden passwords list
+ */
+
+// Get all forbidden passwords (paginated)
+router.get(
+  '/forbidden-passwords',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  getForbiddenPasswords
+);
+
+// Add a forbidden password
+router.post(
+  '/forbidden-passwords',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  addForbiddenPassword
+);
+
+// Remove a forbidden password (soft delete - deactivate)
+router.delete(
+  '/forbidden-passwords/:password',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  removeForbiddenPassword
+);
+
+// Permanently delete a forbidden password
+router.delete(
+  '/forbidden-passwords/permanent/:password',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  deleteForbiddenPassword
+);
+
+// Reset forbidden passwords to default
+router.post(
+  '/forbidden-passwords/reset',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  resetForbiddenPasswords
+);
+
+// Bulk update forbidden passwords
+router.put(
+  '/forbidden-passwords',
+  verifyToken,
+  checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS),
+  checkLicenseForRoute,
+  updateForbiddenPasswords
+);
+
+// ============================================
+// 👤 USER PROFILE & SESSION
+// ============================================
+
+/**
+ * Get authenticated user details (/me)
+ * Includes 2FA and RFID status
+ */
 router.get(
   '/me',
   verifyToken,
@@ -176,7 +373,18 @@ router.get(
       }
 
       // Fetch user using Sequelize
-      const user = await User.findByPk(req.user.userId);
+      const user = await User.findByPk(req.user.userId, {
+        attributes: { 
+          include: [
+            'rfid_enabled',
+            'two_factor_enabled',
+            'two_factor_methods',
+            'two_factor_phone',
+            'two_factor_email'
+          ] 
+        }
+      });
+      
       if (!user) {
         logger.warn('User not found in /me', { userId: req.user.userId });
         return res.status(404).json({
@@ -260,12 +468,29 @@ router.get(
       const tokenIssuedAt = req.user.iat ? new Date(req.user.iat * 1000).toISOString() : null;
       const tokenExpiresAt = req.user.exp ? new Date(req.user.exp * 1000).toISOString() : null;
 
+      // Get available 2FA methods
+      let twoFAMethods = [];
+      let twoFAEnabled = userData.two_factor_enabled || false;
+      
+      if (twoFAEnabled) {
+        if (userData.two_factor_methods?.hardware_token && userData.rfid_enabled) {
+          twoFAMethods.push('hardware_token');
+        }
+        if (userData.two_factor_methods?.email_token) {
+          twoFAMethods.push('email_token');
+        }
+        if (userData.two_factor_methods?.sms_token && userData.two_factor_phone) {
+          twoFAMethods.push('sms_token');
+        }
+      }
+
       logger.info('Authenticated user details fetched', {
         userId: userData.id,
         user_name: userData.user_name,
         role: roleName,
         isAdmin,
-        permissionsCount: Object.keys(permissions).length
+        twoFAEnabled,
+        twoFAMethods
       });
 
       res.json({
@@ -287,7 +512,18 @@ router.get(
           first_name: userData.first_name,
           last_name: userData.last_name,
           status: userData.status,
-          employer_number: userData.employer_number
+          employer_number: userData.employer_number,
+          // 2FA Information
+          two_factor_enabled: twoFAEnabled,
+          two_factor_methods: userData.two_factor_methods || {
+            hardware_token: false,
+            email_token: false,
+            sms_token: false
+          },
+          two_factor_phone: userData.two_factor_phone || null,
+          two_factor_email: userData.two_factor_email || null,
+          rfid_enabled: userData.rfid_enabled || false,
+          two_fa_methods_list: twoFAMethods
         },
         sessionInfo: {
           authenticated: true,
@@ -331,7 +567,8 @@ router.get('/business-role', verifyToken, (req, res) => {
       BU_ROLE_ID: req.user?.BU_ROLE_ID,
       role: req.user?.role,
       isAdmin: req.user?.isAdmin,
-      businessUnit: req.user?.businessUnit || 'Wethral'
+      businessUnit: req.user?.businessUnit || 'Wethral',
+      two_factor_enabled: req.user?.two_factor_enabled || false
     },
     availableRoles: req.user?.isAdmin ? ['Administrator', 'Manager', 'Teller'] : [req.user?.role],
     defaultRole: req.user?.role,
@@ -339,9 +576,181 @@ router.get('/business-role', verifyToken, (req, res) => {
   });
 });
 
-/**
- * 🧪 TEST ENDPOINTS
- */
+// ============================================
+// 🔐 LOGIN VALIDATION ENDPOINT
+// ============================================
+router.post('/login/validate', asyncHandler(async (req, res) => {
+  try {
+    const { user_name, password } = req.body;
+    
+    // Validate input
+    if (!user_name || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username and password are required'
+      });
+    }
+    
+    // Find user
+    const user = await User.findOne({ where: { user_name } });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+    
+    // Check if account is locked
+    if (user.locked) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account locked due to too many failed attempts',
+        locked: true
+      });
+    }
+    
+    // Validate password
+    const isValidPassword = await user.validatePassword(password);
+    if (!isValidPassword) {
+      // Track failed attempts
+      await user.increment('failedLoginAttempts');
+      
+      const attempts = user.failedLoginAttempts + 1;
+      const maxAttempts = 3;
+      const remainingAttempts = Math.max(0, maxAttempts - attempts);
+      
+      if (attempts >= maxAttempts) {
+        await user.update({ locked: true });
+        return res.status(401).json({
+          success: false,
+          message: 'Account locked due to too many failed attempts',
+          locked: true
+        });
+      }
+      
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials',
+        remainingAttempts
+      });
+    }
+    
+    // ✅ Check if user has 2FA enabled
+    if (user.two_factor_enabled) {
+      // Generate a session ID for 2FA
+      const sessionId = generateSessionId();
+      
+      // Determine available 2FA methods
+      const methods = [];
+      const twoFactorMethods = user.two_factor_methods || {};
+      
+      if (twoFactorMethods.hardware_token && user.rfid_enabled) {
+        methods.push({
+          type: 'hardware_token',
+          label: 'Hardware Token (HID)',
+          description: 'Tap your HID Mini Token on the reader'
+        });
+      }
+      if (twoFactorMethods.email_token && user.email) {
+        methods.push({
+          type: 'email_token',
+          label: 'Email Token',
+          description: `Send code to ${user.email}`
+        });
+      }
+      if (twoFactorMethods.sms_token && user.phone) {
+        methods.push({
+          type: 'sms_token',
+          label: 'SMS Token',
+          description: `Send code to ${user.phone}`
+        });
+      }
+      
+      // ✅ Return 2FA required response
+      return res.json({
+        success: true,
+        twoFactorEnabled: true,
+        require2FA: true,
+        userId: user.id,
+        sessionId: sessionId,
+        methods: methods,
+        message: '2FA verification required',
+        remainingAttempts: 3
+      });
+    }
+    
+    // ✅ No 2FA - Login successful
+    // Generate JWT token
+    const token = generateJWT(user);
+    const refreshToken = generateRefreshToken(user);
+    
+    // Reset failed attempts
+    await user.update({ 
+      failedLoginAttempts: 0,
+      lastLogin: new Date()
+    });
+    
+    return res.json({
+      success: true,
+      token,
+      refreshToken,
+      user: {
+        userId: user.id,
+        user_name: user.user_name,
+        email: user.email,
+        phone: user.phone,
+        BU_ROLE_ID: user.BU_ROLE_ID,
+        role: user.role,
+        requiresPasswordChange: user.requiresPasswordChange || false,
+        two_factor_enabled: false
+      },
+      expiresIn: 3600
+    });
+    
+  } catch (error) {
+    console.error('Login validation error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Login failed. Please try again.'
+    });
+  }
+}));
+
+// Helper function to generate session ID
+function generateSessionId() {
+  return `2fa_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+}
+
+// Helper function to generate JWT
+function generateJWT(user) {
+  const jwt = require('jsonwebtoken');
+  const secret = process.env.JWT_SECRET || 'your-secret-key';
+  return jwt.sign(
+    { 
+      userId: user.id, 
+      user_name: user.user_name,
+      role: user.role,
+      BU_ROLE_ID: user.BU_ROLE_ID
+    },
+    secret,
+    { expiresIn: '1h' }
+  );
+}
+
+function generateRefreshToken(user) {
+  const jwt = require('jsonwebtoken');
+  const secret = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key';
+  return jwt.sign(
+    { userId: user.id },
+    secret,
+    { expiresIn: '7d' }
+  );
+}
+
+// ============================================
+// 🧪 TEST ENDPOINTS
+// ============================================
+
 // Test Configuration Service
 router.get('/test-config', testConfigService);
 
@@ -352,13 +761,43 @@ router.get('/status', (req, res) => {
     message: 'Auth routes are working',
     timestamp: new Date().toISOString(),
     endpoints: {
-      login: ['/login', '/login/login'],
-      password: ['/change-password', '/emergency-reset'],
+      login: ['/login', '/login/login', '/login/validate'],
+      password: ['/change-first-password', '/emergency-reset'],
       session: ['/clear-session', '/clear-all-sessions', '/clear-session/:userId'],
       logout: ['/logout', '/logout-protected'],
       profile: ['/me'],
       businessRole: ['/business-role'],
-      test: ['/test-config', '/status']
+      // 2FA Endpoints
+      twoFA: {
+        initiate: '/2fa/initiate',
+        verify: '/2fa/verify',
+        verifyHardware: '/2fa/verify-hardware',
+        resend: '/2fa/resend',
+        status: '/2fa/status',
+        configure: '/2fa/configure',
+        testSMS: '/2fa/test-sms',
+        smsStatus: '/2fa/sms-status/:smsId',
+        statistics: '/2fa/statistics'
+      },
+      // RFID Endpoints
+      rfid: {
+        login: '/rfid/login',
+        verify: '/rfid/verify',
+        tokens: '/rfid/tokens',
+        deactivate: '/rfid/tokens/:tokenId',
+        status: '/rfid/status',
+        initialize: '/rfid/initialize',
+        simulate: '/rfid/simulate'
+      },
+      // ✅ FORBIDDEN PASSWORDS ENDPOINTS
+      forbiddenPasswords: {
+        list: '/forbidden-passwords (GET)',
+        add: '/forbidden-passwords (POST)',
+        remove: '/forbidden-passwords/:password (DELETE)',
+        permanentDelete: '/forbidden-passwords/permanent/:password (DELETE)',
+        reset: '/forbidden-passwords/reset (POST)',
+        bulkUpdate: '/forbidden-passwords (PUT)'
+      }
     }
   });
 });

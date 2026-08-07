@@ -1,5 +1,27 @@
+// controllers/LoginController.js - COMPLETE CLEANED VERSION
+
+// ============================================
+// FIX: Get __dirname BEFORE any other imports that might need it
+// ============================================
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import path from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// ============================================
+// IMPORTS
+// ============================================
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
+import { Op } from 'sequelize';
+
+// Load .env from parent directory
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
 import User from '../models/User.js';
 import Login from '../models/Login.js';
 import UserRole from '../models/UserRole.js';
@@ -12,8 +34,29 @@ import Permissions from '../models/Permissions.js';
 import PERMISSIONS from '../constants/permissions.js';
 import { roleHasPermission } from '../constants/roleMapping.js';
 import sequelize from '../../config/db.js';
-import { Op } from 'sequelize';                  // Sequelize operators
-import { getUser } from '../models/index.js'; 
+import { getUser } from '../models/index.js';
+import LoginPolicy from '../models/LoginPolicy.js';
+import RFIDToken from '../models/RFIDToken.js';
+import twoFactorService from '../services/TwoFactorService.js';
+import rfidReaderService from '../services/rfidReaderService.js';
+
+// ============================================
+// EMAIL CONFIGURATION (Same as TwoFactorService)
+// ============================================
+const emailConfig = {
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.SMTP_PORT || '587'),
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: {
+    user: process.env.SMTP_USER || 'warelogtech@gmail.com',
+    pass: process.env.SMTP_PASS,
+  },
+  from: process.env.SMTP_FROM || 'warelogtech@gmail.com',
+  name: process.env.SMTP_NAME || 'Evolution Banking',
+};
+
+// Store pending 2FA sessions
+const pending2FASessions = new Map();
 
 // Simple IP validation function
 const validateIpAddress = (ip) => {
@@ -27,8 +70,863 @@ const getClientIp = (req) => {
   return ip && ip !== '::1' ? ip.split(',')[0].trim() : null;
 };
 
+// ============================================
+// 📧 SEND WELCOME EMAIL FUNCTION - Picks from .env
+// ============================================
+async function sendWelcomeEmail({ 
+  email, 
+  userName, 
+  password, 
+  firstName, 
+  role
+}) {
+  try {
+    if (!email) {
+      console.error('❌ No email provided');
+      return false;
+    }
 
-// ✅ Force lock a user due to fraud - FIXED for integer force_locked_by
+    console.log('📧 Sending welcome email to:', email);
+    console.log('📧 Using SMTP config from .env:', {
+      host: emailConfig.host,
+      port: emailConfig.port,
+      user: emailConfig.auth.user,
+      from: emailConfig.from
+    });
+
+    // Create transporter using emailConfig
+    const transporter = nodemailer.createTransport({
+      host: emailConfig.host,
+      port: emailConfig.port,
+      secure: emailConfig.secure,
+      auth: {
+        user: emailConfig.auth.user,
+        pass: emailConfig.auth.pass,
+      },
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+
+    // Verify transporter
+    await transporter.verify();
+
+    // ✅ ALL values from .env
+    const fromEmail = emailConfig.from || emailConfig.auth.user;
+    const appName = process.env.APP_NAME || emailConfig.name || 'Evolution Banking';
+    const loginUrl = process.env.LOGIN_URL || 'http://localhost:3000/login';
+    const supportEmail = process.env.SUPPORT_EMAIL || 'support@evolutionbanking.com';
+    const appLogo = process.env.APP_LOGO_URL || null;
+    const appColor = process.env.APP_PRIMARY_COLOR || '#667eea';
+    const appSecondaryColor = process.env.APP_SECONDARY_COLOR || '#764ba2';
+
+    // Generate HTML email
+    const htmlContent = generateWelcomeEmailHTML({
+      firstName,
+      userName,
+      password,
+      role,
+      loginUrl,
+      appName,
+      supportEmail,
+      appLogo,
+      appColor,
+      appSecondaryColor
+    });
+
+    // Generate plain text email
+    const textContent = generateWelcomeEmailText({
+      firstName,
+      userName,
+      password,
+      role,
+      loginUrl,
+      appName,
+      supportEmail
+    });
+
+    const mailOptions = {
+      from: `"${appName} Team" <${fromEmail}>`,
+      to: email,
+      subject: `Welcome to ${appName} - Your Account Has Been Created`,
+      html: htmlContent,
+      text: textContent,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ Welcome email sent successfully:', info.messageId);
+    return true;
+
+  } catch (error) {
+    console.error('❌ sendWelcomeEmail error:', error.message);
+    console.error('❌ Error details:', error.stack);
+    return false;
+  }
+}
+
+// ============================================
+// 📧 GENERATE WELCOME EMAIL HTML - Dynamic from .env
+// ============================================
+function generateWelcomeEmailHTML({ 
+  firstName, 
+  userName, 
+  password, 
+  role, 
+  loginUrl, 
+  appName, 
+  supportEmail,
+  appLogo,
+  appColor = '#667eea',
+  appSecondaryColor = '#764ba2'
+}) {
+  const currentYear = new Date().getFullYear();
+  
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to ${appName}</title>
+        <style>
+          body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #f4f7fc;
+            margin: 0;
+            padding: 20px;
+          }
+          .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+          }
+          .header {
+            text-align: center;
+            border-bottom: 3px solid ${appColor};
+            padding-bottom: 20px;
+            margin-bottom: 25px;
+          }
+          .header h1 {
+            color: ${appColor};
+            font-size: 28px;
+            margin: 0;
+            letter-spacing: -0.5px;
+          }
+          .header .logo {
+            max-width: 150px;
+            height: auto;
+            margin-bottom: 10px;
+          }
+          .header p {
+            color: #888;
+            margin: 5px 0 0;
+            font-size: 14px;
+          }
+          .greeting {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 20px;
+          }
+          .welcome-text {
+            color: #555;
+            line-height: 1.7;
+            font-size: 15px;
+          }
+          .credentials-card {
+            background: linear-gradient(135deg, #f5f7ff 0%, #eef1ff 100%);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+            border: 2px solid ${appColor};
+          }
+          .credential-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e5ff;
+          }
+          .credential-item:last-child {
+            border-bottom: none;
+          }
+          .credential-label {
+            color: #666;
+            font-weight: 600;
+            font-size: 14px;
+          }
+          .credential-value {
+            color: #333;
+            font-weight: 500;
+            font-family: 'Courier New', monospace;
+            font-size: 15px;
+            background: #ffffff;
+            padding: 2px 12px;
+            border-radius: 6px;
+          }
+          .button-container {
+            text-align: center;
+            margin: 30px 0;
+          }
+          .button {
+            display: inline-block;
+            padding: 14px 40px;
+            background: linear-gradient(135deg, ${appColor} 0%, ${appSecondaryColor} 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+          }
+          .button:hover {
+            opacity: 0.9;
+          }
+          .info-box {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid ${appColor};
+          }
+          .info-box p {
+            margin: 5px 0;
+            color: #555;
+            font-size: 14px;
+          }
+          .security-note {
+            background: #fef9e7;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #f39c12;
+          }
+          .security-note p {
+            margin: 5px 0;
+            color: #856404;
+            font-size: 14px;
+          }
+          .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+          }
+          .footer .brand {
+            color: ${appColor};
+            font-weight: 600;
+          }
+          @media (max-width: 480px) {
+            .container { padding: 20px; }
+            .credential-item { flex-direction: column; gap: 5px; }
+            .button { display: block; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            ${appLogo ? `<img src="${appLogo}" alt="${appName}" class="logo" />` : ''}
+            <h1>🏦 ${appName}</h1>
+            <p>Secure Banking Platform</p>
+          </div>
+          
+          <div class="greeting">
+            Hello <strong>${firstName || 'User'}</strong> 👋
+          </div>
+          
+          <div class="welcome-text">
+            <p>Your account has been successfully created in the ${appName} system. 
+            You can now log in using the credentials below.</p>
+          </div>
+          
+          <div class="credentials-card">
+            <h3 style="margin-top: 0; color: #4a3f7a;">🔐 Your Login Credentials</h3>
+            
+            <div class="credential-item">
+              <span class="credential-label">👤 Username</span>
+              <span class="credential-value">${userName}</span>
+            </div>
+            
+            <div class="credential-item">
+              <span class="credential-label">🔑 Password</span>
+              <span class="credential-value">${password}</span>
+            </div>
+            
+            <div class="credential-item">
+              <span class="credential-label">🎯 Role</span>
+              <span class="credential-value">${role || 'User'}</span>
+            </div>
+          </div>
+          
+          <div class="button-container">
+            <a href="${loginUrl}" class="button">🚀 Login to Your Account</a>
+          </div>
+          
+          <div class="info-box">
+            <p><strong>📌 Login URL:</strong> ${loginUrl}</p>
+            <p><strong>⏰ Session Expiry:</strong> 5 years from creation</p>
+            <p><strong>🔄 Password Change:</strong> You'll be prompted to change your password on first login</p>
+          </div>
+          
+          <div class="security-note">
+            <p><strong>🔒 Important Security Notes:</strong></p>
+            <p>• This is your temporary password. Please change it immediately after login.</p>
+            <p>• Never share your password with anyone.</p>
+            <p>• For security, we recommend enabling Two-Factor Authentication (2FA) in your profile.</p>
+            <p>• If you didn't request this account, please contact support immediately.</p>
+          </div>
+          
+          <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+            <p style="margin: 0; color: #555; font-size: 14px;">
+              <strong>📧 Need help?</strong> Contact our support team at 
+              <a href="mailto:${supportEmail}" style="color: ${appColor};">${supportEmail}</a>
+            </p>
+          </div>
+          
+          <div class="footer">
+            <p>&copy; ${currentYear} <span class="brand">${appName}</span>. All rights reserved.</p>
+            <p style="margin-top: 5px; font-size: 11px; color: #bbb;">
+              This is an automated message, please do not reply to this email.
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+// ============================================
+// 📧 GENERATE WELCOME EMAIL PLAIN TEXT
+// ============================================
+function generateWelcomeEmailText({ firstName, userName, password, role, loginUrl, appName, supportEmail }) {
+  const separator = '='.repeat(50);
+  
+  return `
+${appName} - Welcome!
+
+${separator}
+
+Hello ${firstName || 'User'},
+
+Your account has been successfully created in the ${appName} system.
+You can now log in using the credentials below.
+
+${separator}
+🔐 YOUR LOGIN CREDENTIALS
+${separator}
+
+Username: ${userName}
+Password: ${password}
+Role:     ${role || 'User'}
+Login URL: ${loginUrl}
+
+${separator}
+📌 IMPORTANT SECURITY NOTES
+${separator}
+
+• This is your temporary password. Please change it immediately after login.
+• Never share your password with anyone.
+• We recommend enabling Two-Factor Authentication (2FA) for enhanced security.
+• If you didn't request this account, contact support immediately.
+
+${separator}
+🆘 NEED HELP?
+${separator}
+
+Contact our support team: ${supportEmail}
+
+${separator}
+${appName} - Secure Banking
+${separator}
+  `;
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+const createLoginLog = async (userId, username, ipAddress, userAgent, status, success, error = null, twoFactorType = 'none') => {
+  try {
+    return await Login.create({
+      user_id: userId,
+      user_name: username,
+      username: username,
+      login_time: new Date(),
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      status: status,
+      success: success,
+      error: error,
+      attempt_identifier: username,
+      login_type: twoFactorType === 'RFID' ? 'rfid_2fa' : 
+                  twoFactorType === 'SMS' ? 'sms_2fa' : 
+                  twoFactorType === 'Email' ? 'email_2fa' : 'password',
+      device_type: detectDeviceType(userAgent),
+      two_factor_type: twoFactorType === 'RFID' ? 'rfid' : 
+                       twoFactorType === 'SMS' ? 'sms' : 
+                       twoFactorType === 'Email' ? 'email' : 'none',
+      rfid_used: false
+    });
+  } catch (error) {
+    console.error('Error creating login log:', error);
+    return null;
+  }
+};
+
+const logRFIDAttempt = async (userId, tokenId, cardData, success, status, errorMessage, ipAddress, userAgent) => {
+  try {
+    const { default: RFIDLoginLog } = await import('../models/RFIDLoginLog.js');
+    await RFIDLoginLog.create({
+      user_id: userId,
+      token_id: tokenId,
+      serial_number: cardData.serialNumber || cardData.cardNumber,
+      card_number: cardData.cardNumber,
+      raw_data: cardData.raw,
+      success: success,
+      status: status,
+      error_message: errorMessage,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      two_factor_step: 'token_verification',
+      attempt_time: new Date()
+    });
+  } catch (error) {
+    console.error('Error logging RFID attempt:', error);
+  }
+};
+
+const detectDeviceType = (userAgent) => {
+  if (!userAgent) return 'unknown';
+  const ua = userAgent.toLowerCase();
+  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
+    return 'mobile';
+  }
+  if (ua.includes('tablet') || ua.includes('ipad')) {
+    return 'tablet';
+  }
+  return 'desktop';
+};
+
+const getRoleName = (user, isAdmin) => {
+  if (isAdmin) return 'Administrator';
+  const roleKey = user.BU_ROLE_ID?.toString();
+  if (roleKey && ROLE_MAPPING[roleKey]) {
+    return ROLE_MAPPING[roleKey].ROLE_NM || 'Staff';
+  }
+  return 'Staff';
+};
+
+const getPermissionsForUser = (user, isAdmin) => {
+  if (isAdmin) {
+    return Object.values(PERMISSIONS).flatMap(g => typeof g === 'object' ? Object.values(g) : []);
+  }
+  const roleKey = user.BU_ROLE_ID?.toString();
+  if (roleKey && ROLE_MAPPING[roleKey]) {
+    return ROLE_MAPPING[roleKey].permissions || [];
+  }
+  return ['DASHBOARD_STAFF', 'DASHBOARD_REAL_TIME_STATS', 'CUSTOMER_VIEW', 'ACCOUNT_VIEW_BALANCE', 'TRANSACTION_VIEW'];
+};
+
+const generateJWT = (user, isAdmin) => {
+  const roleName = getRoleName(user, isAdmin);
+  return jwt.sign(
+    {
+      userId: user.id,
+      id: user.id,
+      user_name: user.user_name || user.username,
+      email: user.email,
+      preferred_name: user.preferred_name || null,
+      role: roleName,
+      roleId: user.BU_ROLE_ID,
+      BU_ROLE_ID: user.BU_ROLE_ID,
+      isAdmin: isAdmin,
+      businessUnit: user.main_business_unit || 'Wethral',
+      accessibleBusinessUnits: [user.main_business_unit || 'Wethral'],
+      rfid_enabled: user.rfid_enabled || false,
+      two_factor_enabled: user.two_factor_enabled || false,
+      iat: Math.floor(Date.now() / 1000)
+    },
+    getSecretKey() || process.env.JWT_SECRET || 'your-secret-key-change-in-production',
+    { expiresIn: '7d' }
+  );
+};
+
+const complete2FALogin = async (user, ipAddress, userAgent, method, sessionId) => {
+  try {
+    await User.update({
+      failed_attempts: 0,
+      lock_until: null,
+      last_login: new Date()
+    }, { where: { id: user.id } });
+
+    const isAdmin = parseInt(user.BU_ROLE_ID) === 1;
+
+    let requiresPasswordChange = false;
+    if (!isAdmin) {
+      const isExpired = user.password_expiry_date && new Date() > new Date(user.password_expiry_date);
+      requiresPasswordChange = user.force_password_change || isExpired;
+    }
+
+    const pendingSession = pending2FASessions.get(sessionId);
+    if (pendingSession?.login_id) {
+      const updateData = {
+        status: 'Success',
+        success: true,
+        error: null,
+        two_fa_method_used: method,
+        two_fa_completed_at: new Date()
+      };
+
+      if (method === 'hardware_token') {
+        updateData.rfid_used = true;
+        updateData.two_factor_type = 'rfid';
+        updateData.login_type = 'rfid_2fa';
+      } else if (method === 'email_token') {
+        updateData.email_2fa_verified = true;
+        updateData.email_2fa_verified_at = new Date();
+        updateData.two_factor_type = 'email';
+        updateData.login_type = 'email_2fa';
+      } else if (method === 'sms_token') {
+        updateData.sms_2fa_verified = true;
+        updateData.sms_2fa_verified_at = new Date();
+        updateData.two_factor_type = 'sms';
+        updateData.login_type = 'sms_2fa';
+      }
+
+      await Login.update(updateData, { where: { id: pendingSession.login_id } });
+    }
+
+    const token = generateJWT(user, isAdmin);
+
+    return {
+      success: true,
+      message: 'Login successful',
+      token: token,
+      user: {
+        userId: user.id,
+        user_name: user.user_name || user.username,
+        email: user.email,
+        preferred_name: user.preferred_name || null,
+        role: getRoleName(user, isAdmin),
+        BU_ROLE_ID: user.BU_ROLE_ID,
+        primary_business_role: user.primary_business_role || getRoleName(user, isAdmin),
+        businessUnit: user.main_business_unit || 'Wethral',
+        isAdmin: isAdmin,
+        is_first_login: user.is_first_login,
+        force_password_change: user.force_password_change,
+        requiresPasswordChange: requiresPasswordChange,
+        permissions: getPermissionsForUser(user, isAdmin),
+        rfid_enabled: user.rfid_enabled || false,
+        two_factor_enabled: user.two_factor_enabled || false,
+        two_factor_method_used: method,
+        accessibleBusinessUnits: [user.main_business_unit || 'Wethral'],
+        tokenIssuedAt: new Date().toISOString(),
+        tokenExpiresAt: new Date(Date.now() + 7*24*60*60*1000).toISOString()
+      }
+    };
+
+  } catch (error) {
+    console.error('❌ Complete 2FA login error:', error);
+    throw error;
+  }
+};
+
+// ============================================
+// ✅ REGISTER USER - UPDATED WITH user_id = user_name AND EMAIL NOTIFICATION
+// ============================================
+export const registerUser = asyncHandler(async (req, res) => {
+  const {
+    user_name,
+    password,
+    employer_number,
+    first_name,
+    last_name,
+    middle_name,
+    preferred_name,
+    job_title,
+    email,
+    customer_number,
+    main_business_unit,
+    responsibility_centre,
+    primary_business_role,
+    BU_ROLE_ID,
+    start_date,
+    expiry_date,
+    earliest_login_time,
+    latest_login_time,
+    internal_employee_enabled,
+    relationship_officer,
+    enable_multi_session,
+    validate_ip_address = false,
+    note,
+    ip_address,
+    is_supervisor,
+    is_main_BU,
+    status,
+    // 2FA Fields
+    two_factor_enabled,
+    two_factor_methods,
+    two_factor_phone,
+    two_factor_email
+  } = req.body;
+
+  console.log('📝 Registration request received:', {
+    user_name,
+    email,
+    main_business_unit,
+    responsibility_centre,
+    primary_business_role,
+    BU_ROLE_ID,
+    two_factor_enabled,
+    two_factor_methods,
+    two_factor_phone,
+    two_factor_email
+  });
+
+  // ============================================
+  // ✅ DETAILED FIELD VALIDATION
+  // ============================================
+  const missingFields = [];
+  if (!user_name) missingFields.push('user_name (Username)');
+  if (!password) missingFields.push('password (Password)');
+  if (!email) missingFields.push('email (Email)');
+  if (!main_business_unit) missingFields.push('main_business_unit (Main Business Unit)');
+  if (!responsibility_centre) missingFields.push('responsibility_centre (Responsibility Centre)');
+  if (!primary_business_role) missingFields.push('primary_business_role (Primary Business Role)');
+  if (!BU_ROLE_ID) missingFields.push('BU_ROLE_ID (Business Role ID)');
+
+  if (missingFields.length > 0) {
+    console.warn('❌ Missing required fields for registration:', {
+      user_name,
+      email,
+      missingFields
+    });
+    
+    return res.status(400).json({
+      success: false,
+      message: `Missing required fields: ${missingFields.join(', ')}`,
+      missingFields: missingFields.map(f => f.split(' ')[0]),
+      receivedData: {
+        user_name: !!user_name,
+        password: !!password,
+        email: !!email,
+        main_business_unit: !!main_business_unit,
+        responsibility_centre: !!responsibility_centre,
+        primary_business_role: !!primary_business_role,
+        BU_ROLE_ID: !!BU_ROLE_ID,
+        two_factor_enabled: !!two_factor_enabled,
+        two_factor_phone: !!two_factor_phone,
+        two_factor_email: !!two_factor_email
+      },
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // ============================================
+  // ✅ CHECK FOR EXISTING USER
+  // ============================================
+  const existingUser = await User.findOne({
+    where: {
+      [Op.or]: [
+        { email: email.toLowerCase() },
+        { user_name: user_name }
+      ]
+    }
+  });
+
+  if (existingUser) {
+    console.warn('⚠️ User already exists:', { user_name, email });
+    return res.status(409).json({
+      success: false,
+      message: 'User already exists with this username or email',
+      field: existingUser.user_name === user_name ? 'user_name' : 'email',
+      value: existingUser.user_name === user_name ? user_name : email,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // ============================================
+  // ✅ VALIDATE ROLE
+  // ============================================
+  let roleExists = null;
+  if (primary_business_role) {
+    const normalizedRole = primary_business_role.toLowerCase().replace(/\s+/g, ' ').trim();
+    roleExists = await UserRole.findOne({
+      where: {
+        ROLE_NM: { [Op.like]: normalizedRole }
+      }
+    });
+
+    if (!roleExists) {
+      const mappingEntry = Object.values(ROLE_MAPPING).find(
+        role => role.ROLE_NM.toLowerCase() === normalizedRole
+      );
+      if (!mappingEntry) {
+        console.warn(`❌ Role "${primary_business_role}" does not exist`, { user_name });
+        return res.status(400).json({
+          success: false,
+          message: `Role "${primary_business_role}" does not exist. Please select a valid role.`,
+          validRoles: Object.values(ROLE_MAPPING).map(r => r.ROLE_NM),
+          timestamp: new Date().toISOString()
+        });
+      }
+      roleExists = { ROLE_NM: mappingEntry.ROLE_NM, ROLE_ID: mappingEntry.id };
+    }
+  }
+
+  // ============================================
+  // ✅ VALIDATE IP ADDRESS
+  // ============================================
+  let finalIpAddress = ip_address || null;
+  if (validate_ip_address) {
+    if (!ip_address || !validateIpAddress(ip_address)) {
+      finalIpAddress = getClientIp(req);
+      if (!finalIpAddress) {
+        console.warn('⚠️ Invalid or missing IP address', { user_name });
+        finalIpAddress = req.ip;
+      }
+    }
+  }
+
+  // ============================================
+  // ✅ HASH PASSWORD
+  // ============================================
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  // ============================================
+  // ✅ PREPARE 2FA DATA
+  // ============================================
+  const is2FAEnabled = two_factor_enabled === true || 
+                       two_factor_enabled === 'true' || 
+                       two_factor_enabled === 1;
+
+  const twoFAMethods = two_factor_methods || {
+    hardware_token: false,
+    email_token: false,
+    sms_token: false
+  };
+
+  // ============================================
+  // ✅ CREATE USER WITH user_id = user_name
+  // ============================================
+  const newUser = await User.create({
+    user_id: user_name, // ✅ Set user_id to same as user_name
+    user_name,
+    password: hashedPassword,
+    employer_number,
+    first_name,
+    last_name,
+    middle_name,
+    preferred_name,
+    job_title,
+    email,
+    customer_number,
+    main_business_unit,
+    responsibility_centre,
+    primary_business_role: roleExists ? roleExists.ROLE_NM : primary_business_role,
+    BU_ROLE_ID: BU_ROLE_ID || (roleExists ? roleExists.ROLE_ID : null),
+    start_date: start_date || new Date(),
+    expiry_date: expiry_date || new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000),
+    earliest_login_time: earliest_login_time || '00:00',
+    latest_login_time: latest_login_time || '23:59',
+    internal_employee_enabled: internal_employee_enabled !== undefined ? internal_employee_enabled : true,
+    relationship_officer,
+    enable_multi_session: enable_multi_session !== undefined ? enable_multi_session : false,
+    validate_ip_address,
+    note,
+    ip_address: finalIpAddress,
+    is_supervisor,
+    is_main_BU,
+    status: status || 'Active',
+    passwordChangedAt: new Date(),
+    // 2FA Fields
+    two_factor_enabled: is2FAEnabled,
+    two_factor_methods: twoFAMethods,
+    two_factor_phone: two_factor_phone || null,
+    two_factor_email: two_factor_email || null
+  });
+
+  console.info('✅ User registered successfully with 2FA:', { 
+    id: newUser.id,
+    user_id: newUser.user_id, // ✅ Log user_id too
+    user_name: newUser.user_name, 
+    email: newUser.email, 
+    BU_ROLE_ID: newUser.BU_ROLE_ID,
+    two_factor_enabled: newUser.two_factor_enabled,
+    two_factor_methods: newUser.two_factor_methods,
+    two_factor_phone: newUser.two_factor_phone,
+    two_factor_email: newUser.two_factor_email,
+    user_id_matches_user_name: newUser.user_id === newUser.user_name // ✅ Verify match
+  });
+
+  // ============================================
+  // ✅ SEND WELCOME EMAIL WITH CREDENTIALS
+  // ✅ ALL VALUES PICKED FROM .env
+  // ============================================
+  let emailSent = false;
+  try {
+    // Use the plain password from request (not hashed)
+    const plainPassword = password;
+    
+    console.log('📧 Preparing to send welcome email with password:', {
+      email: newUser.email,
+      userName: newUser.user_name,
+      passwordLength: plainPassword ? plainPassword.length : 0
+    });
+    
+    // ✅ Only pass user-specific data, everything else from .env
+    emailSent = await sendWelcomeEmail({
+      email: newUser.email,
+      userName: newUser.user_name,
+      password: plainPassword,
+      firstName: newUser.first_name || newUser.preferred_name || 'User',
+      role: newUser.primary_business_role || 'User'
+    });
+
+    if (emailSent) {
+      console.log(`✅ Welcome email sent to ${newUser.email}`);
+    } else {
+      console.warn(`⚠️ Failed to send welcome email to ${newUser.email}`);
+    }
+  } catch (emailError) {
+    console.error('❌ Error sending welcome email:', emailError.message);
+    console.error('❌ Email error stack:', emailError.stack);
+    // Don't fail the user creation if email fails
+  }
+
+  // ============================================
+  // ✅ RETURN SUCCESS RESPONSE
+  // ============================================
+  res.status(201).json({
+    success: true,
+    message: emailSent 
+      ? 'User registered successfully. Welcome email sent.' 
+      : 'User registered successfully but welcome email could not be sent.',
+    user: {
+      id: newUser.id,
+      user_id: newUser.user_id, // ✅ Include user_id in response
+      user_name: newUser.user_name,
+      email: newUser.email,
+      role: newUser.primary_business_role,
+      BU_ROLE_ID: newUser.BU_ROLE_ID,
+      status: newUser.status,
+      ip_address: newUser.ip_address,
+      two_factor_enabled: newUser.two_factor_enabled,
+      two_factor_methods: newUser.two_factor_methods,
+      two_factor_phone: newUser.two_factor_phone,
+      two_factor_email: newUser.two_factor_email
+    },
+    emailSent: emailSent,
+    timestamp: new Date().toISOString()
+  });
+}); // ✅ THIS CLOSING BRACE IS CRITICAL - MAKE SURE IT'S HERE!
+
+// ============================================
+// FORCE LOCK USER
+// ============================================
 export const forceLockUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
   const { reason } = req.body;
@@ -36,7 +934,6 @@ export const forceLockUser = asyncHandler(async (req, res) => {
   try {
     console.log('🔒 Force lock user request:', { identifier, reason, lockedBy: req.user?.id });
 
-    // Find user by multiple identifiers
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -60,7 +957,6 @@ export const forceLockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Check if already force-locked
     if (user.status === 'ForceLocked') {
       return res.status(400).json({
         success: false,
@@ -75,12 +971,11 @@ export const forceLockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Force lock the user - store the ADMIN's ID (integer)
     await user.update({
       status: 'ForceLocked',
       force_lock_reason: reason || 'Suspicious activity detected',
       force_locked_at: new Date(),
-      force_locked_by: req.user.id,          // ✅ FIX: use integer ID, not username
+      force_locked_by: req.user.id,
       internal_employee_enabled: false
     });
 
@@ -101,12 +996,12 @@ export const forceLockUser = asyncHandler(async (req, res) => {
         status: user.status,
         force_lock_reason: user.force_lock_reason,
         force_locked_at: user.force_locked_at,
-        force_locked_by: user.force_locked_by   // returns integer ID
+        force_locked_by: user.force_locked_by
       },
       lockDetails: {
         reason: reason || 'Suspicious activity detected',
         timestamp: user.force_locked_at,
-        performedBy: req.user.user_name        // still show username in response
+        performedBy: req.user.user_name
       }
     });
 
@@ -120,53 +1015,22 @@ export const forceLockUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Force Reset Password
-export const forceResetPassword = asyncHandler(async (req, res) => {
-  const { user_name, username, new_password } = req.body;
-  try {
-    console.log('🔄 FORCE PASSWORD RESET:', { user_name, username });
-    const loginIdentifier = username || user_name;
-    const User = getUser(); // use dynamic getter
-    if (!User || typeof User.findOne !== 'function') {
-      return res.status(503).json({ success: false, message: 'User model not ready' });
-    }
-    const user = await User.findOne({
-      where: {
-        [Op.or]: [
-          { user_name: loginIdentifier },
-          { username: loginIdentifier }
-        ]
-      }
-    });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-    const hashedPassword = await bcrypt.hash(new_password, 10);
-    await user.update({
-      password: hashedPassword,
-      passwordChangedAt: new Date()
-    });
-    console.log('✅ PASSWORD RESET SUCCESSFUL:', {
-      user_name: user.user_name,
-      new_password_length: new_password.length
-    });
-    res.json({ success: true, message: 'Password reset successfully', user: { user_name: user.user_name, email: user.email } });
-  } catch (error) {
-    console.error('💥 Password reset error:', error);
-    res.status(500).json({ success: false, message: 'Password reset failed', error: error.message });
-  }
-});
 
-// ✅ Unlock a force-locked user - UPDATED FOR SEQUELIZE
-// ✅ Unlock a force-locked user - FIXED for consistency
+// ============================================
+// UNLOCK FORCE LOCKED USER (Force unlock a user)
+// ============================================
 export const unlockForceLockedUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
-  const { reason } = req.body; // optional reason
+  const { reason } = req.body;
 
   try {
-    console.log('🔓 Unlock force-locked user request:', { identifier, reason, unlockedBy: req.user?.user_name });
+    console.log('🔓 Unlock force-locked user request:', { 
+      identifier, 
+      reason, 
+      unlockedBy: req.user?.user_name || req.user?.username || 'system'
+    });
 
-    // Find user by multiple identifiers
+    // Find the user by identifier
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -177,12 +1041,13 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
           { id: !isNaN(identifier) ? parseInt(identifier) : null }
         ].filter(condition => {
           const value = Object.values(condition)[0];
-          return value !== null && value !== undefined;
+          return value !== null && value !== undefined && value !== 'null' && value !== 'undefined';
         })
       }
     });
 
     if (!user) {
+      console.log('❌ User not found:', { identifier });
       return res.status(404).json({
         success: false,
         message: 'User not found',
@@ -192,6 +1057,10 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
 
     // Check if user is actually force-locked
     if (user.status !== 'ForceLocked') {
+      console.log('ℹ️ User is not force-locked:', { 
+        user_name: user.user_name, 
+        status: user.status 
+      });
       return res.status(400).json({
         success: false,
         message: 'User is not force-locked',
@@ -202,14 +1071,13 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Unlock the user: clear force-lock fields and set status to Active
+    // Update user to unlock
     await user.update({
       status: 'Active',
       force_lock_reason: null,
       force_locked_at: null,
       force_locked_by: null,
       internal_employee_enabled: true,
-      // Also clear normal lock fields if any
       lock_until: null,
       failed_attempts: 0
     });
@@ -231,12 +1099,16 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
       unlockDetails: {
         reason: reason || 'Manual unlock by administrator',
         timestamp: new Date(),
-        performedBy: req.user?.user_name || 'System'
+        performedBy: req.user?.user_name || req.user?.username || 'System'
       }
     });
 
   } catch (error) {
-    console.error('💥 Unlock force-locked user error:', error);
+    console.error('💥 Unlock force-locked user error:', {
+      error: error.message,
+      stack: error.stack,
+      identifier
+    });
     res.status(500).json({
       success: false,
       message: 'Error unlocking force-locked user',
@@ -245,7 +1117,104 @@ export const unlockForceLockedUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get Users by Business Unit ID - COMPLETE UPDATED VERSION
+// ============================================
+// FORCE RESET PASSWORD - WITH FORBIDDEN PASSWORD CHECK
+// ============================================
+export const forceResetPassword = asyncHandler(async (req, res) => {
+  const { user_name, username, new_password } = req.body;
+  
+  try {
+    console.log('🔄 FORCE PASSWORD RESET:', { user_name, username });
+    
+    const loginIdentifier = username || user_name;
+    const UserModel = getUser();
+    
+    if (!UserModel || typeof UserModel.findOne !== 'function') {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'User model not ready' 
+      });
+    }
+
+    // Find the user
+    const user = await UserModel.findOne({
+      where: {
+        [Op.or]: [
+          { user_name: loginIdentifier },
+          { username: loginIdentifier }
+        ]
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // ✅ Check if password is forbidden
+    const isForbidden = await isPasswordForbidden(new_password);
+    if (isForbidden) {
+      return res.status(400).json({
+        success: false,
+        message: 'This password is too common or weak. Please choose a stronger password.'
+      });
+    }
+
+    // Validate password strength
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be 8+ characters with uppercase, lowercase, number, and special character'
+      });
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(new_password, 10);
+    
+    // Update user password
+    await user.update({
+      password: hashedPassword,
+      passwordChangedAt: new Date(),
+      failed_attempts: 0,
+      lock_until: null,
+      // Force password change on next login
+      force_password_change: true,
+      is_first_login: false
+    });
+
+    console.log('✅ PASSWORD RESET SUCCESSFUL:', {
+      user_name: user.user_name,
+      new_password_length: new_password.length,
+      force_password_change: true
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Password reset successfully. User must change password on next login.',
+      user: { 
+        user_name: user.user_name, 
+        email: user.email,
+        force_password_change: true
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Password reset error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Password reset failed', 
+      error: error.message 
+    });
+  }
+});
+
+
+// ============================================
+// GET USERS BY BUSINESS UNIT ID
+// ============================================
 export const getUsersByBU_ID = asyncHandler(async (req, res) => {
   try {
     const { bu_id } = req.params;
@@ -268,7 +1237,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       search_field
     });
 
-    // Determine which field to search
     let searchColumn = 'responsibility_centre';
     
     if (search_field === 'main_business_unit') {
@@ -279,7 +1247,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       searchColumn = 'branch';
     }
 
-    // Build WHERE clause
     const whereConditions = [];
     const replacements = [];
     
@@ -295,7 +1262,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       ? `(${whereConditions.join(' OR ')})` 
       : whereConditions[0];
 
-    // Add status filter
     let statusClause = '';
     if (status && status !== 'all') {
       statusClause = `AND status = ?`;
@@ -305,7 +1271,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       replacements.push('Active');
     }
 
-    // Add role filter
     let roleClause = '';
     if (role_id) {
       roleClause = `AND BU_ROLE_ID = ?`;
@@ -314,14 +1279,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    console.log('🔍 SQL WHERE clause:', {
-      whereClause,
-      statusClause,
-      roleClause,
-      replacements
-    });
-
-    // Get total count
     const countQuery = `
       SELECT COUNT(*) as total 
       FROM users 
@@ -332,7 +1289,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       replacements: replacements
     });
 
-    // Get users with pagination
     const usersQuery = `
       SELECT * FROM users 
       WHERE ${whereClause} ${statusClause} ${roleClause}
@@ -349,15 +1305,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
     const usersReplacements = [...replacements, bu_id, parseInt(limit), offset];
     const [users] = await User.sequelize.query(usersQuery, {
       replacements: usersReplacements
-    });
-
-    console.log('📈 Query results:', {
-      bu_id,
-      search_column: searchColumn,
-      users_found: users.length,
-      total_users: total,
-      page,
-      limit
     });
 
     if (users.length === 0) {
@@ -383,7 +1330,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       });
     }
 
-    // 🔧 FIXED: Check Permissions table structure first
     let permissionsTableExists = false;
     let permissionsColumns = [];
     
@@ -393,38 +1339,29 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       );
       permissionsColumns = columns.map(col => col.Field);
       permissionsTableExists = true;
-      console.log('🔍 Permissions table columns:', permissionsColumns);
     } catch (tableError) {
       console.warn('⚠️ Permissions table not found or error:', tableError.message);
     }
 
-    // Map users with permissions - FIXED VERSION
     const mappedUsers = await Promise.all(users.map(async (user) => {
-      // Get role permissions and details
       let permissions = [];
       let roleName = user.primary_business_role || 'Unknown Role';
 
-      // Check if user is Administrator
       if (parseInt(user.BU_ROLE_ID) === 1) {
-        // Administrator has all permissions
         permissions = Object.values(PERMISSIONS).flatMap(group => 
           typeof group === 'object' ? Object.values(group) : []
         );
         roleName = 'Administrator';
       } else if (permissionsTableExists) {
-        // Try to get permissions from database
         try {
-          // First, check what column names exist in the permissions table
-          let permissionQuery = 'SELECT * FROM permissions WHERE BU_ROLE_ID = ? LIMIT 1';
-          
-          const [permissionRows] = await Permissions.sequelize.query(permissionQuery, {
-            replacements: [user.BU_ROLE_ID]
-          });
+          const [permissionRows] = await Permissions.sequelize.query(
+            'SELECT * FROM permissions WHERE BU_ROLE_ID = ? LIMIT 1',
+            { replacements: [user.BU_ROLE_ID] }
+          );
 
           if (permissionRows && permissionRows.length > 0) {
             const permissionData = permissionRows[0];
             
-            // Try to find permissions in different possible columns
             if (permissionData.permissions) {
               permissions = Array.isArray(permissionData.permissions) 
                 ? permissionData.permissions 
@@ -439,7 +1376,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
                 : JSON.parse(permissionData.permission_list || '[]');
             }
             
-            // Get role name
             roleName = permissionData.ROLE_NAME || 
                       permissionData.role_name || 
                       permissionData.ROLE_NM || 
@@ -448,20 +1384,11 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
         } catch (permError) {
           console.warn(`⚠️ Error getting permissions for role ${user.BU_ROLE_ID}:`, permError.message);
         }
-      } else {
-        // If no permissions table, use fallback
-        const roleDetails = getRoleWithPermissions && getRoleWithPermissions(user.BU_ROLE_ID);
-        if (roleDetails) {
-          permissions = Object.values(roleDetails.permissions || {}).flat();
-          roleName = roleDetails.ROLE_NM || roleName;
-        }
       }
 
-      // Calculate lock status
       const isLocked = user.lock_until && user.lock_until > Date.now();
       const lockRemaining = isLocked ? Math.ceil((user.lock_until - Date.now()) / 60000) : 0;
 
-      // Parse accessibleBusinessUnits
       let accessibleBusinessUnits = [];
       try {
         if (user.accessibleBusinessUnits) {
@@ -474,7 +1401,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       }
 
       return {
-        // Basic user information
         id: user.id,
         user_id: user.user_id,
         user_name: user.user_name,
@@ -484,31 +1410,23 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
         full_name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
         employer_number: user.employer_number,
         job_title: user.job_title,
-        
-        // Business unit information
         main_business_unit: user.main_business_unit,
         businessUnit: user.businessUnit,
         responsibility_centre: user.responsibility_centre,
         branch: user.branch,
         is_main_BU: user.is_main_BU,
         accessibleBusinessUnits: accessibleBusinessUnits,
-        
-        // Role and permissions
         primary_business_role: user.primary_business_role,
         BU_ROLE_ID: user.BU_ROLE_ID,
         role_name: roleName,
         permissions_count: permissions.length,
         is_administrator: parseInt(user.BU_ROLE_ID) === 1,
-        
-        // Status and security
         status: user.status,
         internal_employee_enabled: user.internal_employee_enabled,
         is_supervisor: user.is_supervisor,
         enable_multi_session: user.enable_multi_session,
         validate_ip_address: user.validate_ip_address,
         ip_address: user.ip_address,
-        
-        // Lock status
         lock_status: {
           is_locked: isLocked,
           is_force_locked: user.status === 'ForceLocked',
@@ -519,8 +1437,6 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
           force_locked_at: user.force_locked_at,
           force_locked_by: user.force_locked_by
         },
-        
-        // Dates
         start_date: user.start_date,
         expiry_date: user.expiry_date,
         last_login: user.last_login,
@@ -529,23 +1445,11 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
       };
     }));
 
-    // Calculate summary statistics
     const activeUsers = mappedUsers.filter(user => user.status === 'Active').length;
     const inactiveUsers = mappedUsers.filter(user => user.status !== 'Active').length;
     const lockedUsers = mappedUsers.filter(user => user.lock_status.is_locked).length;
     const supervisorUsers = mappedUsers.filter(user => user.is_supervisor).length;
     const administratorUsers = mappedUsers.filter(user => user.is_administrator).length;
-
-    console.log('✅ Users retrieved successfully:', {
-      bu_id,
-      search_column: searchColumn,
-      total_users: mappedUsers.length,
-      active_users: activeUsers,
-      inactive_users: inactiveUsers,
-      locked_users: lockedUsers,
-      supervisor_users: supervisorUsers,
-      administrator_users: administratorUsers
-    });
 
     res.status(200).json({
       success: true,
@@ -593,7 +1497,9 @@ export const getUsersByBU_ID = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get user profile with permissions - UPDATED FOR SEQUELIZE
+// ============================================
+// GET USER PROFILE
+// ============================================
 export const getUserProfile = asyncHandler(async (req, res) => {
   try {
     if (!req.user || !req.user.userId) {
@@ -620,11 +1526,7 @@ export const getUserProfile = asyncHandler(async (req, res) => {
     let roleName = userData.primary_business_role || 'Unknown Role';
     let flattenedPermissions = [];
 
-    // ✅ Check if user is Administrator
     if (parseInt(roleId) === 1) {
-      console.log('Administrator detected - granting full permissions');
-      
-      // Generate all permissions for administrator
       permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
         const permissionGroup = PERMISSIONS[key];
         if (typeof permissionGroup === 'object') {
@@ -634,10 +1536,8 @@ export const getUserProfile = asyncHandler(async (req, res) => {
         }
         return acc;
       }, {});
-      
       roleName = 'Administrator';
     } else {
-      // Non-admin logic
       const permissionsDoc = await Permissions.findOne({ 
         where: { BU_ROLE_ID: roleId },
         attributes: ['permissions', 'ROLE_NAME']
@@ -655,7 +1555,6 @@ export const getUserProfile = asyncHandler(async (req, res) => {
       }
     }
 
-    // Construct user response
     const userResponse = {
       id: userData.id,
       user_name: userData.user_name,
@@ -695,7 +1594,9 @@ export const getUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get User Configuration - UPDATED FOR SEQUELIZE
+// ============================================
+// GET USER CONFIGURATION
+// ============================================
 export const getUserConfig = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -710,7 +1611,6 @@ export const getUserConfig = asyncHandler(async (req, res) => {
 
     const userData = user.get({ plain: true });
 
-    // Get permissions from Permissions model or ROLE_MAPPING
     let permissions = {};
     let roleName = userData.primary_business_role || 'Unknown Role';
 
@@ -727,7 +1627,6 @@ export const getUserConfig = asyncHandler(async (req, res) => {
       roleName = roleDetails?.ROLE_NM || roleName;
     }
 
-    // Return the exact format expected by frontend
     const configData = {
       modules: getModulesForRole(userData.BU_ROLE_ID),
       preferences: {
@@ -753,7 +1652,6 @@ export const getUserConfig = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error('Error fetching user config:', error.message, { stack: error.stack });
     
-    // Return fallback config in expected format
     const fallbackConfig = {
       modules: [],
       preferences: { theme: 'light' },
@@ -768,7 +1666,9 @@ export const getUserConfig = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get Client IP Address
+// ============================================
+// GET CLIENT IP ADDRESS
+// ============================================
 export const getClientIpController = asyncHandler(async (req, res) => {
   try {
     console.log('Processing getClientIpController request:', { headers: req.headers });
@@ -797,22 +1697,24 @@ export const getClientIpController = asyncHandler(async (req, res) => {
   }
 });
 
-// 🔐 Enhanced Login - UPDATED FOR SEQUELIZE
+// ============================================
+// LOGIN FUNCTION with 2FA Integration
+// ============================================
 export const login = asyncHandler(async (req, res) => {
   const { username, user_name, password } = req.body;
-
   const loginIdentifier = (username || user_name)?.trim();
   const cleanPassword = password?.trim();
+  const ipAddress = req.ip || req.connection.remoteAddress;
+  const userAgent = req.headers['user-agent'];
 
-  console.log('🔐 LOGIN ATTEMPT - DEBUG MODE:', {
+  console.log('🔐 LOGIN ATTEMPT:', {
     login_identifier: loginIdentifier,
     password_length: cleanPassword?.length || 0,
+    ip: ipAddress,
     timestamp: new Date().toISOString()
   });
 
-  // Validate input
   if (!loginIdentifier || !cleanPassword) {
-    console.log('❌ MISSING CREDENTIALS');
     return res.status(400).json({
       success: false,
       message: 'Login identifier and password are required',
@@ -820,9 +1722,6 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   try {
-    console.log('🔍 SEARCHING FOR USER:', loginIdentifier);
-    
-    // FIX: Always include password fields
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -836,12 +1735,15 @@ export const login = asyncHandler(async (req, res) => {
                  'BU_ROLE_ID', 'status', 'internal_employee_enabled', 'is_first_login',
                  'force_password_change', 'primary_business_role', 'main_business_unit',
                  'earliest_login_time', 'latest_login_time', 'failed_attempts', 
-                 'lock_until', 'last_login', 'password_expiry_date'] 
+                 'lock_until', 'last_login', 'password_expiry_date',
+                 'rfid_enabled', 'two_factor_enabled', 'two_factor_methods',
+                 'two_factor_phone', 'two_factor_email'] 
       }
     });
 
     if (!user) {
       console.log('❌ USER NOT FOUND');
+      await createLoginLog(null, loginIdentifier, ipAddress, userAgent, 'Failed', false, 'User not found');
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials',
@@ -849,36 +1751,27 @@ export const login = asyncHandler(async (req, res) => {
       });
     }
 
-    // Debug user info - ADDED preferred_name to debug
-    console.log('📊 USER SEARCH RESULTS:', {
-      user_found: true,
+    console.log('📊 USER FOUND:', {
       user_id: user.id,
       user_name: user.user_name,
-      username: user.username,
-      preferred_name: user.preferred_name, // Added
-      has_password: !!user.password && user.password.length > 0,
-      password_length: user.password?.length || 0,
-      has_default_password: !!user.default_password && user.default_password.length > 0,
-      status: user.status,
-      internal_employee_enabled: user.internal_employee_enabled,
-      BU_ROLE_ID: user.BU_ROLE_ID,
-      primary_business_role: user.primary_business_role,
-      is_first_login: user.is_first_login
+      has_password: !!user.password,
+      has_default_password: !!user.default_password,
+      is_first_login: user.is_first_login,
+      rfid_enabled: user.rfid_enabled,
+      two_factor_enabled: user.two_factor_enabled,
+      BU_ROLE_ID: user.BU_ROLE_ID
     });
 
-    // Check if user is active
     if (user.status !== 'Active' || !user.internal_employee_enabled) {
-      console.log('❌ USER ACCOUNT NOT ACTIVE');
+      await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'Account disabled');
       return res.status(401).json({
         success: false,
         message: 'User account is disabled or inactive',
       });
     }
 
-    // Check if account is locked
     if (user.lock_until && new Date(user.lock_until) > new Date()) {
-      const lockTime = Math.ceil((new Date(user.lock_until) - new Date()) / 1000 / 60);
-      console.log('🔒 ACCOUNT LOCKED:', { lock_until: user.lock_until, minutes_remaining: lockTime });
+      const lockTime = Math.ceil((new Date(user.lock_until) - new Date()) / 60000);
       return res.status(401).json({
         success: false,
         message: `Account is locked. Try again in ${lockTime} minutes.`,
@@ -886,122 +1779,64 @@ export const login = asyncHandler(async (req, res) => {
       });
     }
 
-    // Debug password comparison
-    console.log('🔑 PASSWORD COMPARISON - DETAILED DEBUG:', {
-      input_password: `"${cleanPassword.substring(0, 6)}... [${cleanPassword.length} chars]"`,
-      stored_hash_exists: !!user.password && user.password.length > 0,
-      stored_hash_length: user.password?.length || 0,
-      stored_hash_prefix: user.password ? user.password.substring(0, 20) + '...' : 'none',
-      hash_type: user.password?.startsWith('$2') ? 'bcrypt' : 'unknown',
-      has_default_password: !!user.default_password && user.default_password.length > 0
-    });
-
-    // 🔧 FIXED PASSWORD COMPARISON LOGIC:
-    console.log('🧪 STARTING PASSWORD VALIDATION...');
+    // ========== PASSWORD VALIDATION ==========
     let isPasswordMatch = false;
 
-    // First, test bcrypt works
-    console.log('🧪 BCRYPT SELF-TEST:');
-    const testHash = await bcrypt.hash('test', 10);
-    const testMatch = await bcrypt.compare('test', testHash);
-    console.log('🧪 BCRYPT SELF-TEST RESULT:', { testMatch });
-
-    console.log('🔑 STARTING ACTUAL PASSWORD COMPARISON...');
-
-    // Check if user has a password
     if (user.password && user.password.length > 0) {
-      console.log('🔑 CHECKING REGULAR PASSWORD...');
-      
-      // Hashed password exists
-      if (user.password.startsWith('$2')) {
-        // It's a bcrypt hash
-        try {
-          isPasswordMatch = await bcrypt.compare(cleanPassword, user.password);
-          console.log('🔑 BCRYPT COMPARE RESULT:', isPasswordMatch);
-        } catch (bcryptError) {
-          console.error('❌ BCRYPT COMPARE ERROR:', bcryptError.message);
-          // Fallback: check if it's plain text
-          if (cleanPassword === user.password) {
-            console.log('🔑 PLAIN TEXT PASSWORD MATCH (fallback)');
-            isPasswordMatch = true;
-            // Auto-hash the password
-            const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-            await User.update(
-              { password: hashedPassword },
-              { where: { id: user.id } }
-            );
-            console.log('✅ Auto-hashed plain text password');
-          }
-        }
-      } else {
-        // Plain text password
-        console.log('⚠️ Password not hashed, checking plain text...');
-        if (cleanPassword === user.password) {
-          console.log('🔑 PLAIN TEXT PASSWORD MATCH');
-          isPasswordMatch = true;
-          // Auto-hash the plain text password
-          const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-          await User.update(
-            { 
-              password: hashedPassword,
-              is_first_login: 0
-            },
-            { where: { id: user.id } }
-          );
-          console.log('✅ Auto-hashed plain text password');
-        }
+      if (!user.password.startsWith('$2')) {
+        await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'Invalid password hash');
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication error. Please contact administrator.',
+          code: 'INVALID_PASSWORD_HASH'
+        });
       }
-    } else if (user.is_first_login && user.default_password && user.default_password.length > 0) {
-      // First login with default password
+      try {
+        isPasswordMatch = await bcrypt.compare(cleanPassword, user.password);
+        console.log('🔑 BCRYPT COMPARE RESULT:', isPasswordMatch);
+      } catch (bcryptError) {
+        console.error('❌ BCRYPT COMPARE ERROR:', bcryptError.message);
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication error. Please try again later.',
+          code: 'BCRYPT_ERROR'
+        });
+      }
+    }
+    else if (user.is_first_login && user.default_password && user.default_password.length > 0) {
       console.log('🔑 CHECKING DEFAULT PASSWORD (first login)...');
       try {
         isPasswordMatch = await bcrypt.compare(cleanPassword, user.default_password);
         console.log('🔑 DEFAULT PASSWORD MATCH:', isPasswordMatch);
-        
-        if (isPasswordMatch) {
-          console.log('✅ First login with default password - updating to regular password');
-          const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-          await User.update({
-            password: hashedPassword,
-            default_password: null,
-            is_first_login: 0
-          }, { where: { id: user.id } });
-        }
       } catch (defaultError) {
         console.error('❌ DEFAULT PASSWORD COMPARE ERROR:', defaultError.message);
+        isPasswordMatch = false;
       }
-    } else {
-      // No password at all - auto-create one
-      console.log('⚠️ NO PASSWORD SET - CREATING NEW PASSWORD');
-      const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-      await User.update(
-        { 
-          password: hashedPassword,
-          is_first_login: 0,
-          passwordChangedAt: new Date()
-        },
-        { where: { id: user.id } }
-      );
-      isPasswordMatch = true;
-      console.log('✅ AUTO-CREATED PASSWORD FOR USER');
+    }
+    else {
+      console.error('❌ No password hash and no default password – login rejected');
+      await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'No password hash');
+      return res.status(401).json({
+        success: false,
+        message: 'Account not properly configured. Please contact administrator.',
+        code: 'NO_PASSWORD_HASH'
+      });
     }
 
     if (!isPasswordMatch) {
       console.log('❌ PASSWORD MISMATCH');
-      
-      // Update failed attempts
       const newFailedAttempts = (user.failed_attempts || 0) + 1;
       let lockUntil = null;
-      
       if (newFailedAttempts >= 5) {
         lockUntil = new Date(Date.now() + 15 * 60 * 1000);
-        console.log('🔒 LOCKING ACCOUNT:', { failed_attempts: newFailedAttempts, lock_until: lockUntil });
+        console.log('🔒 LOCKING ACCOUNT');
       }
-      
       await User.update({
         failed_attempts: newFailedAttempts,
         lock_until: lockUntil
       }, { where: { id: user.id } });
+      
+      await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'Invalid password');
       
       return res.status(401).json({
         success: false,
@@ -1012,208 +1847,253 @@ export const login = asyncHandler(async (req, res) => {
       });
     }
 
-    console.log('✅ PASSWORD VERIFIED SUCCESSFULLY');
-    
-    // 🔒 ADD LICENSE CHECK HERE (after password validation, before proceeding)
-    console.log('🔍 CHECKING LICENSE VALIDITY...');
-    const licenseCheck = await validateLicenseForLogin();
-    if (!licenseCheck.valid) {
-      console.log('❌ LICENSE CHECK FAILED:', licenseCheck);
-      
-      // Different status codes based on license issue
-      let statusCode = 403;
-      if (licenseCheck.code === 'NO_LICENSE') statusCode = 404;
-      if (licenseCheck.code === 'LICENSE_EXPIRED') statusCode = 410;
-      
-      return res.status(statusCode).json({
+    // ========== FIRST LOGIN WITH DEFAULT PASSWORD – FORCE PASSWORD CHANGE ==========
+    if (user.is_first_login && user.default_password && isPasswordMatch) {
+      console.log('✅ First login with default password – forcing password change');
+      const tempToken = jwt.sign(
+        {
+          userId: user.id,
+          purpose: 'password_change',
+          type: 'temp'
+        },
+        getSecretKey() || process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Pending', false, 'First login - password change required');
+      return res.status(200).json({
         success: false,
-        message: licenseCheck.message,
-        code: licenseCheck.code,
-        details: licenseCheck.details || {}
-      });
-    }
-    
-    console.log('✅ LICENSE VALID:', licenseCheck.license);
-    
-    // ✅ Optional: Check user limit if max_users is set
-    if (licenseCheck.license.max_users) {
-      const userCount = await User.count({ 
-        where: { 
-          status: 'Active',
-          internal_employee_enabled: true
+        requiresPasswordChange: true,
+        message: 'First login. Please set a new password to continue.',
+        tempToken,
+        redirectTo: '/first-time-password',
+        user: {
+          userId: user.id,
+          user_name: user.user_name,
+          name: user.preferred_name || user.user_name
         }
       });
+    }
+
+    console.log('✅ PASSWORD VERIFIED SUCCESSFULLY');
+
+    // ========== GLOBAL LOGIN HOURS POLICY ENFORCEMENT ==========
+    try {
+      const policy = await LoginPolicy.findOne();
+      if (policy && policy.enabled === true) {
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const [earliestHour, earliestMinute] = policy.earliest_login_time.split(':').map(Number);
+        const [latestHour, latestMinute] = policy.latest_login_time.split(':').map(Number);
+        const earliestMinutes = earliestHour * 60 + earliestMinute;
+        const latestMinutes = latestHour * 60 + latestMinute;
+
+        const isAdminUser = parseInt(user.BU_ROLE_ID) === 1;
+        if (!isAdminUser && (currentMinutes < earliestMinutes || currentMinutes > latestMinutes)) {
+          await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'Outside login hours');
+          return res.status(403).json({
+            success: false,
+            message: `Login allowed only between ${policy.earliest_login_time.slice(0,5)} and ${policy.latest_login_time.slice(0,5)}.`,
+            code: 'LOGIN_HOURS_RESTRICTED'
+          });
+        }
+        console.log(`✅ Login allowed – within policy window ${policy.earliest_login_time.slice(0,5)}-${policy.latest_login_time.slice(0,5)}`);
+      } else {
+        console.log('ℹ️ Login policy not enabled, skipping restriction');
+      }
+    } catch (policyError) {
+      console.error('⚠️ Failed to check login policy:', policyError);
+    }
+
+    // ========== LICENSE VALIDATION ==========
+    const isAdmin = parseInt(user.BU_ROLE_ID) === 1;
+    
+    if (!isAdmin) {
+      console.log('🔍 CHECKING LICENSE VALIDITY FOR NON-ADMIN USER...');
+      try {
+        const licenseCheck = await validateLicenseForLogin();
+        if (!licenseCheck || !licenseCheck.valid) {
+          let statusCode = 403;
+          if (licenseCheck?.code === 'NO_LICENSE') statusCode = 404;
+          if (licenseCheck?.code === 'LICENSE_EXPIRED') statusCode = 410;
+          await createLoginLog(user.id, user.user_name, ipAddress, userAgent, 'Failed', false, 'License validation failed');
+          return res.status(statusCode).json({
+            success: false,
+            message: licenseCheck?.message || 'License validation failed',
+            code: licenseCheck?.code || 'LICENSE_ERROR',
+            details: licenseCheck?.details || {}
+          });
+        }
+        console.log('✅ LICENSE VALID');
+      } catch (licenseError) {
+        console.error('⚠️ License validation error:', licenseError.message);
+        console.log('⚠️ License validation failed but allowing login (graceful degradation)');
+      }
+    } else {
+      console.log('✅ ADMIN USER - SKIPPING LICENSE CHECK');
+    }
+
+    // ========== GET UPDATED USER WITH 2FA FIELDS ==========
+    const updatedUser = await User.findByPk(user.id, {
+      attributes: { 
+        include: [
+          'force_password_change', 
+          'password_expiry_date', 
+          'rfid_enabled',
+          'two_factor_enabled',
+          'two_factor_methods',
+          'two_factor_phone',
+          'two_factor_email'
+        ] 
+      }
+    });
+
+    // ========== CHECK FOR 2FA ==========
+    const has2FA = twoFactorService.hasAny2FAEnabled(updatedUser);
+    
+    if (has2FA) {
+      console.log('🔐 2FA ENABLED - Requiring verification');
       
-      if (userCount >= licenseCheck.license.max_users) {
-        console.log('⚠️ USER LIMIT REACHED:', { 
-          current: userCount, 
-          max: licenseCheck.license.max_users 
-        });
-        
-        return res.status(403).json({
+      const availableMethods = twoFactorService.getAvailableMethods(updatedUser);
+      
+      if (availableMethods.length === 0) {
+        await createLoginLog(updatedUser.id, updatedUser.user_name, ipAddress, userAgent, 'Failed', false, 'No 2FA methods available');
+        return res.status(400).json({
           success: false,
-          message: 'Maximum user limit reached',
-          code: 'USER_LIMIT_REACHED',
-          details: {
-            currentUsers: userCount,
-            maxUsers: licenseCheck.license.max_users,
-            licenseId: licenseCheck.license.id
-          }
+          message: '2FA enabled but no methods configured'
         });
       }
+
+      const { sessionId, token, expiresAt } = twoFactorService.init2FASession(
+        updatedUser.id,
+        updatedUser.user_name || updatedUser.username,
+        updatedUser.email,
+        updatedUser.two_factor_phone,
+        twoFactorService.getEnabledMethods(updatedUser)
+      );
+
+      const primaryMethod = availableMethods[0];
+      let sendResult = { success: true };
+      let smsId = null;
+
+      if (primaryMethod.type === 'hardware_token') {
+        sendResult = { success: true, hardware: true };
+      } else {
+        sendResult = await twoFactorService.sendAndStoreToken(
+          sessionId,
+          primaryMethod.type,
+          updatedUser,
+          token
+        );
+        
+        if (sendResult.success && sendResult.smsId) {
+          smsId = sendResult.smsId;
+        }
+      }
+
+      if (!sendResult.success) {
+        await createLoginLog(updatedUser.id, updatedUser.user_name, ipAddress, userAgent, 'Failed', false, 'Failed to send 2FA code');
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to send 2FA code',
+          error: sendResult.error
+        });
+      }
+
+      const loginRecord = await createLoginLog(
+        updatedUser.id,
+        updatedUser.user_name || updatedUser.username,
+        ipAddress,
+        userAgent,
+        'Pending',
+        false,
+        `2FA Required via ${primaryMethod.type}`,
+        primaryMethod.type === 'hardware_token' ? 'RFID' : 
+        primaryMethod.type === 'sms_token' ? 'SMS' : 'Email'
+      );
+
+      pending2FASessions.set(sessionId, {
+        user_id: updatedUser.id,
+        login_id: loginRecord?.id,
+        timestamp: Date.now()
+      });
+
+      console.log('📝 2FA session created:', { sessionId, userId: updatedUser.id });
+
+      return res.status(200).json({
+        success: true,
+        require2FA: true,
+        sessionId: sessionId,
+        expiresAt: expiresAt,
+        methods: availableMethods,
+        primaryMethod: primaryMethod.type,
+        message: primaryMethod.type === 'hardware_token' 
+          ? 'Please tap your HID Mini Token on the reader' 
+          : `2FA code sent via ${primaryMethod.label}`,
+        smsId: smsId,
+        provider: primaryMethod.provider || null,
+        loginId: loginRecord?.id,
+        ...(process.env.NODE_ENV === 'development' && { token: token })
+      });
     }
-    
-    // Reset failed attempts (only if license is valid)
+
+    // ========== NO 2FA - Continue with normal login ==========
+    console.log('ℹ️ No 2FA required - completing login');
+
     await User.update({
       failed_attempts: 0,
       lock_until: null,
       last_login: new Date()
-    }, { where: { id: user.id } });
+    }, { where: { id: updatedUser.id } });
 
-    // Get fresh user data with all fields
-    const updatedUser = await User.findByPk(user.id);
-
-    // ✅ Temporarily skip login hours check to simplify debugging
-    console.log('🕒 TEMPORARILY SKIPPING LOGIN HOURS CHECK FOR DEBUGGING');
-    
-    // Determine if user is admin
-    const isAdmin = parseInt(updatedUser.BU_ROLE_ID) === 1;
-    let roleName = updatedUser.primary_business_role || (isAdmin ? 'Administrator' : 'Staff');
-
-    // Get permissions based on role
-    let permissions = [];
-    if (isAdmin) {
-      // Admin gets all permissions
-      permissions = Object.values(PERMISSIONS).flatMap(group => {
-        if (typeof group === 'object') {
-          return Object.values(group);
-        }
-        return [];
-      });
-    } else {
-      // Get permissions from ROLE_MAPPING
-      const roleKey = updatedUser.BU_ROLE_ID ? updatedUser.BU_ROLE_ID.toString() : null;
-      if (roleKey && ROLE_MAPPING[roleKey]) {
-        const roleData = ROLE_MAPPING[roleKey];
-        roleName = roleData.ROLE_NM || roleName;
-        permissions = roleData.permissions || [];
-      } else {
-        // Default staff permissions
-        permissions = [
-          'DASHBOARD_STAFF',
-          'DASHBOARD_REAL_TIME_STATS', 
-          'CUSTOMER_VIEW',
-          'ACCOUNT_VIEW_BALANCE',
-          'TRANSACTION_VIEW'
-        ];
-      }
-    }
-
-    // ✅ FIXED: Enhanced password change requirement check with debug logging
-    console.log('🔍 PASSWORD CHANGE REQUIREMENT ANALYSIS:', {
-      user_id: updatedUser.id,
-      user_name: updatedUser.user_name,
-      BU_ROLE_ID: updatedUser.BU_ROLE_ID,
-      isAdmin: isAdmin,
-      is_first_login: updatedUser.is_first_login,
-      force_password_change: updatedUser.force_password_change,
-      password_expiry_date: updatedUser.password_expiry_date,
-      password_expired: updatedUser.password_expiry_date ? new Date() > updatedUser.password_expiry_date : false,
-      current_time: new Date().toISOString()
-    });
-
-    // ✅ FIXED: Administrators should NOT be forced to change password on first login
-    // Only non-admin users should be forced to change password on first login
     let requiresPasswordChange = false;
-    
-    if (isAdmin) {
-      // For administrators: Only require password change if password is expired
-      requiresPasswordChange = updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date;
-      console.log('👑 ADMINISTRATOR PASSWORD CHANGE CHECK:', {
-        requiresPasswordChange,
-        reason: requiresPasswordChange ? 'Password expired' : 'No password change required for admin'
-      });
-    } else {
-      // For non-administrators: Check all conditions
-      requiresPasswordChange = updatedUser.is_first_login || 
-                              updatedUser.force_password_change ||
-                              (updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date);
-      console.log('👤 REGULAR USER PASSWORD CHANGE CHECK:', {
-        requiresPasswordChange,
-        is_first_login: updatedUser.is_first_login,
-        force_password_change: updatedUser.force_password_change,
-        password_expired: updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date
-      });
-    }
-
-    // ✅ FIXED: Update is_first_login flag after successful login
-    // This prevents being stuck in password change loop
-    if (updatedUser.is_first_login && isPasswordMatch) {
-      console.log('🔄 Clearing is_first_login flag after successful login');
-      await User.update({
-        is_first_login: 0
-      }, { where: { id: updatedUser.id } });
+    let tempToken = null;
+    if (!isAdmin) {
+      const isExpired = updatedUser.password_expiry_date && new Date() > new Date(updatedUser.password_expiry_date);
+      requiresPasswordChange = updatedUser.force_password_change || isExpired;
       
-      // Update local user object
-      updatedUser.is_first_login = 0;
-      
-      // Re-evaluate password change requirement
-      if (!isAdmin) {
-        requiresPasswordChange = updatedUser.is_first_login || 
-                                updatedUser.force_password_change ||
-                                (updatedUser.password_expiry_date && new Date() > updatedUser.password_expiry_date);
+      if (requiresPasswordChange && updatedUser.force_password_change) {
+        tempToken = jwt.sign(
+          {
+            userId: updatedUser.id,
+            purpose: 'password_change',
+            type: 'temp',
+            isForced: true
+          },
+          getSecretKey() || process.env.JWT_SECRET,
+          { expiresIn: '1h' }
+        );
       }
     }
 
-    // Generate JWT token - ADDED preferred_name to token payload
-    const token = jwt.sign(
-      {
-        userId: updatedUser.id,
-        id: updatedUser.id,
-        user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
-        email: updatedUser.email,
-        preferred_name: updatedUser.preferred_name || null, // Added
-        role: roleName,
-        roleId: updatedUser.BU_ROLE_ID,
-        BU_ROLE_ID: updatedUser.BU_ROLE_ID,
-        isAdmin: isAdmin,
-        businessUnit: updatedUser.main_business_unit || 'Wethral',
-        permissions: permissions,
-        accessibleBusinessUnits: [updatedUser.main_business_unit || 'Wethral'],
-        iat: Math.floor(Date.now() / 1000),
-        license_id: licenseCheck.license.id // Add license ID to token
-      },
-      getSecretKey() || process.env.JWT_SECRET || 'your-secret-key-change-in-production',
-      { expiresIn: '7d' }
+    if (tempToken) {
+      console.log('✅ Forced password change – returning tempToken');
+      await createLoginLog(updatedUser.id, updatedUser.user_name, ipAddress, userAgent, 'Pending', false, 'Forced password change required');
+      return res.status(200).json({
+        success: false,
+        requiresPasswordChange: true,
+        message: 'Your password has been reset by admin. Please set a new password to continue.',
+        tempToken,
+        redirectTo: '/first-time-password',
+        user: {
+          userId: updatedUser.id,
+          user_name: updatedUser.user_name,
+          name: updatedUser.preferred_name || updatedUser.user_name
+        }
+      });
+    }
+
+    const token = generateJWT(updatedUser, isAdmin);
+
+    await createLoginLog(
+      updatedUser.id,
+      updatedUser.user_name || updatedUser.username,
+      ipAddress,
+      userAgent,
+      'Success',
+      true,
+      'Login successful'
     );
 
-    // ✅ FIXED: Determine redirect URL - THIS IS THE CRITICAL FIX
-    let redirectTo = '/business-role'; // Default redirect to business role selection
-
-    // Check if password change is required (for non-admin users)
-    if (!isAdmin && requiresPasswordChange) {
-      redirectTo = '/change-password'; // ✅ CORRECT: Redirect to password change page
-      console.log('🔐 Password change required - redirecting to:', redirectTo);
-    } else {
-      console.log('📍 Normal login - redirecting to business role selection:', redirectTo);
-    }
-
-    console.log('🎉 LOGIN SUCCESSFUL:', {
-      user_id: updatedUser.id,
-      user_name: updatedUser.user_name,
-      preferred_name: updatedUser.preferred_name, // Added
-      role: roleName,
-      BU_ROLE_ID: updatedUser.BU_ROLE_ID,
-      isAdmin: isAdmin,
-      permissions_count: permissions.length,
-      license_valid: true,
-      license_id: licenseCheck.license.id,
-      token_generated: true,
-      requiresPasswordChange: requiresPasswordChange,
-      redirectTo: redirectTo
-    });
-
-    // Prepare response - ADDED preferred_name to user object
     const response = {
       success: true,
       token,
@@ -1221,43 +2101,25 @@ export const login = asyncHandler(async (req, res) => {
         userId: updatedUser.id,
         user_name: updatedUser.user_name || updatedUser.username || loginIdentifier,
         email: updatedUser.email,
-        preferred_name: updatedUser.preferred_name || null, // Added
-        role: roleName,
+        preferred_name: updatedUser.preferred_name || null,
+        role: getRoleName(updatedUser, isAdmin),
         BU_ROLE_ID: updatedUser.BU_ROLE_ID,
-        primary_business_role: updatedUser.primary_business_role || roleName,
+        primary_business_role: updatedUser.primary_business_role || getRoleName(updatedUser, isAdmin),
         businessUnit: updatedUser.main_business_unit || 'Wethral',
         isAdmin: isAdmin,
         is_first_login: updatedUser.is_first_login,
         force_password_change: updatedUser.force_password_change,
         requiresPasswordChange: requiresPasswordChange,
-        permissions: permissions,
+        permissions: getPermissionsForUser(updatedUser, isAdmin),
+        rfid_enabled: updatedUser.rfid_enabled || false,
+        two_factor_enabled: updatedUser.two_factor_enabled || false,
         accessibleBusinessUnits: [updatedUser.main_business_unit || 'Wethral'],
         tokenIssuedAt: new Date().toISOString(),
-        tokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+        tokenExpiresAt: new Date(Date.now() + 7*24*60*60*1000).toISOString()
       },
-      license: {
-        valid: true,
-        id: licenseCheck.license.id,
-        issued_to: licenseCheck.license.issued_to,
-        license_type: licenseCheck.license.license_type,
-        expires: licenseCheck.license.expires,
-        max_users: licenseCheck.license.max_users,
-        max_branches: licenseCheck.license.max_branches
-      },
-      redirectTo: redirectTo,
       message: 'Login successful'
     };
-
-    console.log('✅ LOGIN COMPLETE - Sending response:', {
-      user: updatedUser.user_name,
-      preferred_name: updatedUser.preferred_name, // Added
-      isAdmin: isAdmin,
-      redirectTo: redirectTo,
-      requiresPasswordChange: requiresPasswordChange
-    });
-    
     res.status(200).json(response);
-
   } catch (error) {
     console.error('💥 LOGIN PROCESS ERROR:', {
       message: error.message,
@@ -1273,165 +2135,513 @@ export const login = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Register User - UPDATED FOR SEQUELIZE
-export const registerUser = asyncHandler(async (req, res) => {
-  const {
-    user_name,
-    password,
-    employer_number,
-    first_name,
-    last_name,
-    middle_name,
-    preferred_name,
-    job_title,
-    email,
-    customer_number,
-    main_business_unit,
-    responsibility_centre,
-    primary_business_role,
-    BU_ROLE_ID,
-    start_date,
-    expiry_date,
-    earliest_login_time,
-    latest_login_time,
-    internal_employee_enabled,
-    relationship_officer,
-    enable_multi_session,
-    validate_ip_address = false,
-    note,
-    ip_address,
-    is_supervisor,
-    is_main_BU,
-    status,
-  } = req.body;
+// ============================================
+// VERIFY 2FA TOKEN (Email/SMS)
+// ============================================
+export const verify2FAToken = asyncHandler(async (req, res) => {
+  try {
+    const { sessionId, token, method } = req.body;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'];
 
-  // Validate required fields
-  if (!user_name || !password || !email || !main_business_unit || !responsibility_centre || !primary_business_role || !BU_ROLE_ID) {
-    console.warn('Missing required fields for registration', { user_name });
-    return res.status(400).json({
+    if (!sessionId || !token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Session ID and token required'
+      });
+    }
+
+    const verification = twoFactorService.verifyToken(sessionId, token);
+
+    if (!verification.success) {
+      const pendingSession = pending2FASessions.get(sessionId);
+      if (pendingSession?.login_id) {
+        await Login.update(
+          { 
+            status: 'Failed', 
+            success: false,
+            error: verification.error,
+            error_code: 'TWO_FA_INVALID_TOKEN',
+            two_fa_attempts: sequelize.literal('two_fa_attempts + 1')
+          },
+          { where: { id: pendingSession.login_id } }
+        );
+      }
+      return res.status(401).json({
+        success: false,
+        message: verification.error,
+        remaining: verification.remaining
+      });
+    }
+
+    const session = twoFactorService.getSession(sessionId);
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired'
+      });
+    }
+
+    const user = await User.findByPk(session.user_id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const result = await complete2FALogin(user, ipAddress, userAgent, method || 'email_token', sessionId);
+
+    twoFactorService.clearSession(sessionId);
+    pending2FASessions.delete(sessionId);
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ Verify 2FA token error:', error);
+    res.status(500).json({
       success: false,
-      message: 'Missing required fields: user_name, password, email, main_business_unit, responsibility_centre, primary_business_role, BU_ROLE_ID',
+      message: 'Failed to verify 2FA token'
     });
   }
-
-  // Check for existing user
-  const existingUser = await User.findOne({
-    where: {
-      [Op.or]: [
-        { email: email.toLowerCase() },
-        { user_name: user_name }
-      ]
-    }
-  });
-
-  if (existingUser) {
-    console.warn('User already exists', { user_name, email });
-    return res.status(409).json({
-      success: false,
-      message: 'User already exists',
-    });
-  }
-
-  // Validate role
-  let roleExists = null;
-  if (primary_business_role) {
-    const normalizedRole = primary_business_role.toLowerCase().replace(/\s+/g, ' ').trim();
-    roleExists = await UserRole.findOne({
-      where: {
-        ROLE_NM: { [Op.like]: normalizedRole }
-      }
-    });
-
-    if (!roleExists) {
-      const mappingEntry = Object.values(ROLE_MAPPING).find(
-        role => role.ROLE_NM.toLowerCase() === normalizedRole
-      );
-      if (!mappingEntry) {
-        console.warn(`Role "${primary_business_role}" does not exist`, { user_name });
-        return res.status(400).json({
-          success: false,
-          message: `Role "${primary_business_role}" does not exist`,
-        });
-      }
-      roleExists = { ROLE_NM: mappingEntry.ROLE_NM, ROLE_ID: mappingEntry.id };
-    }
-  }
-
-  // Validate IP address
-  let finalIpAddress = ip_address || null;
-  if (validate_ip_address) {
-    if (!ip_address || !validateIpAddress(ip_address)) {
-      finalIpAddress = getClientIp(req);
-      if (!finalIpAddress) {
-        console.warn('Invalid or missing IP address', { user_name });
-        finalIpAddress = req.ip;
-      }
-    }
-  }
-
-  // Hash password
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  // Create user
-  const newUser = await User.create({
-    user_name,
-    password: hashedPassword,
-    employer_number,
-    first_name,
-    last_name,
-    middle_name,
-    preferred_name,
-    job_title,
-    email,
-    customer_number,
-    main_business_unit,
-    responsibility_centre,
-    primary_business_role: roleExists ? roleExists.ROLE_NM : primary_business_role,
-    BU_ROLE_ID: BU_ROLE_ID || (roleExists ? roleExists.ROLE_ID : null),
-    start_date: start_date || new Date(),
-    expiry_date: expiry_date || new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000),
-    earliest_login_time: earliest_login_time || '00:00',
-    latest_login_time: latest_login_time || '23:59',
-    internal_employee_enabled: internal_employee_enabled !== undefined ? internal_employee_enabled : true,
-    relationship_officer,
-    enable_multi_session: enable_multi_session !== undefined ? enable_multi_session : false,
-    validate_ip_address,
-    note,
-    ip_address: finalIpAddress,
-    is_supervisor,
-    is_main_BU,
-    status: status || 'Active',
-    passwordChangedAt: new Date()
-  });
-
-  console.info('User registered successfully', { 
-    user_name, 
-    email, 
-    BU_ROLE_ID
-  });
-
-  res.status(201).json({
-    success: true,
-    message: 'User registered successfully',
-    user: {
-      id: newUser.id,
-      user_name: newUser.user_name,
-      email: newUser.email,
-      role: newUser.primary_business_role,
-      BU_ROLE_ID: newUser.BU_ROLE_ID,
-      status: newUser.status,
-      ip_address: newUser.ip_address
-    },
-  });
 });
 
-// ✅ Update User - UPDATED FOR SEQUELIZE
+// ============================================
+// VERIFY HARDWARE 2FA (RFID)
+// ============================================
+export const verifyHardware2FA = asyncHandler(async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Session ID required'
+      });
+    }
+
+    const pendingSession = pending2FASessions.get(sessionId);
+    if (!pendingSession) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired session'
+      });
+    }
+
+    if (!rfidReaderService.isConnected) {
+      const initialized = await rfidReaderService.connect();
+      if (!initialized) {
+        return res.status(503).json({
+          success: false,
+          message: 'RFID reader not available',
+          requireCard: true
+        });
+      }
+    }
+
+    const cardData = await rfidReaderService.readCard(10000);
+    
+    if (!cardData) {
+      return res.status(401).json({
+        success: false,
+        message: 'No RFID token detected. Please tap your token.',
+        requireCard: true
+      });
+    }
+
+    const verification = await twoFactorService.verifyHardwareToken(sessionId, cardData);
+
+    if (!verification.success) {
+      if (pendingSession.login_id) {
+        await Login.update(
+          { 
+            status: 'Failed', 
+            success: false,
+            error: verification.error,
+            error_code: 'RFID_VERIFICATION_FAILED',
+            rfid_attempt_count: sequelize.literal('rfid_attempt_count + 1'),
+            two_fa_attempts: sequelize.literal('two_fa_attempts + 1')
+          },
+          { where: { id: pendingSession.login_id } }
+        );
+      }
+      return res.status(401).json({
+        success: false,
+        message: verification.error,
+        requireCard: true
+      });
+    }
+
+    const session = twoFactorService.getSession(sessionId);
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired'
+      });
+    }
+
+    const user = await User.findByPk(session.user_id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    await logRFIDAttempt(
+      user.id,
+      null,
+      cardData,
+      true,
+      'Success',
+      null,
+      ipAddress,
+      userAgent
+    );
+
+    const result = await complete2FALogin(user, ipAddress, userAgent, 'hardware_token', sessionId);
+
+    twoFactorService.clearSession(sessionId);
+    pending2FASessions.delete(sessionId);
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('❌ Hardware 2FA verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify hardware token'
+    });
+  }
+});
+
+// ============================================
+// RESEND 2FA TOKEN
+// ============================================
+export const resend2FAToken = asyncHandler(async (req, res) => {
+  try {
+    const { sessionId, method } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Session ID required'
+      });
+    }
+
+    const session = twoFactorService.getSession(sessionId);
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired session'
+      });
+    }
+
+    const user = await User.findByPk(session.user_id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const result = await twoFactorService.resendToken(sessionId, method || 'email_token', user);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        message: result.error || 'Failed to resend token'
+      });
+    }
+
+    const pendingSession = pending2FASessions.get(sessionId);
+    if (pendingSession?.login_id) {
+      const updateData = {
+        two_fa_attempts: sequelize.literal('two_fa_attempts + 1')
+      };
+      if (method === 'email') {
+        updateData.email_2fa_sent = true;
+        updateData.email_2fa_sent_at = new Date();
+      } else if (method === 'sms') {
+        updateData.sms_2fa_sent = true;
+        updateData.sms_2fa_sent_at = new Date();
+      }
+      await Login.update(updateData, { where: { id: pendingSession.login_id } });
+    }
+
+    const updatedSession = twoFactorService.getSession(sessionId);
+
+    res.json({
+      success: true,
+      message: '2FA code resent successfully',
+      expiresAt: result.expiresAt,
+      smsId: updatedSession?.sms_id || null,
+      ...(process.env.NODE_ENV === 'development' && { token: session.token })
+    });
+
+  } catch (error) {
+    console.error('❌ Resend 2FA token error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to resend 2FA token'
+    });
+  }
+});
+
+// ============================================
+// GET 2FA STATUS
+// ============================================
+export const get2FAStatus = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user?.id || req.params.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    const user = await User.findByPk(userId, {
+      attributes: [
+        'id', 
+        'user_name', 
+        'email',
+        'two_factor_enabled',
+        'two_factor_methods',
+        'two_factor_phone',
+        'two_factor_email',
+        'rfid_enabled'
+      ]
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const availableMethods = twoFactorService.getAvailableMethods(user);
+    const enabledMethods = twoFactorService.getEnabledMethods(user);
+
+    const rfidTokens = await RFIDToken.findAll({
+      where: {
+        user_id: userId,
+        is_active: true
+      },
+      attributes: ['id', 'serial_number', 'batch_number', 'device_type', 'last_used_at', 'is_primary']
+    });
+
+    res.json({
+      success: true,
+      data: {
+        two_factor_enabled: user.two_factor_enabled,
+        enabled_methods: enabledMethods,
+        available_methods: availableMethods,
+        has_hardware_token: user.rfid_enabled,
+        rfid_tokens: rfidTokens,
+        phone: user.two_factor_phone,
+        email: user.two_factor_email,
+        methods_config: user.two_factor_methods
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Get 2FA status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get 2FA status'
+    });
+  }
+});
+
+// ============================================
+// CONFIGURE 2FA (Admin only)
+// ============================================
+export const configure2FA = asyncHandler(async (req, res) => {
+  try {
+    const { 
+      userId, 
+      enabled, 
+      methods, 
+      phone,
+      email 
+    } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID required'
+      });
+    }
+
+    const user = await User.findByPk(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const updateData = {
+      two_factor_enabled: enabled || false,
+      two_factor_methods: {
+        hardware_token: methods?.includes('hardware_token') || false,
+        email_token: methods?.includes('email_token') || false,
+        sms_token: methods?.includes('sms_token') || false
+      }
+    };
+
+    if (phone) {
+      updateData.two_factor_phone = phone;
+    }
+
+    if (email) {
+      updateData.two_factor_email = email;
+    }
+
+    await user.update(updateData);
+
+    logger.info(`2FA settings updated for user ${user.user_name}`, {
+      enabled: enabled,
+      methods: methods
+    });
+
+    res.json({
+      success: true,
+      message: '2FA settings updated successfully',
+      data: {
+        two_factor_enabled: user.two_factor_enabled,
+        two_factor_methods: user.two_factor_methods,
+        two_factor_phone: user.two_factor_phone,
+        two_factor_email: user.two_factor_email
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Configure 2FA error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to configure 2FA'
+    });
+  }
+});
+
+// ============================================
+// TEST SMS CONFIGURATION
+// ============================================
+export const testSMSConfig = asyncHandler(async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number required'
+      });
+    }
+
+    const result = await twoFactorService.testSMSConfiguration(phoneNumber);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'SMS configuration test successful',
+        data: result.data
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'SMS configuration test failed',
+        error: result.error
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ SMS test error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test SMS configuration'
+    });
+  }
+});
+
+// ============================================
+// GET SMS STATUS
+// ============================================
+export const getSMSStatus = asyncHandler(async (req, res) => {
+  try {
+    const { smsId } = req.params;
+    
+    if (!smsId) {
+      return res.status(400).json({
+        success: false,
+        message: 'SMS ID required'
+      });
+    }
+
+    const status = await twoFactorService.getSMSStatus(smsId);
+    
+    if (!status.success) {
+      return res.status(404).json({
+        success: false,
+        message: status.error || 'SMS not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        status: status.status,
+        recipient: status.recipient,
+        sentAt: status.sentAt,
+        errorMessage: status.errorMessage
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Get SMS status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get SMS status'
+    });
+  }
+});
+
+// ============================================
+// GET 2FA STATISTICS (Admin only)
+// ============================================
+export const get2FAStatistics = asyncHandler(async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    const stats = await Login.get2FAStatistics(startDate, endDate);
+    
+    res.json({
+      success: true,
+      data: stats
+    });
+
+  } catch (error) {
+    console.error('❌ Get 2FA statistics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get 2FA statistics'
+    });
+  }
+});
+
+
+// UPDATE USER
 export const updateUser = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
     const updateData = req.body;
 
-    // Find user by multiple identifiers
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -1449,12 +2659,10 @@ export const updateUser = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Handle password update
     if (updateData.password) {
       updateData.password = await bcrypt.hash(updateData.password, 10);
     }
 
-    // Update user
     await user.update(updateData);
 
     res.status(200).json({ 
@@ -1467,12 +2675,11 @@ export const updateUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Deactivate User - UPDATED FOR SEQUELIZE
+// DEACTIVATE USER
 export const deactivateUser = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Find user by multiple identifiers
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -1490,7 +2697,6 @@ export const deactivateUser = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Deactivate the user
     await user.update({ 
       status: 'Deactivated',
       internal_employee_enabled: false
@@ -1506,12 +2712,11 @@ export const deactivateUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Activate User - UPDATED FOR SEQUELIZE
+// ACTIVATE USER
 export const activateUser = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Find user by multiple identifiers
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -1529,7 +2734,6 @@ export const activateUser = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Activate the user
     await user.update({ 
       status: 'Active',
       internal_employee_enabled: true
@@ -1545,7 +2749,7 @@ export const activateUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get All Users - UPDATED FOR SEQUELIZE
+// GET ALL USERS
 export const getAllUsers = asyncHandler(async (req, res) => {
   try {
     const users = await User.findAll({
@@ -1556,9 +2760,65 @@ export const getAllUsers = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: 'No users found' });
     }
 
+    const userRoles = await UserRole.findAll({
+      attributes: ['USER_ID', 'ROLE_NMS', 'USER_ROLE_IDS', 'BU_ID', 'Business_Unit']
+    });
+
+    const roleMap = {};
+    userRoles.forEach(role => {
+      if (role.USER_ID) {
+        if (roleMap[role.USER_ID]) {
+          const existing = roleMap[role.USER_ID];
+          const newRoles = Array.isArray(role.ROLE_NMS) ? role.ROLE_NMS : [role.ROLE_NMS];
+          const existingRoles = Array.isArray(existing.ROLE_NMS) ? existing.ROLE_NMS : [existing.ROLE_NMS];
+          roleMap[role.USER_ID] = {
+            ...existing,
+            ROLE_NMS: [...existingRoles, ...newRoles],
+            USER_ROLE_IDS: [...(existing.USER_ROLE_IDS || []), ...(role.USER_ROLE_IDS || [])]
+          };
+        } else {
+          roleMap[role.USER_ID] = role;
+        }
+      }
+    });
+
+    const usersWithRoles = users.map(user => {
+      const userObj = user.toJSON();
+      const userRole = roleMap[userObj.user_name] || roleMap[userObj.id];
+      
+      let roles = [];
+      let roleIds = [];
+      let businessUnit = null;
+      
+      if (userRole) {
+        if (userRole.ROLE_NMS) {
+          roles = Array.isArray(userRole.ROLE_NMS) ? userRole.ROLE_NMS : [userRole.ROLE_NMS];
+        }
+        if (userRole.USER_ROLE_IDS) {
+          roleIds = Array.isArray(userRole.USER_ROLE_IDS) ? userRole.USER_ROLE_IDS : [userRole.USER_ROLE_IDS];
+        }
+        businessUnit = userRole.Business_Unit || userRole.BU_ID || null;
+      }
+      
+      if (roles.length === 0 && userObj.BU_ROLE_NAME) {
+        roles = [userObj.BU_ROLE_NAME];
+      }
+      
+      return {
+        ...userObj,
+        roles: roles,
+        roleIds: roleIds,
+        businessUnit: businessUnit,
+        hasRole: roles.length > 0,
+        roleDisplay: roles.length > 0 ? roles.join(', ') : 'No Role Assigned'
+      };
+    });
+
     res.status(200).json({ 
+      success: true,
       message: 'Users fetched successfully', 
-      users: users 
+      count: usersWithRoles.length,
+      users: usersWithRoles 
     });
   } catch (error) {
     console.error('Error fetching all users:', error);
@@ -1566,15 +2826,12 @@ export const getAllUsers = asyncHandler(async (req, res) => {
   }
 });
 
-// Clean reset password function
-// Clean reset password function
-// ✅ Clean reset password function – using dynamic model getter
+// SIMPLE RESET PASSWORD
 export const simpleResetPassword = asyncHandler(async (req, res) => {
   try {
     const { user_name, username, newPassword, new_password, newpassword, confirmPassword, confirm_password, confirmpassword } = req.body;
     const currentUser = req.user;
 
-    // Normalise field names – accept multiple conventions
     const finalNewPassword = newPassword || new_password || newpassword;
     const finalConfirmPassword = confirmPassword || confirm_password || confirmpassword;
 
@@ -1610,7 +2867,6 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       });
     }
 
-    // 🔥 Use dynamic model getter
     const UserModel = getUser();
     if (!UserModel || typeof UserModel.findOne !== 'function') {
       return res.status(503).json({
@@ -1619,7 +2875,6 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       });
     }
 
-    // Find user
     const user = await UserModel.findOne({
       where: {
         [Op.or]: [
@@ -1636,7 +2891,6 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
       });
     }
 
-    // Check permissions – user can reset their own password or admin can reset any
     const isAdmin = currentUser?.isAdmin || currentUser?.role === 'Administrator' || 
                    parseInt(currentUser?.roleId || currentUser?.BU_ROLE_ID) === 1;
     const canReset = loginIdentifier === currentUser?.user_name || isAdmin;
@@ -1650,7 +2904,6 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(finalNewPassword, 10);
     
-    // Direct SQL update to avoid hooks
     await sequelize.query(
       'UPDATE users SET password = ?, passwordChangedAt = ?, failed_attempts = 0, lock_until = NULL WHERE id = ?',
       {
@@ -1686,9 +2939,8 @@ export const simpleResetPassword = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Unlock a specific user - UPDATED FOR SEQUELIZE
 // ============================================
-// UNLOCK USER CONTROLLER
+// UNLOCK USER
 // ============================================
 export const unlockUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
@@ -1697,9 +2949,8 @@ export const unlockUser = asyncHandler(async (req, res) => {
   try {
     console.log('🔓 Unlock user request:', { identifier, reason, unlockedBy });
 
-    // 🔥 Get the User model dynamically (ensures it's initialized)
-    const User = getUser();
-    if (!User || typeof User.findOne !== 'function') {
+    const UserModel = getUser();
+    if (!UserModel || typeof UserModel.findOne !== 'function') {
       console.error('❌ User model not ready');
       return res.status(503).json({
         success: false,
@@ -1708,8 +2959,7 @@ export const unlockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Find user by multiple identifiers
-    const user = await User.findOne({
+    const user = await UserModel.findOne({
       where: {
         [Op.or]: [
           { user_name: identifier },
@@ -1733,14 +2983,6 @@ export const unlockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    console.log('👤 User found for unlock:', {
-      user_name: user.user_name,
-      status: user.status,
-      locked: !!(user.lock_until && user.lock_until > Date.now()),
-      failed_attempts: user.failed_attempts
-    });
-
-    // Check if user is actually locked
     const isLocked = user.lock_until && user.lock_until > Date.now();
     const hasFailedAttempts = user.failed_attempts > 0;
 
@@ -1758,7 +3000,6 @@ export const unlockUser = asyncHandler(async (req, res) => {
       });
     }
 
-    // Unlock the user
     await user.update({
       failed_attempts: 0,
       lock_until: null,
@@ -1808,20 +3049,20 @@ export const unlockUser = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get locked users - UPDATED FOR SEQUELIZE
+// GET LOCKED USERS
+// GET LOCKED USERS - WITH ROLE INFORMATION
 export const getLockedUsers = asyncHandler(async (req, res) => {
   try {
     const { page = 1, limit = 50, search } = req.query;
 
     const whereClause = {
       [Op.or]: [
-        { lock_until: { [Op.gt]: new Date() } }, // Currently locked
-        { failed_attempts: { [Op.gt]: 0 } }, // Has failed attempts
-        { status: 'ForceLocked' } // Include force-locked users
+        { lock_until: { [Op.gt]: new Date() } },
+        { failed_attempts: { [Op.gt]: 0 } },
+        { status: 'ForceLocked' }
       ]
     };
 
-    // Add search functionality
     if (search) {
       whereClause[Op.or] = [
         { user_name: { [Op.like]: `%${search}%` } },
@@ -1835,26 +3076,120 @@ export const getLockedUsers = asyncHandler(async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
+    // ✅ Include BU_ROLE_ID in the query
     const { count, rows: lockedUsers } = await User.findAndCountAll({
       where: whereClause,
-      attributes: ['id', 'user_name', 'email', 'first_name', 'last_name', 'employer_number', 'status', 'failed_attempts', 'lock_until', 'force_lock_reason', 'force_locked_at', 'force_locked_by', 'last_login', 'created_at'],
+      attributes: [
+        'id', 
+        'user_name', 
+        'username',
+        'email', 
+        'first_name', 
+        'last_name', 
+        'employer_number', 
+        'status', 
+        'failed_attempts', 
+        'lock_until', 
+        'force_lock_reason', 
+        'force_locked_at', 
+        'force_locked_by', 
+        'last_login', 
+        'created_at',
+        'BU_ROLE_ID',
+        'primary_business_role',
+        'user_id'
+      ],
       order: [['lock_until', 'DESC'], ['failed_attempts', 'DESC']],
       limit: parseInt(limit),
       offset: offset
     });
 
+    // ✅ Fetch user roles for all locked users
+    const userIds = lockedUsers.map(user => user.id);
+    let userRolesMap = {};
+    
+    if (userIds.length > 0) {
+      try {
+        const [roles] = await sequelize.query(
+          `SELECT 
+            ur.user_id,
+            ur.ROLE_NM,
+            ur.ROLE_ID,
+            ur.BU_ID,
+            ur.USER_NAME,
+            ur.EMPLOYER_NUMBER,
+            u.user_name as user_name
+          FROM user_roles ur
+          LEFT JOIN users u ON u.id = ur.user_id
+          WHERE ur.user_id IN (:userIds)
+          AND ur.REC_ST = 'A'`,
+          {
+            replacements: { userIds },
+            type: sequelize.QueryTypes.SELECT
+          }
+        );
+        
+        roles.forEach(role => {
+          const userId = role.user_id;
+          const userName = role.USER_NAME || role.user_name;
+          
+          const roleInfo = {
+            roleName: role.ROLE_NM || 'N/A',
+            roleId: role.ROLE_ID,
+            businessUnit: role.BU_ID
+          };
+          
+          if (userId) userRolesMap[userId] = roleInfo;
+          if (userName) userRolesMap[userName] = roleInfo;
+          if (role.EMPLOYER_NUMBER) userRolesMap[role.EMPLOYER_NUMBER] = roleInfo;
+        });
+      } catch (roleError) {
+        console.error('⚠️ Error fetching user roles:', roleError.message);
+      }
+    }
+
+    const getUserRole = (user) => {
+      let roleInfo = null;
+      
+      if (user.id && userRolesMap[user.id]) roleInfo = userRolesMap[user.id];
+      if (!roleInfo && user.user_name && userRolesMap[user.user_name]) roleInfo = userRolesMap[user.user_name];
+      if (!roleInfo && user.username && userRolesMap[user.username]) roleInfo = userRolesMap[user.username];
+      if (!roleInfo && user.employer_number && userRolesMap[user.employer_number]) roleInfo = userRolesMap[user.employer_number];
+      
+      if (!roleInfo && user.BU_ROLE_ID) {
+        for (const [key, value] of Object.entries(userRolesMap)) {
+          if (value && value.roleId && String(value.roleId) === String(user.BU_ROLE_ID)) {
+            roleInfo = value;
+            break;
+          }
+        }
+      }
+      
+      if (!roleInfo && user.primary_business_role) {
+        return user.primary_business_role;
+      }
+      
+      return roleInfo?.roleName || 'N/A';
+    };
+
     const formattedUsers = lockedUsers.map(user => {
       const userData = user.get({ plain: true });
       const isLocked = userData.lock_until && userData.lock_until > Date.now();
       const lockRemaining = isLocked ? Math.ceil((userData.lock_until - Date.now()) / 60000) : 0;
+      const roleName = getUserRole(userData);
 
       return {
         id: userData.id,
+        user_id: userData.user_id,
         user_name: userData.user_name,
+        username: userData.username || userData.user_name,
         name: `${userData.first_name || ''} ${userData.last_name || ''}`.trim(),
         email: userData.email,
         employer_number: userData.employer_number,
         status: userData.status,
+        role_name: roleName,
+        BU_ROLE_ID: userData.BU_ROLE_ID,
+        primary_business_role: userData.primary_business_role,
         failed_attempts: userData.failed_attempts,
         lock_until: userData.lock_until,
         is_locked: isLocked,
@@ -1896,7 +3231,7 @@ export const getLockedUsers = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Reset User Session - UPDATED FOR SEQUELIZE
+// RESET USER SESSION
 export const resetUser = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -1910,7 +3245,6 @@ export const resetUser = asyncHandler(async (req, res) => {
 
     console.log('🔄 Resetting user session for ID:', userId);
 
-    // Find user by ID
     const user = await User.findByPk(userId, {
       attributes: { exclude: ['password', 'passwordHistory'] }
     });
@@ -1924,23 +3258,11 @@ export const resetUser = asyncHandler(async (req, res) => {
 
     const userData = user.get({ plain: true });
 
-    console.log('✅ User found:', {
-      id: userData.id,
-      user_name: userData.user_name,
-      employer_number: userData.employer_number,
-      BU_ROLE_ID: userData.BU_ROLE_ID
-    });
-
-    // Get fresh permissions
     let permissions = {};
     let roleName = userData.primary_business_role || 'Unknown Role';
     let flattenedPermissions = [];
 
-    // Check if user is Administrator
     if (parseInt(userData.BU_ROLE_ID) === 1) {
-      console.log('🔄 Administrator detected - granting full permissions');
-      
-      // Generate all permissions for administrator
       permissions = Object.keys(PERMISSIONS).reduce((acc, key) => {
         const permissionGroup = PERMISSIONS[key];
         if (typeof permissionGroup === 'object') {
@@ -1950,10 +3272,8 @@ export const resetUser = asyncHandler(async (req, res) => {
         }
         return acc;
       }, {});
-      
       roleName = 'Administrator';
     } else {
-      // Non-admin logic
       const permissionsDoc = await Permissions.findOne({ 
         where: { BU_ROLE_ID: userData.BU_ROLE_ID },
         attributes: ['permissions', 'ROLE_NAME']
@@ -1970,7 +3290,6 @@ export const resetUser = asyncHandler(async (req, res) => {
           roleName = roleDetails.ROLE_NM;
           flattenedPermissions = Object.values(permissions).flat();
         } else {
-          // Fallback permissions
           permissions = {
             DASHBOARD_ACCESS_LEVEL: [PERMISSIONS.DASHBOARD.VIEW],
             CUSTOMER_ACCESS_LEVEL: [PERMISSIONS.CUSTOMER.VIEW]
@@ -1981,7 +3300,6 @@ export const resetUser = asyncHandler(async (req, res) => {
       }
     }
 
-    // Generate new token
     const newToken = jwt.sign(
       {
         userId: userData.id,
@@ -2036,49 +3354,37 @@ export const resetUser = asyncHandler(async (req, res) => {
   }
 });
 
-// Note: I've converted the main functions. The other functions follow similar patterns.
-// Key things to update in the remaining functions:
-// 1. Replace mongoose queries with Sequelize queries
-// 2. Replace .save() with .update() or .create()
-// 3. Replace .findOne() with appropriate Sequelize queries
-// 4. Handle ObjectId comparisons differently
-// 5. Update session/transaction handling if needed
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
 
-
-// Helper function to get role permissions from ROLE_MAPPING
 function getRolePermissionsGrouped(roleId) {
   const roleEntry = Object.values(ROLE_MAPPING).find(role => role.ROLE_ID === roleId);
   return roleEntry ? roleEntry.permissions || {} : {};
 }
 
-// Helper function to get role with permissions
 function getRoleWithPermissions(roleId) {
   const roleEntry = Object.values(ROLE_MAPPING).find(role => role.ROLE_ID === roleId);
   return roleEntry || { ROLE_NM: 'Unknown', permissions: {} };
 }
 
-// Helper function to get modules for role
 function getModulesForRole(roleId) {
-  // Default modules for all roles
   const baseModules = ['dashboard', 'profile', 'settings'];
   
   if (parseInt(roleId) === 1) {
-    // Administrator - all modules
     return [...baseModules, 'users', 'roles', 'permissions', 'reports', 'analytics', 'system'];
   } else {
-    // Regular users - basic modules
     return baseModules;
   }
 }
 
-// Quick enable user endpoint
+// ENABLE USER
 export const enableUser = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
   
   try {
     console.log('🔧 Enabling user:', identifier);
     
-    // Find user by multiple identifiers
     const user = await User.findOne({
       where: {
         [Op.or]: [
@@ -2097,26 +3403,11 @@ export const enableUser = asyncHandler(async (req, res) => {
       });
     }
 
-    console.log('📊 User before activation:', {
-      id: user.id,
-      user_name: user.user_name,
-      status: user.status,
-      internal_employee_enabled: user.internal_employee_enabled
-    });
-
-    // Enable the user
     await user.update({
       internal_employee_enabled: 1,
       status: 'Active',
       failed_attempts: 0,
       lock_until: null
-    });
-
-    console.log('✅ User activated successfully:', {
-      id: user.id,
-      user_name: user.user_name,
-      status: user.status,
-      internal_employee_enabled: user.internal_employee_enabled
     });
 
     res.status(200).json({
@@ -2141,9 +3432,7 @@ export const enableUser = asyncHandler(async (req, res) => {
   }
 });
 
-
-
-// 🔐 Get user permissions
+// GET USER PERMISSIONS
 export const getUserPermissions = asyncHandler(async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
@@ -2157,7 +3446,6 @@ export const getUserPermissions = asyncHandler(async (req, res) => {
       });
     }
 
-    // Try to get permissions from Permissions model first
     let permissionsDoc = await Permissions.findOne({ 
       BU_ROLE_ID: user.BU_ROLE_ID 
     }).lean();
@@ -2166,17 +3454,14 @@ export const getUserPermissions = asyncHandler(async (req, res) => {
     let roleName = 'Unknown Role';
 
     if (permissionsDoc) {
-      // Use permissions from Permissions model
       permissions = permissionsDoc.permissions;
       roleName = permissionsDoc.ROLE_NAME;
     } else {
-      // Fallback to ROLE_MAPPING
       const roleDetails = getRoleWithPermissions(user.BU_ROLE_ID);
       permissions = roleDetails.permissions;
       roleName = roleDetails.ROLE_NM;
     }
 
-    // Return flattened permissions array for easy client-side checking
     const flattenedPermissions = Object.values(permissions).flat();
 
     res.json({
@@ -2201,23 +3486,21 @@ export const getUserPermissions = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get Business Unit Summary - Get statistics for a specific BU_ID
+// GET BUSINESS UNIT SUMMARY
 export const getBUSummary = asyncHandler(async (req, res) => {
   try {
     const { bu_id } = req.params;
 
     console.log('📊 Get Business Unit Summary request:', { bu_id });
 
-    // Build query for this business unit
     const buQuery = {
       $or: [
         { main_business_unit: bu_id },
         { BU_ID: bu_id },
-        { branch: bu_id } // Legacy branch field
+        { branch: bu_id }
       ]
     };
 
-    // Get all users for this business unit
     const users = await User.find(buQuery)
       .select('status BU_ROLE_ID role is_supervisor lock_until failed_attempts internal_employee_enabled')
       .lean();
@@ -2244,7 +3527,6 @@ export const getBUSummary = asyncHandler(async (req, res) => {
       });
     }
 
-    // Calculate comprehensive statistics
     const summary = {
       total_users: users.length,
       active_users: users.filter(user => 
@@ -2270,7 +3552,6 @@ export const getBUSummary = asyncHandler(async (req, res) => {
       ).length
     };
 
-    // Role breakdown
     const roleBreakdown = users.reduce((acc, user) => {
       const roleId = user.BU_ROLE_ID || user.role;
       const roleKey = roleId ? roleId.toString() : 'unknown';
@@ -2286,7 +3567,6 @@ export const getBUSummary = asyncHandler(async (req, res) => {
       return acc;
     }, {});
 
-    // Status breakdown
     const statusBreakdown = users.reduce((acc, user) => {
       const status = user.status || (user.is_active === 'Active' ? 'Active' : 'Inactive');
       if (!acc[status]) {
@@ -2295,12 +3575,6 @@ export const getBUSummary = asyncHandler(async (req, res) => {
       acc[status]++;
       return acc;
     }, {});
-
-    console.log('✅ Business Unit summary retrieved:', {
-      bu_id,
-      total_users: summary.total_users,
-      active_users: summary.active_users
-    });
 
     res.status(200).json({
       success: true,
@@ -2330,8 +3604,7 @@ export const getBUSummary = asyncHandler(async (req, res) => {
   }
 });
 
-
-// 🔐 Validate specific permission
+// VALIDATE PERMISSION
 export const validatePermission = asyncHandler(async (req, res) => {
   try {
     const { permission } = req.body;
@@ -2354,7 +3627,6 @@ export const validatePermission = asyncHandler(async (req, res) => {
       });
     }
 
-    // Administrator (roleId: 1) always has all permissions
     if (parseInt(user.BU_ROLE_ID) === 1) {
       return res.json({
         success: true,
@@ -2364,7 +3636,6 @@ export const validatePermission = asyncHandler(async (req, res) => {
       });
     }
 
-    // Get permissions from Permissions model or ROLE_MAPPING
     let userPermissions = [];
     let roleName = 'Unknown Role';
 
@@ -2400,7 +3671,7 @@ export const validatePermission = asyncHandler(async (req, res) => {
   }
 });
 
-// 🔐 Validate multiple permissions
+// VALIDATE PERMISSIONS
 export const validatePermissions = asyncHandler(async (req, res) => {
   try {
     const { permissions: requiredPermissions, requireAll = true } = req.body;
@@ -2423,7 +3694,6 @@ export const validatePermissions = asyncHandler(async (req, res) => {
       });
     }
 
-    // Administrator has all permissions
     if (parseInt(user.BU_ROLE_ID) === 1) {
       const results = requiredPermissions.reduce((acc, perm) => {
         acc[perm] = true;
@@ -2440,7 +3710,6 @@ export const validatePermissions = asyncHandler(async (req, res) => {
       });
     }
 
-    // Get permissions from Permissions model or ROLE_MAPPING
     let userPermissions = [];
     let roleName = 'Unknown Role';
 
@@ -2484,16 +3753,13 @@ export const validatePermissions = asyncHandler(async (req, res) => {
   }
 });
 
-
-// ✅ Get User by Employer Number - FIXED VERSION with Legacy Compatibility
-// ✅ Get User by Employer Number - FIXED FOR SEQUELIZE
+// GET USER BY EMPLOYER NUMBER
 export const getUserByEmployerNumber = asyncHandler(async (req, res) => {
   try {
     const { employer_number } = req.params;
     
     console.log(`🔍 Searching user by employer_number: ${employer_number}`);
     
-    // 🔍 SEQUELIZE QUERY: Search by employer_number OR username (for legacy data)
     const user = await User.findOne({ 
       where: {
         [Op.or]: [
@@ -2520,60 +3786,38 @@ export const getUserByEmployerNumber = asyncHandler(async (req, res) => {
 
     console.log(`✅ User found: ${user.user_name || user.username} (ID: ${user.id})`);
     
-    // 🔹 Convert Sequelize instance to plain object
     const userData = user.get({ plain: true });
     
-    // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
+    // ✅ FIX: Use getRoleName with proper parameters (user object and isAdmin flag)
+    const isAdmin = parseInt(userData.BU_ROLE_ID) === 1;
+    const roleName = getRoleName(userData, isAdmin);
+    
     const mappedUser = {
       ...userData,
-      // Ensure required fields exist
       user_name: userData.user_name || userData.username || '',
       first_name: userData.first_name || userData.fname || '',
       last_name: userData.last_name || userData.lname || '',
       full_name: `${userData.first_name || ''} ${userData.middle_name || ''} ${userData.last_name || ''}`.trim(),
-      
-      // Business role mapping
       BU_ROLE_ID: userData.BU_ROLE_ID || userData.role || '',
       primary_business_role: userData.primary_business_role || userData.utype || '',
-      role_name: getRoleName(userData.BU_ROLE_ID), // Helper function if you have one
-      
-      // Status mapping
+      role_name: roleName, // ✅ Fixed: Now uses correct parameters
       status: userData.status || (userData.is_active === 'Active' ? 'Active' : 'Inactive'),
       is_active: userData.is_active || (userData.status === 'Active'),
-      
-      // Business unit mapping
       main_business_unit: userData.main_business_unit || userData.branch || '',
       BU_ID: userData.BU_ID || userData.branch || '',
-      
-      // Supervisor status
       is_supervisor: userData.is_supervisor || (userData.rofficer === 'Yes' || false),
-      
-      // Employee type
       internal_employee_enabled: userData.internal_employee_enabled || (userData.utype === 'Staff' || false),
       employee_type: userData.utype || 'External',
-      
-      // Additional useful fields
       email: userData.email || '',
       phone: userData.phone || userData.phone_number || '',
       job_title: userData.job_title || ''
     };
 
-    console.log('🔍 User mapping details:', {
-      employer_number,
-      username: userData.username,
-      user_name: mappedUser.user_name,
-      bu_role_id: mappedUser.BU_ROLE_ID,
-      status: mappedUser.status,
-      business_unit: mappedUser.main_business_unit
-    });
-
-    // Return response
     res.status(200).json({ 
       success: true,
       message: 'User found successfully', 
       data: {
         user: mappedUser,
-        // Include additional metadata
         metadata: {
           id: userData.id,
           employer_number: userData.employer_number,
@@ -2587,7 +3831,6 @@ export const getUserByEmployerNumber = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching user by employer number:', error);
     
-    // More detailed error for debugging
     if (error.name === 'SequelizeDatabaseError') {
       console.error('Database error details:', error.parent?.sql);
     }
@@ -2601,26 +3844,7 @@ export const getUserByEmployerNumber = asyncHandler(async (req, res) => {
   }
 });
 
-// Helper function to get role name (if you have a roles table)
-function getRoleName(buRoleId) {
-  const roleMap = {
-    '1': 'Super Administrator',
-    '2': 'Administrator',
-    '3': 'Manager',
-    '4': 'Supervisor',
-    '5': 'Officer',
-    '6': 'Teller',
-    '7': 'Customer Service',
-    '28': 'Credit Officer',
-    '29': 'Relationship Officer',
-    '30': 'Branch Manager'
-  };
-  return roleMap[buRoleId] || 'User';
-}
-
-
-
-// ✅ Unlock multiple users at once - FIXED VERSION with Legacy Compatibility
+// UNLOCK MULTIPLE USERS
 export const unlockMultipleUsers = asyncHandler(async (req, res) => {
   const { identifiers, reason, unlockedBy } = req.body;
 
@@ -2647,23 +3871,19 @@ export const unlockMultipleUsers = asyncHandler(async (req, res) => {
 
     for (const identifier of identifiers) {
       try {
-        // Build query conditions for each identifier
-        const queryConditions = [
-          { user_name: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-          { username: { $regex: new RegExp(`^${identifier}$`, 'i') } }, // Legacy support
-          { email: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-          { employer_number: identifier }
-        ];
-        if (mongoose.Types.ObjectId.isValid(identifier)) {
-          queryConditions.push({ _id: identifier });
-        }
-        if (!isNaN(identifier)) {
-          queryConditions.push({ id: parseInt(identifier) });
-          queryConditions.push({ user_id: parseInt(identifier) });
-        }
-
         const user = await User.findOne({
-          $or: queryConditions
+          where: {
+            [Op.or]: [
+              { user_name: { [Op.like]: identifier } },
+              { username: { [Op.like]: identifier } },
+              { email: { [Op.like]: identifier } },
+              { employer_number: identifier },
+              { id: !isNaN(identifier) ? parseInt(identifier) : null }
+            ].filter(condition => {
+              const value = Object.values(condition)[0];
+              return value !== null && value !== undefined;
+            })
+          }
         });
 
         if (!user) {
@@ -2671,62 +3891,29 @@ export const unlockMultipleUsers = asyncHandler(async (req, res) => {
           continue;
         }
 
-        // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
-        const mappedUser = {
-          ...user,
-          user_name: user.user_name || user.username,
-          first_name: user.first_name || user.fname,
-          last_name: user.last_name || user.lname,
-          BU_ROLE_ID: user.BU_ROLE_ID || user.role,
-          primary_business_role: user.primary_business_role || user.utype,
-          status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated')
-        };
-
-        console.log('🔍 LEGACY MAPPING DEBUG (Bulk Unlock):', {
-          identifier,
-          original_username: user.username,
-          mapped_user_name: mappedUser.user_name,
-          original_role: user.role,
-          mapped_BU_ROLE_ID: mappedUser.BU_ROLE_ID
-        });
-
         const isLocked = user.lock_until && user.lock_until > Date.now();
         const hasFailedAttempts = user.failed_attempts > 0;
 
         if (!isLocked && !hasFailedAttempts) {
           results.notLocked.push({
             identifier,
-            user_name: mappedUser.user_name,
-            reason: 'User is not locked',
-            // Legacy fields
-            username: user.username || mappedUser.user_name
+            user_name: user.user_name,
+            reason: 'User is not locked'
           });
           continue;
         }
 
-        // Unlock the user
-        const updatedUser = await User.findByIdAndUpdate(
-          user._id,
-          {
-            $set: {
-              failed_attempts: 0,
-              lock_until: null,
-              last_unlocked: new Date(),
-              unlocked_by: unlockedBy || req.user?.user_name || 'system',
-              unlock_reason: reason || 'Bulk unlock by administrator'
-            }
-          },
-          { new: true }
-        );
+        await user.update({
+          failed_attempts: 0,
+          lock_until: null,
+          last_unlocked: new Date(),
+          unlocked_by: unlockedBy || req.user?.user_name || 'system',
+          unlock_reason: reason || 'Bulk unlock by administrator'
+        });
 
         results.successful.push({
           identifier,
-          user_name: mappedUser.user_name,
-          failed_attempts: updatedUser.failed_attempts,
-          lock_until: updatedUser.lock_until,
-          // Legacy fields
-          username: user.username || mappedUser.user_name,
-          legacy_status: user.is_active
+          user_name: user.user_name
         });
 
       } catch (error) {
@@ -2756,12 +3943,9 @@ export const unlockMultipleUsers = asyncHandler(async (req, res) => {
   }
 });
 
-
-
-// ✅ Reset all locked users (Administrative function) - FIXED VERSION with Legacy Compatibility
+// RESET ALL LOCKED USERS
 export const resetAllLockedUsers = asyncHandler(async (req, res) => {
   try {
-    // Check if requester has admin privileges
     if (req.user?.BU_ROLE_ID !== 1 && req.user?.primary_business_role !== 'Administrator') {
       return res.status(403).json({
         success: false,
@@ -2773,26 +3957,25 @@ export const resetAllLockedUsers = asyncHandler(async (req, res) => {
 
     console.log('🔄 Reset all locked users request by:', req.user.user_name);
 
-    // Find and reset all locked users (including force-locked)
-    const result = await User.updateMany(
+    const result = await User.update(
       {
-        $or: [
-          { lock_until: { $gt: new Date() } },
-          { failed_attempts: { $gt: 0 } },
-          { status: 'ForceLocked' }
-        ]
+        failed_attempts: 0,
+        lock_until: null,
+        last_unlocked: new Date(),
+        unlocked_by: req.user.user_name,
+        unlock_reason: reason || 'Mass unlock by administrator',
+        status: 'Active',
+        force_lock_reason: null,
+        force_locked_by: null,
+        force_locked_at: null
       },
       {
-        $set: {
-          failed_attempts: 0,
-          lock_until: null,
-          last_unlocked: new Date(),
-          unlocked_by: req.user.user_name,
-          unlock_reason: reason || 'Mass unlock by administrator',
-          status: 'Active',
-          force_lock_reason: null,
-          force_locked_by: null,
-          force_locked_at: null
+        where: {
+          [Op.or]: [
+            { lock_until: { [Op.gt]: new Date() } },
+            { failed_attempts: { [Op.gt]: 0 } },
+            { status: 'ForceLocked' }
+          ]
         }
       }
     );
@@ -2801,9 +3984,9 @@ export const resetAllLockedUsers = asyncHandler(async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Successfully unlocked ${result.modifiedCount} users`,
+      message: `Successfully unlocked ${result[0]} users`,
       details: {
-        modifiedCount: result.modifiedCount,
+        modifiedCount: result[0],
         timestamp: new Date().toISOString(),
         performedBy: req.user.user_name,
         reason: reason || 'Mass unlock by administrator'
@@ -2821,29 +4004,26 @@ export const resetAllLockedUsers = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get user lock status - FIXED VERSION with Legacy Compatibility
+// GET USER LOCK STATUS
 export const getUserLockStatus = asyncHandler(async (req, res) => {
   const { identifier } = req.params;
 
   try {
-    // Build query conditions with legacy support
-    const queryConditions = [
-      { user_name: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-      { username: { $regex: new RegExp(`^${identifier}$`, 'i') } }, // Legacy
-      { email: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-      { employer_number: identifier }
-    ];
-    if (mongoose.Types.ObjectId.isValid(identifier)) {
-      queryConditions.push({ _id: identifier });
-    }
-    if (!isNaN(identifier)) {
-      queryConditions.push({ id: parseInt(identifier) });
-      queryConditions.push({ user_id: parseInt(identifier) });
-    }
-
     const user = await User.findOne({
-      $or: queryConditions
-    }).select('user_name email status failed_attempts lock_until last_login last_unlocked unlocked_by force_lock_reason force_locked_at force_locked_by username');
+      where: {
+        [Op.or]: [
+          { user_name: { [Op.like]: identifier } },
+          { username: { [Op.like]: identifier } },
+          { email: { [Op.like]: identifier } },
+          { employer_number: identifier },
+          { id: !isNaN(identifier) ? parseInt(identifier) : null }
+        ].filter(condition => {
+          const value = Object.values(condition)[0];
+          return value !== null && value !== undefined;
+        })
+      },
+      attributes: ['id', 'user_name', 'email', 'status', 'failed_attempts', 'lock_until', 'last_login', 'last_unlocked', 'unlocked_by', 'force_lock_reason', 'force_locked_at', 'force_locked_by', 'username']
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -2852,52 +4032,32 @@ export const getUserLockStatus = asyncHandler(async (req, res) => {
       });
     }
 
-    // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
-    const mappedUser = {
-      ...user.toObject(),
-      user_name: user.user_name || user.username,
-      first_name: user.first_name || user.fname,
-      last_name: user.last_name || user.lname,
-      BU_ROLE_ID: user.BU_ROLE_ID || user.role,
-      primary_business_role: user.primary_business_role || user.utype,
-      status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated')
-    };
-
-    console.log('🔍 LEGACY MAPPING DEBUG (Get Lock Status):', {
-      identifier,
-      original_username: user.username,
-      mapped_user_name: mappedUser.user_name,
-      original_role: user.role,
-      mapped_BU_ROLE_ID: mappedUser.BU_ROLE_ID
-    });
-
-    const isLocked = user.lock_until && user.lock_until > Date.now();
-    const lockRemaining = isLocked ? Math.ceil((user.lock_until - Date.now()) / 60000) : 0;
+    const userData = user.get({ plain: true });
+    const isLocked = userData.lock_until && userData.lock_until > Date.now();
+    const lockRemaining = isLocked ? Math.ceil((userData.lock_until - Date.now()) / 60000) : 0;
 
     res.status(200).json({
       success: true,
       user: {
-        id: user._id,
-        user_name: mappedUser.user_name,
-        email: user.email,
-        status: mappedUser.status,
+        id: userData.id,
+        user_name: userData.user_name,
+        email: userData.email,
+        status: userData.status,
         lock_status: {
           is_locked: isLocked,
-          is_force_locked: user.status === 'ForceLocked',
-          failed_attempts: user.failed_attempts,
-          lock_until: user.lock_until,
+          is_force_locked: userData.status === 'ForceLocked',
+          failed_attempts: userData.failed_attempts,
+          lock_until: userData.lock_until,
           lock_remaining_minutes: lockRemaining,
-          force_lock_reason: user.force_lock_reason,
-          force_locked_at: user.force_locked_at,
-          force_locked_by: user.force_locked_by,
-          can_login: !isLocked && user.status === 'Active'
+          force_lock_reason: userData.force_lock_reason,
+          force_locked_at: userData.force_locked_at,
+          force_locked_by: userData.force_locked_by,
+          can_login: !isLocked && userData.status === 'Active'
         },
-        last_login: user.last_login,
-        last_unlocked: user.last_unlocked,
-        unlocked_by: user.unlocked_by,
-        // Legacy fields for compatibility
-        username: user.username || mappedUser.user_name,
-        legacy_status: user.is_active
+        last_login: userData.last_login,
+        last_unlocked: userData.last_unlocked,
+        unlocked_by: userData.unlocked_by,
+        username: userData.username || userData.user_name
       }
     });
 
@@ -2910,11 +4070,9 @@ export const getUserLockStatus = asyncHandler(async (req, res) => {
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
-});
+}); // ✅ ADDED MISSING CLOSING BRACE AND PAREN
 
-
-
-// ✅ Clear User Caches (Admin function) - FIXED VERSION with Legacy Compatibility
+// CLEAR USER CACHES
 export const clearUserCaches = asyncHandler(async (req, res) => {
   try {
     const { user_name } = req.params;
@@ -2923,24 +4081,23 @@ export const clearUserCaches = asyncHandler(async (req, res) => {
     let result;
     
     if (clearAll) {
-      // Clear all user-related caches (simulated - in production you might use Redis)
       console.log('🗑️ Clearing all user caches requested by:', req.user.user_name);
       result = {
         cleared: 'all_user_caches',
         message: 'All user caches cleared (simulated)'
       };
     } else if (user_name) {
-      // Use identifier for flexibility
       const identifier = user_name;
       
-      // Find user by multiple identifiers
       const user = await User.findOne({
-        $or: [
-          { user_name: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-          { username: { $regex: new RegExp(`^${identifier}$`, 'i') } }, // Legacy
-          { email: { $regex: new RegExp(`^${identifier}$`, 'i') } },
-          { employer_number: identifier }
-        ]
+        where: {
+          [Op.or]: [
+            { user_name: { [Op.like]: identifier } },
+            { username: { [Op.like]: identifier } },
+            { email: { [Op.like]: identifier } },
+            { employer_number: identifier }
+          ]
+        }
       });
       
       if (!user) {
@@ -2950,20 +4107,12 @@ export const clearUserCaches = asyncHandler(async (req, res) => {
         });
       }
 
-      // 🔹 LEGACY MAPPING: Map legacy fields for logging
-      const mappedUser = {
-        ...user,
-        user_name: user.user_name || user.username,
-        first_name: user.first_name || user.fname,
-        last_name: user.last_name || user.lname
-      };
-
-      console.log('🗑️ Clearing cache for user:', mappedUser.user_name, 'requested by:', req.user.user_name);
+      console.log('🗑️ Clearing cache for user:', user.user_name, 'requested by:', req.user.user_name);
       
       result = {
-        cleared: `cache_for_${mappedUser.user_name}`,
-        user_id: user._id,
-        message: `Cache cleared for user: ${mappedUser.user_name}`
+        cleared: `cache_for_${user.user_name}`,
+        user_id: user.id,
+        message: `Cache cleared for user: ${user.user_name}`
       };
     } else {
       return res.status(400).json({
@@ -2989,7 +4138,8 @@ export const clearUserCaches = asyncHandler(async (req, res) => {
   }
 });
 
-// ✅ Get User Session Info - FIXED VERSION with Legacy Compatibility
+
+// GET USER SESSION INFO
 export const getUserSessionInfo = asyncHandler(async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -3001,27 +4151,9 @@ export const getUserSessionInfo = asyncHandler(async (req, res) => {
       });
     }
 
-    // Determine the type of identifier and search accordingly
-    let user;
-    
-    if (mongoose.isValidObjectId(userId)) {
-      // Search by MongoDB _id
-      user = await User.findById(userId)
-        .select('user_name email first_name last_name BU_ROLE_ID primary_business_role status last_login created_at current_sessions token last_updated username fname lname') // Include legacy fields
-        .lean();
-    } else {
-      // Search by employer_number, user_name, username, or email
-      user = await User.findOne({
-        $or: [
-          { employer_number: userId },
-          { user_name: userId },
-          { username: userId }, // Legacy
-          { email: userId }
-        ]
-      })
-      .select('user_name email first_name last_name BU_ROLE_ID primary_business_role status last_login created_at current_sessions token last_updated username fname lname')
-      .lean();
-    }
+    const user = await User.findByPk(userId, {
+      attributes: ['id', 'user_name', 'username', 'email', 'first_name', 'last_name', 'BU_ROLE_ID', 'primary_business_role', 'status', 'last_login', 'created_at', 'current_sessions', 'token', 'last_updated']
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -3030,27 +4162,8 @@ export const getUserSessionInfo = asyncHandler(async (req, res) => {
       });
     }
 
-    // 🔹 LEGACY MAPPING: Map legacy fields to modern ones for compatibility
-    const mappedUser = {
-      ...user,
-      user_name: user.user_name || user.username,
-      first_name: user.first_name || user.fname,
-      last_name: user.last_name || user.lname,
-      BU_ROLE_ID: user.BU_ROLE_ID || user.role,
-      primary_business_role: user.primary_business_role || user.utype,
-      status: user.status || (user.is_active === 'Active' ? 'Active' : 'Deactivated')
-    };
+    const userData = user.get({ plain: true });
 
-    console.log('🔍 LEGACY MAPPING DEBUG (Session Info):', {
-      original_username: user.username,
-      mapped_user_name: mappedUser.user_name,
-      original_fname_lname: { fname: user.fname, lname: user.lname },
-      mapped_first_last_name: { first_name: mappedUser.first_name, last_name: mappedUser.last_name },
-      original_role: user.role,
-      mapped_BU_ROLE_ID: mappedUser.BU_ROLE_ID
-    });
-
-    // Decode token to get issued and expiry info
     const token = req.headers.authorization?.replace('Bearer ', '');
     let tokenInfo = {};
     
@@ -3070,27 +4183,21 @@ export const getUserSessionInfo = asyncHandler(async (req, res) => {
       }
     }
 
-    // Get session information
-    const activeSessions = user.current_sessions?.filter(session => session.is_active) || [];
-    const legacyToken = user.token;
-    const lastUpdated = user.last_updated;
+    const activeSessions = userData.current_sessions?.filter(session => session.is_active) || [];
 
     res.json({
       success: true,
       session: {
         user: {
-          id: user._id,
-          user_name: mappedUser.user_name,
-          name: `${mappedUser.first_name || ''} ${mappedUser.last_name || ''}`.trim(),
-          role: mappedUser.primary_business_role,
-          roleId: mappedUser.BU_ROLE_ID,
-          status: mappedUser.status,
-          lastLogin: user.last_login,
-          accountCreated: user.created_at,
-          // Legacy fields for compatibility
-          username: user.username || mappedUser.user_name,
-          legacy_role: user.role,
-          legacy_status: user.is_active
+          id: userData.id,
+          user_name: userData.user_name,
+          name: `${userData.first_name || ''} ${userData.last_name || ''}`.trim(),
+          role: userData.primary_business_role,
+          roleId: userData.BU_ROLE_ID,
+          status: userData.status,
+          lastLogin: userData.last_login,
+          accountCreated: userData.created_at,
+          username: userData.username || userData.user_name
         },
         sessions: {
           activeCount: activeSessions.length,
@@ -3100,13 +4207,13 @@ export const getUserSessionInfo = asyncHandler(async (req, res) => {
             ip_address: session.ip_address,
             last_activity: session.last_activity
           })),
-          legacyToken: legacyToken ? '***' : null,
-          legacyLastUpdated: lastUpdated
+          legacyToken: userData.token ? '***' : null,
+          legacyLastUpdated: userData.last_updated
         },
         token: tokenInfo,
         currentTime: new Date().toISOString(),
-        sessionDuration: user.last_login ? 
-          Math.floor((Date.now() - new Date(user.last_login).getTime()) / 60000) + ' minutes' : 
+        sessionDuration: userData.last_login ? 
+          Math.floor((Date.now() - new Date(userData.last_login).getTime()) / 60000) + ' minutes' : 
           'Unknown'
       }
     });
@@ -3121,12 +4228,11 @@ export const getUserSessionInfo = asyncHandler(async (req, res) => {
   }
 });
 
-// Add this temporary debug endpoint to your user controller
+// DEBUG USER CHECK
 export const debugUserCheck = asyncHandler(async (req, res) => {
   const { user_name, username } = req.body;
   
   try {
-    // Use login identifier for legacy compatibility
     const loginIdentifier = username || user_name;
 
     if (!loginIdentifier) {
@@ -3138,45 +4244,38 @@ export const debugUserCheck = asyncHandler(async (req, res) => {
 
     console.log('🔍 Debug user check for:', loginIdentifier);
     
-    // Check in new User model with enhanced query
-    const userInMongo = await User.findOne({ 
-      $or: [
-        { user_name: { $regex: new RegExp(`^${loginIdentifier}$`, 'i') } },
-        { username: { $regex: new RegExp(`^${loginIdentifier}$`, 'i') } }
-      ]
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { user_name: { [Op.like]: loginIdentifier } },
+          { username: { [Op.like]: loginIdentifier } }
+        ]
+      }
     });
     
     console.log('📊 User search results:', {
       login_identifier: loginIdentifier,
-      foundInMongo: !!userInMongo,
-      mongoUser: userInMongo ? {
-        _id: userInMongo._id,
-        user_name: userInMongo.user_name,
-        username: userInMongo.username,
-        email: userInMongo.email,
-        BU_ROLE_ID: userInMongo.BU_ROLE_ID,
-        status: userInMongo.status
+      found: !!user,
+      user: user ? {
+        id: user.id,
+        user_name: user.user_name,
+        username: user.username,
+        email: user.email,
+        BU_ROLE_ID: user.BU_ROLE_ID,
+        status: user.status
       } : null
-    });
-
-    // Also check with password selection
-    const userWithPassword = await User.findByUsernameWithPassword(loginIdentifier);
-    console.log('🔐 User with password search:', {
-      found: !!userWithPassword,
-      hasPassword: userWithPassword ? !!userWithPassword.password : false
     });
 
     res.json({
       success: true,
       login_identifier: loginIdentifier,
-      foundInMongo: !!userInMongo,
-      foundWithPassword: !!userWithPassword,
-      userDetails: userInMongo ? {
-        id: userInMongo._id,
-        user_name: userInMongo.user_name || userInMongo.username,
-        email: userInMongo.email,
-        status: userInMongo.status,
-        BU_ROLE_ID: userInMongo.BU_ROLE_ID
+      found: !!user,
+      userDetails: user ? {
+        id: user.id,
+        user_name: user.user_name || user.username,
+        email: user.email,
+        status: user.status,
+        BU_ROLE_ID: user.BU_ROLE_ID
       } : null
     });
 
@@ -3189,12 +4288,12 @@ export const debugUserCheck = asyncHandler(async (req, res) => {
     });
   }
 });
-// ✅ Verify Administrator Permissions - UPDATED FOR SEQUELIZE
+
+// VERIFY ADMINISTRATOR PERMISSIONS
 export const verifyAdministratorPermissions = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.user;
     
-    // Get current user details
     const user = await User.findByPk(userId, {
       attributes: ['id', 'user_name', 'first_name', 'last_name', 'BU_ROLE_ID', 'primary_business_role']
     });
@@ -3226,7 +4325,6 @@ export const verifyAdministratorPermissions = asyncHandler(async (req, res) => {
       });
     }
 
-    // Administrator verification logic
     const allPermissions = Object.values(PERMISSIONS).flatMap(group => {
       if (typeof group === 'object') {
         return Object.values(group);
@@ -3288,13 +4386,11 @@ export const verifyAdministratorPermissions = asyncHandler(async (req, res) => {
   }
 });
 
-// Add this to your userController.js for debugging
+// GET USER TABLE INFO
 export const getUserTableInfo = asyncHandler(async (req, res) => {
   try {
-    // Get table structure
     const [columns] = await User.sequelize.query("SHOW COLUMNS FROM users");
     
-    // Get sample users to see actual data
     const sampleUsers = await User.findAll({
       limit: 5,
       attributes: [
@@ -3328,51 +4424,39 @@ export const getUserTableInfo = asyncHandler(async (req, res) => {
   }
 });
 
-
+// GET USERS BY ROLE ID
 export const getUsersByRoleId = asyncHandler(async (req, res) => {
   const { roleId } = req.params;
   
   try {
     console.log(`🔍 SEARCHING FOR USERS WITH ROLE ID: ${roleId}`);
     
-    // Parse roleId as integer
     const roleIdNum = parseInt(roleId);
-    
     const roleName = ROLE_MAPPING[roleId]?.ROLE_NM || `Role ${roleId}`;
     
     console.log(`📌 Looking for users with role: ${roleName} (ID: ${roleIdNum})`);
     
-    // STRATEGY 1: Get users directly from Users table where BU_ROLE_ID matches
-    // =========================================================================
     let usersFromDirect = [];
     
     try {
-      console.log(`🔎 Querying Users table for BU_ROLE_ID = ${roleIdNum} or "${roleIdNum.toString()}"`);
-      
       usersFromDirect = await User.findAll({
         where: {
           [Op.and]: [
             {
               [Op.or]: [
-                // Check BU_ROLE_ID as string '28'
                 { BU_ROLE_ID: roleIdNum.toString() },
-                // Check BU_ROLE_ID as number 28
                 { BU_ROLE_ID: roleIdNum },
-                // Check primary_business_role
                 { primary_business_role: roleName },
-                // Check case-insensitive primary_business_role
                 { primary_business_role: { [Op.iLike]: `%Customer Service Officer%` } },
                 { primary_business_role: { [Op.iLike]: `%CUSTOMER SERVICE OFFICER%` } }
               ]
             },
             {
-              // Only active users
               status: {
                 [Op.in]: ['Active', 'ACTIVE', 'active', 'Active ']
               }
             },
             {
-              // Internal employee enabled
               internal_employee_enabled: 1
             }
           ]
@@ -3383,35 +4467,19 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
           'primary_business_role', 'BU_ROLE_ID',
           'main_business_unit', 'responsibility_centre'
         ],
-        raw: true // Get plain objects instead of Sequelize instances
+        raw: true
       });
       
-      console.log(`✅ RAW SQL Users found: ${usersFromDirect.length}`);
-      
-      // Log each found user
-      usersFromDirect.forEach((user, index) => {
-        console.log(`👤 User ${index + 1}:`, {
-          id: user.id,
-          user_name: user.user_name,
-          BU_ROLE_ID: user.BU_ROLE_ID,
-          primary_business_role: user.primary_business_role,
-          status: user.status
-        });
-      });
+      console.log(`✅ Users found: ${usersFromDirect.length}`);
       
     } catch (directError) {
       console.error('❌ Error fetching from Users table:', directError.message);
-      console.error('Error stack:', directError.stack);
     }
     
-    // STRATEGY 2: Try a simpler query to debug
-    // =========================================
     let allActiveUsers = [];
     
     if (usersFromDirect.length === 0) {
       try {
-        console.log('🔄 Trying simpler query: all active users');
-        
         allActiveUsers = await User.findAll({
           where: {
             status: 'Active'
@@ -3421,12 +4489,6 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
           limit: 50
         });
         
-        console.log(`📊 All active users (${allActiveUsers.length}):`);
-        allActiveUsers.forEach(user => {
-          console.log(`   ${user.user_name} - BU_ROLE_ID: ${user.BU_ROLE_ID}, Role: ${user.primary_business_role}`);
-        });
-        
-        // Filter for our role
         const filteredUsers = allActiveUsers.filter(user => {
           const userRoleId = parseInt(user.BU_ROLE_ID);
           const userRoleName = (user.primary_business_role || '').toLowerCase();
@@ -3437,10 +4499,7 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
                  userRoleName.includes('customer service officer');
         });
         
-        console.log(`🎯 After filtering for role ${roleId}: ${filteredUsers.length} users`);
-        
         if (filteredUsers.length > 0) {
-          // Get full details for filtered users
           const userIds = filteredUsers.map(u => u.id);
           usersFromDirect = await User.findAll({
             where: { id: { [Op.in]: userIds } },
@@ -3454,71 +4513,8 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
       }
     }
     
-    // STRATEGY 3: Check data types and do manual comparison
-    // =====================================================
-    if (usersFromDirect.length === 0) {
-      try {
-        console.log('🔍 Checking all users for BU_ROLE_ID data type issues');
-        
-        const allUsers = await User.findAll({
-          attributes: ['id', 'user_name', 'BU_ROLE_ID', 'primary_business_role', 'status'],
-          raw: true
-        });
-        
-        console.log(`📊 Total users in database: ${allUsers.length}`);
-        
-        // Manual filtering
-        const matchingUsers = allUsers.filter(user => {
-          const buRoleId = user.BU_ROLE_ID;
-          const primaryRole = (user.primary_business_role || '').toLowerCase();
-          
-          console.log(`   Checking ${user.user_name}: BU_ROLE_ID="${buRoleId}" (type: ${typeof buRoleId}), primary_role="${primaryRole}"`);
-          
-          // Check if BU_ROLE_ID matches (handling string vs number)
-          if (buRoleId != null) {
-            const buRoleIdStr = String(buRoleId).trim();
-            const roleIdStr = String(roleIdNum).trim();
-            
-            if (buRoleIdStr === roleIdStr) {
-              console.log(`   ✅ Match found: ${user.user_name} has BU_ROLE_ID = ${buRoleId}`);
-              return true;
-            }
-          }
-          
-          // Check primary_business_role
-          if (primaryRole.includes('customer service officer')) {
-            console.log(`   ✅ Match found: ${user.user_name} has primary_business_role = ${user.primary_business_role}`);
-            return true;
-          }
-          
-          return false;
-        });
-        
-        console.log(`🎯 Manual filtering found ${matchingUsers.length} users`);
-        
-        if (matchingUsers.length > 0) {
-          const userIds = matchingUsers.map(u => u.id);
-          usersFromDirect = await User.findAll({
-            where: { id: { [Op.in]: userIds } },
-            attributes: ['id', 'user_name', 'username', 'email', 'first_name', 'last_name', 'status', 'primary_business_role', 'BU_ROLE_ID', 'main_business_unit', 'responsibility_centre'],
-            raw: true
-          });
-        }
-        
-      } catch (manualError) {
-        console.error('Error in manual checking:', manualError.message);
-      }
-    }
-    
-    // FORMAT THE RESPONSE
-    // ===================
-    console.log(`📋 Final usersFromDirect count: ${usersFromDirect.length}`);
-    
     const formattedUsers = usersFromDirect.map(user => {
-      console.log(`📝 Formatting user: ${user.user_name}`);
-      
       return {
-        // Match frontend expected structure
         userId: user.id.toString(),
         id: user.id.toString(),
         user_name: user.user_name,
@@ -3550,8 +4546,6 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
       };
     });
     
-    console.log(`🎯 FINAL FORMATTED USERS: ${formattedUsers.length}`);
-    
     return res.status(200).json({
       success: true,
       count: formattedUsers.length,
@@ -3570,7 +4564,6 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
 
   } catch (error) {
     console.error(`❌ ERROR GETTING USERS BY ROLE ID ${roleId}:`, error);
-    console.error('Full error:', error);
     return res.status(500).json({
       success: false,
       message: "Error fetching users by role ID",
@@ -3580,6 +4573,10 @@ export const getUsersByRoleId = asyncHandler(async (req, res) => {
   }
 });
 
+// ============================================
+// EXPORT ALL FUNCTIONS
+// ============================================
+
 export default {
   registerUser,
   getClientIpController,
@@ -3587,7 +4584,7 @@ export default {
   deactivateUser,
   getUserByEmployerNumber,
   getAllUsers,
- simpleResetPassword,
+  simpleResetPassword,
   getUserConfig,
   login,
   debugUserCheck,
@@ -3610,5 +4607,13 @@ export default {
   enableUser,
   getUserTableInfo,
   getUsersByBU_ID,
-  getUsersByRoleId
+  getUsersByRoleId,
+  verify2FAToken,
+  verifyHardware2FA,
+  resend2FAToken,
+  get2FAStatus,
+  configure2FA,
+  testSMSConfig,
+  getSMSStatus,
+  get2FAStatistics
 };

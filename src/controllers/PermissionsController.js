@@ -31,6 +31,18 @@ const rolePermissionService = {
     }
   },
 
+  async fetchPermissionsFromDB(roleId) {
+    try {
+      const permissions = await Permissions.findOne({
+        where: { BU_ROLE_ID: parseInt(roleId, 10) }
+      });
+      return permissions;
+    } catch (error) {
+      console.error('Error fetching permissions from DB:', error);
+      return null;
+    }
+  },
+
   hasPermission(roleId, permission) {
     const rolePermissions = ROLE_PERMISSION_MAPPING[roleId]?.permissions || {};
     const allPermissions = Object.values(rolePermissions).flat().filter(p => typeof p === 'string');
@@ -59,7 +71,11 @@ export const getUserRoleData = async (req, res, next) => {
     if (!userData) {
       throw new NotFoundError('User not found');
     }
-    const transformedData = transformRoleData(userData);
+    
+    // ✅ Fetch permissions from database for the user's role
+    const dbPermissions = await rolePermissionService.fetchPermissionsFromDB(userData.USER_ROLE_ID);
+    
+    const transformedData = transformRoleData(userData, dbPermissions);
     res.status(200).json({
       success: true,
       data: transformedData
@@ -69,9 +85,16 @@ export const getUserRoleData = async (req, res, next) => {
   }
 };
 
-export const transformRoleData = (backendData) => {
+// ✅ UPDATED: transformRoleData now uses database permissions
+export const transformRoleData = (backendData, dbPermissions = null) => {
   if (!backendData) return null;
-  const rolePermissions = getDefaultPermissionsForRole(backendData.USER_ROLE_ID);
+  
+  // Get default permissions from mapping (fallback)
+  const defaultPermissions = getDefaultPermissionsForRole(backendData.USER_ROLE_ID);
+  
+  // If we have database permissions, use them, otherwise use defaults
+  const permissions = dbPermissions ? getPermissionsFromDB(dbPermissions) : defaultPermissions;
+  
   return {
     id: backendData.id || backendData.USER_ID,
     USER_ROLE_ID: backendData.USER_ROLE_ID,
@@ -88,10 +111,26 @@ export const transformRoleData = (backendData) => {
     SUPERVISOR_FG: backendData.SUPERVISOR_FG,
     ALLOW_TXN_POSTING_FG: backendData.ALLOW_TXN_POSTING_FG,
     WF_ITEM_ACCESS_LEVEL: backendData.WF_ITEM_ACCESS_LEVEL,
-    permissions: rolePermissions,
+    permissions: permissions,
     businessRole: backendData.businessRole
   };
 };
+
+// ✅ NEW: Extract permissions from database object
+function getPermissionsFromDB(dbPermissions) {
+  if (!dbPermissions) return {};
+  
+  const permissionFields = {};
+  
+  // Get all fields that end with _ACCESS_LEVEL
+  Object.keys(dbPermissions.dataValues || dbPermissions).forEach(key => {
+    if (key.endsWith('_ACCESS_LEVEL') && dbPermissions[key] && Array.isArray(dbPermissions[key])) {
+      permissionFields[key] = dbPermissions[key];
+    }
+  });
+  
+  return permissionFields;
+}
 
 async function syncPermissionsWithRoles() {
   const transaction = await sequelize.transaction();

@@ -223,7 +223,7 @@ class PluginManager {
   }
 
   /**
-   * Start a plugin - FIXED (removed require.cache)
+   * Start a plugin
    */
   async startPlugin(pluginId, entryPath = null) {
     try {
@@ -391,7 +391,7 @@ class PluginManager {
   }
 
   /**
-   * Get all plugins
+   * Get all plugins - ✅ FIXED: Return fields matching frontend expectations
    */
   async getAllPlugins() {
     try {
@@ -404,13 +404,19 @@ class PluginManager {
         id: plugin.id,
         name: plugin.name,
         version: plugin.version,
+        author: plugin.author || 'Unknown', // Add default author
         description: plugin.description || '',
-        status: this.plugins.has(plugin.id) ? 'active' : plugin.status,
-        autoStart: plugin.auto_start === 1,
+        status: this.plugins.has(plugin.id) ? 'active' : (plugin.status || 'stopped'),
+        auto_start: plugin.auto_start === 1 || plugin.auto_start === true, // ✅ Changed to snake_case
+        file_path: plugin.file_path, // ✅ Changed to snake_case
+        installed_at: plugin.created_at, // ✅ Changed to snake_case to match frontend
+        updated_at: plugin.updated_at, // ✅ Changed to snake_case
+        running: this.plugins.has(plugin.id),
+        // Keep camelCase for backward compatibility
+        autoStart: plugin.auto_start === 1 || plugin.auto_start === true,
         filePath: plugin.file_path,
         createdAt: plugin.created_at,
-        updatedAt: plugin.updated_at,
-        running: this.plugins.has(plugin.id)
+        updatedAt: plugin.updated_at
       }));
     } catch (error) {
       console.error('Error getting all plugins:', error);
@@ -439,11 +445,11 @@ class PluginManager {
         name: plugin.name,
         version: plugin.version,
         status: isRunning ? 'active' : plugin.status,
-        autoStart: plugin.auto_start === 1,
+        auto_start: plugin.auto_start === 1,
         running: isRunning,
-        filePath: plugin.file_path,
-        createdAt: plugin.created_at,
-        updatedAt: plugin.updated_at
+        file_path: plugin.file_path,
+        created_at: plugin.created_at,
+        updated_at: plugin.updated_at
       };
     } catch (error) {
       console.error(`Error getting stats for plugin ${pluginName}:`, error);

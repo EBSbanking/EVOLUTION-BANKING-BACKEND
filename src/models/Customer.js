@@ -1,4 +1,4 @@
-﻿// src/models/Customer.js - CORRECTED (duplicate indexes removed)
+﻿// src/models/Customer.js
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -12,396 +12,387 @@ Customer.init(
       autoIncrement: true,
       field: 'id'
     },
-
     CUST_ID: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'CUST_ID'
     },
-
     CUST_NO: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'CUST_NO'
     },
-
     TITLE_ID: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'TITLE_ID'
     },
-
     FIRST_NAME: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'FIRST_NAME'
     },
-
     MIDDLE_NAME: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'MIDDLE_NAME'
     },
-
     LAST_NAME: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'LAST_NAME'
     },
-
     CUST_NM: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'CUST_NM'
     },
-
     HOME_ADDRESS: {
       type: DataTypes.TEXT,
       allowNull: true,
       field: 'HOME_ADDRESS'
     },
-
     EMAIL_ADDRESS: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'EMAIL_ADDRESS'
     },
-
     BU_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'BU_ID'
     },
-
     MAIDEN_NM: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'MAIDEN_NM'
     },
-
     BIRTH_DT: {
       type: DataTypes.DATEONLY,
       allowNull: true,
       field: 'BIRTH_DT'
     },
-
     CNTRY_OF_BIRTH_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'CNTRY_OF_BIRTH_ID'
     },
-
     CUST_CAT: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'CUST_CAT'
     },
-
+    customerType: {
+      type: DataTypes.ENUM('NORMAL', 'RESTRICTED', 'VIP', 'INDIVIDUAL', 'STUDENT', 'MINOR', 'SME', 'CORPORATE', 'PREMIUM'),
+      allowNull: false,
+      defaultValue: 'NORMAL',
+      field: 'customer_type'
+    },
     CAMPAIGN_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'CAMPAIGN_ID'
     },
-
     GENDER_TY: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'GENDER_TY'
     },
-
     COUNTRY_NM: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'COUNTRY_NM'
     },
-
     STATE: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'STATE'
     },
-
     NIN: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'NIN'
     },
-
     BVN: {
       type: DataTypes.STRING(11),
       allowNull: true,
       field: 'BVN',
       validate: { len: [0, 11] }
     },
-
     BVN_VERIFIED: {
       type: DataTypes.BOOLEAN,
       allowNull: true,
       defaultValue: false,
       field: 'BVN_VERIFIED'
     },
-
     BVN_VERIFIED_AT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'BVN_VERIFIED_AT'
     },
-
     LOCAL_GOV: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'LOCAL_GOV'
     },
-
     OPENING_RSN_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'OPENING_RSN_ID'
     },
-
     OPENED_DT: {
       type: DataTypes.DATEONLY,
       allowNull: true,
       field: 'OPENED_DT'
     },
-
     RESIDENT_CNTRY_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'RESIDENT_CNTRY_ID'
     },
-
     RISK_CLASS: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'RISK_CLASS'
     },
-
     STMNT_FREQ_CD: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'STMNT_FREQ_CD'
     },
-
     STMNT_FREQ_VALUE: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'STMNT_FREQ_VALUE'
     },
-
     CREATED_BY: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'CREATED_BY'
     },
-
     USER_ID: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'USER_ID'
     },
-
     CREATE_DT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'CREATE_DT'
     },
-
     INDUSTRY_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'INDUSTRY_ID'
     },
-
     INDUSTRY_CD: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'INDUSTRY_CD'
     },
-
     TAX_STATUS: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'TAX_STATUS'
     },
-
     MARITAL_ST: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'MARITAL_ST'
     },
-
     TAX_GRP_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'TAX_GRP_ID'
     },
-
     OPERATIONS_CRNCY_ID: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'OPERATIONS_CRNCY_ID'
     },
-
     EMP_ST: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'EMP_ST'
     },
-
     ORGANISATION_NM: {
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'ORGANISATION_NM'
     },
-
     REGISTRATION_ADDRESS: {
       type: DataTypes.TEXT,
       allowNull: true,
       field: 'REGISTRATION_ADDRESS'
     },
-
     REGISTRATION_DT: {
       type: DataTypes.DATEONLY,
       allowNull: true,
       field: 'REGISTRATION_DT'
     },
-
+    REGISTRATION_NO: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      defaultValue: null,
+      field: 'REGISTRATION_NO'
+    },
     ALERT_DELIVERY_METHOD: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'ALERT_DELIVERY_METHOD'
     },
-
     KYC_LEVEL: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'KYC_LEVEL'
     },
-
     PHONE_NO: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'PHONE_NO'
     },
-
     SMS: {
       type: DataTypes.STRING(50),
       allowNull: true,
       defaultValue: 'Enabled',
       field: 'SMS'
     },
-
     IS_PEP: {
       type: DataTypes.BOOLEAN,
       allowNull: true,
       defaultValue: false,
       field: 'IS_PEP'
     },
-
     SANCTION_SCORE: {
       type: DataTypes.INTEGER,
       allowNull: true,
       defaultValue: 10,
       field: 'SANCTION_SCORE'
     },
-
     DOCUMENT_VERIFICATION_STATUS: {
       type: DataTypes.STRING(50),
       allowNull: true,
       defaultValue: 'Pending',
       field: 'DOCUMENT_VERIFICATION_STATUS'
     },
-
     REC_ST: {
       type: DataTypes.STRING(50),
       allowNull: true,
       defaultValue: 'PENDING',
       field: 'REC_ST'
     },
-
     status: {
       type: DataTypes.STRING(50),
       allowNull: true,
       defaultValue: 'Pending',
       field: 'status'
     },
-
     APPROVED_BY: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'APPROVED_BY'
     },
-
     APPROVED_DT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'APPROVED_DT'
     },
-
     SUSPENDED_BY: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'SUSPENDED_BY'
     },
-
     SUSPENDED_DT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'SUSPENDED_DT'
     },
-
     CLOSED_BY: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'CLOSED_BY'
     },
-
     CLOSED_DT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'CLOSED_DT'
     },
-
     REJECTED_BY: {
       type: DataTypes.STRING(100),
       allowNull: true,
       field: 'REJECTED_BY'
     },
-
     REJECTED_DT: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'REJECTED_DT'
     },
-
+    // ✅ REJECTION_REASON field for storing rejection reason
+    REJECTION_REASON: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'REJECTION_REASON',
+      comment: 'Stores the reason why the customer was rejected'
+    },
     groupId: {
       type: DataTypes.STRING(50),
       allowNull: true,
       field: 'group_id',
       comment: 'Stores the group code/ID like GRP001, GRP002, etc.'
     },
-
     groupJoinedAt: {
       type: DataTypes.DATE,
       allowNull: true,
       field: 'group_joined_at',
       comment: 'Timestamp when customer joined the group'
     },
-
+    // =============================================
+    // ✅ EXTERNAL BANK TRANSFER FIELDS
+    // =============================================
+    customer_code: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      unique: true,
+      field: 'customer_code',
+      comment: 'Unique customer code (EVO-12345) for external bank transfers'
+    },
+    payment_reference: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+      unique: true,
+      field: 'payment_reference',
+      comment: 'Unique payment reference (INV-2024-001) for external bank transfers'
+    },
+    external_account_number: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'external_account_number',
+      comment: 'Customer\'s account number in external bank (First Bank, UBA, etc.)'
+    },
+    external_bank_name: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'external_bank_name',
+      comment: 'Customer\'s external bank name (First Bank, UBA, GTBank, etc.)'
+    },
+    evolution_account_number: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      field: 'evolution_account_number',
+      comment: 'Customer\'s Evolution Banking account number'
+    },
     created_at: {
       type: DataTypes.DATE,
       allowNull: true,
       defaultValue: DataTypes.NOW,
       field: 'created_at'
     },
-
     updated_at: {
       type: DataTypes.DATE,
       allowNull: true,
       defaultValue: DataTypes.NOW,
       field: 'updated_at'
-    },
+    }
   },
   {
     sequelize,
@@ -413,11 +404,18 @@ Customer.init(
     underscored: false,
     freezeTableName: true,
     hooks: {
+      beforeCreate: async (customer, options) => {
+        // Auto-generate customer_code if not provided
+        if (!customer.customer_code) {
+          const random = Math.floor(10000 + Math.random() * 90000);
+          customer.customer_code = `EVO-${random}`;
+        }
+      },
       afterCreate: async (customer, options) => {
         if (customer.groupId) {
           try {
-            await Customer.assignToGroup(customer.id, customer.groupId, { 
-              transaction: options.transaction 
+            await Customer.assignToGroup(customer.id, customer.groupId, {
+              transaction: options.transaction
             });
           } catch (error) {
             console.error('Error in afterCreate hook for group assignment:', error.message);
@@ -429,7 +427,7 @@ Customer.init(
         if (customersWithGroups.length > 0) {
           for (const customer of customersWithGroups) {
             try {
-              await Customer.assignToGroup(customer.id, customer.groupId, { 
+              await Customer.assignToGroup(customer.id, customer.groupId, {
                 transaction: options.transaction,
                 skipCustomerUpdate: true
               });
@@ -439,8 +437,7 @@ Customer.init(
           }
         }
       }
-    },
-    // ✅ REMOVED indexes array – no manual indexes to avoid duplicate key errors
+    }
   }
 );
 
@@ -485,6 +482,15 @@ Customer.prototype.close = async function(closedBy) {
   return await this.save();
 };
 
+Customer.prototype.reject = async function(rejectedBy, rejectionReason) {
+  this.REC_ST = 'REJECTED';
+  this.status = 'Rejected';
+  this.REJECTED_BY = rejectedBy;
+  this.REJECTED_DT = new Date();
+  this.REJECTION_REASON = rejectionReason || 'No reason provided';
+  return await this.save();
+};
+
 Customer.prototype.assignToGroup = async function(groupId, options = {}) {
   return Customer.assignToGroup(this.id, groupId, options);
 };
@@ -505,6 +511,7 @@ Customer.prototype.getGroupDetails = async function() {
   }
 };
 
+// ✅ Updated getSummary to include external transfer fields
 Customer.prototype.getSummary = function() {
   return {
     customerId: this.CUST_ID,
@@ -516,6 +523,7 @@ Customer.prototype.getSummary = function() {
     bvnVerified: this.BVN_VERIFIED,
     bvnVerifiedAt: this.BVN_VERIFIED_AT,
     nin: this.NIN,
+    registrationNo: this.REGISTRATION_NO || null,
     status: this.status,
     recordStatus: this.REC_ST,
     businessUnit: this.BU_ID,
@@ -524,6 +532,13 @@ Customer.prototype.getSummary = function() {
     groupId: this.groupId,
     groupJoinedAt: this.groupJoinedAt,
     createdDate: this.CREATE_DT,
+    rejectionReason: this.REJECTION_REASON || null,
+    // ✅ External transfer fields
+    customerCode: this.customer_code,
+    paymentReference: this.payment_reference,
+    externalAccountNumber: this.external_account_number,
+    externalBankName: this.external_bank_name,
+    evolutionAccountNumber: this.evolution_account_number,
     createdAt: this.created_at,
     updatedAt: this.updated_at
   };
@@ -537,12 +552,27 @@ Customer.prototype.isPending = function() {
   return this.REC_ST === 'PENDING';
 };
 
+Customer.prototype.isRejected = function() {
+  return this.REC_ST === 'REJECTED';
+};
+
 Customer.prototype.hasCompleteKYC = function() {
   return this.KYC_LEVEL === 'COMPLETE' || this.KYC_LEVEL === 'FULL';
 };
 
 Customer.prototype.isBVNVerified = function() {
   return this.BVN_VERIFIED === true;
+};
+
+// ✅ New method to get external transfer info
+Customer.prototype.getExternalTransferInfo = function() {
+  return {
+    customerCode: this.customer_code,
+    evolutionAccount: this.evolution_account_number,
+    externalAccount: this.external_account_number,
+    externalBank: this.external_bank_name,
+    name: this.getFullName()
+  };
 };
 
 // ========== STATIC METHODS ==========
@@ -633,7 +663,7 @@ Customer.getByGroupCode = async function(groupCode, options = {}) {
   if (status) where.REC_ST = status;
   const { count, rows } = await Customer.findAndCountAll({
     where,
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'NIN', 'status', 'REC_ST', 'groupJoinedAt'],
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'NIN', 'status', 'REC_ST', 'REJECTION_REASON', 'groupJoinedAt', 'customer_code', 'evolution_account_number', 'external_account_number', 'external_bank_name'],
     offset,
     limit: parseInt(limit),
     order: [['groupJoinedAt', 'DESC']]
@@ -686,7 +716,7 @@ Customer.bulkCreateWithGroups = async function(customersData, options = {}) {
 
 Customer.getWithBVN = async function(customerId) {
   return this.findByPk(customerId, {
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT', 'PHONE_NO', 'EMAIL_ADDRESS', 'status', 'REC_ST', 'groupId', 'groupJoinedAt']
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT', 'PHONE_NO', 'EMAIL_ADDRESS', 'status', 'REC_ST', 'REJECTION_REASON', 'groupId', 'groupJoinedAt', 'customer_code', 'evolution_account_number']
   });
 };
 
@@ -694,7 +724,7 @@ Customer.getLoanDetails = async function(customerId) {
   try {
     const LoanAccount = (await import('./LoanAccount.js')).default;
     return await this.findByPk(customerId, {
-      attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'groupId', 'groupJoinedAt'],
+      attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'REJECTION_REASON', 'groupId', 'groupJoinedAt', 'customer_code', 'evolution_account_number'],
       include: [{ model: LoanAccount, as: 'loanAccounts', required: false, separate: true, limit: 10, order: [['created_at', 'DESC']] }]
     });
   } catch (error) {
@@ -704,7 +734,24 @@ Customer.getLoanDetails = async function(customerId) {
 };
 
 Customer.findByBVN = async function(bvn) {
-  return this.findOne({ where: { BVN: bvn }, attributes: ['id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'groupId'] });
+  return this.findOne({ 
+    where: { BVN: bvn }, 
+    attributes: ['id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'REJECTION_REASON', 'groupId', 'customer_code', 'evolution_account_number'] 
+  });
+};
+
+Customer.findByCustomerCode = async function(customerCode) {
+  return this.findOne({ 
+    where: { customer_code: customerCode },
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 'evolution_account_number', 'external_account_number', 'external_bank_name']
+  });
+};
+
+Customer.findByEvolutionAccount = async function(accountNumber) {
+  return this.findOne({ 
+    where: { evolution_account_number: accountNumber },
+    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 'evolution_account_number']
+  });
 };
 
 Customer.updateBVNVerification = async function(customerId, verified, verificationData = {}) {

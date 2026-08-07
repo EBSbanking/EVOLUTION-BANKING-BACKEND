@@ -44,6 +44,7 @@ router.post('/get-coa-balance-type', (req, res) => {
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
+  
 });
 
 // ==================== COA-ALIGNED ACCOUNT RETRIEVAL ROUTES ====================
@@ -52,6 +53,9 @@ router.get('/coa-accounts/:glcode', asyncHandler(GLAccountController.getCOAAlign
 
 // Get by query parameter (supports ?glcode=... or ?accountId=...)
 router.get('/coa-accounts', asyncHandler(GLAccountController.getCOAAlignedAccount));
+
+// ✅ Update Chart of Account (supports hierarchy, posting rules, flags, and GLAccount sync)
+router.put('/chart-of-accounts/:id', asyncHandler(GLAccountController.updateAccount));
 
 // ==================== HEALTH CHECK ROUTES ====================
 router.get('/health', (req, res) => {
@@ -64,7 +68,8 @@ router.get('/health', (req, res) => {
       { method: 'POST', path: '/api/gl-accounts/ledger-entry', description: 'Create Ledger Entry' },
       { method: 'GET', path: '/api/gl-accounts/coa-accounts/:glcode', description: 'Get COA-aligned account by GL code' },
       { method: 'GET', path: '/api/gl-accounts/coa-accounts?glcode=...', description: 'Get COA-aligned account via query' },
-      { method: 'GET', path: '/api/gl-accounts/diagnose', description: 'Diagnose Database' }
+      { method: 'GET', path: '/api/gl-accounts/diagnose', description: 'Diagnose Database' },
+       { method: 'PUT', path: '/api/gl-accounts/chart-of-accounts/:id', description: 'Update Chart of Account (modify GL account)' }
     ]
   });
 });

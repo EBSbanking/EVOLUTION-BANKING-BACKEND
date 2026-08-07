@@ -1,3 +1,4 @@
+// models/LoanInterestRate.js - FIXED VERSION (Reduced indexes)
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -18,7 +19,8 @@ const LoanInterestRate = sequelize.define('LoanInterestRate', {
   code: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    unique: true
+    // ✅ REMOVED unique: true to reduce indexes
+    // Add unique constraint via validation instead
   },
   rate_type: {
     type: DataTypes.ENUM('FIXED', 'VARIABLE', 'TIERED', 'PROMOTIONAL', 'INTRODUCTORY'),
@@ -208,7 +210,41 @@ const LoanInterestRate = sequelize.define('LoanInterestRate', {
   tags: {
     type: DataTypes.JSON,
     allowNull: true,
-    defaultValue: []
+    defaultValue: [],
+    get() {
+      const value = this.getDataValue('tags');
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      try {
+        return JSON.parse(value);
+      } catch (e) {
+        console.warn('Error parsing tags JSON:', e);
+        return [];
+      }
+    },
+    set(value) {
+      if (!value) {
+        this.setDataValue('tags', []);
+      } else if (Array.isArray(value)) {
+        this.setDataValue('tags', value);
+      } else if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          this.setDataValue('tags', Array.isArray(parsed) ? parsed : []);
+        } catch (e) {
+          if (value.includes(',')) {
+            const arr = value.split(',').map(s => s.trim());
+            this.setDataValue('tags', arr);
+          } else {
+            this.setDataValue('tags', [value]);
+          }
+        }
+      } else if (typeof value === 'object') {
+        this.setDataValue('tags', Array.isArray(value) ? value : Object.values(value));
+      } else {
+        this.setDataValue('tags', []);
+      }
+    }
   },
   notes: {
     type: DataTypes.TEXT,
@@ -230,6 +266,30 @@ const LoanInterestRate = sequelize.define('LoanInterestRate', {
   createdAt: 'created_at',
   updatedAt: 'updated_at',
   underscored: true,
+  // ✅ REDUCED INDEXES - Only essential ones
+  indexes: [
+    // Primary index is automatically created on 'id'
+    // Only add essential indexes for frequently queried fields
+    { fields: ['code'], unique: false }, // Removed unique to reduce index overhead
+    { fields: ['status'] },
+    { fields: ['is_active'] },
+    { fields: ['rate_type'] },
+    { fields: ['effective_date'] },
+    // Compound indexes for common queries
+    { fields: ['status', 'is_active'] },
+    { fields: ['rate_type', 'status'] },
+    // ✅ REMOVED: Many unnecessary indexes
+    // - removed index on name
+    // - removed index on interest_type
+    // - removed index on calculation_method
+    // - removed index on term_type
+    // - removed index on created_by
+    // - removed index on updated_by
+    // - removed index on min_term_value
+    // - removed index on max_term_value
+    // - removed index on min_loan_amount
+    // - removed index on max_loan_amount
+  ],
   hooks: {
     beforeCreate: (rate) => {
       if (!rate.min_term_months && rate.min_term_value && rate.term_type) {
@@ -240,15 +300,23 @@ const LoanInterestRate = sequelize.define('LoanInterestRate', {
       }
       rate.is_flat_rate = (rate.calculation_method === 'FLAT' && rate.interest_type === 'SIMPLE');
       rate.is_active = (rate.status === 'ACTIVE');
+      
+      if (!rate.tags || typeof rate.tags === 'string') {
+        rate.tags = [];
+      }
     },
     beforeUpdate: (rate) => {
       rate.is_active = (rate.status === 'ACTIVE');
       rate.is_flat_rate = (rate.calculation_method === 'FLAT' && rate.interest_type === 'SIMPLE');
+      
+      if (!rate.tags || typeof rate.tags === 'string') {
+        rate.tags = [];
+      }
     }
   }
 });
 
-// Helper function (keep it)
+// Helper function
 function convertTermToMonths(value, termType) {
   const numValue = parseInt(value);
   switch(termType?.toUpperCase()) {

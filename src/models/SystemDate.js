@@ -25,7 +25,6 @@ const SystemDate = sequelize.define('SystemDate', {
     allowNull: true,
     field: 'last_e_o_d_date'
   },
-  // New columns for manager dashboard
   lastEODProcessedBy: {
     type: DataTypes.STRING(50),
     allowNull: true,
@@ -36,7 +35,6 @@ const SystemDate = sequelize.define('SystemDate', {
     allowNull: true,
     field: 'lastEODRun'
   },
-  // Legacy column (backward compatibility)
   lastEODProcessedByLegacy: {
     type: DataTypes.STRING(100),
     allowNull: true,
@@ -119,10 +117,13 @@ const SystemDate = sequelize.define('SystemDate', {
       });
     }
   },
+  // ✅ FIX: Use field names that match the actual column names
   indexes: [
-    { fields: ['currentBusinessDate'] },
-    { fields: ['isEODProcessing'] },
-    { fields: ['eodStatus'] }
+    { fields: ['current_business_date'] },  // Use the actual column name
+    { fields: ['is_e_o_d_processing'] },     // Use the actual column name
+    { fields: ['eod_status'] },              // Use the actual column name
+    { fields: ['created_at'] },              // Use the actual column name
+    { fields: ['lastEODRun'] }               // Use the actual column name
   ]
 });
 
@@ -253,6 +254,7 @@ SystemDate.ensureTableExists = async function() {
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'system_dates'
     `);
+    
     if (tables.length === 0) {
       console.log('📝 Creating system_dates table...');
       await sequelize.query(`
@@ -260,31 +262,41 @@ SystemDate.ensureTableExists = async function() {
           id INT PRIMARY KEY AUTO_INCREMENT,
           current_business_date DATE NOT NULL,
           next_business_date DATE NOT NULL,
-          last_e_o_d_date DATE,
-          last_e_o_d_processed_by VARCHAR(100),
-          lastEODProcessedBy VARCHAR(50),
-          lastEODRun DATETIME,
-          is_e_o_d_processing BOOLEAN DEFAULT FALSE,
-          eod_status VARCHAR(50) DEFAULT 'IDLE',
-          eod_history TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          last_e_o_d_date DATE NULL,
+          last_e_o_d_processed_by VARCHAR(100) NULL,
+          lastEODProcessedBy VARCHAR(50) NULL,
+          lastEODRun DATETIME NULL,
+          is_e_o_d_processing TINYINT(1) NOT NULL DEFAULT 0,
+          eod_status VARCHAR(50) NOT NULL DEFAULT 'IDLE',
+          eod_history TEXT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_current_business_date (current_business_date),
+          INDEX idx_is_eod_processing (is_e_o_d_processing),
+          INDEX idx_eod_status (eod_status),
+          INDEX idx_created_at (created_at),
+          INDEX idx_last_eod_run (lastEODRun)
         )
       `);
       console.log('✅ system_dates table created');
+      
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
       const tomorrowStr = tomorrow.toISOString().split('T')[0];
+      
       await sequelize.query(`
         INSERT INTO system_dates 
         (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
-        VALUES (?, ?, 'IDLE', FALSE, '[]')
+        VALUES (?, ?, 'IDLE', 0, '[]')
       `, { replacements: [todayStr, tomorrowStr] });
       console.log('✅ Default system date record created');
+      
     } else {
       console.log('✅ system_dates table already exists');
+      
+      // Check if records exist
       const [records] = await sequelize.query(`SELECT COUNT(*) as count FROM system_dates`);
       if (records[0].count === 0) {
         console.log('📝 No records found, inserting default...');
@@ -296,26 +308,80 @@ SystemDate.ensureTableExists = async function() {
         await sequelize.query(`
           INSERT INTO system_dates 
           (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
-          VALUES (?, ?, 'IDLE', FALSE, '[]')
+          VALUES (?, ?, 'IDLE', 0, '[]')
         `, { replacements: [todayStr, tomorrowStr] });
-        console.log('✅ Default system date record created');
+        console.log('✅ Default system date record inserted');
       }
-      // Ensure the new columns exist (idempotent)
-      try {
-        await sequelize.query(`ALTER TABLE system_dates ADD COLUMN lastEODProcessedBy VARCHAR(50) NULL`);
-        console.log('✅ Added lastEODProcessedBy column');
-      } catch (err) {
-        if (!err.message.includes('Duplicate column')) console.warn('Could not add lastEODProcessedBy:', err.message);
+      
+      // Ensure all columns exist (idempotent)
+      const [columns] = await sequelize.query(`SHOW COLUMNS FROM system_dates`);
+      const columnNames = columns.map(c => c.Field);
+      
+      const columnsToAdd = [
+        { name: 'lastEODProcessedBy', type: 'VARCHAR(50) NULL' },
+        { name: 'lastEODRun', type: 'DATETIME NULL' },
+        { name: 'last_e_o_d_date', type: 'DATE NULL' },
+        { name: 'last_e_o_d_processed_by', type: 'VARCHAR(100) NULL' },
+        { name: 'eod_history', type: 'TEXT NULL' }
+      ];
+      
+      for (const col of columnsToAdd) {
+        if (!columnNames.includes(col.name)) {
+          try {
+            await sequelize.query(`ALTER TABLE system_dates ADD COLUMN ${col.name} ${col.type}`);
+            console.log(`✅ Added ${col.name} column`);
+          } catch (err) {
+            if (!err.message.includes('Duplicate column')) {
+              console.warn(`Could not add ${col.name}:`, err.message);
+            }
+          }
+        }
       }
-      try {
-        await sequelize.query(`ALTER TABLE system_dates ADD COLUMN lastEODRun DATETIME NULL`);
-        console.log('✅ Added lastEODRun column');
-      } catch (err) {
-        if (!err.message.includes('Duplicate column')) console.warn('Could not add lastEODRun:', err.message);
-      }
+      
+      // Update existing records to have default values for new columns
+      await sequelize.query(`
+        UPDATE system_dates 
+        SET 
+          is_e_o_d_processing = COALESCE(is_e_o_d_processing, 0),
+          eod_status = COALESCE(eod_status, 'IDLE'),
+          eod_history = COALESCE(eod_history, '[]')
+        WHERE is_e_o_d_processing IS NULL 
+        OR eod_status IS NULL 
+        OR eod_history IS NULL
+      `);
     }
+    
+    console.log('✅ system_dates table is ready');
+    
   } catch (error) {
     console.error('❌ Error ensuring system_dates table exists:', error);
+    throw error;
+  }
+};
+
+// ========== Additional utility methods ==========
+SystemDate.updateBusinessDate = async function(newDate) {
+  const transaction = await sequelize.transaction();
+  try {
+    const systemDate = await this.findOne({ transaction });
+    if (!systemDate) {
+      throw new Error('No system date record found');
+    }
+    
+    const dateStr = newDate.toISOString().split('T')[0];
+    const nextDate = new Date(newDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateStr = nextDate.toISOString().split('T')[0];
+    
+    await systemDate.update({
+      currentBusinessDate: dateStr,
+      nextBusinessDate: nextDateStr
+    }, { transaction });
+    
+    await transaction.commit();
+    return systemDate;
+  } catch (error) {
+    await transaction.rollback();
     throw error;
   }
 };

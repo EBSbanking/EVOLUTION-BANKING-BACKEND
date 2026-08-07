@@ -28,7 +28,7 @@ Role.init(
       defaultValue: true,
       field: 'active',
     },
-    // ✅ ADDED: permissions column (JSON type for flexibility)
+    // ✅ permissions column (JSON type for flexibility)
     permissions: {
       type: DataTypes.JSON,
       allowNull: true,
@@ -178,6 +178,13 @@ Role.hasPermission = async function(roleId, permissionKey) {
 };
 
 /**
+ * Check if a role can view restricted customers (convenience static method)
+ */
+Role.canViewRestrictedCustomers = async function(roleId) {
+  return this.hasPermission(roleId, 'view_restricted_customers');
+};
+
+/**
  * Get roles from view (compatible with roles_vw)
  */
 Role.getRolesFromView = async function() {
@@ -272,6 +279,14 @@ Role.prototype.setPermissions = function(permissions) {
     this.permissions = permissions;
   }
   return this;
+};
+
+/**
+ * ✅ NEW: Convenience method to check if this role can view restricted customers
+ * @returns {boolean} true if the role has the permission
+ */
+Role.prototype.canViewRestrictedCustomers = function() {
+  return this.hasPermission('view_restricted_customers');
 };
 
 export default Role;

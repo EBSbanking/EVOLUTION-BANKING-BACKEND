@@ -1,194 +1,478 @@
-// src/utils/permissionCache.js - UPDATED VERSION
-import logger from './logger.js';
-import sequelize from '../config/db.js'; // Or however you get your sequelize instance
+// middleware/permissionMiddleware.js - FULLY UPDATED with Enhanced getUserPermissions
+import { roleHasPermission } from '../constants/roleMapping.js';
+import PERMISSIONS from '../constants/permissions.js';
 
-class PermissionCache {
-  constructor() {
-    this.cache = new Map(); // user_id -> permissions array
-    this.roles = {}; // role_id -> role data
-    this.initialized = false;
-    this.initializationPromise = null;
-    this.maxRetries = 3;
-    this.retryDelay = 1000;
-  }
-
-  // ✅ UPDATED: Correct SQL query for your database schema
-  async loadRolesFromMySQL() {
+// ✅ UNIFIED PERMISSION MIDDLEWARE (Combines all approaches)
+export const checkPermission = (permissionKey) => {
+  return async (req, res, next) => {
     try {
-      console.log('🔄 Loading roles from MySQL...');
+      const user = req.user;
       
-      // ✅ FIXED: Use correct column names for your database
-      const [rows] = await sequelize.query(`
-        SELECT 
-          id as role_id, 
-          name as role_name, 
-          permissions, 
-          description,
-          is_active as active
-        FROM roles
-        WHERE is_active = 1
-      `);
-      
-      console.log(`✅ Loaded ${rows.length} roles from MySQL`);
-      return rows;
-    } catch (error) {
-      console.error('❌ Failed to load roles from MySQL:', error.message);
-      throw error;
-    }
-  }
+      // ✅ CRITICAL: Enhanced admin check
+      const isAdmin = (
+        user?.isAdmin === true ||
+        user?.role_name === 'Administrator' ||
+        user?.role === 'Administrator' ||
+        user?.role === 'SuperAdmin' ||
+        (user?.roles && user.roles.includes('Administrator'))
+      );
 
-  async loadUserRolesFromMySQL(userId) {
-    try {
-      const [rows] = await sequelize.query(`
-        SELECT role_id, user_id 
-        FROM user_roles 
-        WHERE user_id = ? AND REC_ST = 'A'
-      `, [userId]);
-      
-      return rows.map(row => row.role_id);
-    } catch (error) {
-      console.error('Failed to load user roles:', error.message);
-      return [];
-    }
-  }
+      // ✅ ADMIN BYPASS: Allow all administrators to bypass permission checks
+      if (isAdmin) {
+        console.log('🔐 ADMIN BYPASS: Administrator bypassing permission check for:', permissionKey);
+        return next();
+      }
 
-  async initializeCache(retryCount = 0) {
-    if (this.initialized) {
-      return true;
-    }
-
-    if (this.initializationPromise) {
-      return this.initializationPromise;
-    }
-
-    this.initializationPromise = (async () => {
-      try {
-        console.log('🔄 Initializing permissions cache from MySQL...');
-        
-        // ✅ Load roles with correct query
-        const roles = await this.loadRolesFromMySQL();
-        
-        // Store roles in cache
-        this.roles = roles.reduce((acc, role) => {
-          acc[role.role_id] = role;
-          return acc;
-        }, {});
-        
-        console.log(`✅ Permissions cache initialized with ${Object.keys(this.roles).length} roles`);
-        this.initialized = true;
-        return true;
-        
-      } catch (error) {
-        console.error(`❌ Permissions cache attempt ${retryCount + 1} failed: ${error.message}`);
-        
-        if (retryCount < this.maxRetries - 1) {
-          console.log(`⏳ Retrying in ${this.retryDelay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, this.retryDelay * (retryCount + 1)));
-          return this.initializeCache(retryCount + 1);
-        } else {
-          console.error('❌ All MySQL attempts failed, using fallback mode');
-          console.log(`Last error: ${error.message}`);
-          this.useFallbackMode();
-          return false;
+      // ✅ ROLE-BASED PERMISSION CHECK (for non-admin users)
+      if (user?.roleId) {
+        const hasPermission = await roleHasPermission(user.roleId, permissionKey);
+        if (hasPermission) {
+          console.log('✅ Role-based permission granted:', { roleId: user.roleId, permissionKey });
+          return next();
         }
       }
-    })();
 
-    return this.initializationPromise;
-  }
+      // ✅ FALLBACK: Legacy role-permission mapping (if no roleId)
+      const userPermissions = getUserPermissions(user?.role);
+      if (userPermissions && userPermissions.includes(permissionKey)) {
+        console.log('✅ Legacy permission granted:', { role: user?.role, permissionKey });
+        return next();
+      }
 
-  useFallbackMode() {
-    console.log('📋 Loaded roles from fallback mapping');
-    // Load from roleMapping or other fallback
-    this.roles = {}; // Initialize with empty or fallback data
-    this.initialized = true;
-  }
-
-  async getUserPermissions(userId) {
-    try {
-      await this.initializeCache();
-      
-      const roleIds = await this.loadUserRolesFromMySQL(userId);
-      const permissions = new Set();
-      
-      roleIds.forEach(roleId => {
-        const role = this.roles[roleId];
-        if (role && role.permissions) {
-          try {
-            const rolePermissions = typeof role.permissions === 'string' 
-              ? JSON.parse(role.permissions) 
-              : role.permissions;
-            
-            if (Array.isArray(rolePermissions)) {
-              rolePermissions.forEach(perm => permissions.add(perm));
-            }
-          } catch (error) {
-            console.error(`Error parsing permissions for role ${roleId}:`, error.message);
-          }
-        }
+      // ❌ PERMISSION DENIED
+      console.log('❌ PERMISSION DENIED:', {
+        user: user?.user_name || user?.name,
+        role: user?.role,
+        roleId: user?.roleId,
+        requiredPermission: permissionKey,
+        isAdmin: isAdmin
       });
-      
-      return Array.from(permissions);
+
+      return res.status(403).json({
+        success: false,
+        message: `Access denied: No permission for ${permissionKey}`,
+        errorCode: 'INSUFFICIENT_PERMISSIONS',
+        requiredPermission: permissionKey
+      });
+
     } catch (error) {
-      console.error('Failed to get user permissions:', error.message);
-      return [];
+      console.error('❌ Permission check error:', error);
+      return res.status(500).json({
+        success: false,
+        message: "Error checking permissions",
+        error: error.message
+      });
     }
-  }
+  };
+};
 
-  async checkPermission(userId, permission) {
-    try {
-      const userPermissions = await this.getUserPermissions(userId);
-      return userPermissions.includes(permission);
-    } catch (error) {
-      console.error('Permission check error:', error.message);
-      return false;
-    }
-  }
-
-  async checkAnyPermission(userId, permissions) {
-    try {
-      const userPermissions = await this.getUserPermissions(userId);
-      return permissions.some(perm => userPermissions.includes(perm));
-    } catch (error) {
-      console.error('Any permission check error:', error.message);
-      return false;
-    }
-  }
-
-  async checkAllPermissions(userId, permissions) {
-    try {
-      const userPermissions = await this.getUserPermissions(userId);
-      return permissions.every(perm => userPermissions.includes(perm));
-    } catch (error) {
-      console.error('All permissions check error:', error.message);
-      return false;
-    }
-  }
-
-  clearCache() {
-    this.cache.clear();
-    this.initialized = false;
-    this.initializationPromise = null;
-    console.log('🗑️  Permission cache cleared');
-  }
-
-  getStats() {
-    return {
-      initialized: this.initialized,
-      rolesCount: Object.keys(this.roles).length,
-      cacheSize: this.cache.size
-    };
-  }
-}
-
-// Create singleton instance
-const permissionCache = new PermissionCache();
-
-// Auto-initialize on import (optional, can be called manually)
-if (process.env.NODE_ENV !== 'test') {
-  permissionCache.initializeCache().catch(error => {
-    console.error('Failed to auto-initialize permission cache:', error.message);
+// ✅ UNIFIED ADMIN ROLE CHECK - CLEANED UP
+export const checkAdminRole = (req, res, next) => {
+  // Enhanced debug logging
+  console.log('🔐 Admin Check - User Details:', {
+    userId: req.user?.userId,
+    username: req.user?.user_name,
+    allRoles: req.user?.roles || [],
+    effectiveRole: req.user?.role_name,
+    isAdminFlag: req.user?.isAdmin,
+    role: req.user?.role
   });
-}
 
-export default permissionCache;
+  // ✅ CONSISTENT: Check multiple possible admin indicators
+  const isAdmin = (
+    req.user?.isAdmin === true ||
+    req.user?.role_name === 'Administrator' ||
+    req.user?.role === 'Administrator' ||
+    req.user?.role === 'SuperAdmin' || // ✅ ADDED: SuperAdmin support
+    (req.user?.roles && req.user.roles.includes('Administrator'))
+  );
+
+  if (!req.user || !isAdmin) {
+    console.warn('❌ Admin access denied for user:', req.user?.user_name);
+    return res.status(403).json({
+      success: false, // ✅ CONSISTENT: Added success field
+      message: 'Only Administrators can perform this action.',
+      userDetails: {
+        userId: req.user?.userId,
+        username: req.user?.user_name,
+        allRoles: req.user?.roles || [],
+        effectiveRole: req.user?.role_name,
+        isAdminFlag: req.user?.isAdmin,
+        role: req.user?.role
+      },
+      required: {
+        role: 'Administrator',
+        orFlag: 'isAdmin: true'
+      }
+    });
+  }
+
+  console.log('✅ Admin access granted to:', req.user.user_name);
+  next();
+};
+
+// ✅ HELPER: Get user permissions (legacy fallback) - UPDATED with VIEW_RESTRICTED_CUSTOMER
+export const getUserPermissions = (userRole) => {
+  const rolePermissions = {
+    Administrator: Object.values(PERMISSIONS).flatMap(category => 
+      Object.values(category)
+    ),
+    'Head Banking Services': [
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+      PERMISSIONS.SYSTEM_ADMIN.VIEW_USERS,
+      PERMISSIONS.SYSTEM_ADMIN.ACTIVATE_USER,
+      PERMISSIONS.SYSTEM_ADMIN.DEACTIVATE_USER,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.TRANSACTION.VIEW_HISTORY,
+      PERMISSIONS.LOAN_OPERATIONS.APPROVE,
+      PERMISSIONS.LOAN_OPERATIONS.REJECT,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.RATE.LOAN_INTEREST,
+    ],
+    'Loan Processing Officer': [
+      PERMISSIONS.LOAN_FEE.VIEW,
+      PERMISSIONS.LOAN_FEE.TOGGLE_STATUS,
+      PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
+      PERMISSIONS.LOAN_OPERATIONS.COLLECT,
+    ],
+    'Senior Financial Accountant': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.EXPORT,
+      PERMISSIONS.FIXED_ASSET.REGISTER,
+      PERMISSIONS.FIXED_ASSET.DEPRECIATE,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+    'Internal Control Officer': [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
+    ],
+    'Internal Control Manager': [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
+      PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS,
+    ],
+    'Head of Credit': [
+      PERMISSIONS.LOAN_FEE.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.APPROVE,
+      PERMISSIONS.LOAN_OPERATIONS.REJECT,
+      PERMISSIONS.CREDIT_APPL.CREATE,
+      PERMISSIONS.CREDIT_APPL.REVIEW,
+      PERMISSIONS.CREDIT_APPL.APPROVE,
+      PERMISSIONS.CREDIT_APPL.REJECT,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.RATE.LOAN_INTEREST,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED (optional – can view restricted if needed)
+    ],
+    'Internal Audit Manager': [
+      PERMISSIONS.SYSTEM_ADMIN.AUDIT_LOGS,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.PERMISSION_MANAGEMENT.VIEW_PERMISSIONS,
+    ],
+    'Head Human Resources': [
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+      PERMISSIONS.PERMISSION_MANAGEMENT.ASSIGN_ROLES,
+    ],
+    'Human Resource Officer': [
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+    ],
+    'IT Manager': [
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+      PERMISSIONS.SYSTEM_ADMIN.SYSTEM_CONFIG,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.EXPORT,
+    ],
+    'Financial Accountant': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.FIXED_ASSET.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+    'Financial Accountant Manager': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.EXPORT,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.FIXED_ASSET.VIEW,
+      PERMISSIONS.APPROVAL.FINANCIAL,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.RATE.INDEX,
+    ],
+    'Chief Financial Officer': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.FIXED_ASSET.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.RATE.INDEX,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+    ],
+    'Chief Executive Officer': [
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED (CEO can view all)
+    ],
+    'Treasurer': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.TREASURY.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+    ],
+    'Loan Processing Supervisor': [
+      PERMISSIONS.LOAN_OPERATIONS.APPROVE,
+      PERMISSIONS.LOAN_OPERATIONS.REJECT,
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.RATE.LOAN_INTEREST,
+    ],
+    // (duplicate Senior Financial Accountant removed)
+    'Branch Manager': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.LOAN_OPERATIONS.APPROVE,
+      PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.DEPOSIT.APPROVAL,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+    ],
+    'Branch Operation Supervisor': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.DRAWER.VIEW,
+      PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
+      PERMISSIONS.LOAN_OPERATIONS.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.REPORT.VIEW,
+    ],
+    'Chief Operation Officer': [
+      PERMISSIONS.SYSTEM_ADMIN.SYSTEM_CONFIG,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.OPERATIONS.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED
+    ],
+    'Marketing Manager': [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.MARKETING.CREATE_CAMPAIGN,
+      PERMISSIONS.MARKETING.VIEW_ANALYTICS,
+    ],
+    'Payment and Reconciliation USD': [
+      PERMISSIONS.POSTING.CUSTOMER_POSTING,
+      PERMISSIONS.POSTING.GL_POSTING,
+      PERMISSIONS.RECONCILIATION.PROCESS_RECONCILIATION,
+    ],
+    'EOD Operator': [
+      PERMISSIONS.SYSTEM_ADMIN.OS_TRIGGER,
+      PERMISSIONS.REPORT.VIEW,
+    ],
+    'Recovery Officer': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.COLLECT,
+    ],
+    'Relationship Development Officer': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.REPORT.VIEW,
+    ],
+    'Customer Relationship Officer': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+    ],
+    'Customer Service Officer': [
+      PERMISSIONS.CUSTOMER.CREATE,
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.CUSTOMER.KYC_VERIFY,
+      PERMISSIONS.ACCOUNT.OPEN,
+      PERMISSIONS.ACCOUNT.FREEZE,
+      PERMISSIONS.LOAN_FEE.VIEW,
+      PERMISSIONS.LOAN_FEE.CREATE,
+      PERMISSIONS.LOAN_FEE.UPDATE,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.CREDIT_OFFICER_DASHBOARD,
+      PERMISSIONS.PRODUCT.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.CREDIT_APPLICATION,
+      PERMISSIONS.LOAN_OPERATIONS.DISBURSE,
+      PERMISSIONS.THRIFT.CREATE,
+      PERMISSIONS.THRIFT.COLLECTION,
+      PERMISSIONS.THRIFT.WITHDRAWAL,
+      PERMISSIONS.GUARANTOR.CREATE,
+      PERMISSIONS.GUARANTOR.VIEW,
+      PERMISSIONS.GUARANTOR.VIEW_DETAILS,
+      PERMISSIONS.GUARANTOR.SEARCH,
+      PERMISSIONS.GUARANTOR.UPDATE,
+      PERMISSIONS.GUARANTOR.VERIFY,
+      PERMISSIONS.GUARANTOR.REMOVAL_REQUEST,
+      PERMISSIONS.GUARANTOR.REPORTS,
+      PERMISSIONS.GUARANTOR.DASHBOARD,
+      PERMISSIONS.GUARANTOR.EXPORT,
+      PERMISSIONS.STANDING_ORDER.CREATE,
+      PERMISSIONS.STANDING_ORDER.VIEW,
+      PERMISSIONS.STANDING_ORDER.UPDATE,
+      PERMISSIONS.STANDING_ORDER.DELETE,
+    ],
+    'Teller': [
+      PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
+      PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+      PERMISSIONS.TRANSACTION.DEPOSIT,
+      PERMISSIONS.TRANSACTION.WITHDRAWAL,
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.DRAWER.VIEW,
+      PERMISSIONS.DRAWER.MANAGE,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.TELLER_SUMMARY,
+      PERMISSIONS.THRIFT.WITHDRAWAL,
+    ],
+    'Head Teller': [
+      PERMISSIONS.DASHBOARD.TELLER_DASHBOARD,
+      PERMISSIONS.DASHBOARD.REAL_TIME_STATS,
+      PERMISSIONS.DASHBOARD.BU_PERFORMANCE,
+      PERMISSIONS.DRAWER.VIEW,
+      PERMISSIONS.DRAWER.MANAGE,
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.ACCOUNT.FREEZE,
+      PERMISSIONS.APPROVAL.TRANSACTION,
+      PERMISSIONS.DEPOSIT.APPROVAL,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.REPORT.TELLER_SUMMARY,
+      PERMISSIONS.PERFORMANCE.VIEW_TELLER_PERFORMANCE,
+    ],
+    'Customer Relationship Supervisor': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.CUSTOMER.APPROVAL,
+      PERMISSIONS.ACCOUNT.VIEW_BALANCE,
+      PERMISSIONS.APPROVAL.CUSTOMER_RELATED,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED
+    ],
+    'Recovery Team Lead': [
+      PERMISSIONS.LOAN_OPERATIONS.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.COLLECT,
+      PERMISSIONS.LOAN_OPERATIONS.APPROVE,
+      PERMISSIONS.REPORT.VIEW,
+    ],
+    'Business Analyst': [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.ANALYTICS.VIEW_BUSINESS_ANALYTICS,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+      PERMISSIONS.STATISTICS.VIEW_REAL_TIME,
+    ],
+    'Credit Risk Analyst': [
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.RISK.VIEW_RISK_REPORT,
+      PERMISSIONS.LOAN_OPERATIONS.VIEW,
+      PERMISSIONS.LOAN_OPERATIONS.PROCESS,
+      PERMISSIONS.RATE.LOAN_INTEREST,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+    ],
+    'Head of Digital Banking': [
+      PERMISSIONS.SYSTEM_ADMIN.SYSTEM_CONFIG,
+      PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.DASHBOARD.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+      PERMISSIONS.PERFORMANCE.VIEW_METRICS,
+      PERMISSIONS.CUSTOMER.VIEW_RESTRICTED, // ✅ ADDED
+    ],
+    'Agency Banking Officer': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.CREATE,
+      PERMISSIONS.AGENCY.MANAGE_AGENCY,
+      PERMISSIONS.REPORT.VIEW,
+    ],
+    'Channel Manager': [
+      PERMISSIONS.CUSTOMER.VIEW,
+      PERMISSIONS.CUSTOMER.UPDATE,
+      PERMISSIONS.REPORT.VIEW,
+      PERMISSIONS.RATE.DEPOSIT_INTEREST,
+    ],
+  };
+  return rolePermissions[userRole] || [];
+};
+
+// ✅ SPECIALIZED: Teller dashboard access (using unified permission system)
+export const checkTellerDashboardAccess = async (req, res, next) => {
+  return checkPermission(PERMISSIONS.DASHBOARD.REAL_TIME_STATS)(req, res, next);
+};
+
+// ✅ GENERIC: Role-based permission middleware (now uses unified system)
+export const requireRolePermission = (permission) => {
+  return checkPermission(permission);
+};
+
+// ✅ ENHANCED: Role authorization with permissions
+export const authorizeRolesWithPermissions = (roles, requiredPermission = null) => {
+  return async (req, res, next) => {
+    try {
+      // First check role access
+      if (!req.user || !req.user.role) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden: No user role found'
+        });
+      }
+
+      if (!roles.includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden: You do not have access to this role'
+        });
+      }
+
+      // Then check specific permission if provided
+      if (requiredPermission) {
+        return checkPermission(requiredPermission)(req, res, next);
+      }
+
+      next();
+    } catch (error) {
+      console.error('❌ Authorize roles with permissions error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Error checking access'
+      });
+    }
+  };
+};
+
+export default {
+  checkAdminRole,
+  checkPermission,
+  checkTellerDashboardAccess,
+  requireRolePermission,
+  authorizeRolesWithPermissions,
+  getUserPermissions
+};

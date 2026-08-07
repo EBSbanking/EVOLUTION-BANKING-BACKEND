@@ -1,3 +1,4 @@
+// src/models/State.js
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -27,17 +28,18 @@ class State extends Model {
     return await this.findAll({
       where: whereClause,
       attributes: [
+        'id',
         'STATE_ID',
         'STATE_NM',
         'COUNTRY_ID',
-        [sequelize.fn('COUNT', sequelize.col('localGovernments.STATE_ID')), 'localGovCount']
+        [sequelize.fn('COUNT', sequelize.col('localGovernments.id')), 'localGovCount']
       ],
       include: [{
         model: LocalGovernment, // Assuming you have LocalGovernment model
         as: 'localGovernments',
         attributes: []
       }],
-      group: ['State.STATE_ID'],
+      group: ['State.id'],
       order: [['STATE_NM', 'ASC']],
       raw: true
     });
@@ -60,12 +62,33 @@ class State extends Model {
 }
 
 State.init({
+  // Auto-increment primary key
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+    allowNull: false,
+    comment: 'Auto-increment primary key'
+  },
+  // Unique state identifier (varchar)
   STATE_ID: {
     type: DataTypes.STRING(50),
-    primaryKey: true,
     allowNull: false,
     unique: true,
-    comment: 'Unique state identifier'
+    comment: 'Unique state identifier (e.g., ST_LAGOS)',
+    validate: {
+      notEmpty: {
+        msg: 'State ID cannot be empty'
+      },
+      len: {
+        args: [1, 50],
+        msg: 'State ID must be between 1 and 50 characters'
+      }
+    },
+    set(value) {
+      // Trim and convert to uppercase
+      this.setDataValue('STATE_ID', value ? value.trim().toUpperCase() : value);
+    }
   },
   STATE_NM: {
     type: DataTypes.STRING(100),
@@ -86,9 +109,17 @@ State.init({
     }
   },
   COUNTRY_ID: {
-    type: DataTypes.STRING(50), // Or INTEGER if your Country model uses integer IDs
+    type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Reference to country'
+    comment: 'Reference to country (e.g., NG)',
+    validate: {
+      notEmpty: {
+        msg: 'Country ID cannot be empty'
+      }
+    },
+    set(value) {
+      this.setDataValue('COUNTRY_ID', value ? value.trim().toUpperCase() : value);
+    }
   }
 }, {
   sequelize,
@@ -102,9 +133,9 @@ State.init({
   hooks: {
     beforeValidate: (state, options) => {
       // Trim string fields
-      if (state.STATE_ID) state.STATE_ID = state.STATE_ID.trim();
+      if (state.STATE_ID) state.STATE_ID = state.STATE_ID.trim().toUpperCase();
       if (state.STATE_NM) state.STATE_NM = state.STATE_NM.trim();
-      if (state.COUNTRY_ID) state.COUNTRY_ID = state.COUNTRY_ID.trim();
+      if (state.COUNTRY_ID) state.COUNTRY_ID = state.COUNTRY_ID.trim().toUpperCase();
     },
     
     beforeCreate: (state, options) => {
@@ -126,16 +157,66 @@ State.init({
       if (state.changed('STATE_NM')) {
         state.STATE_NM = state.STATE_NM.trim();
       }
+      if (state.changed('STATE_ID')) {
+        state.STATE_ID = state.STATE_ID.trim().toUpperCase();
+      }
+      if (state.changed('COUNTRY_ID')) {
+        state.COUNTRY_ID = state.COUNTRY_ID.trim().toUpperCase();
+      }
     },
     
     afterCreate: (state, options) => {
-      console.log(`State "${state.STATE_NM}" (ID: ${state.STATE_ID}) created`);
+      console.log(`State "${state.STATE_NM}" created (ID: ${state.id}, STATE_ID: ${state.STATE_ID})`);
     },
     
     afterUpdate: (state, options) => {
-      console.log(`State "${state.STATE_NM}" (ID: ${state.STATE_ID}) updated`);
+      console.log(`State "${state.STATE_NM}" updated (ID: ${state.id}, STATE_ID: ${state.STATE_ID})`);
     }
-  }
+  },
+
+  // Indexes for better query performance
+  indexes: [
+    {
+      unique: true,
+      fields: ['STATE_ID']
+    },
+    {
+      fields: ['STATE_NM']
+    },
+    {
+      fields: ['COUNTRY_ID']
+    },
+    {
+      fields: ['COUNTRY_ID', 'STATE_NM']
+    }
+  ]
 });
+
+// Define associations
+State.associate = (models) => {
+  State.belongsTo(models.Country, {
+    foreignKey: 'COUNTRY_ID',
+    targetKey: 'code', // Assuming Country model uses 'code' as primary key
+    as: 'country'
+  });
+  
+  State.hasMany(models.LocalGovernment, {
+    foreignKey: 'STATE_ID',
+    sourceKey: 'id',
+    as: 'localGovernments'
+  });
+  
+  State.hasMany(models.Customer, {
+    foreignKey: 'STATE_ID',
+    sourceKey: 'id',
+    as: 'customers'
+  });
+  
+  State.hasMany(models.Branch, {
+    foreignKey: 'STATE_ID',
+    sourceKey: 'id',
+    as: 'branches'
+  });
+};
 
 export default State;

@@ -1,5 +1,5 @@
-// models/StandingOrder.js
-import { DataTypes, Model } from 'sequelize';
+// src/models/StandingOrder.js
+import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
 
@@ -35,12 +35,29 @@ export const DAYS_OF_WEEK = {
 
 class StandingOrder extends Model {
   static associate(models) {
-    this.belongsTo(models.Customer, { foreignKey: 'customerAcctNo', targetKey: 'CUST_ID', as: 'customer' });
-    this.belongsTo(models.Account, { foreignKey: 'customerAcctNo', targetKey: 'account_number', as: 'fromAccount' });
-    this.belongsTo(models.Account, { foreignKey: 'beneficiaryAcctNo', targetKey: 'account_number', as: 'toAccount' });
-    this.belongsTo(models.User, { foreignKey: 'approvedBy', as: 'approver' });
-    this.belongsTo(models.User, { foreignKey: 'rejectedBy', as: 'rejector' });
-    // this.belongsTo(models.Branch, { foreignKey: 'branch_id', as: 'branch' });
+    this.belongsTo(models.Customer, { 
+      foreignKey: 'customerAcctNo', 
+      targetKey: 'CUST_ID', 
+      as: 'customer' 
+    });
+    this.belongsTo(models.Account, { 
+      foreignKey: 'customerAcctNo', 
+      targetKey: 'account_number', 
+      as: 'fromAccount' 
+    });
+    this.belongsTo(models.Account, { 
+      foreignKey: 'beneficiaryAcctNo', 
+      targetKey: 'account_number', 
+      as: 'toAccount' 
+    });
+    this.belongsTo(models.User, { 
+      foreignKey: 'approvedBy', 
+      as: 'approver' 
+    });
+    this.belongsTo(models.User, { 
+      foreignKey: 'rejectedBy', 
+      as: 'rejector' 
+    });
   }
 
   static async findByCustomer(customerAcctNo, options = {}) {
@@ -71,9 +88,9 @@ class StandingOrder extends Model {
       where: {
         status: STATUS.APPROVED,
         isActive: true,
-        [DataTypes.Op.or]: [
+        [Op.or]: [
           { endDate: null },
-          { endDate: { [DataTypes.Op.gte]: new Date() } }
+          { endDate: { [Op.gte]: new Date() } }
         ]
       },
       order: [['nextExecutionDate', 'ASC']]
@@ -85,10 +102,10 @@ class StandingOrder extends Model {
       where: {
         status: STATUS.APPROVED,
         isActive: true,
-        nextExecutionDate: { [DataTypes.Op.lte]: executionDate },
-        [DataTypes.Op.or]: [
+        nextExecutionDate: { [Op.lte]: executionDate },
+        [Op.or]: [
           { endDate: null },
-          { endDate: { [DataTypes.Op.gte]: executionDate } }
+          { endDate: { [Op.gte]: executionDate } }
         ]
       },
       order: [['nextExecutionDate', 'ASC']]
@@ -285,7 +302,7 @@ StandingOrder.init(
       comment: 'Whether standing order is active'
     },
     approvedBy: {
-      type: DataTypes.STRING(50),   // ✅ changed from INTEGER to STRING
+      type: DataTypes.STRING(50),
       allowNull: true,
       field: 'approved_by',
       comment: 'User who approved the standing order (username or ID)'
@@ -297,7 +314,7 @@ StandingOrder.init(
       comment: 'Approval timestamp'
     },
     rejectedBy: {
-      type: DataTypes.STRING(50),   // ✅ changed from INTEGER to STRING
+      type: DataTypes.STRING(50),
       allowNull: true,
       field: 'rejected_by',
       comment: 'User who rejected the standing order (username or ID)'
@@ -331,15 +348,34 @@ StandingOrder.init(
       allowNull: true,
       field: 'next_execution_date',
       comment: 'Next scheduled execution date'
+    },
+    // ✅ FIX: Explicitly define CREATED_AT and UPDATED_AT fields
+    CREATED_AT: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      field: 'CREATED_AT',
+      comment: 'Creation timestamp'
+    },
+    UPDATED_AT: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      field: 'UPDATED_AT',
+      comment: 'Last update timestamp'
     }
   },
   {
     sequelize,
     modelName: 'StandingOrder',
-    tableName: 'STANDING_ORDERS',
+    // ✅ FIX: Use lowercase table name to match actual database
+    tableName: 'standing_orders',
     timestamps: true,
+    // ✅ FIX: Map timestamps to the correct column names
     createdAt: 'CREATED_AT',
     updatedAt: 'UPDATED_AT',
+    // ✅ FIX: Disable automatic camelCase conversion for timestamps
+    underscored: false,
     comment: 'Standing orders for recurring transfers',
     hooks: {
       beforeValidate: (order) => {
@@ -365,6 +401,11 @@ StandingOrder.init(
         order.isActive = (order.status === STATUS.APPROVED);
         if (order.recurrence_interval < 1)
           throw new Error('Interval must be at least 1');
+        
+        // ✅ Ensure CREATED_AT is set
+        if (!order.CREATED_AT) {
+          order.CREATED_AT = new Date();
+        }
       },
       beforeUpdate: (order) => {
         if (order.changed('status'))
@@ -395,6 +436,9 @@ StandingOrder.init(
         }
         if (order.changed('recurrence_interval') && order.recurrence_interval < 1)
           throw new Error('Interval must be at least 1');
+        
+        // ✅ Ensure UPDATED_AT is set
+        order.UPDATED_AT = new Date();
       },
       afterCreate: (order) => {
         logger.info(`Standing order created`, {

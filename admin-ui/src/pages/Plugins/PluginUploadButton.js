@@ -1,4 +1,5 @@
 // admin-ui/src/pages/Plugins/PluginUploadButton.js
+
 import { Button, useNotify, useRefresh } from 'react-admin';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import { API_BASE_URL } from '../../config';
@@ -23,7 +24,10 @@ const PluginUploadButton = () => {
         const token = localStorage.getItem('token');
         // ✅ Use /plugins/upload (not /admin/plugins/upload) 
         // because API_BASE_URL already ends with /admin
-        const response = await fetch(`${API_BASE_URL}/plugins/upload`, {
+        const url = `${API_BASE_URL}/plugins/upload`;
+        console.log('📤 Uploading plugin to:', url);
+        
+        const response = await fetch(url, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -35,6 +39,8 @@ const PluginUploadButton = () => {
 
         if (response.ok) {
           notify('Plugin uploaded successfully', { type: 'success' });
+          // Clear cache and refresh
+          localStorage.removeItem('plugins_cache');
           refresh();
         } else {
           const errorMsg = result.error || result.details || result.message || 'Unknown error';
@@ -53,6 +59,8 @@ const PluginUploadButton = () => {
       label="Upload Plugin"
       onClick={handleUpload}
       startIcon={<CloudUploadIcon />}
+      variant="contained"
+      color="primary"
     />
   );
 };

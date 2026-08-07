@@ -1,6 +1,6 @@
-﻿// models/DepositTransaction.js – UPDATED with withdrawal support and better transaction tracking
+﻿// models/DepositTransaction.js – FULLY UPDATED with all columns
 import { DataTypes, Model, Op } from 'sequelize';
-import { sequelize } from '../../config/db.js';
+import sequelize from '../../config/db.js';
 
 class DepositTransaction extends Model {
   // ==================== STATIC METHODS ====================
@@ -153,6 +153,7 @@ class DepositTransaction extends Model {
         'transaction_type',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+        [sequelize.fn('SUM', sequelize.col('emtl_amount')), 'totalEMTL'],
         [sequelize.fn('SUM', sequelize.literal('CASE WHEN status = "COMPLETED" OR approval_status = "APPROVED" THEN 1 ELSE 0 END')), 'approvedCount'],
         [sequelize.fn('SUM', sequelize.literal('CASE WHEN status = "PENDING_APPROVAL" OR approval_status = "PENDING" THEN 1 ELSE 0 END')), 'pendingCount']
       ],
@@ -164,6 +165,7 @@ class DepositTransaction extends Model {
       totalTransactions: 0,
       totalDepositAmount: 0,
       totalWithdrawalAmount: 0,
+      totalEMTLAmount: 0,
       totalAmount: 0,
       depositCount: 0,
       withdrawalCount: 0,
@@ -175,6 +177,7 @@ class DepositTransaction extends Model {
     results.forEach(result => {
       const count = parseInt(result.count) || 0;
       const totalAmount = parseFloat(result.totalAmount) || 0;
+      const totalEMTL = parseFloat(result.totalEMTL) || 0;
       const isDeposit = result.transaction_type === 'DEPOSIT' || result.transaction_type === 'CR';
       
       if (isDeposit) {
@@ -187,11 +190,72 @@ class DepositTransaction extends Model {
       
       summary.totalTransactions += count;
       summary.totalAmount += totalAmount;
+      summary.totalEMTLAmount += totalEMTL;
       summary.approvedCount += parseInt(result.approvedCount) || 0;
       summary.pendingCount += parseInt(result.pendingCount) || 0;
     });
 
     return summary;
+  }
+
+  // Get transactions with EMTL summary
+  static async getEMTLSummary(startDate, endDate, options = {}) {
+    const whereClause = {
+      emtl_applicable: true,
+      emtl_amount: { [Op.gt]: 0 },
+      transaction_date: {
+        [Op.between]: [startDate, endDate]
+      }
+    };
+
+    if (options.branchId) {
+      whereClause.branch_id = options.branchId;
+    }
+
+    if (options.accountNumber) {
+      whereClause.account_number = options.accountNumber;
+    }
+
+    const results = await this.findAll({
+      where: whereClause,
+      attributes: [
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+        [sequelize.fn('SUM', sequelize.col('emtl_amount')), 'totalEMTL'],
+        [sequelize.fn('SUM', sequelize.col('amount')), 'totalTransferAmount'],
+        [sequelize.fn('AVG', sequelize.col('emtl_amount')), 'avgEMTL']
+      ],
+      raw: true
+    });
+
+    const summary = results[0] || {};
+    return {
+      totalTransactions: parseInt(summary.count) || 0,
+      totalEMTL: parseFloat(summary.totalEMTL) || 0,
+      totalTransferAmount: parseFloat(summary.totalTransferAmount) || 0,
+      averageEMTL: parseFloat(summary.avgEMTL) || 0,
+      startDate,
+      endDate
+    };
+  }
+
+  // Get EMTL collections by status
+  static async getEMTLByStatus(status, options = {}) {
+    const whereClause = {
+      emtl_applicable: true,
+      emtl_amount: { [Op.gt]: 0 }
+    };
+
+    if (status) {
+      whereClause.emtl_remittance_status = status;
+    }
+
+    const defaultOptions = {
+      where: whereClause,
+      order: [['transaction_date', 'DESC']],
+      limit: options.limit || 100
+    };
+
+    return this.findAll({ ...defaultOptions, ...options });
   }
 
   // Approve transaction
@@ -267,7 +331,8 @@ class DepositTransaction extends Model {
       attributes: [
         'transaction_type',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
+        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+        [sequelize.fn('SUM', sequelize.col('emtl_amount')), 'totalEMTL']
       ],
       group: ['transaction_type'],
       raw: true
@@ -276,20 +341,24 @@ class DepositTransaction extends Model {
     const stats = {
       totalTransactions: 0,
       totalAmount: 0,
+      totalEMTL: 0,
       byType: {}
     };
 
     results.forEach(result => {
       const count = parseInt(result.count) || 0;
       const totalAmount = parseFloat(result.totalAmount) || 0;
+      const totalEMTL = parseFloat(result.totalEMTL) || 0;
       
       stats.byType[result.transaction_type] = {
         count: count,
-        totalAmount: totalAmount
+        totalAmount: totalAmount,
+        totalEMTL: totalEMTL
       };
       
       stats.totalTransactions += count;
       stats.totalAmount += totalAmount;
+      stats.totalEMTL += totalEMTL;
     });
 
     return stats;
@@ -311,7 +380,8 @@ class DepositTransaction extends Model {
         [sequelize.fn('DATE', sequelize.col('transaction_date')), 'date'],
         'transaction_type',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
+        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+        [sequelize.fn('SUM', sequelize.col('emtl_amount')), 'totalEMTL']
       ],
       group: [
         sequelize.fn('DATE', sequelize.col('transaction_date')),
@@ -328,7 +398,8 @@ class DepositTransaction extends Model {
       date: result.date,
       transactionType: result.transaction_type,
       count: parseInt(result.count) || 0,
-      totalAmount: parseFloat(result.totalAmount) || 0
+      totalAmount: parseFloat(result.totalAmount) || 0,
+      totalEMTL: parseFloat(result.totalEMTL) || 0
     }));
   }
 
@@ -342,6 +413,13 @@ class DepositTransaction extends Model {
       accountNumber: this.account_number,
       transactionType: this.transaction_type,
       amount: this.formattedAmount,
+      emtlAmount: this.formattedEMTL,
+      totalDebit: this.formattedTotalDebit,
+      emtlApplicable: this.emtl_applicable,
+      emtlReason: this.emtl_reason,
+      emtlGlAccount: this.emtl_gl_account,
+      emtlBeneficiary: this.emtl_beneficiary,
+      emtlRemittanceStatus: this.emtl_remittance_status,
       currency: this.currency,
       status: this.status,
       createdBy: this.created_by,
@@ -417,11 +495,49 @@ class DepositTransaction extends Model {
     return this.transaction_type === 'WITHDRAWAL' || this.transaction_type === 'DR';
   }
 
+  // Check if transaction has EMTL
+  get hasEMTL() {
+    return this.emtl_applicable === true && parseFloat(this.emtl_amount || 0) > 0;
+  }
+
+  // Check if EMTL has been remitted
+  get isEMTLRemitted() {
+    return this.emtl_remittance_status === 'REMITTED';
+  }
+
+  // Check if EMTL is pending remittance
+  get isEMTLPending() {
+    return this.emtl_remittance_status === 'PENDING' || this.emtl_remittance_status === 'PENDING_REMITTANCE';
+  }
+
+  // Check if EMTL remittance failed
+  get isEMTLFailed() {
+    return this.emtl_remittance_status === 'FAILED';
+  }
+
   // ==================== VIRTUAL GETTERS ====================
   
   // Formatted amount
   get formattedAmount() {
     return parseFloat(this.amount).toLocaleString('en-NG', {
+      style: 'currency',
+      currency: this.currency || 'NGN',
+      minimumFractionDigits: 2
+    });
+  }
+
+  // Formatted EMTL amount
+  get formattedEMTL() {
+    return parseFloat(this.emtl_amount || 0).toLocaleString('en-NG', {
+      style: 'currency',
+      currency: this.currency || 'NGN',
+      minimumFractionDigits: 2
+    });
+  }
+
+  // Formatted total debit
+  get formattedTotalDebit() {
+    return parseFloat(this.total_debit || 0).toLocaleString('en-NG', {
       style: 'currency',
       currency: this.currency || 'NGN',
       minimumFractionDigits: 2
@@ -444,6 +560,14 @@ class DepositTransaction extends Model {
     const transactionTime = new Date(this.transaction_date || this.created_at);
     const diffHours = Math.abs(now - transactionTime) / (1000 * 60 * 60);
     return Math.floor(diffHours);
+  }
+
+  // Get EMTL percentage of total
+  get emtlPercentage() {
+    const total = parseFloat(this.total_debit || 0);
+    const emtl = parseFloat(this.emtl_amount || 0);
+    if (total === 0) return 0;
+    return (emtl / total) * 100;
   }
 }
 
@@ -472,12 +596,60 @@ DepositTransaction.init({
     allowNull: true,
     validate: { min: 0 }
   },
+  // ==================== EMTL FIELDS ====================
+  emtl_amount: {
+    type: DataTypes.DECIMAL(20, 2),
+    defaultValue: 0,
+    validate: { min: 0 }
+  },
+  total_debit: {
+    type: DataTypes.DECIMAL(20, 2),
+    defaultValue: 0,
+    validate: { min: 0 }
+  },
+  emtl_applicable: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
+  emtl_reason: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  emtl_gl_account: {
+    type: DataTypes.STRING(50),
+    allowNull: true
+  },
+  emtl_beneficiary: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  // ✅ Updated: emtl_remittance_status with proper options
+  emtl_remittance_status: {
+    type: DataTypes.STRING(50),
+    defaultValue: 'PENDING',
+    validate: {
+      isIn: [['PENDING', 'PENDING_REMITTANCE', 'REMITTED', 'FAILED']]
+    }
+  },
+  emtl_remittance_batch_id: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  emtl_remitted_date: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  emtl_remittance_reference: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  // ==================== END EMTL FIELDS ====================
   currency: {
-    type: DataTypes.STRING(3),
+    type: DataTypes.STRING(10),
     defaultValue: 'NGN'
   },
   status: {
-    type: DataTypes.STRING(20),
+    type: DataTypes.STRING(50),
     defaultValue: 'PENDING',
     validate: {
       isIn: [['PENDING', 'COMPLETED', 'REJECTED', 'FAILED']]
@@ -493,11 +665,31 @@ DepositTransaction.init({
     allowNull: true
   },
   approval_status: {
-    type: DataTypes.STRING(20),
+    type: DataTypes.STRING(50),
     defaultValue: 'PENDING',
     validate: {
       isIn: [['PENDING', 'APPROVED', 'REJECTED']]
     }
+  },
+  approved_by: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  approved_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  rejected_by: {
+    type: DataTypes.STRING(100),
+    allowNull: true
+  },
+  rejected_at: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  rejection_reason: {
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   // ==================== AML FIELDS ====================
   aml_risk_level: {
@@ -538,32 +730,12 @@ DepositTransaction.init({
     type: DataTypes.STRING(100),
     allowNull: true
   },
-  approved_by: {
-    type: DataTypes.STRING(100),
-    allowNull: true
-  },
-  approved_at: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  rejected_by: {
-    type: DataTypes.STRING(100),
-    allowNull: true
-  },
-  rejected_at: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  rejection_reason: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
   transaction_date: {
     type: DataTypes.DATE,
     allowNull: true
   },
   branch_id: {
-    type: DataTypes.STRING(10),
+    type: DataTypes.STRING(50),
     allowNull: true
   },
   transaction_ref_no: {
@@ -573,6 +745,10 @@ DepositTransaction.init({
   },
   description: {
     type: DataTypes.TEXT,
+    allowNull: true
+  },
+  depositor_name: {
+    type: DataTypes.STRING(255),
     allowNull: true
   },
   // ==================== TIMESTAMPS ====================
@@ -623,6 +799,20 @@ DepositTransaction.init({
       if (transaction.requires_approval === undefined || transaction.requires_approval === null) {
         transaction.requires_approval = false;
       }
+      // Set EMTL defaults
+      if (transaction.emtl_amount === undefined || transaction.emtl_amount === null) {
+        transaction.emtl_amount = 0;
+      }
+      if (transaction.total_debit === undefined || transaction.total_debit === null) {
+        transaction.total_debit = transaction.amount || 0;
+      }
+      if (transaction.emtl_applicable === undefined || transaction.emtl_applicable === null) {
+        transaction.emtl_applicable = false;
+      }
+      // ✅ Updated: Set default emtl_remittance_status
+      if (!transaction.emtl_remittance_status) {
+        transaction.emtl_remittance_status = 'PENDING';
+      }
       // Set timestamps
       if (!transaction.created_at) transaction.created_at = new Date();
       if (!transaction.updated_at) transaction.updated_at = new Date();
@@ -648,6 +838,13 @@ DepositTransaction.init({
         }
       }
       
+      // ✅ Updated: Handle EMTL remittance status changes
+      if (transaction.changed('emtl_remittance_status')) {
+        if (transaction.emtl_remittance_status === 'REMITTED') {
+          transaction.emtl_remitted_date = now;
+        }
+      }
+      
       transaction.updated_at = now;
     }
   },
@@ -665,10 +862,15 @@ DepositTransaction.init({
     { fields: ['approval_status'], name: 'idx_deposit_approval_status' },
     { fields: ['approved_by_role'], name: 'idx_deposit_approved_by_role' },
     { fields: ['created_by'], name: 'idx_deposit_created_by' },
-    // ✅ New index for transaction type queries
     { fields: ['transaction_type'], name: 'idx_deposit_transaction_type' },
-    // ✅ New composite index for user + date queries
-    { fields: ['created_by', 'transaction_date'], name: 'idx_deposit_user_date' }
+    { fields: ['created_by', 'transaction_date'], name: 'idx_deposit_user_date' },
+    // ==================== EMTL INDEXES ====================
+    { fields: ['emtl_applicable'], name: 'idx_deposit_emtl_applicable' },
+    { fields: ['emtl_amount'], name: 'idx_deposit_emtl_amount' },
+    { fields: ['emtl_remittance_status'], name: 'idx_deposit_emtl_remittance_status' },
+    { fields: ['emtl_gl_account'], name: 'idx_deposit_emtl_gl_account' },
+    { fields: ['emtl_applicable', 'emtl_remittance_status'], name: 'idx_deposit_emtl_applicable_status' },
+    { fields: ['emtl_remittance_status', 'transaction_date'], name: 'idx_deposit_emtl_status_date' }
   ],
   scopes: {
     pending: { where: { status: 'PENDING' } },
@@ -683,6 +885,12 @@ DepositTransaction.init({
     mediumRisk: { where: { aml_risk_level: 'MEDIUM' } },
     highRisk: { where: { aml_risk_level: 'HIGH' } },
     criticalRisk: { where: { aml_risk_level: 'CRITICAL' } },
+    // ==================== EMTL SCOPES ====================
+    withEMTL: { where: { emtl_applicable: true, emtl_amount: { [Op.gt]: 0 } } },
+    emtlPending: { where: { emtl_remittance_status: 'PENDING' } },
+    emtlPendingRemittance: { where: { emtl_remittance_status: 'PENDING_REMITTANCE' } },
+    emtlRemitted: { where: { emtl_remittance_status: 'REMITTED' } },
+    emtlFailed: { where: { emtl_remittance_status: 'FAILED' } },
     byBranch: (branchId) => ({ where: { branch_id: branchId } }),
     byAccount: (accountNumber) => ({ where: { account_number: accountNumber } }),
     byCustomer: (customerId) => ({ where: { customer_id: customerId } }),
@@ -700,5 +908,108 @@ DepositTransaction.init({
     sortedByDateDesc: { order: [['transaction_date', 'DESC']] }
   }
 });
+
+// ==================== SYNC TABLE FUNCTION ====================
+DepositTransaction.ensureTable = async function() {
+  try {
+    // Check if table exists
+    const [result] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM information_schema.tables 
+       WHERE table_schema = DATABASE() AND table_name = 'deposit_transactions'`
+    );
+    
+    if (result[0].count === 0) {
+      console.log('📝 Creating deposit_transactions table...');
+      await this.sync({ force: false });
+      console.log('✅ deposit_transactions table created');
+    } else {
+      // Check for missing columns and add them
+      const [columns] = await sequelize.query(`SHOW COLUMNS FROM deposit_transactions`);
+      const columnNames = columns.map(col => col.Field);
+      
+      const missingColumns = [];
+      
+      // Check for EMTL columns
+      const emtlColumns = ['emtl_amount', 'emtl_applicable', 'emtl_reason', 'emtl_gl_account', 
+                          'emtl_beneficiary', 'emtl_remittance_status', 'emtl_remittance_batch_id',
+                          'emtl_remitted_date', 'emtl_remittance_reference'];
+      
+      for (const col of emtlColumns) {
+        if (!columnNames.includes(col)) {
+          missingColumns.push(col);
+        }
+      }
+      
+      // Check for approval columns
+      const approvalColumns = ['requires_approval', 'approval_status', 'approved_by_role', 
+                              'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason'];
+      
+      for (const col of approvalColumns) {
+        if (!columnNames.includes(col)) {
+          missingColumns.push(col);
+        }
+      }
+      
+      // Check for AML columns
+      const amlColumns = ['aml_risk_level', 'aml_risk_score', 'aml_indicators'];
+      
+      for (const col of amlColumns) {
+        if (!columnNames.includes(col)) {
+          missingColumns.push(col);
+        }
+      }
+      
+      // Check for other columns
+      const otherColumns = ['total_debit', 'transaction_ref_no', 'description', 'depositor_name'];
+      
+      for (const col of otherColumns) {
+        if (!columnNames.includes(col)) {
+          missingColumns.push(col);
+        }
+      }
+      
+      if (missingColumns.length > 0) {
+        console.log(`📝 Adding missing columns to deposit_transactions: ${missingColumns.join(', ')}`);
+        for (const col of missingColumns) {
+          let columnType = 'VARCHAR(255)';
+          let defaultValue = 'NULL';
+          
+          // Determine column type based on name
+          if (col.includes('amount') || col.includes('debit')) {
+            columnType = 'DECIMAL(20,2) DEFAULT 0.00';
+          } else if (col.includes('applicable') || col.includes('approval') || col.includes('requires')) {
+            columnType = 'BOOLEAN DEFAULT FALSE';
+          } else if (col.includes('status') || col.includes('level')) {
+            columnType = 'VARCHAR(50) DEFAULT "PENDING"';
+          } else if (col.includes('score')) {
+            columnType = 'INT DEFAULT 10';
+          } else if (col.includes('date') || col.includes('at')) {
+            columnType = 'DATETIME DEFAULT NULL';
+          } else if (col.includes('indicators')) {
+            columnType = 'TEXT DEFAULT NULL';
+          } else if (col.includes('reason') || col.includes('description')) {
+            columnType = 'TEXT DEFAULT NULL';
+          } else {
+            columnType = 'VARCHAR(255) DEFAULT NULL';
+          }
+          
+          try {
+            await sequelize.query(`ALTER TABLE deposit_transactions ADD COLUMN ${col} ${columnType}`);
+            console.log(`✅ Added column: ${col}`);
+          } catch (err) {
+            console.warn(`⚠️ Could not add column ${col}:`, err.message);
+          }
+        }
+      }
+      
+      console.log('✅ deposit_transactions table verified');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error ensuring deposit_transactions table:', error.message);
+    return false;
+  }
+};
 
 export default DepositTransaction;

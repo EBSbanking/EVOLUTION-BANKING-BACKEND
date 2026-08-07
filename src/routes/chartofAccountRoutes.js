@@ -18,6 +18,7 @@ router.get('/summary/mapping', chartofAccountController.getMappingStatistics);
 // Clone COA for new branch
 router.post('/clone-branch', chartofAccountController.cloneCOAForBranch);
 
+
 // ============================================
 // CRUD Routes (generic)
 // ============================================
@@ -31,8 +32,7 @@ router.get('/', chartofAccountController.getAccounts);
 // Get single account by ID (must come after specific routes)
 router.get('/:id', chartofAccountController.getAccount);
 
-// Update account
-router.put('/:id', chartofAccountController.updateAccount);
+
 
 // Delete account (soft delete)
 router.delete('/:id', chartofAccountController.deleteAccount);

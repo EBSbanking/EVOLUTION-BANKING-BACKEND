@@ -1,5 +1,5 @@
-﻿// models/TransactionPolicy.js - MySQL/Sequelize Version
-import { DataTypes } from 'sequelize';
+﻿// models/TransactionPolicy.js - MySQL/Sequelize Version - FULLY UPDATED
+import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 // Separate model for policy ranges
@@ -39,12 +39,13 @@ const TransactionPolicyRange = sequelize.define('TransactionPolicyRange', {
   updated_at: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,
-    onUpdate: DataTypes.NOW,
     field: 'updated_at'
   }
 }, {
   tableName: 'transaction_policy_ranges',
   timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   underscored: true,
   indexes: [
     {
@@ -55,7 +56,16 @@ const TransactionPolicyRange = sequelize.define('TransactionPolicyRange', {
       unique: false,
       fields: ['min_amount', 'max_amount']
     }
-  ]
+  ],
+  hooks: {
+    beforeCreate: (record) => {
+      record.created_at = new Date();
+      record.updated_at = new Date();
+    },
+    beforeUpdate: (record) => {
+      record.updated_at = new Date();
+    }
+  }
 });
 
 // Separate model for authorized roles
@@ -80,10 +90,17 @@ const TransactionPolicyRole = sequelize.define('TransactionPolicyRole', {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,
     field: 'created_at'
+  },
+  updated_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
   tableName: 'transaction_policy_roles',
   timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   underscored: true,
   indexes: [
     {
@@ -98,7 +115,16 @@ const TransactionPolicyRole = sequelize.define('TransactionPolicyRole', {
       unique: true,
       fields: ['transaction_policy_range_id', 'role_name']
     }
-  ]
+  ],
+  hooks: {
+    beforeCreate: (record) => {
+      record.created_at = new Date();
+      record.updated_at = new Date();
+    },
+    beforeUpdate: (record) => {
+      record.updated_at = new Date();
+    }
+  }
 });
 
 // Main TransactionPolicy model
@@ -173,12 +199,13 @@ const TransactionPolicy = sequelize.define('TransactionPolicy', {
   updated_at: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,
-    onUpdate: DataTypes.NOW,
     field: 'updated_at'
   }
 }, {
   tableName: 'transaction_policies',
   timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   underscored: true,
   indexes: [
     {
@@ -201,7 +228,16 @@ const TransactionPolicy = sequelize.define('TransactionPolicy', {
       unique: false,
       fields: ['branch_code']
     }
-  ]
+  ],
+  hooks: {
+    beforeCreate: (record) => {
+      record.created_at = new Date();
+      record.updated_at = new Date();
+    },
+    beforeUpdate: (record) => {
+      record.updated_at = new Date();
+    }
+  }
 });
 
 // Define relationships
@@ -225,7 +261,9 @@ TransactionPolicyRole.belongsTo(TransactionPolicyRange, {
   as: 'policy_range'
 });
 
-// Helper methods for TransactionPolicy
+// ==================== HELPER METHODS ====================
+
+// Create a new policy
 TransactionPolicy.createPolicy = async (policyData) => {
   try {
     // Generate POLICY_ID if not provided
@@ -289,6 +327,7 @@ TransactionPolicy.createPolicy = async (policyData) => {
   }
 };
 
+// Get policy by ID
 TransactionPolicy.getPolicyById = async (policyId) => {
   try {
     const policy = await TransactionPolicy.findOne({
@@ -319,6 +358,7 @@ TransactionPolicy.getPolicyById = async (policyId) => {
   }
 };
 
+// Get policies by type and role - UPDATED with better BU_ID handling
 TransactionPolicy.getPoliciesByTypeAndRole = async (policyType, roleName, buId = null, branchCode = null) => {
   try {
     const whereClause = {
@@ -327,13 +367,31 @@ TransactionPolicy.getPoliciesByTypeAndRole = async (policyType, roleName, buId =
       status: 'ACTIVE'
     };
     
-    if (buId) {
-      whereClause.bu_id = buId;
+    // Build OR conditions for BU_ID and branch_code
+    const orConditions = [];
+    
+    // Handle BU_ID - if provided, match specific BU or 'ALL'
+    if (buId && buId !== null && buId !== 'null' && buId !== '') {
+      orConditions.push(
+        { bu_id: 'ALL' },
+        { bu_id: buId.toString() }
+      );
     }
     
-    if (branchCode) {
-      whereClause.branch_code = branchCode;
+    // Handle branch_code - if provided, match specific branch or 'ALL'
+    if (branchCode && branchCode !== null && branchCode !== 'null' && branchCode !== '') {
+      orConditions.push(
+        { branch_code: 'ALL' },
+        { branch_code: branchCode.toString() }
+      );
     }
+    
+    // If we have OR conditions, add them to the where clause
+    if (orConditions.length > 0) {
+      whereClause[Op.or] = orConditions;
+    }
+    
+    console.log('📋 Policy where clause:', JSON.stringify(whereClause, null, 2));
     
     const policies = await TransactionPolicy.findAll({
       where: whereClause,
@@ -352,6 +410,7 @@ TransactionPolicy.getPoliciesByTypeAndRole = async (policyType, roleName, buId =
       order: [['created_at', 'DESC']]
     });
     
+    console.log(`📋 Found ${policies.length} policies matching criteria`);
     return policies;
   } catch (error) {
     console.error('Error getting policies by type and role:', error.message);
@@ -359,40 +418,78 @@ TransactionPolicy.getPoliciesByTypeAndRole = async (policyType, roleName, buId =
   }
 };
 
+// Check if transaction requires approval - UPDATED with logging
 TransactionPolicy.checkRequiresApproval = async (policyType, roleName, amount, buId = null, branchCode = null) => {
   try {
+    console.log('🔍 Checking transaction policy for:', {
+      policyType,
+      roleName,
+      amount,
+      buId,
+      branchCode
+    });
+    
     const policies = await TransactionPolicy.getPoliciesByTypeAndRole(policyType, roleName, buId, branchCode);
     
+    console.log(`📋 Found ${policies?.length || 0} active policies for ${roleName} - ${policyType}`);
+    
     if (!policies || policies.length === 0) {
+      console.log('⚠️ No active policies found for', roleName, '-', policyType);
       return {
         requiresApproval: false,
         policy: null,
         range: null,
-        authorizedRoles: []
+        authorizedRoles: [],
+        hasPolicy: false,
+        hasRange: false
       };
     }
     
     // Find matching range across all policies
     for (const policy of policies) {
+      console.log(`📋 Checking policy ${policy.POLICY_ID} with ${policy.ranges?.length || 0} ranges`);
+      
+      if (!policy.ranges || policy.ranges.length === 0) {
+        console.log(`⚠️ Policy ${policy.POLICY_ID} has no ranges`);
+        continue;
+      }
+      
       for (const range of policy.ranges) {
-        if (amount >= range.MIN_AMOUNT && amount <= range.MAX_AMOUNT) {
+        const minAmount = parseFloat(range.MIN_AMOUNT);
+        const maxAmount = parseFloat(range.MAX_AMOUNT);
+        const txnAmount = parseFloat(amount);
+        
+        console.log(`📊 Range: ${minAmount} - ${maxAmount}, Amount: ${txnAmount}`);
+        console.log(`📊 Condition: ${txnAmount} >= ${minAmount} && ${txnAmount} <= ${maxAmount} = ${txnAmount >= minAmount && txnAmount <= maxAmount}`);
+        
+        if (txnAmount >= minAmount && txnAmount <= maxAmount) {
           const authorizedRoles = range.authorized_roles.map(role => role.ROLE_NM);
+          const requiresApproval = range.requiresApproval === true || range.requiresApproval === 1;
+          
+          console.log(`✅ Found matching range! Requires approval: ${requiresApproval}`);
+          console.log(`📋 Authorized roles: ${authorizedRoles.join(', ')}`);
+          
           return {
-            requiresApproval: range.requiresApproval,
+            requiresApproval: requiresApproval,
             policy: policy,
             range: range,
-            authorizedRoles: authorizedRoles
+            authorizedRoles: authorizedRoles,
+            hasPolicy: true,
+            hasRange: true
           };
         }
       }
     }
     
     // No matching range found
+    console.log(`⚠️ No matching range found for amount: ${amount}`);
     return {
       requiresApproval: false,
       policy: null,
       range: null,
-      authorizedRoles: []
+      authorizedRoles: [],
+      hasPolicy: true,
+      hasRange: false
     };
   } catch (error) {
     console.error('Error checking approval requirement:', error.message);
@@ -400,6 +497,7 @@ TransactionPolicy.checkRequiresApproval = async (policyType, roleName, amount, b
   }
 };
 
+// Get all policies with filters
 TransactionPolicy.getAllPolicies = async (filters = {}) => {
   try {
     const whereClause = {};
@@ -448,6 +546,7 @@ TransactionPolicy.getAllPolicies = async (filters = {}) => {
   }
 };
 
+// Update policy
 TransactionPolicy.updatePolicy = async (policyId, updateData) => {
   try {
     const policy = await TransactionPolicy.getPolicyById(policyId);
@@ -505,6 +604,7 @@ TransactionPolicy.updatePolicy = async (policyId, updateData) => {
   }
 };
 
+// Deactivate policy
 TransactionPolicy.deactivatePolicy = async (policyId) => {
   try {
     const policy = await TransactionPolicy.getPolicyById(policyId);
@@ -525,6 +625,7 @@ TransactionPolicy.deactivatePolicy = async (policyId) => {
   }
 };
 
+// Get policy statistics
 TransactionPolicy.getPolicyStats = async () => {
   try {
     const [stats] = await sequelize.query(`
@@ -547,7 +648,7 @@ TransactionPolicy.getPolicyStats = async () => {
   }
 };
 
-// Initialize tables if they don't exist
+// Initialize tables
 TransactionPolicy.initializeTables = async () => {
   try {
     // Main policies table
@@ -571,13 +672,11 @@ TransactionPolicy.initializeTables = async () => {
         INDEX idx_policy_type_role (policy_type, role_name),
         INDEX idx_status (status),
         INDEX idx_bu_id (bu_id),
-        INDEX idx_branch_code (branch_code),
-        CONSTRAINT fk_transaction_policy_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-        CONSTRAINT fk_transaction_policy_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+        INDEX idx_branch_code (branch_code)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Transaction policies table initialized');
+    console.log('✅ Transaction policies table initialized');
     
     // Policy ranges table
     await sequelize.query(`
@@ -595,7 +694,7 @@ TransactionPolicy.initializeTables = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Transaction policy ranges table initialized');
+    console.log('✅ Transaction policy ranges table initialized');
     
     // Policy roles table
     await sequelize.query(`
@@ -604,6 +703,7 @@ TransactionPolicy.initializeTables = async () => {
         transaction_policy_range_id INT NOT NULL,
         role_name VARCHAR(100) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_policy_range_id (transaction_policy_range_id),
         INDEX idx_role_name (role_name),
         UNIQUE KEY unique_range_role (transaction_policy_range_id, role_name),
@@ -611,7 +711,7 @@ TransactionPolicy.initializeTables = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Transaction policy roles table initialized');
+    console.log('✅ Transaction policy roles table initialized');
     
     return true;
   } catch (error) {
@@ -626,10 +726,46 @@ TransactionPolicy.syncTables = async () => {
     await TransactionPolicy.sync({ alter: true });
     await TransactionPolicyRange.sync({ alter: true });
     await TransactionPolicyRole.sync({ alter: true });
-    console.log('âœ… TransactionPolicy tables synced');
+    console.log('✅ TransactionPolicy tables synced');
     return true;
   } catch (error) {
     console.error('Error syncing TransactionPolicy tables:', error.message);
+    return false;
+  }
+};
+
+// Ensure table columns exist
+TransactionPolicy.ensureTableColumns = async () => {
+  try {
+    // Check and add updated_at to transaction_policy_roles if missing
+    const [columns] = await sequelize.query(`SHOW COLUMNS FROM transaction_policy_roles`);
+    const columnNames = columns.map(col => col.Field);
+    
+    if (!columnNames.includes('updated_at')) {
+      console.log('📝 Adding updated_at column to transaction_policy_roles...');
+      await sequelize.query(`
+        ALTER TABLE transaction_policy_roles 
+        ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      `);
+      console.log('✅ Added updated_at column to transaction_policy_roles');
+    }
+    
+    // Check and add updated_at to transaction_policy_ranges if missing
+    const [rangeColumns] = await sequelize.query(`SHOW COLUMNS FROM transaction_policy_ranges`);
+    const rangeColumnNames = rangeColumns.map(col => col.Field);
+    
+    if (!rangeColumnNames.includes('updated_at')) {
+      console.log('📝 Adding updated_at column to transaction_policy_ranges...');
+      await sequelize.query(`
+        ALTER TABLE transaction_policy_ranges 
+        ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      `);
+      console.log('✅ Added updated_at column to transaction_policy_ranges');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error ensuring table columns:', error.message);
     return false;
   }
 };

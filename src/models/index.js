@@ -1,4 +1,4 @@
-// src/models/index.js – COMPLETE WITH ALL VAULT MODELS & PENALTY RULE
+// src/models/index.js – COMPLETE WITH ALL VAULT MODELS, PENALTY RULE, EMTL, JOURNAL ENTRIES & PENDING TRANSFER
 import sequelize from '../../config/db.js';
 import { DataTypes, Op, QueryTypes } from 'sequelize';
 
@@ -102,6 +102,7 @@ import LoanEvent from './LoanEvent.js';
 
 // ===== MODULE & ROLE MANAGEMENT =====
 import Module from './Module.js';
+import Notification from './Notification.js';
 import RoleModule from './RoleModule.js';
 
 // ===== LOAN PROVISION =====
@@ -110,6 +111,12 @@ import LoanProvision from './LoanProvision.js';
 // ===== INTEREST DISTRIBUTION (for Term Deposits) =====
 import InterestDistribution from './InterestDistribution.js';
 import AdminPlugin from './AdminPlugin.js';
+
+// ================================================================
+// ✅ USER SESSION & ACTIVITY LOG MODELS
+// ================================================================
+import UserSession from './UserSession.js';
+import UserActivityLog from './UserActivityLog.js';
 
 // ================================================================
 // ✅ VAULT MODELS - Class-based only
@@ -128,6 +135,29 @@ import VaultApprovalRequiredRole from './VaultApprovalRequiredRole.js';
 import VaultCurrentApprover from './VaultCurrentApprover.js';
 import VaultEscalationHierarchy from './VaultEscalationHierarchy.js';
 import VaultRoleAccessMatrix from './VaultRoleAccessMatrix.js';
+
+// ================================================================
+// ✅ EMTL MODELS - Electronic Money Transfer Levy
+// ================================================================
+import EMTLPolicy from './EMTLPolicy.js';
+import EMTLAuditLog from './EMTLAuditLog.js';
+import EMTLTransaction from './EMTLTransaction.js';
+import RemittanceBatch from './RemittanceBatch.js';
+
+// ================================================================
+// ✅ JOURNAL ENTRY MODELS
+// ================================================================
+import JournalEntry from './JournalEntry.js';
+import JournalEntryLine from './JournalEntryLine.js';
+
+// ================================================================
+// ✅ INWARD TRANSFER MODELS
+// ================================================================
+import InwardFundsTransfer from './InwardFundsTransfer.js';
+import PendingInwardTransaction from './PendingInwardTransaction.js';
+import PendingTransfer from './PendingTransfer.js';
+import PaystackTransaction from './PaystackPayment.js';
+import PaymentReference from './PaymentReference.js';
 
 // ========== initModel helper ==========
 const initModel = (ModelDef, sequelize, DataTypes) => {
@@ -250,6 +280,11 @@ const modelDefinitions = [
   { key: 'RoleModule', def: RoleModule },
   { key: 'AdminPlugin', def: AdminPlugin },
   // ================================================================
+  // ✅ USER SESSION & ACTIVITY LOG MODELS
+  // ================================================================
+  { key: 'UserSession', def: UserSession },
+  { key: 'UserActivityLog', def: UserActivityLog },
+  // ================================================================
   // ✅ VAULT MODELS - Class-based only
   // ================================================================
   { key: 'Vault', def: Vault },
@@ -266,6 +301,26 @@ const modelDefinitions = [
   { key: 'VaultCurrentApprover', def: VaultCurrentApprover },
   { key: 'VaultEscalationHierarchy', def: VaultEscalationHierarchy },
   { key: 'VaultRoleAccessMatrix', def: VaultRoleAccessMatrix },
+  // ================================================================
+  // ✅ EMTL MODELS
+  // ================================================================
+  { key: 'EMTLPolicy', def: EMTLPolicy },
+  { key: 'EMTLAuditLog', def: EMTLAuditLog },
+  { key: 'EMTLTransaction', def: EMTLTransaction },
+  { key: 'RemittanceBatch', def: RemittanceBatch },
+  // ================================================================
+  // ✅ JOURNAL ENTRY MODELS
+  // ================================================================
+  { key: 'JournalEntry', def: JournalEntry },
+  { key: 'JournalEntryLine', def: JournalEntryLine },
+  // ================================================================
+  // ✅ INWARD TRANSFER MODELS
+  // ================================================================
+  { key: 'InwardFundsTransfer', def: InwardFundsTransfer },
+  { key: 'PendingInwardTransaction', def: PendingInwardTransaction },
+  { key: 'PendingTransfer', def: PendingTransfer },
+  { key: 'PaystackTransaction', def: PaystackTransaction },
+  { key: 'PaymentReference', def: PaymentReference },
 ];
 
 for (const { key, def } of modelDefinitions) {
@@ -308,6 +363,11 @@ function setupAssociations() {
     LoanPenalty,
     PenaltyRule,
     // ================================================================
+    // ✅ USER SESSION & ACTIVITY LOG MODELS
+    // ================================================================
+    UserSession,
+    UserActivityLog,
+    // ================================================================
     // ✅ VAULT MODELS
     // ================================================================
     Vault,
@@ -328,8 +388,90 @@ function setupAssociations() {
     Branch,
     User,
     Transaction: TransactionModel,
-    RepaymentSchedule
+    RepaymentSchedule,
+    // ================================================================
+    // ✅ EMTL MODELS
+    // ================================================================
+    EMTLPolicy,
+    EMTLAuditLog,
+    EMTLTransaction,
+    RemittanceBatch,
+    // ================================================================
+    // ✅ JOURNAL ENTRY MODELS
+    // ================================================================
+    JournalEntry,
+    JournalEntryLine,
+    GLAccount,
+    // ================================================================
+    // ✅ INWARD TRANSFER MODELS
+    // ================================================================
+    InwardFundsTransfer,
+    PendingInwardTransaction,
+    PendingTransfer,
+    PaystackTransaction,
+    PaymentReference,
   } = models;
+
+  // ================================================================
+  // ✅ USER SESSION & ACTIVITY LOG ASSOCIATIONS
+  // ================================================================
+  
+  // User ↔ UserSession (One-to-Many)
+  if (User && UserSession) {
+    User.hasMany(UserSession, {
+      foreignKey: 'user_id',
+      sourceKey: 'id',
+      as: 'sessions',
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    });
+    UserSession.belongsTo(User, {
+      foreignKey: 'user_id',
+      targetKey: 'id',
+      as: 'User',
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    });
+    console.log('✅ User ↔ UserSession');
+  }
+
+  // User ↔ UserActivityLog (One-to-Many)
+  if (User && UserActivityLog) {
+    User.hasMany(UserActivityLog, {
+      foreignKey: 'user_id',
+      sourceKey: 'id',
+      as: 'activities',
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    });
+    UserActivityLog.belongsTo(User, {
+      foreignKey: 'user_id',
+      targetKey: 'id',
+      as: 'User',
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE'
+    });
+    console.log('✅ User ↔ UserActivityLog');
+  }
+
+  // UserSession ↔ UserActivityLog (One-to-Many)
+  if (UserSession && UserActivityLog) {
+    UserSession.hasMany(UserActivityLog, {
+      foreignKey: 'session_id',
+      sourceKey: 'id',
+      as: 'activities',
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE'
+    });
+    UserActivityLog.belongsTo(UserSession, {
+      foreignKey: 'session_id',
+      targetKey: 'id',
+      as: 'Session',
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE'
+    });
+    console.log('✅ UserSession ↔ UserActivityLog');
+  }
 
   // StandingOrder ↔ CustomerAccount
   if (StandingOrder && CustomerAccount) {
@@ -518,6 +660,50 @@ function setupAssociations() {
       as: 'loan' 
     });
     console.log('✅ LoanAccount ↔ RepaymentSchedule');
+  }
+
+  // ================================================================
+  // ✅ JOURNAL ENTRY ASSOCIATIONS
+  // ================================================================
+
+  // JournalEntry ↔ JournalEntryLine (one-to-many)
+  if (JournalEntry && JournalEntryLine) {
+    JournalEntry.hasMany(JournalEntryLine, {
+      foreignKey: 'journalEntryId',
+      as: 'lines',
+      onDelete: 'CASCADE'
+    });
+    JournalEntryLine.belongsTo(JournalEntry, {
+      foreignKey: 'journalEntryId',
+      as: 'journalEntry'
+    });
+    console.log('✅ JournalEntry ↔ JournalEntryLine');
+  }
+
+  // JournalEntryLine ↔ GLAccount
+  if (JournalEntryLine && GLAccount) {
+    JournalEntryLine.belongsTo(GLAccount, {
+      foreignKey: 'glAccountId',
+      as: 'glAccount'
+    });
+    GLAccount.hasMany(JournalEntryLine, {
+      foreignKey: 'glAccountId',
+      as: 'journalLines'
+    });
+    console.log('✅ JournalEntryLine ↔ GLAccount');
+  }
+
+  // JournalEntry ↔ Transaction (optional link)
+  if (JournalEntry && TransactionModel) {
+    JournalEntry.belongsTo(TransactionModel, {
+      foreignKey: 'transactionId',
+      as: 'customerTransaction'
+    });
+    TransactionModel.hasMany(JournalEntry, {
+      foreignKey: 'transactionId',
+      as: 'journalEntries'
+    });
+    console.log('✅ JournalEntry ↔ Transaction');
   }
 
   // ================================================================
@@ -914,6 +1100,194 @@ function setupAssociations() {
     console.log('✅ VaultRoleAccessMatrix ↔ Vault');
   }
 
+  // ================================================================
+  // ✅ EMTL ASSOCIATIONS
+  // ================================================================
+
+  // EMTLAuditLog ↔ EMTLPolicy
+  if (EMTLAuditLog && EMTLPolicy) {
+    EMTLAuditLog.belongsTo(EMTLPolicy, {
+      foreignKey: 'POLICY_ID',
+      targetKey: 'id',
+      as: 'policy'
+    });
+    EMTLPolicy.hasMany(EMTLAuditLog, {
+      foreignKey: 'POLICY_ID',
+      sourceKey: 'id',
+      as: 'auditLogs'
+    });
+    console.log('✅ EMTLAuditLog ↔ EMTLPolicy');
+  }
+
+  // EMTLTransaction ↔ EMTLPolicy (via GL_ACCOUNT reference - loose coupling)
+  if (EMTLTransaction && EMTLPolicy) {
+    console.log('✅ EMTLTransaction ↔ EMTLPolicy (logical reference via GL_ACCOUNT)');
+  }
+
+  // EMTLTransaction ↔ RemittanceBatch
+  if (EMTLTransaction && RemittanceBatch) {
+    EMTLTransaction.belongsTo(RemittanceBatch, {
+      foreignKey: 'REMITTANCE_BATCH_ID',
+      targetKey: 'BATCH_ID',
+      as: 'remittanceBatch'
+    });
+    RemittanceBatch.hasMany(EMTLTransaction, {
+      foreignKey: 'REMITTANCE_BATCH_ID',
+      sourceKey: 'BATCH_ID',
+      as: 'transactions'
+    });
+    console.log('✅ EMTLTransaction ↔ RemittanceBatch');
+  }
+
+  // EMTLTransaction ↔ Customer (logical reference)
+  if (EMTLTransaction && Customer) {
+    console.log('✅ EMTLTransaction ↔ Customer (logical reference via CUSTOMER_NO)');
+  }
+
+  // EMTLTransaction ↔ Account (logical reference)
+  if (EMTLTransaction && Account) {
+    console.log('✅ EMTLTransaction ↔ Account (logical reference via ACCOUNT_NO)');
+  }
+
+  // ================================================================
+  // ✅ INWARD TRANSFER ASSOCIATIONS - CORRECTED
+  // ================================================================
+
+  // PendingTransfer ↔ Customer (when matched)
+  if (PendingTransfer && Customer) {
+    PendingTransfer.belongsTo(Customer, {
+      foreignKey: 'matched_to_customer_id',
+      targetKey: 'id',
+      as: 'matchedCustomer'
+    });
+    Customer.hasMany(PendingTransfer, {
+      foreignKey: 'matched_to_customer_id',
+      sourceKey: 'id',
+      as: 'pendingTransfers'
+    });
+    console.log('✅ PendingTransfer ↔ Customer');
+  }
+
+  // PendingTransfer ↔ InwardFundsTransfer
+  if (PendingTransfer && InwardFundsTransfer) {
+    PendingTransfer.belongsTo(InwardFundsTransfer, {
+      foreignKey: 'inward_transfer_id',
+      targetKey: 'id',
+      as: 'inwardTransfer'
+    });
+    InwardFundsTransfer.hasMany(PendingTransfer, {
+      foreignKey: 'inward_transfer_id',
+      sourceKey: 'id',
+      as: 'pendingTransfers'
+    });
+    console.log('✅ PendingTransfer ↔ InwardFundsTransfer');
+  }
+
+  // PendingTransfer ↔ PendingInwardTransaction
+  if (PendingTransfer && PendingInwardTransaction) {
+    PendingTransfer.belongsTo(PendingInwardTransaction, {
+      foreignKey: 'pending_inward_id',
+      targetKey: 'id',
+      as: 'pendingInward'
+    });
+    PendingInwardTransaction.hasMany(PendingTransfer, {
+      foreignKey: 'pending_inward_id',
+      sourceKey: 'id',
+      as: 'pendingTransfers'
+    });
+    console.log('✅ PendingTransfer ↔ PendingInwardTransaction');
+  }
+
+  // PaystackTransaction ↔ CustomerAccount
+  if (PaystackTransaction && CustomerAccount) {
+    PaystackTransaction.belongsTo(CustomerAccount, {
+      foreignKey: 'customer_account',
+      targetKey: 'account_number',
+      as: 'customerAccount'
+    });
+    CustomerAccount.hasMany(PaystackTransaction, {
+      foreignKey: 'customer_account',
+      sourceKey: 'account_number',
+      as: 'paystackTransactions'
+    });
+    console.log('✅ PaystackTransaction ↔ CustomerAccount');
+  }
+
+  // PaystackTransaction ↔ InwardFundsTransfer
+  if (PaystackTransaction && InwardFundsTransfer) {
+    PaystackTransaction.belongsTo(InwardFundsTransfer, {
+      foreignKey: 'inward_transfer_id',
+      targetKey: 'id',
+      as: 'inwardTransfer'
+    });
+    InwardFundsTransfer.hasMany(PaystackTransaction, {
+      foreignKey: 'inward_transfer_id',
+      sourceKey: 'id',
+      as: 'paystackTransactions'
+    });
+    console.log('✅ PaystackTransaction ↔ InwardFundsTransfer');
+  }
+
+  // PaymentReference ↔ Customer
+  if (PaymentReference && Customer) {
+    PaymentReference.belongsTo(Customer, {
+      foreignKey: 'customer_id',
+      targetKey: 'id',
+      as: 'customer'
+    });
+    Customer.hasMany(PaymentReference, {
+      foreignKey: 'customer_id',
+      sourceKey: 'id',
+      as: 'paymentReferences'
+    });
+    console.log('✅ PaymentReference ↔ Customer');
+  }
+
+  // PaymentReference ↔ CustomerAccount
+  if (PaymentReference && CustomerAccount) {
+    PaymentReference.belongsTo(CustomerAccount, {
+      foreignKey: 'customer_account',
+      targetKey: 'account_number',
+      as: 'account'
+    });
+    CustomerAccount.hasMany(PaymentReference, {
+      foreignKey: 'customer_account',
+      sourceKey: 'account_number',
+      as: 'paymentReferences'
+    });
+    console.log('✅ PaymentReference ↔ CustomerAccount');
+  }
+
+  // InwardFundsTransfer ↔ CustomerAccount
+  if (InwardFundsTransfer && CustomerAccount) {
+    InwardFundsTransfer.belongsTo(CustomerAccount, {
+      foreignKey: 'BENEFICIARY_ACCT',
+      targetKey: 'account_number',
+      as: 'beneficiaryAccount'
+    });
+    CustomerAccount.hasMany(InwardFundsTransfer, {
+      foreignKey: 'BENEFICIARY_ACCT',
+      sourceKey: 'account_number',
+      as: 'inwardTransfers'
+    });
+    console.log('✅ InwardFundsTransfer ↔ CustomerAccount');
+  }
+
+  // InwardFundsTransfer ↔ PendingInwardTransaction
+  if (InwardFundsTransfer && PendingInwardTransaction) {
+    InwardFundsTransfer.hasMany(PendingInwardTransaction, {
+      foreignKey: 'INWD_FUNDS_XFER_ID',
+      sourceKey: 'id',
+      as: 'pendingInwardTransactions'
+    });
+    PendingInwardTransaction.belongsTo(InwardFundsTransfer, {
+      foreignKey: 'INWD_FUNDS_XFER_ID',
+      targetKey: 'id',
+      as: 'inwardFundsTransfer'
+    });
+    console.log('✅ InwardFundsTransfer ↔ PendingInwardTransaction');
+  }
+
   console.log('✅ All associations setup complete!');
 }
 setupAssociations();
@@ -946,6 +1320,12 @@ export const getPenaltyRule = () => models.PenaltyRule;
 export const getLoanPenalty = () => models.LoanPenalty;
 
 // ================================================================
+// ✅ USER SESSION & ACTIVITY LOG GETTERS
+// ================================================================
+export const getUserSession = () => models.UserSession;
+export const getUserActivityLog = () => models.UserActivityLog;
+
+// ================================================================
 // ✅ VAULT GETTERS
 // ================================================================
 export const getVault = () => models.Vault;
@@ -962,6 +1342,29 @@ export const getVaultApprovalRequiredRole = () => models.VaultApprovalRequiredRo
 export const getVaultCurrentApprover = () => models.VaultCurrentApprover;
 export const getVaultEscalationHierarchy = () => models.VaultEscalationHierarchy;
 export const getVaultRoleAccessMatrix = () => models.VaultRoleAccessMatrix;
+
+// ================================================================
+// ✅ EMTL GETTERS
+// ================================================================
+export const getEMTLPolicy = () => models.EMTLPolicy;
+export const getEMTLAuditLog = () => models.EMTLAuditLog;
+export const getEMTLTransaction = () => models.EMTLTransaction;
+export const getRemittanceBatch = () => models.RemittanceBatch;
+
+// ================================================================
+// ✅ JOURNAL ENTRY GETTERS
+// ================================================================
+export const getJournalEntry = () => models.JournalEntry;
+export const getJournalEntryLine = () => models.JournalEntryLine;
+
+// ================================================================
+// ✅ INWARD TRANSFER GETTERS
+// ================================================================
+export const getInwardFundsTransfer = () => models.InwardFundsTransfer;
+export const getPendingInwardTransaction = () => models.PendingInwardTransaction;
+export const getPendingTransfer = () => models.PendingTransfer;
+export const getPaystackTransaction = () => models.PaystackTransaction;
+export const getPaymentReference = () => models.PaymentReference;
 
 // Existing getters (partial list – all remain)
 export const getAccount = () => models.Account;
@@ -1025,6 +1428,7 @@ export const getLoanRepaymentHistory = () => models.LoanRepaymentHistory;
 export const getLoanRepaymentTransaction = () => models.LoanRepaymentTransaction;
 export const getLoginPolicy = () => models.LoginPolicy;
 export const getNextOfKin = () => models.NextOfKin;
+export const getNotification = () => models.Notification;
 export const getOrganization = () => models.Organization;
 export const getOverdueLoan = () => models.OverdueLoan;
 export const getPermissions = () => models.Permissions;
@@ -1054,6 +1458,7 @@ export const getAdminPlugin = () => models.AdminPlugin;
 
 // ========== INITIALISE ==========
 let initialized = false;
+
 export const initializeModels = async () => {
   if (initialized) {
     console.log('📦 Models already initialized');
@@ -1066,6 +1471,101 @@ export const initializeModels = async () => {
   );
   console.log('📊 Available models:', availableModels.join(', '));
   return models;
+};
+
+// ================================================================
+// ✅ SYNC ALL TABLES - Creates missing tables and columns
+// ================================================================
+export const syncAllTables = async (options = {}) => {
+  try {
+    const { force = false, alter = true } = options;
+    
+    console.log('\n📦 Syncing all tables with database...');
+    console.log(`   Force: ${force}, Alter: ${alter}`);
+    
+    // Get all model names (exclude non-model properties)
+    const modelKeys = Object.keys(models).filter(
+      k => !['sequelize', 'Op', 'DataTypes', 'QueryTypes'].includes(k) && models[k] !== null
+    );
+    
+    console.log(`📊 Found ${modelKeys.length} models to sync`);
+    
+    // Disable foreign key checks temporarily
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    
+    // Sync each model individually
+    let syncedCount = 0;
+    let errorCount = 0;
+    const errors = [];
+    
+    for (const key of modelKeys) {
+      const model = models[key];
+      if (model && typeof model.sync === 'function') {
+        try {
+          await model.sync({ alter, force });
+          console.log(`✅ Table ${model.tableName || key} synced successfully`);
+          syncedCount++;
+        } catch (err) {
+          console.error(`❌ Failed to sync ${key}:`, err.message);
+          errorCount++;
+          errors.push({ model: key, error: err.message });
+        }
+      }
+    }
+    
+    // Re-enable foreign key checks
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    
+    console.log(`\n✅ Sync complete! Synced: ${syncedCount}, Errors: ${errorCount}`);
+    
+    if (errors.length > 0) {
+      console.log('⚠️ Errors encountered:');
+      errors.forEach(({ model, error }) => {
+        console.log(`   - ${model}: ${error}`);
+      });
+    }
+    
+    return { success: true, syncedCount, errorCount, errors };
+    
+  } catch (error) {
+    console.error('❌ Error syncing tables:', error.message);
+    // Ensure foreign key checks are re-enabled
+    try {
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    } catch (e) {
+      // Ignore
+    }
+    return { success: false, error: error.message };
+  }
+};
+
+// ========== CREATE ALL TABLES (Alias) ==========
+export const createAllTables = async (options = {}) => {
+  return syncAllTables(options);
+};
+
+// ========== INITIALIZE EMTL TABLES ==========
+export const initializeEMTLTables = async () => {
+  try {
+    if (models.EMTLPolicy && typeof models.EMTLPolicy.initializeTable === 'function') {
+      await models.EMTLPolicy.initializeTable();
+    }
+    if (models.EMTLAuditLog && typeof models.EMTLAuditLog.initializeTable === 'function') {
+      await models.EMTLAuditLog.initializeTable();
+    }
+    if (models.EMTLTransaction && typeof models.EMTLTransaction.initializeTable === 'function') {
+      await models.EMTLTransaction.initializeTable();
+    }
+    if (models.RemittanceBatch && typeof models.RemittanceBatch.initializeTable === 'function') {
+      await models.RemittanceBatch.initializeTable();
+    }
+    
+    console.log('✅ All EMTL tables initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('Error initializing EMTL tables:', error.message);
+    return false;
+  }
 };
 
 // ========== NAMED EXPORTS ==========
@@ -1167,8 +1667,14 @@ export {
   LoanEvent,
   Ledger,
   Module,
+  Notification,
   RoleModule,
-   AdminPlugin,
+  AdminPlugin,
+  // ================================================================
+  // ✅ USER SESSION & ACTIVITY LOG EXPORTS
+  // ================================================================
+  UserSession,
+  UserActivityLog,
   // ================================================================
   // ✅ VAULT EXPORTS - All class-based models
   // ================================================================
@@ -1186,6 +1692,26 @@ export {
   VaultCurrentApprover,
   VaultEscalationHierarchy,
   VaultRoleAccessMatrix,
+  // ================================================================
+  // ✅ EMTL EXPORTS
+  // ================================================================
+  EMTLPolicy,
+  EMTLAuditLog,
+  EMTLTransaction,
+  RemittanceBatch,
+  // ================================================================
+  // ✅ JOURNAL ENTRY EXPORTS
+  // ================================================================
+  JournalEntry,
+  JournalEntryLine,
+  // ================================================================
+  // ✅ INWARD TRANSFER EXPORTS
+  // ================================================================
+  InwardFundsTransfer,
+  PendingInwardTransaction,
+  PendingTransfer,
+  PaystackTransaction,
+  PaymentReference,
 };
 
 export default models;

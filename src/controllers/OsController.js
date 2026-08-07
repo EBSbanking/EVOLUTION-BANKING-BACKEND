@@ -1,4 +1,4 @@
-// src/controllers/OsController.js - COMPLETE UPDATED VERSION (FIXED DUPLICATE IMPORTS)
+// src/controllers/OsController.js - COMPLETE UPDATED VERSION WITH EMAIL STATEMENTS
 import { getServerTime, getBusinessDate, setServerTimeOffset } from '../utils/serverTime.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -15,6 +15,7 @@ import { processAutoCollections } from '../Services/autoCollectionService.js';
 import { initializeModels, getLoanAccount, getLoanRepayment, getPenaltyRule, getLoanPenalty, getRepaymentSchedule } from '../models/index.js';
 import { processDueStandingOrders } from '../controllers/StandingOrderController.js';
 import { processPendingGLTransactions } from '../controllers/PendingGLTransactionController.js';
+import { processEmailStatements, initializeEmailStatementService } from '../utils/emailStatementService.js';
 
 // Import Sequelize models
 import SystemDate from '../models/SystemDate.js';
@@ -1222,6 +1223,22 @@ const systemStatus = {
       processed: 0,
       failed: 0,
       details: []
+    },
+    // ✅ ADDED: Email Statement Service
+    emailStatements: {
+      healthy: true,
+      lastError: null,
+      lastRun: null,
+      executionTime: null,
+      processed: 0,
+      failed: 0,
+      details: {
+        totalCustomersChecked: 0,
+        customersDue: 0,
+        statementsGenerated: 0,
+        emailsSent: 0,
+        emailsFailed: 0
+      }
     }
   }
 };
@@ -1648,6 +1665,26 @@ const executeService = async (serviceName, serviceFn) => {
         executionTime,
       });
     }
+    // ✅ ADDED: Email Statements Service
+    else if (serviceName === 'emailStatements') {
+      serviceDetails.processed = serviceResult.results?.customersDue || 0;
+      serviceDetails.failed = serviceResult.results?.emailsFailed || 0;
+      serviceDetails.details = {
+        totalCustomersChecked: serviceResult.results?.totalCustomersChecked || 0,
+        customersDue: serviceResult.results?.customersDue || 0,
+        statementsGenerated: serviceResult.results?.statementsGenerated || 0,
+        emailsSent: serviceResult.results?.emailsSent || 0,
+        emailsFailed: serviceResult.results?.emailsFailed || 0
+      };
+      serviceDetails.errors = serviceResult.results?.errors || [];
+      
+      logger.info(`emailStatements service completed`, {
+        customersDue: serviceDetails.details.customersDue,
+        emailsSent: serviceDetails.details.emailsSent,
+        emailsFailed: serviceDetails.details.emailsFailed,
+        executionTime,
+      });
+    }
     else {
       logger.info(`${serviceName} completed in ${executionTime}ms`, { executionTime });
     }
@@ -1697,6 +1734,17 @@ const executeService = async (serviceName, serviceFn) => {
     if (serviceName === 'pendingRepayments') {
       serviceDetails.processedCount = 0;
     }
+    // ✅ ADDED: Email Statements Error Handling
+    if (serviceName === 'emailStatements') {
+      serviceDetails.details = {
+        totalCustomersChecked: 0,
+        customersDue: 0,
+        statementsGenerated: 0,
+        emailsSent: 0,
+        emailsFailed: 0
+      };
+      serviceDetails.errors = [errorDetails];
+    }
 
     systemStatus.services[serviceName] = serviceDetails;
 
@@ -1740,11 +1788,13 @@ export const triggerEndOfDayProcess = async (req, res) => {
       runServices
     });
 
+    // ✅ ADDED: emailStatements to validServices
     const validServices = [
       'loanProcessing', 'overdueLoans', 'processAutoCollections', 
       'loanStatusUpdates', 'interestPosting', 'glTransactions',
       'termDepositInterest', 'reconciliation', 'pendingRepayments', 
-      'dormantAccounts', 'standingOrders', 'pendingGLTransactions'
+      'dormantAccounts', 'standingOrders', 'pendingGLTransactions',
+      'emailStatements' // ✅ ADDED
     ];
 
     const invalidServices = skipServices.filter(service => !validServices.includes(service));
@@ -1758,6 +1808,7 @@ export const triggerEndOfDayProcess = async (req, res) => {
 
     logger.info('Skipping EOD services', { skippedServices: skipServices });
 
+    // ✅ ADDED: emailStatements service function
     const serviceFunctions = {
       loanProcessing: processOverdueLoans,
       overdueLoans: processOverdueLoans,
@@ -1770,7 +1821,19 @@ export const triggerEndOfDayProcess = async (req, res) => {
       pendingRepayments: processPendingRepayments,
       dormantAccounts: processDormantAccounts,
       standingOrders: processDueStandingOrders,
-      pendingGLTransactions: processPendingGLTransactions
+      pendingGLTransactions: processPendingGLTransactions,
+      emailStatements: async () => { // ✅ ADDED
+        const result = await processEmailStatements({
+          asOfDate: systemStatus.currentBusinessDate || new Date(),
+          dryRun: false,
+          batchSize: 100,
+          sendEmail: true
+        });
+        return {
+          success: result.emailsFailed === 0,
+          results: result
+        };
+      }
     };
 
     const serviceResults = {};
@@ -1985,6 +2048,12 @@ export const getEODStatus = async (req, res) => {
             processed: systemStatus.services.pendingGLTransactions.processed || 0,
             failed: systemStatus.services.pendingGLTransactions.failed || 0,
             details: systemStatus.services.pendingGLTransactions.details || []
+          }),
+          // ✅ ADDED: Email Statements status
+          ...(serviceName === 'emailStatements' && {
+            processed: systemStatus.services.emailStatements.processed || 0,
+            failed: systemStatus.services.emailStatements.failed || 0,
+            details: systemStatus.services.emailStatements.details || {}
           })
         })),
         metrics: {
@@ -2284,6 +2353,12 @@ export const getStatusOS = async (req, res) => {
         individualLoans: systemStatus.services.processAutoCollections.individualLoans,
         groupLoans: systemStatus.services.processAutoCollections.groupLoans,
       }),
+      // ✅ ADDED: Email Statements status
+      ...(serviceName === 'emailStatements' && {
+        processed: systemStatus.services.emailStatements.processed,
+        failed: systemStatus.services.emailStatements.failed,
+        details: systemStatus.services.emailStatements.details
+      })
     }));
 
     systemStatus.serverTime = getServerTime();
@@ -2552,8 +2627,6 @@ export {
   debugDateIssuesOS as debugDateIssues,
   getStatusOS as getStatus,
   getSystemStatusOS as getSystemStatus,
- 
- 
 };
 
 // ==================== DEFAULT EXPORT ====================
@@ -2580,5 +2653,6 @@ export default {
   calculateNextBusinessDateWithHolidays: calculateNextBusinessDate,
   setNextBusinessDate: setNextBusinessDateOS,
   processLoanRepaymentDirectDebits,
-  processOverdueLoans
+  processOverdueLoans,
+  processEmailStatements // ✅ ADDED export
 };

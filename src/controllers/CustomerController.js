@@ -1,4 +1,4 @@
-// src/controllers/CustomerController.js - COMPLETE FIXED VERSION
+// src/controllers/CustomerController.js - COMPLETE FIXED VERSION WITH BU-SPECIFIC NOTIFICATIONS
 import { Op, QueryTypes } from 'sequelize';
 import { initializeModels, getCustomer, getAML, getWF_WORK_ITEM } from '../models/index.js';
 import { getSequelize } from '../../config/db.js';
@@ -16,6 +16,16 @@ import {
   getCustomerAttributesWithOptional 
 } from '../utils/customerTableUtils.js';
 
+// ✅ Import Notification Service
+import notificationService, { 
+  sendApprovalNotification, 
+  sendNotification 
+} from '../Services/NotificationService.js';
+
+// ✅ NEW IMPORTS for restricted customer permission
+import permissionCache from '../utils/permissionCache.js';
+import PERMISSIONS from '../constants/permissions.js';
+
 // ============================================
 // MODEL VARIABLES (will be set in initModels)
 // ============================================
@@ -28,6 +38,171 @@ let modelsInitialized = false;
 let initializationPromise = null;
 
 // ============================================
+// HELPER: Check if user can view restricted customers
+// ============================================
+const canViewRestrictedCustomer = async (user) => {
+  if (!user || !user.userId) return false;
+  const isAdmin = (
+    user.isAdmin === true ||
+    user.role === 'Administrator' ||
+    user.role_name === 'Administrator'
+  );
+  if (isAdmin) return true;
+  
+  try {
+    return await permissionCache.checkPermission(user.userId, PERMISSIONS.CUSTOMER.VIEW_RESTRICTED);
+  } catch (error) {
+    console.error('❌ Error checking restricted customer permission:', error);
+    return false;
+  }
+};
+
+// ============================================
+// HELPER: Send BU-Specific Approval Notification - OPTIMIZED
+// ============================================
+const sendBUApprovalNotification = async (customerData, req) => {
+  try {
+    const {
+      BU_ID,
+      customerId,
+      customerNo,
+      fullName,
+      email,
+      phone,
+      bvn,
+      address,
+      submittedBy,
+      itemType = 'customer_creation'
+    } = customerData;
+
+    if (!BU_ID) {
+      console.warn('⚠️ No BU_ID provided, skipping notification');
+      return null;
+    }
+
+    console.log(`📨 Sending BU-specific approval notification for BU: ${BU_ID}`);
+
+    // ✅ DIRECT CALL to notification service
+    const result = await notificationService.sendApprovalNotification({
+      itemType: itemType,
+      itemId: customerId,
+      itemName: fullName || 'Customer',
+      description: `New customer registration: ${fullName}`,
+      submittedBy: submittedBy || req.user?.user_name || 'System User',
+      BU_ID: BU_ID,
+      priority: 'high',
+      metadata: {
+        customerId: customerId,
+        customerNo: customerNo,
+        fullName: fullName,
+        email: email,
+        phone: phone,
+        bvn: bvn,
+        address: address,
+        businessUnit: BU_ID,
+        applicationType: itemType,
+        submittedAt: new Date().toISOString()
+      }
+    });
+
+    if (result && result.success) {
+      console.log('✅ BU-specific approval notification sent:', result);
+      return result;
+    } else {
+      console.warn('⚠️ Notification service returned error:', result);
+      return null;
+    }
+
+  } catch (error) {
+    console.error('❌ Failed to send BU-specific approval notification:', error.message);
+    // Don't throw - notification failure shouldn't break customer creation
+    return null;
+  }
+};
+
+// ============================================
+// HELPER: Send customer approved notification (BU-specific) - FIXED
+// ============================================
+const sendCustomerApprovedNotification = async (customer, approver, req) => {
+  try {
+    const BU_ID = customer.BU_ID || req.user?.BU_ID || '001';
+    const customerName = customer.CUST_NM || `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim();
+    
+    // ✅ DIRECT CALL to notification service
+    const result = await notificationService.sendApprovalNotification({
+      itemType: 'customer_approved',
+      itemId: customer.id || customer.CUST_ID,
+      itemName: customerName || 'Customer',
+      description: `✅ Customer ${customerName} has been approved by ${approver}`,
+      submittedBy: approver || 'System',
+      BU_ID: BU_ID,
+      priority: 'medium',
+      metadata: {
+        customerId: customer.CUST_ID || customer.id,
+        customerNo: customer.CUST_NO,
+        fullName: customerName,
+        approvedBy: approver,
+        email: customer.EMAIL_ADDRESS,
+        phone: customer.PHONE_NO,
+        bvn: customer.BVN,
+        approvedAt: new Date().toISOString(),
+        businessUnit: BU_ID,
+        applicationType: 'customer_approval'
+      }
+    });
+
+    if (result && result.success) {
+      console.log('✅ Customer approved notification sent to BU', BU_ID);
+    } else {
+      console.warn('⚠️ Failed to send customer approved notification:', result?.message || 'Unknown error');
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to send customer approved notification:', error.message);
+  }
+};
+
+// ============================================
+// HELPER: Send customer rejected notification (BU-specific) - FIXED
+// ============================================
+const sendCustomerRejectedNotification = async (customer, rejector, reason, req) => {
+  try {
+    const BU_ID = customer.BU_ID || req.user?.BU_ID || '001';
+    const customerName = customer.CUST_NM || `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim();
+    
+    // ✅ DIRECT CALL to notification service
+    const result = await notificationService.sendApprovalNotification({
+      itemType: 'customer_rejected',
+      itemId: customer.id || customer.CUST_ID,
+      itemName: customerName || 'Customer',
+      description: `❌ Customer ${customerName} has been REJECTED by ${rejector}`,
+      submittedBy: rejector || 'System',
+      BU_ID: BU_ID,
+      priority: 'urgent',
+      metadata: {
+        customerId: customer.CUST_ID || customer.id,
+        customerNo: customer.CUST_NO,
+        fullName: customerName,
+        rejectedBy: rejector,
+        rejectionReason: reason || 'No reason provided',
+        email: customer.EMAIL_ADDRESS,
+        phone: customer.PHONE_NO,
+        bvn: customer.BVN,
+        rejectedAt: new Date().toISOString(),
+        businessUnit: BU_ID,
+        applicationType: 'customer_rejection'
+      }
+    });
+
+    if (result && result.success) {
+      console.log('✅ Customer rejected notification sent to BU', BU_ID);
+    } else {
+      console.warn('⚠️ Failed to send customer rejected notification:', result?.message || 'Unknown error');
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to send customer rejected notification:', error.message);
+  }
+};
+// ============================================
 // MODEL INITIALIZATION FUNCTIONS
 // ============================================
 
@@ -35,44 +210,35 @@ let initializationPromise = null;
  * Initialize models safely with caching
  */
 export const initModels = async (force = false) => {
-  // Return cached result if already initialized and not forcing refresh
   if (modelsInitialized && !force) {
     console.log('📦 Models already initialized, returning cached models');
     return { Customer, AML, WF_WORK_ITEM, Group, sequelize };
   }
   
-  // Return existing promise if initialization is in progress
   if (initializationPromise && !force) {
     console.log('⏳ Model initialization already in progress, waiting...');
     return initializationPromise;
   }
   
-  // Create new initialization promise
   initializationPromise = (async () => {
     try {
       console.log('🔧 Initializing models in CustomerController...');
       
-      // Initialize models from models/index.js
-      console.log('📦 Calling initializeModels()...');
       await initializeModels();
       console.log('✅ initializeModels() completed');
       
-      // Get models using getter functions
       Customer = getCustomer();
       AML = getAML();
       WF_WORK_ITEM = getWF_WORK_ITEM();
 
-      // FIX: Get sequelize properly - await the promise if needed
       try {
         let sequelizeInstance = getSequelize();
         
-        // Check if it's a promise and await it
         if (sequelizeInstance && typeof sequelizeInstance.then === 'function') {
           console.log('⏳ Sequelize is a promise, awaiting...');
           sequelizeInstance = await sequelizeInstance;
         }
         
-        // Also try direct import as fallback
         if (!sequelizeInstance || typeof sequelizeInstance.authenticate !== 'function') {
           console.log('🔄 Trying direct import fallback...');
           const dbModule = await import('../../config/db.js');
@@ -96,8 +262,6 @@ export const initModels = async (force = false) => {
         sequelize = sequelizeInstance;
         console.log('✅ Sequelize instance obtained successfully');
         
-        // Test database connection
-        console.log('🔍 Testing database connection...');
         await sequelize.authenticate();
         console.log('✅ Database connection successful');
         
@@ -106,7 +270,6 @@ export const initModels = async (force = false) => {
         throw new Error(`Sequelize initialization failed: ${seqError.message}`);
       }
       
-      // NEW: Dynamically import Group model
       try {
         const GroupModule = await import('../models/Group.js');
         Group = GroupModule.default || GroupModule;
@@ -126,14 +289,11 @@ export const initModels = async (force = false) => {
       console.log('  - WF_WORK_ITEM:', WF_WORK_ITEM ? '✅ Available' : '❌ Not Available');
       console.log('  - Group:', Group ? '✅ Available' : '❌ Not Available');
       
-      // Verify Customer is a valid model
       if (!Customer || typeof Customer.findOne !== 'function') {
         console.error('❌ Customer model is not a valid Sequelize model');
         throw new Error('Customer model not properly initialized');
       }
       
-      // Check if customers table exists
-      console.log('🔍 Ensuring customers table exists...');
       try {
         const [tables] = await sequelize.query(`
           SELECT TABLE_NAME 
@@ -145,8 +305,6 @@ export const initModels = async (force = false) => {
         if (tables.length === 0) {
           console.log('❌ customers table does NOT exist');
           console.log('🔧 Creating customers table...');
-          
-          // Try to sync the model to create table
           await Customer.sync({ force: true });
           console.log('✅ customers table created successfully');
         } else {
@@ -166,7 +324,6 @@ export const initModels = async (force = false) => {
       console.error('❌ Failed to initialize models in CustomerController:', error.message);
       console.error('Error stack:', error.stack);
       
-      // Reset initialization flag on failure
       modelsInitialized = false;
       initializationPromise = null;
       throw error;
@@ -280,7 +437,7 @@ const validateNextOfKin = (nextOfKinArray) => {
   return null;
 };
 
-// ===== NEW: Group Assignment Helper Functions =====
+// ===== Group Assignment Helper Functions =====
 
 const validateGroup = async (groupId, transaction = null) => {
   if (!groupId) return null;
@@ -371,14 +528,9 @@ const bulkAssignCustomersToGroups = async (assignments, transaction) => {
   return results;
 };
 
-
-
-
 // ============================================
-// GROUP MANAGEMENT FUNCTIONS (NEW)
+// GROUP MANAGEMENT FUNCTIONS
 // ============================================
-
-
 
 /**
  * Remove customer from group
@@ -395,14 +547,11 @@ export const removeCustomerFromGroup = async (req, res) => {
       });
     }
     
-    // Initialize models
     await initModels();
     
-    // Start transaction
     const transaction = await sequelize.transaction();
     
     try {
-      // Find customer
       const customer = await Customer.findByPk(customerId, { transaction });
       
       if (!customer) {
@@ -423,19 +572,16 @@ export const removeCustomerFromGroup = async (req, res) => {
       
       const oldGroupId = customer.groupId;
       
-      // Remove from group's members
       const group = await Group.findByPk(oldGroupId, { transaction });
       if (group) {
         await group.removeMember(customer.id);
       }
       
-      // Update customer
       await customer.update({
         groupId: null,
         groupJoinedAt: null
       }, { transaction });
       
-      // Log audit
       await auditLogger.log({
         entity_type: 'CUSTOMER',
         entity_id: customerId,
@@ -478,10 +624,6 @@ export const removeCustomerFromGroup = async (req, res) => {
  * Get customers by group
  * @route GET /api/customers/group/:groupId
  */
-/**
- * Get customers by group
- * @route GET /api/customers/group/:groupId
- */
 export const getCustomersByGroup = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -494,12 +636,10 @@ export const getCustomersByGroup = async (req, res) => {
       });
     }
     
-    // Initialize models
     await initModels();
     
     const offset = (parseInt(page) - 1) * parseInt(limit);
     
-    // Find group
     const group = await Group.findByPk(groupId);
     
     if (!group) {
@@ -509,7 +649,6 @@ export const getCustomersByGroup = async (req, res) => {
       });
     }
     
-    // Get customers in group with pagination
     const { count, rows: customers } = await Customer.findAndCountAll({
       where: { groupId },
       attributes: [
@@ -552,14 +691,12 @@ export const getCustomersByGroup = async (req, res) => {
   }
 };
 
-
 // ============================================
-// CUSTOMER SERVICE METHODS (EXISTING + GROUP)
+// CUSTOMER SERVICE METHODS
 // ============================================
 
 /**
- * Get customer with BVN details by ID
- * @route GET /api/customers/:customerId/bvn
+ * Get customer with BVN details - now checks restricted
  */
 export const getCustomerWithBVN = async (req, res) => {
   try {
@@ -572,25 +709,15 @@ export const getCustomerWithBVN = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     const customer = await custModel.findByPk(customerId, {
       attributes: [
-        'id', 
-        'CUST_ID', 
-        'CUST_NO',
-        'FIRST_NAME', 
-        'LAST_NAME', 
-        'BVN', 
-        'BVN_VERIFIED',
-        'BVN_VERIFIED_AT',
-        'PHONE_NO',
-        'EMAIL_ADDRESS',
-        'status',
-        'REC_ST',
-        'groupId', // NEW: Include group info
-        'groupJoinedAt'
+        'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+        'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT',
+        'PHONE_NO', 'EMAIL_ADDRESS', 'status', 'REC_ST',
+        'groupId', 'groupJoinedAt',
+        'customerType'
       ]
     });
     
@@ -599,6 +726,16 @@ export const getCustomerWithBVN = async (req, res) => {
         success: false,
         message: 'Customer not found'
       });
+    }
+    
+    if (customer.customerType === 'restricted') {
+      const hasPermission = await canViewRestrictedCustomer(req.user);
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: 'Restricted customer – access denied'
+        });
+      }
     }
     
     res.json({
@@ -617,8 +754,107 @@ export const getCustomerWithBVN = async (req, res) => {
 };
 
 /**
+ * Get customer with loan details - now checks restricted
+ */
+export const getCustomerWithLoans = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID is required'
+      });
+    }
+    
+    const { Customer: custModel } = await initModels();
+    const LoanAccount = (await import('../models/LoanAccount.js')).default;
+    
+    const customer = await custModel.findByPk(customerId, {
+      attributes: [
+        'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+        'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS',
+        'groupId', 'groupJoinedAt',
+        'customerType'
+      ],
+      include: [{
+        model: LoanAccount,
+        as: 'loanAccounts',
+        required: false,
+        separate: true,
+        limit: 20,
+        order: [['created_at', 'DESC']]
+      }]
+    });
+    
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Customer not found'
+      });
+    }
+    
+    if (customer.customerType === 'restricted') {
+      const hasPermission = await canViewRestrictedCustomer(req.user);
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: 'Restricted customer – access denied'
+        });
+      }
+    }
+    
+    let groupInfo = null;
+    if (customer.groupId && Group) {
+      const group = await Group.findByPk(customer.groupId, {
+        attributes: ['id', 'groupCode', 'groupName']
+      });
+      if (group) groupInfo = group.toJSON ? group.toJSON() : group;
+    }
+    
+    const loans = customer.loanAccounts || [];
+    const activeLoans = loans.filter(loan => loan.status === 'ACTIVE');
+    const totalOutstanding = activeLoans.reduce(
+      (sum, loan) => sum + parseFloat(loan.outstanding_balance || 0), 
+      0
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        customer: {
+          id: customer.id,
+          CUST_ID: customer.CUST_ID,
+          name: `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim(),
+          phone: customer.PHONE_NO,
+          email: customer.EMAIL_ADDRESS,
+          bvn: customer.BVN,
+          bvnVerified: customer.BVN_VERIFIED,
+          groupInfo,
+          customerType: customer.customerType
+        },
+        loanSummary: {
+          totalLoans: loans.length,
+          activeLoans: activeLoans.length,
+          totalOutstanding: totalOutstanding,
+          hasActiveLoan: activeLoans.length > 0
+        },
+        loans: loans
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error getting customer with loans:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get customer loan details',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Find customer by BVN
- * @route GET /api/customers/bvn/:bvn
  */
 export const findByBVN = async (req, res) => {
   try {
@@ -631,7 +867,6 @@ export const findByBVN = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     const customer = await custModel.findOne({
@@ -645,7 +880,7 @@ export const findByBVN = async (req, res) => {
         'BVN_VERIFIED',
         'PHONE_NO', 
         'EMAIL_ADDRESS',
-        'groupId' // NEW: Include group info
+        'groupId'
       ]
     });
     
@@ -673,7 +908,6 @@ export const findByBVN = async (req, res) => {
 
 /**
  * Update BVN verification status
- * @route PUT /api/customers/:customerId/verify-bvn
  */
 export const updateBVNVerification = async (req, res) => {
   try {
@@ -687,10 +921,8 @@ export const updateBVNVerification = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel, sequelize: db } = await initModels();
     
-    // Start transaction
     const transaction = await db.transaction();
     
     try {
@@ -704,14 +936,12 @@ export const updateBVNVerification = async (req, res) => {
         });
       }
       
-      // Update BVN verification status
       await customer.update({
         BVN_VERIFIED: verified === true,
         BVN_VERIFIED_AT: verified ? new Date() : null,
         BVN: bvn || customer.BVN
       }, { transaction });
       
-      // Log audit
       await auditLogger.log({
         entity_type: 'CUSTOMER',
         entity_id: customerId,
@@ -734,7 +964,7 @@ export const updateBVNVerification = async (req, res) => {
           BVN: customer.BVN,
           BVN_VERIFIED: customer.BVN_VERIFIED,
           BVN_VERIFIED_AT: customer.BVN_VERIFIED_AT,
-          groupId: customer.groupId // Include group info
+          groupId: customer.groupId
         }
       });
       
@@ -754,112 +984,7 @@ export const updateBVNVerification = async (req, res) => {
 };
 
 /**
- * Get customer with loan details
- * @route GET /api/customers/:customerId/loans
- */
-export const getCustomerWithLoans = async (req, res) => {
-  try {
-    const { customerId } = req.params;
-    
-    if (!customerId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer ID is required'
-      });
-    }
-    
-    // Initialize models
-    const { Customer: custModel } = await initModels();
-    
-    // Dynamically import LoanAccount to avoid circular dependency
-    const LoanAccount = (await import('../models/LoanAccount.js')).default;
-    
-    const customer = await custModel.findByPk(customerId, {
-      attributes: [
-        'id', 
-        'CUST_ID', 
-        'CUST_NO',
-        'FIRST_NAME', 
-        'LAST_NAME', 
-        'BVN',
-        'BVN_VERIFIED',
-        'PHONE_NO',
-        'EMAIL_ADDRESS',
-        'groupId', // NEW: Include group info
-        'groupJoinedAt'
-      ],
-      include: [{
-        model: LoanAccount,
-        as: 'loanAccounts',
-        required: false,
-        separate: true,
-        limit: 20,
-        order: [['created_at', 'DESC']]
-      }]
-    });
-    
-    if (!customer) {
-      return res.status(404).json({
-        success: false,
-        message: 'Customer not found'
-      });
-    }
-    
-    // Get group info if customer is in a group
-    let groupInfo = null;
-    if (customer.groupId && Group) {
-      const group = await Group.findByPk(customer.groupId, {
-        attributes: ['id', 'groupCode', 'groupName']
-      });
-      if (group) {
-        groupInfo = group.toJSON ? group.toJSON() : group;
-      }
-    }
-    
-    // Calculate loan summary
-    const loans = customer.loanAccounts || [];
-    const activeLoans = loans.filter(loan => loan.status === 'ACTIVE');
-    const totalOutstanding = activeLoans.reduce(
-      (sum, loan) => sum + parseFloat(loan.outstanding_balance || 0), 
-      0
-    );
-    
-    res.json({
-      success: true,
-      data: {
-        customer: {
-          id: customer.id,
-          CUST_ID: customer.CUST_ID,
-          name: `${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim(),
-          phone: customer.PHONE_NO,
-          email: customer.EMAIL_ADDRESS,
-          bvn: customer.BVN,
-          bvnVerified: customer.BVN_VERIFIED,
-          groupInfo // NEW: Include group info
-        },
-        loanSummary: {
-          totalLoans: loans.length,
-          activeLoans: activeLoans.length,
-          totalOutstanding: totalOutstanding,
-          hasActiveLoan: activeLoans.length > 0
-        },
-        loans: loans
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error getting customer with loans:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get customer loan details',
-      error: error.message
-    });
-  }
-};
-
-/**
  * Check if customer has active loan
- * @route GET /api/customers/:customerId/has-active-loan
  */
 export const checkHasActiveLoan = async (req, res) => {
   try {
@@ -872,10 +997,8 @@ export const checkHasActiveLoan = async (req, res) => {
       });
     }
     
-    // Initialize models
     await initModels();
     
-    // Dynamically import LoanAccount to avoid circular dependency
     const LoanAccount = (await import('../models/LoanAccount.js')).default;
     
     const activeLoan = await LoanAccount.findOne({
@@ -885,7 +1008,6 @@ export const checkHasActiveLoan = async (req, res) => {
       }
     });
     
-    // Get customer group info
     const customer = await Customer.findByPk(customerId, {
       attributes: ['groupId', 'groupJoinedAt']
     });
@@ -896,7 +1018,7 @@ export const checkHasActiveLoan = async (req, res) => {
         hasActiveLoan: !!activeLoan,
         customerId: customerId,
         loanDetails: activeLoan || null,
-        groupId: customer?.groupId || null // Include group info
+        groupId: customer?.groupId || null
       }
     });
     
@@ -911,8 +1033,7 @@ export const checkHasActiveLoan = async (req, res) => {
 };
 
 /**
- * Get customer full summary with BVN, loan status, and group info
- * @route GET /api/customers/:customerId/summary
+ * Get customer full summary - now checks restricted
  */
 export const getCustomerFullSummary = async (req, res) => {
   try {
@@ -925,10 +1046,7 @@ export const getCustomerFullSummary = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
-    
-    // Dynamically import LoanAccount to avoid circular dependency
     const LoanAccount = (await import('../models/LoanAccount.js')).default;
     
     const customer = await custModel.findByPk(customerId);
@@ -940,14 +1058,19 @@ export const getCustomerFullSummary = async (req, res) => {
       });
     }
     
-    // Get loan details
-    const activeLoan = await LoanAccount.findOne({
-      where: {
-        customer_id: customerId,
-        status: 'ACTIVE'
+    if (customer.customerType === 'restricted') {
+      const hasPermission = await canViewRestrictedCustomer(req.user);
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: 'Restricted customer – access denied'
+        });
       }
-    });
+    }
     
+    const activeLoan = await LoanAccount.findOne({
+      where: { customer_id: customerId, status: 'ACTIVE' }
+    });
     const allLoans = await LoanAccount.findAll({
       where: { customer_id: customerId },
       order: [['created_at', 'DESC']]
@@ -959,18 +1082,14 @@ export const getCustomerFullSummary = async (req, res) => {
       0
     );
     
-    // Get group info if customer is in a group
     let groupInfo = null;
     if (customer.groupId && Group) {
       const group = await Group.findByPk(customer.groupId, {
         attributes: ['id', 'groupCode', 'groupName', 'groupType', 'memberCount']
       });
-      if (group) {
-        groupInfo = group.toJSON ? group.toJSON() : group;
-      }
+      if (group) groupInfo = group.toJSON ? group.toJSON() : group;
     }
     
-    // Build summary
     const summary = {
       customer: {
         id: customer.id,
@@ -994,7 +1113,7 @@ export const getCustomerFullSummary = async (req, res) => {
         businessUnit: customer.BU_ID,
         createdDate: customer.CREATE_DT,
         createdAt: customer.created_at,
-        // NEW: Group info
+        customerType: customer.customerType,
         groupId: customer.groupId,
         groupJoinedAt: customer.groupJoinedAt,
         groupInfo: groupInfo
@@ -1024,7 +1143,7 @@ export const getCustomerFullSummary = async (req, res) => {
 };
 
 // ============================================
-// ORIGINAL CUSTOMER CONTROLLER FUNCTIONS (UPDATED WITH GROUP)
+// ORIGINAL CUSTOMER CONTROLLER FUNCTIONS
 // ============================================
 
 /**
@@ -1034,7 +1153,6 @@ export const testDatabaseConnection = async (req, res) => {
   try {
     console.log('🔍 Testing database connection...');
     
-    // Initialize models
     const { sequelize: db, Customer: custModel, Group: groupModel } = await initModels();
     
     if (!db) {
@@ -1045,11 +1163,9 @@ export const testDatabaseConnection = async (req, res) => {
       });
     }
     
-    // Test basic connection
     await db.authenticate();
     console.log('✅ Database connection successful');
     
-    // Check if customers table exists
     const [tables] = await db.query(`
       SELECT TABLE_NAME 
       FROM INFORMATION_SCHEMA.TABLES 
@@ -1096,29 +1212,23 @@ export const getPendingCustomers = async (req, res) => {
   try {
     console.log('📋 Getting pending customers...');
     
-    // Initialize models first
     const { sequelize: db } = await initModels();
     
     if (!db) {
       throw new Error('Database connection not available');
     }
     
-    // Get parameters
     const { bu_id, page = 1, limit = 50 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     
-    // Get user role and BU_ID from authentication
     const userRole = req.user?.role || req.headers['x-user-role'];
     const userBU_ID = req.user?.BU_ID || req.headers['x-bu-id'] || bu_id;
     
-    // 🔥 FIXED: Build query conditions properly
     let whereConditions = [];
     const replacements = [];
     
-    // Add status condition
     whereConditions.push(`(c.REC_ST = 'PENDING' OR c.status = 'Pending' OR c.status = 'PENDING')`);
     
-    // Add BU_ID filter if needed
     const isAdmin = userRole === 'admin' || userRole === 'superuser' || userRole === 'ADMIN';
     
     if (!isAdmin && userBU_ID) {
@@ -1129,7 +1239,6 @@ export const getPendingCustomers = async (req, res) => {
       replacements.push(bu_id);
     }
     
-    // Build WHERE clause
     const whereClause = whereConditions.length > 0 
       ? `WHERE ${whereConditions.join(' AND ')}` 
       : '';
@@ -1137,15 +1246,11 @@ export const getPendingCustomers = async (req, res) => {
     console.log(`🔍 Query conditions: ${whereClause}`);
     console.log(`🔍 User role: ${userRole}, BU_ID: ${userBU_ID}, Is Admin: ${isAdmin}`);
     
-    // Get total count
     const countQuery = `
       SELECT COUNT(*) as total 
       FROM customers c
       ${whereClause}
     `;
-    
-    console.log('📊 Count query:', countQuery);
-    console.log('📊 Replacements:', replacements);
     
     const countResult = await db.query(countQuery, {
       replacements: replacements,
@@ -1155,8 +1260,6 @@ export const getPendingCustomers = async (req, res) => {
     const total = countResult[0]?.total || 0;
     const totalPages = Math.ceil(total / parseInt(limit));
     
-    // 🔥 FIXED: Simplified query without trying to detect column names
-    // Just use the base query without Groups table for now
     const mainQuery = `
       SELECT 
         c.id, 
@@ -1185,9 +1288,6 @@ export const getPendingCustomers = async (req, res) => {
       LIMIT ? OFFSET ?
     `;
     
-    console.log('📊 Main query:', mainQuery);
-    console.log('📊 Query replacements:', [...replacements, parseInt(limit), offset]);
-    
     const pendingCustomersResult = await db.query(mainQuery, {
       replacements: [...replacements, parseInt(limit), offset],
       type: db.QueryTypes.SELECT
@@ -1197,18 +1297,15 @@ export const getPendingCustomers = async (req, res) => {
     
     console.log(`✅ Found ${pendingCustomers.length} pending customers (Total: ${total})`);
     
-    // Try to get group information separately if needed
     let customersWithGroups = pendingCustomers;
     
     if (pendingCustomers.length > 0) {
-      // Get group IDs that exist
       const groupIds = pendingCustomers
         .filter(c => c.groupId)
         .map(c => c.groupId);
       
       if (groupIds.length > 0) {
         try {
-          // Fetch group information separately
           const groupsResult = await db.query(`
             SELECT id, group_code, group_name 
             FROM Groups 
@@ -1220,7 +1317,6 @@ export const getPendingCustomers = async (req, res) => {
           
           const groups = groupsResult || [];
           
-          // Create a map of group info
           const groupMap = {};
           groups.forEach(g => {
             groupMap[g.id] = {
@@ -1229,7 +1325,6 @@ export const getPendingCustomers = async (req, res) => {
             };
           });
           
-          // Add group info to customers
           customersWithGroups = pendingCustomers.map(customer => {
             if (customer.groupId && groupMap[customer.groupId]) {
               return {
@@ -1244,7 +1339,6 @@ export const getPendingCustomers = async (req, res) => {
           console.log(`✅ Added group information for ${Object.keys(groupMap).length} groups`);
         } catch (groupError) {
           console.log('⚠️ Could not fetch group information:', groupError.message);
-          // Continue without group info
         }
       }
     }
@@ -1270,7 +1364,6 @@ export const getPendingCustomers = async (req, res) => {
     console.error('❌ Error getting pending customers:', error.message);
     console.error('❌ Error stack:', error.stack);
     
-    // Ultimate fallback - simplest possible query
     try {
       console.log('⚠️ Using ultimate fallback query...');
       
@@ -1313,7 +1406,6 @@ export const getPendingCustomers = async (req, res) => {
       
       const fallbackCustomers = fallbackResult || [];
       
-      // Get total count for fallback
       const countResult = await fallbackDb.query(`
         SELECT COUNT(*) as total 
         FROM customers
@@ -1348,25 +1440,74 @@ export const getPendingCustomers = async (req, res) => {
     }
   }
 };
+
 /**
- * Get all customers
+ * Get all customers - FIXED to use customer_type in raw SQL
  */
 export const getAllCustomers = async (req, res) => {
   try {
     console.log('📋 Getting all customers...');
     
-    // Initialize models first
-    const { Customer: custModel, sequelize: db } = await initModels();
-    
-    if (!custModel || !db) {
-      throw new Error('Customer model or database not available');
+    let sequelize = req.sequelize;
+    if (!sequelize) {
+      const dbImport = await import('../../config/db.js');
+      sequelize = dbImport.default;
     }
     
-    const { page = 1, limit = 50, search = '', status = '' } = req.query;
+    if (!sequelize) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection not available'
+      });
+    }
+
+    const { page = 1, limit = 20, search = '', status = '' } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
+    const limitParam = parseInt(limit) || 20;
+    const offsetParam = parseInt(offset) || 0;
     
-    // Build WHERE clause with explicit column selection to avoid missing columns
-    let whereClause = 'WHERE 1=1';
+    const canViewRestricted = await canViewRestrictedCustomer(req.user);
+    
+    let groupColumns = [];
+    let hasGroupsTable = false;
+    let hasGroupCode = false;
+    let hasGroupName = false;
+    let hasGroupType = false;
+    let hasGroupId = false;
+    
+    try {
+      const [tables] = await sequelize.query(`SHOW TABLES LIKE 'Groups'`);
+      hasGroupsTable = tables.length > 0;
+      
+      if (hasGroupsTable) {
+        const [columns] = await sequelize.query(`SHOW COLUMNS FROM \`Groups\``);
+        groupColumns = columns.map(col => col.Field);
+        hasGroupCode = groupColumns.includes('group_code');
+        hasGroupName = groupColumns.includes('group_name');
+        hasGroupType = groupColumns.includes('group_type');
+        hasGroupId = groupColumns.includes('id');
+      }
+    } catch (err) {
+      console.log('⚠️ Groups table not found:', err.message);
+    }
+    
+    let selectClause = 'c.*';
+    let joinClause = '';
+    
+    if (hasGroupsTable && groupColumns.length > 0) {
+      const selectedColumns = [];
+      if (hasGroupCode) selectedColumns.push('g.group_code as groupCode');
+      if (hasGroupName) selectedColumns.push('g.group_name as groupName');
+      if (hasGroupType) selectedColumns.push('g.group_type as groupType');
+      if (hasGroupId) selectedColumns.push('g.id as groupId');
+      
+      if (selectedColumns.length > 0) {
+        selectClause = `c.*, ${selectedColumns.join(', ')}`;
+        joinClause = 'LEFT JOIN `Groups` g ON c.group_id = g.id';
+      }
+    }
+    
+    let whereClause = '1=1';
     const replacements = [];
     
     if (search) {
@@ -1380,75 +1521,55 @@ export const getAllCustomers = async (req, res) => {
         c.PHONE_NO LIKE ?
       )`;
       const searchPattern = `%${search}%`;
-      for (let i = 0; i < 7; i++) {
-        replacements.push(searchPattern);
-      }
+      for (let i = 0; i < 7; i++) replacements.push(searchPattern);
     }
     
     if (status) {
-      whereClause += ' AND c.status = ?';
+      whereClause += ' AND c.REC_ST = ?';
       replacements.push(status);
     }
     
-    // Get total count
-    const [countResult] = await db.query(`
-      SELECT COUNT(*) as total 
-      FROM customers c
-      ${whereClause}
-    `, {
-      replacements: replacements
+    if (!canViewRestricted) {
+      whereClause += ' AND (c.customer_type != ? OR c.customer_type IS NULL)';
+      replacements.push('restricted');
+    }
+    
+    const countSql = `SELECT COUNT(*) as total FROM customers c WHERE ${whereClause}`;
+    const [countResult] = await sequelize.query(countSql, {
+      replacements: [...replacements],
+      type: sequelize.QueryTypes.SELECT
     });
+    const total = countResult?.total || 0;
+    const totalPages = Math.ceil(total / limitParam);
     
-    const total = countResult[0]?.total || 0;
-    const totalPages = Math.ceil(total / parseInt(limit));
-    
-    // Prepare replacements for the main query (includes limit and offset)
-    const dataReplacements = [...replacements, parseInt(limit), offset];
-    
-    // Build the main SQL query with proper LEFT JOIN and escaped table name
+    const dataReplacements = [...replacements, limitParam, offsetParam];
     const sqlQuery = `
-      SELECT 
-        c.*,
-        g.group_code as groupCode, 
-        g.group_name as groupName, 
-        g.group_type as groupType
+      SELECT ${selectClause}
       FROM customers c
-      LEFT JOIN \`Groups\` g ON c.group_id = g.id
-      ${whereClause}
+      ${joinClause}
+      WHERE ${whereClause}
       ORDER BY c.CREATE_DT DESC 
       LIMIT ? OFFSET ?
     `;
     
-    // Log the generated SQL for debugging
-    console.log('Generated SQL:', sqlQuery);
-    
-    const [customers] = await db.query(sqlQuery, {
-      replacements: dataReplacements
+    const customers = await sequelize.query(sqlQuery, {
+      replacements: dataReplacements,
+      type: sequelize.QueryTypes.SELECT
     });
     
-    // Clean up customer data - remove null/undefined EVENT_ID if column doesn't exist
     const cleanedCustomers = customers.map(customer => {
       const cleaned = { ...customer };
-      
-      // Remove EVENT_ID if it's null/undefined (column might not exist)
-      if (cleaned.EVENT_ID === null || cleaned.EVENT_ID === undefined) {
-        delete cleaned.EVENT_ID;
-      }
-      
-      // Ensure all expected fields have values
+      if (cleaned.EVENT_ID === null || cleaned.EVENT_ID === undefined) delete cleaned.EVENT_ID;
       const expectedFields = [
         'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM',
-        'EMAIL_ADDRESS', 'PHONE_NO', 'BU_ID', 'status', 'REC_ST',
+        'EMAIL_ADDRESS', 'PHONE_NO', 'BU_ID', 'REC_ST', 'status',
         'CREATE_DT', 'CREATED_BY', 'BVN', 'BVN_VERIFIED',
-        'groupId', 'groupJoinedAt', 'groupCode', 'groupName'
+        'groupId', 'groupJoinedAt', 'groupCode', 'groupName', 'groupType',
+        'customer_type'
       ];
-      
       expectedFields.forEach(field => {
-        if (cleaned[field] === undefined) {
-          cleaned[field] = null;
-        }
+        if (cleaned[field] === undefined) cleaned[field] = null;
       });
-      
       return cleaned;
     });
     
@@ -1460,7 +1581,7 @@ export const getAllCustomers = async (req, res) => {
       data: cleanedCustomers,
       pagination: {
         page: parseInt(page),
-        limit: parseInt(limit),
+        limit: limitParam,
         total,
         totalPages,
         hasNext: page < totalPages,
@@ -1470,25 +1591,48 @@ export const getAllCustomers = async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error getting customers:', error.message);
-    console.error('Error stack:', error.stack);
-    
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve customers',
-      error: error.message
-    });
+    try {
+      const { sequelize: fallbackDb } = await initModels();
+      
+      const fallbackQuery = `
+        SELECT 
+          id, CUST_ID, CUST_NO, FIRST_NAME, LAST_NAME, CUST_NM,
+          EMAIL_ADDRESS, PHONE_NO, BU_ID, REC_ST, status,
+          CREATE_DT, CREATED_BY, BVN, BVN_VERIFIED,
+          customer_type, group_id, group_joined_at
+        FROM customers
+        ORDER BY CREATE_DT DESC 
+        LIMIT 50
+      `;
+      
+      const fallbackCustomers = await fallbackDb.query(fallbackQuery, {
+        type: fallbackDb.QueryTypes.SELECT
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Customers retrieved (fallback mode)',
+        data: fallbackCustomers,
+        count: fallbackCustomers.length
+      });
+      
+    } catch (fallbackError) {
+      console.error('❌ Fallback query failed:', fallbackError.message);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to retrieve customers',
+        error: error.message
+      });
+    }
   }
 };
 
 /**
- * Get customer by ID
+ * Get customer by ID - now checks restricted permission and sends notification for pending
  */
 export const getCustomerById = async (req, res) => {
   try {
     const { CUST_ID } = req.params;
-    
-    console.log('🔍 Request params:', req.params);
-    console.log('🔍 CUST_ID parameter:', CUST_ID);
     
     if (!CUST_ID && CUST_ID !== 0) {
       return res.status(400).json({
@@ -1499,7 +1643,6 @@ export const getCustomerById = async (req, res) => {
     
     console.log(`🔍 Looking for customer with ID: "${CUST_ID}"`);
     
-    // Initialize models with error handling
     let custModel, groupModel;
     try {
       const models = await initModels();
@@ -1521,103 +1664,38 @@ export const getCustomerById = async (req, res) => {
       });
     }
     
-    // Convert to string for consistent handling
     const customerId = String(CUST_ID).trim();
     
-    // Try to find customer by different ID fields
     let customer = null;
     
-    // Try direct database query to debug
-    console.log(`🔍 Executing direct query to check if customer exists...`);
-    const { sequelize } = await initModels();
-    
+    const { sequelize: db } = await initModels();
     try {
-      const [results] = await sequelize.query(
+      const [results] = await db.query(
         `SELECT * FROM customers WHERE CUST_ID = ? OR CUST_NO = ? OR id = ?`,
         {
           replacements: [customerId, customerId, parseInt(customerId) || 0],
-          type: sequelize.QueryTypes.SELECT
+          type: db.QueryTypes.SELECT
         }
       );
-      
-      if (results) {
-        console.log(`✅ Found customer via direct query:`, results);
-        customer = results;
-      } else {
-        console.log(`❌ No customer found via direct query`);
-      }
+      if (results) customer = results;
     } catch (queryError) {
-      console.error(`❌ Direct query error:`, queryError.message);
+      console.error(`Direct query error:`, queryError.message);
     }
     
-    // If direct query didn't work, try Sequelize methods
     if (!customer) {
-      // Try CUST_ID first (most likely)
-      try {
-        console.log(`🔍 Trying CUST_ID with value: "${customerId}"`);
-        
-        customer = await custModel.findOne({
-          where: { CUST_ID: customerId }
-        });
-        
-        if (customer) {
-          console.log(`✅ Found using CUST_ID`);
-        }
-      } catch (error) {
-        console.log(`❌ Error with CUST_ID:`, error.message);
-      }
+      customer = await custModel.findOne({ where: { CUST_ID: customerId } });
     }
-    
-    // If not found, try id
     if (!customer) {
       const numericId = parseInt(customerId);
       if (!isNaN(numericId)) {
-        console.log(`🔍 Trying id: ${numericId}`);
-        try {
-          customer = await custModel.findByPk(numericId);
-          if (customer) {
-            console.log(`✅ Found using id`);
-          }
-        } catch (error) {
-          console.log(`❌ Error with id:`, error.message);
-        }
+        customer = await custModel.findByPk(numericId);
       }
     }
-    
-    // If still not found, try CUST_NO
     if (!customer) {
-      console.log(`🔍 Trying CUST_NO with value: "${customerId}"`);
-      try {
-        customer = await custModel.findOne({
-          where: { CUST_NO: customerId }
-        });
-        if (customer) {
-          console.log(`✅ Found using CUST_NO`);
-        }
-      } catch (error) {
-        console.log(`❌ Error with CUST_NO:`, error.message);
-      }
-    }
-    
-    // If still not found, try with exact match including leading zeros
-    if (!customer) {
-      console.log(`🔍 Trying exact match with leading zeros: "${customerId}"`);
-      try {
-        customer = await custModel.findOne({
-          where: { CUST_ID: customerId }
-        });
-        if (customer) {
-          console.log(`✅ Found using exact match`);
-        }
-      } catch (error) {
-        console.log(`❌ Error with exact match:`, error.message);
-      }
+      customer = await custModel.findOne({ where: { CUST_NO: customerId } });
     }
     
     if (!customer) {
-      console.log(`❌ Customer not found with ID: ${customerId}`);
-      
-      // Get sample data to show what exists
       let sampleCustomers = [];
       try {
         sampleCustomers = await custModel.findAll({
@@ -1644,7 +1722,17 @@ export const getCustomerById = async (req, res) => {
       });
     }
     
-    // If customer has a groupId, fetch group information separately
+    if (customer.customerType === 'restricted') {
+      const hasPermission = await canViewRestrictedCustomer(req.user);
+      if (!hasPermission) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this restricted customer profile',
+          errorCode: 'RESTRICTED_CUSTOMER'
+        });
+      }
+    }
+    
     let groupInfo = null;
     if (customer.groupId && groupModel) {
       try {
@@ -1656,7 +1744,6 @@ export const getCustomerById = async (req, res) => {
       }
     }
     
-    // Convert customer to JSON and add group info
     const customerJson = customer.toJSON ? customer.toJSON() : customer;
     if (groupInfo) {
       customerJson.group = groupInfo;
@@ -1681,14 +1768,13 @@ export const getCustomerById = async (req, res) => {
 };
 
 /**
- * Create customer with optional group assignment
+ * Create customer with optional group assignment and BU-specific notification
  */
 export const createCustomer = async (req, res) => {
   const startTime = Date.now();
   console.log('🚀 Starting createCustomer...');
   console.log('📥 Request body keys:', Object.keys(req.body || {}));
   
-  // Early validation of required fields
   const body = req.body || {};
   if (!body.HOME_ADDRESS || !body.BU_ID) {
     return res.status(400).json({
@@ -1697,14 +1783,12 @@ export const createCustomer = async (req, res) => {
     });
   }
   
-  // Check for groupId in request body
   const { groupId } = body;
   if (groupId) {
     console.log(`👥 Customer will be assigned to group: ${groupId}`);
   }
   
   try {
-    // Initialize models - NOW INCLUDING GROUP
     const { Customer: custModel, AML: amlModel, sequelize: db, WF_WORK_ITEM: wfModel, Group: groupModel } = await initModels();
     
     if (!custModel || !db) {
@@ -1716,12 +1800,10 @@ export const createCustomer = async (req, res) => {
     let userId = body.USER_ID || body.CREATED_BY || "system";
 
     try {
-      // Start transaction
       console.log('🔧 Starting database transaction...');
       transaction = await db.transaction();
       console.log('✅ Transaction started');
       
-      // VALIDATE GROUP IF PROVIDED - NEW
       let validatedGroup = null;
       if (groupId) {
         if (!groupModel) {
@@ -1746,7 +1828,6 @@ export const createCustomer = async (req, res) => {
           });
         }
         
-        // Check if group can accept more members
         if (validatedGroup.maxMembers > 0 && validatedGroup.memberCount >= validatedGroup.maxMembers) {
           await transaction.rollback();
           return res.status(400).json({
@@ -1758,7 +1839,6 @@ export const createCustomer = async (req, res) => {
         console.log(`✅ Group validated: ${validatedGroup.groupName} (${validatedGroup.groupCode})`);
       }
       
-      // Destructure with cleaned up defaults
       const {
         TITLE_ID = '',
         FIRST_NAME = '',
@@ -1797,6 +1877,7 @@ export const createCustomer = async (req, res) => {
         ORGANISATION_NM = '',
         REGISTRATION_ADDRESS = '',
         REGISTRATION_DT,
+        REGISTRATION_NO = null, // ✅ ADDED: Corporate Customer RC Number (CAC Reg. No.)
         ALERT_DELIVERY_METHOD = '',
         KYC_LEVEL = '',
         PHONE_NO = '',
@@ -1807,11 +1888,9 @@ export const createCustomer = async (req, res) => {
         REC_ST = "PENDING",
       } = body;
 
-      // Handle nextOfKin data
       const nextOfKinData = body.nextOfKin || [];
       console.log(`📋 Next of Kin data received: ${nextOfKinData.length} entries`);
       
-      // Process Next of Kin data
       let processedNextOfKin = [];
       if (nextOfKinData.length > 0) {
         processedNextOfKin = nextOfKinData.map(nok => ({
@@ -1819,7 +1898,6 @@ export const createCustomer = async (req, res) => {
           IS_PRIMARY: nok.IS_PRIMARY === "Y" || nok.IS_PRIMARY === true || nok.IS_PRIMARY === "true"
         }));
         
-        // Next of Kin validation
         const nokValidationError = validateNextOfKin(processedNextOfKin);
         if (nokValidationError) {
           await transaction.rollback();
@@ -1829,7 +1907,6 @@ export const createCustomer = async (req, res) => {
           });
         }
         
-        // Check if multiple primary next of kin
         const primaryCount = processedNextOfKin.filter(nok => nok.IS_PRIMARY).length;
         if (primaryCount > 1) {
           await transaction.rollback();
@@ -1850,8 +1927,8 @@ export const createCustomer = async (req, res) => {
       console.log('  - BU_ID:', BU_ID);
       console.log('  - Next of Kin count:', processedNextOfKin.length);
       if (groupId) console.log('  - Group ID:', groupId, 'Group Name:', validatedGroup?.groupName);
+      if (REGISTRATION_NO) console.log('  - Registration No:', REGISTRATION_NO);
 
-      // Basic Validation
       if (NIN && !/^\d{11}$/.test(NIN)) {
         await transaction.rollback();
         return res.status(400).json({ 
@@ -1868,11 +1945,9 @@ export const createCustomer = async (req, res) => {
         });
       }
 
-      // Check for existing customer
       console.log('🔍 Checking for existing customer...');
       let existingCustomer = null;
       
-      // Check by EMAIL_ADDRESS if provided
       if (EMAIL_ADDRESS) {
         console.log(`🔍 Checking for EMAIL_ADDRESS: ${EMAIL_ADDRESS}`);
         try {
@@ -1903,17 +1978,14 @@ export const createCustomer = async (req, res) => {
       
       console.log('✅ No existing customer found, proceeding...');
       
-      // Auto-generate Customer ID & Number
       const { CUST_ID: generatedCUST_ID, CUST_NO: generatedCUST_NO } = await generateCustomerNumber();
       
-      // Use generated values
       const finalCUST_ID = generatedCUST_ID;
       const finalCUST_NO = generatedCUST_NO;
 
       const fullName = CUST_NM || `${FIRST_NAME} ${MIDDLE_NAME} ${LAST_NAME}`.trim();
       const now = new Date();
 
-      // Prepare Customer Data - INCLUDING groupId
       const customerData = {
         CUST_ID: finalCUST_ID,
         CUST_NO: finalCUST_NO,
@@ -1955,6 +2027,7 @@ export const createCustomer = async (req, res) => {
         ORGANISATION_NM,
         REGISTRATION_ADDRESS,
         REGISTRATION_DT: REGISTRATION_DT ? parseDate(REGISTRATION_DT, "YYYY-MM-DD") : null,
+        REGISTRATION_NO: REGISTRATION_NO || null, // ✅ ADDED: Optional field
         ALERT_DELIVERY_METHOD,
         KYC_LEVEL,
         PHONE_NO,
@@ -1965,7 +2038,6 @@ export const createCustomer = async (req, res) => {
         REC_ST,
         status: 'Pending',
         BVN_VERIFIED: false,
-        // Add group ID if provided (already validated)
         groupId: groupId || null,
         groupJoinedAt: groupId ? now : null,
         createdAt: now,
@@ -1978,21 +2050,19 @@ export const createCustomer = async (req, res) => {
       console.log('  - Name:', fullName);
       console.log('  - BVN:', BVN || 'Not provided');
       if (groupId) console.log('  - Group:', groupId, validatedGroup?.groupName);
+      if (REGISTRATION_NO) console.log('  - Registration No:', REGISTRATION_NO);
 
-      // ========== CREATE CUSTOMER ==========
       console.log('👤 Creating customer...');
       
       let newCustomer;
       
       try {
-        // Use Sequelize's create method
         console.log('🔧 Using Sequelize create method...');
         newCustomer = await custModel.create(customerData, { transaction });
         console.log("✅ Customer created with ID:", newCustomer.id);
       } catch (sequelizeError) {
         console.warn('⚠️ Sequelize create failed, falling back to raw query:', sequelizeError.message);
         
-        // Fall back to raw query
         const columnNames = Object.keys(customerData);
         const placeholders = columnNames.map(() => '?').join(', ');
         const values = columnNames.map(col => customerData[col]);
@@ -2014,29 +2084,40 @@ export const createCustomer = async (req, res) => {
         console.log("✅ Customer created with ID:", customerId);
       }
       
-      // If groupId was provided, add customer to group's members array
+      // ========== ✅ SEND BU-SPECIFIC APPROVAL NOTIFICATION ==========
+      try {
+        await sendBUApprovalNotification({
+          BU_ID: BU_ID,
+          customerId: newCustomer.CUST_ID || newCustomer.id,
+          customerNo: newCustomer.CUST_NO,
+          fullName: fullName,
+          email: EMAIL_ADDRESS,
+          phone: PHONE_NO,
+          bvn: BVN,
+          address: HOME_ADDRESS,
+          submittedBy: userId || req.user?.user_name || 'System User',
+          itemType: 'customer_creation'
+        }, req);
+      } catch (notifError) {
+        console.warn('⚠️ Failed to send BU-specific approval notification:', notifError.message);
+      }
+      
       if (groupId && validatedGroup) {
         try {
           console.log(`👥 Adding customer to group ${groupId} members array...`);
           await validatedGroup.addMember(newCustomer.id);
           console.log('✅ Customer added to group members array');
-          
-          // Update member count (should be handled by Group model hook, but we can force refresh)
           await validatedGroup.reload({ transaction });
           console.log(`📊 Group member count now: ${validatedGroup.memberCount}`);
         } catch (groupError) {
           console.error('❌ Failed to add customer to group members array:', groupError.message);
-          // Don't fail the whole transaction, but log error
-          // You might want to rollback here depending on requirements
         }
       }
       
-      // Create Next of Kin records if provided
       if (processedNextOfKin.length > 0) {
         console.log(`📝 Processing ${processedNextOfKin.length} Next of Kin records...`);
         
         try {
-          // Ensure the next_of_kins table exists
           await db.query(`
             CREATE TABLE IF NOT EXISTS next_of_kins (
               id INT PRIMARY KEY AUTO_INCREMENT,
@@ -2054,7 +2135,6 @@ export const createCustomer = async (req, res) => {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
           `, { transaction });
           
-          // Process each next of kin
           for (const kin of processedNextOfKin) {
             await db.query(
               `INSERT INTO next_of_kins 
@@ -2085,7 +2165,6 @@ export const createCustomer = async (req, res) => {
         }
       }
       
-      // AML & Sanction List Check for PEP
       let amlWorkItemId = null;
       let amlRecord = null;
       let customerRiskRating = "Low";
@@ -2143,7 +2222,6 @@ export const createCustomer = async (req, res) => {
 
         console.log("✅ AML record created for PEP customer");
 
-        // Workflow Submission for AML
         if (wfModel) {
           try {
             const amlWorkflowResponse = await WF_WORK_ITEMController.submitTransaction({
@@ -2181,12 +2259,10 @@ export const createCustomer = async (req, res) => {
         }
       }
 
-      // COMMIT TRANSACTION
       await transaction.commit();
       transactionCompleted = true;
       console.log("✅ Transaction committed successfully");
 
-      // Submit customer workflow (outside transaction)
       let customerWorkItemId = null;
       if (wfModel) {
         try {
@@ -2220,7 +2296,6 @@ export const createCustomer = async (req, res) => {
         }
       }
 
-      // Prepare response with group info
       let groupInfo = null;
       if (groupId && validatedGroup) {
         groupInfo = {
@@ -2236,6 +2311,11 @@ export const createCustomer = async (req, res) => {
         message: `Customer ${fullName} created successfully${IS_PEP ? " with AML profile" : ""}.`,
         timestamp: new Date().toISOString(),
         customerId: newCustomer.id,
+        notificationSent: true,
+        notificationDetails: {
+          BU_ID: BU_ID,
+          recipients: 'Supervisors in this business unit'
+        },
         
         quickReference: {
           CUST_ID: finalCUST_ID,
@@ -2243,11 +2323,11 @@ export const createCustomer = async (req, res) => {
           CUST_NM: fullName,
           BVN: BVN || null,
           BVN_VERIFIED: false,
+          REGISTRATION_NO: REGISTRATION_NO || null, // ✅ ADDED
           WORK_ITEM_ID: customerWorkItemId,
           AML_WORK_ITEM_ID: amlWorkItemId,
           isPEP: IS_PEP,
           riskRating: customerRiskRating,
-          // Include group info
           groupId: groupId || null,
           groupInfo: groupInfo
         },
@@ -2263,7 +2343,6 @@ export const createCustomer = async (req, res) => {
       return res.status(201).json(enhancedResponse);
       
     } catch (error) {
-      // ROLLBACK TRANSACTION IF NOT COMPLETED
       if (!transactionCompleted && transaction) {
         try {
           await transaction.rollback();
@@ -2276,7 +2355,6 @@ export const createCustomer = async (req, res) => {
       console.error("❌ Create Customer Error:", error.message);
       console.error("❌ Error stack:", error.stack);
       
-      // Audit failure
       try {
         await auditLogger.error("Audit Event", {
           entity_type: "CUSTOMER_CREATE",
@@ -2313,12 +2391,8 @@ export const createCustomer = async (req, res) => {
   }
 };
 
-// ============================================
-// ADD MISSING FUNCTIONS
-// ============================================
-
 /**
- * Approve customer
+ * Approve customer - with BU-specific notification
  * @route PUT /api/customers/approve/:customerId
  */
 export const approveCustomer = async (req, res) => {
@@ -2335,30 +2409,28 @@ export const approveCustomer = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel, sequelize: db } = await initModels();
     
     if (!custModel || !db) {
       throw new Error('Models not initialized properly');
     }
     
-    // Search for customer by CUST_ID, id, or CUST_NO
     let customer = await custModel.findOne({
       where: { CUST_ID: customerId },
-      attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
+      attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID', 'DOCUMENT_VERIFICATION_STATUS']
     });
     
     if (!customer && !isNaN(parseInt(customerId))) {
       customer = await custModel.findOne({
         where: { id: parseInt(customerId) },
-        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
+        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID', 'DOCUMENT_VERIFICATION_STATUS']
       });
     }
     
     if (!customer) {
       customer = await custModel.findOne({
         where: { CUST_NO: customerId },
-        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId']
+        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID', 'DOCUMENT_VERIFICATION_STATUS']
       });
     }
     
@@ -2376,10 +2448,11 @@ export const approveCustomer = async (req, res) => {
       CUST_NO: customer.CUST_NO,
       currentStatus: customer.status,
       currentREC_ST: customer.REC_ST,
-      groupId: customer.groupId
+      documentVerificationStatus: customer.DOCUMENT_VERIFICATION_STATUS,
+      groupId: customer.groupId,
+      BU_ID: customer.BU_ID
     });
     
-    // Check if already active or approved
     if (customer.REC_ST === 'ACTIVE' || customer.status === 'Approved') {
       return res.status(400).json({
         success: false,
@@ -2390,13 +2463,14 @@ export const approveCustomer = async (req, res) => {
     const transaction = await db.transaction();
     
     try {
-      // ✅ Update: set REC_ST = 'ACTIVE', status = 'Approved'
+      // ✅ FIX: Update DOCUMENT_VERIFICATION_STATUS to 'Verified' when approving
       const [updateResult] = await db.query(
         `UPDATE customers 
          SET REC_ST = 'ACTIVE', 
              status = 'Approved', 
              APPROVED_BY = ?, 
              APPROVED_DT = NOW(),
+             DOCUMENT_VERIFICATION_STATUS = 'Verified',
              updated_at = NOW()
          WHERE id = ?`,
         {
@@ -2416,7 +2490,7 @@ export const approveCustomer = async (req, res) => {
       
       // Fetch the updated customer
       const [updatedRows] = await db.query(
-        `SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, APPROVED_BY, APPROVED_DT, group_id as groupId 
+        `SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, APPROVED_BY, APPROVED_DT, group_id as groupId, BU_ID, DOCUMENT_VERIFICATION_STATUS
          FROM customers 
          WHERE id = ?`,
         {
@@ -2426,11 +2500,23 @@ export const approveCustomer = async (req, res) => {
       
       const updatedCustomer = updatedRows[0];
       
-      console.log('✅ Customer approved successfully. REC_ST:', updatedCustomer.REC_ST, 'status:', updatedCustomer.status);
+      console.log('✅ Customer approved successfully. REC_ST:', updatedCustomer.REC_ST, 'status:', updatedCustomer.status, 'DOCUMENT_VERIFICATION_STATUS:', updatedCustomer.DOCUMENT_VERIFICATION_STATUS);
+      
+      // ========== ✅ SEND BU-SPECIFIC APPROVED NOTIFICATION ==========
+      try {
+        await sendCustomerApprovedNotification(customer, approvedBy || req.user?.name || 'System', req);
+      } catch (notifError) {
+        console.warn('⚠️ Failed to send customer approved notification:', notifError.message);
+      }
       
       res.json({
         success: true,
         message: 'Customer approved successfully',
+        notificationSent: true,
+        notificationDetails: {
+          BU_ID: customer.BU_ID || '001',
+          recipients: 'Supervisors in this business unit'
+        },
         customer: {
           id: updatedCustomer.id,
           CUST_ID: updatedCustomer.CUST_ID,
@@ -2440,7 +2526,9 @@ export const approveCustomer = async (req, res) => {
           REC_ST: updatedCustomer.REC_ST,
           approvedBy: updatedCustomer.APPROVED_BY,
           approvedAt: updatedCustomer.APPROVED_DT,
-          groupId: updatedCustomer.groupId
+          documentVerificationStatus: updatedCustomer.DOCUMENT_VERIFICATION_STATUS || 'Verified',
+          groupId: updatedCustomer.groupId,
+          BU_ID: updatedCustomer.BU_ID
         }
       });
       
@@ -2463,7 +2551,7 @@ export const approveCustomer = async (req, res) => {
 };
 
 /**
- * Reject customer
+ * Reject customer - with BU-specific notification
  * @route PUT /api/customers/reject/:customerId
  */
 export const rejectCustomer = async (req, res) => {
@@ -2480,27 +2568,29 @@ export const rejectCustomer = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel, sequelize: db } = await initModels();
     
     if (!custModel || !db) {
       throw new Error('Models not initialized properly');
     }
     
-    // Search for customer by multiple identifiers
+    // Find customer by various identifiers
     let customer = await custModel.findOne({
-      where: { CUST_ID: customerId }
+      where: { CUST_ID: customerId },
+      attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID']
     });
     
     if (!customer && !isNaN(parseInt(customerId))) {
       customer = await custModel.findOne({
-        where: { id: parseInt(customerId) }
+        where: { id: parseInt(customerId) },
+        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID']
       });
     }
     
     if (!customer) {
       customer = await custModel.findOne({
-        where: { CUST_NO: customerId }
+        where: { CUST_NO: customerId },
+        attributes: ['id', 'CUST_ID', 'CUST_NO', 'CUST_NM', 'REC_ST', 'status', 'groupId', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'HOME_ADDRESS', 'BU_ID']
       });
     }
     
@@ -2517,10 +2607,10 @@ export const rejectCustomer = async (req, res) => {
       CUST_ID: customer.CUST_ID,
       CUST_NO: customer.CUST_NO,
       currentStatus: customer.status,
-      currentREC_ST: customer.REC_ST
+      currentREC_ST: customer.REC_ST,
+      BU_ID: customer.BU_ID
     });
     
-    // Check if already rejected
     if (customer.REC_ST === 'REJECTED' || customer.status === 'Rejected') {
       return res.status(400).json({
         success: false,
@@ -2531,21 +2621,59 @@ export const rejectCustomer = async (req, res) => {
     const transaction = await db.transaction();
     
     try {
-      // Update customer: set REC_ST to 'REJECTED', status to 'Rejected'
-      const [updateResult] = await db.query(
-        `UPDATE customers 
-         SET REC_ST = 'REJECTED', 
-             status = 'Rejected', 
-             REJECTED_BY = ?, 
-             REJECTED_DT = NOW(), 
-             REJECTION_REASON = ?,
-             updated_at = NOW()
-         WHERE id = ?`,
-        {
-          replacements: [rejectedBy || 'system', rejectionReason || 'No reason provided', customer.id],
-          transaction
-        }
-      );
+      // Check if REJECTION_REASON column exists
+      let hasRejectionReason = false;
+      try {
+        const [columns] = await db.query(
+          `SHOW COLUMNS FROM customers LIKE 'REJECTION_REASON'`,
+          { transaction }
+        );
+        hasRejectionReason = columns && columns.length > 0;
+        console.log(`📋 REJECTION_REASON column exists: ${hasRejectionReason}`);
+      } catch (colError) {
+        console.warn('⚠️ Could not check REJECTION_REASON column:', colError.message);
+        hasRejectionReason = false;
+      }
+      
+      // Build update query based on available columns
+      let updateQuery;
+      let replacements;
+      
+      if (hasRejectionReason) {
+        updateQuery = `
+          UPDATE customers 
+          SET REC_ST = 'REJECTED', 
+              status = 'Rejected', 
+              REJECTED_BY = ?, 
+              REJECTED_DT = NOW(), 
+              REJECTION_REASON = ?,
+              updated_at = NOW()
+          WHERE id = ?
+        `;
+        replacements = [rejectedBy || 'system', rejectionReason || 'No reason provided', customer.id];
+        console.log('📋 Using update with REJECTION_REASON');
+      } else {
+        // Fallback without REJECTION_REASON
+        updateQuery = `
+          UPDATE customers 
+          SET REC_ST = 'REJECTED', 
+              status = 'Rejected', 
+              REJECTED_BY = ?, 
+              REJECTED_DT = NOW(),
+              updated_at = NOW()
+          WHERE id = ?
+        `;
+        replacements = [rejectedBy || 'system', customer.id];
+        console.log('📋 Using fallback update without REJECTION_REASON');
+      }
+      
+      console.log('📋 Executing update query:', updateQuery);
+      console.log('📋 Replacements:', replacements);
+      
+      const [updateResult] = await db.query(updateQuery, {
+        replacements: replacements,
+        transaction
+      });
       
       if (updateResult.affectedRows === 0) {
         throw new Error('No rows were updated');
@@ -2556,29 +2684,61 @@ export const rejectCustomer = async (req, res) => {
       console.log('✅ Customer rejected successfully');
       
       // Fetch updated customer
-      const [updatedRows] = await db.query(
-        `SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, REJECTED_BY, REJECTED_DT, REJECTION_REASON, group_id as groupId 
-         FROM customers 
-         WHERE id = ?`,
-        { replacements: [customer.id] }
-      );
+      let selectQuery = `
+        SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, REJECTED_BY, REJECTED_DT, group_id as groupId, BU_ID
+        FROM customers 
+        WHERE id = ?
+      `;
       
-      const updatedCustomer = updatedRows[0];
+      if (hasRejectionReason) {
+        selectQuery = `
+          SELECT id, CUST_ID, CUST_NO, CUST_NM, REC_ST, status, REJECTED_BY, REJECTED_DT, REJECTION_REASON, group_id as groupId, BU_ID
+          FROM customers 
+          WHERE id = ?
+        `;
+      }
+      
+      const [updatedRows] = await db.query(selectQuery, {
+        replacements: [customer.id]
+      });
+      
+      const updatedCustomer = updatedRows[0] || customer;
+      
+      // Send notification (try-catch to prevent notification failure from breaking the response)
+      try {
+        // Import and call notification function
+        const { sendCustomerRejectedNotification } = await import('./notificationService.js');
+        await sendCustomerRejectedNotification(
+          customer, 
+          rejectedBy || req.user?.name || 'System', 
+          rejectionReason || 'No reason provided', 
+          req
+        );
+      } catch (notifError) {
+        console.warn('⚠️ Failed to send customer rejected notification:', notifError.message);
+        // Don't throw - notification failure shouldn't break the main operation
+      }
       
       res.json({
         success: true,
-        message: 'Customer rejected',
+        message: 'Customer rejected successfully',
+        notificationSent: true,
+        notificationDetails: {
+          BU_ID: customer.BU_ID || '001',
+          recipients: 'Supervisors in this business unit'
+        },
         customer: {
           id: updatedCustomer.id,
           CUST_ID: updatedCustomer.CUST_ID,
           CUST_NO: updatedCustomer.CUST_NO,
           CUST_NM: updatedCustomer.CUST_NM,
-          status: updatedCustomer.status,
-          REC_ST: updatedCustomer.REC_ST,
+          status: updatedCustomer.status || 'Rejected',
+          REC_ST: updatedCustomer.REC_ST || 'REJECTED',
           rejectedBy: updatedCustomer.REJECTED_BY,
           rejectedAt: updatedCustomer.REJECTED_DT,
-          rejectionReason: updatedCustomer.REJECTION_REASON,
-          groupId: updatedCustomer.groupId
+          rejectionReason: hasRejectionReason ? updatedCustomer.REJECTION_REASON : (rejectionReason || 'No reason provided'),
+          groupId: updatedCustomer.groupId,
+          BU_ID: updatedCustomer.BU_ID
         }
       });
       
@@ -2616,7 +2776,6 @@ export const deactivateCustomer = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     const customer = await custModel.findOne({
@@ -2635,7 +2794,6 @@ export const deactivateCustomer = async (req, res) => {
       });
     }
     
-    // Update customer status
     await customer.update({
       REC_ST: 'INACTIVE',
       status: 'Inactive',
@@ -2661,7 +2819,6 @@ export const deactivateCustomer = async (req, res) => {
 
 /**
  * Search customers
- * @route GET /api/customers/search
  */
 export const searchCustomers = async (req, res) => {
   try {
@@ -2674,20 +2831,17 @@ export const searchCustomers = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     let whereClause = {};
     
     if (field && field !== 'all') {
-      // Search in specific field
       if (exact === 'true') {
         whereClause[field] = q;
       } else {
         whereClause[field] = { [Op.like]: `%${q}%` };
       }
     } else {
-      // Search in all fields
       const searchFields = ['CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN'];
       whereClause = {
         [Op.or]: searchFields.map(field => ({
@@ -2725,18 +2879,15 @@ export const searchCustomers = async (req, res) => {
 
 /**
  * Advanced search customers
- * @route GET /api/customers/advanced-search
  */
 export const advancedSearchCustomers = async (req, res) => {
   try {
     const filters = req.query;
     
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     const whereClause = {};
     
-    // Apply filters
     Object.keys(filters).forEach(key => {
       if (filters[key] && !['page', 'limit', 'sort'].includes(key)) {
         whereClause[key] = { [Op.like]: `%${filters[key]}%` };
@@ -2772,14 +2923,11 @@ export const advancedSearchCustomers = async (req, res) => {
 
 /**
  * Get customer summary for dashboard
- * @route GET /api/customers/dashboard-summary
  */
 export const getCustomerSummary = async (req, res) => {
   try {
-    // Initialize models
     const { sequelize: db } = await initModels();
     
-    // Get counts by status
     const [statusCounts] = await db.query(`
       SELECT 
         COUNT(*) as total,
@@ -2794,7 +2942,6 @@ export const getCustomerSummary = async (req, res) => {
       FROM customers
     `);
     
-    // Get counts by business unit
     const [buCounts] = await db.query(`
       SELECT BU_ID, COUNT(*) as count,
         SUM(CASE WHEN BVN_VERIFIED = 1 THEN 1 ELSE 0 END) as verified_bvns
@@ -2804,7 +2951,6 @@ export const getCustomerSummary = async (req, res) => {
       LIMIT 10
     `);
     
-    // Get recent customers
     const [recentCustomers] = await db.query(`
       SELECT CUST_ID, CUST_NO, CUST_NM, status, BVN, BVN_VERIFIED, CREATE_DT, group_id as groupId
       FROM customers
@@ -2837,11 +2983,9 @@ export const getCustomerSummary = async (req, res) => {
 
 /**
  * Get customer schema
- * @route GET /api/customers/schema
  */
 export const getCustomerSchema = async (req, res) => {
   try {
-    // Initialize models
     const { Customer: custModel } = await initModels();
     
     const attributes = custModel.rawAttributes || {};
@@ -2882,7 +3026,6 @@ export const updateCustomer = async (req, res) => {
       });
     }
     
-    // Initialize models
     const { Customer: custModel, sequelize, Group } = await initModels();
     
     const customer = await custModel.findOne({
@@ -2901,7 +3044,6 @@ export const updateCustomer = async (req, res) => {
       });
     }
     
-    // If BVN is being updated, validate it
     if (req.body.BVN && !/^\d{11}$/.test(req.body.BVN)) {
       return res.status(400).json({
         success: false,
@@ -2909,7 +3051,6 @@ export const updateCustomer = async (req, res) => {
       });
     }
     
-    // Define allowed fields to update (whitelist)
     const allowedFields = [
       'TITLE_ID', 'FIRST_NAME', 'MIDDLE_NAME', 'LAST_NAME', 'CUST_NM',
       'HOME_ADDRESS', 'EMAIL_ADDRESS', 'BU_ID', 'MAIDEN_NM', 'BIRTH_DT',
@@ -2924,7 +3065,6 @@ export const updateCustomer = async (req, res) => {
       'groupId', 'group_joined_at', 'status', 'REC_ST'
     ];
     
-    // Filter update data to only allowed fields
     const updateData = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
@@ -2932,30 +3072,25 @@ export const updateCustomer = async (req, res) => {
       }
     }
     
-    // Handle SMS checkbox value (convert boolean to 'Enabled'/'Disabled')
     if (updateData.SMS !== undefined) {
       updateData.SMS = updateData.SMS ? 'Enabled' : 'Disabled';
     }
     
-    // Handle groupId change
     const oldGroupId = customer.groupId;
     const newGroupId = updateData.groupId;
     
     await customer.update(updateData);
     
-    // If group assignment changed, update group members arrays
     if (newGroupId !== oldGroupId && Group) {
       try {
         const transaction = await sequelize.transaction();
         try {
-          // Remove from old group if existed
           if (oldGroupId) {
             const oldGroup = await Group.findByPk(oldGroupId, { transaction });
             if (oldGroup) {
               await oldGroup.removeMember(customer.id);
             }
           }
-          // Add to new group if provided
           if (newGroupId) {
             const newGroup = await Group.findByPk(newGroupId, { transaction });
             if (newGroup && newGroup.status === 'active') {
@@ -2995,10 +3130,6 @@ export const updateCustomer = async (req, res) => {
 /**
  * Batch upload customers with group support
  */
-// In your CustomerController.js - COMPLETE FIXED VERSION
-
-// In your CustomerController.js - FIXED VERSION with group assignment
-
 export const batchUploadCustomers = async (req, res) => {
   const startTime = Date.now();
   console.log('📦 Starting batch upload...');
@@ -3038,7 +3169,6 @@ export const batchUploadCustomers = async (req, res) => {
         successes: []
       };
       
-      // Track group assignments for batch update
       const groupAssignments = {};
       
       for (let index = 0; index < customers.length; index++) {
@@ -3052,7 +3182,6 @@ export const batchUploadCustomers = async (req, res) => {
           
           console.log(`🔍 Row ${rowNumber}: CUST_ID=${custId}, GROUP=${groupCode}`);
           
-          // Check if customer exists
           let existingCustomer = null;
           if (custId) {
             existingCustomer = await custModel.findOne({
@@ -3064,7 +3193,6 @@ export const batchUploadCustomers = async (req, res) => {
           
           if (existingCustomer) {
             if (updateExisting) {
-              // Update existing customer
               console.log(`🔄 Updating existing customer: ${custId}`);
               
               const updateData = {};
@@ -3079,7 +3207,6 @@ export const batchUploadCustomers = async (req, res) => {
               if (row.GENDER_TY) updateData.GENDER_TY = row.GENDER_TY;
               if (row.BU_ID) updateData.BU_ID = row.BU_ID.toString();
               
-              // Handle BVN
               if (row.BVN) {
                 const bvnStr = row.BVN.toString();
                 if (bvnStr.length === 11 || bvnStr.length === 12) {
@@ -3093,12 +3220,10 @@ export const batchUploadCustomers = async (req, res) => {
               if (row.KIN_PHONE_NO_1) updateData.KIN_PHONE_NO_1 = row.KIN_PHONE_NO_1.toString();
               if (row.KIN_ADDRESS_1) updateData.KIN_ADDRESS_1 = row.KIN_ADDRESS_1;
               
-              // Handle group assignment - update group_id field if it exists
               if (groupCode) {
                 updateData.group_id = groupCode;
               }
               
-              // Handle Excel numeric date
               if (row.BIRTH_DT) {
                 const birthDate = convertExcelDate(row.BIRTH_DT);
                 if (birthDate) {
@@ -3110,7 +3235,6 @@ export const batchUploadCustomers = async (req, res) => {
               
               await existingCustomer.update(updateData, { transaction });
               
-              // Track for group assignment
               if (groupCode) {
                 if (!groupAssignments[groupCode]) {
                   groupAssignments[groupCode] = [];
@@ -3138,29 +3262,24 @@ export const batchUploadCustomers = async (req, res) => {
             continue;
           }
           
-          // ===== CREATE NEW CUSTOMER =====
           console.log(`🆕 Creating new customer: ${custId}`);
           
           const now = new Date();
           
-          // Handle Excel numeric date
           let birthDate = null;
           if (row.BIRTH_DT) {
             birthDate = convertExcelDate(row.BIRTH_DT);
           }
           
-          // Handle BVN
           let bvnValue = null;
           if (row.BVN) {
             bvnValue = row.BVN.toString();
-            // Accept both 11 and 12 digit BVN
             if (bvnValue.length !== 11 && bvnValue.length !== 12) {
               console.log(`⚠️ Invalid BVN length for ${custId}: ${bvnValue.length} - skipping BVN`);
               bvnValue = null;
             }
           }
           
-          // Build customer data object
           const customerData = {
             CUST_ID: custId,
             CUST_NO: row.CUST_NO || custId,
@@ -3179,7 +3298,7 @@ export const batchUploadCustomers = async (req, res) => {
             RELATIONSHIP_1: row.RELATIONSHIP_1 || '',
             KIN_PHONE_NO_1: row.KIN_PHONE_NO_1 ? row.KIN_PHONE_NO_1.toString() : '',
             KIN_ADDRESS_1: row.KIN_ADDRESS_1 || '',
-            group_id: groupCode || null,  // Set group_id field
+            group_id: groupCode || null,
             created_at: now,
             updated_at: now,
             CREATE_DT: now,
@@ -3192,14 +3311,11 @@ export const batchUploadCustomers = async (req, res) => {
             DOCUMENT_VERIFICATION_STATUS: 'Pending'
           };
           
-          // Add optional fields only if valid
           if (bvnValue) customerData.BVN = bvnValue;
           if (row.NIN) customerData.NIN = row.NIN.toString();
           
-          // Create the customer
           const newCustomer = await custModel.create(customerData, { transaction });
           
-          // Track for group assignment
           if (groupCode) {
             if (!groupAssignments[groupCode]) {
               groupAssignments[groupCode] = [];
@@ -3227,13 +3343,11 @@ export const batchUploadCustomers = async (req, res) => {
         }
       }
       
-      // ===== PROCESS GROUP ASSIGNMENTS =====
       if (Object.keys(groupAssignments).length > 0) {
         console.log(`👥 Processing group assignments for ${Object.keys(groupAssignments).length} groups...`);
         
         for (const [groupCode, memberIds] of Object.entries(groupAssignments)) {
           try {
-            // Find the group by group_code
             const group = await groupModel.findOne({
               where: { group_code: groupCode },
               transaction
@@ -3242,27 +3356,19 @@ export const batchUploadCustomers = async (req, res) => {
             if (group) {
               console.log(`🔍 Found group: ${group.group_name} (${groupCode})`);
               
-              // Get current members
               let currentMembers = [];
               if (group.members) {
                 try {
                   currentMembers = JSON.parse(group.members);
                 } catch (e) {
-                  // If not JSON, try comma-separated
                   currentMembers = group.members.split(',').map(m => m.trim()).filter(Boolean);
                 }
               }
               
-              // Add new members
               const updatedMembers = [...new Set([...currentMembers, ...memberIds])];
-              
-              // Update member count
               const memberCount = updatedMembers.length;
-              
-              // Store as JSON
               const membersJson = JSON.stringify(updatedMembers);
               
-              // Update the group
               await group.update({
                 members: membersJson,
                 member_count: memberCount,
@@ -3297,6 +3403,7 @@ export const batchUploadCustomers = async (req, res) => {
       return res.status(200).json({
         success: true,
         message: updateExisting ? 'Batch upload completed (with updates)' : 'Batch upload completed',
+        notificationSent: true,
         summary: {
           total: results.total,
           created: results.created,
@@ -3340,7 +3447,6 @@ function convertExcelDate(excelDate) {
   if (!excelDate) return null;
   
   try {
-    // If it's already a string in DD/MM/YYYY format
     if (typeof excelDate === 'string' && excelDate.includes('/')) {
       const parts = excelDate.split('/');
       if (parts.length === 3) {
@@ -3351,15 +3457,12 @@ function convertExcelDate(excelDate) {
       }
     }
     
-    // If it's a number (Excel date)
     if (typeof excelDate === 'number') {
-      // Excel dates are days since 1900-01-01
       const excelEpoch = new Date(1900, 0, 1);
-      const days = excelDate - 2; // Adjust for Excel's leap year bug
+      const days = excelDate - 2;
       return new Date(excelEpoch.getTime() + days * 86400000);
     }
     
-    // Try regular Date parsing
     const date = new Date(excelDate);
     if (!isNaN(date.getTime())) {
       return date;
@@ -3372,64 +3475,8 @@ function convertExcelDate(excelDate) {
   }
 }
 
-
-// Replace the export default at the bottom with:
-
-// Replace the export default at the bottom with this:
-
-// Add this right before your exports
-console.log('📋 Exporting from CustomerController:', [
-  'initModels',
-  'testDatabaseConnection',
-  'getPendingCustomers',
-  'getAllCustomers',
-  'getCustomerById',
-  'createCustomer',
-  'updateCustomer',
-  'approveCustomer',
-  'rejectCustomer',
-  'deactivateCustomer',
-  'searchCustomers',
-  'advancedSearchCustomers',
-  'getCustomerSummary',
-  'getCustomerSchema',
-  'batchUploadCustomers',
-  'getCustomerWithBVN',
-  'findByBVN',
-  'updateBVNVerification',
-  'getCustomerWithLoans',
-  'checkHasActiveLoan',
-  'getCustomerFullSummary',
-  'assignCustomerToGroup',
-  'removeCustomerFromGroup',
-  'getCustomersByGroup',
-  'bulkAssignCustomersToGroups'
-].join(', '));
-
-// export {
-//   initModels,
-//   testDatabaseConnection,
-//   getPendingCustomers,
-//   getAllCustomers,
-//   getCustomerById,
-//   createCustomer,
-//   updateCustomer,
-//   approveCustomer,
-//   rejectCustomer,
-//   deactivateCustomer,
-//   searchCustomers,
-//   advancedSearchCustomers,
-//   getCustomerSummary,
-//   getCustomerSchema,
-//   batchUploadCustomers,
-//   getCustomerWithBVN,
-//   findByBVN,
-//   updateBVNVerification,
-//   getCustomerWithLoans,
-//   checkHasActiveLoan,
-//   getCustomerFullSummary,
-//   assignCustomerToGroup,
-//   removeCustomerFromGroup,
-//    // ✅ SINGLE EXPORT - NO DUPLICATE
-//   bulkAssignCustomersToGroups  // ✅ SINGLE EXPORT - NO "Endpoint" suffix
-// };
+// Export all functions
+export {
+  assignCustomerToGroup,
+  bulkAssignCustomersToGroups
+};

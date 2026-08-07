@@ -1,5 +1,5 @@
 ﻿// models/WFWorkItem.js
-import { DataTypes } from 'sequelize';
+import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/sequelize.js';
 
 export const STATUS = {
@@ -228,11 +228,11 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     comment: 'Parent Work Item ID'
   },
   ENTITY_REF: {
-  type: DataTypes.STRING(100),
-  allowNull: true,
-  field: 'ENTITY_REF',
-  comment: 'Entity Reference (e.g., account number)'
-},
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    field: 'ENTITY_REF',
+    comment: 'Entity Reference (e.g., account number)'
+  },
   slaBreach: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -267,8 +267,9 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
 }, {
   tableName: 'wf_work_items',
   timestamps: true,
-  createdAt: 'CREATED_AT',
-  updatedAt: 'UPDATED_AT',
+  // ✅ FIXED: Use correct field names - NO typos!
+  createdAt: 'CREATE_DT',      // ✅ Use CREATE_DT which exists in your model
+  updatedAt: 'SYS_CREATE_TS',  // ✅ Use SYS_CREATE_TS which exists in your model
   hooks: {
     beforeCreate: (workItem) => {
       // Sync status and WAIT_ST
@@ -326,11 +327,11 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     },
     {
       name: 'idx_status',
-      fields: ['status']
+      fields: ['STATUS']
     },
     {
       name: 'idx_priority',
-      fields: ['priority']
+      fields: ['PRIORITY']
     },
     {
       name: 'idx_target_user_role',
@@ -355,15 +356,15 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     // Composite indexes for common queries
     {
       name: 'idx_status_priority',
-      fields: ['status', 'priority']
+      fields: ['STATUS', 'PRIORITY']
     },
     {
       name: 'idx_cust_status',
-      fields: ['CUST_ID', 'status']
+      fields: ['CUST_ID', 'STATUS']
     },
     {
       name: 'idx_user_status',
-      fields: ['TARGET_USER_ROLE_ID', 'status']
+      fields: ['TARGET_USER_ROLE_ID', 'STATUS']
     },
     {
       name: 'idx_item_ref',
@@ -376,7 +377,7 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
 WFWorkItem.findByStatus = async function(status, options = {}) {
   const defaults = {
     where: { status },
-    order: [['priority', 'DESC'], ['DEADLINE_TM', 'ASC']]
+    order: [['PRIORITY', 'DESC'], ['DEADLINE_TM', 'ASC']]
   };
   return await this.findAll({ ...defaults, ...options });
 };
@@ -385,9 +386,9 @@ WFWorkItem.findByUserRole = async function(userRole, options = {}) {
   const defaults = {
     where: { 
       TARGET_USER_ROLE_ID: userRole,
-      status: 'PENDING'
+      STATUS: 'PENDING'
     },
-    order: [['priority', 'DESC'], ['DEADLINE_TM', 'ASC']]
+    order: [['PRIORITY', 'DESC'], ['DEADLINE_TM', 'ASC']]
   };
   return await this.findAll({ ...defaults, ...options });
 };
@@ -395,7 +396,7 @@ WFWorkItem.findByUserRole = async function(userRole, options = {}) {
 WFWorkItem.findByCustomer = async function(customerId, options = {}) {
   const defaults = {
     where: { CUST_ID: customerId },
-    order: [['CREATED_AT', 'DESC']]
+    order: [['CREATE_DT', 'DESC']]
   };
   return await this.findAll({ ...defaults, ...options });
 };
@@ -405,7 +406,7 @@ WFWorkItem.findOverdue = async function() {
   return await this.findAll({
     where: {
       DEADLINE_TM: { [Op.lt]: now },
-      status: 'PENDING'
+      STATUS: 'PENDING'
     },
     order: [['DEADLINE_TM', 'ASC']]
   });
@@ -414,25 +415,25 @@ WFWorkItem.findOverdue = async function() {
 WFWorkItem.findHighPriority = async function() {
   return await this.findAll({
     where: {
-      priority: { [Op.in]: ['HIGH', 'CRITICAL'] },
-      status: 'PENDING'
+      PRIORITY: { [Op.in]: ['HIGH', 'CRITICAL'] },
+      STATUS: 'PENDING'
     },
-    order: [['priority', 'DESC'], ['DEADLINE_TM', 'ASC']]
+    order: [['PRIORITY', 'DESC'], ['DEADLINE_TM', 'ASC']]
   });
 };
 
 WFWorkItem.countByStatus = async function() {
   const result = await this.findAll({
     attributes: [
-      'status',
+      'STATUS',
       [sequelize.fn('COUNT', sequelize.col('WORK_ITEM_ID')), 'count']
     ],
-    group: ['status'],
+    group: ['STATUS'],
     raw: true
   });
   
   return result.reduce((acc, item) => {
-    acc[item.status] = item.count;
+    acc[item.STATUS] = item.count;
     return acc;
   }, {});
 };
@@ -444,7 +445,7 @@ WFWorkItem.paginate = async function(page = 1, limit = 10, filters = {}) {
     where: filters,
     limit,
     offset,
-    order: [['CREATED_AT', 'DESC']]
+    order: [['CREATE_DT', 'DESC']]
   });
   
   return {
@@ -469,38 +470,38 @@ WFWorkItem.prototype.assignTo = async function(userRole) {
 
 WFWorkItem.prototype.complete = async function(comments = '') {
   return await this.update({
-    status: 'COMPLETED',
+    STATUS: 'COMPLETED',
     WAIT_ST: 'COMPLETED',
     REC_ST: 'Completed',
-    comments: this.comments ? `${this.comments}\n${comments}` : comments,
+    COMMENTS: this.COMMENTS ? `${this.COMMENTS}\n${comments}` : comments,
     actualResolutionTime: this.calculateResolutionTime()
   });
 };
 
 WFWorkItem.prototype.approve = async function(comments = '') {
   return await this.update({
-    status: 'APPROVED',
+    STATUS: 'APPROVED',
     WAIT_ST: 'APPROVED',
     REC_ST: 'Approved',
-    comments: this.comments ? `${this.comments}\n${comments}` : comments
+    COMMENTS: this.COMMENTS ? `${this.COMMENTS}\n${comments}` : comments
   });
 };
 
 WFWorkItem.prototype.reject = async function(comments = '') {
   return await this.update({
-    status: 'REJECTED',
+    STATUS: 'REJECTED',
     WAIT_ST: 'REJECTED',
     REC_ST: 'Rejected',
-    comments: this.comments ? `${this.comments}\n${comments}` : comments
+    COMMENTS: this.COMMENTS ? `${this.COMMENTS}\n${comments}` : comments
   });
 };
 
 WFWorkItem.prototype.escalate = async function(level = 1) {
   return await this.update({
-    isEscalated: true,
-    escalationLevel: level,
-    priority: level > 2 ? 'CRITICAL' : 'HIGH',
-    comments: this.comments ? `${this.comments}\nEscalated to level ${level}` : `Escalated to level ${level}`
+    IS_ESCALATED: true,
+    ESCALATION_LEVEL: level,
+    PRIORITY: level > 2 ? 'CRITICAL' : 'HIGH',
+    COMMENTS: this.COMMENTS ? `${this.COMMENTS}\nEscalated to level ${level}` : `Escalated to level ${level}`
   });
 };
 
@@ -518,7 +519,7 @@ WFWorkItem.prototype.isOverdue = function() {
   
   const deadline = new Date(this.DEADLINE_TM);
   const now = new Date();
-  return now > deadline && this.status === 'PENDING';
+  return now > deadline && this.STATUS === 'PENDING';
 };
 
 WFWorkItem.prototype.daysUntilDue = function() {

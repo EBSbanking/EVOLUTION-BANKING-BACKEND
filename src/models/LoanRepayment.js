@@ -1,4 +1,4 @@
-﻿// src/models/LoanRepayment.js - Converted to Class + Direct Export
+﻿// models/LoanRepayment.js - FIXED (removed afterCreate hook)
 import { DataTypes, Op, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -9,18 +9,23 @@ class LoanRepayment extends Model {
 
   static async findByLoanAccount(loanAccountId, options = {}) {
     const { limit, offset, startDate, endDate } = options;
-    const where = { loan_account_id: loanAccountId };
+    const where = { loanAccountId: loanAccountId };
     if (startDate && endDate) {
-      where.repayment_date = { [Op.between]: [startDate, endDate] };
+      where.repaymentDate = { [Op.between]: [startDate, endDate] };
     }
-    return await this.findAll({ where, order: [['repayment_date', 'DESC']], limit, offset });
+    return await this.findAll({ 
+      where, 
+      order: [['repaymentDate', 'DESC']],
+      limit, 
+      offset 
+    });
   }
 
   static async findByLoanAccountNumber(loanAccountNumber, options = {}) {
     const { limit, offset } = options;
     return await this.findAll({
-      where: { loan_account_number: loanAccountNumber },
-      order: [['repayment_date', 'DESC']],
+      where: { loanAccountNumber: loanAccountNumber },
+      order: [['repaymentDate', 'DESC']],
       limit,
       offset
     });
@@ -29,42 +34,42 @@ class LoanRepayment extends Model {
   static async findByCustomerId(customerId, options = {}) {
     const { limit, offset } = options;
     return await this.findAll({
-      where: { customer_id: customerId },
-      order: [['repayment_date', 'DESC']],
+      where: { customerId: customerId },
+      order: [['repaymentDate', 'DESC']],
       limit,
       offset
     });
   }
 
   static async getTotalRepaidForLoan(loanAccountId) {
-    const result = await this.sum('total_amount', {
-      where: { loan_account_id: loanAccountId, status: 'COMPLETED' }
+    const result = await this.sum('totalAmount', {
+      where: { loanAccountId: loanAccountId, status: 'COMPLETED' }
     });
     return parseFloat(result) || 0;
   }
 
   static async getPrincipalRepaidForLoan(loanAccountId) {
-    const result = await this.sum('principal_amount', {
-      where: { loan_account_id: loanAccountId, status: 'COMPLETED' }
+    const result = await this.sum('principalAmount', {
+      where: { loanAccountId: loanAccountId, status: 'COMPLETED' }
     });
     return parseFloat(result) || 0;
   }
 
   static async getInterestRepaidForLoan(loanAccountId) {
-    const result = await this.sum('interest_amount', {
-      where: { loan_account_id: loanAccountId, status: 'COMPLETED' }
+    const result = await this.sum('interestAmount', {
+      where: { loanAccountId: loanAccountId, status: 'COMPLETED' }
     });
     return parseFloat(result) || 0;
   }
 
   static async getRepaymentSummary(loanAccountId) {
     const repayments = await this.findAll({
-      where: { loan_account_id: loanAccountId, status: 'COMPLETED' },
+      where: { loanAccountId: loanAccountId, status: 'COMPLETED' },
       attributes: [
-        [sequelize.fn('SUM', sequelize.col('principal_amount')), 'total_principal'],
-        [sequelize.fn('SUM', sequelize.col('interest_amount')), 'total_interest'],
-        [sequelize.fn('SUM', sequelize.col('penalty_amount')), 'total_penalty'],
-        [sequelize.fn('SUM', sequelize.col('total_amount')), 'total_amount'],
+        [sequelize.fn('SUM', sequelize.col('principalAmount')), 'total_principal'],
+        [sequelize.fn('SUM', sequelize.col('interestAmount')), 'total_interest'],
+        [sequelize.fn('SUM', sequelize.col('penaltyAmount')), 'total_penalty'],
+        [sequelize.fn('SUM', sequelize.col('totalAmount')), 'total_amount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'payment_count']
       ],
       raw: true
@@ -79,24 +84,32 @@ class LoanRepayment extends Model {
   }
 
   static async findByDateRange(startDate, endDate, options = {}) {
-    const where = { repayment_date: { [Op.between]: [startDate, endDate] } };
-    if (options.loanAccountId) where.loan_account_id = options.loanAccountId;
-    if (options.customerId) where.customer_id = options.customerId;
+    const where = { repaymentDate: { [Op.between]: [startDate, endDate] } };
+    if (options.loanAccountId) where.loanAccountId = options.loanAccountId;
+    if (options.customerId) where.customerId = options.customerId;
     if (options.status) where.status = options.status;
-    return await this.findAll({ where, order: [['repayment_date', 'DESC']] });
+    return await this.findAll({ 
+      where, 
+      order: [['repaymentDate', 'DESC']] 
+    });
   }
 
   static async getDailySummary(date) {
-    const startDate = new Date(date); startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(date); endDate.setHours(23, 59, 59, 999);
+    const startDate = new Date(date); 
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(date); 
+    endDate.setHours(23, 59, 59, 999);
     const result = await this.findAll({
-      where: { repayment_date: { [Op.between]: [startDate, endDate] }, status: 'COMPLETED' },
+      where: { 
+        repaymentDate: { [Op.between]: [startDate, endDate] }, 
+        status: 'COMPLETED' 
+      },
       attributes: [
-        [sequelize.fn('SUM', sequelize.col('total_amount')), 'total_collected'],
+        [sequelize.fn('SUM', sequelize.col('totalAmount')), 'total_collected'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'transaction_count'],
-        [sequelize.fn('SUM', sequelize.col('principal_amount')), 'total_principal'],
-        [sequelize.fn('SUM', sequelize.col('interest_amount')), 'total_interest'],
-        [sequelize.fn('SUM', sequelize.col('penalty_amount')), 'total_penalty']
+        [sequelize.fn('SUM', sequelize.col('principalAmount')), 'total_principal'],
+        [sequelize.fn('SUM', sequelize.col('interestAmount')), 'total_interest'],
+        [sequelize.fn('SUM', sequelize.col('penaltyAmount')), 'total_penalty']
       ],
       raw: true
     });
@@ -118,14 +131,17 @@ class LoanRepayment extends Model {
 
   static async getDailySummaryRange(startDate, endDate) {
     const result = await this.findAll({
-      where: { repayment_date: { [Op.between]: [startDate, endDate] }, status: 'COMPLETED' },
+      where: { 
+        repaymentDate: { [Op.between]: [startDate, endDate] }, 
+        status: 'COMPLETED' 
+      },
       attributes: [
-        [sequelize.fn('DATE', sequelize.col('repayment_date')), 'repayment_day'],
-        [sequelize.fn('SUM', sequelize.col('total_amount')), 'daily_total'],
+        [sequelize.fn('DATE', sequelize.col('repaymentDate')), 'repayment_day'],
+        [sequelize.fn('SUM', sequelize.col('totalAmount')), 'daily_total'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'daily_count']
       ],
-      group: [sequelize.fn('DATE', sequelize.col('repayment_date'))],
-      order: [[sequelize.fn('DATE', sequelize.col('repayment_date')), 'ASC']],
+      group: [sequelize.fn('DATE', sequelize.col('repaymentDate'))],
+      order: [[sequelize.fn('DATE', sequelize.col('repaymentDate')), 'ASC']],
       raw: true
     });
     return result.map(day => ({
@@ -141,12 +157,12 @@ class LoanRepayment extends Model {
   static setupAssociations(models) {
     if (models.LoanAccount) {
       LoanRepayment.belongsTo(models.LoanAccount, {
-        foreignKey: 'loan_account_id',
+        foreignKey: 'loanAccountId',
         as: 'loanAccount',
         targetKey: 'id'
       });
       models.LoanAccount.hasMany(LoanRepayment, {
-        foreignKey: 'loan_account_id',
+        foreignKey: 'loanAccountId',
         as: 'repayments'
       });
       console.log('✅ LoanRepayment ↔ LoanAccount association set up');
@@ -154,105 +170,141 @@ class LoanRepayment extends Model {
     
     if (models.Customer) {
       LoanRepayment.belongsTo(models.Customer, {
-        foreignKey: 'customer_id',
+        foreignKey: 'customerId',
         as: 'customer',
         targetKey: 'CUST_ID'
       });
       console.log('✅ LoanRepayment ↔ Customer association set up');
     }
     
-    // ✅ NEW: Association with Collection (if the model exists)
     if (models.Collection) {
       LoanRepayment.belongsTo(models.Collection, {
-        foreignKey: 'collection_id',
+        foreignKey: 'collectionId',
         as: 'collection',
         targetKey: 'id'
       });
       models.Collection.hasMany(LoanRepayment, {
-        foreignKey: 'collection_id',
+        foreignKey: 'collectionId',
         as: 'loanRepayments'
       });
       console.log('✅ LoanRepayment ↔ Collection association set up');
     } else {
-      console.log('⚠️ Collection model not found – skipping association for loan_repayments.collection_id');
+      console.log('⚠️ Collection model not found – skipping association for loan_repayments.collectionId');
     }
+  }
+
+  // ======================
+  // INSTANCE METHODS
+  // ======================
+  
+  isOverdue() {
+    if (this.status === 'COMPLETED') return false;
+    return new Date(this.repaymentDate) < new Date();
+  }
+
+  getDaysOverdue() {
+    if (!this.isOverdue()) return 0;
+    const diff = new Date() - new Date(this.repaymentDate);
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
+  }
+
+  canProcess() {
+    return this.status === 'PENDING' || this.status === 'SCHEDULED';
+  }
+
+  async markAsProcessed(transaction = null) {
+    this.status = 'COMPLETED';
+    await this.save({ transaction });
+  }
+
+  async markAsFailed(reason, transaction = null) {
+    this.status = 'FAILED';
+    await this.save({ transaction });
   }
 }
 
-// Initialize the model
+// ======================
+// MODEL INITIALIZATION
+// ======================
 LoanRepayment.init(
   {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true
+      autoIncrement: true,
+      field: 'id'
     },
-    loan_account_number: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-      field: 'loan_account_number'
+    collectionId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'collectionId',
+      references: { model: 'collections', key: 'id' }
     },
-    loan_account_id: {
+    loanAccountId: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      field: 'loan_account_id',
+      field: 'loanAccountId',
       references: { model: 'loan_accounts', key: 'id' }
     },
-    customer_id: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-      field: 'customer_id'
+    loanAccountNumber: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'loanAccountNumber'
     },
-    principal_amount: {
-      type: DataTypes.DECIMAL(20, 2),
-      allowNull: false,
-      field: 'principal_amount'
+    customerId: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'customerId'
     },
-    interest_amount: {
-      type: DataTypes.DECIMAL(20, 2),
-      allowNull: false,
-      field: 'interest_amount'
-    },
-    total_amount: {
-      type: DataTypes.DECIMAL(20, 2),
-      allowNull: false,
-      field: 'total_amount'
-    },
-    repayment_date: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      field: 'repayment_date'
-    },
-    transaction_reference: {
+    customerName: {
       type: DataTypes.STRING(100),
       allowNull: true,
-      field: 'transaction_reference'
+      field: 'customerName'
     },
-    status: {
-      type: DataTypes.ENUM('PENDING', 'COMPLETED', 'FAILED', 'REVERSED'),
-      defaultValue: 'PENDING',
-      field: 'status'
+    principalAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0.00,
+      field: 'principalAmount'
     },
-    customer_name: {
-      type: DataTypes.STRING(200),
-      allowNull: true,
-      field: 'customer_name'
+    interestAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0.00,
+      field: 'interestAmount'
     },
-    collection_id: {
-      type: DataTypes.BIGINT,        // Must match database column type
-      allowNull: true,               // ✅ Allows NULL – manual repayments have no collection
-      field: 'collection_id'
+    penaltyAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0.00,
+      field: 'penaltyAmount'
     },
-    installment_number: {
+    totalAmount: {
+      type: DataTypes.DECIMAL(15, 2),
+      allowNull: false,
+      defaultValue: 0.00,
+      field: 'totalAmount'
+    },
+    installmentNumber: {
       type: DataTypes.INTEGER,
       allowNull: true,
-      field: 'installment_number'
+      field: 'installmentNumber'
     },
-    penalty_amount: {
-      type: DataTypes.DECIMAL(20, 2),
+    repaymentDate: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      field: 'repaymentDate'
+    },
+    transactionReference: {
+      type: DataTypes.STRING(100),
       allowNull: true,
-      defaultValue: 0.00,
-      field: 'penalty_amount'
+      field: 'transactionReference'
+    },
+    status: {
+      type: DataTypes.ENUM('PENDING', 'SCHEDULED', 'COMPLETED', 'FAILED', 'REVERSED'),
+      defaultValue: 'PENDING',
+      field: 'status'
     },
     created_at: {
       type: DataTypes.DATE,
@@ -273,44 +325,49 @@ LoanRepayment.init(
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     indexes: [
-      { fields: ['loan_account_id'] },
-      { fields: ['loan_account_number'] },
-      { fields: ['customer_id'] },
-      { fields: ['repayment_date'] },
+      { fields: ['loanAccountId'] },
+      { fields: ['customerId'] },
+      { fields: ['repaymentDate'] },
       { fields: ['status'] },
-      { unique: true, fields: ['transaction_reference'] },
-      { fields: ['loan_account_id', 'repayment_date'] },
-      { fields: ['customer_id', 'status'] }
+      { unique: true, fields: ['transactionReference'] },
+      { fields: ['loanAccountId', 'repaymentDate'] },
+      { fields: ['customerId', 'status'] },
+      { fields: ['status', 'repaymentDate'] }
     ],
     hooks: {
       beforeCreate: async (repayment) => {
-        if (!repayment.transaction_reference) {
+        if (!repayment.transactionReference) {
           const timestamp = Date.now();
           const random = Math.floor(Math.random() * 10000);
-          repayment.transaction_reference = `REPAY-${timestamp}-${random}`;
+          repayment.transactionReference = `REPAY-${timestamp}-${random}`;
         }
-      },
-      afterCreate: async (repayment) => {
-        try {
-          const { LoanAccount } = sequelize.models;
-          if (LoanAccount && repayment.status === 'COMPLETED') {
-            const loanAccount = await LoanAccount.findByPk(repayment.loan_account_id);
-            if (loanAccount) {
-              const newOutstanding = Math.max(0,
-                (parseFloat(loanAccount.OUTSTANDING_PRINCIPAL) || 0) -
-                (parseFloat(repayment.principal_amount) || 0)
-              );
-              await loanAccount.update({
-                OUTSTANDING_PRINCIPAL: newOutstanding,
-                LAST_REPAYMENT_DATE: repayment.repayment_date,
-                LAST_REPAYMENT_AMOUNT: repayment.total_amount
-              });
+        
+        // Auto-fill loanAccountNumber if not provided
+        if (!repayment.loanAccountNumber && repayment.loanAccountId) {
+          try {
+            const { LoanAccount } = sequelize.models;
+            if (LoanAccount) {
+              const loanAccount = await LoanAccount.findByPk(repayment.loanAccountId);
+              if (loanAccount) {
+                repayment.loanAccountNumber = loanAccount.ACCT_NO || 
+                                              loanAccount.acct_no || 
+                                              loanAccount.account_number || 
+                                              null;
+              }
             }
+          } catch (error) {
+            console.error('Error fetching loan account for loanAccountNumber:', error.message);
           }
-        } catch (error) {
-          console.error('Error updating loan account balance:', error.message);
+        }
+        
+        // Ensure totalAmount is set
+        if (!repayment.totalAmount || repayment.totalAmount === 0) {
+          repayment.totalAmount = (parseFloat(repayment.principalAmount) || 0) + 
+                                  (parseFloat(repayment.interestAmount) || 0) +
+                                  (parseFloat(repayment.penaltyAmount) || 0);
         }
       }
+      // ✅ REMOVED afterCreate hook - causes lock timeout
     }
   }
 );

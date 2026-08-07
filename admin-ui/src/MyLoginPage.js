@@ -253,7 +253,7 @@ const MyLoginPage = () => (
           
           {/* ✅ BrandSubtitle now defined and visible */}
           <BrandSubtitle variant="body2">
-            Backend Console · Warelogtech Limited
+            Backend Weblogic Console · Warelogtech Limited
           </BrandSubtitle>
           
           <DecorativeLine />

@@ -1,9 +1,10 @@
-// controllers/ChargeController.js – with multi‑tier support
+// controllers/ChargeController.js – with multi‑tier support + VAT & WHT
 import { Op } from 'sequelize';
 import Charge from '../models/Charge.js';
-import ChargeTier from '../models/ChargeTier.js'; // 👈 new import
+import ChargeTier from '../models/ChargeTier.js';
 
 const ChargeController = {
+  // ==================== TRANSFORM REQUEST ====================
   transformChargeRequest: (body) => {
     const transformed = { ...body };
     
@@ -85,10 +86,54 @@ const ChargeController = {
       delete transformed.FEE_PERCENTAGE;
     }
 
+    // ==================== VAT TRANSFORMATIONS ====================
+    if (body.isVATApplicable !== undefined) {
+      transformed.IS_VAT_APPLICABLE = body.isVATApplicable;
+      delete transformed.isVATApplicable;
+    }
+    if (body.vatRate !== undefined) {
+      transformed.VAT_RATE = parseFloat(body.vatRate);
+      delete transformed.vatRate;
+    }
+    if (body.vatGLAccountNo !== undefined) {
+      transformed.VAT_GL_ACCOUNT_NO = body.vatGLAccountNo;
+      delete transformed.vatGLAccountNo;
+    }
+    
+    // ==================== WHT TRANSFORMATIONS ====================
+    if (body.isWHTApplicable !== undefined) {
+      transformed.IS_WHT_APPLICABLE = body.isWHTApplicable;
+      delete transformed.isWHTApplicable;
+    }
+    if (body.whtRate !== undefined) {
+      transformed.WHT_RATE = parseFloat(body.whtRate);
+      delete transformed.whtRate;
+    }
+    if (body.whtGLAccountNo !== undefined) {
+      transformed.WHT_GL_ACCOUNT_NO = body.whtGLAccountNo;
+      delete transformed.whtGLAccountNo;
+    }
+    if (body.whtType !== undefined) {
+      transformed.WHT_TYPE = body.whtType;
+      delete transformed.whtType;
+    }
+
+    // ✅ CRITICAL FIX: For FLAT and PERCENTAGE, clear ALL tier-related fields
+    // This prevents FEE_TYPE from being carried over from a previous selection
+    if (transformed.TIER_TY === 'FLAT' || transformed.TIER_TY === 'PERCENTAGE') {
+      transformed.FEE_TYPE = null;
+      transformed.FEE_AMOUNT = null;
+      transformed.FEE_PERCENTAGE = null;
+      transformed.MIN_AMOUNT = null;
+      transformed.MAX_AMOUNT = null;
+      // Also clear any tiers that might have been sent
+      delete transformed._tiers;
+    }
+
     return transformed;
   },
 
-  // Helper: validate and sort tiers
+  // ==================== VALIDATE TIERS ====================
   validateTiers: (tiers) => {
     if (!tiers || tiers.length === 0) {
       throw new Error('At least one tier is required for RANGE charge');
@@ -130,6 +175,7 @@ const ChargeController = {
     return sorted;
   },
 
+  // ==================== TRANSFORM TO SIMPLIFIED FORMAT ====================
   transformToSimplifiedFormat: (charge) => {
     const base = {
       chargeId: charge.CHRG_ID,
@@ -147,6 +193,15 @@ const ChargeController = {
       currencyId: charge.CRNCY_ID,
       effectiveDate: charge.EFFECTIVE_DT,
       version: charge.VERSION_NO,
+      // VAT fields
+      isVATApplicable: charge.IS_VAT_APPLICABLE || false,
+      vatRate: charge.VAT_RATE ? parseFloat(charge.VAT_RATE) : 7.5,
+      vatGLAccountNo: charge.VAT_GL_ACCOUNT_NO || null,
+      // WHT fields
+      isWHTApplicable: charge.IS_WHT_APPLICABLE || false,
+      whtRate: charge.WHT_RATE ? parseFloat(charge.WHT_RATE) : 5,
+      whtGLAccountNo: charge.WHT_GL_ACCOUNT_NO || null,
+      whtType: charge.WHT_TYPE || 'CORPORATE',
     };
     
     if (charge.TIER_TY === 'RANGE') {
@@ -171,124 +226,254 @@ const ChargeController = {
     return base;
   },
 
-  createCharge: async (req, res) => {
-    try {
-      const transformedBody = ChargeController.transformChargeRequest(req.body);
-      delete transformedBody.CHRG_ID;
+  // ==================== CREATE CHARGE ====================
+// ==================== CREATE CHARGE ====================
+createCharge: async (req, res) => {
+  try {
+    const transformedBody = ChargeController.transformChargeRequest(req.body);
+    delete transformedBody.CHRG_ID;
 
-      // Validate required fields
-      const requiredFields = ['CHRG_CD', 'CHRG_TY', 'TIER_TY', 'VERSION_NO', 'USER_ID', 'CREATED_BY', 'BAL_ACTION_CD'];
-      const missing = requiredFields.filter(f => !transformedBody[f]);
-      if (missing.length) {
-        return res.status(400).json({ success: false, message: `Missing: ${missing.join(', ')}` });
+    // Validate required fields
+    const requiredFields = ['CHRG_CD', 'CHRG_TY', 'TIER_TY', 'VERSION_NO', 'USER_ID', 'CREATED_BY', 'BAL_ACTION_CD'];
+    const missing = requiredFields.filter(f => !transformedBody[f]);
+    if (missing.length) {
+      return res.status(400).json({ success: false, message: `Missing: ${missing.join(', ')}` });
+    }
+
+    // Log incoming data for debugging
+    console.log('📥 Incoming transformed body:', JSON.stringify({
+      TIER_TY: transformedBody.TIER_TY,
+      FEE_TYPE: transformedBody.FEE_TYPE,
+      FEE_AMOUNT: transformedBody.FEE_AMOUNT,
+      FEE_PERCENTAGE: transformedBody.FEE_PERCENTAGE,
+      MIN_AMOUNT: transformedBody.MIN_AMOUNT,
+      MAX_AMOUNT: transformedBody.MAX_AMOUNT,
+      CHRG_AMT: transformedBody.CHRG_AMT,
+      CHRG_PCT: transformedBody.CHRG_PCT,
+      has_tiers: transformedBody._tiers ? transformedBody._tiers.length : 0
+    }, null, 2));
+
+    // FLAT / PERCENTAGE validation
+    if (transformedBody.TIER_TY === 'FLAT') {
+      if (!transformedBody.CHRG_AMT || transformedBody.CHRG_AMT <= 0) {
+        return res.status(400).json({ success: false, message: 'For FLAT charges, CHRG_AMT > 0 required' });
       }
-
-      // FLAT / PERCENTAGE validation (unchanged)
-      if (transformedBody.TIER_TY === 'FLAT') {
-        if (!transformedBody.CHRG_AMT || transformedBody.CHRG_AMT <= 0) {
-          return res.status(400).json({ success: false, message: 'For FLAT charges, CHRG_AMT > 0 required' });
-        }
-        transformedBody.CHRG_PCT = null;
-      } else if (transformedBody.TIER_TY === 'PERCENTAGE') {
-        if (!transformedBody.CHRG_PCT || transformedBody.CHRG_PCT <= 0) {
-          return res.status(400).json({ success: false, message: 'For PERCENTAGE charges, CHRG_PCT > 0 required' });
-        }
-        transformedBody.CHRG_AMT = null;
-      } 
-      // RANGE validation – multi‑tier or legacy single‑tier
-      else if (transformedBody.TIER_TY === 'RANGE') {
-        // Check for multi‑tier payload
-        if (transformedBody._tiers && Array.isArray(transformedBody._tiers)) {
-          try {
-            const validatedTiers = ChargeController.validateTiers(transformedBody._tiers);
-            transformedBody._tiers = validatedTiers;
-            // Clear legacy fields
-            delete transformedBody.MIN_AMOUNT;
-            delete transformedBody.MAX_AMOUNT;
-            delete transformedBody.FEE_TYPE;
-            delete transformedBody.FEE_AMOUNT;
-            delete transformedBody.FEE_PERCENTAGE;
-          } catch (err) {
-            return res.status(400).json({ success: false, message: err.message });
-          }
-        } else {
-          // Legacy single‑tier validation
-          const minAmount = transformedBody.MIN_AMOUNT;
-          const maxAmount = transformedBody.MAX_AMOUNT;
-          const feeType = transformedBody.FEE_TYPE;
-          const feeAmount = transformedBody.FEE_AMOUNT;
-          const feePercentage = transformedBody.FEE_PERCENTAGE;
-
-          if (minAmount === undefined || minAmount === null) {
-            return res.status(400).json({ success: false, message: 'RANGE charges require minAmount/min_amount' });
-          }
-          if (minAmount < 0) {
-            return res.status(400).json({ success: false, message: 'Minimum amount cannot be negative' });
-          }
-          if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '' && maxAmount <= minAmount) {
-            return res.status(400).json({ success: false, message: 'MAX_AMOUNT must be greater than MIN_AMOUNT' });
-          }
-          if (!feeType) {
-            return res.status(400).json({ success: false, message: 'RANGE charges require feeType/fee_type (FIXED or PERCENTAGE)' });
-          }
-          if (feeType === 'FIXED') {
-            if (!feeAmount || feeAmount <= 0) {
-              return res.status(400).json({ success: false, message: 'FIXED fee requires positive feeAmount/fee_amount' });
-            }
-            transformedBody.FEE_AMOUNT = parseFloat(feeAmount);
-            transformedBody.FEE_PERCENTAGE = null;
-          } else if (feeType === 'PERCENTAGE') {
-            if (!feePercentage || feePercentage <= 0) {
-              return res.status(400).json({ success: false, message: 'PERCENTAGE fee requires positive feePercentage/fee_percentage' });
-            }
-            transformedBody.FEE_PERCENTAGE = parseFloat(feePercentage);
-            transformedBody.FEE_AMOUNT = null;
-          } else {
-            return res.status(400).json({ success: false, message: 'feeType/fee_type must be FIXED or PERCENTAGE' });
-          }
+      transformedBody.CHRG_PCT = null;
+      transformedBody.MIN_AMOUNT = null;
+      transformedBody.MAX_AMOUNT = null;
+      transformedBody.FEE_TYPE = null;
+      transformedBody.FEE_AMOUNT = null;
+      transformedBody.FEE_PERCENTAGE = null;
+      delete transformedBody._tiers;
+    } 
+    else if (transformedBody.TIER_TY === 'PERCENTAGE') {
+      if (!transformedBody.CHRG_PCT || transformedBody.CHRG_PCT <= 0) {
+        return res.status(400).json({ success: false, message: 'For PERCENTAGE charges, CHRG_PCT > 0 required' });
+      }
+      transformedBody.CHRG_AMT = null;
+      transformedBody.MIN_AMOUNT = null;
+      transformedBody.MAX_AMOUNT = null;
+      transformedBody.FEE_TYPE = null;
+      transformedBody.FEE_AMOUNT = null;
+      transformedBody.FEE_PERCENTAGE = null;
+      delete transformedBody._tiers;
+    } 
+    else if (transformedBody.TIER_TY === 'RANGE') {
+      if (transformedBody._tiers && Array.isArray(transformedBody._tiers) && transformedBody._tiers.length > 0) {
+        try {
+          const validatedTiers = ChargeController.validateTiers(transformedBody._tiers);
+          transformedBody._tiers = validatedTiers;
+          transformedBody.MIN_AMOUNT = null;
+          transformedBody.MAX_AMOUNT = null;
+          transformedBody.FEE_TYPE = null;
+          transformedBody.FEE_AMOUNT = null;
+          transformedBody.FEE_PERCENTAGE = null;
           transformedBody.CHRG_AMT = null;
           transformedBody.CHRG_PCT = null;
+        } catch (err) {
+          return res.status(400).json({ success: false, message: err.message });
         }
+      } else {
+        const minAmount = transformedBody.MIN_AMOUNT;
+        const maxAmount = transformedBody.MAX_AMOUNT;
+        let feeType = transformedBody.FEE_TYPE;
+        let feeAmount = transformedBody.FEE_AMOUNT;
+        let feePercentage = transformedBody.FEE_PERCENTAGE;
+
+        if (minAmount === undefined || minAmount === null || minAmount === '') {
+          return res.status(400).json({ success: false, message: 'RANGE charges require minAmount/min_amount' });
+        }
+        if (parseFloat(minAmount) < 0) {
+          return res.status(400).json({ success: false, message: 'Minimum amount cannot be negative' });
+        }
+        if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '' && parseFloat(maxAmount) <= parseFloat(minAmount)) {
+          return res.status(400).json({ success: false, message: 'MAX_AMOUNT must be greater than MIN_AMOUNT' });
+        }
+        if (!feeType) {
+          return res.status(400).json({ success: false, message: 'RANGE charges require feeType/fee_type (FIXED or PERCENTAGE)' });
+        }
+        
+        if (feeType === 'FIXED') {
+          if (feeAmount === undefined || feeAmount === null || feeAmount === '' || parseFloat(feeAmount) <= 0) {
+            return res.status(400).json({ 
+              success: false, 
+              message: 'FIXED fee requires positive feeAmount/fee_amount' 
+            });
+          }
+          transformedBody.FEE_AMOUNT = parseFloat(feeAmount);
+          transformedBody.FEE_PERCENTAGE = null;
+        } else if (feeType === 'PERCENTAGE') {
+          if (feePercentage === undefined || feePercentage === null || feePercentage === '' || parseFloat(feePercentage) <= 0) {
+            return res.status(400).json({ 
+              success: false, 
+              message: 'PERCENTAGE fee requires positive feePercentage/fee_percentage' 
+            });
+          }
+          transformedBody.FEE_PERCENTAGE = parseFloat(feePercentage);
+          transformedBody.FEE_AMOUNT = null;
+        } else {
+          return res.status(400).json({ success: false, message: 'feeType/fee_type must be FIXED or PERCENTAGE' });
+        }
+        
+        transformedBody.CHRG_AMT = null;
+        transformedBody.CHRG_PCT = null;
+        transformedBody.MIN_AMOUNT = parseFloat(minAmount);
+        transformedBody.MAX_AMOUNT = (maxAmount && maxAmount !== '') ? parseFloat(maxAmount) : null;
+        transformedBody.FEE_TYPE = feeType;
       }
-
-      // Check duplicate charge code
-      const existing = await Charge.findOne({ where: { CHRG_CD: transformedBody.CHRG_CD } });
-      if (existing) {
-        return res.status(400).json({ success: false, message: 'Charge code already exists' });
-      }
-
-      // Create charge
-      const charge = await Charge.create(transformedBody);
-
-      // Create tiers if multi‑tier
-      if (transformedBody.TIER_TY === 'RANGE' && transformedBody._tiers && transformedBody._tiers.length) {
-        const tierRecords = transformedBody._tiers.map(tier => ({
-          charge_id: charge.CHRG_ID,
-          min_amount: tier.minAmount,
-          max_amount: tier.maxAmount || null,
-          fee_type: tier.feeType,
-          fee_amount: tier.feeType === 'FIXED' ? tier.feeAmount : null,
-          fee_percentage: tier.feeType === 'PERCENTAGE' ? tier.feePercentage : null
-        }));
-        await ChargeTier.bulkCreate(tierRecords);
-      }
-
-      // Fetch charge with tiers for response
-      const fullCharge = await Charge.findByPk(charge.CHRG_ID, {
-        include: [{ model: ChargeTier, as: 'tiers' }]
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Charge created',
-        data: ChargeController.transformToSimplifiedFormat(fullCharge)
-      });
-    } catch (error) {
-      console.error('Create Charge Error:', error);
-      res.status(500).json({ success: false, message: 'Error creating charge', error: error.message });
     }
-  },
 
+    // ==================== VAT VALIDATION ====================
+    if (transformedBody.IS_VAT_APPLICABLE) {
+      if (!transformedBody.VAT_RATE || transformedBody.VAT_RATE <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'VAT rate must be greater than 0 when VAT is applicable' 
+        });
+      }
+      if (!transformedBody.VAT_GL_ACCOUNT_NO) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'VAT GL account is required when VAT is applicable' 
+        });
+      }
+    }
+
+    // ==================== WHT VALIDATION ====================
+    if (transformedBody.IS_WHT_APPLICABLE) {
+      if (!transformedBody.WHT_RATE || transformedBody.WHT_RATE <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'WHT rate must be greater than 0 when WHT is applicable' 
+        });
+      }
+      if (!transformedBody.WHT_GL_ACCOUNT_NO) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'WHT GL account is required when WHT is applicable' 
+        });
+      }
+      if (!transformedBody.WHT_TYPE) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'WHT type is required when WHT is applicable' 
+        });
+      }
+    }
+
+    // Check duplicate charge code
+    const existing = await Charge.findOne({ where: { CHRG_CD: transformedBody.CHRG_CD } });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Charge code already exists' });
+    }
+
+    // ✅ CRITICAL: Log the EXACT data being sent to Sequelize
+    console.log('🔴 EXACT DATA FOR SEQUELIZE:', JSON.stringify({
+      CHRG_CD: transformedBody.CHRG_CD,
+      CHRG_TY: transformedBody.CHRG_TY,
+      CHRG_NM: transformedBody.CHRG_NM,
+      TIER_TY: transformedBody.TIER_TY,
+      CHRG_AMT: transformedBody.CHRG_AMT,
+      CHRG_PCT: transformedBody.CHRG_PCT,
+      FEE_TYPE: transformedBody.FEE_TYPE,
+      FEE_AMOUNT: transformedBody.FEE_AMOUNT,
+      FEE_PERCENTAGE: transformedBody.FEE_PERCENTAGE,
+      MIN_AMOUNT: transformedBody.MIN_AMOUNT,
+      MAX_AMOUNT: transformedBody.MAX_AMOUNT,
+      IS_VAT_APPLICABLE: transformedBody.IS_VAT_APPLICABLE,
+      VAT_RATE: transformedBody.VAT_RATE,
+      VAT_GL_ACCOUNT_NO: transformedBody.VAT_GL_ACCOUNT_NO,
+      IS_WHT_APPLICABLE: transformedBody.IS_WHT_APPLICABLE,
+      WHT_RATE: transformedBody.WHT_RATE,
+      WHT_GL_ACCOUNT_NO: transformedBody.WHT_GL_ACCOUNT_NO,
+      WHT_TYPE: transformedBody.WHT_TYPE,
+      BAL_ACTION_CD: transformedBody.BAL_ACTION_CD,
+      CHRG_DESC: transformedBody.CHRG_DESC,
+      CRNCY_ID: transformedBody.CRNCY_ID,
+      VERSION_NO: transformedBody.VERSION_NO,
+      USER_ID: transformedBody.USER_ID,
+      CREATED_BY: transformedBody.CREATED_BY,
+      has_tiers: transformedBody._tiers ? transformedBody._tiers.length : 0
+    }, null, 2));
+
+    // ✅ Also log the model's default values for comparison
+    console.log('🔴 CHARGE MODEL DEFAULTS:', {
+      FEE_TYPE: Charge.rawAttributes.FEE_TYPE.defaultValue,
+      FEE_AMOUNT: Charge.rawAttributes.FEE_AMOUNT.defaultValue,
+      FEE_PERCENTAGE: Charge.rawAttributes.FEE_PERCENTAGE.defaultValue,
+      MIN_AMOUNT: Charge.rawAttributes.MIN_AMOUNT.defaultValue,
+      MAX_AMOUNT: Charge.rawAttributes.MAX_AMOUNT.defaultValue,
+    });
+
+    // Create charge
+    const charge = await Charge.create(transformedBody);
+
+    // Create tiers if multi‑tier
+    if (transformedBody.TIER_TY === 'RANGE' && transformedBody._tiers && transformedBody._tiers.length) {
+      const tierRecords = transformedBody._tiers.map(tier => ({
+        charge_id: charge.CHRG_ID,
+        min_amount: tier.minAmount,
+        max_amount: tier.maxAmount || null,
+        fee_type: tier.feeType,
+        fee_amount: tier.feeType === 'FIXED' ? tier.feeAmount : null,
+        fee_percentage: tier.feeType === 'PERCENTAGE' ? tier.feePercentage : null
+      }));
+      await ChargeTier.bulkCreate(tierRecords);
+    }
+
+    // Fetch charge with tiers for response
+    const fullCharge = await Charge.findByPk(charge.CHRG_ID, {
+      include: [{ model: ChargeTier, as: 'tiers' }]
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Charge created',
+      data: ChargeController.transformToSimplifiedFormat(fullCharge)
+    });
+  } catch (error) {
+    console.error('Create Charge Error:', error);
+    
+    // Handle specific database errors
+    if (error.name === 'SequelizeDatabaseError') {
+      if (error.message.includes('FEE_AMOUNT')) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'FEE_AMOUNT is required when FEE_TYPE is FIXED. Please provide a positive fee amount.' 
+        });
+      }
+      if (error.message.includes('FEE_PERCENTAGE')) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'FEE_PERCENTAGE is required when FEE_TYPE is PERCENTAGE. Please provide a positive percentage.' 
+        });
+      }
+    }
+    
+    res.status(500).json({ success: false, message: 'Error creating charge', error: error.message });
+  }
+},
+  // ==================== GET ALL CHARGES ====================
   getAllCharges: async (req, res) => {
     try {
       const { page = 1, limit = 10, sortBy = 'CHRG_CD', sortOrder = 'ASC', search, recSt, chrgTy, tierTy, format = 'oracle' } = req.query;
@@ -320,6 +505,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== GET CHARGE BY ID ====================
   getChargeById: async (req, res) => {
     try {
       const { format = 'oracle' } = req.query;
@@ -337,6 +523,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== UPDATE CHARGE ====================
   updateCharge: async (req, res) => {
     try {
       const { id } = req.params;
@@ -351,7 +538,7 @@ const ChargeController = {
 
       const newTier = transformed.TIER_TY || existing.TIER_TY;
 
-      // FLAT update (unchanged)
+      // FLAT update
       if (newTier === 'FLAT') {
         const amount = transformed.CHRG_AMT !== undefined ? transformed.CHRG_AMT : existing.CHRG_AMT;
         if (!amount || amount <= 0) {
@@ -363,10 +550,9 @@ const ChargeController = {
         transformed.FEE_TYPE = null;
         transformed.FEE_AMOUNT = null;
         transformed.FEE_PERCENTAGE = null;
-        // Delete any existing tiers
         await ChargeTier.destroy({ where: { charge_id: id } });
       } 
-      // PERCENTAGE update (unchanged)
+      // PERCENTAGE update
       else if (newTier === 'PERCENTAGE') {
         const pct = transformed.CHRG_PCT !== undefined ? transformed.CHRG_PCT : existing.CHRG_PCT;
         if (!pct || pct <= 0) {
@@ -386,7 +572,6 @@ const ChargeController = {
         if (transformed._tiers && Array.isArray(transformed._tiers)) {
           try {
             const validatedTiers = ChargeController.validateTiers(transformed._tiers);
-            // Replace all tiers
             await ChargeTier.destroy({ where: { charge_id: id } });
             const tierRecords = validatedTiers.map(tier => ({
               charge_id: id,
@@ -397,7 +582,6 @@ const ChargeController = {
               fee_percentage: tier.feeType === 'PERCENTAGE' ? tier.feePercentage : null
             }));
             await ChargeTier.bulkCreate(tierRecords);
-            // Clear legacy fields
             transformed.CHRG_AMT = null;
             transformed.CHRG_PCT = null;
             transformed.MIN_AMOUNT = null;
@@ -409,47 +593,84 @@ const ChargeController = {
             return res.status(400).json({ success: false, message: err.message });
           }
         } else {
-          // Legacy single‑tier update (existing logic)
+          // Legacy single‑tier update
           const minAmount = transformed.MIN_AMOUNT !== undefined ? transformed.MIN_AMOUNT : existing.MIN_AMOUNT;
           const maxAmount = transformed.MAX_AMOUNT !== undefined ? transformed.MAX_AMOUNT : existing.MAX_AMOUNT;
           let feeType = transformed.FEE_TYPE !== undefined ? transformed.FEE_TYPE : existing.FEE_TYPE;
           let feeAmount = transformed.FEE_AMOUNT !== undefined ? transformed.FEE_AMOUNT : existing.FEE_AMOUNT;
           let feePercentage = transformed.FEE_PERCENTAGE !== undefined ? transformed.FEE_PERCENTAGE : existing.FEE_PERCENTAGE;
 
-          if (minAmount === undefined || minAmount === null) {
+          if (minAmount === undefined || minAmount === null || minAmount === '') {
             return res.status(400).json({ success: false, message: 'RANGE charges require minAmount/min_amount' });
           }
-          if (minAmount < 0) {
+          if (parseFloat(minAmount) < 0) {
             return res.status(400).json({ success: false, message: 'Minimum amount cannot be negative' });
           }
-          if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '' && maxAmount <= minAmount) {
+          if (maxAmount !== undefined && maxAmount !== null && maxAmount !== '' && parseFloat(maxAmount) <= parseFloat(minAmount)) {
             return res.status(400).json({ success: false, message: 'MAX_AMOUNT must be greater than MIN_AMOUNT' });
           }
           if (!feeType) {
             return res.status(400).json({ success: false, message: 'RANGE charges require feeType/fee_type' });
           }
+          
           if (feeType === 'FIXED') {
-            if (!feeAmount || feeAmount <= 0) {
-              return res.status(400).json({ success: false, message: 'FIXED fee requires positive feeAmount/fee_amount' });
+            if (feeAmount === undefined || feeAmount === null || feeAmount === '' || parseFloat(feeAmount) <= 0) {
+              return res.status(400).json({ 
+                success: false, 
+                message: 'FIXED fee requires positive feeAmount/fee_amount' 
+              });
             }
             transformed.FEE_AMOUNT = parseFloat(feeAmount);
             transformed.FEE_PERCENTAGE = null;
           } else if (feeType === 'PERCENTAGE') {
-            if (!feePercentage || feePercentage <= 0) {
-              return res.status(400).json({ success: false, message: 'PERCENTAGE fee requires positive feePercentage/fee_percentage' });
+            if (feePercentage === undefined || feePercentage === null || feePercentage === '' || parseFloat(feePercentage) <= 0) {
+              return res.status(400).json({ 
+                success: false, 
+                message: 'PERCENTAGE fee requires positive feePercentage/fee_percentage' 
+              });
             }
             transformed.FEE_PERCENTAGE = parseFloat(feePercentage);
             transformed.FEE_AMOUNT = null;
           } else {
             return res.status(400).json({ success: false, message: 'feeType must be FIXED or PERCENTAGE' });
           }
+          
           transformed.CHRG_AMT = null;
           transformed.CHRG_PCT = null;
           transformed.FEE_TYPE = feeType;
           transformed.MIN_AMOUNT = parseFloat(minAmount);
           transformed.MAX_AMOUNT = (maxAmount && maxAmount !== '') ? parseFloat(maxAmount) : null;
-          // Delete any existing tiers (since we're using legacy single‑tier)
           await ChargeTier.destroy({ where: { charge_id: id } });
+        }
+      }
+
+      // ==================== VAT VALIDATION FOR UPDATE ====================
+      const isVATApplicable = transformed.IS_VAT_APPLICABLE !== undefined ? transformed.IS_VAT_APPLICABLE : existing.IS_VAT_APPLICABLE;
+      if (isVATApplicable) {
+        const vatRate = transformed.VAT_RATE !== undefined ? transformed.VAT_RATE : existing.VAT_RATE;
+        const vatGL = transformed.VAT_GL_ACCOUNT_NO !== undefined ? transformed.VAT_GL_ACCOUNT_NO : existing.VAT_GL_ACCOUNT_NO;
+        if (!vatRate || vatRate <= 0) {
+          return res.status(400).json({ success: false, message: 'VAT rate must be greater than 0 when VAT is applicable' });
+        }
+        if (!vatGL) {
+          return res.status(400).json({ success: false, message: 'VAT GL account is required when VAT is applicable' });
+        }
+      }
+
+      // ==================== WHT VALIDATION FOR UPDATE ====================
+      const isWHTApplicable = transformed.IS_WHT_APPLICABLE !== undefined ? transformed.IS_WHT_APPLICABLE : existing.IS_WHT_APPLICABLE;
+      if (isWHTApplicable) {
+        const whtRate = transformed.WHT_RATE !== undefined ? transformed.WHT_RATE : existing.WHT_RATE;
+        const whtGL = transformed.WHT_GL_ACCOUNT_NO !== undefined ? transformed.WHT_GL_ACCOUNT_NO : existing.WHT_GL_ACCOUNT_NO;
+        const whtType = transformed.WHT_TYPE !== undefined ? transformed.WHT_TYPE : existing.WHT_TYPE;
+        if (!whtRate || whtRate <= 0) {
+          return res.status(400).json({ success: false, message: 'WHT rate must be greater than 0 when WHT is applicable' });
+        }
+        if (!whtGL) {
+          return res.status(400).json({ success: false, message: 'WHT GL account is required when WHT is applicable' });
+        }
+        if (!whtType) {
+          return res.status(400).json({ success: false, message: 'WHT type is required when WHT is applicable' });
         }
       }
 
@@ -467,6 +688,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== GET CHARGE BY CODE ====================
   getChargeByCode: async (req, res) => {
     try {
       const charge = await Charge.findOne({ 
@@ -481,11 +703,12 @@ const ChargeController = {
     }
   },
 
+  // ==================== DELETE CHARGE ====================
   deleteCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ where: { CHRG_ID: parseInt(req.params.id) } });
       if (!charge) return res.status(404).json({ success: false, message: 'Charge not found' });
-      await charge.destroy(); // CASCADE will delete tiers automatically
+      await charge.destroy();
       res.status(200).json({ success: true, message: 'Charge deleted', data: charge });
     } catch (error) {
       console.error('Delete Charge Error:', error);
@@ -493,6 +716,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== DEACTIVATE CHARGE ====================
   deactivateCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ where: { CHRG_ID: parseInt(req.params.id) } });
@@ -505,6 +729,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== ACTIVATE CHARGE ====================
   activateCharge: async (req, res) => {
     try {
       const charge = await Charge.findOne({ where: { CHRG_ID: parseInt(req.params.id) } });
@@ -517,6 +742,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== GET CHARGES BY TYPE ====================
   getChargesByType: async (req, res) => {
     try {
       const { type } = req.params;
@@ -531,6 +757,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== GET ACTIVE CHARGES ====================
   getActiveCharges: async (req, res) => {
     try {
       const charges = await Charge.findAll({ 
@@ -544,6 +771,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== BULK CREATE CHARGES ====================
   bulkCreateCharges: async (req, res) => {
     try {
       const { charges } = req.body;
@@ -562,18 +790,35 @@ const ChargeController = {
             throw new Error('Percentage charge requires positive CHRG_PCT');
           if (transformed.TIER_TY === 'RANGE') {
             if (transformed._tiers && transformed._tiers.length) {
-              ChargeController.validateTiers(transformed._tiers); // throws on error
+              ChargeController.validateTiers(transformed._tiers);
             } else {
-              if (!transformed.MIN_AMOUNT) throw new Error('Range charge requires minAmount');
-              if (transformed.MIN_AMOUNT < 0) throw new Error('Minimum amount cannot be negative');
+              if (!transformed.MIN_AMOUNT && transformed.MIN_AMOUNT !== 0) 
+                throw new Error('Range charge requires minAmount');
+              if (transformed.MIN_AMOUNT < 0) 
+                throw new Error('Minimum amount cannot be negative');
               if (transformed.MAX_AMOUNT && transformed.MAX_AMOUNT <= transformed.MIN_AMOUNT)
                 throw new Error('MAX_AMOUNT must be greater than MIN_AMOUNT');
-              if (!transformed.FEE_TYPE) throw new Error('Range charge requires feeType');
+              if (!transformed.FEE_TYPE) 
+                throw new Error('Range charge requires feeType');
               if (transformed.FEE_TYPE === 'FIXED' && (!transformed.FEE_AMOUNT || transformed.FEE_AMOUNT <= 0))
                 throw new Error('FIXED fee requires positive FEE_AMOUNT');
               if (transformed.FEE_TYPE === 'PERCENTAGE' && (!transformed.FEE_PERCENTAGE || transformed.FEE_PERCENTAGE <= 0))
                 throw new Error('PERCENTAGE fee requires positive FEE_PERCENTAGE');
             }
+          }
+          if (transformed.IS_VAT_APPLICABLE) {
+            if (!transformed.VAT_RATE || transformed.VAT_RATE <= 0)
+              throw new Error('VAT rate must be greater than 0 when VAT is applicable');
+            if (!transformed.VAT_GL_ACCOUNT_NO)
+              throw new Error('VAT GL account is required when VAT is applicable');
+          }
+          if (transformed.IS_WHT_APPLICABLE) {
+            if (!transformed.WHT_RATE || transformed.WHT_RATE <= 0)
+              throw new Error('WHT rate must be greater than 0 when WHT is applicable');
+            if (!transformed.WHT_GL_ACCOUNT_NO)
+              throw new Error('WHT GL account is required when WHT is applicable');
+            if (!transformed.WHT_TYPE)
+              throw new Error('WHT type is required when WHT is applicable');
           }
           validated.push(transformed);
         } catch (err) {
@@ -584,8 +829,6 @@ const ChargeController = {
         return res.status(400).json({ success: false, message: 'Some charges failed validation', errors, validatedCount: validated.length });
       }
       const result = await Charge.bulkCreate(validated, { validate: true, returning: true });
-      // After bulk create, we would need to create tiers individually – for simplicity, skip or implement loop
-      // For production, you'd need to handle tiers separately.
       res.status(201).json({ success: true, message: `${result.length} charges created`, data: result });
     } catch (error) {
       console.error('Bulk Create Error:', error);
@@ -593,6 +836,7 @@ const ChargeController = {
     }
   },
 
+  // ==================== EXPORT CHARGES ====================
   exportCharges: async (req, res) => {
     try {
       const { format = 'json', recSt, chrgTy, tierTy } = req.query;

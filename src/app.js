@@ -1,11 +1,11 @@
+///////////////////////////////////////////////////////////////////////////////
+////======APP WITH FIXED USER ROUTES (DIRECT IMPORT)======///////////////////
 // app.js - EXPRESS APP ONLY (NO SERVER STARTUP) - WITH LAZY LOADING & FIXED BODY PARSING
 // ============================================
 // PIDUSAGE ERROR SUPPRESSION - MUST BE AT VERY TOP
 // ============================================
 
-process.env.PIDUSAGE_NO_WMIC = '1';
-process.env.PIDUSAGE_DISABLE = '1';
-
+// ✅ Force disable pidusage BEFORE any imports
 const originalConsoleError = console.error;
 console.error = function(...args) {
     const message = args[0];
@@ -18,6 +18,34 @@ console.error = function(...args) {
     }
     originalConsoleError.apply(console, args);
 };
+
+// ============================================
+// GLOBAL ERROR HANDLERS (Must be at the top)
+// ============================================
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ UNCAUGHT EXCEPTION:');
+  console.error('Time:', new Date().toISOString());
+  console.error('Message:', err.message);
+  console.error('Stack:', err.stack);
+  
+  // Log but don't exit immediately
+  // Give time for cleanup if needed
+  setTimeout(() => {
+    console.error('⚠️ Process exiting due to uncaught exception');
+    process.exit(1);
+  }, 1000);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+  console.error('⚠️ UNHANDLED REJECTION:');
+  console.error('Time:', new Date().toISOString());
+  console.error('Message:', err.message || err);
+  console.error('Stack:', err.stack);
+  // Don't exit immediately, but log the error
+});
 
 // ============================================
 // IMPORTS
@@ -41,7 +69,7 @@ import { v2 as cloudinaryV2 } from 'cloudinary';
 import monitor from 'express-status-monitor';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
-import Redis from 'ioredis';   // ✅ Redis client for traffic monitoring
+import Redis from 'ioredis';
 
 // Fix __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -57,7 +85,6 @@ import DebitCardRoutes from './routes/DebitCardRoutes.js';
 import binCardCounterRoutes from './routes/binCardCounterRoutes.js';
 import adminRoutes from './routes/AdminRoutes.js';
 
-
 // Direct route imports (non-lazy)
 import loginRoutes from './routes/LoginRoutes.js';
 import BulkGroupLoanRoutes from './routes/BulkGroupLoanRoutes.js';
@@ -69,15 +96,90 @@ import outwardTransferRoutes from './routes/OutwardTransferRoutes.js';
 import TransactionRoutes from './routes/TransactionRoutes.js';
 import ModuleRoutes from './routes/ModuleRoutes.js';
 import pendingGLTransactionRoutes from './routes/PendingGLTransactionRoutes.js';
+import EMTLRoutes from './routes/EMTLRoutes.js';
+import JournalEntryRoutes from './routes/JournalEntryRoutes.js';
+import EmailStatementRoutes from './routes/EmailStatementRoutes.js';
 
 
+// Channel Routes
 
-// ✅ Import AdminUser from the correct path (root -> src/models)
+import InwardFundsTransferRoutes from './routes/InwardFundsTransferRoutes.js';
+import ExternalTransferRoutes from './routes/ExternalTransferRoutes.js';
+import CardPaymentRoutes from './routes/CardPaymentRoutes.js';
+
+// ✅ Import AdminUser from the correct path
 import AdminUser from '../src/models/AdminUser.js';
+
+// ✅ IMPORT BANK ROUTES
+import BankRoutes from './routes/BankRoutes.js';
+
+// ✅ IMPORT NOTIFICATION ROUTES - Direct import (NOT lazy loaded)
+import NotificationRoutes from './routes/NotificationRoutes.js';
+
+// COLLATERAL ROUTES
+import CollateralRoutes from '../src/routes/CollateralRoutes.js';
+
+// ✅ IMPORT USER ROUTES - Direct import (FIX FOR 503 ERROR)
+import userRoutes from './routes/userRoutes.js';
 
 // Initialize app
 const app = express();
 app.set('trust proxy', 1);
+
+// ============================================
+// WINSTON LOGGER SETUP (More robust logging)
+// ============================================
+
+import winston from 'winston';
+
+// Create logs directory if it doesn't exist
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+// Configure Winston logger
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'evolution-banking-api' },
+  transports: [
+    new winston.transports.File({ 
+      filename: path.join(logsDir, 'error.log'),
+      level: 'error',
+      handleExceptions: true,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5
+    }),
+    new winston.transports.File({ 
+      filename: path.join(logsDir, 'combined.log'),
+      handleExceptions: true,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5
+    }),
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      ),
+      handleExceptions: true
+    })
+  ],
+  exitOnError: false // Don't exit on error
+});
+
+// Override console methods to use Winston
+console.log = (...args) => logger.info(args.join(' '));
+console.error = (...args) => logger.error(args.join(' '));
+console.warn = (...args) => logger.warn(args.join(' '));
+console.info = (...args) => logger.info(args.join(' '));
 
 // ============================================
 // CORS CONFIGURATION (MUST BE FIRST)
@@ -109,26 +211,117 @@ const corsOptions = {
     'range',
     'cache-control',
     'pragma',
-    'expires'  
+    'expires',
+    // ✅ ADD THESE CUSTOM HEADERS
+    'x-business-unit',
+    'x-branch-name',
+    'x-branch-code',
+    'x-encrypted',
+    'x-encryption-version',
+    'x-encryption-metadata',
+    'x-skip-encryption',  // ✅ ADD THIS - required for 2FA
+    'accept',
+    'origin',
+    'user-agent',
+    'referer'
   ],
-  exposedHeaders: ['Content-Range', 'X-Total-Count'],
+  exposedHeaders: [
+    'Content-Range', 
+    'X-Total-Count',
+    'X-Business-Unit',
+    'X-Branch-Name',
+    'X-Branch-Code'
+  ],
 };
 
 console.log('🛡️ CORS Allowed Origins:', corsOptions.origin);
+console.log('🛡️ CORS Allowed Headers:', corsOptions.allowedHeaders);
+
+// Apply CORS middleware
 app.use(cors(corsOptions));
 
-// Additional CORS headers
+// Additional CORS headers middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  
+  // Check if origin is allowed
   if (origin && corsOptions.origin.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+  } else if (process.env.NODE_ENV === 'development') {
+    // Allow any origin in development
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   }
+  
+  // Allow credentials
   res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Allow methods
   res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
-  res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  
+  // Allow headers - include all custom headers including x-skip-encryption
+  res.header('Access-Control-Allow-Headers', [
+    ...corsOptions.allowedHeaders,
+    'x-business-unit',
+    'x-branch-name',
+    'x-branch-code',
+    'x-encrypted',
+    'x-encryption-version',
+    'x-encryption-metadata',
+    'x-skip-encryption'  // ✅ ADD THIS
+  ].join(', '));
+  
+  // Expose headers to frontend
+  res.header('Access-Control-Expose-Headers', [
+    'Content-Range',
+    'X-Total-Count',
+    'X-Business-Unit',
+    'X-Branch-Name',
+    'X-Branch-Code'
+  ].join(', '));
+  
+  // Handle preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   next();
 });
+
+// ✅ Alternative: Use a more permissive CORS for development
+if (process.env.NODE_ENV === 'development') {
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', [
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'x-business-unit',
+      'x-branch-name',
+      'x-branch-code',
+      'x-encrypted',
+      'x-encryption-version',
+      'x-encryption-metadata',
+      'x-skip-encryption',  // ✅ ADD THIS
+      'x-api-key',
+      'app-id',
+      'x-webhook-signature',
+      'x-nip-signature',
+      'range',
+      'cache-control',
+      'pragma',
+      'expires'
+    ].join(', '));
+    res.header('Access-Control-Expose-Headers', 'Content-Range, X-Total-Count, X-Business-Unit, X-Branch-Name, X-Branch-Code');
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    next();
+  });
+}
 
 // ============================================
 // MULTER ROUTES (MUST BE BEFORE BODY PARSERS)
@@ -136,16 +329,20 @@ app.use((req, res, next) => {
 app.use('/api/identification-information', IdentificationInformation);
 console.log('✅ Identification upload route mounted (before body parsers)');
 
+
+// Email Statement Routes
+// Add this where you mount other routes
+app.use('/api/email-statements', EmailStatementRoutes);
+console.log('✅ Email Statement routes registered at /api/email-statements');
+
 // ============================================
 // BODY PARSERS (global)
 // ============================================
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
-// app.js - Traffic section
-
 // ============================================
-// REDIS TRAFFIC MONITORING
+// REDIS TRAFFIC MONITORING (WITH IMPROVED ERROR HANDLING)
 // ============================================
 
 const redisHost = (process.env.REDIS_HOST && process.env.REDIS_HOST !== 'disabled') 
@@ -154,6 +351,7 @@ const redisHost = (process.env.REDIS_HOST && process.env.REDIS_HOST !== 'disable
 
 const redisPort = process.env.REDIS_PORT || 6379;
 
+// Enhanced Redis configuration with better error handling
 const redis = new Redis({
   host: redisHost,
   port: redisPort,
@@ -162,9 +360,20 @@ const redis = new Redis({
   retryStrategy: (times) => {
     if (times > 3) {
       console.warn('⚠️ Redis connection failed after 3 retries, traffic monitoring disabled');
-      return null;
+      return null; // Stop retrying
     }
     return Math.min(times * 100, 3000);
+  },
+  // Additional options for stability
+  enableReadyCheck: true,
+  lazyConnect: false,
+  keepAlive: 30000,
+  reconnectOnError: (err) => {
+    const targetError = 'READONLY';
+    if (err.message.includes(targetError)) {
+      return true; // Reconnect for this specific error
+    }
+    return false;
   }
 });
 
@@ -177,6 +386,11 @@ redis.on('connect', () => {
   redisErrorLogged = false;
 });
 
+redis.on('ready', () => {
+  console.log('✅ Redis is ready');
+  redisConnected = true;
+});
+
 redis.on('error', (err) => {
   if (!redisErrorLogged) {
     console.warn('⚠️ Redis connection error:', err.message);
@@ -185,9 +399,18 @@ redis.on('error', (err) => {
   }
 });
 
+redis.on('close', () => {
+  console.warn('⚠️ Redis connection closed');
+  redisConnected = false;
+});
+
+redis.on('reconnecting', () => {
+  console.log('🔄 Redis reconnecting...');
+});
+
 app.set('redisClient', redis);
 
-// Traffic counter middleware
+// Traffic counter middleware with try-catch for write operations
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api') || 
       req.path === '/api/health' || 
@@ -202,17 +425,28 @@ app.use((req, res, next) => {
     return next();
   }
 
-  const pathParts = req.path.split('/').filter(Boolean);
-  let baseRoute = '/api';
-  if (pathParts.length >= 2) {
-    baseRoute = `/${pathParts[0]}/${pathParts[1]}`;
-  } else if (pathParts.length === 1) {
-    baseRoute = `/${pathParts[0]}`;
-  }
-  const key = `traffic:${baseRoute}`;
+  try {
+    const pathParts = req.path.split('/').filter(Boolean);
+    let baseRoute = '/api';
+    if (pathParts.length >= 2) {
+      baseRoute = `/${pathParts[0]}/${pathParts[1]}`;
+    } else if (pathParts.length === 1) {
+      baseRoute = `/${pathParts[0]}`;
+    }
+    const key = `traffic:${baseRoute}`;
 
-  redis.incr(key).catch(() => {});
-  redis.expire(key, 60).catch(() => {});
+    // Wrap Redis write operations in try-catch
+    try {
+      redis.incr(key).catch(() => {});
+      redis.expire(key, 60).catch(() => {});
+    } catch (redisError) {
+      console.error('Redis write error:', redisError.message);
+      // Handle gracefully - don't crash the request
+    }
+  } catch (error) {
+    console.error('Traffic counter error:', error.message);
+    // Continue without traffic counting
+  }
 
   next();
 });
@@ -249,36 +483,46 @@ app.get('/api/traffic/stats', async (req, res) => {
       });
     }
 
-    const keys = await redis.keys('traffic:*');
-    const stats = [];
-    let totalRequests = 0;
+    try {
+      const keys = await redis.keys('traffic:*');
+      const stats = [];
+      let totalRequests = 0;
 
-    for (const key of keys) {
-      const count = await redis.get(key);
-      const route = key.replace('traffic:', '');
-      const numCount = parseInt(count) || 0;
-      totalRequests += numCount;
-      stats.push({ route, count: numCount, percentage: 0 });
-    }
-
-    stats.forEach(stat => {
-      stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
-    });
-
-    stats.sort((a, b) => b.count - a.count);
-    const topRoutes = stats.slice(0, 20);
-
-    res.json({
-      success: true,
-      data: {
-        totalRequests,
-        uniqueRoutes: stats.length,
-        topRoutes,
-        allRoutes: stats,
-        redisConnected: true,
-        timestamp: new Date().toISOString()
+      for (const key of keys) {
+        try {
+          const count = await redis.get(key);
+          const route = key.replace('traffic:', '');
+          const numCount = parseInt(count) || 0;
+          totalRequests += numCount;
+          stats.push({ route, count: numCount, percentage: 0 });
+        } catch (getError) {
+          console.error('Error getting Redis key:', getError.message);
+          // Continue with other keys
+        }
       }
-    });
+
+      stats.forEach(stat => {
+        stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
+      });
+
+      stats.sort((a, b) => b.count - a.count);
+      const topRoutes = stats.slice(0, 20);
+
+      res.json({
+        success: true,
+        data: {
+          totalRequests,
+          uniqueRoutes: stats.length,
+          topRoutes,
+          allRoutes: stats,
+          redisConnected: true,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (redisError) {
+      console.error('Redis stats error:', redisError);
+      throw redisError;
+    }
   } catch (error) {
     console.error('❌ Traffic stats error:', error);
     res.json({
@@ -302,140 +546,6 @@ app.get('/api/traffic-test', (req, res) => {
     redisConnected: redisConnected || false,
     redisStatus: redisConnected ? 'Connected' : 'Disconnected',
     message: redisConnected ? 'Redis is running' : 'Redis is not running',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// ============================================
-// ✅ PUBLIC TRAFFIC ENDPOINTS (NO AUTH REQUIRED)
-// ============================================
-
-/**
- * GET /api/traffic - Simple traffic stats (public)
- */
-app.get('/api/traffic', async (req, res) => {
-  try {
-    const redisClient = req.app.get('redisClient');
-    if (!redisClient || !redisConnected) {
-      return res.status(200).json({
-        success: true,
-        data: [],
-        message: 'Redis not available',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const keys = await redisClient.keys('traffic:*');
-    const data = [];
-    let total = 0;
-
-    for (const key of keys) {
-      const count = await redisClient.get(key);
-      const route = key.replace('traffic:', '');
-      const numCount = parseInt(count) || 0;
-      total += numCount;
-      data.push({ route, count: numCount });
-    }
-
-    data.sort((a, b) => b.count - a.count);
-
-    res.json({
-      success: true,
-      data,
-      total,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ Traffic stats error:', error);
-    res.status(200).json({
-      success: false,
-      data: [],
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * GET /api/traffic/stats - Detailed traffic stats (public)
- */
-app.get('/api/traffic/stats', async (req, res) => {
-  try {
-    const redisClient = req.app.get('redisClient');
-    if (!redisClient || !redisConnected) {
-      return res.status(200).json({
-        success: true,
-        data: {
-          totalRequests: 0,
-          uniqueRoutes: 0,
-          topRoutes: [],
-          redisConnected: false,
-          message: 'Redis not available'
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const keys = await redisClient.keys('traffic:*');
-    const stats = [];
-    let totalRequests = 0;
-
-    for (const key of keys) {
-      const count = await redisClient.get(key);
-      const route = key.replace('traffic:', '');
-      const numCount = parseInt(count) || 0;
-      totalRequests += numCount;
-      stats.push({ route, count: numCount });
-    }
-
-    // Sort by count descending
-    stats.sort((a, b) => b.count - a.count);
-
-    // Calculate percentages
-    stats.forEach(stat => {
-      stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
-    });
-
-    // Get top routes (limit to top 20)
-    const topRoutes = stats.slice(0, 20);
-
-    res.json({
-      success: true,
-      data: {
-        totalRequests,
-        uniqueRoutes: stats.length,
-        topRoutes,
-        allRoutes: stats,
-        redisConnected: true,
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    console.error('❌ Traffic stats error:', error);
-    res.status(200).json({
-      success: false,
-      data: {
-        totalRequests: 0,
-        uniqueRoutes: 0,
-        topRoutes: [],
-        error: error.message,
-        redisConnected: false
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * GET /api/traffic-test - Check Redis status (public)
- */
-app.get('/api/traffic-test', (req, res) => {
-  res.json({
-    success: true,
-    redisConnected,
-    redisStatus: redisConnected ? 'Connected' : 'Disconnected',
-    redisHost: process.env.REDIS_HOST || 'localhost',
-    redisPort: process.env.REDIS_PORT || 6379,
     timestamp: new Date().toISOString()
   });
 });
@@ -637,12 +747,11 @@ if (!fs.existsSync(bulkLoansDir)) {
 // ============================================
 app.use((req, res, next) => {
   const isBulkRoute = req.url.includes('/bulk/group-loans') || req.url.includes('/bulk/individual');
-  const isPluginRoute = req.url.includes('/plugins/upload'); // ✅ ADD THIS
+  const isPluginRoute = req.url.includes('/plugins/upload');
   const isMultipart = req.headers['content-type']?.includes('multipart/form-data');
   const isJson = req.headers['content-type']?.includes('application/json');
-  const isWebhook = req.url.includes('/webhook'); // Also skip webhooks
+  const isWebhook = req.url.includes('/webhook');
   
-  // Skip fileUpload for JSON requests, bulk multipart routes, plugin uploads, and webhooks
   if (isJson || isPluginRoute || isWebhook || (isBulkRoute && isMultipart)) {
     console.log('🔧 Skipping fileUpload for route:', req.url);
     return next();
@@ -666,181 +775,51 @@ app.use('/api/thriftsetup', ThriftSettingsRoutes);
 app.use('/api/bulk/group-loans', BulkGroupLoanRoutes);
 console.log('✅ Bulk group loan routes loaded directly');
 
-// ✅ Login route – placed after admin‑login and fileUpload
 app.use('/api/login', loginRoutes);
 console.log('✅ Login routes loaded directly');
 
-// ============================================
-// ORGANIZATION ROUTES
-// ============================================
 app.use('/api/organization', organizationRoutes);
 console.log('✅ Organization routes loaded directly');
 
 // ============================================
-// MANUAL TRANSACTION ROUTES
+// ✅ USER ROUTES - Direct import (FIX FOR 503 ERROR)
 // ============================================
 console.log('\n🔧 ========================================');
-console.log('🔧 SETTING UP MANUAL TRANSACTION ROUTES');
+console.log('🔧 SETTING UP USER ROUTES');
 console.log('🔧 ==========================================\n');
 
-import decryptPayload from './middleware/decryptPayload.js';
-import transactionController from './Services/postTransaction.js';
+app.use('/api/users', userRoutes);
+console.log('✅ User routes registered directly!');
+console.log('   - Base path: /api/users');
+console.log('   - Routes: GET /, POST /register, PUT /:id, etc.');
 
-if (transactionController && typeof transactionController.postTransaction === 'function') {
-  console.log('✅ Transaction controller loaded successfully');
-  const transactionRouter = express.Router();
-  
-  // ========== TRANSACTION POST ROUTES ==========
-  transactionRouter.post('/transactions', decryptPayload, async (req, res) => {
-    try {
-      console.log('📥 Manual transaction: POST /transactions');
-      await transactionController.postTransaction(req, res);
-    } catch (error) {
-      console.error('❌ Transaction error:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, message: 'Transaction processing failed', error: error.message });
-      }
-    }
-  });
-  
-  transactionRouter.post('/transfer', decryptPayload, async (req, res) => {
-    try {
-      console.log('📥 Manual transaction: POST /transfer');
-      await transactionController.postTransaction(req, res);
-    } catch (error) {
-      console.error('❌ Transaction error:', error);
-      if (!res.headersSent) res.status(500).json({ error: error.message });
-    }
-  });
-  
-  transactionRouter.post('/payment', decryptPayload, async (req, res) => {
-    try {
-      console.log('📥 Manual transaction: POST /payment');
-      await transactionController.postTransaction(req, res);
-    } catch (error) {
-      console.error('❌ Transaction error:', error);
-      if (!res.headersSent) res.status(500).json({ error: error.message });
-    }
-  });
-  
-  // ========== TRANSACTION GET ROUTES ==========
-  transactionRouter.get('/transactions/account/:accountNo/balance', async (req, res) => {
-    try { 
-      await transactionController.getAccountBalance(req, res); 
-    } catch (error) { 
-      res.status(500).json({ error: error.message }); 
-    }
-  });
-  
-  transactionRouter.get('/transactions/account/:accountNo', async (req, res) => {
-    try { 
-      await transactionController.getTransactionsByAccount(req, res); 
-    } catch (error) { 
-      res.status(500).json({ error: error.message }); 
-    }
-  });
-  
-  transactionRouter.get('/transactions/history', async (req, res) => {
-    try { 
-      await transactionController.getTransactionHistory(req, res); 
-    } catch (error) { 
-      res.status(500).json({ error: error.message }); 
-    }
-  });
-  
-  transactionRouter.get('/transactions/debug/accounts', async (req, res) => {
-    try { 
-      await transactionController.debugAccounts(req, res); 
-    } catch (error) { 
-      res.status(500).json({ error: error.message }); 
-    }
-  });
-  
-  // ============================================================
-  // ✅ NEW: TELLER DAILY TRANSACTIONS ROUTES
-  // ============================================================
-  
-  /**
-   * Get daily transactions for a specific teller (path param)
-   * GET /api/post-transactions/transactions/teller/daily/:userId?date=2026-07-11
-   */
-  transactionRouter.get('/transactions/teller/daily/:userId', async (req, res) => {
-    try {
-      console.log(`📊 Fetching daily transactions for teller: ${req.params.userId}`);
-      await transactionController.getTellerDailyTransactions(req, res);
-    } catch (error) {
-      console.error('❌ Error in teller daily transactions route:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          success: false, 
-          message: 'Failed to fetch teller daily transactions',
-          error: error.message 
-        });
-      }
-    }
-  });
-  
-  /**
-   * Get daily transactions for a specific teller (query param)
-   * GET /api/post-transactions/transactions/teller/daily?userId=PCO02&date=2026-07-11
-   */
-  transactionRouter.get('/transactions/teller/daily', async (req, res) => {
-    try {
-      console.log(`📊 Fetching daily transactions for teller: ${req.query.userId}`);
-      await transactionController.getTellerDailyTransactions(req, res);
-    } catch (error) {
-      console.error('❌ Error in teller daily transactions route:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          success: false, 
-          message: 'Failed to fetch teller daily transactions',
-          error: error.message 
-        });
-      }
-    }
-  });
-  
-  /**
-   * Get teller transaction summary (for dashboard)
-   * GET /api/post-transactions/transactions/teller/summary?userId=PCO02
-   */
-  transactionRouter.get('/transactions/teller/summary', async (req, res) => {
-    try {
-      console.log(`📊 Fetching transaction summary for teller: ${req.query.userId}`);
-      await transactionController.getTellerTransactionSummary(req, res);
-    } catch (error) {
-      console.error('❌ Error in teller transaction summary route:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          success: false, 
-          message: 'Failed to fetch teller transaction summary',
-          error: error.message 
-        });
-      }
-    }
-  });
-  
-  // ============================================================
-  // ✅ MOUNT THE ROUTER
-  // ============================================================
-  app.use('/api/post-transactions', transactionRouter);
-  
-  console.log('✅ Manual transaction routes registered successfully!');
-  console.log('   - POST   /api/post-transactions/transactions');
-  console.log('   - POST   /api/post-transactions/transfer');
-  console.log('   - POST   /api/post-transactions/payment');
-  console.log('   - GET    /api/post-transactions/transactions/account/:accountNo/balance');
-  console.log('   - GET    /api/post-transactions/transactions/account/:accountNo');
-  console.log('   - GET    /api/post-transactions/transactions/history');
-  console.log('   - GET    /api/post-transactions/transactions/debug/accounts');
-  console.log('   ✅ TELLER ROUTES:');
-  console.log('   - GET    /api/post-transactions/transactions/teller/daily/:userId');
-  console.log('   - GET    /api/post-transactions/transactions/teller/daily?userId=&date=');
-  console.log('   - GET    /api/post-transactions/transactions/teller/summary?userId=');
-  
-} else {
-  console.error('❌ CRITICAL: Transaction controller not available!');
-}
+// ============================================
+// ✅ NOTIFICATION ROUTES - Direct import (NOT lazy loaded)
+// ============================================
+console.log('\n🔧 ========================================');
+console.log('🔧 SETTING UP NOTIFICATION ROUTES');
+console.log('🔧 ==========================================\n');
+
+app.use('/api/notifications', NotificationRoutes);
+console.log('✅ Notification routes registered directly!');
+console.log('   - Base path: /api/notifications');
+console.log('   - Routes: GET /user/:userId/:roleId, PUT /:id/read, etc.');
+
+// ============================================
+// ✅ TRANSACTION ROUTES - BOTH SINGULAR AND PLURAL
+// ============================================
+console.log('\n🔧 ========================================');
+console.log('🔧 SETTING UP TRANSACTION ROUTES');
+console.log('🔧 ==========================================\n');
+
+// Mount the consolidated transaction routes at BOTH paths
+app.use('/api/transaction', TransactionRoutes);
+app.use('/api/transactions', TransactionRoutes);  // Alias for backward compatibility
+
+console.log('✅ Transaction routes registered successfully!');
+console.log('   - All routes are defined in ./routes/TransactionRoutes.js');
+console.log('   - Base path: /api/transaction');
+console.log('   - Alias path: /api/transactions (for backward compatibility)');
 
 // ============================================
 // MANUAL BANK ROUTES
@@ -849,7 +828,6 @@ console.log('\n🔧 ========================================');
 console.log('🔧 SETTING UP MANUAL BANK ROUTES');
 console.log('🔧 ==========================================\n');
 
-import BankRoutes from './routes/BankRoutes.js';
 app.use('/api/banking', BankRoutes);
 console.log('✅ Bank routes registered directly');
 
@@ -859,15 +837,24 @@ console.log('✅ Bank routes registered directly');
 
 const lazyLoadRoute = (routePath) => {
   return async (req, res, next) => {
+    // ✅ Skip routes that are already loaded directly
     const skipRoutes = [
       './routes/QueueRoutes.js',
-      './routes/OrganizationRoutes.js'
+      './routes/OrganizationRoutes.js',
+      './routes/userRoutes.js',        // ✅ Skip - loaded directly
+      './routes/NotificationRoutes.js', // ✅ Skip - loaded directly
+      './routes/LoginRoutes.js',        // ✅ Skip - loaded directly
+      './routes/TransactionRoutes.js',  // ✅ Skip - loaded directly
+      './routes/BankRoutes.js'          // ✅ Skip - loaded directly
     ];
-    if (skipRoutes.includes(routePath)) return next();
+    if (skipRoutes.includes(routePath)) {
+      console.warn(`⚠️ Route ${routePath} is skipped (loaded directly)`);
+      return next();
+    }
     
     try {
       const { initializeModels } = await import('./models/index.js');
-      await initializeModels();   // Safe – runs only once
+      await initializeModels();
       
       const module = await import(routePath);
       const handler = module.default;
@@ -884,11 +871,18 @@ const lazyLoadRoute = (routePath) => {
   };
 };
 
-// Mount all lazy routes (list unchanged)
-app.use('/api/inwardfunds', lazyLoadRoute('./routes/InwardFundsTransferRoutes.js'));
+
+// Channel routes ////////////////////////////////////////////////////////////////
+app.use('/api/inwardfunds', InwardFundsTransferRoutes);
+app.use('/api/external-transfers', ExternalTransferRoutes);
+app.use('/api/card-payments', CardPaymentRoutes);
+
+
+ 
+
+// Mount the consolidated transaction routes at BOTH paths
 app.use('/api/webhook', lazyLoadRoute('./routes/WebhookRoutes.js'));
 app.use('/api/nip/webhook', lazyLoadRoute('./routes/NipWebhookRoutes.js'));
-app.use('/api/users', lazyLoadRoute('./routes/userRoutes.js'));
 app.use('/api/user-role', lazyLoadRoute('./routes/UserRoleRoutes.js'));
 app.use('/api/permissions', lazyLoadRoute('./routes/PermissionRoutes.js'));
 app.use('/api/aml', lazyLoadRoute('./routes/amlRoutes.js'));
@@ -948,7 +942,6 @@ app.use('/api/drawer-user-role', lazyLoadRoute('./routes/DrawerUserRoleRoutes.js
 app.use('/api/direct-debits', lazyLoadRoute('./routes/DirectDebitRoutes.js'));
 app.use('/api/direct-debit-requests', lazyLoadRoute('./routes/DirectDebitRequestRoute.js'));
 app.use('/api/direct-debit-schedulers', lazyLoadRoute('./routes/DirectDebitSchedulerRoutes.js'));
-app.use('/api/notification', lazyLoadRoute('./routes/NotificationServiceRoutes.js'));
 app.use('/api/sms', lazyLoadRoute('./routes/SMSRoutes.js'));
 app.use('/api/analytics', lazyLoadRoute('./routes/AnalyticsRoute.js'));
 app.use('/api/audit-trails', lazyLoadRoute('./routes/AuditTrailRoutes.js'));
@@ -997,7 +990,8 @@ app.use("/api/Loan-disbursement-report", lazyLoadRoute('./routes/DisbursementRep
 app.use('/api/penalties', lazyLoadRoute('./routes/LoanpenaltyRoutes.js'));
 app.use('/api/organizations', lazyLoadRoute('./routes/OrganizationRoutes.js'));
 app.use('/api/overdue-loans', lazyLoadRoute('./routes/OverdueLoansRoutes.js'));
-app.use('/api/notifications', lazyLoadRoute('./routes/NotificationServiceRoutes.js'));
+// ✅ NOTIFICATION ROUTES - REMOVED LAZY LOAD (now using direct import above)
+// app.use('/api/notifications', lazyLoadRoute('./routes/NotificationServiceRoutes.js'));
 app.use('/api/guarantor-audits', lazyLoadRoute('./routes/GuarantorAuditRoutes.js'));
 app.use('/api/next-of-kins', lazyLoadRoute('./routes/NextOfKinRoutes.js'));
 app.use('/api/configuration', lazyLoadRoute('./routes/ConfigurationRoutes.js'));
@@ -1008,15 +1002,12 @@ app.use('/api/debit-cards', DebitCardRoutes);
 app.use('/api/bin-cards', binCardCounterRoutes);
 app.use('/api/config', CardSettlementConfigRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/transaction', TransactionRoutes);
 app.use('/api/modules', ModuleRoutes);
 app.use('/api/pending-gl-transactions', pendingGLTransactionRoutes);
-
-// ============================================
-// OUTWARD TRANSFER ROUTES (direct import)
-// ============================================ 
 app.use('/api/outward', outwardTransferRoutes);
-// ============================================
+app.use('/api/emt', EMTLRoutes);
+app.use('/api/journal-entries', JournalEntryRoutes);
+app.use('/api/collateral', CollateralRoutes)
 
 // ============================================
 // DEBUG MIDDLEWARE FOR BULK UPLOADS (optional)
@@ -1049,7 +1040,6 @@ if (fs.existsSync(adminBuildPath)) {
 // HEALTH & UTILITY ENDPOINTS
 // ============================================
 
-// Simple health check for frontend (no /api prefix)
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -1059,7 +1049,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Detailed health check (with /api prefix, includes DB status)
 app.get('/api/health', async (req, res) => {
   let dbStatus = 'UNHEALTHY';
   let dbDetails = 'Disconnected';
@@ -1082,7 +1071,6 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-// Server time utility
 app.get('/server-time', (req, res) => res.json({
   iso: new Date().toISOString(),
   local: new Date().toLocaleString(),
@@ -1166,7 +1154,6 @@ app.post('/cors-test', (req, res) => res.json({
 // ERROR HANDLING (must be last)
 // ============================================
 
-// ✅ NEW: Handle Malformed part header errors from busboy (e.g., vulnerability scanners)
 app.use((err, req, res, next) => {
   if (err.message && err.message.includes('Malformed part header')) {
     return res.status(400).send('Bad Request');

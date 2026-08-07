@@ -23,6 +23,12 @@ const ACCOUNT_TYPE_CODES = {
   'PETTY_CASH': '1005',
   'CASH_RESERVE': '1006',
   'FOREIGN_CURRENCY_CASH': '1007',
+
+  // ==================== DRAWER ACCOUNTS (1008-1019) ====================
+  'DRAWER_ACCOUNT': '1008',
+  'DRAWER_SUMMARY': '1009',
+  'DRAWER_PENDING': '1010',
+  'CASH_OVERDRAFT': '1020',
   
   // Bank Accounts (1100-1199)
   'BANK_ACCOUNT': '1100',
@@ -55,6 +61,10 @@ const ACCOUNT_TYPE_CODES = {
   'ADVANCES_TO_CUSTOMERS': '1215',
   'ADVANCES_TO_STAFF': '1216',
   'ADVANCES_TO_SUPPLIERS': '1217',
+
+  // ==================== INTER-BRANCH LOANS (1218-1220) ====================
+  'INTER_BRANCH_LOANS': '1218',
+  'LOAN_ORIGINATION_COSTS': '1220',
   
   // Specific Loan Types (1300-1399)
   'MORTGAGE_LOAN': '1300',
@@ -69,6 +79,17 @@ const ACCOUNT_TYPE_CODES = {
   'OVERDRAFT_ACCOUNT': '1309',
   'TERM_LOAN': '1310',
   'REVOLVING_CREDIT': '1311',
+  
+  // ==================== CARD SERVICES ASSET ACCOUNTS (1312-1320) ====================
+  'CARD_ISSUANCE': '1312',
+  'CARD_MAINTENANCE': '1313',
+  'CARD_EMBOSSING': '1314',
+  'CARD_PERSONALIZATION': '1315',
+  'CARD_STOCK_INVENTORY': '1316',
+  'CARD_STOCK_IN_TRANSIT': '1317',
+  'CARD_DAMAGED_STOCK': '1318',
+  'CARD_EXPIRED_STOCK': '1319',
+  'CARD_PIN_MAILER_INVENTORY': '1320',
   
   // Provision Related Asset Accounts (1320-1339)
   'LOAN_PROVISION_ACCOUNT': '1320',
@@ -99,6 +120,74 @@ const ACCOUNT_TYPE_CODES = {
   'UNAPPLIED_FUNDS': '1423',
   'LOAN_UNCLEARED_BALANCE': '1424',
   'UNEARNED_INTEREST': '1425',
+
+  'ACCRUED_INCOME': '1426',
+  'DIVIDEND_RECEIVABLE': '1427',
+  'TAX_REFUND_RECEIVABLE': '1428',
+  'INTERCOMPANY_RECEIVABLE': '1429',
+  
+  // ==================== ACCRUED INTEREST ACCOUNTS (Asset - Receivable) (1430-1489) ====================
+  // These represent interest earned but not yet received
+  
+  // Accrued Interest - General (1430-1439)
+  'ACCRUED_INTEREST': '1430',
+  'ACCRUED_INTEREST_RECEIVABLE': '1431',
+  'ACCRUED_INTEREST_ON_LOANS': '1432',
+  
+  // Accrued Interest by Loan Product (1433-1469)
+  'ACCRUED_INTEREST_PERSONAL_LOAN': '1433',
+  'ACCRUED_INTEREST_BUSINESS_LOAN': '1434',
+  'ACCRUED_INTEREST_MORTGAGE_LOAN': '1435',
+  'ACCRUED_INTEREST_AUTO_LOAN': '1436',
+  'ACCRUED_INTEREST_EDUCATION_LOAN': '1437',
+  'ACCRUED_INTEREST_CONSUMER_LOAN': '1438',
+  'ACCRUED_INTEREST_SME_LOAN': '1439',
+  'ACCRUED_INTEREST_AGRICULTURAL_LOAN': '1440',
+  'ACCRUED_INTEREST_DAILY_LOAN': '1441',
+  'ACCRUED_INTEREST_WEEKLY_LOAN': '1442',
+  'ACCRUED_INTEREST_GROUP_LOAN': '1443',
+  'ACCRUED_INTEREST_MONTHLY_LOAN': '1444',
+  'ACCRUED_INTEREST_GROUP_MONTHLY_LOAN': '1445',
+  'ACCRUED_INTEREST_ASSET_LOAN': '1446',
+  'ACCRUED_INTEREST_SOLAR_LOAN': '1447',
+  'ACCRUED_INTEREST_RAPID_CASH_LOAN': '1448',
+  'ACCRUED_INTEREST_STAFF_SALARY_ADVANCE': '1449',
+  'ACCRUED_INTEREST_STAFF_LOAN': '1450',
+  'ACCRUED_INTEREST_INDIVIDUAL_LOAN': '1451',
+  'ACCRUED_INTEREST_CORPORATE_LOAN': '1452',
+  'ACCRUED_INTEREST_OVERDRAFT': '1453',
+  'ACCRUED_INTEREST_HOME_IMPROVEMENT_LOAN': '1454',
+  'ACCRUED_INTEREST_SCHOOL_IMPROVEMENT_LOAN': '1455',
+  'ACCRUED_INTEREST_AGRICULTURE_LOAN': '1456',
+  'ACCRUED_INTEREST_GENERAL_LOAN': '1457',
+  'ACCRUED_INTEREST_MORTGAGE': '1458',
+  'ACCRUED_INTEREST_HOME_LOAN': '1459',
+  
+  // Accrued Interest on Deposits (1460-1469)
+  'ACCRUED_INTEREST_SAVINGS_DEPOSITS': '1460',
+  'ACCRUED_INTEREST_TERM_DEPOSITS': '1461',
+  'ACCRUED_INTEREST_FIXED_DEPOSITS': '1462',
+  'ACCRUED_INTEREST_RECURRING_DEPOSITS': '1463',
+  'ACCRUED_INTEREST_DEMAND_DEPOSITS': '1464',
+  'ACCRUED_INTEREST_CALL_DEPOSITS': '1465',
+  'ACCRUED_INTEREST_TIME_DEPOSITS': '1466',
+  'ACCRUED_INTEREST_MARGIN_DEPOSITS': '1467',
+  'ACCRUED_INTEREST_ESCROW_DEPOSITS': '1468',
+  'ACCRUED_INTEREST_THRIFT_SAVINGS': '1469',
+  
+  // Accrued Interest Payable (Liability) (1470-1489)
+  // Note: These are liability accounts for interest owed to customers
+  'ACCRUED_INTEREST_PAYABLE_SAVINGS': '1470',
+  'ACCRUED_INTEREST_PAYABLE_TERM_DEPOSIT': '1471',
+  'ACCRUED_INTEREST_PAYABLE_FIXED_DEPOSIT': '1472',
+  'ACCRUED_INTEREST_PAYABLE_CURRENT_DEPOSIT': '1473',
+  'ACCRUED_INTEREST_PAYABLE_RECURRING_DEPOSIT': '1474',
+  'ACCRUED_INTEREST_PAYABLE_DEMAND_DEPOSIT': '1475',
+  'ACCRUED_INTEREST_PAYABLE_CALL_DEPOSIT': '1476',
+  'ACCRUED_INTEREST_PAYABLE_TIME_DEPOSIT': '1477',
+  'ACCRUED_INTEREST_PAYABLE_MARGIN_DEPOSIT': '1478',
+  'ACCRUED_INTEREST_PAYABLE_ESCROW_DEPOSIT': '1479',
+  'ACCRUED_INTEREST_PAYABLE_THRIFT_SAVINGS': '1480',
   
   // Investments (1500-1599)
   'INVESTMENT_ASSET': '1500',
@@ -202,8 +291,15 @@ const ACCOUNT_TYPE_CODES = {
   'COMMERCIAL_PAPER': '2107',
   'LOAN_FROM_DIRECTORS': '2108',
   'LOAN_FROM_SHAREHOLDERS': '2109',
+
+  // ==================== INTER-BRANCH BORROWINGS (2110-2112) ====================
+  'INTER_BRANCH_BORROWINGS': '2110',
+  'INTERCOMPANY_PAYABLE': '2150',
   
-  // Interest Payable (2200-2299)
+  // ==================== INTEREST PAYABLE ACCOUNTS (Liability) (2200-2299) ====================
+  // These represent interest owed but not yet paid
+  
+  // Interest Payable - General (2200-2208)
   'INTEREST_PAYABLE': '2200',
   'INTEREST_PAYABLE_ON_LOANS': '2201',
   'INTEREST_PAYABLE_ON_SAVINGS': '2202',
@@ -214,7 +310,7 @@ const ACCOUNT_TYPE_CODES = {
   'ACCRUED_INTEREST_PAYABLE': '2207',
   'THRIFT_INTEREST_PAYABLE': '2208',
   
-  // ==================== INTEREST PAYABLE BY PRODUCT (2209-2299) ====================
+  // Interest Payable by Loan Product (2209-2239)
   'INTEREST_PAYABLE_PERSONAL_LOAN': '2209',
   'INTEREST_PAYABLE_BUSINESS_LOAN': '2210',
   'INTEREST_PAYABLE_MORTGAGE_LOAN': '2211',
@@ -247,6 +343,30 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_PAYABLE_CREDIT_CARD': '2238',
   'INTEREST_PAYABLE_LINE_OF_CREDIT': '2239',
   
+  // Interest Payable on Deposits (2240-2250)
+  'INTEREST_PAYABLE_SAVINGS_DEPOSITS': '2240',
+  'INTEREST_PAYABLE_FIXED_DEPOSITS': '2241',
+  'INTEREST_PAYABLE_RECURRING_DEPOSITS': '2242',
+  'INTEREST_PAYABLE_DEMAND_DEPOSITS': '2243',
+  'INTEREST_PAYABLE_CALL_DEPOSITS': '2244',
+  'INTEREST_PAYABLE_TIME_DEPOSITS': '2245',
+  'INTEREST_PAYABLE_MARGIN_DEPOSITS': '2246',
+  'INTEREST_PAYABLE_ESCROW_DEPOSITS': '2247',
+  'INTEREST_PAYABLE_THRIFT_SAVINGS': '2248',
+  'INTEREST_PAYABLE_TERM_DEPOSIT_INTEREST': '2249',
+  'INTEREST_PAYABLE_FIXED_DEPOSIT_INTEREST': '2250',
+  
+  // ==================== CARD SERVICES LIABILITY ACCOUNTS (2260-2299) ====================
+  'CARD_PAYABLE': '2260',
+  'CARD_FEE_PAYABLE': '2261',
+  'CARD_INTEREST_PAYABLE': '2262',
+  'CARD_ANNUAL_FEE_PAYABLE': '2263',
+  'CARD_LATE_FEE_PAYABLE': '2264',
+  'CARD_OVER_LIMIT_FEE_PAYABLE': '2265',
+  'CARD_FOREIGN_TRANSACTION_FEE_PAYABLE': '2266',
+  'CARD_CASH_ADVANCE_FEE_PAYABLE': '2267',
+  'CARD_BALANCE_TRANSFER_FEE_PAYABLE': '2268',
+  
   // Accounts Payable (2300-2399)
   'PAYABLE_ACCOUNT': '2300',
   'ACCOUNTS_PAYABLE': '2301',
@@ -269,12 +389,16 @@ const ACCOUNT_TYPE_CODES = {
   'ACCRUED_SALARIES': '2401',
   'ACCRUED_VACATION': '2402',
   'ACCRUED_BONUS': '2403',
-  'ACCRUED_INTEREST': '2404',
   'ACCRUED_TAXES': '2405',
   'ACCRUED_AUDIT_FEES': '2406',
   'ACCRUED_LEGAL_FEES': '2407',
   'ACCRUED_CONSULTING_FEES': '2408',
   'ACCRUED_LIABILITIES': '2450',
+  
+  // ==================== EMTL PAYABLE (2460-2469) ====================
+  'EMTL_PAYABLE': '2460',
+  'EMTL_COLLECTIONS': '2461',
+  'EMTL_REMITTANCE_CLEARING': '2462',
   
   // Current Liabilities (2500-2599)
   'CURRENT_LIABILITY': '2500',
@@ -285,6 +409,7 @@ const ACCOUNT_TYPE_CODES = {
   'DEFERRED_INCOME': '2505',
   'CUSTOMER_ADVANCES': '2506',
   'DEFERRED_REVENUE': '2507',
+  'DEFERRED_FEE_INCOME': '2508',
   'OTHER_CURRENT_LIABILITIES': '2550',
   
   // Long Term Liabilities (2600-2699)
@@ -357,7 +482,7 @@ const ACCOUNT_TYPE_CODES = {
   
   // ==================== REVENUE/INCOME ACCOUNTS (4000-4999) ====================
   
-  // Interest Income - General (4000-4099)
+  // Interest Income - General (4000-4012)
   'INTEREST_INCOME': '4000',
   'INTEREST_INCOME_ON_LOANS': '4001',
   'INTEREST_INCOME_ON_MORTGAGES': '4002',
@@ -372,7 +497,7 @@ const ACCOUNT_TYPE_CODES = {
   'THRIFT_INTEREST_INCOME': '4011',
   'THRIFT_CYCLE_INTEREST_INCOME': '4012',
   
-  // ==================== INTEREST INCOME BY PRODUCT (4013-4049) ====================
+  // Interest Income by Loan Product (4013-4044)
   'INTEREST_ON_PERSONAL_LOAN': '4013',
   'INTEREST_ON_BUSINESS_LOAN': '4014',
   'INTEREST_ON_MORTGAGE_LOAN': '4015',
@@ -405,6 +530,14 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_ON_TERM_DEPOSIT': '4042',
   'INTEREST_ON_CREDIT_CARD': '4043',
   'INTEREST_ON_LINE_OF_CREDIT': '4044',
+  
+  // Interest Income on Deposits (4045-4050)
+  'INTEREST_INCOME_ON_SAVINGS_DEPOSITS': '4045',
+  'INTEREST_INCOME_ON_TERM_DEPOSITS': '4046',
+  'INTEREST_INCOME_ON_FIXED_DEPOSITS': '4047',
+  'INTEREST_INCOME_ON_RECURRING_DEPOSITS': '4048',
+  'INTEREST_INCOME_ON_DEMAND_DEPOSITS': '4049',
+  'INTEREST_INCOME_ON_CALL_DEPOSITS': '4050',
   
   // Fee Income (4100-4199)
   'FEE_INCOME': '4100',
@@ -446,6 +579,24 @@ const ACCOUNT_TYPE_CODES = {
   'THRIFT_SERVICE_FEE': '4136',
   'THRIFT_PENALTY_FEE': '4137',
   'THRIFT_WITHDRAWAL_FEE': '4138',
+  'EMTL_SERVICE_CHARGE_INCOME': '4139',
+  
+  // ==================== CARD SERVICES REVENUE ACCOUNTS (4140-4199) ====================
+  'CARD_ISSUANCE_FEE_INCOME': '4140',
+  'CARD_ANNUAL_FEE_INCOME': '4141',
+  'CARD_LATE_FEE_INCOME': '4142',
+  'CARD_OVER_LIMIT_FEE_INCOME': '4143',
+  'CARD_FOREIGN_TRANSACTION_FEE_INCOME': '4144',
+  'CARD_CASH_ADVANCE_FEE_INCOME': '4145',
+  'CARD_BALANCE_TRANSFER_FEE_INCOME': '4146',
+  'CARD_INTERCHANGE_FEE_INCOME': '4147',
+  'CARD_REPLACEMENT_FEE_INCOME': '4148',
+  'CARD_PIN_RESET_FEE_INCOME': '4149',
+  'CARD_STATEMENT_FEE_INCOME': '4150',
+  'CARD_INACTIVITY_FEE_INCOME': '4151',
+  'CARD_RENEWAL_FEE_INCOME': '4152',
+  'CARD_EMBOSSING_FEE_INCOME': '4153',
+  'CARD_PERSONALIZATION_FEE_INCOME': '4154',
   
   // Service Income (4200-4299)
   'SERVICE_INCOME': '4200',
@@ -480,10 +631,18 @@ const ACCOUNT_TYPE_CODES = {
   'LITIGATION_SETTLEMENT_INCOME': '4405',
   'EXTRAORDINARY_INCOME': '4406',
   'OTHER_NON_OPERATING_INCOME': '4407',
+
+  // ==================== DRAWER OVER INCOME (4408-4410) ====================
+  'DRAWER_OVER_INCOME': '4408',
+
+  // ==================== INTER-BRANCH INCOME (4411-4413) ====================
+  'INTER_BRANCH_FEE_INCOME': '4411',
+  'INTER_BRANCH_INTEREST_INCOME': '4412',
+  'BAD_DEBT_RECOVERY': '4413',
   
   // ==================== EXPENSE ACCOUNTS (5000-5999) ====================
   
-  // Interest Expense - General (5000-5099)
+  // Interest Expense - General (5000-5009)
   'INTEREST_EXPENSE': '5000',
   'INTEREST_EXPENSE_ON_DEPOSITS': '5001',
   'INTEREST_EXPENSE_ON_SAVINGS': '5002',
@@ -495,7 +654,7 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_EXPENSE_ACCRUED': '5008',
   'THRIFT_INTEREST_EXPENSE': '5009',
   
-  // ==================== INTEREST EXPENSE BY PRODUCT (5010-5049) ====================
+  // Interest Expense by Loan Product (5010-5040)
   'INTEREST_EXPENSE_PERSONAL_LOAN': '5010',
   'INTEREST_EXPENSE_BUSINESS_LOAN': '5011',
   'INTEREST_EXPENSE_MORTGAGE_LOAN': '5012',
@@ -527,6 +686,34 @@ const ACCOUNT_TYPE_CODES = {
   'INTEREST_EXPENSE_TERM_DEPOSIT': '5038',
   'INTEREST_EXPENSE_CREDIT_CARD': '5039',
   'INTEREST_EXPENSE_LINE_OF_CREDIT': '5040',
+  
+  // Interest Expense on Deposits (5041-5050)
+  'INTEREST_EXPENSE_SAVINGS_DEPOSITS': '5041',
+  'INTEREST_EXPENSE_TERM_DEPOSITS': '5042',
+  'INTEREST_EXPENSE_FIXED_DEPOSITS': '5043',
+  'INTEREST_EXPENSE_RECURRING_DEPOSITS': '5044',
+  'INTEREST_EXPENSE_DEMAND_DEPOSITS': '5045',
+  'INTEREST_EXPENSE_CALL_DEPOSITS': '5046',
+  'INTEREST_EXPENSE_TIME_DEPOSITS': '5047',
+  'INTEREST_EXPENSE_MARGIN_DEPOSITS': '5048',
+  'INTEREST_EXPENSE_ESCROW_DEPOSITS': '5049',
+  'INTEREST_EXPENSE_THRIFT_SAVINGS': '5050',
+  
+  // ==================== CARD SERVICES EXPENSE ACCOUNTS (5051-5099) ====================
+  'CARD_PROCESSING_EXPENSE': '5051',
+  'CARD_FRAUD_LOSS_EXPENSE': '5052',
+  'CARD_CHARGEBACK_EXPENSE': '5053',
+  'CARD_REWARDS_EXPENSE': '5054',
+  'CARD_PRINTING_EXPENSE': '5055',
+  'CARD_PERSONALIZATION_EXPENSE': '5056',
+  'CARD_EMBOSSING_EXPENSE': '5057',
+  'CARD_SHIPPING_EXPENSE': '5058',
+  'CARD_STOCK_WRITE_OFF_EXPENSE': '5059',
+  'CARD_PIN_MAILER_EXPENSE': '5060',
+  'CARD_MANUFACTURING_EXPENSE': '5061',
+  'CARD_INTERCHANGE_FEE_EXPENSE': '5062',
+  'CARD_NETWORK_FEE_EXPENSE': '5063',
+  'CARD_DELIVERY_EXPENSE': '5064',
   
   // Staff Expenses (5100-5199)
   'STAFF_EXPENSE': '5100',
@@ -588,6 +775,12 @@ const ACCOUNT_TYPE_CODES = {
   'INSURANCE_EXPENSE': '5311',
   'PROPERTY_TAX': '5312',
   'OTHER_OPERATING_EXPENSES': '5313',
+
+  // ==================== DRAWER OVER/SHORT ACCOUNTS (5314-5319) ====================
+  'DRAWER_SHORT_EXPENSE': '5314',
+  'INTER_BRANCH_FEE_EXPENSE': '5315',
+  'INTER_BRANCH_INTEREST_EXPENSE': '5316',
+  
   
   // Marketing Expenses (5400-5499)
   'MARKETING_EXPENSE': '5400',
@@ -762,6 +955,9 @@ const ACCOUNT_TYPE_CODES = {
   'CLEARING_SUSPENSE': '6103',
   'RECONCILIATION_SUSPENSE': '6104',
   'DIFFERENCE_SUSPENSE': '6105',
+
+  // ==================== DRAWER SUSPENSE (6106-6110) ====================
+  'DRAWER_SUSPENSE': '6106',
   
   // Clearing Accounts (6200-6299)
   'CLEARING_ACCOUNT': '6200',
@@ -776,6 +972,15 @@ const ACCOUNT_TYPE_CODES = {
   'ACH_CLEARING': '6209',
   'SWIFT_CLEARING': '6210',
   'INTERNAL_CLEARING': '6211',
+
+  // ==================== DRAWER CLEARING (6212-6219) ====================
+  'DRAWER_CLEARING': '6212',
+  'DRAWER_APPROVAL_CLEARING': '6213',
+
+  // Clearing/Suspense Section
+  'ATM_CLEARING_SUSPENSE': '6215',
+  'POS_CLEARING_SUSPENSE': '6216',
+  'ONLINE_TRANSFER_SUSPENSE': '6217',
   
   // Inter-Branch Accounts (6300-6399)
   'INTER_BRANCH': '6300',
@@ -786,6 +991,9 @@ const ACCOUNT_TYPE_CODES = {
   'HEAD_OFFICE_CURRENT': '6305',
   'BRANCH_CURRENT': '6306',
   'BRANCH_CURRENT_ACCOUNT': '6307',
+  'INTER_BRANCH_SETTLEMENT': '6308',
+  'INTER_BRANCH_SUSPENSE': '6309',
+  'INTER_BRANCH_CLEARING': '6310',
   
   // ==================== TAX ACCOUNTS (7000-7999) ====================
   
@@ -881,8 +1089,6 @@ const ACCOUNT_TYPE_CODES = {
   'BUDGET_ACCOUNT': '8204',
   'FORECAST_ACCOUNT': '8205'
 };
-
-
 
 // Account class to code mapping (updated with more classes)
 const validClasses = [
@@ -1604,7 +1810,190 @@ export const createCOAAlignedGLAccount = async (req, res) => {
   }
 };
 
-// ==================== GET COA-ALIGNED GL ACCOUNT ====================
+
+
+// ============================================
+// UPDATE – including hierarchy, posting rules, and GLAccount sync
+// ============================================
+export const updateAccount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    // 1. Find the ChartofAccount
+    const account = await ChartofAccount.findOne({
+      where: { id, is_deleted: false }
+    });
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chart of account not found'
+      });
+    }
+
+    // 2. Allowed fields for ChartofAccount (including hierarchy and posting rules)
+    const allowedUpdates = [
+      // Basic fields
+      'name', 'glcode', 'type', 'account_usage', 'gl_group',
+      'description', 'status', 'metadata',
+      // Hierarchy
+      'parentId', 'isFolder', 'sortOrder',
+      // Posting rules
+      'cr_allowed', 'dr_allowed', 'post_allow', 'allow_negative_balance',
+      // Account flags
+      'is_control_account', 'is_suspense_account',
+      // Additional
+      'posting_rules', 'category', 'sub_category'
+    ];
+
+    const updateData = {};
+    allowedUpdates.forEach(field => {
+      if (updates[field] !== undefined) {
+        updateData[field] = updates[field];
+      }
+    });
+
+    // 3. Handle parentId changes (recalculate level and path)
+    if (updateData.parentId !== undefined && updateData.parentId !== account.parentId) {
+      if (updateData.parentId === null) {
+        updateData.accountLevel = 1;
+        updateData.accountPath = null;
+      } else {
+        const newParent = await ChartofAccount.findOne({
+          where: {
+            id: updateData.parentId,
+            organization_code: account.organization_code,
+            branch_code: account.branch_code,
+            is_deleted: false
+          }
+        });
+        if (!newParent) {
+          return res.status(404).json({
+            success: false,
+            message: 'New parent account not found'
+          });
+        }
+        updateData.accountLevel = (newParent.accountLevel || 0) + 1;
+        updateData.accountPath = newParent.accountPath
+          ? `${newParent.accountPath}/${newParent.id}`
+          : `${newParent.id}`;
+      }
+    }
+
+    // 4. Prevent GL code conflicts (within same branch)
+    if (updateData.glcode && updateData.glcode !== account.glcode) {
+      const existing = await ChartofAccount.findOne({
+        where: {
+          organization_code: account.organization_code,
+          branch_code: account.branch_code,
+          glcode: updateData.glcode,
+          is_deleted: false,
+          id: { [Op.ne]: id }
+        }
+      });
+      if (existing) {
+        return res.status(409).json({
+          success: false,
+          message: `GL code ${updateData.glcode} already exists in this branch`
+        });
+      }
+    }
+
+    // 5. Update ChartofAccount
+    await account.update({
+      ...updateData,
+      updated_by: req.user?.id || 'system'
+    });
+
+    // ===== SYNC WITH LINKED GLAccount =====
+    if (account.glAccountId || account.glAccountNo) {
+      try {
+        const whereClause = {};
+        if (account.glAccountId) {
+          whereClause.id = account.glAccountId;
+        } else if (account.glAccountNo) {
+          whereClause.GL_ACCT_NO = account.glAccountNo;
+        }
+
+        const glAccount = await GLAccount.findOne({ where: whereClause });
+
+        if (glAccount) {
+          const glUpdates = {};
+
+          // Map ChartofAccount fields to GLAccount fields
+          if (updateData.name !== undefined) {
+            glUpdates.ACCT_DESC = updateData.name;
+          }
+          if (updateData.type !== undefined) {
+            glUpdates.GL_ACCT_CAT = updateData.type;
+          }
+          if (updateData.account_usage !== undefined) {
+            glUpdates.accountType = updateData.account_usage;
+          }
+          if (updateData.status !== undefined) {
+            glUpdates.REC_ST = updateData.status.charAt(0).toUpperCase() + updateData.status.slice(1).toLowerCase();
+          }
+          if (updateData.description !== undefined) {
+            glUpdates.SEG_DESC = updateData.description;
+          }
+
+          // Posting rules sync
+          if (updateData.cr_allowed !== undefined) glUpdates.CR_ALLOWED = updateData.cr_allowed;
+          if (updateData.dr_allowed !== undefined) glUpdates.DR_ALLOWED = updateData.dr_allowed;
+          if (updateData.post_allow !== undefined) glUpdates.POST_ALLOW = updateData.post_allow;
+          if (updateData.allow_negative_balance !== undefined) glUpdates.ALLOW_BAL_SWING_FG = updateData.allow_negative_balance;
+          if (updateData.is_control_account !== undefined) glUpdates.CONTROL_ACCT_FG = updateData.is_control_account;
+          if (updateData.is_suspense_account !== undefined) glUpdates.SUSPENSE_ACCT_FG = updateData.is_suspense_account;
+
+          // Hierarchy sync
+          if (updateData.parentId !== undefined) glUpdates.PARENT_ID = updateData.parentId;
+          if (updateData.isFolder !== undefined) glUpdates.IS_FOLDER = updateData.isFolder;
+          if (updateData.sortOrder !== undefined) glUpdates.SORT_ORDER = updateData.sortOrder;
+
+          if (updateData.metadata !== undefined) {
+            const currentMeta = typeof glAccount.metadata === 'string'
+              ? JSON.parse(glAccount.metadata)
+              : glAccount.metadata || {};
+            const newMeta = { ...currentMeta, ...updateData.metadata };
+            glUpdates.metadata = newMeta;
+          }
+
+          if (Object.keys(glUpdates).length > 0) {
+            await glAccount.update(glUpdates);
+          }
+        }
+      } catch (syncError) {
+        console.warn('Could not sync GLAccount:', syncError.message);
+        // We don't fail the request, just log a warning
+      }
+    }
+
+    // 6. Return updated ChartofAccount (with fresh data)
+    const updatedAccount = await ChartofAccount.findOne({
+      where: { id, is_deleted: false },
+      include: [
+        { model: ChartofAccount, as: 'parent' },
+        { model: ChartofAccount, as: 'children' }
+      ]
+    });
+
+    res.json({
+      success: true,
+      message: 'Account updated successfully',
+      data: updatedAccount
+    });
+
+  } catch (error) {
+    console.error('Update account error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update account',
+      error: error.message
+    });
+  }
+};
+
 // ==================== GET COA-ALIGNED GL ACCOUNT(S) ====================
 export const getCOAAlignedAccount = async (req, res) => {
   try {
@@ -1614,36 +2003,56 @@ export const getCOAAlignedAccount = async (req, res) => {
 
     console.log('🔍 Fetching COA-aligned account(s):', { glAccountNo, glAccountId });
 
+    // Helper function to safely format date
+    const safeDate = (dateValue) => {
+      if (!dateValue) return null;
+      try {
+        const d = new Date(dateValue);
+        // Check if date is valid
+        if (isNaN(d.getTime())) {
+          return null;
+        }
+        return d.toISOString();
+      } catch (e) {
+        return null;
+      }
+    };
+
     // If no identifier provided, return all COA-aligned GL accounts
     if (!glAccountNo && !glAccountId) {
       const page = parseInt(req.query.page) || 1;
-      // ✅ Support 'all' parameter or use a larger default limit
       let limit;
       if (req.query.limit === 'all') {
-        limit = 10000; // Large number to get all records
+        limit = 10000;
       } else {
-        limit = parseInt(req.query.limit) || 100; // Default to 100 instead of 20
+        limit = parseInt(req.query.limit) || 100;
       }
       const offset = (page - 1) * limit;
 
       const { count, rows } = await GLAccount.findAndCountAll({
         limit,
         offset,
-        order: [['GL_ACCT_NO', 'ASC']]
+        order: [['created_at', 'DESC']] // Use created_at instead of GL_ACCT_NO for better sorting
       });
 
-      // Format accounts for response
-      const accounts = rows.map(glAccount => ({
-        glcode: glAccount.GL_ACCT_NO,
-        glAccountId: glAccount.GL_ACCT_ID,
-        description: glAccount.ACCT_DESC,
-        accountClass: glAccount.GL_ACCT_CAT,
-        accountType: glAccount.accountType,
-        organizationCode: glAccount.organizationCode,
-        branchCode: glAccount.branchCode,
-        status: glAccount.REC_ST,
-        createdAt: glAccount.createdAt
-      }));
+      // Format accounts for response with safe date handling
+      const accounts = rows.map(glAccount => {
+        const createdAt = glAccount.created_at || glAccount.createdAt;
+        const updatedAt = glAccount.updated_at || glAccount.updatedAt;
+        
+        return {
+          glcode: glAccount.GL_ACCT_NO,
+          glAccountId: glAccount.GL_ACCT_ID,
+          description: glAccount.ACCT_DESC,
+          accountClass: glAccount.GL_ACCT_CAT,
+          accountType: glAccount.accountType,
+          organizationCode: glAccount.organizationCode,
+          branchCode: glAccount.branchCode,
+          status: glAccount.REC_ST,
+          createdAt: safeDate(createdAt),
+          updatedAt: safeDate(updatedAt)
+        };
+      });
 
       return res.status(200).json({
         success: true,
@@ -1695,6 +2104,9 @@ export const getCOAAlignedAccount = async (req, res) => {
       try { metadata = JSON.parse(metadata); } catch(e) { metadata = {}; }
     }
 
+    const createdAt = glAccount.created_at || glAccount.createdAt;
+    const updatedAt = glAccount.updated_at || glAccount.updatedAt;
+
     const responseData = {
       glcode: glAccount.GL_ACCT_NO,
       glAccountId: glAccount.GL_ACCT_ID,
@@ -1725,8 +2137,8 @@ export const getCOAAlignedAccount = async (req, res) => {
       parentId: glAccount.PARENT_ID,
       status: glAccount.REC_ST,
       createdBy: glAccount.CREATED_BY,
-      createdAt: glAccount.createdAt,
-      updatedAt: glAccount.updatedAt,
+      createdAt: safeDate(createdAt),
+      updatedAt: safeDate(updatedAt),
       coaStructure: metadata?.coaStructure || glAccount.coaStructure,
       chartAccountId: chartAccount?.id,
       ledgerId: ledgerEntry?.id,
@@ -2373,6 +2785,7 @@ export const diagnoseDatabase = async (req, res) => {
 // ==================== EXPORT DEFAULT ====================
 const GLAccountController = {
   createCOAAlignedGLAccount,
+  updateAccount,
   createLedgerEntry,
   diagnoseDatabase,
   validateAccountClassType,

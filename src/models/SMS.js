@@ -1,4 +1,5 @@
-import { DataTypes, Model } from 'sequelize';
+// models/SMS.js - UPDATED with correct table name and fields
+import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
 
@@ -36,7 +37,7 @@ class SMS extends Model {
     const defaultOptions = {
       where: {
         TXN_DATE: {
-          [DataTypes.Op.between]: [startDate, endDate]
+          [Op.between]: [startDate, endDate]
         }
       },
       order: [['TXN_DATE', 'DESC']]
@@ -66,7 +67,7 @@ class SMS extends Model {
       ],
       where: {
         TXN_DATE: {
-          [DataTypes.Op.between]: [startDate, endDate]
+          [Op.between]: [startDate, endDate]
         }
       },
       group: ['DR_CR_IND'],
@@ -83,6 +84,30 @@ class SMS extends Model {
     }, {});
   }
 
+  // Static method to create SMS record
+  static async createSMS(data) {
+    try {
+      // Generate EXTERNAL_SMS_ID if not provided
+      if (!data.EXTERNAL_SMS_ID) {
+        data.EXTERNAL_SMS_ID = `SMS_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      }
+      
+      // Set default values
+      if (!data.REC_ST) data.REC_ST = 'A';
+      if (!data.ROW_TS) data.ROW_TS = new Date();
+      if (!data.SYS_CREATE_TS) data.SYS_CREATE_TS = new Date();
+      if (!data.CREATE_DT) data.CREATE_DT = new Date();
+      if (!data.TXN_DATE) data.TXN_DATE = new Date();
+      
+      // Create the SMS record
+      const sms = await this.create(data);
+      return sms;
+    } catch (error) {
+      logger.error('Error creating SMS record:', error.message);
+      throw error;
+    }
+  }
+
   // Instance method to get SMS summary
   getSummary() {
     return {
@@ -95,7 +120,7 @@ class SMS extends Model {
       balance: this.ACCT_BALANCE,
       availableBalance: this.DISP_AVAIL_BAL,
       depositorPayee: this.DEPOSITOR_PAYEE_NM,
-      messageContent: this.MESSAGE_CONTENT.substring(0, 100) + '...',
+      messageContent: this.MESSAGE_CONTENT ? this.MESSAGE_CONTENT.substring(0, 100) + '...' : '',
       recordStatus: this.REC_ST,
       createdBy: this.CREATED_BY
     };
@@ -103,11 +128,9 @@ class SMS extends Model {
 
   // Instance method to check if SMS is valid
   get isValid() {
-    // Validate required fields
     const requiredFields = [
       'EXTERNAL_SMS_ID',
       'RECIPIENT_PHONE_NUMBER',
-      'REC_ST',
       'MESSAGE_CONTENT',
       'ACCT_NO',
       'DR_CR_IND'
@@ -117,44 +140,31 @@ class SMS extends Model {
       if (!this[field]) return false;
     }
     
-    // Validate transaction amount
     if (this.TXN_AMT < 0) return false;
-    
-    // Validate debit/credit indicator
     if (!['D', 'C'].includes(this.DR_CR_IND.toUpperCase())) return false;
-    
-    // Validate dates
-    if (this.TXN_DATE > new Date()) return false;
-    if (this.CREATE_DT > new Date()) return false;
-    if (this.SYS_CREATE_TS > new Date()) return false;
     
     return true;
   }
 
-  // Virtual getter for formatted transaction type
+  // Virtual getters
   get formattedTransactionType() {
-    switch (this.DR_CR_IND.toUpperCase()) {
-      case 'D':
-        return 'Debit';
-      case 'C':
-        return 'Credit';
-      default:
-        return 'Unknown';
+    switch (this.DR_CR_IND?.toUpperCase()) {
+      case 'D': return 'Debit';
+      case 'C': return 'Credit';
+      default: return 'Unknown';
     }
   }
 
-  // Virtual getter for formatted transaction date
   get formattedTransactionDate() {
-    return this.TXN_DATE ? this.TXN_DATE.toLocaleDateString() : 'N/A';
+    return this.TXN_DATE ? new Date(this.TXN_DATE).toLocaleDateString() : 'N/A';
   }
 
-  // Virtual getter for transaction direction
   get isDebit() {
-    return this.DR_CR_IND.toUpperCase() === 'D';
+    return this.DR_CR_IND?.toUpperCase() === 'D';
   }
 
   get isCredit() {
-    return this.DR_CR_IND.toUpperCase() === 'C';
+    return this.DR_CR_IND?.toUpperCase() === 'C';
   }
 }
 
@@ -182,10 +192,7 @@ SMS.init({
     defaultValue: 'A',
     comment: 'Record status (A=Active, I=Inactive, D=Deleted)',
     validate: {
-      isIn: {
-        args: [['A', 'I', 'D']],
-        msg: 'REC_ST must be A, I, or D'
-      }
+      isIn: [['A', 'I', 'D']]
     }
   },
   ROW_TS: {
@@ -207,6 +214,7 @@ SMS.init({
   CREATE_DT: {
     type: DataTypes.DATE,
     allowNull: false,
+    defaultValue: DataTypes.NOW,
     comment: 'Creation date'
   },
   SYS_CREATE_TS: {
@@ -223,23 +231,19 @@ SMS.init({
   ACCT_BALANCE: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
+    defaultValue: 0,
     comment: 'Account balance at transaction time',
     validate: {
-      min: {
-        args: [0],
-        msg: 'Account balance cannot be negative'
-      }
+      min: { args: [0], msg: 'Account balance cannot be negative' }
     }
   },
   TXN_AMT: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
+    defaultValue: 0,
     comment: 'Transaction amount',
     validate: {
-      min: {
-        args: [0],
-        msg: 'Transaction amount cannot be negative'
-      }
+      min: { args: [0], msg: 'Transaction amount cannot be negative' }
     }
   },
   ACCT_NO: {
@@ -252,101 +256,88 @@ SMS.init({
     allowNull: false,
     comment: 'Debit/Credit indicator (D=Debit, C=Credit)',
     validate: {
-      isIn: {
-        args: [['D', 'C', 'd', 'c']],
-        msg: 'DR_CR_IND must be D or C'
-      }
+      isIn: [['D', 'C']]
     },
     set(value) {
-      // Always store in uppercase
       this.setDataValue('DR_CR_IND', value ? value.toUpperCase() : value);
     }
   },
   TXN_DATE: {
     type: DataTypes.DATE,
     allowNull: false,
+    defaultValue: DataTypes.NOW,
     comment: 'Transaction date'
   },
   DISP_AVAIL_BAL: {
     type: DataTypes.DECIMAL(15, 2),
     allowNull: false,
+    defaultValue: 0,
     comment: 'Display available balance',
     validate: {
-      min: {
-        args: [0],
-        msg: 'Available balance cannot be negative'
-      }
+      min: { args: [0], msg: 'Available balance cannot be negative' }
     }
   },
   DEPOSITOR_PAYEE_NM: {
     type: DataTypes.STRING(255),
-    allowNull: false,
+    allowNull: true,
     comment: 'Depositor/Payee name'
+  },
+  // Added for compatibility
+  created_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: DataTypes.NOW,
+    field: 'created_at'
+  },
+  updated_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: DataTypes.NOW,
+    field: 'updated_at'
   }
 }, {
   sequelize,
   modelName: 'SMS',
-  tableName: 'SMS_RECORDS',
-  timestamps: false, // Using custom timestamp fields instead
+  tableName: 'sms_records', // ✅ Fixed: lowercase table name
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
+  underscored: false,
   comment: 'SMS notification records',
   
   hooks: {
-    beforeValidate: (sms, options) => {
+    beforeValidate: (sms) => {
       // Trim string fields
-      if (sms.EXTERNAL_SMS_ID) sms.EXTERNAL_SMS_ID = sms.EXTERNAL_SMS_ID.trim();
-      if (sms.RECIPIENT_PHONE_NUMBER) sms.RECIPIENT_PHONE_NUMBER = sms.RECIPIENT_PHONE_NUMBER.trim();
-      if (sms.USER_ID) sms.USER_ID = sms.USER_ID.trim();
-      if (sms.CREATED_BY) sms.CREATED_BY = sms.CREATED_BY.trim();
-      if (sms.ACCT_NO) sms.ACCT_NO = sms.ACCT_NO.trim();
-      if (sms.DEPOSITOR_PAYEE_NM) sms.DEPOSITOR_PAYEE_NM = sms.DEPOSITOR_PAYEE_NM.trim();
+      const fields = ['EXTERNAL_SMS_ID', 'RECIPIENT_PHONE_NUMBER', 'USER_ID', 
+                     'CREATED_BY', 'ACCT_NO', 'DEPOSITOR_PAYEE_NM'];
+      for (const field of fields) {
+        if (sms[field]) {
+          sms[field] = sms[field].trim();
+        }
+      }
       
-      // Ensure DR_CR_IND is uppercase
       if (sms.DR_CR_IND) {
         sms.DR_CR_IND = sms.DR_CR_IND.toUpperCase();
       }
-      
-      // Ensure REC_ST is uppercase
       if (sms.REC_ST) {
         sms.REC_ST = sms.REC_ST.toUpperCase();
       }
     },
     
-    beforeCreate: (sms, options) => {
-      // Set ROW_TS if not provided
-      if (!sms.ROW_TS) {
-        sms.ROW_TS = new Date();
-      }
-      
-      // Set SYS_CREATE_TS if not provided
-      if (!sms.SYS_CREATE_TS) {
-        sms.SYS_CREATE_TS = new Date();
-      }
-      
-      // Set CREATE_DT if not provided
-      if (!sms.CREATE_DT) {
-        sms.CREATE_DT = new Date();
-      }
-      
-      // Set TXN_DATE if not provided
-      if (!sms.TXN_DATE) {
-        sms.TXN_DATE = new Date();
-      }
-      
-      // Validate dates are not in the future
+    beforeCreate: (sms) => {
       const now = new Date();
-      if (sms.TXN_DATE > now) {
-        throw new Error('Transaction date cannot be in the future');
-      }
-      if (sms.CREATE_DT > now) {
-        throw new Error('Creation date cannot be in the future');
-      }
       
-      // Validate transaction amount matches debit/credit
+      if (!sms.ROW_TS) sms.ROW_TS = now;
+      if (!sms.SYS_CREATE_TS) sms.SYS_CREATE_TS = now;
+      if (!sms.CREATE_DT) sms.CREATE_DT = now;
+      if (!sms.TXN_DATE) sms.TXN_DATE = now;
+      if (!sms.created_at) sms.created_at = now;
+      if (!sms.updated_at) sms.updated_at = now;
+      
+      // Validate amounts
       if (sms.TXN_AMT <= 0) {
         throw new Error('Transaction amount must be greater than 0');
       }
-      
-      // Validate balances are not negative
       if (sms.ACCT_BALANCE < 0) {
         throw new Error('Account balance cannot be negative');
       }
@@ -355,32 +346,20 @@ SMS.init({
       }
     },
     
-    beforeUpdate: (sms, options) => {
-      // Update ROW_TS on modification
-      sms.ROW_TS = new Date();
+    beforeUpdate: (sms) => {
+      const now = new Date();
+      sms.ROW_TS = now;
+      sms.updated_at = now;
       
-      // Prevent updating certain fields
       const immutableFields = ['EXTERNAL_SMS_ID', 'SYS_CREATE_TS', 'CREATE_DT'];
       for (const field of immutableFields) {
         if (sms.changed(field)) {
           throw new Error(`Cannot update immutable field: ${field}`);
         }
       }
-      
-      // Validate if updating debit/credit indicator
-      if (sms.changed('DR_CR_IND')) {
-        const oldValue = sms.previous('DR_CR_IND');
-        const newValue = sms.DR_CR_IND;
-        
-        if (oldValue.toUpperCase() !== newValue.toUpperCase()) {
-          logger.warn(`DR_CR_IND changed from ${oldValue} to ${newValue}`, {
-            externalSmsId: sms.EXTERNAL_SMS_ID
-          });
-        }
-      }
     },
     
-    afterCreate: (sms, options) => {
+    afterCreate: (sms) => {
       logger.info(`SMS record created`, {
         externalSmsId: sms.EXTERNAL_SMS_ID,
         recipientPhone: sms.RECIPIENT_PHONE_NUMBER,
@@ -388,18 +367,60 @@ SMS.init({
         amount: sms.TXN_AMT,
         transactionType: sms.DR_CR_IND
       });
-    },
-    
-    afterUpdate: (sms, options) => {
-      if (sms.changed('REC_ST')) {
-        logger.info(`SMS record status changed`, {
-          externalSmsId: sms.EXTERNAL_SMS_ID,
-          oldStatus: sms.previous('REC_ST'),
-          newStatus: sms.REC_ST
-        });
-      }
     }
+  },
+  
+  indexes: [
+    { fields: ['RECIPIENT_PHONE_NUMBER'], name: 'idx_sms_recipient' },
+    { fields: ['ACCT_NO'], name: 'idx_sms_account' },
+    { fields: ['EXTERNAL_SMS_ID'], name: 'idx_sms_external_id', unique: true },
+    { fields: ['TXN_DATE'], name: 'idx_sms_transaction_date' },
+    { fields: ['REC_ST'], name: 'idx_sms_record_status' },
+    { fields: ['USER_ID'], name: 'idx_sms_user' },
+    { fields: ['CREATE_DT'], name: 'idx_sms_create_dt' }
+  ],
+  
+  scopes: {
+    active: { where: { REC_ST: 'A' } },
+    inactive: { where: { REC_ST: 'I' } },
+    byRecipient: (phone) => ({ where: { RECIPIENT_PHONE_NUMBER: phone } }),
+    byAccount: (acctNo) => ({ where: { ACCT_NO: acctNo } }),
+    byUser: (userId) => ({ where: { USER_ID: userId } }),
+    byDateRange: (start, end) => ({
+      where: {
+        TXN_DATE: { [Op.between]: [start, end] }
+      }
+    }),
+    today: {
+      where: {
+        TXN_DATE: { [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)) }
+      }
+    },
+    credits: { where: { DR_CR_IND: 'C' } },
+    debits: { where: { DR_CR_IND: 'D' } }
   }
 });
+
+// Ensure table exists
+SMS.ensureTable = async function() {
+  try {
+    const [result] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM information_schema.tables 
+       WHERE table_schema = DATABASE() AND table_name = 'sms_records'`
+    );
+    
+    if (result[0].count === 0) {
+      console.log('📝 Creating sms_records table...');
+      await this.sync({ force: false });
+      console.log('✅ sms_records table created');
+    } else {
+      console.log('✅ sms_records table verified');
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ Error ensuring sms_records table:', error.message);
+    return false;
+  }
+};
 
 export default SMS;

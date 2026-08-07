@@ -170,13 +170,40 @@ function extractModulesFromFile(filePath) {
   return { modules, roleActionKeys };
 }
 
-// === LOAD ROLE MAPPING (with fallback) ===
+// === LOAD ROLE MAPPING (with fallback) - FIXED FOR WINDOWS ===
 async function loadRoleMapping() {
   try {
-    const module = await import('../../EVOLUTION BANKING BACKEND/constants/roleMapping.js');
-    return module.ROLE_MAPPING;
+    // Get the absolute path to roleMapping.js
+    const roleMappingPath = path.resolve(__dirname, '../../EVOLUTION BANKING BACKEND/src/constants/roleMapping.js');
+    console.log('📂 Attempting to load ROLE_MAPPING from:', roleMappingPath);
+    
+    // Check if file exists
+    if (!fs.existsSync(roleMappingPath)) {
+      console.error('❌ File not found:', roleMappingPath);
+      console.log('⚠️ Using fallback mapping instead.');
+      return fallbackRoles;
+    }
+    
+    // Convert Windows path to file:// URL
+    // Replace backslashes with forward slashes and encode spaces
+    const normalizedPath = roleMappingPath.replace(/\\/g, '/');
+    const fileUrl = new URL(`file:///${normalizedPath}`);
+    console.log('📂 Using URL:', fileUrl.href);
+    
+    // Import using the file URL
+    const module = await import(fileUrl.href);
+    console.log('✅ ROLE_MAPPING loaded successfully');
+    
+    // Check if ROLE_MAPPING exists in the module
+    if (module.ROLE_MAPPING) {
+      return module.ROLE_MAPPING;
+    } else {
+      console.warn('⚠️ ROLE_MAPPING not found in module, using fallback');
+      return fallbackRoles;
+    }
   } catch (err) {
-    console.error('❌ Could not load ROLE_MAPPING, using fallback mapping.');
+    console.error('❌ Could not load ROLE_MAPPING:', err.message);
+    console.log('⚠️ Using fallback mapping instead.');
     return fallbackRoles;
   }
 }

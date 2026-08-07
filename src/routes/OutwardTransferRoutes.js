@@ -1,30 +1,35 @@
 // routes/outwardTransferRoutes.js
+
 import express from 'express';
-import { outwardTransferController } from '../controllers/outwardTransferController.js';
+import {
+  initiateTransfer,
+  approveTransfer,
+  rejectTransfer,
+  getTransferStatus,
+  getPendingTransfers,
+  getTransferDetails,
+  getTransferStats,
+  handlePaystackWebhook,
+  getBanks,
+  verifyBeneficiary
+} from '../controllers/outwardTransferController.js';
 import { authenticate } from '../middlewares/auth.js';
 
 const router = express.Router();
 
-// ────────────── Initiate ──────────────
-// POST /api/outward/transfer – requires authentication
-router.post('/transfer', authenticate, outwardTransferController.initiateTransfer);
+// Public webhook endpoint (no auth)
+router.post('/webhook/paystack', handlePaystackWebhook);
 
-// ────────────── Approval / Rejection ──────────────
-// POST /api/outward/transfer/:reference/approve
-router.post('/transfer/:reference/approve', authenticate, outwardTransferController.approveTransfer);
+// Protected routes
+router.get('/transfers/banks', authenticate, getBanks);
+router.post('/transfers/beneficiaries/verify', authenticate, verifyBeneficiary);
 
-// POST /api/outward/transfer/:reference/reject
-router.post('/transfer/:reference/reject', authenticate, outwardTransferController.rejectTransfer);
-
-// ────────────── Status & List ──────────────
-// GET /api/outward/transfer/:reference – get single transfer
-router.get('/transfer/:reference', authenticate, outwardTransferController.getTransferStatus);
-
-// GET /api/outward/transfers/pending – list pending transfers (awaiting approval)
-router.get('/transfers/pending', authenticate, outwardTransferController.getPendingTransfers);
-
-// ────────────── Webhook (public) ──────────────
-// POST /api/outward/webhook/paystack – no authentication (must be public)
-router.post('/webhook/paystack', outwardTransferController.handlePaystackWebhook);
+router.post('/transfer', authenticate, initiateTransfer);
+router.get('/transfer/:reference', authenticate, getTransferStatus);
+router.get('/transfer/:reference/details', authenticate, getTransferDetails);
+router.post('/transfer/:reference/approve', authenticate, approveTransfer);
+router.post('/transfer/:reference/reject', authenticate, rejectTransfer);
+router.get('/transfers/pending', authenticate, getPendingTransfers);
+router.get('/transfers/stats', authenticate, getTransferStats);
 
 export default router;

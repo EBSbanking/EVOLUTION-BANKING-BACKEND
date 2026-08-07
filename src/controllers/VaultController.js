@@ -51,6 +51,7 @@ export const createVault = async (req, res) => {
     const userId = req.user?.user_name || req.user?.id || CREATED_BY || 'system';
     
     console.log('👤 User ID from request:', userId);
+    console.log('📝 Received DRAWER_ID:', DRAWER_ID);
 
     console.log('📝 Validating input...');
     
@@ -116,25 +117,43 @@ export const createVault = async (req, res) => {
       });
     }
 
-    console.log(`🔍 Finding drawer with ID: ${DRAWER_ID}`);
+    console.log(`🔍 Finding drawer with DRAWER_ID: ${DRAWER_ID} or DRAWER_NO: ${DRAWER_ID}`);
     
-    // Find drawer
-    const existingDrawer = await Drawer.findOne({
+    // ✅ FIX: Find drawer by DRAWER_ID OR DRAWER_NO
+    let existingDrawer = await Drawer.findOne({
       where: { DRAWER_ID: DRAWER_ID },
       transaction
     });
+    
+    // If not found by DRAWER_ID, try by DRAWER_NO
+    if (!existingDrawer) {
+      console.log(`🔍 Trying to find by DRAWER_NO: ${DRAWER_ID}`);
+      existingDrawer = await Drawer.findOne({
+        where: { DRAWER_NO: DRAWER_ID },
+        transaction
+      });
+    }
+    
+    // If still not found, try by id (numeric)
+    if (!existingDrawer && !isNaN(parseInt(DRAWER_ID))) {
+      console.log(`🔍 Trying to find by id: ${parseInt(DRAWER_ID)}`);
+      existingDrawer = await Drawer.findOne({
+        where: { id: parseInt(DRAWER_ID) },
+        transaction
+      });
+    }
     
     if (!existingDrawer) {
       console.log('❌ Drawer not found');
       await transaction.rollback();
       return res.status(404).json({
         success: false,
-        message: `Drawer with ID ${DRAWER_ID} not found`
+        message: `Drawer with ID or Number ${DRAWER_ID} not found. Please check the drawer exists.`
       });
     }
 
-    console.log(`🔍 Checking if drawer ${DRAWER_ID} is already used...`);
-    
+    console.log(`✅ Found drawer: DRAWER_ID: ${existingDrawer.DRAWER_ID}, DRAWER_NO: ${existingDrawer.DRAWER_NO}`);
+
     // Check if drawer is already used
     const drawerAlreadyUsed = await Vault.findOne({
       where: { drawer_ref: existingDrawer.id },
@@ -146,7 +165,7 @@ export const createVault = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: `Drawer with ID ${DRAWER_ID} is already associated with another vault`
+        message: `Drawer ${existingDrawer.DRAWER_NO} (ID: ${existingDrawer.DRAWER_ID}) is already associated with another vault`
       });
     }
 
@@ -156,17 +175,16 @@ export const createVault = async (req, res) => {
     
     // Update drawer
     await existingDrawer.update({
-      drawer_nm: VAULT_NM,
-      drawer_ty_cd: 'VAULT',
-      vault_type: VAULT_CATEGORY || 'BRANCH_VAULT',
-      security_level: SECURITY_LEVEL || 'LEVEL_2',
-      requires_dual_control: true,
-      vault_capacity: capacity,
-      max_bal: capacity,
-      gl_acct_no: `VAULT-${VAULT_CD}`,
-      branch_code: BRANCH_CODE || existingDrawer.branch_code,
-      location_code: LOCATION_CODE || existingDrawer.location_code,
-      updated_by: userId
+      DRAWER_NM: VAULT_NM,
+      DRAWER_TY_CD: 'VAULT',
+      VAULT_TYPE: VAULT_CATEGORY || 'BRANCH_VAULT',
+      SECURITY_LEVEL: SECURITY_LEVEL || 'LEVEL_2',
+      REQUIRES_DUAL_CONTROL: true,
+      VAULT_CAPACITY: capacity,
+      MAX_BAL: capacity,
+      GL_ACCT_NO: `VAULT-${VAULT_CD}`,
+      BRANCH_CODE: BRANCH_CODE || existingDrawer.BRANCH_CODE,
+      updated_at: new Date()
     }, { transaction });
 
     console.log('📝 Creating vault...');
@@ -176,13 +194,13 @@ export const createVault = async (req, res) => {
       vault_id: parseInt(VAULT_ID, 10),
       vault_cd: VAULT_CD,
       vault_nm: VAULT_NM,
-      drawer_id: parseInt(DRAWER_ID, 10),
+      drawer_id: parseInt(existingDrawer.DRAWER_ID, 10) || parseInt(DRAWER_ID, 10),
       drawer_ref: existingDrawer.id,
       vault_category: VAULT_CATEGORY || 'BRANCH_VAULT',
       security_level: SECURITY_LEVEL || 'LEVEL_2',
       requires_dual_control: true,
       vault_capacity: capacity,
-      branch_code: BRANCH_CODE || existingDrawer.branch_code,
+      branch_code: BRANCH_CODE || existingDrawer.BRANCH_CODE,
       location_code: LOCATION_CODE || existingDrawer.location_code,
       created_by: userId,
       vault_status: 'OPERATIONAL',

@@ -41,7 +41,10 @@ class OutwardFundsTransfer extends Model {
       bankCntryId: this.beneficiaryBankCntryId,
       bicId: this.beneficiaryBicId,
       email: this.beneficiaryEmail,
-      phone: this.beneficiaryPhone
+      phone: this.beneficiaryPhone,
+      verifiedName: this.beneficiaryVerifiedName,
+      validationStatus: this.validationStatus,
+      validationDetails: this.beneficiaryValidation ? JSON.parse(this.beneficiaryValidation) : null
     };
   }
 
@@ -58,7 +61,7 @@ class OutwardFundsTransfer extends Model {
   get charges() {
     return {
       sendingBank: parseFloat(this.sendingBankChrg) || 0,
-      receivingBank: parseFloat(this.receivingBankChrg) || 0,   // fixed spelling
+      receivingBank: parseFloat(this.receivingBankChrg) || 0,
       nip: parseFloat(this.nipTransactionFee) || 0,
       vat: parseFloat(this.vatAmount) || 0,
       total: parseFloat(this.totalChrg) || 0
@@ -68,7 +71,7 @@ class OutwardFundsTransfer extends Model {
   calculateNetAmount() {
     const xferAmount = parseFloat(this.xferAmt) || 0;
     const sendingCharges = parseFloat(this.sendingBankChrg) || 0;
-    const receivingCharges = parseFloat(this.receivingBankChrg) || 0;   // fixed
+    const receivingCharges = parseFloat(this.receivingBankChrg) || 0;
     const nipFee = parseFloat(this.nipTransactionFee) || 0;
     const vat = parseFloat(this.vatAmount) || 0;
     return xferAmount - sendingCharges - receivingCharges - nipFee - vat;
@@ -89,6 +92,7 @@ class OutwardFundsTransfer extends Model {
       amount: parseFloat(this.xferAmt) || 0,
       currencyId: this.xferCrncyId,
       beneficiaryName: this.beneficiaryNm,
+      beneficiaryVerifiedName: this.beneficiaryVerifiedName,
       beneficiaryAccount: this.beneficiaryAcct,
       beneficiaryBank: this.beneficiaryBankNm,
       remitterName: this.remitterNm,
@@ -99,7 +103,9 @@ class OutwardFundsTransfer extends Model {
       totalDebit: this.calculateTotalDebit(),
       isReversal: this.isReversal,
       processingDate: this.processingDate,
-      completedDate: this.completedDate
+      completedDate: this.completedDate,
+      validationStatus: this.validationStatus,
+      validatedAt: this.validatedAt
     };
   }
 
@@ -130,6 +136,11 @@ class OutwardFundsTransfer extends Model {
       beneficiaryPostalCode: data.beneficiaryPostalCode || data.BENEFICIARY_POSTAL_CODE || data.beneficiary?.postalCode,
       beneficiaryCountryId: data.beneficiaryCountryId || data.BENEFICIARY_COUNTRY_ID || data.beneficiary?.countryId || 1,
       beneficiaryBvn: data.beneficiaryBvn || data.BENEFICIARY_BVN || data.beneficiary?.bvn,
+      
+      beneficiaryVerifiedName: data.beneficiaryVerifiedName || data.beneficiary?.verifiedName || null,
+      beneficiaryValidation: data.beneficiaryValidation ? JSON.stringify(data.beneficiaryValidation) : null,
+      validationStatus: data.validationStatus || data.VALIDATION_STATUS || 'PENDING',
+      validatedAt: data.validatedAt || data.VALIDATED_AT || null,
       
       remitterNm: data.remitterNm || data.REMITTER_NM || data.remitter?.name,
       remitterAcctNo: data.remitterAcctNo || data.REMITTER_ACCT_NO || data.remitter?.accountNo,
@@ -213,7 +224,7 @@ OutwardFundsTransfer.init(
       type: DataTypes.DECIMAL(15, 2),
       allowNull: true,
       defaultValue: 0.00,
-      field: 'receiving_bank_chrg'   // correct spelling
+      field: 'receiving_bank_chrg'
     },
     nipTransactionFee: { type: DataTypes.DECIMAL(15, 2), allowNull: true, defaultValue: 0.00 },
     vatAmount: { type: DataTypes.DECIMAL(15, 2), allowNull: true, defaultValue: 0.00 },
@@ -232,6 +243,7 @@ OutwardFundsTransfer.init(
     fundsXferTyId: { type: DataTypes.INTEGER, allowNull: true },
     buId: { type: DataTypes.INTEGER, allowNull: true },
     
+    // Beneficiary Details
     beneficiaryNm: { type: DataTypes.STRING(100), allowNull: false },
     beneficiaryAcct: { type: DataTypes.STRING(60), allowNull: false },
     beneficiaryBicId: { type: DataTypes.INTEGER, allowNull: true },
@@ -248,6 +260,34 @@ OutwardFundsTransfer.init(
     beneficiaryCountryId: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 1 },
     beneficiaryBvn: { type: DataTypes.STRING(20), allowNull: true },
     
+    // ✅ NEW: Paystack Validation Fields (matching database columns)
+    beneficiaryVerifiedName: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'beneficiary_verified_name',
+      comment: 'Verified name from Paystack/beneficiary validation'
+    },
+    beneficiaryValidation: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'beneficiary_validation',
+      comment: 'JSON containing validation details from Paystack'
+    },
+    validationStatus: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      defaultValue: 'PENDING',
+      field: 'validation_status',
+      comment: 'PENDING, VERIFIED, FAILED'
+    },
+    validatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'validated_at',
+      comment: 'Date and time when the beneficiary was validated'
+    },
+    
+    // Remitter Details
     remitterNm: { type: DataTypes.STRING(100), allowNull: false },
     remitterAcctNo: { type: DataTypes.STRING(60), allowNull: false },
     remitterCustomerId: { type: DataTypes.INTEGER, allowNull: true },
@@ -262,12 +302,14 @@ OutwardFundsTransfer.init(
     remitterIdentTyId: { type: DataTypes.INTEGER, allowNull: true },
     remitterIdentNo: { type: DataTypes.STRING(60), allowNull: true },
     
+    // NIP Specific
     nipSessionId: { type: DataTypes.STRING(100), allowNull: true },
     nipResponseCode: { type: DataTypes.STRING(10), allowNull: true },
     nipChannelCode: { type: DataTypes.STRING(10), allowNull: true },
     nipDestinationInstitution: { type: DataTypes.STRING(10), allowNull: true },
     nipTransactionLocation: { type: DataTypes.STRING(255), allowNull: true },
     
+    // Status Fields
     recSt: { type: DataTypes.ENUM(Object.values(RECORD_STATUS)), allowNull: false, defaultValue: RECORD_STATUS.PENDING },
     transactionStatus: { type: DataTypes.ENUM(Object.values(TRANSACTION_STATUS)), allowNull: false, defaultValue: TRANSACTION_STATUS.INITIATED },
     versionNo: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
@@ -295,7 +337,7 @@ OutwardFundsTransfer.init(
     batchId: { type: DataTypes.STRING(50), allowNull: true },
     settlementDate: { type: DataTypes.DATE, allowNull: true },
     
-    // === Paystack specific fields ===
+    // Paystack specific fields
     paystackFee: {
       type: DataTypes.DECIMAL(15, 2),
       allowNull: true,
@@ -370,6 +412,11 @@ OutwardFundsTransfer.init(
         if (!transfer.rowTs) transfer.rowTs = new Date();
         if (!transfer.createDt) transfer.createDt = new Date();
         if (!transfer.sysCreateTs) transfer.sysCreateTs = new Date();
+        
+        // Set validation defaults
+        if (!transfer.validationStatus) {
+          transfer.validationStatus = 'PENDING';
+        }
       },
       beforeUpdate: (transfer) => {
         if (transfer.transactionStatus === TRANSACTION_STATUS.PROCESSING && !transfer.processingDate) {
@@ -377,6 +424,11 @@ OutwardFundsTransfer.init(
         }
         if (transfer.transactionStatus === TRANSACTION_STATUS.COMPLETED && !transfer.completedDate) {
           transfer.completedDate = new Date();
+        }
+        
+        // Update validatedAt when validation status changes to VERIFIED
+        if (transfer.validationStatus === 'VERIFIED' && !transfer.validatedAt) {
+          transfer.validatedAt = new Date();
         }
       }
     }

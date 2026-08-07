@@ -1,9 +1,39 @@
 // src/controllers/chartofAccountController.js
 import { Op } from 'sequelize';
+import { v4 as uuidv4 } from 'uuid';
 import ChartofAccount from '../models/ChartofAccount.js';
-import GLAccount from '../models/GLAccount.js';
+import GLAccount from '../models/GLAccount.js';  // ✅ import GLAccount model
+import Branch from '../models/Branch.js'; // if you have one
 
 console.log('✅ Chart of Accounts controller loaded with Sequelize');
+
+
+// ============================================
+// Helper: generate new GL code
+// ============================================
+function generateNewGlCode(sourceAccount, orgCode, targetBranchCode, prefix) {
+  const orgPart = String(orgCode).padStart(2, '0');
+  const branchPart = String(targetBranchCode).padStart(3, '0');
+
+  const sourceCode = sourceAccount.GL_ACCT_NO || ''; // ✅ use GL_ACCT_NO
+  if (sourceCode.length >= 5) {
+    const rest = sourceCode.slice(5);
+    let newCode = orgPart + branchPart + rest;
+    if (prefix) {
+      newCode = prefix + newCode;
+    }
+    return newCode;
+  }
+
+  // Fallback: generate a new code from scratch
+  const base = sourceCode.padStart(8, '0');
+  const rest = base.slice(5);
+  let newCode = orgPart + branchPart + rest;
+  if (prefix) {
+    newCode = prefix + newCode;
+  }
+  return newCode;
+}
 
 export const chartofAccountController = {
   // ============================================
@@ -260,101 +290,7 @@ async getTree(req, res) {
     }
   },
 
-  // ============================================
-  // UPDATE – including hierarchy (move/change parent)
-  // ============================================
-  async updateAccount(req, res) {
-    try {
-      const { id } = req.params;
-      const updates = req.body;
 
-      const account = await ChartofAccount.findOne({
-        where: { id, is_deleted: false }
-      });
-
-      if (!account) {
-        return res.status(404).json({
-          success: false,
-          message: 'Chart of account not found'
-        });
-      }
-
-      // Allowed fields (including hierarchy)
-      const allowedUpdates = [
-        'name', 'glcode', 'type', 'account_usage', 'gl_group',
-        'description', 'status', 'metadata',
-        'parentId', 'isFolder', 'sortOrder'
-      ];
-
-      const updateData = {};
-      allowedUpdates.forEach(field => {
-        if (updates[field] !== undefined) {
-          updateData[field] = updates[field];
-        }
-      });
-
-      // If parentId is being changed, recalculate level and path
-      if (updateData.parentId !== undefined && updateData.parentId !== account.parentId) {
-        if (updateData.parentId === null) {
-          // Moving to root
-          updateData.accountLevel = 1;
-          updateData.accountPath = null;
-        } else {
-          const newParent = await ChartofAccount.findOne({
-            where: { id: updateData.parentId, organization_code: account.organization_code, branch_code: account.branch_code, is_deleted: false }
-          });
-          if (!newParent) {
-            return res.status(404).json({
-              success: false,
-              message: 'New parent account not found'
-            });
-          }
-          updateData.accountLevel = (newParent.accountLevel || 0) + 1;
-          updateData.accountPath = newParent.accountPath
-            ? `${newParent.accountPath}/${newParent.id}`
-            : `${newParent.id}`;
-        }
-      }
-
-      // Prevent GL code conflicts
-      if (updateData.glcode && updateData.glcode !== account.glcode) {
-        const existing = await ChartofAccount.findOne({
-          where: {
-            organization_code: account.organization_code,
-            branch_code: account.branch_code,
-            glcode: updateData.glcode,
-            is_deleted: false,
-            id: { [Op.ne]: id }
-          }
-        });
-        if (existing) {
-          return res.status(409).json({
-            success: false,
-            message: `GL code ${updateData.glcode} already exists in this branch`
-          });
-        }
-      }
-
-      await account.update({
-        ...updateData,
-        updated_by: req.user?.id || 'system'
-      });
-
-      res.json({
-        success: true,
-        message: 'Account updated successfully',
-        data: account
-      });
-
-    } catch (error) {
-      console.error('Update account error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to update account',
-        error: error.message
-      });
-    }
-  },
 
   // ============================================
   // DELETE (soft delete)
@@ -661,32 +597,212 @@ async getTree(req, res) {
     }
   },
 
-  // ============================================
-  // CLONE COA (unchanged)
-  // ============================================
-  async cloneCOAForBranch(req, res) {
-    try {
-      const { sourceBranchCode, targetBranchCode, organization_code, options = {} } = req.body;
-      const { copyBalance = false, prefixNewCode = true, glCodePrefix = '', overwrite = false } = options;
+// ============================================
+// CLONE COA – with branch name correction
+// ============================================
+async cloneCOAForBranch(req, res) {
+  try {
+    const {
+      sourceBranchCode,
+      targetBranchCode,
+      organization_code,
+      targetBranchName,          // <-- now required
+      glAccountIds = null,
+      options = {}
+    } = req.body;
 
-      // ... (keep your existing clone logic, but also copy hierarchy fields: parentId, accountLevel, isFolder, sortOrder, accountPath)
-      // Note: When cloning, you need to map parentId to new IDs.
-      // I'll keep the original clone code for brevity – you can extend it similarly.
-      // For now, I'll include a placeholder.
-      res.status(501).json({
-        success: false,
-        message: 'Clone COA feature needs to be updated to support hierarchy'
-      });
+    const {
+      copyBalance = false,
+      prefixNewCode = true,
+      glCodePrefix = '',
+      overwrite = false
+    } = options;
 
-    } catch (error) {
-      console.error('Clone COA error:', error);
-      res.status(500).json({
+    // 1. Validate
+    if (!sourceBranchCode || !targetBranchCode || !organization_code || !targetBranchName) {
+      return res.status(400).json({
         success: false,
-        message: 'Failed to clone chart of accounts',
-        error: error.message
+        message: 'sourceBranchCode, targetBranchCode, organization_code, and targetBranchName are required'
       });
     }
-  },
+    if (sourceBranchCode === targetBranchCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Source and target branches must be different'
+      });
+    }
+
+    // 2. Fetch source GL accounts
+    const whereSource = {
+      organizationCode: parseInt(organization_code, 10),
+      branchCode: sourceBranchCode,
+      rec_st: 'Active'
+    };
+
+    let sourceAccounts;
+    const isSelective = glAccountIds && Array.isArray(glAccountIds) && glAccountIds.length > 0;
+
+    if (isSelective) {
+      sourceAccounts = await GLAccount.findAll({
+        where: {
+          ...whereSource,
+          GL_ACCT_ID: { [Op.in]: glAccountIds }   // ✅ uses GL_ACCT_ID (model attribute)
+        },
+        raw: true
+      });
+    } else {
+      sourceAccounts = await GLAccount.findAll({ where: whereSource, raw: true });
+    }
+
+    if (!sourceAccounts || sourceAccounts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No GL accounts found to clone'
+      });
+    }
+
+    // 3. Overwrite handling – only for full clone
+    if (!isSelective) {
+      if (!overwrite) {
+        const existing = await GLAccount.findOne({
+          where: {
+            organizationCode: parseInt(organization_code, 10),
+            branchCode: targetBranchCode
+          }
+        });
+        if (existing) {
+          return res.status(409).json({
+            success: false,
+            message: 'Target branch already has GL accounts. Enable "overwrite" to replace them.'
+          });
+        }
+      } else {
+        await GLAccount.destroy({
+          where: {
+            organizationCode: parseInt(organization_code, 10),
+            branchCode: targetBranchCode
+          },
+          force: true
+        });
+      }
+    }
+
+    // 4. Map old -> new IDs
+    const oldToNewMap = new Map();
+    const newAccounts = [];
+    const now = new Date();
+
+    // 5. Prepare new accounts
+    for (const oldAccount of sourceAccounts) {
+      const newGlCode = generateNewGlCode(
+        oldAccount,
+        organization_code,
+        targetBranchCode,
+        prefixNewCode ? glCodePrefix : ''
+      );
+
+      // Ensure GL_ACCT_NO is unique in target branch
+      let finalGlCode = newGlCode;
+      let counter = 0;
+      let unique = false;
+      while (!unique) {
+        const existing = await GLAccount.findOne({
+          where: {
+            organizationCode: parseInt(organization_code, 10),
+            branchCode: targetBranchCode,
+            GL_ACCT_NO: finalGlCode
+          }
+        });
+        if (existing) {
+          const base = finalGlCode.slice(0, -2);
+          const suffix = String(counter + 1).padStart(2, '0');
+          finalGlCode = base + suffix;
+          counter++;
+          if (counter > 99) break;
+        } else {
+          unique = true;
+        }
+      }
+
+      const newGlAccountId = `GL${Date.now()}${Math.floor(Math.random() * 10000)}`;
+
+      const newAccount = {
+        ...oldAccount,
+        GL_ACCT_ID: newGlAccountId,
+        GL_ACCT_NO: finalGlCode,
+        branchCode: targetBranchCode,
+        branchName: targetBranchName,   // ✅ store the provided name
+        // Balances
+        LEDGER_BALANCE: copyBalance ? oldAccount.LEDGER_BALANCE : 0,
+        AVAILABLE_BALANCE: copyBalance ? oldAccount.AVAILABLE_BALANCE : 0,
+        OPENING_BALANCE: copyBalance ? oldAccount.OPENING_BALANCE : 0,
+        CURRENT_BALANCE: copyBalance ? oldAccount.CURRENT_BALANCE : 0,
+        createdAt: now,
+        updatedAt: now,
+        _oldParentAccountId: oldAccount.PARENT_ID,
+        id: undefined,
+        _id: undefined
+      };
+
+      oldToNewMap.set(oldAccount.GL_ACCT_ID, newAccount.GL_ACCT_ID);
+      newAccounts.push(newAccount);
+    }
+
+    // 6. Remap PARENT_ID
+    for (const newAccount of newAccounts) {
+      const oldParentId = newAccount._oldParentAccountId;
+      if (oldParentId) {
+        const newParentId = oldToNewMap.get(oldParentId);
+        newAccount.PARENT_ID = newParentId || null;
+      }
+      delete newAccount._oldParentAccountId;
+    }
+
+    // 7. Insert in transaction
+    await GLAccount.sequelize.transaction(async (t) => {
+      const insertable = newAccounts.map(acc => {
+        const validAttributes = [
+          'GL_ACCT_NO', 'GL_ACCT_ID', 'CREATED_BY', 'coaStructure',
+          'organizationName', 'organizationCode', 'branchName', 'branchCode',
+          'branchType', 'categoryCode', 'categoryName', 'parentCode',
+          'level', 'LEDGER_NO', 'PARENT_ID', 'subfolderId', 'BAL_CD',
+          'SUB_LEDGER_NO', 'SEG_NO', 'CHART_OF_ACCT_ID', 'ACCT_DESC',
+          'accountType', 'GL_ACCT_CAT', 'JOURNAL_ID', 'TRANSACTION_TYPE',
+          'CR_ALLOWED', 'DR_ALLOWED', 'REC_ST', 'POST_ALLOW', 'POST_FG',
+          'CONTROL_ACCT_FG', 'SUSPENSE_ACCT_FG', 'ALLOW_BAL_SWING_FG',
+          'SEG_VALUE', 'SEG_DESC', 'SEG_TY_CD', 'SEG_PLACEHLDR_ID',
+          'DELAY_GL_POSTING', 'LEDGER_BALANCE', 'AVAILABLE_BALANCE',
+          'OPENING_BALANCE', 'CURRENT_BALANCE', 'CURRENCY_CODE',
+          'balanceHistory', 'transactions', 'SETTLEMENT_GL_ACCT_NO',
+          'INTER_BRANCH_ACCOUNT', 'legacyReference', 'systemSource',
+          'syncStatus', 'metadata', 'branchTimezone', 'createdAt', 'updatedAt'
+        ];
+        const filtered = {};
+        validAttributes.forEach(field => {
+          if (acc[field] !== undefined) filtered[field] = acc[field];
+        });
+        return filtered;
+      });
+
+      await GLAccount.bulkCreate(insertable, { transaction: t });
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully cloned ${newAccounts.length} GL account(s) to branch ${targetBranchCode}`,
+      data: { clonedCount: newAccounts.length, targetBranchCode }
+    });
+
+  } catch (error) {
+    console.error('Clone COA error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to clone chart of accounts',
+      error: error.message
+    });
+  }
+},
+
 
   // ============================================
   // TEST (unchanged)

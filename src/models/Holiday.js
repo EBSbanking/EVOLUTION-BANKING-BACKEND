@@ -41,7 +41,7 @@ const Holiday = sequelize.define('Holiday', {
   country: {
     type: DataTypes.STRING(2),
     allowNull: false,
-    defaultValue: 'US',
+    defaultValue: 'NG',
     field: 'country',
     validate: {
       is: /^[A-Z]{2}$/,
@@ -148,6 +148,35 @@ const Holiday = sequelize.define('Holiday', {
 });
 
 // =============================================
+// HELPER: Check if table exists
+// =============================================
+
+let tableExistsCache = null;
+let tableExistsCacheTime = 0;
+
+async function checkTableExists() {
+  // Cache for 30 seconds to avoid excessive queries
+  const now = Date.now();
+  if (tableExistsCache && (now - tableExistsCacheTime) < 30000) {
+    return tableExistsCache;
+  }
+  
+  try {
+    const [tables] = await sequelize.query(`
+      SELECT 1 FROM information_schema.tables 
+      WHERE table_schema = DATABASE() 
+      AND table_name = 'holidays'
+    `);
+    tableExistsCache = tables && tables.length > 0;
+    tableExistsCacheTime = now;
+    return tableExistsCache;
+  } catch (error) {
+    console.warn('⚠️ Could not check if holidays table exists:', error.message);
+    return false;
+  }
+}
+
+// =============================================
 // INSTANCE METHODS
 // =============================================
 
@@ -189,7 +218,7 @@ Holiday.prototype.getNextOccurrence = function(baseDate = new Date()) {
 // =============================================
 
 /**
- * Check if a date is a holiday - FIXED VERSION
+ * Check if a date is a holiday - PRODUCTION VERSION
  */
 Holiday.isHoliday = async function(date, options = {}) {
   try {
@@ -198,11 +227,17 @@ Holiday.isHoliday = async function(date, options = {}) {
       return null;
     }
 
+    // Check if table exists first
+    const tableExists = await checkTableExists();
+    if (!tableExists) {
+      return null;
+    }
+
     const dateStr = inputDate.toISOString().split('T')[0];
     const month = inputDate.getMonth() + 1; // MySQL MONTH() returns 1-12
     const day = inputDate.getDate();
     
-    // Build query conditionally based on what columns exist
+    // Build query with proper column checks
     let query = `
       SELECT * FROM holidays 
       WHERE (
@@ -214,9 +249,8 @@ Holiday.isHoliday = async function(date, options = {}) {
       )
     `;
     
-    // Check if is_active column exists - if not, we'll skip that condition
+    // Check for status columns
     try {
-      // Try to get table info
       const [columns] = await sequelize.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -249,16 +283,20 @@ Holiday.isHoliday = async function(date, options = {}) {
         dateStr, 
         month,
         day,
-        country: options.country 
+        country: options.country || 'NG'
       },
       type: sequelize.QueryTypes.SELECT
     });
 
     return result || null;
   } catch (error) {
-    console.error('Error checking holiday:', error);
-    // Return null instead of throwing to prevent EOD failure
-    return null;
+    // Don't log full error for missing table to reduce noise
+    if (error.message && (error.message.includes('doesn\'t exist') || error.message.includes('does not exist'))) {
+      console.warn('⚠️ Holidays table not available:', error.message);
+    } else {
+      console.error('Error checking holiday:', error.message);
+    }
+    return null; // Return null to prevent EOD failure
   }
 };
 
@@ -267,6 +305,12 @@ Holiday.isHoliday = async function(date, options = {}) {
  */
 Holiday.getHolidaysForMonth = async function(year, month, options = {}) {
   try {
+    // Check if table exists
+    const tableExists = await checkTableExists();
+    if (!tableExists) {
+      return [];
+    }
+    
     const startDate = new Date(year, month, 1);
     const endDate = new Date(year, month + 1, 0);
     
@@ -324,7 +368,7 @@ Holiday.getHolidaysForMonth = async function(year, month, options = {}) {
       return true;
     });
   } catch (error) {
-    console.error('Error getting holidays for month:', error);
+    console.error('Error getting holidays for month:', error.message);
     return [];
   }
 };
@@ -334,6 +378,12 @@ Holiday.getHolidaysForMonth = async function(year, month, options = {}) {
  */
 Holiday.getHolidaysInRange = async function(startDate, endDate, options = {}) {
   try {
+    // Check if table exists
+    const tableExists = await checkTableExists();
+    if (!tableExists) {
+      return [];
+    }
+    
     const start = new Date(startDate);
     const end = new Date(endDate);
     
@@ -409,7 +459,7 @@ Holiday.getHolidaysInRange = async function(startDate, endDate, options = {}) {
     
     return result;
   } catch (error) {
-    console.error('Error getting holidays in range:', error);
+    console.error('Error getting holidays in range:', error.message);
     return [];
   }
 };
@@ -418,6 +468,12 @@ Holiday.getHolidaysInRange = async function(startDate, endDate, options = {}) {
  * Create a new holiday with validation
  */
 Holiday.createHoliday = async function(holidayData, options = {}) {
+  // Check if table exists
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    throw new Error('Holidays table does not exist. Please run migrations first.');
+  }
+  
   const transaction = options.transaction;
   
   try {
@@ -431,7 +487,7 @@ Holiday.createHoliday = async function(holidayData, options = {}) {
     }
     
     const dateStr = date.toISOString().split('T')[0];
-    const country = holidayData.country || 'US';
+    const country = holidayData.country || 'NG';
     
     // Check if holiday already exists
     const existing = await this.findOne({
@@ -456,7 +512,79 @@ Holiday.createHoliday = async function(holidayData, options = {}) {
     
     return await this.create(data, { transaction });
   } catch (error) {
-    console.error('Error creating holiday:', error);
+    console.error('Error creating holiday:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Update an existing holiday
+ */
+Holiday.updateHoliday = async function(id, updateData, options = {}) {
+  // Check if table exists
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    throw new Error('Holidays table does not exist. Please run migrations first.');
+  }
+  
+  const transaction = options.transaction;
+  
+  try {
+    const holiday = await this.findByPk(id, { transaction });
+    if (!holiday) {
+      throw new Error(`Holiday with ID ${id} not found`);
+    }
+    
+    // Validate date if provided
+    if (updateData.holidayDate) {
+      const date = new Date(updateData.holidayDate);
+      if (isNaN(date.getTime())) {
+        throw new Error('Invalid date provided');
+      }
+      updateData.holidayDate = date.toISOString().split('T')[0];
+    }
+    
+    await holiday.update(updateData, { transaction });
+    return holiday;
+  } catch (error) {
+    console.error('Error updating holiday:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Delete a holiday (soft delete by setting status to INACTIVE)
+ */
+Holiday.deleteHoliday = async function(id, options = {}) {
+  // Check if table exists
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    throw new Error('Holidays table does not exist. Please run migrations first.');
+  }
+  
+  const transaction = options.transaction;
+  const permanent = options.permanent || false;
+  
+  try {
+    const holiday = await this.findByPk(id, { transaction });
+    if (!holiday) {
+      throw new Error(`Holiday with ID ${id} not found`);
+    }
+    
+    if (permanent) {
+      // Hard delete
+      await holiday.destroy({ transaction });
+      return { success: true, message: `Holiday "${holiday.holidayName}" permanently deleted` };
+    } else {
+      // Soft delete by setting status to INACTIVE
+      await holiday.update({ 
+        status: 'INACTIVE', 
+        is_active: false 
+      }, { transaction });
+      return { success: true, message: `Holiday "${holiday.holidayName}" deactivated` };
+    }
+  } catch (error) {
+    console.error('Error deleting holiday:', error.message);
     throw error;
   }
 };
@@ -466,14 +594,226 @@ Holiday.createHoliday = async function(holidayData, options = {}) {
  */
 Holiday.getUpcomingHolidays = async function(days = 30, options = {}) {
   try {
+    // Check if table exists
+    const tableExists = await checkTableExists();
+    if (!tableExists) {
+      return [];
+    }
+    
     const today = new Date();
     const futureDate = new Date();
     futureDate.setDate(futureDate.getDate() + days);
     
     return await this.getHolidaysInRange(today, futureDate, options);
   } catch (error) {
-    console.error('Error getting upcoming holidays:', error);
+    console.error('Error getting upcoming holidays:', error.message);
     return [];
+  }
+};
+
+/**
+ * Check if a given date is a business day (not weekend or holiday)
+ */
+Holiday.isBusinessDay = async function(date, options = {}) {
+  try {
+    const checkDate = new Date(date);
+    if (isNaN(checkDate.getTime())) {
+      return false;
+    }
+    
+    // Check if it's a weekend (Saturday = 6, Sunday = 0)
+    const dayOfWeek = checkDate.getDay();
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return false;
+    }
+    
+    // Check if it's a holiday
+    const holiday = await this.isHoliday(date, options);
+    if (holiday) {
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error checking business day:', error.message);
+    // If there's an error, assume it's a business day to prevent blocking operations
+    return true;
+  }
+};
+
+/**
+ * Get next business day after a given date
+ */
+Holiday.getNextBusinessDay = async function(date, options = {}) {
+  try {
+    const checkDate = new Date(date);
+    if (isNaN(checkDate.getTime())) {
+      return null;
+    }
+    
+    let nextDate = new Date(checkDate);
+    let maxAttempts = 365; // Prevent infinite loop
+    
+    while (maxAttempts > 0) {
+      nextDate.setDate(nextDate.getDate() + 1);
+      const isBusiness = await this.isBusinessDay(nextDate, options);
+      if (isBusiness) {
+        return nextDate;
+      }
+      maxAttempts--;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting next business day:', error.message);
+    // Fallback: return date + 1 day
+    const nextDate = new Date(date);
+    nextDate.setDate(nextDate.getDate() + 1);
+    return nextDate;
+  }
+};
+
+/**
+ * Bulk create holidays
+ */
+Holiday.bulkCreateHolidays = async function(holidaysData, options = {}) {
+  // Check if table exists
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    throw new Error('Holidays table does not exist. Please run migrations first.');
+  }
+  
+  const transaction = options.transaction;
+  const created = [];
+  const errors = [];
+  
+  for (const data of holidaysData) {
+    try {
+      const holiday = await this.createHoliday(data, { transaction });
+      created.push(holiday);
+    } catch (error) {
+      errors.push({
+        data,
+        error: error.message
+      });
+    }
+  }
+  
+  return {
+    created,
+    errors,
+    total: holidaysData.length,
+    successful: created.length,
+    failed: errors.length
+  };
+};
+
+/**
+ * Get all holidays with pagination and filtering
+ */
+Holiday.getHolidays = async function(options = {}) {
+  try {
+    // Check if table exists
+    const tableExists = await checkTableExists();
+    if (!tableExists) {
+      return { data: [], total: 0 };
+    }
+    
+    const {
+      page = 1,
+      limit = 50,
+      country,
+      status,
+      year,
+      month,
+      search,
+      sortBy = 'holidayDate',
+      sortOrder = 'ASC'
+    } = options;
+    
+    const offset = (page - 1) * limit;
+    const whereClause = {};
+    
+    if (country) {
+      whereClause.country = country;
+    }
+    
+    if (status) {
+      whereClause.status = status;
+    } else {
+      // Default: show all except soft-deleted
+      whereClause.status = { [Op.ne]: 'DELETED' };
+    }
+    
+    if (year) {
+      whereClause[Op.and] = [
+        sequelize.where(sequelize.fn('YEAR', sequelize.col('holiday_date')), year)
+      ];
+    }
+    
+    if (month) {
+      whereClause[Op.and] = [
+        ...(whereClause[Op.and] || []),
+        sequelize.where(sequelize.fn('MONTH', sequelize.col('holiday_date')), month)
+      ];
+    }
+    
+    if (search) {
+      whereClause[Op.or] = [
+        { holidayName: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    
+    const { count, rows } = await this.findAndCountAll({
+      where: whereClause,
+      order: [[sortBy, sortOrder]],
+      limit,
+      offset
+    });
+    
+    return {
+      data: rows,
+      total: count,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit)
+    };
+  } catch (error) {
+    console.error('Error getting holidays:', error.message);
+    return { data: [], total: 0 };
+  }
+};
+
+// =============================================
+// INITIALIZE TABLE IF NOT EXISTS
+// =============================================
+
+/**
+ * Initialize the holidays table
+ */
+Holiday.initializeTable = async function(force = false) {
+  try {
+    const tableExists = await checkTableExists();
+    
+    if (!tableExists) {
+      console.log('📋 Creating holidays table...');
+      await this.sync({ force: false });
+      console.log('✅ Holidays table created successfully');
+      tableExistsCache = true;
+      tableExistsCacheTime = Date.now();
+    } else if (force) {
+      console.log('📋 Recreating holidays table...');
+      await this.sync({ force: true });
+      console.log('✅ Holidays table recreated successfully');
+    } else {
+      console.log('✅ Holidays table already exists');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error initializing holidays table:', error.message);
+    return false;
   }
 };
 

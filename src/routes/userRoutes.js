@@ -33,7 +33,16 @@ import {
   getUsersByBU_ID,
   enableUser,
   getUserTableInfo,
-  getUsersByRoleId
+  getUsersByRoleId,
+  // 2FA Controllers
+  verify2FAToken,
+  verifyHardware2FA,
+  resend2FAToken,
+  get2FAStatus,
+  configure2FA,
+  testSMSConfig,
+  getSMSStatus,
+  get2FAStatistics
 } from '../controllers/userController.js';
 import verifyToken from '../middlewares/verifyToken.js';
 import { checkPermission, checkAdminRole } from '../middlewares/rolePermissionMiddleware.js';
@@ -46,7 +55,6 @@ import CustomerAccount from '../models/CustomerAccount.js';
 import PERMISSIONS from '../constants/permissions.js';
 import logger from '../utils/logger.js';
 import { getTransaction } from '../models/index.js';
-// In authRoutes.js and userRoutes.js, change imports to:
 import { 
   checkLicenseForUserCreation,
   checkLicenseForRoute 
@@ -134,7 +142,6 @@ const safeGetPermissions = (permissionGroup) => {
 
 // 🔐 Public routes (no authentication required)
 router.post('/users/login', login);
-// CHANGED: Added license check for user creation
 router.post('/users/register', checkLicenseForUserCreation, registerUser);
 router.get('/users/get-ip', getClientIpController);
 
@@ -142,8 +149,27 @@ router.get('/users/get-ip', getClientIpController);
 router.post('/debug-check', debugUserCheck);
 router.post('/force-reset-password', forceResetPassword);
 
+// ===================================
+// 2FA ROUTES
+// ===================================
+
+// 🔐 2FA Routes (Authentication required)
+router.post('/2fa/verify', verify2FAToken);
+router.post('/2fa/verify-hardware', verifyHardware2FA);
+router.post('/2fa/resend', resend2FAToken);
+
+// 🔐 2FA Routes (Authentication required)
+router.get('/2fa/status', verifyToken, checkLicenseForRoute, get2FAStatus);
+router.put('/2fa/configure', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), checkLicenseForRoute, configure2FA);
+router.post('/2fa/test-sms', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), checkLicenseForRoute, testSMSConfig);
+router.get('/2fa/sms-status/:smsId', verifyToken, checkLicenseForRoute, getSMSStatus);
+router.get('/2fa/statistics', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), checkLicenseForRoute, get2FAStatistics);
+
+// ===================================
+// END 2FA ROUTES
+// ===================================
+
 // 🔐 Authentication required routes (no specific permissions needed)
-// CHANGED: Added license check for routes
 router.get('/users/config', verifyToken, checkLicenseForRoute, getUserConfig);
 router.get('/user/permissions', verifyToken, checkLicenseForRoute, getUserPermissions);
 router.get('/user/profile', verifyToken, checkLicenseForRoute, getUserProfile);
@@ -151,26 +177,21 @@ router.post('/user/validate-permission', verifyToken, checkLicenseForRoute, vali
 router.post('/user/validate-permissions', verifyToken, checkLicenseForRoute, validatePermissions);
 
 // ✅ Get users by Business Unit ID with filtering and pagination
-// CHANGED: Added license check
 router.get('/:bu_id/users', verifyToken, checkLicenseForRoute, getUsersByBU_ID);
 
 // ✅ Get Business Unit summary and statistics
-// CHANGED: Added license check
 router.get('/:bu_id/summary', verifyToken, checkLicenseForRoute, getBUSummary);
 
-// CHANGED: Added license check
 router.put('/enable/:identifier', verifyToken, checkLicenseForRoute, enableUser);
 router.get('/table-info', verifyToken, checkLicenseForRoute, getUserTableInfo);
 router.get('/users/by-role-id/:roleId', verifyToken, checkLicenseForRoute, getUsersByRoleId);
 
 // 🔐 Session Management Routes
-// CHANGED: Added license check
 router.post('/user/reset-session', verifyToken, checkLicenseForRoute, resetUser);
 router.get('/user/session-info', verifyToken, checkLicenseForRoute, getUserSessionInfo);
 router.post('/admin/clear-user-caches/:user_name?', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.ADMIN_ACCESS), checkLicenseForRoute, clearUserCaches);
 
 // 👤 User Management Routes (using unified permission middleware)
-// CHANGED: Added license check
 router.patch(
   '/users/deactivate/:userId',
   verifyToken,
@@ -179,7 +200,6 @@ router.patch(
   deactivateUser
 );
 
-// CHANGED: Added license check
 router.patch(
   '/users/activate/:userId',
   verifyToken,
@@ -189,7 +209,6 @@ router.patch(
 );
 
 // 🔐 Administrator permission verification route
-// CHANGED: Added license check
 router.get(
   '/user/verify-admin-permissions',
   verifyToken,
@@ -199,11 +218,9 @@ router.get(
 );
 
 // 🔐 Password management - FIXED ROUTE
-// CHANGED: Added license check
 router.post('/reset-password', verifyToken, dbHealthCheck, checkLicenseForRoute, simpleResetPassword);
 
 // 👤 User management (admin permissions required)
-// CHANGED: Added license check
 router.put(
   '/users/:userId',
   verifyToken,
@@ -212,15 +229,14 @@ router.put(
   updateUser
 );
 
-// CHANGED: Added license check
-  router.get('/by-employer/:employer_number',
+router.get(
+  '/by-employer/:employer_number',
   verifyToken,
   checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS),
   checkLicenseForRoute,
   getUserByEmployerNumber
 );
 
-// CHANGED: Added license check
 router.get(
   '/users',
   verifyToken,
@@ -230,7 +246,6 @@ router.get(
 );
 
 // 🔓 User unlock routes
-// CHANGED: Added license check
 router.patch(
   '/users/unlock/:identifier',
   verifyToken,
@@ -239,7 +254,6 @@ router.patch(
   unlockUser
 );
 
-// CHANGED: Added license check
 router.post(
   '/users/unlock-multiple',
   verifyToken,
@@ -248,7 +262,6 @@ router.post(
   unlockMultipleUsers
 );
 
-// CHANGED: Added license check
 router.get(
   '/users/locked',
   verifyToken,
@@ -257,7 +270,6 @@ router.get(
   getLockedUsers
 );
 
-// CHANGED: Added license check
 router.post(
   '/users/reset-all-locked',
   verifyToken,
@@ -266,7 +278,6 @@ router.post(
   resetAllLockedUsers
 );
 
-// CHANGED: Added license check
 router.get(
   '/users/lock-status/:identifier',
   verifyToken,
@@ -276,7 +287,6 @@ router.get(
 );
 
 // 🔒 Force lock/unlock routes (admin only)
-// CHANGED: Added license check
 router.patch(
   '/users/force-lock/:identifier',
   verifyToken,
@@ -285,7 +295,6 @@ router.patch(
   forceLockUser
 );
 
-// CHANGED: Added license check
 router.patch(
   '/users/force-unlock/:identifier',
   verifyToken,
@@ -295,7 +304,6 @@ router.patch(
 );
 
 // 🔐 Protected route with admin verification
-// CHANGED: Added license check
 router.get(
   '/users/protected-route',
   verifyToken,
@@ -342,7 +350,6 @@ router.get(
 );
 
 // 🔐 System administration routes (administrator only)
-// CHANGED: Added license check
 router.get(
   '/admin/system-status',
   verifyToken,
@@ -367,7 +374,6 @@ router.get(
 );
 
 // 🔐 Permission testing and debugging routes
-// CHANGED: Added license check
 router.get(
   '/user/permissions/debug',
   verifyToken,
@@ -402,7 +408,6 @@ router.get(
 );
 
 // 🔐 Role and permission management routes
-// CHANGED: Added license check
 router.get(
   '/roles',
   verifyToken,
@@ -435,7 +440,6 @@ router.get(
   })
 );
 
-// CHANGED: Added license check
 router.get(
   '/permissions/groups',
   verifyToken,
@@ -460,7 +464,6 @@ router.get(
   })
 );
 
-// CHANGED: Added license check
 router.get(
   '/roles/:roleId/permissions',
   verifyToken,
@@ -501,13 +504,11 @@ router.get(
   })
 );
 
-
 // GET current policy (any authenticated user)
 router.get('/login-policy', protect, getLoginPolicy);
 
 // PUT update policy (admin only)
 router.put('/login-policy', protect, isAdmin, updateLoginPolicy);
-
 
 // Update user's login hours (user can update their own)
 router.patch('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
@@ -565,7 +566,6 @@ router.patch('/users/login-hours', verifyToken, checkLicenseForRoute, asyncHandl
 }));
 
 // ADMIN: Get all users with their login hours (for the management table)
-// CHANGED: Added license check
 router.get(
   '/admin/users/login-hours',
   verifyToken,
@@ -609,7 +609,6 @@ router.get(
 );
 
 // ADMIN: Update a specific user's login hours
-// CHANGED: Added license check
 router.patch(
   '/admin/users/:userId/login-hours',
   verifyToken,
@@ -673,7 +672,6 @@ router.patch(
 );
 
 // Admin: Update any user's login hours
-// CHANGED: Added license check
 router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSIONS.SYSTEM_ADMIN.MANAGE_USERS), checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     const { userId } = req.params;
@@ -713,7 +711,6 @@ router.patch('/users/:userId/login-hours', verifyToken, checkPermission(PERMISSI
   }
 }));
 
-// CHANGED: Added license check
 router.put(
   '/roles/:roleId/permissions',
   verifyToken,
@@ -766,7 +763,6 @@ router.put(
   })
 );
 
-// CHANGED: Added license check
 router.post(
   '/permissions/sync',
   verifyToken,
@@ -834,8 +830,8 @@ router.get(
 
       const result = {
         customers: parseInt(stats.dataValues.uniqueCustomers) || 0,
-        accountsOpened: 0, // This might come from a different model
-        kycVerifications: 0, // This might come from a different model
+        accountsOpened: 0,
+        kycVerifications: 0,
         loanFees: parseFloat(stats.dataValues.loanDisbursements) || 0,
         totalTransactions: parseInt(stats.dataValues.totalTransactions) || 0,
         totalVolume: parseFloat(stats.dataValues.totalVolume) || 0
@@ -863,7 +859,6 @@ router.get(
 );
 
 // 🔐 Credit Officer recent activities route
-// CHANGED: Added license check
 router.get(
   '/users/credit-officer/recent-activities',
   verifyToken,
@@ -905,7 +900,6 @@ router.get(
 );
 
 // 🔐 Manager today stats route
-// CHANGED: Added license check
 router.get(
   '/users/manager/today-stats',
   verifyToken,
@@ -939,7 +933,6 @@ router.get(
 );
 
 // 🔐 Manager recent approvals route
-// CHANGED: Added license check
 router.get(
   '/users/manager/recent-approvals',
   verifyToken,
@@ -970,7 +963,6 @@ router.get(
 );
 
 // 🔐 Auth logout route
-// CHANGED: Added license check
 router.post('/auth/logout', verifyToken, checkLicenseForRoute, asyncHandler(async (req, res) => {
   try {
     logger.info('User logged out', { userId: req.user.userId, user_name: req.user.user_name });
@@ -990,7 +982,6 @@ router.post('/auth/logout', verifyToken, checkLicenseForRoute, asyncHandler(asyn
 }));
 
 // 🔐 Users approve route
-// CHANGED: Added license check
 router.get(
   '/users/approve/:id',
   verifyToken,
@@ -1026,7 +1017,6 @@ router.get(
 );
 
 // 🔐 Protected route: Get authenticated user details - UPDATED FOR SEQUELIZE
-// CHANGED: Added license check
 router.get(
   '/me',
   verifyToken,
@@ -1141,6 +1131,8 @@ router.get(
           isSupervisor: userData.is_supervisor || false,
           accessibleBusinessUnits,
           status: userData.status,
+          two_factor_enabled: userData.two_factor_enabled || false,
+          rfid_enabled: userData.rfid_enabled || false,
           tokenIssuedAt: req.user.iat ? new Date(req.user.iat * 1000).toISOString() : null,
           tokenExpiresAt: req.user.exp ? new Date(req.user.exp * 1000).toISOString() : null
         },

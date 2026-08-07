@@ -1,4 +1,4 @@
-// admin-ui/src/App.js - COMPLETE FIXED VERSION
+// admin-ui/src/App.js - COMPLETE FIXED VERSION WITH USER MONITORING
 
 import { Admin, Resource, fetchUtils, Layout } from 'react-admin';
 import simpleRestProvider from 'ra-data-simple-rest';
@@ -22,6 +22,7 @@ import { EnvList, EnvEdit, EnvCreate } from './pages/Environment/EnvEditor';
 import { ServicesList, ServicesCreate, ServicesEdit, ServicesShow } from './pages/Services';
 import SchedulerStatusWrapper from './pages/Scheduler/SchedulerStatusWrapper';
 import TrafficStats from './pages/TrafficStats/TrafficStats';
+import UserMonitoring from './pages/UserMonitoring/UserMonitoring';
 
 import { Box, Typography } from '@mui/material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -38,6 +39,7 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import MemoryIcon from '@mui/icons-material/Memory';
+import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 
 import { API_BASE_URL } from './config';
 
@@ -125,7 +127,72 @@ const dataProvider = {
 
   getList: async (resource, params) => {
     try {
-      // Handle special resources
+      // =============================================
+      // ✅ FIXED: AUDIT LOGS - Special handling
+      // =============================================
+      if (resource === 'audit') {
+        const { page, perPage } = params.pagination;
+        const { field, order } = params.sort;
+        const filter = params.filter || {};
+
+        const url = `${API_BASE_URL}/audit?` + new URLSearchParams({
+          range: JSON.stringify([(page - 1) * perPage, page * perPage - 1]),
+          sort: JSON.stringify([field, order]),
+          filter: JSON.stringify(filter),
+        });
+
+        const response = await httpClient(url, {
+          method: 'GET',
+        });
+
+        // Get the data and ensure it's an array
+        let data = response.json || [];
+        if (!Array.isArray(data)) {
+          data = Object.values(data);
+        }
+
+        // Get total from Content-Range header
+        const contentRange = response.headers?.get('Content-Range') || '';
+        const total = parseInt(contentRange.split('/').pop(), 10) || data.length;
+
+        // Ensure each item has an id (use event_id as primary key)
+        data = data.map((item, index) => ({
+          ...item,
+          id: item.event_id || item.id || index + 1
+        }));
+
+        console.log('📊 Audit data loaded:', { total, count: data.length });
+        return { data, total };
+      }
+
+      // =============================================
+      // SPECIAL HANDLING FOR USER MONITORING
+      // =============================================
+      if (resource === 'user-monitoring') {
+        const response = await httpClient(`${API_BASE_URL}/users/active-sessions`, {
+          method: 'GET',
+        });
+        
+        let data = response.json?.data?.sessions || [];
+        const summary = response.json?.data?.summary || {};
+        
+        if (!Array.isArray(data)) {
+          data = Object.values(data);
+        }
+        
+        data = data.map((item, index) => ({
+          ...item,
+          id: item.id || item.session_id || index + 1
+        }));
+        
+        const total = data.length;
+        
+        return { data, total };
+      }
+
+      // =============================================
+      // SPECIAL HANDLING FOR MIDDLEWARES
+      // =============================================
       if (resource === 'middlewares') {
         const response = await httpClient(`${API_BASE_URL}/middlewares`, {
           method: 'GET',
@@ -138,6 +205,9 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR ENVIRONMENT VARIABLES
+      // =============================================
       if (resource === 'env') {
         const response = await httpClient(`${API_BASE_URL}/env`, {
           method: 'GET',
@@ -150,7 +220,9 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
-      // ✅ FIXED: plugins - API_BASE_URL already has /admin
+      // =============================================
+      // SPECIAL HANDLING FOR PLUGINS
+      // =============================================
       if (resource === 'plugins') {
         const response = await httpClient(`${API_BASE_URL}/plugins`, {
           method: 'GET',
@@ -164,7 +236,9 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
-      // ✅ FIXED: servers - API_BASE_URL already has /admin
+      // =============================================
+      // SPECIAL HANDLING FOR SERVERS
+      // =============================================
       if (resource === 'servers') {
         const response = await httpClient(`${API_BASE_URL}/servers`, {
           method: 'GET',
@@ -177,6 +251,9 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR WEBHOOK CONFIGS
+      // =============================================
       if (resource === 'webhook_configs') {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs`, {
           method: 'GET',
@@ -189,6 +266,9 @@ const dataProvider = {
         return { data, total: data.length };
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR TRAFFIC STATS
+      // =============================================
       if (resource === 'traffic-stats') {
         try {
           const response = await fetch(`${API_BASE_URL}/traffic/stats`);
@@ -217,6 +297,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR TRAFFIC STATUS
+      // =============================================
       if (resource === 'traffic-status') {
         try {
           const response = await fetch(`${API_BASE_URL}/traffic/status`);
@@ -242,6 +325,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // DEFAULT: Use baseDataProvider
+      // =============================================
       const response = await baseDataProvider.getList(resource, params);
       console.log('📦 Raw response:', response);
 
@@ -277,12 +363,31 @@ const dataProvider = {
     }
   },
 
+  // =============================================
+  // GET ONE
+  // =============================================
   getOne: async (resource, params) => {
     if (!params || params.id === undefined) {
       return { data: { id: null } };
     }
 
     try {
+      // =============================================
+      // ✅ FIXED: AUDIT LOGS - Special handling for getOne
+      // =============================================
+      if (resource === 'audit') {
+        const response = await httpClient(`${API_BASE_URL}/audit/${params.id}`, {
+          method: 'GET',
+        });
+        
+        let responseData = response.json.data || response.json;
+        responseData = ensureId(responseData, params.id);
+        return { data: responseData };
+      }
+
+      // =============================================
+      // SPECIAL HANDLING FOR SERVICES
+      // =============================================
       if (resource === 'services') {
         try {
           const response = await httpClient(`${API_BASE_URL}/services/${params.id}`, {
@@ -306,6 +411,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR MIDDLEWARES
+      // =============================================
       if (resource === 'middlewares') {
         try {
           const response = await httpClient(`${API_BASE_URL}/middlewares/${params.id}`, {
@@ -329,6 +437,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR ENVIRONMENT VARIABLES
+      // =============================================
       if (resource === 'env') {
         try {
           const response = await httpClient(`${API_BASE_URL}/env/${params.id}`, {
@@ -352,6 +463,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR WEBHOOK CONFIGS
+      // =============================================
       if (resource === 'webhook_configs') {
         try {
           const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -367,6 +481,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR DATA SOURCES
+      // =============================================
       if (resource === 'datasources') {
         try {
           const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -382,7 +499,9 @@ const dataProvider = {
         }
       }
 
-      // ✅ FIXED: plugins - API_BASE_URL already has /admin
+      // =============================================
+      // SPECIAL HANDLING FOR PLUGINS
+      // =============================================
       if (resource === 'plugins') {
         try {
           const response = await httpClient(`${API_BASE_URL}/plugins/${params.id}`, {
@@ -406,7 +525,9 @@ const dataProvider = {
         }
       }
 
-      // ✅ FIXED: servers - API_BASE_URL already has /admin
+      // =============================================
+      // SPECIAL HANDLING FOR SERVERS
+      // =============================================
       if (resource === 'servers') {
         try {
           const response = await httpClient(`${API_BASE_URL}/servers/${params.id}`, {
@@ -430,6 +551,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // SPECIAL HANDLING FOR TRAFFIC STATS
+      // =============================================
       if (resource === 'traffic-stats') {
         try {
           const response = await fetch(`${API_BASE_URL}/traffic/stats`);
@@ -451,6 +575,9 @@ const dataProvider = {
         }
       }
 
+      // =============================================
+      // DEFAULT: Use baseDataProvider
+      // =============================================
       const response = await baseDataProvider.getOne(resource, params);
       
       if (response && response.data) {
@@ -464,6 +591,9 @@ const dataProvider = {
     }
   },
 
+  // =============================================
+  // GET MANY
+  // =============================================
   getMany: async (resource, params) => {
     const { ids } = params;
     console.log(`📤 getMany: ${resource} with ids:`, ids);
@@ -510,8 +640,13 @@ const dataProvider = {
     }
   },
 
-  // ✅ FIXED: CREATE for plugins
+  // =============================================
+  // CREATE
+  // =============================================
   create: async (resource, params) => {
+    // =============================================
+    // SPECIAL HANDLING FOR PLUGINS (File Upload)
+    // =============================================
     if (resource === 'plugins' && params.data?.file) {
       const formData = new FormData();
       const { file, ...rest } = params.data;
@@ -530,7 +665,6 @@ const dataProvider = {
         formData.append('plugin', file);
       }
       
-      // ✅ API_BASE_URL already has /admin
       const response = await fetch(`${API_BASE_URL}/plugins/upload`, {
         method: 'POST',
         headers: {
@@ -545,6 +679,9 @@ const dataProvider = {
       return { data: responseData };
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR SERVICES (File Upload)
+    // =============================================
     if (resource === 'services' && params.data?.file) {
       const formData = new FormData();
       const { file, ...rest } = params.data;
@@ -572,6 +709,9 @@ const dataProvider = {
       return { data: result };
     }
     
+    // =============================================
+    // SPECIAL HANDLING FOR ENVIRONMENT VARIABLES
+    // =============================================
     if (resource === 'env') {
       try {
         const response = await httpClient(`${API_BASE_URL}/env`, {
@@ -588,6 +728,9 @@ const dataProvider = {
       }
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR WEBHOOK CONFIGS
+    // =============================================
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs`, {
@@ -603,6 +746,9 @@ const dataProvider = {
       }
     }
     
+    // =============================================
+    // DEFAULT: Use baseDataProvider
+    // =============================================
     const response = await baseDataProvider.create(resource, params);
     if (response && response.data) {
       response.data = ensureId(response.data);
@@ -610,8 +756,13 @@ const dataProvider = {
     return response;
   },
 
-  // ... rest of update, delete, deleteMany remain the same
+  // =============================================
+  // UPDATE
+  // =============================================
   update: async (resource, params) => {
+    // =============================================
+    // SPECIAL HANDLING FOR ENVIRONMENT VARIABLES
+    // =============================================
     if (resource === 'env') {
       try {
         const response = await httpClient(`${API_BASE_URL}/env/${params.id}`, {
@@ -627,6 +778,9 @@ const dataProvider = {
       }
     }
     
+    // =============================================
+    // SPECIAL HANDLING FOR MIDDLEWARES
+    // =============================================
     if (resource === 'middlewares') {
       try {
         const response = await httpClient(`${API_BASE_URL}/middlewares/${params.id}`, {
@@ -642,6 +796,9 @@ const dataProvider = {
       }
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR WEBHOOK CONFIGS
+    // =============================================
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -657,6 +814,9 @@ const dataProvider = {
       }
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR DATA SOURCES
+    // =============================================
     if (resource === 'datasources') {
       try {
         const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -672,6 +832,9 @@ const dataProvider = {
       }
     }
     
+    // =============================================
+    // DEFAULT: Use baseDataProvider
+    // =============================================
     try {
       const response = await baseDataProvider.update(resource, params);
       if (response && response.data) {
@@ -684,7 +847,13 @@ const dataProvider = {
     }
   },
 
+  // =============================================
+  // DELETE
+  // =============================================
   delete: async (resource, params) => {
+    // =============================================
+    // SPECIAL HANDLING FOR ENVIRONMENT VARIABLES
+    // =============================================
     if (resource === 'env') {
       try {
         const response = await httpClient(`${API_BASE_URL}/env/${params.id}`, {
@@ -699,6 +868,9 @@ const dataProvider = {
       }
     }
     
+    // =============================================
+    // SPECIAL HANDLING FOR MIDDLEWARES
+    // =============================================
     if (resource === 'middlewares') {
       try {
         const response = await httpClient(`${API_BASE_URL}/middlewares/${params.id}`, {
@@ -713,6 +885,9 @@ const dataProvider = {
       }
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR WEBHOOK CONFIGS
+    // =============================================
     if (resource === 'webhook_configs') {
       try {
         const response = await httpClient(`${API_BASE_URL}/webhook_configs/${params.id}`, {
@@ -727,6 +902,9 @@ const dataProvider = {
       }
     }
 
+    // =============================================
+    // SPECIAL HANDLING FOR DATA SOURCES
+    // =============================================
     if (resource === 'datasources') {
       try {
         const response = await httpClient(`${API_BASE_URL}/datasources/${params.id}`, {
@@ -741,6 +919,9 @@ const dataProvider = {
       }
     }
     
+    // =============================================
+    // DEFAULT: Use baseDataProvider
+    // =============================================
     try {
       const response = await baseDataProvider.delete(resource, params);
       if (response && response.data) {
@@ -753,6 +934,9 @@ const dataProvider = {
     }
   },
 
+  // =============================================
+  // DELETE MANY
+  // =============================================
   deleteMany: async (resource, params) => {
     const { ids } = params;
     console.log(`📤 deleteMany: ${resource} with ids:`, ids);
@@ -771,7 +955,9 @@ const dataProvider = {
   },
 };
 
-// Custom Layout with footer
+// =============================================
+// CUSTOM LAYOUT
+// =============================================
 const MyLayout = (props) => (
   <>
     <Layout {...props} />
@@ -794,6 +980,9 @@ const MyLayout = (props) => (
   </>
 );
 
+// =============================================
+// APP
+// =============================================
 function App() {
   return (
     <Admin 
@@ -872,12 +1061,20 @@ function App() {
         icon={BuildIcon}
       />
 
-      {/* Audit & Logs */}
+      {/* ✅ AUDIT & LOGS - Fixed */}
       <Resource 
         name="audit" 
         list={AuditLog} 
         options={{ label: 'Audit Log' }} 
         icon={AssessmentIcon}
+      />
+
+      {/* ✅ USER MONITORING - New */}
+      <Resource 
+        name="user-monitoring" 
+        list={UserMonitoring} 
+        options={{ label: 'User Monitoring' }} 
+        icon={PeopleAltIcon}
       />
 
       {/* WebLogic Servers */}

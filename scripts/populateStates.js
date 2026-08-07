@@ -1,89 +1,169 @@
 // scripts/populateStates.js
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import Country from '../models/Country.js';
-import State from '../models/State.js';
-import LocalGovernment from '../models/LocalGovernment.js';
-import States from './data/nigeriaStates.js'; // Ensure this contains all states and local governments
+import sequelize from '../config/db.js';
+import States from './data/nigeriaStates.js';
 
 dotenv.config();
 
-// MongoDB connection string
-const mongoUri = process.env.MONGO_URI || 'mongodb+srv://Administrator:Fo$th3DR$=083@cluster0.zpuy3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+// Helper function to sanitize LOCAL_GOV_ID
+function sanitizeLocalGovId(value) {
+  if (!value) return value;
+  // Remove special characters, keep alphanumeric, underscores, and hyphens
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '') // Remove anything that's not A-Z, 0-9, underscore, or hyphen
+    .replace(/_+/g, '_') // Replace multiple underscores with single
+    .replace(/-+/g, '-') // Replace multiple hyphens with single
+    .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
+}
 
-mongoose.connect(mongoUri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected.'))
-  .catch((err) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
-
-async function populateStatesAndLocalGovs() {
+async function populateStates() {
   try {
-    // Find Nigeria by COUNTRY_ID ('NG001')
-    const nigeria = await Country.findOne({ COUNTRY_ID: 'NG001' });
+    await sequelize.authenticate();
+    console.log('✅ Database connected');
 
-    if (!nigeria) {
-      throw new Error('Nigeria (NGA) country not found. Please create it first.');
+    // Get Nigeria
+    const [nigeria] = await sequelize.query(
+      `SELECT code FROM countries WHERE code = 'NG' OR name = 'Nigeria' LIMIT 1`
+    );
+
+    if (!nigeria || nigeria.length === 0) {
+      throw new Error('Nigeria not found. Please run createNigeria.js first.');
     }
 
-    // Check if states are already populated for Nigeria
-    const stateCount = await State.countDocuments({ COUNTRY_ID: nigeria._id });
-    if (stateCount > 0) {
-      console.log('States already populated!');
-      return;
+    const countryCode = nigeria[0].code;
+    console.log(`✅ Found Nigeria with code: ${countryCode}`);
+
+    // Check existing states
+    const [existing] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM states WHERE COUNTRY_ID = ?`,
+      { replacements: [countryCode] }
+    );
+
+    if (existing[0].count > 0) {
+      console.log(`⚠️ Found ${existing[0].count} existing states. Clearing and repopulating...`);
+      
+      // Delete existing data
+      await sequelize.query(`DELETE FROM local_governments`);
+      await sequelize.query(`DELETE FROM states WHERE COUNTRY_ID = ?`, {
+        replacements: [countryCode]
+      });
+      await sequelize.query(`ALTER TABLE states AUTO_INCREMENT = 1`);
+      await sequelize.query(`ALTER TABLE local_governments AUTO_INCREMENT = 1`);
+      console.log('  ✅ Cleared existing data');
     }
 
-    // Loop through the state data and insert them into the database
+    console.log('🔄 Starting population...');
+
+    let totalLGs = 0;
+    let statesCreated = 0;
+
     for (let i = 0; i < States.length; i++) {
       const stateData = States[i];
-      const localGovIds = [];
+      const stateId = i + 1;
+      const stateName = stateData.name;
+      const stateCode = stateName.toUpperCase().replace(/\s+/g, '_');
+      const customStateId = `ST_${stateCode}`;
 
-      // Assign state ID as 1 to 36
-      const stateId = i + 1;  // This ensures the ID starts from 1
+      console.log(`\n📂 Processing ${stateId}: ${stateName}...`);
 
-      // For each local government in the state, create and save the Local Government document
-      for (const lg of stateData.LOCAL_GOV) {
-        const localGov = new LocalGovernment({
-          LOCAL_GOV_ID: `${stateId}_${lg.name}`.toUpperCase().replace(/\s+/g, '_'), // Unique LocalGov ID
-          LOCAL_GOV_NM: lg.name,
-          URBAN: lg.URBAN || false,
-          RURAL: lg.RURAL || false,
-        });
-        await localGov.save();
-        localGovIds.push(localGov._id);
-      }
-
-      // Now save the state and link to the country and local governments
-      const state = new State({
-        STATE_ID: stateId,  // Numeric state ID (1-36)
-        STATE_NM: stateData.name,
-        LOCAL_GOV: localGovIds,  // Array of Local Gov IDs
-        COUNTRY_ID: nigeria._id
-      });
-      await state.save();
-
-      // After saving the state, update the Local Governments to link back to the STATE_ID
-      await LocalGovernment.updateMany(
-        { _id: { $in: localGovIds } },
-        { $set: { STATE_ID: state._id } }  // Now we can safely update STATE_ID
+      // Insert state
+      await sequelize.query(
+        `INSERT INTO states (STATE_ID, STATE_NM, COUNTRY_ID, CREATED_AT, UPDATED_AT) 
+         VALUES (?, ?, ?, NOW(), NOW())`,
+        { replacements: [customStateId, stateName, countryCode] }
       );
 
-      // Push the state's ID to Nigeria's STATES array
-      nigeria.STATES.push(state._id);
+      statesCreated++;
+
+      // Get the auto-increment id
+      const [stateResult] = await sequelize.query(
+        `SELECT id FROM states WHERE STATE_ID = ? LIMIT 1`,
+        { replacements: [customStateId] }
+      );
+
+      if (!stateResult || stateResult.length === 0) {
+        console.error(`  ❌ Could not find id for state: ${customStateId}`);
+        continue;
+      }
+
+      const stateAutoId = stateResult[0].id;
+      console.log(`  ✅ Created state: ${stateName} (ID: ${stateAutoId}, STATE_ID: ${customStateId})`);
+
+      // Insert local governments
+      for (const lg of stateData.LOCAL_GOV) {
+        // Create a clean LOCAL_GOV_ID
+        const rawLgId = `${stateId}_${lg.name}`;
+        const cleanLgId = sanitizeLocalGovId(rawLgId);
+        
+        // If sanitization removed everything, create a fallback
+        const finalLgId = cleanLgId || `${stateId}_LG_${Math.random().toString(36).substr(2, 6)}`;
+        
+        await sequelize.query(
+          `INSERT INTO local_governments 
+           (LOCAL_GOV_ID, LOCAL_GOV_NM, STATE_ID, URBAN, RURAL, createdAt, updatedAt) 
+           VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+          { 
+            replacements: [
+              finalLgId, 
+              lg.name, 
+              stateAutoId,
+              lg.URBAN ? 1 : 0, 
+              lg.RURAL ? 1 : 0
+            ] 
+          }
+        );
+        
+        totalLGs++;
+      }
+
+      console.log(`  ✅ Completed: ${stateData.LOCAL_GOV.length} LGs`);
     }
 
-    // Save the updated Nigeria document with references to its states
-    await nigeria.save();
+    console.log('\n✅ Population completed successfully!');
+    console.log(`📊 ${statesCreated} states created`);
+    console.log(`📊 ${totalLGs} local governments created`);
 
-    console.log('States and Local Governments populated successfully.');
-    process.exit();
+    // Verify
+    const [verifyStates] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM states WHERE COUNTRY_ID = ?`,
+      { replacements: [countryCode] }
+    );
+    const [verifyLGs] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM local_governments`
+    );
+
+    console.log(`✅ Verification: ${verifyStates[0].count} states, ${verifyLGs[0].count} LGs`);
+
+    // Show sample data
+    const [sample] = await sequelize.query(`
+      SELECT 
+        s.STATE_NM,
+        s.STATE_ID,
+        COUNT(lg.id) as lg_count
+      FROM states s
+      LEFT JOIN local_governments lg ON lg.STATE_ID = s.id
+      WHERE s.COUNTRY_ID = ?
+      GROUP BY s.id
+      ORDER BY s.STATE_NM ASC
+      LIMIT 5
+    `, { replacements: [countryCode] });
+    
+    console.log('\n📊 Sample data:');
+    console.table(sample);
+
+    process.exit(0);
+
   } catch (error) {
-    console.error('Error populating:', error);
+    console.error('❌ Error:', error.message);
+    if (error.sql) {
+      console.error('SQL:', error.sql);
+    }
+    if (error.stack) {
+      console.error('Stack trace:', error.stack);
+    }
     process.exit(1);
   }
 }
 
-populateStatesAndLocalGovs();
+populateStates();

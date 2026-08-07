@@ -1,105 +1,8 @@
-// models/CreditApplication.js
-import { DataTypes, Model } from 'sequelize';
+// models/CreditApplication.js - ADD GUARANTOR_ID FIELD
+import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
-class CreditApplication extends Model {
-  static async generateApplId() {
-    const Counter = sequelize.models.Counter;
-    const seq = await Counter.getNextSequence('creditAppId');
-    const serialNumber = seq.toString().padStart(4, '0');
-    return `CRAPP/${serialNumber}`;
-  }
-
-  static async generateRefNo() {
-    const Counter = sequelize.models.Counter;
-    const seq = await Counter.getNextSequence('refNo');
-    return seq.toString().padStart(8, '0');
-  }
-
-  static async generateCreditApplicationId() {
-    const Counter = sequelize.models.Counter;
-    return await Counter.getNextSequence('creditApplicationId');
-  }
-
-  static async generateCustId() {
-    const Counter = sequelize.models.Counter;
-    return await Counter.getNextSequence('custId');
-  }
-
-  static async findPending() {
-    return this.findAll({
-      where: { status: 'PENDING' },
-      order: [['applyDate', 'DESC']]
-    });
-  }
-
-  static async findByCustomerId(customerId) {
-    return this.findAll({
-      where: { custId: customerId },
-      order: [['createDate', 'DESC']]
-    });
-  }
-
-  static async findByStatus(status) {
-    return this.findAll({
-      where: { status },
-      order: [['createDate', 'DESC']]
-    });
-  }
-
-  async approve(approvedBy, approvedLimit, comments = '') {
-    this.status = 'APPROVED';
-    this.approvalDate = new Date();
-    this.approvedLimitAmount = approvedLimit;
-    this.approvedBy = approvedBy;
-    this.comments = comments || this.comments;
-    return await this.save();
-  }
-
-  async reject(rejectedBy, reason = '') {
-    this.status = 'REJECTED';
-    this.declineDate = new Date();
-    this.rejectedBy = rejectedBy;
-    this.rejectionReason = reason;
-    this.comments = reason || this.comments;
-    return await this.save();
-  }
-
-  getSummary() {
-    return {
-      applicationId: this.creditApplicationId,
-      applicationNumber: this.applId,
-      customerName: this.customerName,
-      customerId: this.custId,
-      product: this.product,
-      appliedAmount: this.primeLimitAmount,
-      approvedAmount: this.approvedLimitAmount,
-      status: this.status,
-      applyDate: this.applyDate,
-      approvalDate: this.approvalDate,
-      purpose: this.purposeOfCredit,
-      referenceNumber: this.refNo
-    };
-  }
-
-  isPending() { return this.status === 'PENDING'; }
-  isApproved() { return this.status === 'APPROVED'; }
-  isRejected() { return this.status === 'REJECTED'; }
-
-  get formattedApplyDate() {
-    return this.applyDate ? this.applyDate.toLocaleString() : 'N/A';
-  }
-
-  get formattedApprovalDate() {
-    return this.approvalDate ? this.approvalDate.toLocaleString() : 'N/A';
-  }
-
-  get formattedCreateDate() {
-    return this.createDate ? this.createDate.toLocaleString() : 'N/A';
-  }
-}
-
-CreditApplication.init({
+const CreditApplication = sequelize.define('CreditApplication', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
@@ -109,355 +12,332 @@ CreditApplication.init({
     type: DataTypes.INTEGER,
     allowNull: false,
     unique: true,
-    comment: 'Numeric credit application ID'
-  },
-  customerName: {
-    type: DataTypes.STRING(255),
-    allowNull: false,
-    comment: 'Customer name'
-  },
-  custId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    comment: 'Customer ID'
-  },
-  product: {
-    type: DataTypes.STRING(100),
-    allowNull: true,
-    comment: 'Product name'
-  },
-  accountId: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    comment: 'Account ID'
-  },
-  accountNumber: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-    comment: 'Account number'
-  },
-  applyDate: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW,
-    comment: 'Application date'
+    field: 'credit_application_id'
   },
   applId: {
     type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
-    comment: 'Application ID (formatted)'
+    field: 'appl_id'
+  },
+  custId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'cust_id'
+  },
+  customerName: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    field: 'customer_name'
+  },
+  product: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    field: 'product'
+  },
+  accountId: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'account_id'
+  },
+  accountNumber: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'account_number'
+  },
+  applyDate: {
+    type: DataTypes.DATE,
+    allowNull: false,
+    defaultValue: DataTypes.NOW,
+    field: 'apply_date'
   },
   prodId: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Product ID'
+    field: 'prod_id'
   },
   approvalDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Approval date'
+    field: 'approval_date'
   },
   approvedCurrencyId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Approved currency ID'
+    field: 'approved_currency_id'
   },
   approvedCreditRequiredDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Approved credit required date'
+    field: 'approved_credit_required_date'
   },
   approvedExpiryDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Approved expiry date'
+    field: 'approved_expiry_date'
   },
   approvedLimitAmount: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
-    comment: 'Approved limit amount'
+    field: 'approved_limit_amount'
   },
   approvedTermCode: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Approved term code'
+    field: 'approved_term_code'
   },
   approvedTermValue: {
     type: DataTypes.INTEGER,
     allowNull: true,
-    comment: 'Approved term value'
+    field: 'approved_term_value'
   },
   bankOfficerId: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Bank officer ID'
+    field: 'bank_officer_id'
   },
   businessUnitId: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Business unit ID'
+    field: 'business_unit_id'
   },
   borrowerAddress: {
-    type: DataTypes.JSON,           // MySQL JSON type – much cleaner
+    type: DataTypes.JSON,
     allowNull: true,
     defaultValue: {},
-    comment: 'Borrower address information'
+    field: 'borrower_address'
   },
   comments: {
     type: DataTypes.TEXT,
     allowNull: true,
-    comment: 'Comments'
+    field: 'comments'
   },
   createDate: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW,
-    comment: 'Create date'
+    field: 'create_date'
   },
   createdBy: {
     type: DataTypes.STRING(100),
     allowNull: false,
-    comment: 'Created by user'
+    field: 'created_by'
   },
   currencyId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Currency ID'
+    field: 'currency_id'
   },
   creditRequiredDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Credit required date'
+    field: 'credit_required_date'
   },
   creditTypeId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Credit type ID'
+    field: 'credit_type_id'
   },
   creditUtilisationMethodCode: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Credit utilisation method code'
+    field: 'credit_utilisation_method_code'
   },
   creditType: {
     type: DataTypes.STRING(50),
     allowNull: true,
     defaultValue: 'LOAN',
-    comment: 'Credit type'
+    field: 'credit_type'
   },
   declineDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Decline date'
+    field: 'decline_date'
   },
   expiryDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Expiry date'
+    field: 'expiry_date'
   },
   industryId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Industry ID'
+    field: 'industry_id'
   },
   loanCycle: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 1,
-    comment: 'Loan cycle number'
+    field: 'loan_cycle'
   },
   multiCurrencyFlag: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false,
-    comment: 'Multi-currency flag'
+    field: 'multi_currency_flag'
   },
   overdraftAccountId: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Overdraft account ID'
+    field: 'overdraft_account_id'
   },
   portfolioId: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Portfolio ID'
+    field: 'portfolio_id'
   },
   primeLimitAmount: {
-    type: DataTypes.STRING(50),  // keep as string as original
+    type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Prime limit amount'
+    field: 'prime_limit_amount'
   },
   productCombination: {
     type: DataTypes.STRING(100),
     allowNull: true,
-    comment: 'Product combination'
+    field: 'product_combination'
   },
   productCombOption: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Product combination option'
+    field: 'product_comb_option'
   },
   purposeOfCredit: {
     type: DataTypes.STRING(255),
     allowNull: true,
     defaultValue: 'GENERAL LOAN',
-    comment: 'Purpose of credit'
+    field: 'purpose_of_credit'
   },
   recordStatus: {
     type: DataTypes.STRING(10),
     allowNull: false,
     defaultValue: 'active',
-    comment: 'Record status'
+    field: 'record_status'
   },
   refNo: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Reference number'
+    field: 'ref_no'
   },
   repaymentSourceAccountNo: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Repayment source account number'
+    field: 'repayment_source_account_no'
   },
   rowTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW,
-    comment: 'Row timestamp'
+    field: 'row_timestamp'
   },
   reasonId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Reason ID'
+    field: 'reason_id'
   },
   secondaryBankOfficerId: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    comment: 'Secondary bank officer ID'
+    field: 'secondary_bank_officer_id'
   },
   indexRateId: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Index rate ID'
+    field: 'index_rate_id'
   },
   systemCreateTimestamp: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW,
-    comment: 'System create timestamp'
+    field: 'system_create_timestamp'
   },
   termCode: {
     type: DataTypes.STRING(10),
     allowNull: false,
-    comment: 'Term code'
+    defaultValue: 'M',
+    field: 'term_code',
+    comment: 'Term code (D=Days, W=Weeks, BW=Bi-Weekly, M=Months, Q=Quarters, Y=Years)'
   },
   termValue: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    comment: 'Term value'
+    defaultValue: 1,
+    field: 'term_value',
+    comment: 'Term value (number of days/weeks/months/etc.)'
   },
   userId: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'User ID'
+    field: 'user_id'
   },
   validityExpirationDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Validity expiration date'
+    field: 'validity_expiration_date'
   },
   versionNo: {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 1,
-    comment: 'Version number'
+    field: 'version_no'
   },
   transactionType: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    comment: 'Transaction type'
+    field: 'transaction_type'
   },
   loanCycleStartDate: {
     type: DataTypes.DATE,
     allowNull: true,
-    comment: 'Loan cycle start date'
+    field: 'loan_cycle_start_date'
   },
   status: {
     type: DataTypes.STRING(20),
     allowNull: false,
     defaultValue: 'PENDING',
-    validate: {
-      isIn: [['PENDING', 'APPROVED', 'REJECTED']]
-    },
-    comment: 'Application status'
+    field: 'status'
   },
   rejectedBy: {
     type: DataTypes.STRING(100),
     allowNull: true,
-    comment: 'Rejected by user'
+    field: 'rejected_by'
   },
   rejectionReason: {
     type: DataTypes.TEXT,
     allowNull: true,
-    comment: 'Rejection reason'
+    field: 'rejection_reason'
   },
   approvedBy: {
     type: DataTypes.STRING(100),
     allowNull: true,
-    comment: 'Approved by user'
+    field: 'approved_by'
+  },
+  // ✅ ADDED: Guarantor ID field
+  guarantorId: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    field: 'guarantor_id',
+    comment: 'Business ID of the guarantor (e.g., 1000000)'
   }
 }, {
   sequelize,
   modelName: 'CreditApplication',
   tableName: 'credit_applications',
-  timestamps: false,  // we have custom createDate / rowTimestamp
-  underscored: true,   // camelCase → snake_case automatically
+  timestamps: false,
+  underscored: false,
   freezeTableName: true,
   hooks: {
-    beforeCreate: async (application) => {
-      if (!application.creditApplicationId) {
-        application.creditApplicationId = await CreditApplication.generateCreditApplicationId();
+    beforeCreate: (application) => {
+      // Set defaults if not provided
+      if (!application.termCode) {
+        application.termCode = 'M';
       }
-      if (!application.custId) {
-        application.custId = await CreditApplication.generateCustId();
+      if (!application.termValue) {
+        application.termValue = 1;
       }
-      if (!application.applId) {
-        application.applId = await CreditApplication.generateApplId();
-      }
-      if (!application.refNo) {
-        application.refNo = await CreditApplication.generateRefNo();
-      }
-      if (application.status === 'PENDING') {
-        application.creditType = application.creditType || 'LOAN';
-        application.purposeOfCredit = application.purposeOfCredit || 'GENERAL LOAN';
-        application.primeLimitAmount = application.primeLimitAmount || '1000000';
-        application.approvalDate = null;
-        application.approvedLimitAmount = null;
-      }
-      if (!application.customerName) {
-        application.customerName = 'Unknown Borrower';
-      }
-      if (!application.borrowerAddress || typeof application.borrowerAddress === 'object') {
-        application.borrowerAddress = application.borrowerAddress || {};
-      }
-    },
-    beforeUpdate: (application) => {
-      application.rowTimestamp = new Date();
-      if (application.changed() && !application.changed('versionNo')) {
-        application.versionNo = (application.versionNo || 0) + 1;
+      if (!application.status) {
+        application.status = 'PENDING';
       }
     }
-  },
-  scopes: {
-    pending: { where: { status: 'PENDING' } },
-    approved: { where: { status: 'APPROVED' } },
-    rejected: { where: { status: 'REJECTED' } },
-    active: { where: { recordStatus: 'active' } },
-    byCustomer: (custId) => ({ where: { custId } }),
-    byProduct: (prodId) => ({ where: { prodId } }),
-    byBusinessUnit: (businessUnitId) => ({ where: { businessUnitId } }),
-    recent: { order: [['createDate', 'DESC']], limit: 100 }
   }
 });
 

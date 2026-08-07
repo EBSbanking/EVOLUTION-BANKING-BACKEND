@@ -1,75 +1,152 @@
-// services/cardIssuanceService.js
-import crypto from 'crypto';
-import CustomerAccount from '../models/CustomerAccount.js';
-import DebitCard from '../models/DebitCard.js';
-import generateCardPan from '../utils/cardPanGenerator.js';
-import { getBinInfo } from '../utils/binInfo.js';
+import crypto from "crypto";
 
 /**
- * Issue a new debit card for a customer's account.
- * Uses sequential PAN generation with BIN metadata.
+ * Generates a random 12-byte nonce required by Flutterwave
  *
- * @param {number} customerId - ID of the customer
- * @param {string} accountNumber - Account number (e.g., "2973130168")
- * @param {string} cardType - 'PHYSICAL' or 'VIRTUAL' (default 'VIRTUAL')
- * @param {string} issuedBy - Username or system identifier
- * @returns {Promise<Object>} Masked card details
+ * @returns {string}
  */
-export async function issueDebitCard(customerId, accountNumber, cardType = 'VIRTUAL', issuedBy = 'system') {
-  // 1. Fetch the CustomerAccount by account_number
-  const customerAccount = await CustomerAccount.findOne({
-    where: { account_number: accountNumber, customer_id: customerId, status: 'ACTIVE' }
-  });
-  if (!customerAccount) {
-    throw new Error('Customer account not found or not active for this customer');
+export function generateNonce() {
+    return crypto.randomBytes(12).toString("utf8");
+}
+
+/**
+ * Encrypt any card field using Flutterwave AES-256-GCM
+ *
+ * @param {string|number} value
+ * @param {string} nonce
+ * @returns {string}
+ */
+export function encryptCardField(value, nonce) {
+
+    const encryptionKey = process.env.FLUTTERWAVE_ENCRYPTION_KEY;
+
+    if (!encryptionKey) {
+        throw new Error("FLUTTERWAVE_ENCRYPTION_KEY is missing.");
+    }
+
+    if (!nonce || nonce.length !== 12) {
+        throw new Error("Nonce must be exactly 12 characters.");
+    }
+
+    const key = Buffer.from(encryptionKey, "base64");
+
+    if (key.length !== 32) {
+        throw new Error(
+            "Flutterwave encryption key must decode to exactly 32 bytes."
+        );
+    }
+
+    const cipher = crypto.createCipheriv(
+        "aes-256-gcm",
+        key,
+        Buffer.from(nonce, "utf8")
+    );
+
+    const encrypted = Buffer.concat([
+        cipher.update(String(value), "utf8"),
+        cipher.final()
+    ]);
+
+    const authTag = cipher.getAuthTag();
+
+    return Buffer.concat([
+        encrypted,
+        authTag
+    ]).toString("base64");
+}
+
+/**
+ * Encrypt Card Number
+ */
+export function encryptCardNumber(cardNumber, nonce) {
+    return encryptCardField(cardNumber, nonce);
+}
+
+/**
+ * Encrypt Expiry Month
+ */
+export function encryptExpiryMonth(month, nonce) {
+    return encryptCardField(month, nonce);
+}
+
+/**
+ * Encrypt Expiry Year
+ */
+export function encryptExpiryYear(year, nonce) {
+    return encryptCardField(year, nonce);
+}
+
+/**
+ * Encrypt CVV
+ */
+export function encryptCVV(cvv, nonce) {
+    return encryptCardField(cvv, nonce);
+}
+
+/**
+ * Encrypt all card details at once
+ *
+ * @param {Object} card
+ * @returns {Object}
+ */
+export function encryptCard(card) {
+
+    const nonce = generateNonce();
+
+    return {
+
+        nonce,
+
+        encrypted_card_number: encryptCardNumber(
+            card.cardNumber,
+            nonce
+        ),
+
+        encrypted_expiry_month: encryptExpiryMonth(
+            card.expiryMonth,
+            nonce
+        ),
+
+        encrypted_expiry_year: encryptExpiryYear(
+            card.expiryYear,
+            nonce
+        ),
+
+        encrypted_cvv: encryptCVV(
+            card.cvv,
+            nonce
+        )
+
+    };
+}
+/**
+ * Disable a card for Flutterwave payments
+ */
+export async function disableCardForFlutterwave(cardId) {
+  try {
+    const card = await DebitCard.findByPk(cardId);
+    
+    if (!card) {
+      throw new Error('Card not found');
+    }
+    
+    await card.update({
+      flutterwaveEnabled: false
+    });
+    
+    logger.info('✅ Card disabled for Flutterwave:', {
+      cardId: card.id,
+      cardLast4: card.card_last4
+    });
+    
+    return {
+      success: true,
+      message: 'Card disabled for Flutterwave payments',
+      cardId: card.id,
+      cardLast4: card.cardLast4
+    };
+  } catch (error) {
+    logger.error('❌ Error disabling card for Flutterwave:', error.message);
+    throw error;
   }
-
-  // 2. Generate card details (sequential PAN)
-  const pan = await generateCardPan('506099', 16);
-  const bin = pan.slice(0, 6);
-  const last4 = pan.slice(-4);
-  const expiryMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
-  const expiryYear = (new Date().getFullYear() + 3).toString();
-  const cvv = Math.floor(100 + Math.random() * 900).toString();
-  const hashedCVV = crypto.createHash('sha256').update(cvv).digest('hex');
-
-  // 3. Get BIN metadata
-  const binInfo = getBinInfo(bin); // static map
-
-  // 4. Create the debit card record (linked to CustomerAccount.id)
-  const card = await DebitCard.create({
-    customer_id: customerId,
-    account_id: customerAccount.id,
-    card_pan: pan,
-    card_holder_name: customerAccount.account_name || 'Card Holder',
-    expiry_month: expiryMonth,
-    expiry_year: expiryYear,
-    cvv_hash: hashedCVV,
-    card_type: cardType,
-    card_status: 'ISSUED',
-    issued_by: issuedBy,
-    issued_at: new Date(),
-    card_last4: last4,
-    card_bin: bin,
-    account_number: customerAccount.account_number,
-    // BIN metadata fields (add to DebitCard model first)
-    bin_bank_name: binInfo.bankName,
-    bin_country: binInfo.country,
-    bin_network: binInfo.network,
-    bin_card_type: binInfo.cardType
-  });
-
-  // 5. Return masked details
-  return {
-    cardId: card.id,
-    maskedPan: `**** **** **** ${card.card_last4}`,
-    expiry: `${expiryMonth}/${expiryYear}`,
-    cardType: card.card_type,
-    status: card.card_status,
-    accountNumber: customerAccount.account_number,
-    bankName: binInfo.bankName,
-    country: binInfo.country,
-    network: binInfo.network,
-    message: 'Card issued. Please set a PIN before first use.'
-  };
 }

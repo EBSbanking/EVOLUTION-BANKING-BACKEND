@@ -7,7 +7,7 @@ import logger from '../utils/logger.js';
 
 /**
  * Webhook Controller
- * Handles incoming webhooks from various sources (JSON, XML, NIP)
+ * Handles incoming webhooks from various sources (JSON, XML, NIP, Paystack)
  */
 class WebhookController {
   constructor() {
@@ -62,6 +62,9 @@ class WebhookController {
           return await nipWebhook.handleFinancialInstitutionList(req, res);
         }
         
+        case 'paystack':
+          return await this.handlePaystackWebhook(req, res);
+        
         case 'xml':
           return await this.handleXmlWebhook(req, res);
         
@@ -80,6 +83,41 @@ class WebhookController {
       return res.status(500).json({
         success: false,
         message: 'Internal server error processing webhook',
+        error: error.message
+      });
+    }
+  };
+
+  /**
+   * Handle Paystack Webhook - External Bank Transfers
+   * Delegates to PaystackController for processing
+   */
+  handlePaystackWebhook = async (req, res) => {
+    try {
+      // Log that we're processing a Paystack external bank transfer
+      logger.info('📥 Processing Paystack external bank transfer webhook', {
+        event: req.body?.event,
+        reference: req.body?.data?.reference,
+        amount: req.body?.data?.amount ? req.body.data.amount / 100 : null,
+        gateway: 'paystack'
+      });
+
+      // Dynamically import PaystackController to avoid circular dependency
+      const PaystackController = (await import('./PaystackController.js')).default;
+      
+      // Delegate to PaystackController's handleWebhook method
+      return await PaystackController.handleWebhook(req, res);
+      
+    } catch (error) {
+      logger.error('❌ Paystack external bank webhook handling failed:', {
+        error: error.message,
+        stack: error.stack,
+        body: req.body
+      });
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process Paystack external bank webhook',
         error: error.message
       });
     }
@@ -1052,7 +1090,7 @@ class WebhookController {
       status: 'healthy',
       service: 'webhook-controller',
       timestamp: new Date().toISOString(),
-      supportedGateways: ['json', 'xml', 'csv', 'nip', 'nip_name_enquiry', 'nip_status_enquiry', 'nip_reversal']
+      supportedGateways: ['json', 'xml', 'csv', 'nip', 'nip_name_enquiry', 'nip_status_enquiry', 'nip_reversal', 'paystack']
     });
   };
 }

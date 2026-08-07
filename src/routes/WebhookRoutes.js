@@ -1,8 +1,9 @@
 // src/routes/WebhookRoutes.js
+
 import express from 'express';
 import webhookController from '../controllers/WebhookController.js';
 import nipWebhookRoutes from './NipWebhookRoutes.js';
-// Fix the import path - from 'middlewares' to 'middleware'
+import MultiGatewayWebhook from '../webhooks/multiGatewayWebhook.js';
 import { authenticateWebhook } from '../middlewares/authMiddleware.js';
 import rateLimit from 'express-rate-limit';
 
@@ -53,6 +54,9 @@ try {
 
 const router = express.Router();
 
+// Initialize MultiGatewayWebhook handler
+const multiGatewayHandler = new MultiGatewayWebhook();
+
 // Rate limiting for webhooks
 const webhookLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -66,11 +70,58 @@ const webhookLimiter = rateLimit({
 router.use(webhookLimiter);
 
 // Optional: Authenticate webhooks if needed
-// Uncomment this when authenticateWebhook is properly exported
 // router.use(authenticateWebhook);
 
+// ================================================================
+// FLUTTERWAVE WEBHOOK ROUTE (NEW - MultiGatewayWebhook)
+// ================================================================
+
+/**
+ * @route   POST /api/webhooks/flutterwave
+ * @desc    Handle Flutterwave webhook events
+ * @access  Public (Called by Flutterwave)
+ */
+router.post('/flutterwave', 
+  express.raw({ type: 'application/json' }),
+  (req, res) => {
+    // Store raw body for signature verification
+    req.rawBody = req.body.toString();
+    
+    // Parse body as JSON
+    try {
+      req.body = JSON.parse(req.rawBody);
+    } catch (e) {
+      req.body = {};
+    }
+    
+    multiGatewayHandler.handleWebhook(req, res);
+  }
+);
+
+// ================================================================
+// GENERIC WEBHOOK ROUTE (NEW - MultiGatewayWebhook)
+// ================================================================
+
+/**
+ * @route   POST /api/webhooks/:gateway
+ * @desc    Handle any gateway webhook using MultiGatewayWebhook
+ * @access  Public
+ */
+router.post('/:gateway', 
+  express.raw({ type: 'application/json' }),
+  (req, res) => {
+    req.rawBody = req.body.toString();
+    try {
+      req.body = JSON.parse(req.rawBody);
+    } catch (e) {
+      req.body = {};
+    }
+    multiGatewayHandler.handleWebhook(req, res);
+  }
+);
+
 // ===========================================
-// MAIN WEBHOOK ENDPOINTS
+// MAIN WEBHOOK ENDPOINTS (EXISTING)
 // ===========================================
 
 // Main webhook endpoint - handles all gateway types
@@ -83,9 +134,6 @@ router.post('/webhook/csv', csvParser, webhookController.handleCsvWebhook);
 
 // Simple webhook for backward compatibility
 router.post('/webhook/simple', webhookController.simpleWebhook);
-
-// Health check
-router.get('/webhook/health', webhookController.healthCheck);
 
 // ===========================================
 // NIP WEBHOOK ENDPOINTS (via controller)
@@ -187,6 +235,18 @@ router.post('/webhook/validate', (req, res) => {
   });
 });
 
+// ================================================================
+// HEALTH CHECK
+// ================================================================
+
+router.get('/webhook/health', (req, res) => {
+  webhookController.healthCheck(req, res);
+});
+
+router.get('/webhooks/health', (req, res) => {
+  multiGatewayHandler.healthCheck(req, res);
+});
+
 // ===========================================
 // LEGACY/CATCH-ALL ENDPOINTS
 // ===========================================
@@ -207,8 +267,11 @@ router.all('/webhook/*', (req, res) => {
       'POST /webhook/json - JSON webhook',
       'POST /webhook/xml - XML webhook',
       'POST /webhook/csv - CSV webhook',
+      'POST /webhooks/flutterwave - Flutterwave webhook',
+      'POST /webhooks/:gateway - Multi-gateway webhook',
       'POST /nip/fund-transfer - NIP funds transfer',
-      'GET /webhook/health - Health check'
+      'GET /webhook/health - Health check',
+      'GET /webhooks/health - Multi-gateway health check'
     ]
   });
 });

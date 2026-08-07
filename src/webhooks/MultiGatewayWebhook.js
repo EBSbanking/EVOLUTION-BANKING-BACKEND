@@ -1,4 +1,5 @@
 // webhooks/multiGatewayWebhook.js
+
 import crypto from 'crypto';
 import InwardFundsTransfer, { 
   RECORD_STATUS,
@@ -13,10 +14,14 @@ import axios from 'axios';
 /**
  * Multi-Gateway Webhook Handler
  * Supports multiple payment gateways: NIP, PayPal, Stripe, Flutterwave, Paystack, Interswitch, etc.
- * Delegates actual processing to webhookController for consistency
+ * With idempotency support for duplicate event handling
  */
 class MultiGatewayWebhook {
   constructor(config = {}) {
+    // Store processed events for idempotency (in production, use Redis or database)
+    this.processedEvents = new Map();
+    this.eventExpiry = 24 * 60 * 60 * 1000; // 24 hours
+
     // Gateway-specific configurations
     this.gatewayConfigs = {
       // NIP (Nigeria Inter-Bank Settlement)
@@ -48,13 +53,14 @@ class MultiGatewayWebhook {
         webhookMethod: 'handleJsonWebhook'
       },
       
-      // Flutterwave
+      // Flutterwave - CORRECTED with idempotency
       flutterwave: {
-        secretKey: config.flutterwave?.secretKey || process.env.FLUTTERWAVE_WEBHOOK_SECRET,
+        secretKey: config.flutterwave?.secretKey || process.env.FLUTTERWAVE_SECRET_HASH,
         allowedIps: config.flutterwave?.allowedIps || process.env.FLUTTERWAVE_ALLOWED_IPS?.split(',') || [],
-        signatureHeader: 'verif-hash',
+        signatureHeader: 'flutterwave-signature',
         parser: this.parseFlutterwavePayload.bind(this),
-        webhookMethod: 'handleJsonWebhook'
+        webhookMethod: 'handleFlutterwaveWebhook',
+        webhookType: 'flutterwave'
       },
       
       // Paystack
@@ -151,11 +157,494 @@ class MultiGatewayWebhook {
     this.webhookController = webhookController;
   }
 
+  // ================================================================
+  // IDEMPOTENCY HELPERS
+  // ================================================================
+
+  /**
+   * Check if event has already been processed
+   */
+  isEventProcessed(eventId, eventType) {
+    const key = `${eventType}:${eventId}`;
+    if (this.processedEvents.has(key)) {
+      const processedAt = this.processedEvents.get(key);
+      // Check if event is still within expiry
+      if (Date.now() - processedAt < this.eventExpiry) {
+        return true;
+      }
+      // Remove expired event
+      this.processedEvents.delete(key);
+    }
+    return false;
+  }
+
+  /**
+   * Mark event as processed
+   */
+  markEventProcessed(eventId, eventType) {
+    const key = `${eventType}:${eventId}`;
+    this.processedEvents.set(key, Date.now());
+    
+    // Clean up old events periodically (every 100 events)
+    if (this.processedEvents.size > 100) {
+      this.cleanupProcessedEvents();
+    }
+  }
+
+  /**
+   * Clean up expired events
+   */
+  cleanupProcessedEvents() {
+    const now = Date.now();
+    for (const [key, timestamp] of this.processedEvents) {
+      if (now - timestamp > this.eventExpiry) {
+        this.processedEvents.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Verify transaction with Flutterwave
+   * Ensures the webhook data is valid by verifying with Flutterwave API
+   */
+  async verifyFlutterwaveTransaction(payload, expectedAmount, expectedCurrency, expectedReference) {
+    try {
+      const transactionId = payload.data?.id || payload.id;
+      
+      // Verify with Flutterwave API
+      const response = await axios.get(
+        `${process.env.FLUTTERWAVE_BASE_URL || 'https://api.flutterwave.com/v3'}/transactions/${transactionId}/verify`,
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`
+          }
+        }
+      );
+
+      const data = response.data.data;
+
+      // Verify transaction details
+      if (
+        data.status === 'successful' &&
+        data.amount === expectedAmount &&
+        data.currency === expectedCurrency &&
+        data.tx_ref === expectedReference
+      ) {
+        return { valid: true, transaction: data };
+      } else {
+        logger.warn('Transaction verification failed:', {
+          status: data.status,
+          amount: data.amount,
+          currency: data.currency,
+          tx_ref: data.tx_ref
+        });
+        return { valid: false, reason: 'Transaction details mismatch' };
+      }
+    } catch (error) {
+      logger.error('Error verifying transaction with Flutterwave:', error);
+      return { valid: false, reason: error.message };
+    }
+  }
+
+  // ================================================================
+  // FLUTTERWAVE WEBHOOK HANDLERS WITH IDEMPOTENCY
+  // ================================================================
+
+  /**
+   * Handle Flutterwave charge completed with idempotency
+   */
+  async handleFlutterwaveChargeCompleted(data) {
+    const eventId = data.id || data.reference || data.tx_ref;
+    const eventType = 'charge.completed';
+    
+    // Check for duplicate event
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true, message: 'Event already processed' };
+    }
+
+    try {
+      logger.info('✅ Flutterwave charge completed:', {
+        reference: data.reference || data.tx_ref,
+        amount: data.amount,
+        currency: data.currency,
+        customer: data.customer?.email
+      });
+
+      // Verify transaction with Flutterwave API
+      const expectedAmount = parseFloat(data.amount);
+      const expectedCurrency = data.currency || 'NGN';
+      const expectedReference = data.reference || data.tx_ref;
+
+      const verification = await this.verifyFlutterwaveTransaction(
+        { data },
+        expectedAmount,
+        expectedCurrency,
+        expectedReference
+      );
+
+      if (!verification.valid) {
+        logger.warn('⚠️ Transaction verification failed:', verification.reason);
+        // Still process but log the warning
+      }
+
+      // Find or create transaction record
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+
+      if (!transaction) {
+        logger.warn('Transaction not found for webhook:', data.reference || data.tx_ref);
+        // Create a new transaction record
+        const newTransaction = await this.webhookController.createFlutterwaveTransaction(data);
+        
+        // Mark event as processed
+        this.markEventProcessed(eventId, eventType);
+        
+        return { success: true, transaction: newTransaction, created: true };
+      }
+
+      // Check if status has already been updated (idempotency)
+      if (transaction.status === 'SUCCESS') {
+        logger.info(`ℹ️ Transaction ${transaction.transaction_reference} already marked as SUCCESS`);
+        this.markEventProcessed(eventId, eventType);
+        return { success: true, transaction, alreadyProcessed: true };
+      }
+
+      // Update transaction status
+      await transaction.update({
+        status: 'SUCCESS',
+        gateway_response: data.processor_response?.code || '00',
+        channel: data.payment_method?.type,
+        paid_at: data.created_at ? new Date(data.created_at) : new Date(),
+        amount: data.amount,
+        fees: data.fees || 0,
+        flutterwave_data: data,
+        webhook_processed_at: new Date(),
+        card_type: data.payment_method?.card?.type,
+        card_last4: data.payment_method?.card?.last4
+      });
+
+      // Process inward transfer
+      if (transaction.customer_account) {
+        await this.webhookController.processInwardTransfer(transaction, data);
+      }
+
+      // Mark event as processed
+      this.markEventProcessed(eventId, eventType);
+
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave charge completed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle Flutterwave charge failed with idempotency
+   */
+  async handleFlutterwaveChargeFailed(data) {
+    const eventId = data.id || data.reference || data.tx_ref;
+    const eventType = 'charge.failed';
+    
+    // Check for duplicate event
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true, message: 'Event already processed' };
+    }
+
+    try {
+      logger.info('❌ Flutterwave charge failed:', {
+        reference: data.reference || data.tx_ref,
+        reason: data.processor_response?.response || 'Unknown error'
+      });
+
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+
+      if (!transaction) {
+        logger.warn('Transaction not found for webhook:', data.reference || data.tx_ref);
+        this.markEventProcessed(eventId, eventType);
+        return;
+      }
+
+      // Check if already failed
+      if (transaction.status === 'FAILED') {
+        logger.info(`ℹ️ Transaction ${transaction.transaction_reference} already marked as FAILED`);
+        this.markEventProcessed(eventId, eventType);
+        return { success: true, transaction, alreadyProcessed: true };
+      }
+
+      await transaction.update({
+        status: 'FAILED',
+        gateway_response: data.processor_response?.code || '99',
+        flutterwave_data: data,
+        webhook_processed_at: new Date(),
+        failure_reason: data.processor_response?.response || 'Payment failed'
+      });
+
+      // Mark event as processed
+      this.markEventProcessed(eventId, eventType);
+
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave charge failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle Flutterwave transfer completed with idempotency
+   */
+  async handleFlutterwaveTransferCompleted(data) {
+    const eventId = data.id || data.reference;
+    const eventType = 'transfer.completed';
+    
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true };
+    }
+
+    try {
+      logger.info('✅ Flutterwave transfer completed:', {
+        reference: data.reference,
+        amount: data.amount,
+        currency: data.currency,
+        recipient: data.recipient
+      });
+      
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+      
+      if (transaction) {
+        await transaction.update({
+          status: 'TRANSFER_COMPLETED',
+          flutterwave_data: data,
+          webhook_processed_at: new Date()
+        });
+      }
+      
+      this.markEventProcessed(eventId, eventType);
+      
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave transfer completed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle Flutterwave transfer failed with idempotency
+   */
+  async handleFlutterwaveTransferFailed(data) {
+    const eventId = data.id || data.reference;
+    const eventType = 'transfer.failed';
+    
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true };
+    }
+
+    try {
+      logger.info('❌ Flutterwave transfer failed:', {
+        reference: data.reference,
+        reason: data.reason
+      });
+      
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+      
+      if (transaction) {
+        await transaction.update({
+          status: 'TRANSFER_FAILED',
+          flutterwave_data: data,
+          webhook_processed_at: new Date(),
+          failure_reason: data.reason || 'Transfer failed'
+        });
+      }
+      
+      this.markEventProcessed(eventId, eventType);
+      
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave transfer failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle Flutterwave subscription completed with idempotency
+   */
+  async handleFlutterwaveSubscriptionCompleted(data) {
+    const eventId = data.subscription_id || data.id;
+    const eventType = 'subscription.completed';
+    
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true };
+    }
+
+    try {
+      logger.info('📋 Flutterwave subscription completed:', {
+        subscription_id: data.subscription_id,
+        customer: data.customer
+      });
+      
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+      
+      if (transaction) {
+        await transaction.update({
+          status: 'SUBSCRIPTION_ACTIVE',
+          flutterwave_data: data,
+          webhook_processed_at: new Date()
+        });
+      }
+      
+      this.markEventProcessed(eventId, eventType);
+      
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave subscription completed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle Flutterwave subscription cancelled with idempotency
+   */
+  async handleFlutterwaveSubscriptionCancelled(data) {
+    const eventId = data.subscription_id || data.id;
+    const eventType = 'subscription.cancelled';
+    
+    if (this.isEventProcessed(eventId, eventType)) {
+      logger.info(`🔄 Duplicate Flutterwave event detected: ${eventType}:${eventId} - Skipping`);
+      return { success: true, duplicate: true };
+    }
+
+    try {
+      logger.info('📋 Flutterwave subscription cancelled:', {
+        subscription_id: data.subscription_id,
+        customer: data.customer
+      });
+      
+      const transaction = await this.webhookController.findFlutterwaveTransaction(data);
+      
+      if (transaction) {
+        await transaction.update({
+          status: 'SUBSCRIPTION_CANCELLED',
+          flutterwave_data: data,
+          webhook_processed_at: new Date()
+        });
+      }
+      
+      this.markEventProcessed(eventId, eventType);
+      
+      return { success: true, transaction };
+    } catch (error) {
+      logger.error('Error handling Flutterwave subscription cancelled:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Main Flutterwave webhook handler - dispatches to specific handlers
+   */
+  async handleFlutterwaveWebhook(req, res) {
+    try {
+      const event = req.body;
+      const eventType = event.type;
+      const data = event.data;
+
+      // Log all received events (recommended by Flutterwave)
+      logger.info('📨 Flutterwave webhook received:', {
+        eventType: eventType,
+        id: event.id,
+        reference: data?.reference || data?.tx_ref,
+        status: data?.status,
+        timestamp: event.timestamp
+      });
+
+      // Check if this is a duplicate event based on status
+      const existingTransaction = await this.webhookController.findFlutterwaveTransaction(data);
+      
+      if (existingTransaction) {
+        // If the status hasn't changed, it's likely a duplicate
+        const currentStatus = existingTransaction.status;
+        const newStatus = this.mapFlutterwaveStatusToInternal(data.status);
+        
+        if (currentStatus === newStatus) {
+          logger.info(`ℹ️ Duplicate event - status unchanged (${currentStatus}) for transaction ${existingTransaction.transaction_reference}`);
+          // Return 200 to acknowledge receipt (Flutterwave expects 200)
+          return res.status(200).json({
+            status: 'success',
+            message: 'Duplicate event - already processed',
+            duplicate: true
+          });
+        }
+      }
+
+      let result;
+
+      switch (eventType) {
+        case 'charge.completed':
+          result = await this.handleFlutterwaveChargeCompleted(data);
+          break;
+        case 'charge.failed':
+          result = await this.handleFlutterwaveChargeFailed(data);
+          break;
+        case 'transfer.completed':
+          result = await this.handleFlutterwaveTransferCompleted(data);
+          break;
+        case 'transfer.failed':
+          result = await this.handleFlutterwaveTransferFailed(data);
+          break;
+        case 'subscription.completed':
+          result = await this.handleFlutterwaveSubscriptionCompleted(data);
+          break;
+        case 'subscription.cancelled':
+          result = await this.handleFlutterwaveSubscriptionCancelled(data);
+          break;
+        default:
+          logger.warn('⚠️ Unhandled Flutterwave webhook event:', eventType);
+          result = { success: true, message: 'Unhandled event type', eventType };
+      }
+
+      // Always return 200 to acknowledge receipt
+      return res.status(200).json({
+        status: 'success',
+        message: 'Webhook processed',
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('❌ Flutterwave webhook processing error:', error);
+      // Still return 200 to prevent retries from Flutterwave
+      return res.status(200).json({
+        status: 'error',
+        message: 'Failed to process webhook',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  }
+
+  /**
+   * Map Flutterwave status to internal status
+   */
+  mapFlutterwaveStatusToInternal(flutterwaveStatus) {
+    const statusMap = {
+      'successful': 'SUCCESS',
+      'succeeded': 'SUCCESS',
+      'success': 'SUCCESS',
+      'failed': 'FAILED',
+      'cancelled': 'CANCELLED',
+      'pending': 'PENDING'
+    };
+    return statusMap[flutterwaveStatus] || flutterwaveStatus;
+  }
+
+  // ================================================================
+  // END OF FLUTTERWAVE WEBHOOK HANDLERS
+  // ================================================================
+
   /**
    * Get gateway configuration based on request
    */
   getGatewayConfig(req) {
-    // Detect gateway from headers or URL
     const gateway = req.params.gateway || req.query.gateway || req.body.gateway;
     
     if (gateway && this.gatewayConfigs[gateway]) {
@@ -172,7 +661,7 @@ class MultiGatewayWebhook {
     if (req.headers['paypal-transmission-sig']) {
       return { ...this.gatewayConfigs.paypal, name: 'paypal' };
     }
-    if (req.headers['verif-hash']) {
+    if (req.headers['flutterwave-signature']) {
       return { ...this.gatewayConfigs.flutterwave, name: 'flutterwave' };
     }
     if (req.headers['x-paystack-signature']) {
@@ -185,7 +674,6 @@ class MultiGatewayWebhook {
       return { ...this.gatewayConfigs.remitta, name: 'remitta' };
     }
     
-    // Default to JSON
     return {
       secretKey: this.defaultSecretKey,
       allowedIps: this.defaultAllowedIps,
@@ -200,7 +688,7 @@ class MultiGatewayWebhook {
   /**
    * Verify webhook signature based on gateway
    */
-  verifySignature(payload, signature, timestamp, gatewayConfig) {
+  verifySignature(payload, signature, timestamp, gatewayConfig, rawBody = null) {
     if (!gatewayConfig.secretKey) return true;
     
     try {
@@ -210,7 +698,7 @@ class MultiGatewayWebhook {
         case 'paypal':
           return this.verifyPayPalSignature(payload, signature, timestamp, gatewayConfig.secretKey);
         case 'flutterwave':
-          return this.verifyFlutterwaveSignature(payload, signature, gatewayConfig.secretKey);
+          return this.verifyFlutterwaveSignature(rawBody, signature, gatewayConfig.secretKey);
         case 'paystack':
           return this.verifyPaystackSignature(payload, signature, gatewayConfig.secretKey);
         case 'nip':
@@ -257,18 +745,54 @@ class MultiGatewayWebhook {
    * PayPal signature verification
    */
   async verifyPayPalSignature(payload, signature, timestamp, secretKey) {
-    // PayPal uses a different verification method
     const webhookId = process.env.PAYPAL_WEBHOOK_ID;
-    // In production, verify with PayPal's API
     return true;
   }
 
   /**
    * Flutterwave signature verification
+   * Uses HMAC-SHA256 with the raw request body
    */
-  verifyFlutterwaveSignature(payload, signature, secretKey) {
-    const hash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-    return hash === signature;
+  verifyFlutterwaveSignature(rawBody, signature, secretHash) {
+    if (!signature) {
+      logger.warn('Missing flutterwave-signature header');
+      return false;
+    }
+    
+    if (!rawBody) {
+      logger.warn('Raw body not available for Flutterwave signature verification');
+      return false;
+    }
+    
+    if (!secretHash) {
+      logger.warn('Secret hash not configured - skipping verification');
+      return true;
+    }
+    
+    try {
+      // CRITICAL: Flutterwave uses HMAC-SHA256 with the RAW request body
+      const hash = crypto
+        .createHmac('sha256', secretHash)
+        .update(rawBody)
+        .digest('base64');
+      
+      // Use timing-safe comparison
+      const isValid = crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(hash)
+      );
+      
+      if (!isValid) {
+        logger.warn('Invalid Flutterwave signature');
+        logger.debug(`Expected: ${hash}`);
+        logger.debug(`Received: ${signature}`);
+      }
+      
+      return isValid;
+    } catch (error) {
+      logger.error('Flutterwave signature verification error:', error);
+      return false;
+    }
   }
 
   /**
@@ -298,7 +822,6 @@ class MultiGatewayWebhook {
     const allowedIps = gatewayConfig.allowedIps || this.defaultAllowedIps;
     if (allowedIps.length === 0) return true;
     
-    // Check CIDR ranges
     return allowedIps.some(allowedIp => {
       if (allowedIp.includes('/')) {
         return this.ipInCidr(ip, allowedIp);
@@ -323,6 +846,57 @@ class MultiGatewayWebhook {
    */
   ipToLong(ip) {
     return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0) >>> 0;
+  }
+
+  /**
+   * Parse Flutterwave payload
+   */
+  parseFlutterwavePayload(data) {
+    const transactionData = data.data || data;
+    
+    return {
+      gateway: 'flutterwave',
+      xferRef: transactionData.tx_ref || transactionData.id || data.id,
+      xferAmt: parseFloat(transactionData.amount || 0),
+      xferCrncyId: this.getCurrencyId(transactionData.currency || 'NGN'),
+      payCrncyId: this.getCurrencyId(transactionData.currency || 'NGN'),
+      payExchRate: 1,
+      valueDt: transactionData.created_at ? new Date(transactionData.created_at) : 
+               (data.timestamp ? new Date(data.timestamp) : new Date()),
+      priorityLevelCd: 'NORMAL',
+      beneficiary: {
+        name: transactionData.beneficiary_name || 
+              transactionData.customer?.name || 
+              transactionData.customer?.email || 
+              'Unknown Beneficiary',
+        account: transactionData.beneficiary_account || 
+                 transactionData.customer?.email || 
+                 transactionData.id,
+        bankName: transactionData.beneficiary_bank || 'Flutterwave'
+      },
+      remitter: {
+        name: transactionData.sender || 
+              transactionData.customer?.name || 
+              'Flutterwave User',
+        accountNo: transactionData.sender_account || 'FLW-REM'
+      },
+      payDetails: JSON.stringify(data),
+      paymentMtdCd: 'FLUTTERWAVE',
+      foreignIftFg: transactionData.currency && transactionData.currency !== 'NGN' ? 'Y' : 'N',
+      userId: 'FLUTTERWAVE',
+      createdBy: 'FLUTTERWAVE',
+      recSt: 'A',
+      flutterwaveEventId: data.id,
+      flutterwaveEventType: data.type,
+      flutterwaveTimestamp: data.timestamp,
+      flutterwaveStatus: transactionData.status,
+      flutterwaveReference: transactionData.reference,
+      metadata: {
+        payment_method: transactionData.payment_method,
+        processor_response: transactionData.processor_response,
+        redirect_url: transactionData.redirect_url
+      }
+    };
   }
 
   /**
@@ -420,36 +994,6 @@ class MultiGatewayWebhook {
       foreignIftFg: 'Y',
       userId: 'STRIPE',
       createdBy: 'STRIPE',
-      recSt: 'A'
-    };
-  }
-
-  /**
-   * Parse Flutterwave payload
-   */
-  parseFlutterwavePayload(data) {
-    return {
-      gateway: 'flutterwave',
-      xferRef: data.data?.tx_ref || data.data?.id,
-      xferAmt: parseFloat(data.data?.amount),
-      xferCrncyId: this.getCurrencyId(data.data?.currency || 'NGN'),
-      payCrncyId: this.getCurrencyId(data.data?.currency || 'NGN'),
-      payExchRate: 1,
-      valueDt: new Date(data.data?.created_at),
-      priorityLevelCd: 'NORMAL',
-      beneficiary: {
-        name: data.data?.beneficiary_name || data.data?.customer?.name,
-        account: data.data?.beneficiary_account || data.data?.customer?.email,
-        bankName: data.data?.beneficiary_bank
-      },
-      remitter: {
-        name: data.data?.sender || data.data?.customer?.name
-      },
-      payDetails: JSON.stringify(data),
-      paymentMtdCd: 'FLUTTERWAVE',
-      foreignIftFg: data.data?.currency !== 'NGN' ? 'Y' : 'N',
-      userId: 'FLUTTERWAVE',
-      createdBy: 'FLUTTERWAVE',
       recSt: 'A'
     };
   }
@@ -568,7 +1112,6 @@ class MultiGatewayWebhook {
       return this.bankMap[value.toString()] || parseInt(value) || null;
     };
 
-    // Extract beneficiary fields
     let beneficiaryName = null;
     let beneficiaryAccount = null;
     let beneficiaryBicId = null;
@@ -589,7 +1132,6 @@ class MultiGatewayWebhook {
     beneficiaryBankName = beneficiaryBankName || data.beneficiaryBank || data.beneficiary_bank || data.beneficiaryBankName || data.beneficiary_bank_name;
     beneficiaryCountryId = beneficiaryCountryId || data.beneficiaryCountry || data.beneficiary_country || data.beneficiaryBankCountry;
 
-    // Extract remitter fields
     let remitterName = null;
     let remitterAccountNo = null;
 
@@ -639,7 +1181,6 @@ class MultiGatewayWebhook {
    * Parse ISO 20022 payload
    */
   parseISO20022Payload(xmlData) {
-    // Use the existing parser from earlier implementation
     const transfer = this.parseIso20022(xmlData);
     return {
       gateway: 'iso20022',
@@ -655,7 +1196,6 @@ class MultiGatewayWebhook {
    * Parse SWIFT payload
    */
   parseSwiftPayload(swiftMessage) {
-    // Use the existing parser from earlier implementation
     const transfer = this.parseSwiftMT103(swiftMessage);
     return {
       gateway: 'swift',
@@ -689,32 +1229,28 @@ class MultiGatewayWebhook {
    */
   getExchangeRate(fromCurrency, toCurrency) {
     if (fromCurrency === toCurrency) return 1;
-    return 1; // Placeholder - implement actual exchange rate service
+    return 1;
   }
 
   /**
-   * Parse ISO 20022 (placeholder - implement actual parser)
+   * Parse ISO 20022 (placeholder)
    */
   parseIso20022(xmlData) {
-    // This would contain your actual ISO 20022 parsing logic
     logger.info('Parsing ISO 20022 message', { xmlData });
     return {
       xferRef: extractXmlValue(xmlData, 'Ref'),
       xferAmt: parseFloat(extractXmlValue(xmlData, 'Amt') || 0),
-      // ... extract other fields
     };
   }
 
   /**
-   * Parse SWIFT MT103 (placeholder - implement actual parser)
+   * Parse SWIFT MT103 (placeholder)
    */
   parseSwiftMT103(swiftMessage) {
-    // This would contain your actual SWIFT MT103 parsing logic
     logger.info('Parsing SWIFT MT103 message', { swiftMessage });
     return {
       xferRef: swiftMessage.substring(0, 16),
       xferAmt: parseFloat(swiftMessage.substring(16, 32) || 0),
-      // ... parse other fields
     };
   }
 
@@ -752,7 +1288,8 @@ class MultiGatewayWebhook {
           req.body, 
           signature, 
           timestamp, 
-          gatewayConfig
+          gatewayConfig,
+          req.rawBody // Pass raw body for Flutterwave verification
         );
         
         if (!isValid) {
@@ -762,6 +1299,11 @@ class MultiGatewayWebhook {
             gateway: gatewayConfig.name 
           });
         }
+      }
+      
+      // For Flutterwave, use the dedicated handler with idempotency
+      if (gatewayConfig.name === 'flutterwave') {
+        return await this.handleFlutterwaveWebhook(req, res);
       }
       
       // Parse payload using gateway-specific parser
@@ -799,10 +1341,8 @@ class MultiGatewayWebhook {
               data
             );
             
-            // Set appropriate status code
             const statusCode = code === 201 || code === 200 ? 200 : code;
             
-            // For NIP, always return 200 with NIP-specific response
             if (gatewayConfig.name === 'nip') {
               return res.status(200).json(formattedResponse);
             }
@@ -828,7 +1368,6 @@ class MultiGatewayWebhook {
         gateway: req.params.gateway
       });
       
-      // Format error response based on gateway
       const gatewayConfig = this.getGatewayConfig(req);
       const errorResponse = this.formatErrorResponse(error, gatewayConfig.name);
       
@@ -897,7 +1436,7 @@ class MultiGatewayWebhook {
     switch (gateway) {
       case 'nip':
         return {
-          statusCode: 200, // NIP always returns 200 with error codes
+          statusCode: 200,
           response: {
             SessionID: error.sessionId || null,
             DestinationInstitutionCode: process.env.NIP_INSTITUTION_CODE,

@@ -1,5 +1,4 @@
 // src/models/LoanAccount.js – WITH LOAN CYCLE TRACKING & CORRECT FIELD MAPPING
-// REMOVED: penalty_rule_id (does not exist in database)
 import { DataTypes, Op, QueryTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -29,7 +28,7 @@ class LoanAccount extends Model {
   static async getLoanCycleHistory(customerId) {
     const loans = await this.findAll({
       where: { CUST_ID: customerId },
-      attributes: ['id', 'ACCT_NO', 'loan_cycle', 'LOAN_STATUS', 'DISBURSEMENT_DATE', 'OUTSTANDING_PRINCIPAL'],
+      attributes: ['id', 'ACCT_NO', 'loan_cycle', 'LOAN_STATUS', 'DISBURSEMENT_DATE', 'OUTSTANDING_PRINCIPAL', 'ACCRUED_INTEREST'],
       order: [['created_at', 'ASC']]
     });
     
@@ -38,7 +37,8 @@ class LoanAccount extends Model {
       loanCycle: loan.loan_cycle,
       status: loan.LOAN_STATUS,
       disbursementDate: loan.DISBURSEMENT_DATE,
-      outstandingPrincipal: loan.OUTSTANDING_PRINCIPAL
+      outstandingPrincipal: loan.OUTSTANDING_PRINCIPAL,
+      accruedInterest: loan.ACCRUED_INTEREST
     }));
   }
 
@@ -67,6 +67,32 @@ class LoanAccount extends Model {
       }
     });
     return parseFloat(result) || 0;
+  }
+
+  /**
+   * Get total accrued interest for a customer across all loans
+   * @param {string} customerId - The customer ID
+   * @returns {Promise<number>} Total accrued interest
+   */
+  static async getTotalAccruedInterest(customerId) {
+    const result = await this.sum('ACCRUED_INTEREST', {
+      where: { 
+        CUST_ID: customerId,
+        LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] }
+      }
+    });
+    return parseFloat(result) || 0;
+  }
+
+  /**
+   * Get total outstanding balance (principal + interest) for a customer
+   * @param {string} customerId - The customer ID
+   * @returns {Promise<number>} Total outstanding balance
+   */
+  static async getTotalOutstandingBalance(customerId) {
+    const principal = await this.getTotalOutstandingPrincipal(customerId);
+    const interest = await this.getTotalAccruedInterest(customerId);
+    return principal + interest;
   }
 
   /**
@@ -111,7 +137,6 @@ class LoanAccount extends Model {
     console.log('🔄 Starting loan_cycle backfill...');
     
     try {
-      // Get all customers with their loan counts
       const customers = await this.findAll({
         attributes: ['CUST_ID'],
         group: ['CUST_ID'],
@@ -129,7 +154,6 @@ class LoanAccount extends Model {
         if (!custId) continue;
         
         try {
-          // Get all loans for this customer ordered by creation
           const loans = await this.findAll({
             where: { CUST_ID: custId },
             order: [['created_at', 'ASC']],
@@ -140,7 +164,6 @@ class LoanAccount extends Model {
           
           let customerUpdated = 0;
           
-          // Update each loan with its cycle number
           for (let i = 0; i < loans.length; i++) {
             const loan = loans[i];
             const cycleNumber = i + 1;
@@ -248,10 +271,13 @@ class LoanAccount extends Model {
     }
   }
 
+  // ========== INSTANCE METHODS ==========
   getAccountNumber() { return this.ACCT_NO; }
   getCustomerId() { return this.CUST_ID; }
   getLoanStatus() { return this.LOAN_STATUS; }
   getOutstandingPrincipal() { return parseFloat(this.OUTSTANDING_PRINCIPAL) || 0; }
+  getAccruedInterest() { return parseFloat(this.ACCRUED_INTEREST) || 0; }
+  getTotalOutstanding() { return this.getOutstandingPrincipal() + this.getAccruedInterest(); }
   isActive() { return ['ACTIVE', 'DISBURSED', 'APPROVED'].includes(this.LOAN_STATUS); }
   
   /**
@@ -277,6 +303,154 @@ class LoanAccount extends Model {
     if (!this.isOverdue()) return 0;
     const diff = Math.floor((Date.now() - new Date(this.NEXT_PAYMENT_DATE).getTime()) / (1000 * 60 * 60 * 24));
     return Math.max(0, diff);
+  }
+
+  /**
+   * Check if a year is a leap year
+   * @param {number} year - The year to check
+   * @returns {boolean} True if leap year
+   */
+  _isLeapYear(year) {
+    // Leap year rule: divisible by 4, but not by 100 unless also by 400
+    return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+  }
+
+  /**
+   * Calculate year fraction using Actual/Actual (ISMA) convention
+   * Accounts for leap years by counting actual days in each year
+   * @param {Date} startDate - Start date
+   * @param {Date} endDate - End date
+   * @returns {number} Year fraction
+   */
+  _calculateActualActualYearFraction(startDate, endDate) {
+    let yearFraction = 0;
+    let currentDate = new Date(startDate);
+    
+    while (currentDate < endDate) {
+      const year = currentDate.getFullYear();
+      const isLeapYear = this._isLeapYear(year);
+      const daysInYear = isLeapYear ? 366 : 365;
+      
+      // Get the next year start date
+      const nextYearStart = new Date(year + 1, 0, 1);
+      const segmentEnd = nextYearStart < endDate ? nextYearStart : endDate;
+      
+      // Calculate days in this segment
+      const daysInSegment = Math.floor((segmentEnd - currentDate) / (1000 * 60 * 60 * 24));
+      
+      // Add the fraction for this year
+      yearFraction += daysInSegment / daysInYear;
+      
+      currentDate = segmentEnd;
+    }
+    
+    return yearFraction;
+  }
+
+  /**
+   * Calculate total interest accrued on this loan
+   * Supports multiple day count conventions:
+   * - ACTUAL_365: Actual days / 365 (standard for most loans)
+   * - ACTUAL_360: Actual days / 360 (used in money markets)
+   * - ACTUAL_ACTUAL: Actual days / actual days in year (most accurate, handles leap years)
+   * 
+   * @param {Date} asOfDate - Date to calculate interest up to
+   * @param {string} dayCountConvention - Day count convention (default: 'ACTUAL_365')
+   * @returns {number} Total interest accrued
+   */
+  calculateAccruedInterest(asOfDate = new Date(), dayCountConvention = 'ACTUAL_365') {
+    if (!this.INTEREST_RATE || !this.OUTSTANDING_PRINCIPAL) return 0;
+    if (parseFloat(this.OUTSTANDING_PRINCIPAL) <= 0) return 0;
+
+    const rate = parseFloat(this.INTEREST_RATE) / 100;
+    const principal = parseFloat(this.OUTSTANDING_PRINCIPAL);
+    const startDate = new Date(this.DISBURSEMENT_DATE || this.APPLICATION_DATE);
+    const endDate = new Date(asOfDate);
+
+    if (startDate >= endDate) return 0;
+
+    let yearFraction;
+
+    switch (dayCountConvention) {
+      case 'ACTUAL_360':
+        // Actual/360 - used in many money market instruments
+        const actualDays360 = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
+        yearFraction = actualDays360 / 360;
+        break;
+        
+      case 'ACTUAL_ACTUAL':
+        // Actual/Actual - most accurate, accounts for leap years
+        yearFraction = this._calculateActualActualYearFraction(startDate, endDate);
+        break;
+        
+      case 'ACTUAL_365':
+      default:
+        // Actual/365 - used in most loan agreements
+        const actualDays365 = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
+        yearFraction = actualDays365 / 365;
+    }
+
+    // Simple interest: principal * rate * time
+    return principal * rate * yearFraction;
+  }
+
+  /**
+   * Get interest details with different day count conventions
+   * @param {Date} asOfDate - Date to calculate interest up to
+   * @param {string} convention - Day count convention
+   * @returns {object} Interest calculation details
+   */
+  getInterestDetails(asOfDate = new Date(), convention = 'ACTUAL_365') {
+    const interest = this.calculateAccruedInterest(asOfDate, convention);
+
+    return {
+      principal: parseFloat(this.OUTSTANDING_PRINCIPAL),
+      interestRate: parseFloat(this.INTEREST_RATE),
+      interestAccrued: interest,
+      totalOutstanding: parseFloat(this.OUTSTANDING_PRINCIPAL) + interest,
+      dayCountConvention: convention,
+      asOfDate: asOfDate,
+      disbursementDate: this.DISBURSEMENT_DATE,
+      daysSinceDisbursement: Math.floor((asOfDate - new Date(this.DISBURSEMENT_DATE || this.APPLICATION_DATE)) / (1000 * 60 * 60 * 24)),
+      loanStatus: this.LOAN_STATUS,
+      accountNumber: this.ACCT_NO
+    };
+  }
+
+  /**
+   * Calculate interest using standard ACTUAL/365
+   * @param {Date} asOfDate - Date to calculate interest up to
+   * @returns {number} Total interest accrued
+   */
+  calculateInterestStandard(asOfDate = new Date()) {
+    return this.calculateAccruedInterest(asOfDate, 'ACTUAL_365');
+  }
+
+  /**
+   * Calculate interest using ACTUAL/360 (money market)
+   * @param {Date} asOfDate - Date to calculate interest up to
+   * @returns {number} Total interest accrued
+   */
+  calculateInterestMoneyMarket(asOfDate = new Date()) {
+    return this.calculateAccruedInterest(asOfDate, 'ACTUAL_360');
+  }
+
+  /**
+   * Calculate interest using ACTUAL/ACTUAL (most accurate with leap year handling)
+   * @param {Date} asOfDate - Date to calculate interest up to
+   * @returns {number} Total interest accrued
+   */
+  calculateInterestActual(asOfDate = new Date()) {
+    return this.calculateAccruedInterest(asOfDate, 'ACTUAL_ACTUAL');
+  }
+
+  /**
+   * Get the day count convention name for display
+   * @returns {string} Day count convention name
+   */
+  getDefaultDayCountConvention() {
+    // This could be stored in the loan account or determined from product
+    return 'ACTUAL_365';
   }
 }
 
@@ -397,9 +571,10 @@ LoanAccount.init(
       field: 'total_repaid_amount'
     },
     TERM_CD: {
-      type: DataTypes.STRING(20),
-      defaultValue: 'MONTHLY',
-      field: 'term_cd'
+      type: DataTypes.STRING(10),
+      allowNull: false,
+      defaultValue: 'M',
+      field: 'TERM_CD'
     },
     TERM_VALUE: {
       type: DataTypes.INTEGER,
@@ -411,9 +586,8 @@ LoanAccount.init(
       field: 'customer_account_id'
     },
 
-    // Guarantor info
     GUARANTOR_ID: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.STRING(20),
       allowNull: true,
       field: 'guarantor_id'
     },
@@ -437,7 +611,7 @@ LoanAccount.init(
       field: 'created_by'
     },
 
-    // ✅ Loan Cycle Tracking
+    // Loan Cycle Tracking
     loan_cycle: {
       type: DataTypes.INTEGER,
       defaultValue: 1,
@@ -468,8 +642,6 @@ LoanAccount.init(
       defaultValue: DataTypes.NOW,
       field: 'updated_at'
     }
-    // ❌ REMOVED: penalty_rule_id - This column does NOT exist in the loan_accounts table
-    // The penalty_rule_id is stored in loan_penalties table, not loan_accounts
   },
   {
     sequelize,
@@ -479,10 +651,17 @@ LoanAccount.init(
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     underscored: false,
+    defaultScope: {
+      attributes: {
+        exclude: ['penalty_rule_id']
+      }
+    },
+    scopes: {
+      withAllFields: {
+        attributes: {}
+      }
+    },
     hooks: {
-      /**
-       * Automatically set the loan_cycle before creating a new loan
-       */
       beforeCreate: async (loan, options) => {
         if (loan.CUST_ID) {
           const count = await LoanAccount.count({
@@ -496,13 +675,9 @@ LoanAccount.init(
           console.warn('⚠️ No CUST_ID provided, setting loan_cycle to 1');
         }
       },
-      /**
-       * Handle bulk creation - set loan_cycle for each loan
-       */
       beforeBulkCreate: async (loans, options) => {
         if (!loans || loans.length === 0) return;
         
-        // Group loans by CUST_ID
         const loansByCustomer = {};
         for (const loan of loans) {
           if (loan.CUST_ID) {
@@ -513,7 +688,6 @@ LoanAccount.init(
           }
         }
         
-        // For each customer, get the current count and assign cycles
         for (const [custId, customerLoans] of Object.entries(loansByCustomer)) {
           const currentCount = await LoanAccount.count({
             where: { CUST_ID: custId },

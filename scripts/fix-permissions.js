@@ -1,0 +1,122 @@
+import mysql from 'mysql2/promise';
+
+const dbConfig = {
+  host: '127.0.0.1',
+  port: 3306,
+  database: 'core_banking',
+  user: 'root',
+  password: '', // Add your password if you have one
+};
+
+async function createTable() {
+  const connection = await mysql.createConnection(dbConfig);
+  
+  try {
+    console.log('🔧 Creating permissions table...');
+    
+    // Drop existing
+    await connection.query("DROP VIEW IF EXISTS roles_vw");
+    await connection.query("DROP TABLE IF EXISTS permissions");
+    console.log('✅ Dropped existing objects');
+    
+    // Create table
+    await connection.query(`
+      CREATE TABLE permissions (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        BU_ROLE_ID INT NOT NULL,
+        ROLE_NAME VARCHAR(100) NOT NULL,
+        DESCRIPTION VARCHAR(500) NULL,
+        IS_ACTIVE BOOLEAN NOT NULL DEFAULT true,
+        DRAWER_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        CUSTOMER_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        ACCOUNT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        TRANSACTION_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        DASHBOARD_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        REPORT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        THRIFT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        LOAN_OPERATIONS_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        LOAN_FEE_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        POSTING_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        FIXED_ASSET_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        SYSTEM_ADMIN_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        PERMISSION_MANAGEMENT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        CREDIT_APPL_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        APPROVAL_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        TREASURY_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        OPERATIONS_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        WORKFLOW_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        AML_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        BUSINESS_UNIT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        SECURITY_PROFILE_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        DEPOSIT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        GUARANTOR_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        RATE_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        PRODUCT_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        HOLIDAY_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        MARKETING_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        AGENCY_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        ANALYTICS_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        RISK_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        RECONCILIATION_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        PERFORMANCE_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        STATISTICS_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        RESTRICTED_CUSTOMER_ACCESS_LEVEL JSON NULL DEFAULT (JSON_ARRAY()),
+        createdAt TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_bu_role (BU_ROLE_ID, ROLE_NAME)
+      )
+    `);
+    console.log('✅ Permissions table created');
+    
+    // Create view
+    await connection.query(`
+      CREATE VIEW roles_vw AS 
+      SELECT 
+        id, BU_ROLE_ID, ROLE_NAME as name, DESCRIPTION as description, IS_ACTIVE,
+        DRAWER_ACCESS_LEVEL, CUSTOMER_ACCESS_LEVEL, ACCOUNT_ACCESS_LEVEL,
+        TRANSACTION_ACCESS_LEVEL, DASHBOARD_ACCESS_LEVEL, REPORT_ACCESS_LEVEL,
+        THRIFT_ACCESS_LEVEL, LOAN_OPERATIONS_ACCESS_LEVEL, LOAN_FEE_ACCESS_LEVEL,
+        POSTING_ACCESS_LEVEL, FIXED_ASSET_ACCESS_LEVEL, SYSTEM_ADMIN_ACCESS_LEVEL,
+        PERMISSION_MANAGEMENT_ACCESS_LEVEL, CREDIT_APPL_ACCESS_LEVEL,
+        APPROVAL_ACCESS_LEVEL, TREASURY_ACCESS_LEVEL, OPERATIONS_ACCESS_LEVEL,
+        WORKFLOW_ACCESS_LEVEL, AML_ACCESS_LEVEL, BUSINESS_UNIT_ACCESS_LEVEL,
+        SECURITY_PROFILE_ACCESS_LEVEL, DEPOSIT_ACCESS_LEVEL, GUARANTOR_ACCESS_LEVEL,
+        RATE_ACCESS_LEVEL, PRODUCT_ACCESS_LEVEL, HOLIDAY_ACCESS_LEVEL,
+        MARKETING_ACCESS_LEVEL, AGENCY_ACCESS_LEVEL, ANALYTICS_ACCESS_LEVEL,
+        RISK_ACCESS_LEVEL, RECONCILIATION_ACCESS_LEVEL, PERFORMANCE_ACCESS_LEVEL,
+        STATISTICS_ACCESS_LEVEL, RESTRICTED_CUSTOMER_ACCESS_LEVEL,
+        createdAt, updatedAt
+      FROM permissions 
+      WHERE IS_ACTIVE = true
+    `);
+    console.log('✅ roles_vw view created');
+    
+    // Insert sample data
+    await connection.query(`
+      INSERT INTO permissions (BU_ROLE_ID, ROLE_NAME, DESCRIPTION, IS_ACTIVE,
+        DASHBOARD_ACCESS_LEVEL, REPORT_ACCESS_LEVEL, TRANSACTION_ACCESS_LEVEL,
+        CUSTOMER_ACCESS_LEVEL, ACCOUNT_ACCESS_LEVEL, SYSTEM_ADMIN_ACCESS_LEVEL)
+      VALUES 
+      (1, 'Super Admin', 'Full system access', true,
+        JSON_ARRAY('view', 'create', 'edit', 'delete'),
+        JSON_ARRAY('view_all', 'export'), JSON_ARRAY('view_all', 'approve', 'reverse'),
+        JSON_ARRAY('view_all', 'create', 'edit', 'delete'),
+        JSON_ARRAY('view_all', 'create', 'edit', 'delete'),
+        JSON_ARRAY('full_access')),
+      (2, 'Admin', 'Administrative access', true,
+        JSON_ARRAY('view', 'create', 'edit'), JSON_ARRAY('view_all', 'export'),
+        JSON_ARRAY('view_all', 'approve'), JSON_ARRAY('view_all', 'create', 'edit'),
+        JSON_ARRAY('view_all', 'create', 'edit'), JSON_ARRAY('limited_access'))
+    `);
+    console.log('✅ Sample data inserted');
+    
+    console.log('\n✅ Permissions setup completed successfully!');
+    
+  } catch (error) {
+    console.error('❌ Error:', error.message);
+  } finally {
+    await connection.end();
+  }
+}
+
+createTable();

@@ -1,4 +1,5 @@
-// src/routes/AdminRoutes.js - COMPLETE UPDATED VERSION
+// src/routes/AdminRoutes.js - COMPLETE UPDATED VERSION WITH USER MONITORING
+
 import express from 'express';
 import { sequelize } from '../../config/db.js';
 import { protectAdmin, isAdminConsole } from '../middlewares/adminAuthMiddleware.js';
@@ -17,7 +18,12 @@ import WebhookConfig from '../models/WebhookConfig.js';
 import AdminPlugin from '../models/AdminPlugin.js';
 import { Op } from 'sequelize';
 import net from 'net';
-
+// ✅ FIXED: Import AuditTrail model directly, not from index
+import AuditTrail from '../models/AuditTrail.js';
+import UserSession from '../models/UserSession.js';
+import UserActivityLog from '../models/UserActivityLog.js';
+import User from '../models/User.js';
+import sessionTracker from '../middlewares/sessionTracker.js'; 
 
 // ✅ Import OsController as default
 import OsController from '../controllers/OsController.js';
@@ -65,7 +71,6 @@ router.use(isAdminConsole);
 // ==========================================
 // 1. NIP METRICS - USING ONLY RAW SQL (FIXED)
 // ==========================================
-// src/routes/AdminRoutes.js
 const getNIPMetrics = async () => {
   try {
     const results = await sequelize.query(`
@@ -108,7 +113,6 @@ const getNIPMetrics = async () => {
 };
 
 // GET /nip/metrics - Get NIP metrics
-// In AdminRoutes.js
 router.get('/nip/metrics', async (req, res) => {
   try {
     const metrics = await getNIPMetrics();
@@ -558,22 +562,12 @@ router.post('/datasources/test', async (req, res) => {
 // ==========================================
 // 4. PLUGINS
 // ==========================================
-// src/routes/AdminRoutes.js - Plugin Routes Section
-
-// ==========================================
-// 4. PLUGINS
-// ==========================================
-
-// Import AdminPlugin model (add this at the top of the file)
-
-// Create a specific multer instance for plugin uploads
 const pluginUpload = multer({
   storage: multer.memoryStorage(),
   limits: { 
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
-    // Accept zip files
     if (file.mimetype === 'application/zip' || file.originalname.endsWith('.zip')) {
       cb(null, true);
     } else {
@@ -582,12 +576,15 @@ const pluginUpload = multer({
   }
 });
 
-/**
- * GET /plugins - Get all plugins
- */
 router.get('/plugins', async (req, res) => {
   try {
     const plugins = await pluginManager.getAllPlugins();
+    console.log('📦 Plugins from database:', JSON.stringify(plugins, null, 2));
+    console.log('📦 Plugins count:', plugins.length);
+    if (plugins.length > 0) {
+      console.log('📦 First plugin fields:', Object.keys(plugins[0]));
+    }
+    res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Content-Range', `items 0-${plugins.length - 1}/${plugins.length}`);
     res.json(plugins);
   } catch (error) {
@@ -596,9 +593,6 @@ router.get('/plugins', async (req, res) => {
   }
 });
 
-/**
- * GET /plugins/:id - Get a single plugin
- */
 router.get('/plugins/:id', async (req, res) => {
   try {
     const plugin = await AdminPlugin.findByPk(req.params.id);
@@ -612,9 +606,6 @@ router.get('/plugins/:id', async (req, res) => {
   }
 });
 
-/**
- * POST /plugins/upload - Upload a new plugin
- */
 router.post('/plugins/upload', pluginUpload.single('plugin'), async (req, res) => {
   try {
     console.log('📤 Plugin upload received');
@@ -626,7 +617,6 @@ router.post('/plugins/upload', pluginUpload.single('plugin'), async (req, res) =
       return res.status(400).json({ error: 'No plugin file uploaded' });
     }
 
-    // Check if plugin name already exists using the model
     try {
       const existingPlugin = await AdminPlugin.findOne({
         where: { 
@@ -643,14 +633,12 @@ router.post('/plugins/upload', pluginUpload.single('plugin'), async (req, res) =
       }
     } catch (findError) {
       console.warn('Could not check for existing plugin:', findError.message);
-      // Continue with installation even if check fails
     }
 
     console.log('📦 Installing plugin...');
     const pluginId = await pluginManager.installPlugin(req.body.name, req.file.buffer);
     console.log('✅ Plugin installed with ID:', pluginId);
     
-    // Get the installed plugin
     const plugin = await AdminPlugin.findByPk(pluginId);
     
     res.json({ 
@@ -667,37 +655,29 @@ router.post('/plugins/upload', pluginUpload.single('plugin'), async (req, res) =
   }
 });
 
-/**
- * POST /plugins/:id/start - Start a plugin
- */
 router.post('/plugins/:id/start', async (req, res) => {
   try {
     const pluginId = req.params.id;
     
-    // Check if plugin exists
     const plugin = await AdminPlugin.findByPk(pluginId);
     if (!plugin) {
       return res.status(404).json({ error: 'Plugin not found' });
     }
     
-    // ✅ Check if plugin has a file_path
     if (!plugin.file_path) {
       return res.status(400).json({ 
         error: 'Plugin has no file_path. Please reinstall the plugin.' 
       });
     }
     
-    // Check if plugin can be started
     if (!plugin.canStart()) {
       return res.status(400).json({ 
         error: `Plugin cannot be started. Current status: ${plugin.status}` 
       });
     }
     
-    // ✅ Pass the file_path to startPlugin
     await pluginManager.startPlugin(pluginId, plugin.file_path);
     
-    // Refresh plugin data
     const updatedPlugin = await AdminPlugin.findByPk(pluginId);
     
     res.json({ 
@@ -713,20 +693,15 @@ router.post('/plugins/:id/start', async (req, res) => {
   }
 });
 
-/**
- * POST /plugins/:id/stop - Stop a plugin
- */
 router.post('/plugins/:id/stop', async (req, res) => {
   try {
     const pluginId = req.params.id;
     
-    // Check if plugin exists
     const plugin = await AdminPlugin.findByPk(pluginId);
     if (!plugin) {
       return res.status(404).json({ error: 'Plugin not found' });
     }
     
-    // Check if plugin can be stopped
     if (!plugin.canStop()) {
       return res.status(400).json({ 
         error: `Plugin cannot be stopped. Current status: ${plugin.status}` 
@@ -735,7 +710,6 @@ router.post('/plugins/:id/stop', async (req, res) => {
     
     await pluginManager.stopPlugin(pluginId);
     
-    // Refresh plugin data
     const updatedPlugin = await AdminPlugin.findByPk(pluginId);
     
     res.json({ 
@@ -748,20 +722,15 @@ router.post('/plugins/:id/stop', async (req, res) => {
   }
 });
 
-/**
- * DELETE /plugins/:id - Delete (uninstall) a plugin
- */
 router.delete('/plugins/:id', async (req, res) => {
   try {
     const pluginId = req.params.id;
     
-    // Check if plugin exists
     const plugin = await AdminPlugin.findByPk(pluginId);
     if (!plugin) {
       return res.status(404).json({ error: 'Plugin not found' });
     }
     
-    // Check if plugin can be deleted
     if (!plugin.canDelete()) {
       return res.status(400).json({ 
         error: `Plugin cannot be deleted. Current status: ${plugin.status}` 
@@ -781,9 +750,6 @@ router.delete('/plugins/:id', async (req, res) => {
   }
 });
 
-/**
- * PUT /plugins/:id/auto-start - Toggle auto-start
- */
 router.put('/plugins/:id/auto-start', async (req, res) => {
   try {
     const pluginId = req.params.id;
@@ -794,7 +760,6 @@ router.put('/plugins/:id/auto-start', async (req, res) => {
       return res.status(404).json({ error: 'Plugin not found' });
     }
     
-    // Update auto-start
     plugin.auto_start = autoStart !== undefined ? autoStart : !plugin.auto_start;
     await plugin.save();
     
@@ -808,9 +773,6 @@ router.put('/plugins/:id/auto-start', async (req, res) => {
   }
 });
 
-/**
- * GET /plugins/stats - Get plugin statistics
- */
 router.get('/plugins/stats', async (req, res) => {
   try {
     const stats = await AdminPlugin.getStats();
@@ -830,14 +792,9 @@ router.get('/plugins/stats', async (req, res) => {
   }
 });
 
-/**
- * GET /plugins/debug - Debug endpoint for plugin system
- */
 router.get('/plugins/debug', async (req, res) => {
   try {
     const debugInfo = pluginManager.getDebugInfo();
-    
-    // Get database stats
     const dbStats = await AdminPlugin.getStats();
     
     res.json({
@@ -854,15 +811,9 @@ router.get('/plugins/debug', async (req, res) => {
   }
 });
 
-/**
- * POST /plugins/reload - Reload all plugins (admin only)
- */
 router.post('/plugins/reload', async (req, res) => {
   try {
-    // Stop all plugins
     await pluginManager.stopAllPlugins();
-    
-    // Reload from database
     await pluginManager.loadPluginsFromDB();
     
     res.json({
@@ -875,80 +826,717 @@ router.post('/plugins/reload', async (req, res) => {
     res.status(500).json({ error: 'Failed to reload plugins', details: error.message });
   }
 });
+
+// src/routes/AdminRoutes.js - AUDIT ROUTES SECTION
+
 // ==========================================
-// 5. AUDIT LOGS
+// 5. AUDIT LOGS - ✅ FIXED WITH CORRECT FIELD HANDLING
 // ==========================================
+
+/**
+ * GET /audit - Get all audit logs with pagination and filtering
+ */
 router.get('/audit', async (req, res) => {
   try {
-    const range = req.query.range ? JSON.parse(req.query.range) : [0, 9];
+    const range = req.query.range ? JSON.parse(req.query.range) : [0, 24];
     const sort = req.query.sort ? JSON.parse(req.query.sort) : ['created_at', 'DESC'];
     const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
 
+    const whereClause = {};
+    
+    // Search filter - using database column names (uppercase)
+    if (filter.q) {
+      whereClause[Op.or] = [
+        { EVENT_TYPE: { [Op.like]: `%${filter.q}%` } },
+        { ACTION: { [Op.like]: `%${filter.q}%` } },
+        { USER_ID: { [Op.like]: `%${filter.q}%` } },
+        { description: { [Op.like]: `%${filter.q}%` } },
+        { ENTITY_TYPE: { [Op.like]: `%${filter.q}%` } }
+      ];
+    }
+
+    // Filter by event type (using database column name)
+    if (filter.event_type) {
+      whereClause.EVENT_TYPE = filter.event_type;
+    }
+    
+    // Filter by status (using database column name)
+    if (filter.status) {
+      whereClause.status = filter.status;
+    }
+    
+    // Filter by user ID (using database column name)
+    if (filter.user_id) {
+      whereClause.USER_ID = filter.user_id;
+    }
+    
+    // Date range filter (using database column name)
+    if (filter.date_from && filter.date_to) {
+      whereClause.created_at = {
+        [Op.between]: [new Date(filter.date_from), new Date(filter.date_to)]
+      };
+    }
+
+    // Sort field - must be a valid database column name
     let sortField = sort[0];
-    const validColumns = ['id', 'event_id', 'created_at', 'updated_at', 'event_type', 'action', 'user_id', 'entity_type'];
-    if (!validColumns.includes(sortField)) sortField = 'created_at';
+    const validColumns = ['event_id', 'created_at', 'updated_at', 'EVENT_TYPE', 'ACTION', 'USER_ID', 'ENTITY_TYPE', 'status'];
+    if (!validColumns.includes(sortField)) {
+      sortField = 'created_at';
+    }
     const sortOrder = sort[1]?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     const limit = range[1] - range[0] + 1;
     const offset = range[0];
 
-    let whereClause = '';
-    const replacements = [];
-    if (filter.q) {
-      whereClause = `WHERE (event_type LIKE ? OR action LIKE ? OR user_id LIKE ? OR description LIKE ? OR entity_type LIKE ?)`;
-      const searchTerm = `%${filter.q}%`;
-      replacements.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
-    }
-
-    const countQuery = `SELECT COUNT(*) as total FROM audit_trail ${whereClause}`;
-    const countResult = await sequelize.query(countQuery, { replacements, type: QueryTypes.SELECT });
-    const total = countResult[0]?.total || 0;
-
-    const orderBy = `${sortField} ${sortOrder}`;
-    const query = `
-      SELECT * FROM audit_trail
-      ${whereClause}
-      ORDER BY ${orderBy}
-      LIMIT ? OFFSET ?
-    `;
-    let rows = await sequelize.query(query, {
-      replacements: [...replacements, limit, offset],
-      type: QueryTypes.SELECT
+    // Use AuditTrail model directly
+    const { count, rows } = await AuditTrail.findAndCountAll({
+      where: whereClause,
+      order: [[sortField, sortOrder]],
+      limit: limit,
+      offset: offset,
     });
 
-    let dataArray = Array.isArray(rows) ? rows : Object.values(rows);
-    const finalData = dataArray.map(row => {
-      if (row.id) return row;
-      const firstKey = Object.keys(row)[0];
-      return { ...row, id: row[firstKey] };
+    // Convert to plain objects with proper field names
+    const finalData = rows.map(row => {
+      const data = row.toJSON ? row.toJSON() : row;
+      // Ensure we have both uppercase and lowercase versions for compatibility
+      return {
+        // Uppercase versions (database format)
+        EVENT_TYPE: data.EVENT_TYPE || data.event_type,
+        ACTION: data.ACTION || data.action,
+        USER_ID: data.USER_ID || data.user_id,
+        ENTITY_TYPE: data.ENTITY_TYPE || data.entity_type,
+        ENTITY_ID: data.ENTITY_ID || data.entity_id,
+        IP_ADDRESS: data.IP_ADDRESS || data.ip_address,
+        OLD_VALUE: data.OLD_VALUE || data.old_value,
+        NEW_VALUE: data.NEW_VALUE || data.new_value,
+        ADDITIONAL_INFO: data.ADDITIONAL_INFO || data.additional_info,
+        // Lowercase versions (model format)
+        event_type: data.EVENT_TYPE || data.event_type,
+        action: data.ACTION || data.action,
+        user_id: data.USER_ID || data.user_id,
+        entity_type: data.ENTITY_TYPE || data.entity_type,
+        entity_id: data.ENTITY_ID || data.entity_id,
+        ip_address: data.IP_ADDRESS || data.ip_address,
+        old_value: data.OLD_VALUE || data.old_value,
+        new_value: data.NEW_VALUE || data.new_value,
+        additional_info: data.ADDITIONAL_INFO || data.additional_info,
+        // Common fields
+        event_id: data.event_id,
+        status: data.status,
+        description: data.description,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        user_role: data.user_role,
+        reference_no: data.reference_no,
+        account_no: data.account_no,
+        session_id: data.session_id,
+        request_id: data.request_id,
+        endpoint: data.endpoint,
+        method: data.method,
+        user_agent: data.user_agent,
+        branch: data.branch,
+      };
     });
-    res.setHeader('Content-Range', `items ${range[0]}-${range[1]}/${total}`);
+
+    res.setHeader('Content-Range', `items ${range[0]}-${range[1]}/${count}`);
     res.json(finalData);
   } catch (error) {
-    console.error('Audit fetch error:', error);
+    console.error('❌ Audit fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch audit logs' });
   }
 });
 
+/**
+ * GET /audit/:id - Get a single audit log by ID
+ */
 router.get('/audit/:id', async (req, res) => {
   try {
-    const rows = await sequelize.query(
-      'SELECT * FROM audit_trail WHERE event_id = ?',
-      { replacements: [req.params.id], type: QueryTypes.SELECT }
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'Audit log not found' });
-    const data = rows[0];
-    data.id = data.event_id || data.id || req.params.id;
-    console.log('📤 AUDIT getOne response:', JSON.stringify({ data }));
-    res.json({ data });
+    const auditLog = await AuditTrail.findByPk(req.params.id);
+
+    if (!auditLog) {
+      return res.status(404).json({ error: 'Audit log not found' });
+    }
+
+    const data = auditLog.toJSON ? auditLog.toJSON() : auditLog;
+    
+    // Ensure both uppercase and lowercase versions are available
+    const responseData = {
+      // Uppercase versions (database format)
+      EVENT_TYPE: data.EVENT_TYPE || data.event_type,
+      ACTION: data.ACTION || data.action,
+      USER_ID: data.USER_ID || data.user_id,
+      ENTITY_TYPE: data.ENTITY_TYPE || data.entity_type,
+      ENTITY_ID: data.ENTITY_ID || data.entity_id,
+      IP_ADDRESS: data.IP_ADDRESS || data.ip_address,
+      OLD_VALUE: data.OLD_VALUE || data.old_value,
+      NEW_VALUE: data.NEW_VALUE || data.new_value,
+      ADDITIONAL_INFO: data.ADDITIONAL_INFO || data.additional_info,
+      // Lowercase versions (model format)
+      event_type: data.EVENT_TYPE || data.event_type,
+      action: data.ACTION || data.action,
+      user_id: data.USER_ID || data.user_id,
+      entity_type: data.ENTITY_TYPE || data.entity_type,
+      entity_id: data.ENTITY_ID || data.entity_id,
+      ip_address: data.IP_ADDRESS || data.ip_address,
+      old_value: data.OLD_VALUE || data.old_value,
+      new_value: data.NEW_VALUE || data.new_value,
+      additional_info: data.ADDITIONAL_INFO || data.additional_info,
+      // Common fields
+      event_id: data.event_id,
+      status: data.status,
+      description: data.description,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      user_role: data.user_role,
+      reference_no: data.reference_no,
+      account_no: data.account_no,
+      session_id: data.session_id,
+      request_id: data.request_id,
+      endpoint: data.endpoint,
+      method: data.method,
+      user_agent: data.user_agent,
+      branch: data.branch,
+    };
+
+    console.log('📤 AUDIT getOne response:', JSON.stringify({ data: responseData }));
+    res.json({ data: responseData });
   } catch (error) {
-    console.error('Audit fetch by ID error:', error);
+    console.error('❌ Audit fetch by ID error:', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
   }
 });
 
+/**
+ * GET /audit/stats - Get audit statistics
+ */
+router.get('/audit/stats', async (req, res) => {
+  try {
+    const stats = await AuditTrail.findAll({
+      attributes: [
+        'EVENT_TYPE',
+        [sequelize.fn('COUNT', sequelize.col('event_id')), 'count']
+      ],
+      group: ['EVENT_TYPE'],
+      order: [[sequelize.fn('COUNT', sequelize.col('event_id')), 'DESC']]
+    });
+
+    const statusStats = await AuditTrail.findAll({
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('event_id')), 'count']
+      ],
+      group: ['status']
+    });
+
+    const totalCount = await AuditTrail.count();
+
+    res.json({
+      total: totalCount,
+      byEventType: stats,
+      byStatus: statusStats
+    });
+  } catch (error) {
+    console.error('❌ Audit stats error:', error);
+    res.status(500).json({ error: 'Failed to fetch audit statistics' });
+  }
+});
+
+/**
+ * GET /audit/user/:userId - Get audit logs for a specific user
+ */
+router.get('/audit/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 50, offset = 0 } = req.query;
+
+    const { count, rows } = await AuditTrail.findAndCountAll({
+      where: { USER_ID: userId },
+      order: [['created_at', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.json({
+      total: count,
+      data: rows.map(row => row.toJSON())
+    });
+  } catch (error) {
+    console.error('❌ User audit fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch user audit logs' });
+  }
+});
+
+/**
+ * GET /audit/entity/:entityType/:entityId - Get audit logs for a specific entity
+ */
+router.get('/audit/entity/:entityType/:entityId', async (req, res) => {
+  try {
+    const { entityType, entityId } = req.params;
+    const { limit = 50, offset = 0 } = req.query;
+
+    const { count, rows } = await AuditTrail.findAndCountAll({
+      where: {
+        ENTITY_TYPE: entityType,
+        ENTITY_ID: entityId
+      },
+      order: [['created_at', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.json({
+      total: count,
+      data: rows.map(row => row.toJSON())
+    });
+  } catch (error) {
+    console.error('❌ Entity audit fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch entity audit logs' });
+  }
+});
+
 // ==========================================
-// 6. SERVER STATUS & CONTROL
+// 6. USER SESSION MONITORING
+// ==========================================
+
+/**
+ * GET /users/active-sessions - Get all active user sessions
+ */
+router.get('/users/active-sessions', async (req, res) => {
+  try {
+    console.log('📊 Fetching active sessions...');
+    
+    if (!sessionTracker || typeof sessionTracker.getActiveSessions !== 'function') {
+      console.error('❌ sessionTracker not properly initialized');
+      return res.status(500).json({
+        success: false,
+        message: 'Session tracker not initialized',
+        data: {
+          sessions: [],
+          summary: {
+            total_active_sessions: 0,
+            unique_users: 0,
+            timestamp: new Date().toISOString()
+          }
+        }
+      });
+    }
+    
+    const sessions = await sessionTracker.getActiveSessions();
+    
+    console.log(`✅ Found ${sessions.length} active sessions`);
+    
+    const formattedSessions = sessions.map(session => {
+      const duration = Math.floor((Date.now() - new Date(session.login_time).getTime()) / 1000);
+      const hours = Math.floor(duration / 3600);
+      const minutes = Math.floor((duration % 3600) / 60);
+      
+      const user = session.User || {};
+      
+      return {
+        id: session.id,
+        user_id: session.user_id,
+        user_name: user.user_name || 'Unknown',
+        full_name: user.first_name || user.last_name ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : 'Unknown',
+        email: user.email || 'N/A',
+        role: user.primary_business_role || 'N/A',
+        session_id: session.session_id,
+        login_time: session.login_time,
+        last_activity: session.last_activity,
+        duration: `${hours}h ${minutes}m`,
+        duration_seconds: duration,
+        ip_address: session.ip_address || 'N/A',
+        device_type: session.device_type || 'desktop',
+        browser: session.browser || 'Unknown',
+        os: session.os || 'Unknown',
+        request_count: session.request_count || 0,
+        last_request_url: session.last_request_url,
+        last_request_method: session.last_request_method,
+        is_active: session.is_active
+      };
+    });
+    
+    const totalActive = sessions.length;
+    const uniqueUsers = new Set(sessions.map(s => s.user_id)).size;
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        sessions: formattedSessions,
+        summary: {
+          total_active_sessions: totalActive,
+          unique_users: uniqueUsers,
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching active sessions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching active sessions',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      data: {
+        sessions: [],
+        summary: {
+          total_active_sessions: 0,
+          unique_users: 0,
+          timestamp: new Date().toISOString()
+        }
+      }
+    });
+  }
+});
+
+/**
+ * POST /users/sessions/terminate - Terminate a user session
+ */
+router.post('/users/sessions/terminate', async (req, res) => {
+  try {
+    const { session_id, reason } = req.body;
+    
+    if (!session_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Session ID required'
+      });
+    }
+    
+    const session = await UserSession.findOne({
+      where: {
+        session_id: session_id,
+        is_active: true,
+        logout_time: null
+      }
+    });
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Active session not found'
+      });
+    }
+    
+    const user = await User.findByPk(session.user_id, {
+      attributes: ['user_name']
+    });
+    
+    await session.update({
+      is_active: false,
+      logout_time: new Date(),
+      session_duration: sequelize.literal(`TIMESTAMPDIFF(SECOND, login_time, NOW())`)
+    });
+    
+    // Log the activity
+    try {
+      await UserActivityLog.create({
+        user_id: session.user_id,
+        action_type: 'LOGOUT',
+        action: 'Session terminated by admin',
+        description: `Session terminated by admin: ${reason || 'No reason provided'}`,
+        ip_address: req.ip || req.connection.remoteAddress,
+        user_agent: req.headers['user-agent'],
+        metadata: {
+          terminated_by: req.user?.user_name || 'admin',
+          reason: reason || 'No reason provided',
+          session_id: session_id
+        }
+      });
+    } catch (logError) {
+      console.warn('Could not create activity log:', logError.message);
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Session terminated successfully',
+      data: {
+        user_id: session.user_id,
+        user_name: user?.user_name || 'Unknown',
+        terminated_at: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error terminating session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error terminating session',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST /users/force-lock/:identifier - Force lock a user
+ */
+router.post('/users/force-lock/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const { reason } = req.body;
+
+    console.log('🔒 Force lock user request:', { identifier, reason, lockedBy: req.user?.id });
+
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { user_name: identifier },
+          { username: identifier },
+          { email: identifier },
+          { employer_number: identifier },
+          { id: !isNaN(identifier) ? parseInt(identifier) : null }
+        ].filter(condition => {
+          const value = Object.values(condition)[0];
+          return value !== null && value !== undefined;
+        })
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        identifier
+      });
+    }
+
+    if (user.status === 'ForceLocked') {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already force-locked',
+        user: {
+          user_name: user.user_name,
+          status: user.status,
+          force_lock_reason: user.force_lock_reason,
+          force_locked_at: user.force_locked_at,
+          force_locked_by: user.force_locked_by
+        }
+      });
+    }
+
+    await user.update({
+      status: 'ForceLocked',
+      force_lock_reason: reason || 'Suspicious activity detected',
+      force_locked_at: new Date(),
+      force_locked_by: req.user?.id || 'system',
+      internal_employee_enabled: false
+    });
+
+    console.log('✅ User force-locked successfully:', {
+      user_name: user.user_name,
+      status: user.status,
+      force_lock_reason: user.force_lock_reason,
+      locked_by_admin_id: req.user?.id
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User force-locked successfully',
+      user: {
+        id: user.id,
+        user_name: user.user_name,
+        email: user.email,
+        status: user.status,
+        force_lock_reason: user.force_lock_reason,
+        force_locked_at: user.force_locked_at,
+        force_locked_by: user.force_locked_by
+      },
+      lockDetails: {
+        reason: reason || 'Suspicious activity detected',
+        timestamp: user.force_locked_at,
+        performedBy: req.user?.user_name || 'system'
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Force lock user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error force-locking user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST /users/unlock-force-locked/:identifier - Unlock a force-locked user
+ */
+router.post('/users/unlock-force-locked/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const { reason } = req.body;
+
+    console.log('🔓 Unlock force-locked user request:', { 
+      identifier, 
+      reason, 
+      unlockedBy: req.user?.user_name || req.user?.username || 'system'
+    });
+
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { user_name: identifier },
+          { username: identifier },
+          { email: identifier },
+          { employer_number: identifier },
+          { id: !isNaN(identifier) ? parseInt(identifier) : null }
+        ].filter(condition => {
+          const value = Object.values(condition)[0];
+          return value !== null && value !== undefined && value !== 'null' && value !== 'undefined';
+        })
+      }
+    });
+
+    if (!user) {
+      console.log('❌ User not found:', { identifier });
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        identifier
+      });
+    }
+
+    if (user.status !== 'ForceLocked') {
+      console.log('ℹ️ User is not force-locked:', { 
+        user_name: user.user_name, 
+        status: user.status 
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'User is not force-locked',
+        user: {
+          user_name: user.user_name,
+          status: user.status
+        }
+      });
+    }
+
+    await user.update({
+      status: 'Active',
+      force_lock_reason: null,
+      force_locked_at: null,
+      force_locked_by: null,
+      internal_employee_enabled: true,
+      lock_until: null,
+      failed_attempts: 0
+    });
+
+    console.log('✅ User unlocked from force-lock successfully:', {
+      user_name: user.user_name,
+      status: user.status
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'User unlocked from force-lock successfully',
+      user: {
+        id: user.id,
+        user_name: user.user_name,
+        email: user.email,
+        status: user.status
+      },
+      unlockDetails: {
+        reason: reason || 'Manual unlock by administrator',
+        timestamp: new Date(),
+        performedBy: req.user?.user_name || req.user?.username || 'System'
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Unlock force-locked user error:', {
+      error: error.message,
+      stack: error.stack,
+      identifier
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Error unlocking force-locked user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST /users/force-reset-password - Force reset a user's password
+ */
+router.post('/users/force-reset-password', async (req, res) => {
+  const { user_name, username, new_password } = req.body;
+  
+  try {
+    console.log('🔄 FORCE PASSWORD RESET:', { user_name, username });
+    
+    const loginIdentifier = username || user_name;
+    
+    if (!loginIdentifier || !new_password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username and new password are required'
+      });
+    }
+
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { user_name: loginIdentifier },
+          { username: loginIdentifier }
+        ]
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Password validation
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be 8+ characters with uppercase, lowercase, number, and special character'
+      });
+    }
+
+    // Hash the new password
+    const bcrypt = await import('bcrypt');
+    const hashedPassword = await bcrypt.hash(new_password, 10);
+    
+    await user.update({
+      password: hashedPassword,
+      passwordChangedAt: new Date(),
+      failed_attempts: 0,
+      lock_until: null,
+      force_password_change: true,
+      is_first_login: false
+    });
+
+    console.log('✅ PASSWORD RESET SUCCESSFUL:', {
+      user_name: user.user_name,
+      force_password_change: true
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Password reset successfully. User must change password on next login.',
+      user: { 
+        user_name: user.user_name, 
+        email: user.email,
+        force_password_change: true
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Password reset error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Password reset failed', 
+      error: error.message 
+    });
+  }
+});
+
+// ==========================================
+// 7. SERVER STATUS & CONTROL
 // ==========================================
 router.get('/server/status', (req, res) => {
   const memory = process.memoryUsage();
@@ -1045,7 +1633,7 @@ router.post('/server/stop', async (req, res) => {
 });
 
 // ==========================================
-// 7. SCHEDULER / JOBS REGISTRY
+// 8. SCHEDULER / JOBS REGISTRY
 // ==========================================
 router.get('/scheduler/jobs', async (req, res) => {
   try {
@@ -1082,12 +1670,8 @@ router.get('/scheduler/status', async (req, res) => {
 });
 
 // ==========================================
-// 8. EOD (End of Day) ROUTES - FIXED WITH OSCONTROLLER
+// 9. EOD (End of Day) ROUTES
 // ==========================================
-
-/**
- * GET /os/eod/status - Get EOD status from OsController
- */
 router.get('/os/eod/status', async (req, res) => {
   try {
     await OsController.getEODStatus(req, res);
@@ -1109,9 +1693,6 @@ router.get('/os/eod/status', async (req, res) => {
   }
 });
 
-/**
- * POST /os/eod/trigger - Trigger EOD process using OsController
- */
 router.post('/os/eod/trigger', async (req, res) => {
   try {
     await OsController.triggerEndOfDayProcess(req, res);
@@ -1125,9 +1706,6 @@ router.post('/os/eod/trigger', async (req, res) => {
   }
 });
 
-/**
- * GET /os/status - Get system status from OsController
- */
 router.get('/os/status', async (req, res) => {
   try {
     await OsController.getStatusOS(req, res);
@@ -1140,9 +1718,6 @@ router.get('/os/status', async (req, res) => {
   }
 });
 
-/**
- * GET /os/current-business-date - Get current business date
- */
 router.get('/os/current-business-date', async (req, res) => {
   try {
     await OsController.getCurrentBusinessDateOS(req, res);
@@ -1155,9 +1730,6 @@ router.get('/os/current-business-date', async (req, res) => {
   }
 });
 
-/**
- * POST /os/initialize-dates - Initialize system dates
- */
 router.post('/os/initialize-dates', async (req, res) => {
   try {
     await OsController.initializeSystemDatesOS(req, res);
@@ -1171,12 +1743,8 @@ router.post('/os/initialize-dates', async (req, res) => {
 });
 
 // ==========================================
-// 9. PENALTY ACCRUAL ROUTES (ADMIN ONLY)
+// 10. PENALTY ACCRUAL ROUTES
 // ==========================================
-
-/**
- * GET /penalty/status - Get penalty accrual status
- */
 router.get('/penalty/status', async (req, res) => {
   try {
     res.status(200).json({
@@ -1198,9 +1766,6 @@ router.get('/penalty/status', async (req, res) => {
   }
 });
 
-/**
- * POST /penalty/accrue - Manually trigger penalty accrual
- */
 router.post('/penalty/accrue', async (req, res) => {
   try {
     const { accrualDate } = req.body;
@@ -1227,9 +1792,6 @@ router.post('/penalty/accrue', async (req, res) => {
   }
 });
 
-/**
- * GET /penalty/loan/:loanId - Get penalty summary for a loan
- */
 router.get('/penalty/loan/:loanId', async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -1249,9 +1811,6 @@ router.get('/penalty/loan/:loanId', async (req, res) => {
   }
 });
 
-/**
- * POST /penalty/pay - Process penalty payment
- */
 router.post('/penalty/pay', async (req, res) => {
   try {
     const { loanId, amount, paymentMethod = 'CASH' } = req.body;
@@ -1285,9 +1844,6 @@ router.post('/penalty/pay', async (req, res) => {
   }
 });
 
-/**
- * POST /penalty/waive - Waive a penalty
- */
 router.post('/penalty/waive', async (req, res) => {
   try {
     const { penaltyId, reason } = req.body;
@@ -1320,9 +1876,6 @@ router.post('/penalty/waive', async (req, res) => {
   }
 });
 
-/**
- * GET /penalty/debug - Debug penalty accrual
- */
 router.get('/penalty/debug', async (req, res) => {
   try {
     const LoanAccount = getLoanAccount();
@@ -1347,7 +1900,6 @@ router.get('/penalty/debug', async (req, res) => {
       }
     };
 
-    // Try to find any overdue loans
     try {
       if (LoanAccount) {
         const overdueLoans = await LoanAccount.unscoped().findAll({
@@ -1377,7 +1929,6 @@ router.get('/penalty/debug', async (req, res) => {
       debugInfo.loanError = loanError.message;
     }
 
-    // Try to find penalty rules
     try {
       if (PenaltyRule) {
         const penaltyRules = await PenaltyRule.findAll({
@@ -1427,7 +1978,7 @@ router.get('/penalty/debug', async (req, res) => {
 });
 
 // ==========================================
-// 10. UTILITIES STATUS
+// 11. UTILITIES STATUS
 // ==========================================
 router.get('/utils/status', async (req, res) => {
   try {
@@ -1457,7 +2008,7 @@ router.get('/utils/status', async (req, res) => {
 });
 
 // ==========================================
-// 11. SERVICES (filesystem)
+// 12. SERVICES (filesystem)
 // ==========================================
 router.get('/services', async (req, res) => {
   try {
@@ -1610,7 +2161,7 @@ router.get('/services/debug', (req, res) => {
 });
 
 // ==========================================
-// 12. TRAFFIC MONITORING
+// 13. TRAFFIC MONITORING
 // ==========================================
 router.get('/traffic', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -1647,9 +2198,8 @@ router.get('/traffic', async (req, res) => {
 });
 
 // ==========================================
-// 13. WEBLOGIC SERVERS - SIMPLIFIED & RELIABLE
+// 14. WEBLOGIC SERVERS
 // ==========================================
-
 const serverDefinitions = [
   { id: 'AdminServer', name: 'AdminServer', type: 'Configured', cluster: null, machine: null, port: 3003 },
   { id: 'ManagedServer1', name: 'ManagedServer1', type: 'Managed', cluster: 'Cluster1', machine: 'Node1', port: 3002 },
@@ -1661,9 +2211,6 @@ const serverDefinitions = [
   { id: 'ManagedServer7', name: 'ManagedServer7', type: 'Managed', cluster: 'Cluster1', machine: 'Node7', port: 3009 },
 ];
 
-/**
- * Check if a port is open using ES module syntax
- */
 const isPortOpen = (port, host = 'localhost') => {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -1690,20 +2237,11 @@ const isPortOpen = (port, host = 'localhost') => {
   });
 };
 
-
-
-// In AdminRoutes.js - Update the formatMemory function
-
-/**
- * Format memory - handles both numbers and objects
- */
 const formatMemory = (bytes) => {
   if (!bytes) return 'N/A';
   if (typeof bytes === 'string') return bytes;
   
-  // If it's an object, try to extract bytes
   if (typeof bytes === 'object') {
-    // Try common memory object properties
     if (bytes.bytes) bytes = bytes.bytes;
     else if (bytes.rss) bytes = bytes.rss;
     else if (bytes.heapUsed) bytes = bytes.heapUsed;
@@ -1712,7 +2250,6 @@ const formatMemory = (bytes) => {
     else return 'N/A';
   }
   
-  // Convert to number
   const numBytes = Number(bytes);
   if (isNaN(numBytes) || numBytes === 0) return '0 B';
   
@@ -1728,14 +2265,10 @@ const formatMemory = (bytes) => {
   return numBytes + ' B';
 };
 
-/**
- * Format uptime - handles both numbers and objects
- */
 const formatUptime = (seconds) => {
   if (!seconds) return 'N/A';
   if (typeof seconds === 'string') return seconds;
   if (typeof seconds === 'object') {
-    // Try to extract seconds
     if (seconds.seconds) seconds = seconds.seconds;
     else if (seconds.uptime) seconds = seconds.uptime;
     else return 'N/A';
@@ -1755,14 +2288,10 @@ const formatUptime = (seconds) => {
   return `${secs}s`;
 };
 
-/**
- * Check a single server health
- */
 const checkServer = async (def) => {
   const startTime = Date.now();
   const isOpen = await isPortOpen(def.port);
   
-  // If port is not open, server is stopped
   if (!isOpen) {
     return {
       ...def,
@@ -1783,7 +2312,6 @@ const checkServer = async (def) => {
     };
   }
 
-  // Port is open - try to get health info
   const url = `http://localhost:${def.port}/health`;
   
   try {
@@ -1804,7 +2332,6 @@ const checkServer = async (def) => {
           jsonData = { status: text.trim() || 'OK' };
         }
         
-        // Extract memory properly - handle both direct values and nested objects
         let memoryData = null;
         if (jsonData.memory) {
           memoryData = {
@@ -1814,7 +2341,6 @@ const checkServer = async (def) => {
             external: jsonData.memory.external || 0
           };
         } else {
-          // Use process memory as fallback
           const mem = process.memoryUsage();
           memoryData = {
             rss: mem.rss || 0,
@@ -1824,7 +2350,6 @@ const checkServer = async (def) => {
           };
         }
         
-        // Extract CPU data
         let cpuData = null;
         if (jsonData.cpu) {
           cpuData = {
@@ -1852,16 +2377,13 @@ const checkServer = async (def) => {
           status: jsonData.status || 'OK'
         };
         
-        // Determine health status
         let health = 'OK';
         let state = 'RUNNING';
         
-        // For main server (port 3002), always show as healthy
         if (def.port === 3002) {
           health = 'OK';
           state = 'RUNNING';
         } else {
-          // Check memory usage for other servers
           if (memoryData && memoryData.heapUsed && memoryData.heapTotal) {
             const usageRatio = memoryData.heapUsed / memoryData.heapTotal;
             if (usageRatio > 0.9) {
@@ -1879,9 +2401,7 @@ const checkServer = async (def) => {
         
         return { ...def, state, health, details };
       } catch (parseError) {
-        // Response wasn't valid JSON
         if (def.port === 3002) {
-          // Main server fallback
           const mem = process.memoryUsage();
           return {
             ...def,
@@ -1939,7 +2459,6 @@ const checkServer = async (def) => {
         };
       }
     } else {
-      // Health endpoint returned error
       if (def.port === 3002) {
         const mem = process.memoryUsage();
         return {
@@ -1990,7 +2509,6 @@ const checkServer = async (def) => {
       };
     }
   } catch (error) {
-    // Health check failed but port is open
     if (def.port === 3002) {
       const mem = process.memoryUsage();
       return {
@@ -2051,17 +2569,12 @@ const checkServer = async (def) => {
   }
 };
 
-/**
- * GET /servers - Get all WebLogic servers
- */
 router.get('/servers', async (req, res) => {
   try {
-    // Check all servers in parallel
     const results = await Promise.all(
       serverDefinitions.map(def => checkServer(def))
     );
     
-    // Sort by port
     results.sort((a, b) => a.port - b.port);
     
     const servers = results.map(r => ({
@@ -2096,7 +2609,6 @@ router.get('/servers', async (req, res) => {
       } : null
     }));
     
-    // Count statuses for summary
     const counts = { OK: 0, WARNING: 0, CRITICAL: 0, FAILED: 0 };
     results.forEach(r => {
       const h = r.health || 'FAILED';
@@ -2104,7 +2616,6 @@ router.get('/servers', async (req, res) => {
       else counts.FAILED++;
     });
     
-    // Set content-range header
     const total = servers.length;
     res.setHeader('Content-Range', `items 0-${total - 1}/${total}`);
     res.json(servers);
@@ -2113,11 +2624,6 @@ router.get('/servers', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch servers' });
   }
 });
-
-/**
- * GET /servers/:id - Get a specific server
- */
-// In AdminRoutes.js - Update the /servers/:id route
 
 router.get('/servers/:id', async (req, res) => {
   const { id } = req.params;
@@ -2129,7 +2635,6 @@ router.get('/servers/:id', async (req, res) => {
   try {
     const result = await checkServer(def);
     
-    // ✅ Ensure memory values are numbers
     const memoryData = result.details?.memory ? {
       rss: {
         bytes: Number(result.details.memory.rss) || 0,
@@ -2191,7 +2696,7 @@ router.get('/servers/:id', async (req, res) => {
 });
 
 // ==========================================
-// 14. FRONTEND STATUS MONITORING
+// 15. FRONTEND STATUS MONITORING
 // ==========================================
 router.get('/frontend/status', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -2278,9 +2783,8 @@ router.post('/frontend/restart', async (req, res) => {
 });
 
 // ==========================================
-// 15. MIDDLEWARES (filesystem)
+// 16. MIDDLEWARES (filesystem)
 // ==========================================
-
 const MIDDLEWARE_PATHS = [
   path.join(process.cwd(), 'src/middleware'),
   path.join(process.cwd(), 'src/middlewares'),
@@ -2421,7 +2925,7 @@ router.put('/middlewares/:id/content', (req, res) => {
 });
 
 // ==========================================
-// 16. WEBHOOKS
+// 17. WEBHOOKS
 // ==========================================
 const runningWebhookServers = new Map();
 
@@ -2669,18 +3173,11 @@ router.get('/webhook_configs/:id/status', async (req, res) => {
   }
 });
 
-
-
 // ============================================
-// TRAFFIC STATS ENDPOINTS
+// 18. TRAFFIC STATS ENDPOINTS
 // ============================================
-
-/**
- * GET /traffic/stats - Get detailed traffic statistics
- */
 router.get('/traffic/stats', async (req, res) => {
   try {
-    // ✅ Get redis from req.app instead of direct app reference
     const redis = req.app.get('redisClient');
     if (!redis) {
       return res.status(200).json({
@@ -2697,7 +3194,6 @@ router.get('/traffic/stats', async (req, res) => {
       });
     }
 
-    // Check if Redis is connected
     const redisConnected = redis.status === 'ready';
     if (!redisConnected) {
       return res.status(200).json({
@@ -2714,7 +3210,6 @@ router.get('/traffic/stats', async (req, res) => {
       });
     }
 
-    // Get all traffic keys
     const keys = await redis.keys('traffic:*');
     const stats = [];
     let totalRequests = 0;
@@ -2731,18 +3226,13 @@ router.get('/traffic/stats', async (req, res) => {
       });
     }
 
-    // Calculate percentages
     stats.forEach(stat => {
       stat.percentage = totalRequests > 0 ? ((stat.count / totalRequests) * 100).toFixed(1) : 0;
     });
 
-    // Sort by count descending
     stats.sort((a, b) => b.count - a.count);
 
-    // Get top routes (limit to top 20)
     const topRoutes = stats.slice(0, 20);
-
-    // Get total unique routes
     const uniqueRoutes = stats.length;
 
     res.status(200).json({
@@ -2774,16 +3264,12 @@ router.get('/traffic/stats', async (req, res) => {
   }
 });
 
-/**
- * GET /traffic - Get traffic data (summary)
- */
 router.get('/traffic', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
 
   try {
-    // ✅ Get redis from req.app instead of direct app reference
     const redis = req.app.get('redisClient');
     if (!redis) {
       console.warn('⚠️ Redis client not available – returning empty traffic stats');
@@ -2873,12 +3359,8 @@ router.get('/traffic', async (req, res) => {
   }
 });
 
-/**
- * GET /traffic/redis-status - Check Redis connection status
- */
 router.get('/traffic/redis-status', async (req, res) => {
   try {
-    // ✅ Get redis from req.app instead of direct app reference
     const redis = req.app.get('redisClient');
     const redisConnected = redis && redis.status === 'ready';
     
@@ -2901,12 +3383,8 @@ router.get('/traffic/redis-status', async (req, res) => {
   }
 });
 
-/**
- * POST /traffic/reset - Reset traffic counters (admin only)
- */
 router.post('/traffic/reset', async (req, res) => {
   try {
-    // ✅ Get redis from req.app instead of direct app reference
     const redis = req.app.get('redisClient');
     if (!redis) {
       return res.status(200).json({
@@ -2948,4 +3426,8 @@ router.post('/traffic/reset', async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// 19. EXPORT ROUTER
+// ==========================================
 export default router;

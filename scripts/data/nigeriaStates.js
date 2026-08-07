@@ -1,272 +1,1150 @@
-import mongoose from "mongoose";
-export const States = [
-    {
-      "name": "Abia",
-      "LOCAL_GOV": [
-        { "name": "Aba North", "URBAN": true, "RURAL": false },
-        { "name": "Aba South", "URBAN": true, "RURAL": false },
-        { "name": "Isiala Ngwa North", "URBAN": false, "RURAL": true },
-        { "name": "Isiala Ngwa South", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Adamawa",
-      "LOCAL_GOV": [
-        { "name": "Yola North", "URBAN": true, "RURAL": false },
-        { "name": "Mubi North", "URBAN": false, "RURAL": true },
-        { "name": "Michika", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Akwa Ibom",
-      "LOCAL_GOV": [
-        { "name": "Uyo", "URBAN": true, "RURAL": false },
-        { "name": "Eket", "URBAN": true, "RURAL": false },
-        { "name": "Ikot Abasi", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Anambra",
-      "LOCAL_GOV": [
-        { "name": "Awka", "URBAN": true, "RURAL": false },
-        { "name": "Onitsha", "URBAN": true, "RURAL": false },
-        { "name": "Oyi", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Bauchi",
-      "LOCAL_GOV": [
-        { "name": "Bauchi", "URBAN": true, "RURAL": false },
-        { "name": "Azare", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Bayelsa",
-      "LOCAL_GOV": [
-        { "name": "Yenagoa", "URBAN": true, "RURAL": false },
-        { "name": "Brass", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Benue",
-      "LOCAL_GOV": [
-        { "name": "Makurdi", "URBAN": true, "RURAL": false },
-        { "name": "Gboko", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Borno",
-      "LOCAL_GOV": [
-        { "name": "Maiduguri", "URBAN": true, "RURAL": false },
-        { "name": "Bama", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Cross River",
-      "LOCAL_GOV": [
-        { "name": "Calabar Municipal", "URBAN": true, "RURAL": false },
-        { "name": "Obudu", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Delta",
-      "LOCAL_GOV": [
-        { "name": "Asaba", "URBAN": true, "RURAL": false },
-        { "name": "Warri", "URBAN": true, "RURAL": false },
-        { "name": "Udu", "URBAN": true, "RURAL": false },
-        { "name": "Ethiope West", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Ebonyi",
-      "LOCAL_GOV": [
-        { "name": "Abakaliki", "URBAN": true, "RURAL": false },
-        { "name": "Ikwo", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Edo",
-      "LOCAL_GOV": [
-        { "name": "Benin City", "URBAN": true, "RURAL": false },
-        { "name": "Uromi", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Ekiti",
-      "LOCAL_GOV": [
-        { "name": "Ado-Ekiti", "URBAN": true, "RURAL": false },
-        { "name": "Ikere", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Enugu",
-      "LOCAL_GOV": [
-        { "name": "Enugu South", "URBAN": true, "RURAL": false },
-        { "name": "Nsukka", "URBAN": false, "RURAL": true },
-        { "name": "Udi", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Gombe",
-      "LOCAL_GOV": [
-        { "name": "Gombe", "URBAN": true, "RURAL": false },
-        { "name": "Kaltungo", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Imo",
-      "LOCAL_GOV": [
-        { "name": "Owerri Municipal", "URBAN": true, "RURAL": false },
-        { "name": "Orlu", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Jigawa",
-      "LOCAL_GOV": [
-        { "name": "Dutse", "URBAN": true, "RURAL": false },
-        { "name": "Hadejia", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Kaduna",
-      "LOCAL_GOV": [
-        { "name": "Kaduna North", "URBAN": true, "RURAL": false },
-        { "name": "Zaria", "URBAN": true, "RURAL": false },
-        { "name": "Jama'a", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Kano",
-      "LOCAL_GOV": [
-        { "name": "Kano Municipal", "URBAN": true, "RURAL": false },
-        { "name": "Nasarawa", "URBAN": true, "RURAL": false },
-        { "name": "Ungogo", "URBAN": true, "RURAL": false },
-        { "name": "Rano", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Katsina",
-      "LOCAL_GOV": [
-        { "name": "Katsina", "URBAN": true, "RURAL": false },
-        { "name": "Funtua", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Kebbi",
-      "LOCAL_GOV": [
-        { "name": "Birnin Kebbi", "URBAN": true, "RURAL": false },
-        { "name": "Argungu", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Kogi",
-      "LOCAL_GOV": [
-        { "name": "Lokoja", "URBAN": true, "RURAL": false },
-        { "name": "Idah", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Kwara",
-      "LOCAL_GOV": [
-        { "name": "Ilorin West", "URBAN": true, "RURAL": false },
-        { "name": "Offa", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Lagos",
-      "LOCAL_GOV": [
-        { "name": "Ikeja", "URBAN": true, "RURAL": false },
-        { "name": "Badagry", "URBAN": false, "RURAL": true },
-        { "name": "Lekki", "URBAN": true, "RURAL": false },
-        { "name": "Surulere", "URBAN": true, "RURAL": false },
-        { "name": "Apapa", "URBAN": true, "RURAL": false }
-      ]
-    },
-    {
-      "name": "Nasarawa",
-      "LOCAL_GOV": [
-        { "name": "Lafia", "URBAN": true, "RURAL": false },
-        { "name": "Karu", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Niger",
-      "LOCAL_GOV": [
-        { "name": "Minna", "URBAN": true, "RURAL": false },
-        { "name": "Kontagora", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Ogun",
-      "LOCAL_GOV": [
-        { "name": "Abeokuta South", "URBAN": true, "RURAL": false },
-        { "name": "Ijebu Ode", "URBAN": true, "RURAL": false },
-        { "name": "Yewa North", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Ondo",
-      "LOCAL_GOV": [
-        { "name": "Akure North", "URBAN": true, "RURAL": false },
-        { "name": "Owo", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Osun",
-      "LOCAL_GOV": [
-        { "name": "Osogbo", "URBAN": true, "RURAL": false },
-        { "name": "Ilesa", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Oyo",
-      "LOCAL_GOV": [
-        { "name": "Ibadan North", "URBAN": true, "RURAL": false },
-        { "name": "Oyo", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Plateau",
-      "LOCAL_GOV": [
-        { "name": "Jos North", "URBAN": true, "RURAL": false },
-        { "name": "Shendam", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Rivers",
-      "LOCAL_GOV": [
-        { "name": "Port Harcourt", "URBAN": true, "RURAL": false },
-        { "name": "Obio-Akpor", "URBAN": true, "RURAL": false },
-        { "name": "Ahoada West", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Sokoto",
-      "LOCAL_GOV": [
-        { "name": "Sokoto North", "URBAN": true, "RURAL": false },
-        { "name": "Tambuwal", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Taraba",
-      "LOCAL_GOV": [
-        { "name": "Jalingo", "URBAN": true, "RURAL": false },
-        { "name": "Wukari", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Yobe",
-      "LOCAL_GOV": [
-        { "name": "Damaturu", "URBAN": true, "RURAL": false },
-        { "name": "Potiskum", "URBAN": false, "RURAL": true }
-      ]
-    },
-    {
-      "name": "Zamfara",
-      "LOCAL_GOV": [
-        { "name": "Gusau", "URBAN": true, "RURAL": false },
-        { "name": "Shinkafi", "URBAN": false, "RURAL": true }
-      ]
-    }
-  ]
-  export default States;
+// scripts/data/nigeriaStates.js
+const States = [
+  {
+    name: "Abia",
+    capital: "Umuahia",
+    isoCode: "NG-AB",
+    geoPoliticalZone: "South-East",
+    postalCode: "440001",
+    cities: ["Umuahia", "Aba", "Ohafia", "Arochukwu", "Aba"],
+    LOCAL_GOV: [
+      { name: "Aba North", URBAN: true, RURAL: false },
+      { name: "Aba South", URBAN: true, RURAL: false },
+      { name: "Arochukwu", URBAN: false, RURAL: true },
+      { name: "Bende", URBAN: false, RURAL: true },
+      { name: "Ikwuano", URBAN: false, RURAL: true },
+      { name: "Isiala Ngwa North", URBAN: false, RURAL: true },
+      { name: "Isiala Ngwa South", URBAN: false, RURAL: true },
+      { name: "Isuikwuato", URBAN: false, RURAL: true },
+      { name: "Obi Ngwa", URBAN: false, RURAL: true },
+      { name: "Ohafia", URBAN: false, RURAL: true },
+      { name: "Osisioma", URBAN: true, RURAL: false },
+      { name: "Ugwunagbo", URBAN: false, RURAL: true },
+      { name: "Ukwa East", URBAN: false, RURAL: true },
+      { name: "Ukwa West", URBAN: false, RURAL: true },
+      { name: "Umuahia North", URBAN: true, RURAL: false },
+      { name: "Umuahia South", URBAN: true, RURAL: false },
+      { name: "Umu Nneochi", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Adamawa",
+    capital: "Yola",
+    isoCode: "NG-AD",
+    geoPoliticalZone: "North-East",
+    postalCode: "640001",
+    cities: ["Yola", "Jimeta", "Mubi", "Numan", "Girei"],
+    LOCAL_GOV: [
+      { name: "Demsa", URBAN: false, RURAL: true },
+      { name: "Fufure", URBAN: false, RURAL: true },
+      { name: "Ganye", URBAN: false, RURAL: true },
+      { name: "Gayuk", URBAN: false, RURAL: true },
+      { name: "Gombi", URBAN: false, RURAL: true },
+      { name: "Grie", URBAN: false, RURAL: true },
+      { name: "Hong", URBAN: false, RURAL: true },
+      { name: "Jada", URBAN: false, RURAL: true },
+      { name: "Lamurde", URBAN: false, RURAL: true },
+      { name: "Madagali", URBAN: false, RURAL: true },
+      { name: "Maiha", URBAN: false, RURAL: true },
+      { name: "Mayo-Belwa", URBAN: false, RURAL: true },
+      { name: "Michika", URBAN: false, RURAL: true },
+      { name: "Mubi North", URBAN: true, RURAL: false },
+      { name: "Mubi South", URBAN: false, RURAL: true },
+      { name: "Numan", URBAN: false, RURAL: true },
+      { name: "Shelleng", URBAN: false, RURAL: true },
+      { name: "Song", URBAN: false, RURAL: true },
+      { name: "Toungo", URBAN: false, RURAL: true },
+      { name: "Yola North", URBAN: true, RURAL: false },
+      { name: "Yola South", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Akwa Ibom",
+    capital: "Uyo",
+    isoCode: "NG-AK",
+    geoPoliticalZone: "South-South",
+    postalCode: "520001",
+    cities: ["Uyo", "Eket", "Ikot Ekpene", "Oron", "Abak"],
+    LOCAL_GOV: [
+      { name: "Abak", URBAN: false, RURAL: true },
+      { name: "Eastern Obolo", URBAN: false, RURAL: true },
+      { name: "Eket", URBAN: true, RURAL: false },
+      { name: "Esit Eket", URBAN: false, RURAL: true },
+      { name: "Essien Udim", URBAN: false, RURAL: true },
+      { name: "Etim Ekpo", URBAN: false, RURAL: true },
+      { name: "Etinan", URBAN: false, RURAL: true },
+      { name: "Ibeno", URBAN: false, RURAL: true },
+      { name: "Ibesikpo Asutan", URBAN: false, RURAL: true },
+      { name: "Ibiono-Ibom", URBAN: false, RURAL: true },
+      { name: "Ika", URBAN: false, RURAL: true },
+      { name: "Ikono", URBAN: false, RURAL: true },
+      { name: "Ikot Abasi", URBAN: true, RURAL: false },
+      { name: "Ikot Ekpene", URBAN: true, RURAL: false },
+      { name: "Ini", URBAN: false, RURAL: true },
+      { name: "Itu", URBAN: false, RURAL: true },
+      { name: "Mbo", URBAN: false, RURAL: true },
+      { name: "Mkpat-Enin", URBAN: false, RURAL: true },
+      { name: "Nsit-Atai", URBAN: false, RURAL: true },
+      { name: "Nsit-Ibom", URBAN: false, RURAL: true },
+      { name: "Nsit-Ubium", URBAN: false, RURAL: true },
+      { name: "Obot Akara", URBAN: false, RURAL: true },
+      { name: "Okobo", URBAN: false, RURAL: true },
+      { name: "Onna", URBAN: false, RURAL: true },
+      { name: "Oron", URBAN: true, RURAL: false },
+      { name: "Oruk Anam", URBAN: false, RURAL: true },
+      { name: "Udung-Uko", URBAN: false, RURAL: true },
+      { name: "Ukanafun", URBAN: false, RURAL: true },
+      { name: "Uruan", URBAN: false, RURAL: true },
+      { name: "Urue-Offong/Oruko", URBAN: false, RURAL: true },
+      { name: "Uyo", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Anambra",
+    capital: "Awka",
+    isoCode: "NG-AN",
+    geoPoliticalZone: "South-East",
+    postalCode: "420001",
+    cities: ["Awka", "Onitsha", "Nnewi", "Ekwulobia", "Agulu"],
+    LOCAL_GOV: [
+      { name: "Aguata", URBAN: false, RURAL: true },
+      { name: "Anambra East", URBAN: false, RURAL: true },
+      { name: "Anambra West", URBAN: false, RURAL: true },
+      { name: "Anaocha", URBAN: false, RURAL: true },
+      { name: "Awka North", URBAN: false, RURAL: true },
+      { name: "Awka South", URBAN: true, RURAL: false },
+      { name: "Ayamelum", URBAN: false, RURAL: true },
+      { name: "Dunukofia", URBAN: false, RURAL: true },
+      { name: "Ekwusigo", URBAN: false, RURAL: true },
+      { name: "Idemili North", URBAN: true, RURAL: false },
+      { name: "Idemili South", URBAN: false, RURAL: true },
+      { name: "Ihiala", URBAN: false, RURAL: true },
+      { name: "Njikoka", URBAN: false, RURAL: true },
+      { name: "Nnewi North", URBAN: true, RURAL: false },
+      { name: "Nnewi South", URBAN: false, RURAL: true },
+      { name: "Ogbaru", URBAN: false, RURAL: true },
+      { name: "Onitsha North", URBAN: true, RURAL: false },
+      { name: "Onitsha South", URBAN: true, RURAL: false },
+      { name: "Orumba North", URBAN: false, RURAL: true },
+      { name: "Orumba South", URBAN: false, RURAL: true },
+      { name: "Oyi", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Bauchi",
+    capital: "Bauchi",
+    isoCode: "NG-BA",
+    geoPoliticalZone: "North-East",
+    postalCode: "740001",
+    cities: ["Bauchi", "Azare", "Misau", "Jama'are", "Ningi"],
+    LOCAL_GOV: [
+      { name: "Alkaleri", URBAN: false, RURAL: true },
+      { name: "Bauchi", URBAN: true, RURAL: false },
+      { name: "Bogoro", URBAN: false, RURAL: true },
+      { name: "Damban", URBAN: false, RURAL: true },
+      { name: "Darazo", URBAN: false, RURAL: true },
+      { name: "Dass", URBAN: false, RURAL: true },
+      { name: "Gamawa", URBAN: false, RURAL: true },
+      { name: "Ganjuwa", URBAN: false, RURAL: true },
+      { name: "Giade", URBAN: false, RURAL: true },
+      { name: "Itas/Gadau", URBAN: false, RURAL: true },
+      { name: "Jama'are", URBAN: false, RURAL: true },
+      { name: "Katagum", URBAN: false, RURAL: true },
+      { name: "Kirfi", URBAN: false, RURAL: true },
+      { name: "Misau", URBAN: false, RURAL: true },
+      { name: "Ningi", URBAN: false, RURAL: true },
+      { name: "Shira", URBAN: false, RURAL: true },
+      { name: "Tafawa Balewa", URBAN: false, RURAL: true },
+      { name: "Toro", URBAN: false, RURAL: true },
+      { name: "Warji", URBAN: false, RURAL: true },
+      { name: "Zaki", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Bayelsa",
+    capital: "Yenagoa",
+    isoCode: "NG-BY",
+    geoPoliticalZone: "South-South",
+    postalCode: "560001",
+    cities: ["Yenagoa", "Brass", "Ogbia", "Sagbama", "Nembe"],
+    LOCAL_GOV: [
+      { name: "Brass", URBAN: false, RURAL: true },
+      { name: "Ekeremor", URBAN: false, RURAL: true },
+      { name: "Kolokuma/Opokuma", URBAN: false, RURAL: true },
+      { name: "Nembe", URBAN: false, RURAL: true },
+      { name: "Ogbia", URBAN: false, RURAL: true },
+      { name: "Sagbama", URBAN: false, RURAL: true },
+      { name: "Southern Ijaw", URBAN: false, RURAL: true },
+      { name: "Yenagoa", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Benue",
+    capital: "Makurdi",
+    isoCode: "NG-BE",
+    geoPoliticalZone: "North-Central",
+    postalCode: "970001",
+    cities: ["Makurdi", "Otukpo", "Gboko", "Katsina-Ala", "Vandeikya"],
+    LOCAL_GOV: [
+      { name: "Ado", URBAN: false, RURAL: true },
+      { name: "Agatu", URBAN: false, RURAL: true },
+      { name: "Apa", URBAN: false, RURAL: true },
+      { name: "Buruku", URBAN: false, RURAL: true },
+      { name: "Gboko", URBAN: true, RURAL: false },
+      { name: "Guma", URBAN: false, RURAL: true },
+      { name: "Gwer East", URBAN: false, RURAL: true },
+      { name: "Gwer West", URBAN: false, RURAL: true },
+      { name: "Katsina-Ala", URBAN: false, RURAL: true },
+      { name: "Konshisha", URBAN: false, RURAL: true },
+      { name: "Kwande", URBAN: false, RURAL: true },
+      { name: "Logo", URBAN: false, RURAL: true },
+      { name: "Makurdi", URBAN: true, RURAL: false },
+      { name: "Obi", URBAN: false, RURAL: true },
+      { name: "Ogbadibo", URBAN: false, RURAL: true },
+      { name: "Ohimini", URBAN: false, RURAL: true },
+      { name: "Oju", URBAN: false, RURAL: true },
+      { name: "Okpokwu", URBAN: false, RURAL: true },
+      { name: "Otukpo", URBAN: true, RURAL: false },
+      { name: "Tarka", URBAN: false, RURAL: true },
+      { name: "Ukum", URBAN: false, RURAL: true },
+      { name: "Ushongo", URBAN: false, RURAL: true },
+      { name: "Vandeikya", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Borno",
+    capital: "Maiduguri",
+    isoCode: "NG-BO",
+    geoPoliticalZone: "North-East",
+    postalCode: "600001",
+    cities: ["Maiduguri", "Bama", "Monguno", "Gwoza", "Dikwa"],
+    LOCAL_GOV: [
+      { name: "Abadam", URBAN: false, RURAL: true },
+      { name: "Askira/Uba", URBAN: false, RURAL: true },
+      { name: "Bama", URBAN: false, RURAL: true },
+      { name: "Bayo", URBAN: false, RURAL: true },
+      { name: "Biu", URBAN: false, RURAL: true },
+      { name: "Chibok", URBAN: false, RURAL: true },
+      { name: "Damboa", URBAN: false, RURAL: true },
+      { name: "Dikwa", URBAN: false, RURAL: true },
+      { name: "Gubio", URBAN: false, RURAL: true },
+      { name: "Guzamala", URBAN: false, RURAL: true },
+      { name: "Gwoza", URBAN: false, RURAL: true },
+      { name: "Hawul", URBAN: false, RURAL: true },
+      { name: "Jere", URBAN: false, RURAL: true },
+      { name: "Kaga", URBAN: false, RURAL: true },
+      { name: "Kala/Balge", URBAN: false, RURAL: true },
+      { name: "Konduga", URBAN: false, RURAL: true },
+      { name: "Kukawa", URBAN: false, RURAL: true },
+      { name: "Kwaya Kusar", URBAN: false, RURAL: true },
+      { name: "Mafa", URBAN: false, RURAL: true },
+      { name: "Magumeri", URBAN: false, RURAL: true },
+      { name: "Maiduguri", URBAN: true, RURAL: false },
+      { name: "Marte", URBAN: false, RURAL: true },
+      { name: "Mobbar", URBAN: false, RURAL: true },
+      { name: "Monguno", URBAN: false, RURAL: true },
+      { name: "Ngala", URBAN: false, RURAL: true },
+      { name: "Nganzai", URBAN: false, RURAL: true },
+      { name: "Shani", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Cross River",
+    capital: "Calabar",
+    isoCode: "NG-CR",
+    geoPoliticalZone: "South-South",
+    postalCode: "540001",
+    cities: ["Calabar", "Ikom", "Ogoja", "Obudu", "Ugep"],
+    LOCAL_GOV: [
+      { name: "Abi", URBAN: false, RURAL: true },
+      { name: "Akamkpa", URBAN: false, RURAL: true },
+      { name: "Akpabuyo", URBAN: false, RURAL: true },
+      { name: "Bakassi", URBAN: false, RURAL: true },
+      { name: "Bekwarra", URBAN: false, RURAL: true },
+      { name: "Biase", URBAN: false, RURAL: true },
+      { name: "Boki", URBAN: false, RURAL: true },
+      { name: "Calabar Municipal", URBAN: true, RURAL: false },
+      { name: "Calabar South", URBAN: true, RURAL: false },
+      { name: "Etung", URBAN: false, RURAL: true },
+      { name: "Ikom", URBAN: false, RURAL: true },
+      { name: "Obanliku", URBAN: false, RURAL: true },
+      { name: "Obubra", URBAN: false, RURAL: true },
+      { name: "Obudu", URBAN: false, RURAL: true },
+      { name: "Odukpani", URBAN: false, RURAL: true },
+      { name: "Ogoja", URBAN: false, RURAL: true },
+      { name: "Yakuur", URBAN: false, RURAL: true },
+      { name: "Yala", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Delta",
+    capital: "Asaba",
+    isoCode: "NG-DE",
+    geoPoliticalZone: "South-South",
+    postalCode: "320001",
+    cities: ["Asaba", "Warri", "Sapele", "Ughelli", "Agbor"],
+    LOCAL_GOV: [
+      { name: "Aniocha North", URBAN: false, RURAL: true },
+      { name: "Aniocha South", URBAN: false, RURAL: true },
+      { name: "Bomadi", URBAN: false, RURAL: true },
+      { name: "Burutu", URBAN: false, RURAL: true },
+      { name: "Ethiope East", URBAN: false, RURAL: true },
+      { name: "Ethiope West", URBAN: false, RURAL: true },
+      { name: "Ika North East", URBAN: false, RURAL: true },
+      { name: "Ika South", URBAN: false, RURAL: true },
+      { name: "Isoko North", URBAN: false, RURAL: true },
+      { name: "Isoko South", URBAN: false, RURAL: true },
+      { name: "Ndokwa East", URBAN: false, RURAL: true },
+      { name: "Ndokwa West", URBAN: false, RURAL: true },
+      { name: "Okpe", URBAN: false, RURAL: true },
+      { name: "Oshimili North", URBAN: false, RURAL: true },
+      { name: "Oshimili South", URBAN: true, RURAL: false },
+      { name: "Patani", URBAN: false, RURAL: true },
+      { name: "Sapele", URBAN: true, RURAL: false },
+      { name: "Udu", URBAN: false, RURAL: true },
+      { name: "Ughelli North", URBAN: true, RURAL: false },
+      { name: "Ughelli South", URBAN: false, RURAL: true },
+      { name: "Ukwuani", URBAN: false, RURAL: true },
+      { name: "Uvwie", URBAN: true, RURAL: false },
+      { name: "Warri North", URBAN: false, RURAL: true },
+      { name: "Warri South", URBAN: true, RURAL: false },
+      { name: "Warri South West", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Ebonyi",
+    capital: "Abakaliki",
+    isoCode: "NG-EB",
+    geoPoliticalZone: "South-East",
+    postalCode: "840001",
+    cities: ["Abakaliki", "Afikpo", "Onueke", "Ezzamgbo", "Okposi"],
+    LOCAL_GOV: [
+      { name: "Abakaliki", URBAN: true, RURAL: false },
+      { name: "Afikpo North", URBAN: true, RURAL: false },
+      { name: "Afikpo South", URBAN: false, RURAL: true },
+      { name: "Ebonyi", URBAN: false, RURAL: true },
+      { name: "Ezza North", URBAN: false, RURAL: true },
+      { name: "Ezza South", URBAN: false, RURAL: true },
+      { name: "Ikwo", URBAN: false, RURAL: true },
+      { name: "Ishielu", URBAN: false, RURAL: true },
+      { name: "Ivo", URBAN: false, RURAL: true },
+      { name: "Izzi", URBAN: false, RURAL: true },
+      { name: "Nwangele", URBAN: false, RURAL: true },
+      { name: "Ohaozara", URBAN: false, RURAL: true },
+      { name: "Ohaukwu", URBAN: false, RURAL: true },
+      { name: "Onicha", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Edo",
+    capital: "Benin City",
+    isoCode: "NG-ED",
+    geoPoliticalZone: "South-South",
+    postalCode: "300001",
+    cities: ["Benin City", "Uromi", "Auchi", "Ekpoma", "Oredo"],
+    LOCAL_GOV: [
+      { name: "Akoko-Edo", URBAN: false, RURAL: true },
+      { name: "Egor", URBAN: false, RURAL: true },
+      { name: "Esan Central", URBAN: false, RURAL: true },
+      { name: "Esan North-East", URBAN: false, RURAL: true },
+      { name: "Esan South-East", URBAN: false, RURAL: true },
+      { name: "Esan West", URBAN: false, RURAL: true },
+      { name: "Etsako Central", URBAN: false, RURAL: true },
+      { name: "Etsako East", URBAN: false, RURAL: true },
+      { name: "Etsako West", URBAN: false, RURAL: true },
+      { name: "Igueben", URBAN: false, RURAL: true },
+      { name: "Ikpoba-Okha", URBAN: false, RURAL: true },
+      { name: "Oredo", URBAN: true, RURAL: false },
+      { name: "Orhionmwon", URBAN: false, RURAL: true },
+      { name: "Ovia North-East", URBAN: false, RURAL: true },
+      { name: "Ovia South-West", URBAN: false, RURAL: true },
+      { name: "Owan East", URBAN: false, RURAL: true },
+      { name: "Owan West", URBAN: false, RURAL: true },
+      { name: "Uhunmwonde", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Ekiti",
+    capital: "Ado-Ekiti",
+    isoCode: "NG-EK",
+    geoPoliticalZone: "South-West",
+    postalCode: "360001",
+    cities: ["Ado-Ekiti", "Ikere-Ekiti", "Iyin-Ekiti", "Ode", "Ilawe"],
+    LOCAL_GOV: [
+      { name: "Ado-Ekiti", URBAN: true, RURAL: false },
+      { name: "Efon", URBAN: false, RURAL: true },
+      { name: "Ekiti East", URBAN: false, RURAL: true },
+      { name: "Ekiti South-West", URBAN: false, RURAL: true },
+      { name: "Ekiti West", URBAN: false, RURAL: true },
+      { name: "Emure", URBAN: false, RURAL: true },
+      { name: "Gbonyin", URBAN: false, RURAL: true },
+      { name: "Ido-Osi", URBAN: false, RURAL: true },
+      { name: "Ijero", URBAN: false, RURAL: true },
+      { name: "Ikere", URBAN: false, RURAL: true },
+      { name: "Ikole", URBAN: false, RURAL: true },
+      { name: "Ilejemeje", URBAN: false, RURAL: true },
+      { name: "Irepodun/Ifelodun", URBAN: false, RURAL: true },
+      { name: "Ise/Orun", URBAN: false, RURAL: true },
+      { name: "Moba", URBAN: false, RURAL: true },
+      { name: "Oye", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Enugu",
+    capital: "Enugu",
+    isoCode: "NG-EN",
+    geoPoliticalZone: "South-East",
+    postalCode: "400001",
+    cities: ["Enugu", "Nsukka", "Awgu", "Udi", "Aguata"],
+    LOCAL_GOV: [
+      { name: "Aninri", URBAN: false, RURAL: true },
+      { name: "Awgu", URBAN: false, RURAL: true },
+      { name: "Enugu East", URBAN: true, RURAL: false },
+      { name: "Enugu North", URBAN: true, RURAL: false },
+      { name: "Enugu South", URBAN: true, RURAL: false },
+      { name: "Ezeagu", URBAN: false, RURAL: true },
+      { name: "Igbo Etiti", URBAN: false, RURAL: true },
+      { name: "Igbo Eze North", URBAN: false, RURAL: true },
+      { name: "Igbo Eze South", URBAN: false, RURAL: true },
+      { name: "Isi Uzo", URBAN: false, RURAL: true },
+      { name: "Nkanu East", URBAN: false, RURAL: true },
+      { name: "Nkanu West", URBAN: false, RURAL: true },
+      { name: "Nsukka", URBAN: true, RURAL: false },
+      { name: "Oji River", URBAN: false, RURAL: true },
+      { name: "Udenu", URBAN: false, RURAL: true },
+      { name: "Udi", URBAN: false, RURAL: true },
+      { name: "Uzo-Uwani", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Federal Capital Territory",
+    capital: "Abuja",
+    isoCode: "NG-FC",
+    geoPoliticalZone: "North-Central",
+    postalCode: "900001",
+    cities: ["Abuja", "Gwarinpa", "Kubwa", "Maitama", "Asokoro"],
+    LOCAL_GOV: [
+      { name: "Abaji", URBAN: false, RURAL: true },
+      { name: "Bwari", URBAN: true, RURAL: false },
+      { name: "Gwagwalada", URBAN: true, RURAL: false },
+      { name: "Kuje", URBAN: false, RURAL: true },
+      { name: "Kwali", URBAN: false, RURAL: true },
+      { name: "Municipal Area Council", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Gombe",
+    capital: "Gombe",
+    isoCode: "NG-GO",
+    geoPoliticalZone: "North-East",
+    postalCode: "760001",
+    cities: ["Gombe", "Kaltungo", "Bajoga", "Deba", "Dukku"],
+    LOCAL_GOV: [
+      { name: "Akko", URBAN: false, RURAL: true },
+      { name: "Balanga", URBAN: false, RURAL: true },
+      { name: "Billiri", URBAN: false, RURAL: true },
+      { name: "Dukku", URBAN: false, RURAL: true },
+      { name: "Funakaye", URBAN: false, RURAL: true },
+      { name: "Gombe", URBAN: true, RURAL: false },
+      { name: "Kaltungo", URBAN: false, RURAL: true },
+      { name: "Kwami", URBAN: false, RURAL: true },
+      { name: "Nafada", URBAN: false, RURAL: true },
+      { name: "Shongom", URBAN: false, RURAL: true },
+      { name: "Yamaltu/Deba", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Imo",
+    capital: "Owerri",
+    isoCode: "NG-IM",
+    geoPoliticalZone: "South-East",
+    postalCode: "460001",
+    cities: ["Owerri", "Orlu", "Okigwe", "Mbaise", "Ohaji"],
+    LOCAL_GOV: [
+      { name: "Aboh Mbaise", URBAN: false, RURAL: true },
+      { name: "Ahiazu Mbaise", URBAN: false, RURAL: true },
+      { name: "Ehime Mbano", URBAN: false, RURAL: true },
+      { name: "Ezinihitte", URBAN: false, RURAL: true },
+      { name: "Ideato North", URBAN: false, RURAL: true },
+      { name: "Ideato South", URBAN: false, RURAL: true },
+      { name: "Ihitte/Uboma", URBAN: false, RURAL: true },
+      { name: "Ikeduru", URBAN: false, RURAL: true },
+      { name: "Isiala Mbano", URBAN: false, RURAL: true },
+      { name: "Isu", URBAN: false, RURAL: true },
+      { name: "Mbaitoli", URBAN: false, RURAL: true },
+      { name: "Ngor Okpala", URBAN: false, RURAL: true },
+      { name: "Njaba", URBAN: false, RURAL: true },
+      { name: "Nkwerre", URBAN: false, RURAL: true },
+      { name: "Nwangele", URBAN: false, RURAL: true },
+      { name: "Obowo", URBAN: false, RURAL: true },
+      { name: "Oguta", URBAN: false, RURAL: true },
+      { name: "Ohaji/Egbema", URBAN: false, RURAL: true },
+      { name: "Okigwe", URBAN: false, RURAL: true },
+      { name: "Onuimo", URBAN: false, RURAL: true },
+      { name: "Orlu", URBAN: false, RURAL: true },
+      { name: "Orsu", URBAN: false, RURAL: true },
+      { name: "Oru East", URBAN: false, RURAL: true },
+      { name: "Oru West", URBAN: false, RURAL: true },
+      { name: "Owerri Municipal", URBAN: true, RURAL: false },
+      { name: "Owerri North", URBAN: false, RURAL: true },
+      { name: "Owerri West", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Jigawa",
+    capital: "Dutse",
+    isoCode: "NG-JI",
+    geoPoliticalZone: "North-West",
+    postalCode: "720001",
+    cities: ["Dutse", "Hadejia", "Gumel", "Kazaure", "Ringim"],
+    LOCAL_GOV: [
+      { name: "Auyo", URBAN: false, RURAL: true },
+      { name: "Babura", URBAN: false, RURAL: true },
+      { name: "Biriniwa", URBAN: false, RURAL: true },
+      { name: "Birnin Kudu", URBAN: false, RURAL: true },
+      { name: "Buji", URBAN: false, RURAL: true },
+      { name: "Dutse", URBAN: true, RURAL: false },
+      { name: "Gagarawa", URBAN: false, RURAL: true },
+      { name: "Garki", URBAN: false, RURAL: true },
+      { name: "Gumel", URBAN: false, RURAL: true },
+      { name: "Guri", URBAN: false, RURAL: true },
+      { name: "Gwaram", URBAN: false, RURAL: true },
+      { name: "Gwiwa", URBAN: false, RURAL: true },
+      { name: "Hadejia", URBAN: false, RURAL: true },
+      { name: "Jahun", URBAN: false, RURAL: true },
+      { name: "Kafin Hausa", URBAN: false, RURAL: true },
+      { name: "Kaugama", URBAN: false, RURAL: true },
+      { name: "Kazaure", URBAN: false, RURAL: true },
+      { name: "Kiri Kasama", URBAN: false, RURAL: true },
+      { name: "Kirawa", URBAN: false, RURAL: true },
+      { name: "Maigatari", URBAN: false, RURAL: true },
+      { name: "Malam Madori", URBAN: false, RURAL: true },
+      { name: "Miga", URBAN: false, RURAL: true },
+      { name: "Ringim", URBAN: false, RURAL: true },
+      { name: "Roni", URBAN: false, RURAL: true },
+      { name: "Sule Tankarkar", URBAN: false, RURAL: true },
+      { name: "Taura", URBAN: false, RURAL: true },
+      { name: "Yankwashi", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Kaduna",
+    capital: "Kaduna",
+    isoCode: "NG-KD",
+    geoPoliticalZone: "North-West",
+    postalCode: "800001",
+    cities: ["Kaduna", "Zaria", "Kafanchan", "Birnin Gwari", "Saminaka"],
+    LOCAL_GOV: [
+      { name: "Birnin Gwari", URBAN: false, RURAL: true },
+      { name: "Chikun", URBAN: false, RURAL: true },
+      { name: "Giwa", URBAN: false, RURAL: true },
+      { name: "Igabi", URBAN: false, RURAL: true },
+      { name: "Ikara", URBAN: false, RURAL: true },
+      { name: "Jaba", URBAN: false, RURAL: true },
+      { name: "Jema'a", URBAN: false, RURAL: true },
+      { name: "Kachia", URBAN: false, RURAL: true },
+      { name: "Kaduna North", URBAN: true, RURAL: false },
+      { name: "Kaduna South", URBAN: true, RURAL: false },
+      { name: "Kagarko", URBAN: false, RURAL: true },
+      { name: "Kajuru", URBAN: false, RURAL: true },
+      { name: "Kaura", URBAN: false, RURAL: true },
+      { name: "Kauru", URBAN: false, RURAL: true },
+      { name: "Kubau", URBAN: false, RURAL: true },
+      { name: "Kudan", URBAN: false, RURAL: true },
+      { name: "Lere", URBAN: false, RURAL: true },
+      { name: "Makarfi", URBAN: false, RURAL: true },
+      { name: "Sabon Gari", URBAN: false, RURAL: true },
+      { name: "Sanga", URBAN: false, RURAL: true },
+      { name: "Soba", URBAN: false, RURAL: true },
+      { name: "Zangon Kataf", URBAN: false, RURAL: true },
+      { name: "Zaria", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Kano",
+    capital: "Kano",
+    isoCode: "NG-KN",
+    geoPoliticalZone: "North-West",
+    postalCode: "700001",
+    cities: ["Kano", "Kunfu", "Dambatta", "Rano", "Gaya"],
+    LOCAL_GOV: [
+      { name: "Ajingi", URBAN: false, RURAL: true },
+      { name: "Albasu", URBAN: false, RURAL: true },
+      { name: "Bagwai", URBAN: false, RURAL: true },
+      { name: "Bebeji", URBAN: false, RURAL: true },
+      { name: "Bichi", URBAN: false, RURAL: true },
+      { name: "Bunkure", URBAN: false, RURAL: true },
+      { name: "Dala", URBAN: true, RURAL: false },
+      { name: "Dambatta", URBAN: false, RURAL: true },
+      { name: "Dawakin Kudu", URBAN: false, RURAL: true },
+      { name: "Dawakin Tofa", URBAN: false, RURAL: true },
+      { name: "Doguwa", URBAN: false, RURAL: true },
+      { name: "Fagge", URBAN: true, RURAL: false },
+      { name: "Gabasawa", URBAN: false, RURAL: true },
+      { name: "Garko", URBAN: false, RURAL: true },
+      { name: "Garun Mallam", URBAN: false, RURAL: true },
+      { name: "Gaya", URBAN: false, RURAL: true },
+      { name: "Gezawa", URBAN: false, RURAL: true },
+      { name: "Gwale", URBAN: true, RURAL: false },
+      { name: "Gwarzo", URBAN: false, RURAL: true },
+      { name: "Kabo", URBAN: false, RURAL: true },
+      { name: "Kano Municipal", URBAN: true, RURAL: false },
+      { name: "Karaye", URBAN: false, RURAL: true },
+      { name: "Kibiya", URBAN: false, RURAL: true },
+      { name: "Kiru", URBAN: false, RURAL: true },
+      { name: "Kumbotso", URBAN: false, RURAL: true },
+      { name: "Kunchi", URBAN: false, RURAL: true },
+      { name: "Kura", URBAN: false, RURAL: true },
+      { name: "Madobi", URBAN: false, RURAL: true },
+      { name: "Makoda", URBAN: false, RURAL: true },
+      { name: "Minjibir", URBAN: false, RURAL: true },
+      { name: "Nasarawa", URBAN: false, RURAL: true },
+      { name: "Rano", URBAN: false, RURAL: true },
+      { name: "Rimin Gado", URBAN: false, RURAL: true },
+      { name: "Rogo", URBAN: false, RURAL: true },
+      { name: "Shanono", URBAN: false, RURAL: true },
+      { name: "Sumaila", URBAN: false, RURAL: true },
+      { name: "Takai", URBAN: false, RURAL: true },
+      { name: "Tarauni", URBAN: true, RURAL: false },
+      { name: "Tofa", URBAN: false, RURAL: true },
+      { name: "Tsanyawa", URBAN: false, RURAL: true },
+      { name: "Tudun Wada", URBAN: false, RURAL: true },
+      { name: "Ungogo", URBAN: false, RURAL: true },
+      { name: "Warawa", URBAN: false, RURAL: true },
+      { name: "Wudil", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Katsina",
+    capital: "Katsina",
+    isoCode: "NG-KT",
+    geoPoliticalZone: "North-West",
+    postalCode: "820001",
+    cities: ["Katsina", "Daura", "Funtua", "Malumfashi", "Kankia"],
+    LOCAL_GOV: [
+      { name: "Bakori", URBAN: false, RURAL: true },
+      { name: "Batagarawa", URBAN: false, RURAL: true },
+      { name: "Batsari", URBAN: false, RURAL: true },
+      { name: "Baure", URBAN: false, RURAL: true },
+      { name: "Bindawa", URBAN: false, RURAL: true },
+      { name: "Charanchi", URBAN: false, RURAL: true },
+      { name: "Dandume", URBAN: false, RURAL: true },
+      { name: "Danja", URBAN: false, RURAL: true },
+      { name: "Dan Musa", URBAN: false, RURAL: true },
+      { name: "Daura", URBAN: false, RURAL: true },
+      { name: "Dutsi", URBAN: false, RURAL: true },
+      { name: "Dutsin-Ma", URBAN: false, RURAL: true },
+      { name: "Faskari", URBAN: false, RURAL: true },
+      { name: "Funtua", URBAN: false, RURAL: true },
+      { name: "Ingawa", URBAN: false, RURAL: true },
+      { name: "Jibia", URBAN: false, RURAL: true },
+      { name: "Kafur", URBAN: false, RURAL: true },
+      { name: "Kaita", URBAN: false, RURAL: true },
+      { name: "Kankara", URBAN: false, RURAL: true },
+      { name: "Kankia", URBAN: false, RURAL: true },
+      { name: "Katsina", URBAN: true, RURAL: false },
+      { name: "Kurfi", URBAN: false, RURAL: true },
+      { name: "Kusada", URBAN: false, RURAL: true },
+      { name: "Mai'Adua", URBAN: false, RURAL: true },
+      { name: "Malumfashi", URBAN: false, RURAL: true },
+      { name: "Mani", URBAN: false, RURAL: true },
+      { name: "Mashi", URBAN: false, RURAL: true },
+      { name: "Matazu", URBAN: false, RURAL: true },
+      { name: "Musawa", URBAN: false, RURAL: true },
+      { name: "Rimi", URBAN: false, RURAL: true },
+      { name: "Sabuwa", URBAN: false, RURAL: true },
+      { name: "Safana", URBAN: false, RURAL: true },
+      { name: "Sandamu", URBAN: false, RURAL: true },
+      { name: "Zango", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Kebbi",
+    capital: "Birnin Kebbi",
+    isoCode: "NG-KE",
+    geoPoliticalZone: "North-West",
+    postalCode: "860001",
+    cities: ["Birnin Kebbi", "Argungu", "Yauri", "Jega", "Zuru"],
+    LOCAL_GOV: [
+      { name: "Aleiro", URBAN: false, RURAL: true },
+      { name: "Arewa Dandi", URBAN: false, RURAL: true },
+      { name: "Argungu", URBAN: false, RURAL: true },
+      { name: "Augie", URBAN: false, RURAL: true },
+      { name: "Bagudo", URBAN: false, RURAL: true },
+      { name: "Birnin Kebbi", URBAN: true, RURAL: false },
+      { name: "Bunza", URBAN: false, RURAL: true },
+      { name: "Dandi", URBAN: false, RURAL: true },
+      { name: "Fakai", URBAN: false, RURAL: true },
+      { name: "Gwandu", URBAN: false, RURAL: true },
+      { name: "Jega", URBAN: false, RURAL: true },
+      { name: "Kalgo", URBAN: false, RURAL: true },
+      { name: "Koko/Besse", URBAN: false, RURAL: true },
+      { name: "Maiyama", URBAN: false, RURAL: true },
+      { name: "Ngaski", URBAN: false, RURAL: true },
+      { name: "Sakaba", URBAN: false, RURAL: true },
+      { name: "Shanga", URBAN: false, RURAL: true },
+      { name: "Suru", URBAN: false, RURAL: true },
+      { name: "Wasagu/Danko", UBRAN: false, RURAL: true },
+      { name: "Yauri", UBRAN: false, RURAL: true },
+      { name: "Zuru", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Kogi",
+    capital: "Lokoja",
+    isoCode: "NG-KO",
+    geoPoliticalZone: "North-Central",
+    postalCode: "260001",
+    cities: ["Lokoja", "Okene", "Idah", "Ankpa", "Kabba"],
+    LOCAL_GOV: [
+      { name: "Adavi", URBAN: false, RURAL: true },
+      { name: "Ajaokuta", URBAN: false, RURAL: true },
+      { name: "Ankpa", URBAN: false, RURAL: true },
+      { name: "Bassa", URBAN: false, RURAL: true },
+      { name: "Dekina", URBAN: false, RURAL: true },
+      { name: "Ibaji", URBAN: false, RURAL: true },
+      { name: "Idah", URBAN: false, RURAL: true },
+      { name: "Igalamela-Odolu", URBAN: false, RURAL: true },
+      { name: "Ijumu", URBAN: false, RURAL: true },
+      { name: "Kabba/Bunu", URBAN: false, RURAL: true },
+      { name: "Kogi", URBAN: false, RURAL: true },
+      { name: "Lokoja", URBAN: true, RURAL: false },
+      { name: "Mopa-Muro", URBAN: false, RURAL: true },
+      { name: "Ofu", URBAN: false, RURAL: true },
+      { name: "Ogori/Magongo", URBAN: false, RURAL: true },
+      { name: "Okehi", URBAN: false, RURAL: true },
+      { name: "Okene", URBAN: false, RURAL: true },
+      { name: "Olamaboro", URBAN: false, RURAL: true },
+      { name: "Omala", URBAN: false, RURAL: true },
+      { name: "Yagba East", URBAN: false, RURAL: true },
+      { name: "Yagba West", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Kwara",
+    capital: "Ilorin",
+    isoCode: "NG-KW",
+    geoPoliticalZone: "North-Central",
+    postalCode: "240001",
+    cities: ["Ilorin", "Offa", "Omu-Aran", "Lafiagi", "Kaiama"],
+    LOCAL_GOV: [
+      { name: "Asa", URBAN: false, RURAL: true },
+      { name: "Baruten", URBAN: false, RURAL: true },
+      { name: "Edu", URBAN: false, RURAL: true },
+      { name: "Ekiti", URBAN: false, RURAL: true },
+      { name: "Ifelodun", URBAN: false, RURAL: true },
+      { name: "Ilorin East", URBAN: false, RURAL: true },
+      { name: "Ilorin South", URBAN: true, RURAL: false },
+      { name: "Ilorin West", URBAN: true, RURAL: false },
+      { name: "Irepodun", URBAN: false, RURAL: true },
+      { name: "Isin", URBAN: false, RURAL: true },
+      { name: "Kaiama", URBAN: false, RURAL: true },
+      { name: "Moro", URBAN: false, RURAL: true },
+      { name: "Offa", URBAN: false, RURAL: true },
+      { name: "Oke Ero", URBAN: false, RURAL: true },
+      { name: "Oyun", URBAN: false, RURAL: true },
+      { name: "Pategi", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Lagos",
+    capital: "Ikeja",
+    isoCode: "NG-LA",
+    geoPoliticalZone: "South-West",
+    postalCode: "100001",
+    cities: ["Lagos", "Ikeja", "Lekki", "Badagry", "Epe"],
+    LOCAL_GOV: [
+      { name: "Agege", URBAN: true, RURAL: false },
+      { name: "Ajeromi-Ifelodun", URBAN: true, RURAL: false },
+      { name: "Alimosho", URBAN: true, RURAL: false },
+      { name: "Amuwo-Odofin", URBAN: true, RURAL: false },
+      { name: "Apapa", URBAN: true, RURAL: false },
+      { name: "Badagry", URBAN: false, RURAL: true },
+      { name: "Epe", URBAN: false, RURAL: true },
+      { name: "Eti Osa", URBAN: true, RURAL: false },
+      { name: "Ibeju-Lekki", URBAN: false, RURAL: true },
+      { name: "Ifako-Ijaiye", URBAN: true, RURAL: false },
+      { name: "Ikeja", URBAN: true, RURAL: false },
+      { name: "Ikorodu", URBAN: false, RURAL: true },
+      { name: "Kosofe", URBAN: true, RURAL: false },
+      { name: "Lagos Island", URBAN: true, RURAL: false },
+      { name: "Lagos Mainland", URBAN: true, RURAL: false },
+      { name: "Mushin", URBAN: true, RURAL: false },
+      { name: "Ojo", URBAN: false, RURAL: true },
+      { name: "Oshodi-Isolo", URBAN: true, RURAL: false },
+      { name: "Shomolu", URBAN: true, RURAL: false },
+      { name: "Surulere", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Nasarawa",
+    capital: "Lafia",
+    isoCode: "NG-NA",
+    geoPoliticalZone: "North-Central",
+    postalCode: "950001",
+    cities: ["Lafia", "Keffi", "Karu", "Nasarawa", "Akwanga"],
+    LOCAL_GOV: [
+      { name: "Akwanga", URBAN: false, RURAL: true },
+      { name: "Awe", URBAN: false, RURAL: true },
+      { name: "Doma", URBAN: false, RURAL: true },
+      { name: "Karu", URBAN: false, RURAL: true },
+      { name: "Keana", URBAN: false, RURAL: true },
+      { name: "Keffi", URBAN: false, RURAL: true },
+      { name: "Kokona", URBAN: false, RURAL: true },
+      { name: "Lafia", URBAN: true, RURAL: false },
+      { name: "Nasarawa", URBAN: false, RURAL: true },
+      { name: "Nasarawa Egon", URBAN: false, RURAL: true },
+      { name: "Obi", URBAN: false, RURAL: true },
+      { name: "Toto", URBAN: false, RURAL: true },
+      { name: "Wamba", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Niger",
+    capital: "Minna",
+    isoCode: "NG-NI",
+    geoPoliticalZone: "North-Central",
+    postalCode: "920001",
+    cities: ["Minna", "Bida", "Suleja", "Kontagora", "Kuta"],
+    LOCAL_GOV: [
+      { name: "Agaie", URBAN: false, RURAL: true },
+      { name: "Agwara", URBAN: false, RURAL: true },
+      { name: "Bida", URBAN: false, RURAL: true },
+      { name: "Borgu", URBAN: false, RURAL: true },
+      { name: "Bosso", URBAN: false, RURAL: true },
+      { name: "Chanchaga", URBAN: false, RURAL: true },
+      { name: "Edati", URBAN: false, RURAL: true },
+      { name: "Gbako", URBAN: false, RURAL: true },
+      { name: "Gurara", URBAN: false, RURAL: true },
+      { name: "Katcha", URBAN: false, RURAL: true },
+      { name: "Kontagora", URBAN: false, RURAL: true },
+      { name: "Lapai", URBAN: false, RURAL: true },
+      { name: "Lavun", URBAN: false, RURAL: true },
+      { name: "Magama", URBAN: false, RURAL: true },
+      { name: "Mariga", URBAN: false, RURAL: true },
+      { name: "Mashegu", URBAN: false, RURAL: true },
+      { name: "Mokwa", URBAN: false, RURAL: true },
+      { name: "Moya", URBAN: false, RURAL: true },
+      { name: "Paikoro", URBAN: false, RURAL: true },
+      { name: "Rafi", URBAN: false, RURAL: true },
+      { name: "Rijau", URBAN: false, RURAL: true },
+      { name: "Shiroro", URBAN: false, RURAL: true },
+      { name: "Suleja", URBAN: false, RURAL: true },
+      { name: "Tafa", URBAN: false, RURAL: true },
+      { name: "Wushishi", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Ogun",
+    capital: "Abeokuta",
+    isoCode: "NG-OG",
+    geoPoliticalZone: "South-West",
+    postalCode: "110001",
+    cities: ["Abeokuta", "Ijebu Ode", "Sagamu", "Ota", "Ilaro"],
+    LOCAL_GOV: [
+      { name: "Abeokuta North", URBAN: false, RURAL: true },
+      { name: "Abeokuta South", URBAN: true, RURAL: false },
+      { name: "Ado-Odo/Ota", URBAN: false, RURAL: true },
+      { name: "Egbado North", URBAN: false, RURAL: true },
+      { name: "Egbado South", URBAN: false, RURAL: true },
+      { name: "Ewekoro", URBAN: false, RURAL: true },
+      { name: "Ifo", URBAN: false, RURAL: true },
+      { name: "Ijebu East", URBAN: false, RURAL: true },
+      { name: "Ijebu North", URBAN: false, RURAL: true },
+      { name: "Ijebu North East", URBAN: false, RURAL: true },
+      { name: "Ijebu Ode", URBAN: true, RURAL: false },
+      { name: "Ikenne", URBAN: false, RURAL: true },
+      { name: "Imeko Afon", URBAN: false, RURAL: true },
+      { name: "Ipokia", URBAN: false, RURAL: true },
+      { name: "Obafemi Owode", URBAN: false, RURAL: true },
+      { name: "Odeda", URBAN: false, RURAL: true },
+      { name: "Odogbolu", URBAN: false, RURAL: true },
+      { name: "Ogun Waterside", URBAN: false, RURAL: true },
+      { name: "Remo North", URBAN: false, RURAL: true },
+      { name: "Shagamu", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Ondo",
+    capital: "Akure",
+    isoCode: "NG-ON",
+    geoPoliticalZone: "South-West",
+    postalCode: "340001",
+    cities: ["Akure", "Ondo", "Owo", "Okitipupa", "Ikare"],
+    LOCAL_GOV: [
+      { name: "Akoko North-East", URBAN: false, RURAL: true },
+      { name: "Akoko North-West", URBAN: false, RURAL: true },
+      { name: "Akoko South-East", URBAN: false, RURAL: true },
+      { name: "Akoko South-West", URBAN: false, RURAL: true },
+      { name: "Akure North", URBAN: false, RURAL: true },
+      { name: "Akure South", URBAN: true, RURAL: false },
+      { name: "Ese Odo", URBAN: false, RURAL: true },
+      { name: "Idanre", URBAN: false, RURAL: true },
+      { name: "Ifedore", URBAN: false, RURAL: true },
+      { name: "Ilaje", URBAN: false, RURAL: true },
+      { name: "Ile Oluji/Okeigbo", URBAN: false, RURAL: true },
+      { name: "Irele", URBAN: false, RURAL: true },
+      { name: "Odigbo", URBAN: false, RURAL: true },
+      { name: "Okitipupa", URBAN: false, RURAL: true },
+      { name: "Ondo East", URBAN: false, RURAL: true },
+      { name: "Ondo West", URBAN: false, RURAL: true },
+      { name: "Ose", URBAN: false, RURAL: true },
+      { name: "Owo", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Osun",
+    capital: "Osogbo",
+    isoCode: "NG-OS",
+    geoPoliticalZone: "South-West",
+    postalCode: "230001",
+    cities: ["Osogbo", "Ile-Ife", "Ilesha", "Oshogbo", "Iwo"],
+    LOCAL_GOV: [
+      { name: "Aiyedade", URBAN: false, RURAL: true },
+      { name: "Aiyedire", URBAN: false, RURAL: true },
+      { name: "Atakunmosa East", URBAN: false, RURAL: true },
+      { name: "Atakunmosa West", URBAN: false, RURAL: true },
+      { name: "Boluwaduro", URBAN: false, RURAL: true },
+      { name: "Boripe", URBAN: false, RURAL: true },
+      { name: "Ede North", URBAN: false, RURAL: true },
+      { name: "Ede South", URBAN: false, RURAL: true },
+      { name: "Egbedore", URBAN: false, RURAL: true },
+      { name: "Ejigbo", URBAN: false, RURAL: true },
+      { name: "Ife Central", URBAN: false, RURAL: true },
+      { name: "Ife East", URBAN: false, RURAL: true },
+      { name: "Ife North", URBAN: false, RURAL: true },
+      { name: "Ife South", URBAN: false, RURAL: true },
+      { name: "Ifedayo", URBAN: false, RURAL: true },
+      { name: "Ifelodun", URBAN: false, RURAL: true },
+      { name: "Ila", URBAN: false, RURAL: true },
+      { name: "Ilesa East", URBAN: false, RURAL: true },
+      { name: "Ilesa West", URBAN: false, RURAL: true },
+      { name: "Irepodun", URBAN: false, RURAL: true },
+      { name: "Irewole", URBAN: false, RURAL: true },
+      { name: "Isokan", URBAN: false, RURAL: true },
+      { name: "Iwo", URBAN: false, RURAL: true },
+      { name: "Obokun", URBAN: false, RURAL: true },
+      { name: "Odo Otin", URBAN: false, RURAL: true },
+      { name: "Ola Oluwa", URBAN: false, RURAL: true },
+      { name: "Olorunda", URBAN: false, RURAL: true },
+      { name: "Oriade", URBAN: false, RURAL: true },
+      { name: "Orolu", URBAN: false, RURAL: true },
+      { name: "Osogbo", URBAN: true, RURAL: false }
+    ]
+  },
+  {
+    name: "Oyo",
+    capital: "Ibadan",
+    isoCode: "NG-OY",
+    geoPoliticalZone: "South-West",
+    postalCode: "200001",
+    cities: ["Ibadan", "Ogbomoso", "Oyo", "Iseyin", "Saki"],
+    LOCAL_GOV: [
+      { name: "Afijio", URBAN: false, RURAL: true },
+      { name: "Akinyele", URBAN: false, RURAL: true },
+      { name: "Atiba", URBAN: false, RURAL: true },
+      { name: "Atisbo", URBAN: false, RURAL: true },
+      { name: "Egbeda", URBAN: false, RURAL: true },
+      { name: "Ibadan North", URBAN: true, RURAL: false },
+      { name: "Ibadan North-East", URBAN: true, RURAL: false },
+      { name: "Ibadan North-West", URBAN: true, RURAL: false },
+      { name: "Ibadan South-East", URBAN: true, RURAL: false },
+      { name: "Ibadan South-West", URBAN: true, RURAL: false },
+      { name: "Ibarapa Central", URBAN: false, RURAL: true },
+      { name: "Ibarapa East", URBAN: false, RURAL: true },
+      { name: "Ibarapa North", URBAN: false, RURAL: true },
+      { name: "Ido", URBAN: false, RURAL: true },
+      { name: "Irepo", URBAN: false, RURAL: true },
+      { name: "Iseyin", URBAN: false, RURAL: true },
+      { name: "Itesiwaju", URBAN: false, RURAL: true },
+      { name: "Iwajowa", URBAN: false, RURAL: true },
+      { name: "Kajola", URBAN: false, RURAL: true },
+      { name: "Lagelu", URBAN: false, RURAL: true },
+      { name: "Ogbomosho North", URBAN: false, RURAL: true },
+      { name: "Ogbomosho South", URBAN: false, RURAL: true },
+      { name: "Ogo Oluwa", URBAN: false, RURAL: true },
+      { name: "Olorunsogo", URBAN: false, RURAL: true },
+      { name: "Oluyole", URBAN: false, RURAL: true },
+      { name: "Ona Ara", URBAN: false, RURAL: true },
+      { name: "Orelope", URBAN: false, RURAL: true },
+      { name: "Ori Ire", URBAN: false, RURAL: true },
+      { name: "Oyo", URBAN: false, RURAL: true },
+      { name: "Oyo East", URBAN: false, RURAL: true },
+      { name: "Saki East", URBAN: false, RURAL: true },
+      { name: "Saki West", URBAN: false, RURAL: true },
+      { name: "Surulere", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Plateau",
+    capital: "Jos",
+    isoCode: "NG-PL",
+    geoPoliticalZone: "North-Central",
+    postalCode: "930001",
+    cities: ["Jos", "Bukuru", "Pankshin", "Shendam", "Langtang"],
+    LOCAL_GOV: [
+      { name: "Barkin Ladi", URBAN: false, RURAL: true },
+      { name: "Bassa", URBAN: false, RURAL: true },
+      { name: "Bokkos", URBAN: false, RURAL: true },
+      { name: "Jos East", URBAN: false, RURAL: true },
+      { name: "Jos North", URBAN: true, RURAL: false },
+      { name: "Jos South", URBAN: true, RURAL: false },
+      { name: "Kanam", URBAN: false, RURAL: true },
+      { name: "Kanke", URBAN: false, RURAL: true },
+      { name: "Langtang North", UBRAN: false, RURAL: true },
+      { name: "Langtang South", URBAN: false, RURAL: true },
+      { name: "Mangu", URBAN: false, RURAL: true },
+      { name: "Mikang", URBAN: false, RURAL: true },
+      { name: "Pankshin", URBAN: false, RURAL: true },
+      { name: "Qua'an Pan", URBAN: false, RURAL: true },
+      { name: "Riyom", URBAN: false, RURAL: true },
+      { name: "Shendam", URBAN: false, RURAL: true },
+      { name: "Wase", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Rivers",
+    capital: "Port Harcourt",
+    isoCode: "NG-RI",
+    geoPoliticalZone: "South-South",
+    postalCode: "500001",
+    cities: ["Port Harcourt", "Bonny", "Okrika", "Ahoada", "Bori"],
+    LOCAL_GOV: [
+      { name: "Abua/Odual", URBAN: false, RURAL: true },
+      { name: "Ahoada East", URBAN: false, RURAL: true },
+      { name: "Ahoada West", URBAN: false, RURAL: true },
+      { name: "Akuku-Toru", URBAN: false, RURAL: true },
+      { name: "Andoni", URBAN: false, RURAL: true },
+      { name: "Asari-Toru", URBAN: false, RURAL: true },
+      { name: "Bonny", URBAN: false, RURAL: true },
+      { name: "Degema", URBAN: false, RURAL: true },
+      { name: "Eleme", URBAN: false, RURAL: true },
+      { name: "Emuoha", URBAN: false, RURAL: true },
+      { name: "Etche", URBAN: false, RURAL: true },
+      { name: "Gokana", URBAN: false, RURAL: true },
+      { name: "Ikwerre", URBAN: false, RURAL: true },
+      { name: "Khana", URBAN: false, RURAL: true },
+      { name: "Obio-Akpor", URBAN: true, RURAL: false },
+      { name: "Ogba/Egbema/Ndoni", URBAN: false, RURAL: true },
+      { name: "Ogu/Bolo", URBAN: false, RURAL: true },
+      { name: "Okrika", URBAN: false, RURAL: true },
+      { name: "Omuma", URBAN: false, RURAL: true },
+      { name: "Opobo/Nkoro", URBAN: false, RURAL: true },
+      { name: "Oyigbo", URBAN: false, RURAL: true },
+      { name: "Port Harcourt", URBAN: true, RURAL: false },
+      { name: "Tai", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Sokoto",
+    capital: "Sokoto",
+    isoCode: "NG-SO",
+    geoPoliticalZone: "North-West",
+    postalCode: "840001",
+    cities: ["Sokoto", "Tambuwal", "Gwadabawa", "Illela", "Wamako"],
+    LOCAL_GOV: [
+      { name: "Binji", URBAN: false, RURAL: true },
+      { name: "Bodinga", URBAN: false, RURAL: true },
+      { name: "Dange Shuni", URBAN: false, RURAL: true },
+      { name: "Gada", URBAN: false, RURAL: true },
+      { name: "Goronyo", URBAN: false, RURAL: true },
+      { name: "Gudu", URBAN: false, RURAL: true },
+      { name: "Gwadabawa", URBAN: false, RURAL: true },
+      { name: "Illela", URBAN: false, RURAL: true },
+      { name: "Isa", URBAN: false, RURAL: true },
+      { name: "Kebbe", URBAN: false, RURAL: true },
+      { name: "Kware", URBAN: false, RURAL: true },
+      { name: "Rabah", URBAN: false, RURAL: true },
+      { name: "Sabon Birni", URBAN: false, RURAL: true },
+      { name: "Shagari", URBAN: false, RURAL: true },
+      { name: "Silame", URBAN: false, RURAL: true },
+      { name: "Sokoto North", URBAN: true, RURAL: false },
+      { name: "Sokoto South", URBAN: true, RURAL: false },
+      { name: "Tambuwal", URBAN: false, RURAL: true },
+      { name: "Tangaza", URBAN: false, RURAL: true },
+      { name: "Tureta", URBAN: false, RURAL: true },
+      { name: "Wamako", URBAN: false, RURAL: true },
+      { name: "Wurno", URBAN: false, RURAL: true },
+      { name: "Yabo", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Taraba",
+    capital: "Jalingo",
+    isoCode: "NG-TA",
+    geoPoliticalZone: "North-East",
+    postalCode: "660001",
+    cities: ["Jalingo", "Wukari", "Bali", "Gembu", "Serti"],
+    LOCAL_GOV: [
+      { name: "Ardo Kola", URBAN: false, RURAL: true },
+      { name: "Bali", URBAN: false, RURAL: true },
+      { name: "Donga", URBAN: false, RURAL: true },
+      { name: "Gashaka", URBAN: false, RURAL: true },
+      { name: "Gassol", URBAN: false, RURAL: true },
+      { name: "Ibi", URBAN: false, RURAL: true },
+      { name: "Jalingo", URBAN: true, RURAL: false },
+      { name: "Karim Lamido", URBAN: false, RURAL: true },
+      { name: "Kurmi", URBAN: false, RURAL: true },
+      { name: "Lau", URBAN: false, RURAL: true },
+      { name: "Sardauna", URBAN: false, RURAL: true },
+      { name: "Takum", URBAN: false, RURAL: true },
+      { name: "Ussa", URBAN: false, RURAL: true },
+      { name: "Wukari", URBAN: false, RURAL: true },
+      { name: "Yorro", UBRAN: false, RURAL: true },
+      { name: "Zing", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Yobe",
+    capital: "Damaturu",
+    isoCode: "NG-YO",
+    geoPoliticalZone: "North-East",
+    postalCode: "620001",
+    cities: ["Damaturu", "Potiskum", "Gashua", "Nguru", "Geidam"],
+    LOCAL_GOV: [
+      { name: "Bade", URBAN: false, RURAL: true },
+      { name: "Bursari", URBAN: false, RURAL: true },
+      { name: "Damaturu", URBAN: true, RURAL: false },
+      { name: "Fika", URBAN: false, RURAL: true },
+      { name: "Fune", URBAN: false, RURAL: true },
+      { name: "Geidam", URBAN: false, RURAL: true },
+      { name: "Gujba", URBAN: false, RURAL: true },
+      { name: "Gulani", URBAN: false, RURAL: true },
+      { name: "Jakusko", URBAN: false, RURAL: true },
+      { name: "Karasuwa", URBAN: false, RURAL: true },
+      { name: "Machina", URBAN: false, RURAL: true },
+      { name: "Nangere", URBAN: false, RURAL: true },
+      { name: "Nguru", URBAN: false, RURAL: true },
+      { name: "Potiskum", URBAN: false, RURAL: true },
+      { name: "Tarmuwa", UBRAN: false, RURAL: true },
+      { name: "Yunusari", URBAN: false, RURAL: true },
+      { name: "Yusufari", URBAN: false, RURAL: true }
+    ]
+  },
+  {
+    name: "Zamfara",
+    capital: "Gusau",
+    isoCode: "NG-ZA",
+    geoPoliticalZone: "North-West",
+    postalCode: "860001",
+    cities: ["Gusau", "Kaura Namoda", "Talata Mafara", "Anka", "Gummi"],
+    LOCAL_GOV: [
+      { name: "Anka", URBAN: false, RURAL: true },
+      { name: "Bakura", URBAN: false, RURAL: true },
+      { name: "Birnin Magaji/Kiyaw", URBAN: false, RURAL: true },
+      { name: "Bukkuyum", URBAN: false, RURAL: true },
+      { name: "Bungudu", URBAN: false, RURAL: true },
+      { name: "Gummi", URBAN: false, RURAL: true },
+      { name: "Gusau", URBAN: true, RURAL: false },
+      { name: "Kaura Namoda", URBAN: false, RURAL: true },
+      { name: "Maradun", URBAN: false, RURAL: true },
+      { name: "Maru", URBAN: false, RURAL: true },
+      { name: "Shinkafi", URBAN: false, RURAL: true },
+      { name: "Talata Mafara", URBAN: false, RURAL: true },
+      { name: "Chafe", URBAN: false, RURAL: true },
+      { name: "Zurmi", URBAN: false, RURAL: true }
+    ]
+  }
+];
+
+export default States;
