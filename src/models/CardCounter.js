@@ -29,7 +29,7 @@ CardCounter.init({
   timestamps: true,
   createdAt: false,        // we don’t need created_at
   updatedAt: 'updated_at',
-  underscored: true
+  underscored: false
 });
 
 export default CardCounter;

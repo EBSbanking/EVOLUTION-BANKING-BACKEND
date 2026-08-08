@@ -1096,6 +1096,14 @@ const validClasses = [
   'CONTROL', 'SUSPENSE', 'TAX', 'OFF_BALANCE_SHEET',
   'CONTROL_SUSPENSE'    // ✅ now supported
 ];
+// Also update the getDbSafeAccountClass function:
+const getDbSafeAccountClass = (accClass) => {
+  const mapping = { 
+    'CONTROL_SUSPENSE': 'CONTROL',  // ✅ Map to CONTROL for DB
+    'OFF_BALANCE_SHEET': 'CONTROL'   // ✅ Map to CONTROL for DB
+  };
+  return mapping[accClass] || accClass;
+};
 
 // Helper function to get account type description
 const getAccountTypeDescription = (code) => {
@@ -1387,7 +1395,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
 
     console.log('🔍 Account classification:', { accountClassUpper, accountTypeUpper });
 
-    // Valid classes
+    // ✅ Updated valid classes with CONTROL_SUSPENSE
     const validClasses = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE', 'CONTROL', 'SUSPENSE', 'TAX', 'OFF_BALANCE_SHEET', 'CONTROL_SUSPENSE'];
     if (!validClasses.includes(accountClassUpper)) {
       await transaction.rollback();
@@ -1407,11 +1415,12 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     const normalizedBranchCode = normalizeBranchCodeSimple(branchCode);
     const subAccountCode = subAccount || '0001';
 
+    // ✅ Updated class mapping with CONTROL_SUSPENSE
     const clsMap = {
       'ASSET': '1', 'LIABILITY': '2', 'EQUITY': '3',
       'REVENUE': '4', 'EXPENSE': '5', 'CONTROL': '6',
       'SUSPENSE': '7', 'TAX': '8', 'OFF_BALANCE_SHEET': '9',
-      'CONTROL_SUSPENSE': '6'
+      'CONTROL_SUSPENSE': '6'  // ✅ Map to CONTROL code
     };
 
     const accountTypeCategoryMap = {};
@@ -1454,7 +1463,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     let accountPath = null;
 
     // ---------- HIERARCHY LOGIC ----------
-    // Resolve parentId (could come as 'parentId' or from parentAccountNo)
     const resolvedParentId = parentId || (parentAccountNo ? parseInt(parentAccountNo, 10) : null);
 
     if (resolvedParentId) {
@@ -1474,10 +1482,8 @@ export const createCOAAlignedGLAccount = async (req, res) => {
           message: `Parent account with ID ${resolvedParentId} not found in this branch`
         });
       }
-      // Level = parent level + 1 (or use provided level if greater)
       const parentLevel = parent.accountLevel || 0;
       accountLevel = Math.max(accountLevel, parentLevel + 1);
-      // Path = parent path + parent id
       accountPath = parent.accountPath
         ? `${parent.accountPath}/${parent.id}`
         : `${parent.id}`;
@@ -1502,8 +1508,12 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     );
 
     // ---------------- MAP TO DB-SAFE ACCOUNT CLASS ----------------
+    // ✅ FIXED: Properly map CONTROL_SUSPENSE to CONTROL for DB
     const getDbSafeAccountClass = (accClass) => {
-      const mapping = { 'CONTROL_SUSPENSE': 'CONTROL' };
+      const mapping = { 
+        'CONTROL_SUSPENSE': 'CONTROL',
+        'OFF_BALANCE_SHEET': 'CONTROL'
+      };
       return mapping[accClass] || accClass;
     };
 
@@ -1607,7 +1617,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       createdBy: safeTrim(CREATED_BY),
       updatedBy: safeTrim(CREATED_BY),
       sourceSystem: 'INTERNAL_COA_ENGINE',
-      // HIERARCHY FIELDS
       parentId: resolvedParentId,
       accountLevel: accountLevel,
       isFolder: Boolean(isFolder),
@@ -1623,7 +1632,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
         'REVENUE': '4000', 'EXPENSE': '5000',
         'CONTROL': '6000', 'SUSPENSE': '6100',
         'TAX': '7000', 'OFF_BALANCE_SHEET': '8000',
-        'CONTROL_SUSPENSE': '6000'
+        'CONTROL_SUSPENSE': '6000'  // ✅ Added
       };
       return map[accClass] || '1000';
     };
@@ -1637,7 +1646,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       ACCT_DESC: acctDesc,
       LEDGER_NO: '001',
       BU_ID: normalizedBranchCode,
-      GL_ACCT_CAT: dbSafeClass,
+      GL_ACCT_CAT: dbSafeClass,  // ✅ Uses mapped class (CONTROL for CONTROL_SUSPENSE)
       CR_ALLOWED: postingRules.crAllowed,
       DR_ALLOWED: postingRules.drAllowed,
       REC_ST: 'Active',
@@ -1699,7 +1708,7 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       SEG_NO: 1,
       CHART_OF_ACCT_ID: '10001',
       ACCT_DESC: acctDesc,
-      GL_ACCT_CAT: dbSafeClass,
+      GL_ACCT_CAT: dbSafeClass,  // ✅ Uses mapped class
       JOURNAL_ID: `JRN-COA-${Date.now()}`,
       TRANSACTION_TYPE: `${accountClassUpper} Balance`,
       CR_ALLOWED: postingRules.crAllowed,
@@ -1779,7 +1788,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
       coaStructure,
       metadata: coaMetadata,
       categoryCode: accountTypeCategoryMap[accountTypeUpper] || '0000',
-      // Hierarchy info
       hierarchy: {
         parentId: chartAccount.parentId,
         accountLevel: chartAccount.accountLevel,
@@ -1809,7 +1817,6 @@ export const createCOAAlignedGLAccount = async (req, res) => {
     });
   }
 };
-
 
 
 // ============================================

@@ -1,10 +1,15 @@
-// src/controllers/GLAccountEOYController.js
+// src/controllers/GLAccountEOYController.js - COMPLETE FIXED VERSION
 
 import { Op } from 'sequelize';
 import logger from '../utils/logger.js';
 import auditLogger from '../utils/AuditLogger.js';
-import { sendEOYNotification } from '../Services/NotificationService.js';
 import sequelize from '../../config/db.js';
+import GLAccountTransaction from '../models/GLAccountTransaction.js';
+import Ledger from '../models/Ledger.js';
+import GLAccount from '../models/GLAccount.js';
+import ChartofAccount from '../models/ChartofAccount.js';
+import EOYReport from '../models/EOYReport.js';
+import GLClosingPeriod from '../models/GLClosingPeriods.js';
 
 export class GLAccountEOYController {
   /**
@@ -13,13 +18,16 @@ export class GLAccountEOYController {
    */
   static async executeYearEndClosing(params = {}) {
     const transaction = await sequelize.transaction();
+    let transactionCommitted = false;
     
     try {
       const {
         fiscalYear = new Date().getFullYear() - 1,
-        closingDate = new Date(),
+        closingDate = new Date(fiscalYear, 11, 31),
         userId = 'system',
         branchId = 1,
+        organizationCode = 1,
+        branchCode = '001',
         dryRun = false
       } = params;
 
@@ -27,30 +35,57 @@ export class GLAccountEOYController {
         closingDate,
         userId,
         branchId,
+        organizationCode,
+        branchCode,
         dryRun
       });
 
       // Step 1: Validate business date and lock period
-      await this.validateClosingConditions(closingDate, transaction);
+      await this.validateClosingConditions(
+        closingDate, 
+        fiscalYear, 
+        organizationCode, 
+        branchCode, 
+        transaction
+      );
 
-      // Step 2: Identify P&L accounts
-      const plAccounts = await this.getProfitLossAccounts(transaction);
+      // Step 2: Identify P&L accounts - ENHANCED
+      const plAccounts = await this.getProfitLossAccounts(organizationCode, branchCode, transaction);
       
+      if (plAccounts.length === 0) {
+        logger.warn('⚠️ No Profit & Loss accounts found. Please create Revenue and Expense accounts first.');
+        
+        if (!dryRun) {
+          await transaction.rollback();
+        }
+        
+        return {
+          success: false,
+          error: 'No Profit & Loss accounts found. Please create Revenue and Expense accounts first.',
+          fiscalYear,
+          dryRun,
+          timestamp: new Date().toISOString(),
+          recommendation: 'Create at least one Revenue account (GL_ACCT_CAT: REVENUE) and one Expense account (GL_ACCT_CAT: EXPENSE)'
+        };
+      }
+
       // Step 3: Calculate closing balances
       const closingBalances = await this.calculateClosingBalances(plAccounts, fiscalYear, transaction);
       
-      // Step 4: Create closing journal entries
+      // Step 4: Create closing GL transactions
       const journalEntries = await this.createClosingEntries(
         closingBalances, 
         fiscalYear, 
         userId, 
-        branchId, 
+        branchId,
+        organizationCode,
+        branchCode,
         transaction
       );
 
-      // Step 5: Update account balances
+      // Step 5: Update Ledger balances
       if (!dryRun) {
-        await this.updateAccountBalances(journalEntries, transaction);
+        await this.updateLedgerBalances(journalEntries, transaction);
       }
 
       // Step 6: Create retained earnings entry
@@ -58,7 +93,9 @@ export class GLAccountEOYController {
         closingBalances, 
         fiscalYear, 
         userId, 
-        branchId, 
+        branchId,
+        organizationCode,
+        branchCode,
         transaction,
         dryRun
       );
@@ -66,6 +103,14 @@ export class GLAccountEOYController {
       // Step 7: Mark accounts as closed
       if (!dryRun) {
         await this.markAccountsAsClosed(plAccounts, fiscalYear, transaction);
+        await this.createClosingPeriod(
+          fiscalYear, 
+          closingDate, 
+          userId, 
+          organizationCode, 
+          branchCode, 
+          transaction
+        );
       }
 
       // Step 8: Create EOY report
@@ -73,12 +118,15 @@ export class GLAccountEOYController {
         closingBalances, 
         journalEntries, 
         retainedEarnings, 
-        fiscalYear
+        fiscalYear,
+        organizationCode,
+        branchCode
       );
 
       // Commit transaction if not dry run
       if (!dryRun) {
         await transaction.commit();
+        transactionCommitted = true;
         
         // Log audit
         await auditLogger.info({
@@ -97,8 +145,7 @@ export class GLAccountEOYController {
           outcome: 'success'
         });
 
-        // Send notifications
-        await sendEOYNotification(eoyReport, userId);
+        logger.info(`✅ Year-End Closing completed successfully for FY ${fiscalYear}`);
       } else {
         await transaction.rollback();
         logger.info('📋 Dry run completed - no changes made');
@@ -113,12 +160,16 @@ export class GLAccountEOYController {
           totalPLAccounts: plAccounts.length,
           totalJournalEntries: journalEntries.length,
           netProfit: closingBalances.netProfit,
+          revenueTotal: closingBalances.revenueTotal,
+          expenseTotal: closingBalances.expenseTotal,
           report: eoyReport
         }
       };
 
     } catch (error) {
-      await transaction.rollback();
+      if (!transactionCommitted) {
+        await transaction.rollback();
+      }
       
       logger.error('❌ Year-End Closing failed:', error);
       
@@ -137,34 +188,38 @@ export class GLAccountEOYController {
   /**
    * Validate that closing can proceed
    */
-  static async validateClosingConditions(closingDate, transaction) {
-    const lastDayOfYear = new Date(closingDate.getFullYear(), 11, 31);
+  static async validateClosingConditions(closingDate, fiscalYear, organizationCode, branchCode, transaction) {
+    const closingDateObj = new Date(closingDate);
+    const closingYear = closingDateObj.getFullYear();
     
-    if (closingDate.getTime() !== lastDayOfYear.getTime()) {
-      throw new Error('Year-End closing must be performed on December 31st');
+    // ✅ Check if closing date matches fiscal year
+    if (closingYear !== parseInt(fiscalYear)) {
+      throw new Error(`Closing date ${closingYear} does not match fiscal year ${fiscalYear}`);
     }
 
     // Check if period is already closed
     const existingClosing = await GLClosingPeriod.findOne({
       where: { 
-        fiscal_year: closingDate.getFullYear(),
+        fiscal_year: parseInt(fiscalYear),
+        organization_code: parseInt(organizationCode) || 1,
+        branch_code: branchCode || '001',
         status: 'CLOSED'
       },
       transaction
     });
 
     if (existingClosing) {
-      throw new Error(`Fiscal Year ${closingDate.getFullYear()} is already closed`);
+      throw new Error(`Fiscal Year ${fiscalYear} is already closed`);
     }
 
-    // Check for pending transactions
-    const pendingTransactions = await Transaction.count({
+    // Check for pending GL transactions
+    const pendingTransactions = await GLAccountTransaction.count({
       where: {
-        transaction_date: {
-          [Op.gte]: new Date(closingDate.getFullYear(), 0, 1),
-          [Op.lte]: closingDate
-        },
-        status: 'PENDING'
+        STATUS: 'PENDING',
+        createdAt: {
+          [Op.gte]: new Date(parseInt(fiscalYear), 0, 1),
+          [Op.lte]: closingDateObj
+        }
       },
       transaction
     });
@@ -177,27 +232,137 @@ export class GLAccountEOYController {
   }
 
   /**
-   * Get all Profit & Loss accounts
+   * Get all Profit & Loss accounts - ENHANCED with multiple search strategies
    */
-  static async getProfitLossAccounts(transaction) {
-    const GLAccount = (await import('../models/GLAccount.js')).default;
+  static async getProfitLossAccounts(organizationCode, branchCode, transaction) {
+    const plAccounts = [];
+    const orgCode = parseInt(organizationCode) || 1;
+    const brCode = branchCode || '001';
     
-    const plAccounts = await GLAccount.findAll({
+    // ✅ Strategy 1: Try GLAccount table first
+    const glAccounts = await GLAccount.findAll({
       where: {
-        account_type: {
+        organizationCode: orgCode,
+        branchCode: brCode,
+        GL_ACCT_CAT: {
           [Op.in]: ['REVENUE', 'EXPENSE', 'INCOME', 'COST_OF_SALES']
         },
-        is_active: true,
-        is_closed: false
+        REC_ST: 'Active'
       },
-      transaction
+      transaction,
+      logging: false
     });
 
-    if (plAccounts.length === 0) {
-      throw new Error('No Profit & Loss accounts found for closing');
+    if (glAccounts.length > 0) {
+      logger.info(`✅ Found ${glAccounts.length} P&L accounts in GLAccount table`);
+      plAccounts.push(...glAccounts);
     }
 
-    logger.info(`📊 Found ${plAccounts.length} P&L accounts`);
+    // ✅ Strategy 2: Try ChartofAccount table if no GL accounts found
+    if (plAccounts.length === 0) {
+      const chartAccounts = await ChartofAccount.findAll({
+        where: {
+          organization_code: orgCode,
+          branch_code: brCode,
+          type: {
+            [Op.in]: ['REVENUE', 'EXPENSE', 'INCOME', 'COST_OF_SALES']
+          },
+          status: 'ACTIVE'
+        },
+        transaction,
+        logging: false
+      });
+
+      if (chartAccounts.length > 0) {
+        logger.info(`✅ Found ${chartAccounts.length} P&L accounts in ChartofAccount table`);
+        // Map ChartofAccount to GLAccount-like objects
+        const mappedAccounts = chartAccounts.map(chart => ({
+          id: chart.id,
+          GL_ACCT_NO: chart.glcode,
+          GL_ACCT_ID: chart.glAccountId || chart.id,
+          ACCT_DESC: chart.name,
+          GL_ACCT_CAT: chart.type,
+          account_type: chart.type,
+          account_code: chart.glcode,
+          account_name: chart.name,
+          is_active: chart.status === 'ACTIVE',
+          is_closed: false,
+          chartAccount: chart
+        }));
+        plAccounts.push(...mappedAccounts);
+      }
+    }
+
+    // ✅ Strategy 3: Broad search with case-insensitive matching
+    if (plAccounts.length === 0) {
+      const broadAccounts = await GLAccount.findAll({
+        where: {
+          organizationCode: orgCode,
+          branchCode: brCode,
+          REC_ST: 'Active'
+        },
+        transaction,
+        logging: false
+      });
+
+      // Filter manually for P&L type accounts
+      const filtered = broadAccounts.filter(acc => {
+        const cat = (acc.GL_ACCT_CAT || '').toUpperCase();
+        return ['REVENUE', 'EXPENSE', 'INCOME', 'COST', 'COST_OF_SALES', 'REV', 'EXP', 'INC'].some(
+          type => cat.includes(type)
+        );
+      });
+
+      if (filtered.length > 0) {
+        logger.info(`✅ Found ${filtered.length} P&L accounts via broad search`);
+        plAccounts.push(...filtered);
+      }
+    }
+
+    // ✅ Strategy 4: Direct SQL query as fallback
+    if (plAccounts.length === 0) {
+      try {
+        const [results] = await sequelize.query(`
+          SELECT * FROM gl_accounts 
+          WHERE organizationCode = ${orgCode}
+          AND branchCode = '${brCode}'
+          AND REC_ST = 'Active'
+          AND (GL_ACCT_CAT LIKE '%REVENUE%' 
+            OR GL_ACCT_CAT LIKE '%EXPENSE%' 
+            OR GL_ACCT_CAT LIKE '%INCOME%'
+            OR GL_ACCT_CAT LIKE '%COST%')
+        `, { transaction });
+
+        if (results && results.length > 0) {
+          logger.info(`✅ Found ${results.length} P&L accounts via direct SQL query`);
+          plAccounts.push(...results);
+        }
+      } catch (sqlError) {
+        logger.warn('⚠️ Direct SQL query failed:', sqlError.message);
+      }
+    }
+
+    // ✅ Strategy 5: If still no accounts, check if there are ANY GL accounts
+    if (plAccounts.length === 0) {
+      const totalAccounts = await GLAccount.count({
+        where: {
+          organizationCode: orgCode,
+          branchCode: brCode,
+          REC_ST: 'Active'
+        },
+        transaction
+      });
+
+      if (totalAccounts === 0) {
+        logger.warn(`⚠️ No GL accounts found at all for organization ${orgCode}, branch ${brCode}`);
+        logger.warn('📋 Please create GL accounts first using /api/gl/create-coa-aligned');
+      } else {
+        logger.warn(`⚠️ Found ${totalAccounts} GL accounts but none are Revenue or Expense type`);
+        logger.warn('📋 Please create Revenue and Expense accounts');
+      }
+    }
+
+    logger.info(`📊 Total P&L accounts found: ${plAccounts.length}`);
     return plAccounts;
   }
 
@@ -205,76 +370,77 @@ export class GLAccountEOYController {
    * Calculate closing balances for all P&L accounts
    */
   static async calculateClosingBalances(plAccounts, fiscalYear, transaction) {
-    const Transaction = (await import('../models/Transaction.js')).default;
-    
-    const yearStart = new Date(fiscalYear, 0, 1);
-    const yearEnd = new Date(fiscalYear, 11, 31, 23, 59, 59);
+    const yearStart = new Date(parseInt(fiscalYear), 0, 1);
+    const yearEnd = new Date(parseInt(fiscalYear), 11, 31, 23, 59, 59);
 
     const closingBalances = {
       revenueTotal: 0,
       expenseTotal: 0,
       incomeTotal: 0,
       costTotal: 0,
-      accountDetails: []
+      accountDetails: [],
+      netProfit: 0
     };
 
     for (const account of plAccounts) {
-      const transactions = await Transaction.findAll({
+      const accountNo = account.GL_ACCT_NO || account.glcode || account.account_code;
+      const accountType = account.GL_ACCT_CAT || account.type || account.account_type;
+      
+      // Get all transactions for this account
+      const transactions = await GLAccountTransaction.findAll({
         where: {
-          gl_account_id: account.id,
-          transaction_date: {
+          [Op.or]: [
+            { DR_ACCT_NO: accountNo },
+            { CR_ACCT_NO: accountNo }
+          ],
+          createdAt: {
             [Op.gte]: yearStart,
             [Op.lte]: yearEnd
           },
-          status: 'POSTED'
+          STATUS: 'POSTED'
         },
-        attributes: [
-          'transaction_type',
-          [sequelize.fn('SUM', sequelize.col('amount')), 'total_amount']
-        ],
-        group: ['transaction_type'],
         transaction
       });
 
+      // Calculate net balance
       let accountBalance = 0;
       
-      // Calculate balance based on transaction types
       transactions.forEach(tx => {
-        const amount = parseFloat(tx.dataValues.total_amount) || 0;
+        const amount = parseFloat(tx.AMOUNT) || 0;
         
-        if (['CREDIT', 'REVENUE', 'INCOME'].includes(tx.transaction_type)) {
-          accountBalance += amount;  // Increase for credits
-        } else if (['DEBIT', 'EXPENSE', 'COST'].includes(tx.transaction_type)) {
-          accountBalance -= amount;  // Decrease for debits
+        if (tx.DR_ACCT_NO === accountNo) {
+          accountBalance -= amount;
+        }
+        if (tx.CR_ACCT_NO === accountNo) {
+          accountBalance += amount;
         }
       });
 
       // Adjust sign based on account type
       let closingAmount = 0;
-      let accountType = '';
+      let displayType = '';
+
+      const upperType = String(accountType).toUpperCase();
       
-      switch(account.account_type) {
-        case 'REVENUE':
-        case 'INCOME':
-          closingAmount = -accountBalance;  // Revenue accounts need to be debited to zero
-          closingBalances.revenueTotal += accountBalance;
-          accountType = 'Revenue';
-          break;
-        case 'EXPENSE':
-        case 'COST_OF_SALES':
-          closingAmount = accountBalance;   // Expense accounts need to be credited to zero
-          closingBalances.expenseTotal += accountBalance;
-          accountType = 'Expense';
-          break;
+      if (['REVENUE', 'INCOME'].includes(upperType)) {
+        closingAmount = -accountBalance;
+        closingBalances.revenueTotal += accountBalance;
+        displayType = 'Revenue';
+      } else if (['EXPENSE', 'COST_OF_SALES', 'COST'].includes(upperType)) {
+        closingAmount = accountBalance;
+        closingBalances.expenseTotal += accountBalance;
+        displayType = 'Expense';
       }
 
       closingBalances.accountDetails.push({
         accountId: account.id,
-        accountCode: account.account_code,
-        accountName: account.account_name,
-        accountType: account.account_type,
+        accountCode: accountNo,
+        accountName: account.ACCT_DESC || account.name || account.account_name,
+        accountType: upperType,
+        displayType: displayType,
         openingBalance: accountBalance,
         closingAmount: closingAmount,
+        transactionCount: transactions.length,
         newBalance: 0
       });
     }
@@ -282,9 +448,7 @@ export class GLAccountEOYController {
     // Calculate net profit/loss
     closingBalances.netProfit = 
       closingBalances.revenueTotal - 
-      closingBalances.expenseTotal +
-      closingBalances.incomeTotal -
-      closingBalances.costTotal;
+      closingBalances.expenseTotal;
 
     logger.info('📈 Calculated closing balances:', {
       revenueTotal: closingBalances.revenueTotal,
@@ -297,34 +461,38 @@ export class GLAccountEOYController {
   }
 
   /**
-   * Create closing journal entries
+   * Create closing journal entries using GLAccountTransaction
    */
-  static async createClosingEntries(closingBalances, fiscalYear, userId, branchId, transaction) {
-    const JournalEntry = (await import('../models/JournalEntry.js')).default;
+  static async createClosingEntries(closingBalances, fiscalYear, userId, branchId, organizationCode, branchCode, transaction) {
     const journalEntries = [];
-    const batchId = `EOY-${fiscalYear}-${Date.now()}`;
+    const journalId = `EOY-${fiscalYear}-${Date.now()}`;
+    const txnIdNum = await GLAccountTransaction.generateTransactionId();
 
-    // Create entries for each account
     for (const account of closingBalances.accountDetails) {
-      if (Math.abs(account.closingAmount) > 0.01) { // Ignore zero amounts
-        const entry = await JournalEntry.create({
-          journal_id: batchId,
-          account_id: account.accountId,
-          transaction_date: new Date(fiscalYear, 11, 31),
-          fiscal_year: fiscalYear,
-          amount: Math.abs(account.closingAmount),
-          transaction_type: account.closingAmount > 0 ? 'CREDIT' : 'DEBIT',
-          description: `Year-End Closing FY${fiscalYear}`,
-          reference: `EOY-${account.accountCode}`,
-          status: 'POSTED',
-          created_by: userId,
-          branch_id: branchId,
-          is_closing_entry: true,
-          closing_fiscal_year: fiscalYear
-        }, { transaction });
+      if (Math.abs(account.closingAmount) < 0.01) continue;
 
-        journalEntries.push(entry);
-      }
+      const isCredit = account.closingAmount > 0;
+      const amount = Math.abs(account.closingAmount);
+
+      // Create GL Transaction
+      const entry = await GLAccountTransaction.create({
+        JOURNAL_ID: journalId,
+        TRANSACTION_ID: `EOY-TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+        DR_ACCT_NO: isCredit ? null : account.accountCode,
+        CR_ACCT_NO: isCredit ? account.accountCode : null,
+        AMOUNT: amount,
+        NARRATION: `Year-End Closing FY${fiscalYear} - ${account.accountName} (${account.accountType})`,
+        CREATED_BY: userId,
+        TRANSACTION_TYPE: 'EOY_CLOSING',
+        CURRENCY_CODE: 'NGN',
+        STATUS: 'POSTED',
+        TransactionId: txnIdNum + journalEntries.length,
+        BU_ID: branchCode || '001',
+        organizationCode: parseInt(organizationCode) || 1,
+        branchCode: branchCode || '001'
+      }, { transaction });
+
+      journalEntries.push(entry);
     }
 
     logger.info(`📝 Created ${journalEntries.length} closing journal entries`);
@@ -332,49 +500,128 @@ export class GLAccountEOYController {
   }
 
   /**
+   * Update Ledger balances after closing
+   */
+  static async updateLedgerBalances(journalEntries, transaction) {
+    const updatedAccounts = [];
+
+    for (const entry of journalEntries) {
+      // Update DR account
+      if (entry.DR_ACCT_NO) {
+        await Ledger.updateBalanceForTransaction(
+          entry.DR_ACCT_NO,
+          entry.AMOUNT,
+          false,
+          { transaction }
+        );
+        updatedAccounts.push(entry.DR_ACCT_NO);
+      }
+
+      // Update CR account
+      if (entry.CR_ACCT_NO) {
+        await Ledger.updateBalanceForTransaction(
+          entry.CR_ACCT_NO,
+          entry.AMOUNT,
+          true,
+          { transaction }
+        );
+        updatedAccounts.push(entry.CR_ACCT_NO);
+      }
+    }
+
+    logger.info(`🔄 Updated balances for ${updatedAccounts.length} accounts`);
+  }
+
+  /**
    * Create retained earnings entry
    */
-  static async createRetainedEarningsEntry(closingBalances, fiscalYear, userId, branchId, transaction, dryRun = false) {
+  static async createRetainedEarningsEntry(closingBalances, fiscalYear, userId, branchId, organizationCode, branchCode, transaction, dryRun = false) {
     if (Math.abs(closingBalances.netProfit) < 0.01) {
       logger.info('📊 Net profit is zero, skipping retained earnings entry');
       return null;
     }
 
     // Find retained earnings account
-    const GLAccount = (await import('../models/GLAccount.js')).default;
     const retainedEarningsAccount = await GLAccount.findOne({
       where: {
-        account_code: '3100', // Retained Earnings account code
-        is_active: true
+        GL_ACCT_NO: '3100',
+        organizationCode: parseInt(organizationCode) || 1,
+        branchCode: branchCode || '001',
+        REC_ST: 'Active'
       },
       transaction
     });
 
     if (!retainedEarningsAccount) {
-      throw new Error('Retained Earnings account (3100) not found');
+      logger.warn('⚠️ Retained Earnings account (3100) not found, using default');
+      const defaultAccount = await GLAccount.findOne({
+        where: {
+          GL_ACCT_CAT: 'EQUITY',
+          organizationCode: parseInt(organizationCode) || 1,
+          branchCode: branchCode || '001',
+          REC_ST: 'Active'
+        },
+        transaction
+      });
+      
+      if (!defaultAccount) {
+        throw new Error('No equity account found for retained earnings');
+      }
+      return await this.createRetainedEarningsEntryWithAccount(
+        defaultAccount, closingBalances, fiscalYear, userId, branchId, organizationCode, branchCode, transaction, dryRun
+      );
     }
 
-    const JournalEntry = (await import('../models/JournalEntry.js')).default;
-    
-    const entry = await JournalEntry.create({
-      journal_id: `RE-${fiscalYear}-${Date.now()}`,
-      account_id: retainedEarningsAccount.id,
-      transaction_date: new Date(fiscalYear, 11, 31),
-      fiscal_year: fiscalYear,
-      amount: Math.abs(closingBalances.netProfit),
-      transaction_type: closingBalances.netProfit > 0 ? 'CREDIT' : 'DEBIT',
-      description: `Retained Earnings FY${fiscalYear}`,
-      reference: `RE-EOY-${fiscalYear}`,
-      status: 'POSTED',
-      created_by: userId,
-      branch_id: branchId,
-      is_closing_entry: true,
-      is_retained_earnings: true,
-      closing_fiscal_year: fiscalYear
+    return await this.createRetainedEarningsEntryWithAccount(
+      retainedEarningsAccount, closingBalances, fiscalYear, userId, branchId, organizationCode, branchCode, transaction, dryRun
+    );
+  }
+
+  /**
+   * Helper: Create retained earnings entry with specific account
+   */
+  static async createRetainedEarningsEntryWithAccount(account, closingBalances, fiscalYear, userId, branchId, organizationCode, branchCode, transaction, dryRun = false) {
+    if (dryRun) {
+      logger.info(`📋 DRY RUN: Would create retained earnings entry for ${account.GL_ACCT_NO}: ${closingBalances.netProfit}`);
+      return {
+        account: account.GL_ACCT_NO,
+        amount: Math.abs(closingBalances.netProfit),
+        type: closingBalances.netProfit > 0 ? 'CREDIT' : 'DEBIT',
+        dryRun: true
+      };
+    }
+
+    const isCredit = closingBalances.netProfit > 0;
+    const amount = Math.abs(closingBalances.netProfit);
+    const txnIdNum = await GLAccountTransaction.generateTransactionId();
+
+    const entry = await GLAccountTransaction.create({
+      JOURNAL_ID: `RE-${fiscalYear}-${Date.now()}`,
+      TRANSACTION_ID: `RE-TXN-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      DR_ACCT_NO: isCredit ? null : account.GL_ACCT_NO,
+      CR_ACCT_NO: isCredit ? account.GL_ACCT_NO : null,
+      AMOUNT: amount,
+      NARRATION: `Retained Earnings FY${fiscalYear} - ${closingBalances.netProfit > 0 ? 'Profit' : 'Loss'}`,
+      CREATED_BY: userId,
+      TRANSACTION_TYPE: 'RETAINED_EARNINGS',
+      CURRENCY_CODE: 'NGN',
+      STATUS: 'POSTED',
+      TransactionId: txnIdNum,
+      BU_ID: branchCode || '001',
+      organizationCode: parseInt(organizationCode) || 1,
+      branchCode: branchCode || '001'
     }, { transaction });
 
+    // Update the retained earnings account ledger
+    await Ledger.updateBalanceForTransaction(
+      account.GL_ACCT_NO,
+      amount,
+      isCredit,
+      { transaction }
+    );
+
     logger.info('💰 Created retained earnings entry:', {
-      account: retainedEarningsAccount.account_code,
+      account: account.GL_ACCT_NO,
       amount: closingBalances.netProfit,
       type: closingBalances.netProfit > 0 ? 'Profit' : 'Loss'
     });
@@ -383,81 +630,75 @@ export class GLAccountEOYController {
   }
 
   /**
-   * Update account balances to zero
+   * Mark accounts as closed for the fiscal year
    */
-  static async updateAccountBalances(journalEntries, transaction) {
-    const GLAccount = (await import('../models/GLAccount.js')).default;
-    
-    // Group by account
-    const accountUpdates = {};
-    
-    journalEntries.forEach(entry => {
-      if (!accountUpdates[entry.account_id]) {
-        accountUpdates[entry.account_id] = {
-          debitTotal: 0,
-          creditTotal: 0
-        };
-      }
-      
-      if (entry.transaction_type === 'DEBIT') {
-        accountUpdates[entry.account_id].debitTotal += entry.amount;
-      } else {
-        accountUpdates[entry.account_id].creditTotal += entry.amount;
-      }
-    });
+  static async markAccountsAsClosed(plAccounts, fiscalYear, transaction) {
+    const accountIds = plAccounts
+      .filter(acc => acc.id)
+      .map(acc => acc.id);
 
-    // Update each account
-    for (const [accountId, totals] of Object.entries(accountUpdates)) {
-      const netChange = totals.creditTotal - totals.debitTotal;
-      
+    if (accountIds.length > 0) {
       await GLAccount.update({
-        current_balance: sequelize.literal('current_balance + ' + netChange),
-        ytd_debit: sequelize.literal('ytd_debit + ' + totals.debitTotal),
-        ytd_credit: sequelize.literal('ytd_credit + ' + totals.creditTotal),
-        last_closing_date: new Date(),
-        updated_at: new Date()
+        REC_ST: 'Closed',
+        updatedAt: new Date()
       }, {
-        where: { id: accountId },
+        where: {
+          id: {
+            [Op.in]: accountIds
+          }
+        },
         transaction
       });
     }
 
-    logger.info(`🔄 Updated balances for ${Object.keys(accountUpdates).length} accounts`);
+    logger.info(`🔒 Marked ${accountIds.length} P&L accounts as closed for FY ${fiscalYear}`);
   }
 
   /**
-   * Mark accounts as closed for the fiscal year
+   * Create closing period record
    */
-  static async markAccountsAsClosed(plAccounts, fiscalYear, transaction) {
-    const GLAccount = (await import('../models/GLAccount.js')).default;
-    
-    await GLAccount.update({
-      is_closed: true,
-      closed_fiscal_year: fiscalYear,
-      last_closing_date: new Date()
-    }, {
+  static async createClosingPeriod(fiscalYear, closingDate, userId, organizationCode, branchCode, transaction) {
+    const existing = await GLClosingPeriod.findOne({
       where: {
-        id: plAccounts.map(acc => acc.id),
-        account_type: {
-          [Op.in]: ['REVENUE', 'EXPENSE', 'INCOME', 'COST_OF_SALES']
-        }
+        fiscal_year: parseInt(fiscalYear),
+        organization_code: parseInt(organizationCode) || 1,
+        branch_code: branchCode || '001'
       },
       transaction
     });
 
-    logger.info(`🔒 Marked ${plAccounts.length} P&L accounts as closed for FY ${fiscalYear}`);
+    if (existing) {
+      existing.status = 'CLOSED';
+      existing.closed_by = userId;
+      existing.closed_at = new Date();
+      await existing.save({ transaction });
+      logger.info(`📅 Updated closing period record for FY ${fiscalYear}`);
+    } else {
+      await GLClosingPeriod.create({
+        fiscal_year: parseInt(fiscalYear),
+        closing_date: closingDate,
+        status: 'CLOSED',
+        closed_by: userId,
+        closed_at: new Date(),
+        organization_code: parseInt(organizationCode) || 1,
+        branch_code: branchCode || '001'
+      }, { transaction });
+      logger.info(`📅 Created closing period record for FY ${fiscalYear}`);
+    }
   }
 
   /**
    * Generate EOY report
    */
-  static async generateEOYReport(closingBalances, journalEntries, retainedEarnings, fiscalYear) {
+  static async generateEOYReport(closingBalances, journalEntries, retainedEarnings, fiscalYear, organizationCode, branchCode) {
     const reportId = `EOY-REPORT-${fiscalYear}-${Date.now()}`;
     
     const report = {
       reportId,
       fiscalYear,
       generationDate: new Date(),
+      organizationCode: parseInt(organizationCode) || 1,
+      branchCode: branchCode || '001',
       summary: {
         totalPLAccounts: closingBalances.accountDetails.length,
         totalJournalEntries: journalEntries.length,
@@ -467,13 +708,22 @@ export class GLAccountEOYController {
         hasRetainedEarnings: !!retainedEarnings,
         retainedEarningsAmount: retainedEarnings?.amount || 0
       },
-      accountDetails: closingBalances.accountDetails,
+      accountDetails: closingBalances.accountDetails.map(acc => ({
+        accountCode: acc.accountCode,
+        accountName: acc.accountName,
+        accountType: acc.accountType,
+        openingBalance: acc.openingBalance,
+        closingAmount: acc.closingAmount,
+        transactionCount: acc.transactionCount
+      })),
       journalEntries: journalEntries.map(entry => ({
         id: entry.id,
-        accountCode: entry.account_code,
-        amount: entry.amount,
-        type: entry.transaction_type,
-        description: entry.description
+        journalId: entry.JOURNAL_ID,
+        transactionId: entry.TRANSACTION_ID,
+        drAccount: entry.DR_ACCT_NO,
+        crAccount: entry.CR_ACCT_NO,
+        amount: entry.AMOUNT,
+        narration: entry.NARRATION
       })),
       financialStatement: {
         revenue: closingBalances.revenueTotal,
@@ -484,43 +734,142 @@ export class GLAccountEOYController {
       }
     };
 
-    // Save report to database or file system
-    await this.saveEOYReport(report);
+    // Save report to database
+    try {
+      await EOYReport.create({
+        report_id: report.reportId,
+        fiscal_year: parseInt(fiscalYear),
+        report_data: report,
+        organization_code: parseInt(organizationCode) || 1,
+        branch_code: branchCode || '001',
+        generated_at: new Date(),
+        generated_by: 'system',
+        status: 'COMPLETED'
+      });
+      logger.info(`📄 Saved EOY Report: ${reportId}`);
+    } catch (error) {
+      logger.warn('⚠️ Could not save EOY report to database:', error.message);
+    }
 
     logger.info(`📄 Generated EOY Report: ${reportId}`);
     return report;
   }
 
-  static async saveEOYReport(report) {
-    // Implement report saving logic
-    // Could save to database, file system, or cloud storage
-    const EOYReport = (await import('../models/EOYReport.js')).default;
-    
-    await EOYReport.create({
-      report_id: report.reportId,
-      fiscal_year: report.fiscalYear,
-      report_data: report,
-      generated_at: new Date(),
-      status: 'COMPLETED'
-    });
+  /**
+   * Get closing status
+   */
+  static async getClosingStatus(fiscalYear, organizationCode = 1, branchCode = '001') {
+    try {
+      return await GLClosingPeriod.findOne({
+        where: { 
+          fiscal_year: parseInt(fiscalYear),
+          organization_code: parseInt(organizationCode) || 1,
+          branch_code: branchCode || '001'
+        }
+      });
+    } catch (error) {
+      logger.warn('⚠️ Could not get closing status:', error.message);
+      return null;
+    }
   }
 
   /**
-   * Get EOY closing status
+   * Reverse Year-End Closing
    */
-  static async getClosingStatus(fiscalYear) {
-    const GLClosingPeriod = (await import('../models/GLClosingPeriod.js')).default;
+  static async reverseYearEndClosing(fiscalYear, userId, reason, organizationCode = 1, branchCode = '001') {
+    const transaction = await sequelize.transaction();
     
-    return await GLClosingPeriod.findOne({
-      where: { fiscal_year: fiscalYear }
-    });
-  }
+    try {
+      logger.warn(`🔄 Reversing Year-End Closing for FY ${fiscalYear}`, { userId, reason });
 
-  /**
-   * Reverse Year-End Closing (if needed)
-   */
-  static async reverseYearEndClosing(fiscalYear, userId, reason) {
-    // Implementation for reversal
-    // This should be carefully controlled with proper approvals
+      const closingPeriod = await GLClosingPeriod.findOne({
+        where: {
+          fiscal_year: parseInt(fiscalYear),
+          organization_code: parseInt(organizationCode) || 1,
+          branch_code: branchCode || '001',
+          status: 'CLOSED'
+        },
+        transaction
+      });
+
+      if (!closingPeriod) {
+        throw new Error(`No closed period found for FY ${fiscalYear}`);
+      }
+
+      // Find and reverse EOY closing transactions
+      const eoyTransactions = await GLAccountTransaction.findAll({
+        where: {
+          TRANSACTION_TYPE: 'EOY_CLOSING',
+          createdAt: {
+            [Op.gte]: new Date(parseInt(fiscalYear), 11, 25),
+            [Op.lte]: new Date(parseInt(fiscalYear), 11, 31, 23, 59, 59)
+          },
+          STATUS: 'POSTED'
+        },
+        transaction
+      });
+
+      for (const tx of eoyTransactions) {
+        tx.STATUS = 'REVERSED';
+        tx.REVERSAL_DATE = new Date();
+        tx.REVERSED_BY = userId;
+        tx.REVERSAL_REASON = reason || 'Year-End Closing Reversal';
+        await tx.save({ transaction });
+
+        // Reverse ledger balances
+        if (tx.DR_ACCT_NO) {
+          await Ledger.updateBalanceForTransaction(
+            tx.DR_ACCT_NO,
+            tx.AMOUNT,
+            true,
+            { transaction }
+          );
+        }
+        if (tx.CR_ACCT_NO) {
+          await Ledger.updateBalanceForTransaction(
+            tx.CR_ACCT_NO,
+            tx.AMOUNT,
+            false,
+            { transaction }
+          );
+        }
+      }
+
+      closingPeriod.status = 'REVERSED';
+      closingPeriod.reversed_by = userId;
+      closingPeriod.reversed_at = new Date();
+      closingPeriod.reversal_reason = reason;
+      await closingPeriod.save({ transaction });
+
+      // Unmark accounts
+      await GLAccount.update({
+        REC_ST: 'Active',
+        updatedAt: new Date()
+      }, {
+        where: {
+          REC_ST: 'Closed',
+          organizationCode: parseInt(organizationCode) || 1,
+          branchCode: branchCode || '001'
+        },
+        transaction
+      });
+
+      await transaction.commit();
+      logger.info(`✅ Year-End Closing reversed for FY ${fiscalYear}`);
+
+      return {
+        success: true,
+        fiscalYear,
+        transactionsReversed: eoyTransactions.length,
+        message: `Year-End Closing for FY ${fiscalYear} has been reversed`
+      };
+
+    } catch (error) {
+      await transaction.rollback();
+      logger.error('❌ Failed to reverse Year-End Closing:', error);
+      throw error;
+    }
   }
 }
+
+export default GLAccountEOYController;

@@ -1,200 +1,181 @@
-// routes/cards.js
-
+// routes/debitCardRoutes.js
 import express from 'express';
+import { authenticate } from '../middlewares/auth.js';
 import {
+  // Card Issuance (Approval Workflow)
+  requestCardIssuance,
   issueCard,
-  cardPurchase,
+  issueCardDirectly,
+  executeCardIssuanceFromApproval,
+  
+  // Card Management
   getCustomerCards,
+  getCardDetailsForPrinting,
   setDailyLimit,
   setPerTransactionLimit,
   setCardPin,
   blockCard,
   unblockCard,
   getCardTransactionHistory,
-  getCardDetailsForPrinting,
-  cardPayment
+  
+  // Flutterwave Payments
+  cardPayment,
+  verifyFlutterwavePayment,
+  refundFlutterwavePayment,
+  getFlutterwaveTransactionStatus,
+  listFlutterwaveTransactions,
+  flutterwaveHealthCheck,
+  
+  // Card Purchase
+  cardPurchase,
 } from '../controllers/DebitCardController.js';
-import { authenticate } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-// ================================================================
-// ✅ CARD ISSUANCE & MANAGEMENT
-// ================================================================
+// ============================================
+// CARD ISSUANCE - APPROVAL WORKFLOW
+// ============================================
 
 /**
- * @route   POST /api/cards/issue
- * @desc    Issue a new card
- * @access  Private
+ * POST /api/debit-cards/cards/request-issuance
+ * @description Request card issuance with approval workflow
+ * @access Authenticated users
+ */
+router.post('/cards/request-issuance', authenticate, requestCardIssuance);
+
+/**
+ * POST /api/debit-cards/cards/issue
+ * @description Direct card issuance (kept for backward compatibility)
+ * @access Authenticated users with proper permissions
  */
 router.post('/cards/issue', authenticate, issueCard);
 
 /**
- * @route   POST /api/cards/transaction
- * @desc    Process a card purchase transaction
- * @access  Private
+ * POST /api/debit-cards/cards/issue-direct
+ * @description Direct card issuance bypassing approval (admin only)
+ * @access Admin only
  */
-router.post('/cards/transaction', authenticate, cardPurchase);
+router.post('/cards/issue-direct', authenticate, issueCardDirectly);
+
+// ============================================
+// CARD MANAGEMENT
+// ============================================
 
 /**
- * @route   GET /api/cards/customer/:customerId
- * @desc    Get all cards for a customer
- * @access  Private
+ * GET /api/debit-cards/cards/customer/:customerId
+ * @description Get all cards for a customer
+ * @access Authenticated users
  */
 router.get('/cards/customer/:customerId', authenticate, getCustomerCards);
 
 /**
- * @route   PUT /api/cards/daily-limit
- * @desc    Update daily limit for a card
- * @access  Private
+ * GET /api/debit-cards/cards/:identifier/details
+ * @description Get card details for printing (includes CVV)
+ * @access Users with debit_card.print permission
+ */
+router.get('/cards/:identifier/details', authenticate, getCardDetailsForPrinting);
+
+/**
+ * PUT /api/debit-cards/cards/daily-limit
+ * @description Set daily spending limit for a card
+ * @access Authenticated users
  */
 router.put('/cards/daily-limit', authenticate, setDailyLimit);
 
 /**
- * @route   PUT /api/cards/per-transaction-limit
- * @desc    Update per-transaction limit for a card
- * @access  Private
+ * PUT /api/debit-cards/cards/per-transaction-limit
+ * @description Set per-transaction limit for a card
+ * @access Authenticated users
  */
 router.put('/cards/per-transaction-limit', authenticate, setPerTransactionLimit);
 
 /**
- * @route   POST /api/cards/set-pin
- * @desc    Set PIN for a card
- * @access  Private
+ * PUT /api/debit-cards/cards/pin
+ * @description Set PIN for a card
+ * @access Authenticated users
  */
-router.post('/cards/set-pin', authenticate, setCardPin);
+router.put('/cards/pin', authenticate, setCardPin);
 
 /**
- * @route   POST /api/cards/block
- * @desc    Block a card
- * @access  Private
+ * POST /api/debit-cards/cards/block
+ * @description Block a card
+ * @access Authenticated users
  */
 router.post('/cards/block', authenticate, blockCard);
 
 /**
- * @route   POST /api/cards/unblock
- * @desc    Unblock a card
- * @access  Private
+ * POST /api/debit-cards/cards/unblock
+ * @description Unblock a card
+ * @access Authenticated users
  */
 router.post('/cards/unblock', authenticate, unblockCard);
 
 /**
- * @route   GET /api/cards/transactions
- * @desc    Get card transaction history
- * @access  Private
+ * GET /api/debit-cards/cards/transactions
+ * @description Get card transaction history
+ * @access Authenticated users
  */
 router.get('/cards/transactions', authenticate, getCardTransactionHistory);
 
-// ================================================================
-// ✅ FLUTTERWAVE CARD PAYMENT
-// ================================================================
+// ============================================
+// FLUTTERWAVE PAYMENTS
+// ============================================
 
 /**
- * @route   POST /api/cards/pay
- * @desc    Process a card payment via Flutterwave
- * @access  Private
+ * POST /api/debit-cards/payments/charge
+ * @description Initiate a card payment via Flutterwave
+ * @access Authenticated users
  */
-router.post('/cards/pay', authenticate, cardPayment);
+router.post('/payments/charge', authenticate, cardPayment);
 
 /**
- * @route   POST /api/cards/pay/public
- * @desc    Process a card payment via Flutterwave (public - for testing)
- * @access  Public
+ * GET /api/debit-cards/payments/verify/:reference
+ * @description Verify a Flutterwave payment
+ * @access Authenticated users
  */
-router.post('/cards/pay/public', cardPayment);
-
-// ================================================================
-// ✅ CARD PRINTING
-// ================================================================
+router.get('/payments/verify/:reference', authenticate, verifyFlutterwavePayment);
 
 /**
- * @route   GET /api/cards/:identifier/details
- * @desc    Get full card details including decrypted CVV
- * @desc    Supports both cardId (numeric) and cardPan (alphanumeric)
- * @access  Private (requires debit_card.print permission)
+ * POST /api/debit-cards/payments/refund
+ * @description Refund a Flutterwave payment
+ * @access Authenticated users with proper permissions
  */
-router.get('/cards/:identifier/details', authenticate, getCardDetailsForPrinting);
-
-// ================================================================
-// ✅ DEBUG ROUTES (Remove in production)
-// ================================================================
+router.post('/payments/refund', authenticate, refundFlutterwavePayment);
 
 /**
- * @route   GET /api/cards/debug/card
- * @desc    DEBUG: Get card by ID or last4
- * @access  Private
+ * GET /api/debit-cards/payments/status/:reference
+ * @description Get Flutterwave transaction status
+ * @access Authenticated users
  */
-router.get('/cards/debug/card', authenticate, async (req, res) => {
-  try {
-    const { id, last4, customerId } = req.query;
-    let whereClause = {};
-    
-    if (id) {
-      whereClause.id = id;
-    } else if (last4) {
-      whereClause.cardLast4 = last4;
-      if (customerId) {
-        whereClause.customerId = customerId;
-      }
-    } else {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Provide id or last4 (with customerId)' 
-      });
-    }
-    
-    const card = await DebitCard.findOne({
-      where: whereClause,
-      attributes: [
-        'id', 'cardLast4', 'cardStatus', 'flutterwaveEnabled',
-        'expiryMonth', 'expiryYear', 'customerId', 'encryptedCvv',
-        'createdAt', 'updatedAt'
-      ]
-    });
-    
-    if (!card) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Card not found',
-        debug: { whereClause }
-      });
-    }
-    
-    return res.status(200).json({
-      success: true,
-      data: card
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
+router.get('/payments/status/:reference', authenticate, getFlutterwaveTransactionStatus);
 
 /**
- * @route   GET /api/cards/debug/customer/:customerId
- * @desc    DEBUG: Get all cards for a customer with full details
- * @access  Private
+ * GET /api/debit-cards/payments/transactions
+ * @description List Flutterwave transactions
+ * @access Authenticated users with proper permissions
  */
-router.get('/cards/debug/customer/:customerId', authenticate, async (req, res) => {
-  try {
-    const { customerId } = req.params;
-    const cards = await DebitCard.findAll({
-      where: { 
-        customerId: customerId
-      },
-      attributes: [
-        'id', 'cardLast4', 'cardStatus', 'flutterwaveEnabled',
-        'expiryMonth', 'expiryYear', 'customerId', 'encryptedCvv',
-        'createdAt', 'updatedAt'
-      ]
-    });
-    
-    return res.status(200).json({
-      success: true,
-      data: cards
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
+router.get('/payments/transactions', authenticate, listFlutterwaveTransactions);
+
+/**
+ * GET /api/debit-cards/payments/health
+ * @description Flutterwave health check
+ * @access Public
+ */
+router.get('/payments/health', flutterwaveHealthCheck);
+
+// ============================================
+// CARD PURCHASE
+// ============================================
+
+/**
+ * POST /api/debit-cards/purchase
+ * @description Process a card purchase transaction
+ * @access Authenticated users
+ */
+router.post('/purchase', authenticate, cardPurchase);
+
+// ============================================
+// EXPORT ROUTER
+// ============================================
 
 export default router;

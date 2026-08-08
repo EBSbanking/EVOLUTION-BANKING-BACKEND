@@ -16,6 +16,8 @@ import { initializeModels, getLoanAccount, getLoanRepayment, getPenaltyRule, get
 import { processDueStandingOrders } from '../controllers/StandingOrderController.js';
 import { processPendingGLTransactions } from '../controllers/PendingGLTransactionController.js';
 import { processEmailStatements, initializeEmailStatementService } from '../utils/emailStatementService.js';
+import GLClosingPeriod from '../models/GLClosingPeriods.js';
+import EOYReport from '../models/EOYReport.js';
 
 // Import Sequelize models
 import SystemDate from '../models/SystemDate.js';
@@ -2609,6 +2611,533 @@ export const debugHolidaySystem = async (req, res) => {
     });
   }
 };
+
+// Add these to your OsController.js
+// src/controllers/OsController.js - EOY Functions Section
+
+// ==================== EOY CLOSING STATUS ====================
+
+// EOY status tracking
+const eoyStatus = {
+  isEOYRunning: false,
+  lastEOYRun: null,
+  nextEOYRun: null,
+  eoyState: 'IDLE', // IDLE, IN_PROGRESS, COMPLETED, FAILED, PARTIAL
+  eoyProgress: 0, // 0-100
+  eoyErrors: [],
+  eoyWarnings: [],
+  eoyLogs: [],
+  currentFiscalYear: null,
+  eoyLocked: false,
+  eoyLockReason: null,
+  eoyLockedBy: null,
+  eoyLockedAt: null
+};
+
+// ==================== EOY SERVICE FUNCTIONS ====================
+
+/**
+ * Check if EOY is currently running
+ * @returns {boolean} True if EOY is running
+ */
+export const isEOYRunning = () => {
+  return eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS';
+};
+
+/**
+ * Check if EOY is locked
+ * @returns {boolean} True if EOY is locked
+ */
+export const isEOYLocked = () => {
+  return eoyStatus.eoyLocked;
+};
+
+/**
+ * Lock EOY process
+ * @param {string} reason - Reason for locking
+ * @param {string} userId - User who locked
+ * @returns {boolean} True if locked successfully
+ */
+export const lockEOY = (reason, userId) => {
+  if (eoyStatus.eoyLocked) {
+    logger.warn('EOY is already locked', { 
+      lockedBy: eoyStatus.eoyLockedBy, 
+      lockedAt: eoyStatus.eoyLockedAt,
+      reason: eoyStatus.eoyLockReason
+    });
+    return false;
+  }
+  
+  eoyStatus.eoyLocked = true;
+  eoyStatus.eoyLockReason = reason || 'EOY process in progress';
+  eoyStatus.eoyLockedBy = userId || 'system';
+  eoyStatus.eoyLockedAt = new Date();
+  
+  logger.info('🔒 EOY locked', { reason, userId });
+  return true;
+};
+
+/**
+ * Unlock EOY process
+ * @param {string} userId - User who unlocks
+ * @returns {boolean} True if unlocked successfully
+ */
+export const unlockEOY = (userId) => {
+  if (!eoyStatus.eoyLocked) {
+    logger.warn('EOY is not locked');
+    return true;
+  }
+  
+  eoyStatus.eoyLocked = false;
+  eoyStatus.eoyLockReason = null;
+  eoyStatus.eoyLockedBy = null;
+  eoyStatus.eoyLockedAt = null;
+  
+  logger.info('🔓 EOY unlocked', { userId });
+  return true;
+};
+
+/**
+ * Get EOY status
+ * @returns {Object} EOY status object
+ */
+export const getEOYStatus = () => {
+  return {
+    ...eoyStatus,
+    isRunning: eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS',
+    isLocked: eoyStatus.eoyLocked,
+    canRun: !eoyStatus.isEOYRunning && !eoyStatus.eoyLocked && eoyStatus.eoyState !== 'IN_PROGRESS',
+    timestamp: new Date().toISOString()
+  };
+};
+
+/**
+ * Reset EOY status
+ * @param {string} userId - User performing reset
+ * @returns {Object} Reset result
+ */
+export const resetEOYStatus = (userId) => {
+  const oldState = eoyStatus.eoyState;
+  const oldLocked = eoyStatus.eoyLocked;
+  
+  // Reset but keep logs for audit
+  eoyStatus.isEOYRunning = false;
+  eoyStatus.eoyState = 'IDLE';
+  eoyStatus.eoyProgress = 0;
+  eoyStatus.eoyErrors = [];
+  eoyStatus.eoyWarnings = [];
+  eoyStatus.eoyLocked = false;
+  eoyStatus.eoyLockReason = null;
+  eoyStatus.eoyLockedBy = null;
+  eoyStatus.eoyLockedAt = null;
+  
+  logger.info('🔄 EOY status reset', { 
+    userId, 
+    oldState, 
+    oldLocked,
+    timestamp: new Date().toISOString()
+  });
+  
+  return {
+    success: true,
+    message: 'EOY status reset successfully',
+    oldState,
+    oldLocked,
+    newState: eoyStatus.eoyState,
+    timestamp: new Date().toISOString()
+  };
+};
+
+// ==================== EOY EXECUTION FUNCTION ====================
+
+/**
+ * Execute Year-End Closing with status tracking
+ * @param {Object} params - Parameters for EOY execution
+ * @param {number} params.fiscalYear - Fiscal year to close
+ * @param {string} params.userId - User executing the closing
+ * @param {number} params.organizationCode - Organization code
+ * @param {string} params.branchCode - Branch code
+ * @param {boolean} params.dryRun - If true, only simulate
+ * @param {boolean} params.force - Force execution even if locked
+ * @param {string|Date} params.closingDate - Closing date (defaults to Dec 31 of fiscal year)
+ * @returns {Promise<Object>} EOY execution result
+ */
+export const executeEOY = async (params = {}) => {
+  const {
+    fiscalYear,
+    userId = 'system',
+    organizationCode = 1,
+    branchCode = '001',
+    dryRun = false,
+    force = false,
+    closingDate = null
+  } = params;
+
+  // Validate required parameters
+  if (!fiscalYear) {
+    return {
+      success: false,
+      error: 'Fiscal year is required',
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  // ✅ Set closing date to Dec 31 of fiscal year if not provided
+  const effectiveClosingDate = closingDate || new Date(fiscalYear, 11, 31);
+  const closingDateStr = effectiveClosingDate instanceof Date 
+    ? effectiveClosingDate.toISOString().split('T')[0] 
+    : effectiveClosingDate;
+
+  logger.info(`📅 Using closing date: ${closingDateStr} for FY${fiscalYear}`);
+
+  // Check if EOY is already running
+  if (eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS') {
+    if (!force) {
+      return {
+        success: false,
+        error: 'EOY is already in progress',
+        status: eoyStatus,
+        timestamp: new Date().toISOString()
+      };
+    }
+    logger.warn('⚠️ Force executing EOY while already in progress', { userId });
+  }
+
+  // Check if EOY is locked
+  if (eoyStatus.eoyLocked && !force) {
+    return {
+      success: false,
+      error: `EOY is locked. Reason: ${eoyStatus.eoyLockReason}`,
+      lockedBy: eoyStatus.eoyLockedBy,
+      lockedAt: eoyStatus.eoyLockedAt,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  // Update EOY status
+  eoyStatus.isEOYRunning = true;
+  eoyStatus.eoyState = 'IN_PROGRESS';
+  eoyStatus.eoyProgress = 0;
+  eoyStatus.eoyErrors = [];
+  eoyStatus.eoyWarnings = [];
+  eoyStatus.currentFiscalYear = fiscalYear;
+  eoyStatus.eoyLogs = [];
+
+  // Lock EOY
+  lockEOY(`Year-End Closing FY${fiscalYear}`, userId);
+
+  const startTime = Date.now();
+  let result = null;
+
+  try {
+    logger.info(`🚀 Starting Year-End Closing for FY${fiscalYear}`, {
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      force,
+      closingDate: closingDateStr
+    });
+
+    // Log EOY start
+    eoyStatus.eoyLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: `Starting Year-End Closing for FY${fiscalYear}`,
+      userId,
+      dryRun,
+      closingDate: closingDateStr
+    });
+
+    // Update progress: 10%
+    eoyStatus.eoyProgress = 10;
+
+    // Import the GLAccountEOYController
+    const { GLAccountEOYController } = await import('./GLAccountEOYController.js');
+
+    // Execute Year-End Closing
+    eoyStatus.eoyLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: `Executing Year-End Closing for FY${fiscalYear} (${dryRun ? 'DRY RUN' : 'LIVE'})`,
+    });
+
+    // Update progress: 30%
+    eoyStatus.eoyProgress = 30;
+
+    result = await GLAccountEOYController.executeYearEndClosing({
+      fiscalYear,
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      closingDate: effectiveClosingDate  // ✅ Pass the closing date
+    });
+
+    // Update progress based on result
+    if (result.success) {
+      eoyStatus.eoyProgress = 80;
+      eoyStatus.eoyLogs.push({
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        message: `Year-End Closing for FY${fiscalYear} completed successfully`,
+        summary: result.summary
+      });
+    } else {
+      eoyStatus.eoyProgress = 60;
+      eoyStatus.eoyErrors.push({
+        timestamp: new Date().toISOString(),
+        error: result.error || 'Unknown error occurred',
+        stack: result.stack
+      });
+      eoyStatus.eoyLogs.push({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: `Year-End Closing for FY${fiscalYear} failed: ${result.error || 'Unknown error'}`,
+      });
+    }
+
+    // Complete
+    eoyStatus.eoyProgress = 100;
+    eoyStatus.isEOYRunning = false;
+    eoyStatus.eoyState = result.success ? 'COMPLETED' : 'FAILED';
+    eoyStatus.lastEOYRun = new Date();
+
+    // Unlock EOY
+    unlockEOY(userId);
+
+    const executionTime = Date.now() - startTime;
+    logger.info(`✅ Year-End Closing completed for FY${fiscalYear}`, {
+      success: result.success,
+      executionTime: `${executionTime}ms`,
+      dryRun,
+      state: eoyStatus.eoyState
+    });
+
+    return {
+      success: result.success,
+      dryRun,
+      fiscalYear,
+      executionTime,
+      result,
+      status: { ...eoyStatus },
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    // Handle errors
+    eoyStatus.isEOYRunning = false;
+    eoyStatus.eoyState = 'FAILED';
+    eoyStatus.eoyProgress = 0;
+    eoyStatus.eoyErrors.push({
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      stack: error.stack
+    });
+    eoyStatus.eoyLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      message: `Year-End Closing for FY${fiscalYear} threw an exception: ${error.message}`,
+    });
+
+    // Unlock EOY
+    unlockEOY(userId);
+
+    logger.error(`❌ Year-End Closing for FY${fiscalYear} failed with exception`, {
+      error: error.message,
+      stack: error.stack
+    });
+
+    return {
+      success: false,
+      dryRun,
+      fiscalYear,
+      error: error.message,
+      stack: error.stack,
+      status: { ...eoyStatus },
+      timestamp: new Date().toISOString()
+    };
+  }
+};
+
+/**
+ * Execute Year-End Closing from API endpoint
+ * POST /api/eoy/execute
+ */
+export const executeYearEndClosing = async (req, res) => {
+  try {
+    const {
+      fiscalYear,
+      userId = req.user?.id || req.user?.user_name || 'system',
+      organizationCode = 1,
+      branchCode = '001',
+      dryRun = false,
+      force = false,
+      checkOnly = false,
+      closingDate = null
+    } = req.body;
+
+    // If checkOnly is true, just return the status
+    if (checkOnly) {
+      return res.status(200).json({
+        success: true,
+        message: 'EOY status check',
+        data: {
+          canRun: !eoyStatus.isEOYRunning && !eoyStatus.eoyLocked,
+          isRunning: eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS',
+          isLocked: eoyStatus.eoyLocked,
+          status: { ...eoyStatus },
+          currentFiscalYear: eoyStatus.currentFiscalYear,
+          lastEOYRun: eoyStatus.lastEOYRun,
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+
+    // ✅ Set default closing date if not provided
+    const effectiveClosingDate = closingDate || new Date(fiscalYear, 11, 31);
+
+    // Execute EOY
+    const result = await executeEOY({
+      fiscalYear,
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      force,
+      closingDate: effectiveClosingDate
+    });
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'EOY execution failed',
+        data: result,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Year-End Closing for FY${fiscalYear} executed successfully${dryRun ? ' (DRY RUN)' : ''}`,
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('❌ Failed to execute Year-End Closing:', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to execute Year-End Closing',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Get EOY status from API endpoint
+ * GET /api/eoy/status
+ */
+export const getEOYStatusAPI = async (req, res) => {
+  try {
+    const status = getEOYStatus();
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...status,
+        canRun: !status.isRunning && !status.isLocked,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    logger.error('❌ Failed to get EOY status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get EOY status',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Reset EOY status from API endpoint
+ * POST /api/eoy/reset
+ */
+export const resetEOYStatusAPI = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?.user_name || 'system';
+    const result = resetEOYStatus(userId);
+    
+    return res.status(200).json({
+      success: true,
+      ...result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('❌ Failed to reset EOY status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to reset EOY status',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Get EOY logs
+ * GET /api/eoy/logs
+ */
+export const getEOYLogs = async (req, res) => {
+  try {
+    const { limit = 100, level } = req.query;
+    
+    let logs = eoyStatus.eoyLogs || [];
+    
+    if (level) {
+      logs = logs.filter(log => log.level === level);
+    }
+    
+    // Sort by timestamp descending (newest first)
+    logs = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Apply limit
+    if (limit > 0) {
+      logs = logs.slice(0, parseInt(limit));
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        logs,
+        count: logs.length,
+        total: eoyStatus.eoyLogs?.length || 0,
+        errors: eoyStatus.eoyErrors || [],
+        warnings: eoyStatus.eoyWarnings || []
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('❌ Failed to get EOY logs:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get EOY logs',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+
+
 
 // ==================== EXPORTS ====================
 

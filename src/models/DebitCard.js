@@ -57,6 +57,12 @@ const DebitCard = sequelize.define('DebitCard', {
     field: 'encrypted_cvv',
     comment: 'Encrypted CVV for Flutterwave payments (AES-256-CBC)',
   },
+  cvvNonce: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    field: 'cvv_nonce',
+    comment: 'Nonce used for CVV encryption',
+  },
   pinHash: {
     type: DataTypes.STRING(255),
     allowNull: true,
@@ -64,7 +70,7 @@ const DebitCard = sequelize.define('DebitCard', {
     comment: 'Hashed PIN for ATM/POS',
   },
   cardScheme: {
-    type: DataTypes.ENUM('VERVE', 'MASTERCARD', 'VISA'),
+    type: DataTypes.ENUM('VERVE', 'MASTERCARD', 'VISA', 'AMEX', 'DISCOVER'),
     defaultValue: 'VERVE',
     field: 'card_scheme',
     comment: 'Card network',
@@ -75,20 +81,13 @@ const DebitCard = sequelize.define('DebitCard', {
     field: 'card_type',
     comment: 'Physical or virtual card',
   },
+  // ✅ FIXED: Added 'PENDING' to cardStatus ENUM
   cardStatus: {
-    type: DataTypes.ENUM('ACTIVE', 'BLOCKED', 'EXPIRED', 'CANCELLED', 'ISSUED', 'PIN_PENDING'),
-    defaultValue: 'ISSUED',
+    type: DataTypes.ENUM('PENDING', 'ISSUED', 'ACTIVE', 'BLOCKED', 'EXPIRED', 'CANCELLED', 'PIN_PENDING'),
+    defaultValue: 'PENDING',  // ✅ Changed from 'ISSUED' to 'PENDING'
     field: 'card_status',
-    comment: 'Current card status',
+    comment: 'Current card status: PENDING, ISSUED, ACTIVE, BLOCKED, EXPIRED, CANCELLED, PIN_PENDING',
   },
-  // models/DebitCard.js - Add this field
-
-cardScheme: {
-  type: DataTypes.ENUM('VISA', 'MASTERCARD', 'VERVE', 'AMEX', 'DISCOVER'),
-  allowNull: true,
-  defaultValue: 'VISA',
-  field: 'card_scheme'
-},
   dailyLimit: {
     type: DataTypes.DECIMAL(20, 2),
     allowNull: true,
@@ -198,6 +197,12 @@ cardScheme: {
     allowNull: true,
     field: 'unblock_reason',
     comment: 'Reason for unblocking the card',
+  },
+  approvalRequestId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    field: 'approval_request_id',
+    comment: 'Reference to the approval request that created this card',
   },
 }, {
   tableName: 'debit_cards',
@@ -383,6 +388,19 @@ DebitCard.findActiveCards = async function(customerId = null) {
     cardStatus: {
       [DataTypes.Op.in]: ['ACTIVE', 'ISSUED']
     }
+  };
+  if (customerId) {
+    where.customerId = String(customerId);
+  }
+  return await this.findAll({ where });
+};
+
+/**
+ * Find pending cards (PENDING status)
+ */
+DebitCard.findPendingCards = async function(customerId = null) {
+  const where = {
+    cardStatus: 'PENDING'
   };
   if (customerId) {
     where.customerId = String(customerId);

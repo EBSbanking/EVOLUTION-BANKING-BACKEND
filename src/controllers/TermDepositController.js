@@ -14,6 +14,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import SavingsProduct from '../models/SavingsProduct.js';
 import sequelize from '../../config/db.js';
+import calculateEarlyTermination from '../utils/termDepositEarlyTermination.js';
 
 // Get __dirname for file operations
 const __filename = fileURLToPath(import.meta.url);
@@ -204,8 +205,13 @@ export const accrueDailyInterest = async () => {
         
         const validatedBU_ID = validateBU_ID(termDeposit.BU_ID);
         
+        // ✅ Get customer name for descriptions
+        const customerName = termDeposit.CUST_NM || termDeposit.ACCT_NM || 'Customer';
+        
         // ✅ Calculate daily interest using the model method (which now uses effective rate)
         const dailyInterest = termDeposit.calculateDailyInterest();
+        const effectiveRate = termDeposit.getEffectiveRate();
+        const rateType = termDeposit.USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT';
         
         termDeposit.ACCRUED_INTEREST = (parseFloat(termDeposit.ACCRUED_INTEREST) || 0) + dailyInterest;
         termDeposit.LAST_ACCRUAL_DATE = new Date();
@@ -221,7 +227,7 @@ export const accrueDailyInterest = async () => {
             SUB_LEDGER_NO: '000',
             SEG_NO: validatedBU_ID,
             LEDGER_NO: '000',
-            description: `Daily Interest Accrual for Term Deposit ${termDeposit.ACCT_NO}`,
+            description: `Daily Interest Accrual for ${customerName} (${termDeposit.ACCT_NO}) - Rate: ${effectiveRate}% (${rateType})`,
             JOURNAL_ID: identifiers.JOURNAL_ID,
             DRS_ALLOWED_FG: true,
             CRS_ALLOWED_FG: false,
@@ -236,7 +242,7 @@ export const accrueDailyInterest = async () => {
             SUB_LEDGER_NO: '000',
             SEG_NO: validatedBU_ID,
             LEDGER_NO: '000',
-            description: `Daily Interest Accrual to Interest Payable GL for Term Deposit ${termDeposit.ACCT_NO}`,
+            description: `Daily Interest Accrual to Interest Payable GL for ${customerName} (${termDeposit.ACCT_NO})`,
             JOURNAL_ID: identifiers.JOURNAL_ID,
             DRS_ALLOWED_FG: false,
             CRS_ALLOWED_FG: true,
@@ -248,6 +254,8 @@ export const accrueDailyInterest = async () => {
         for (const transactionData of glTransactions) {
           await processGLTransaction(null, null, transactionData, { transaction });
         }
+        
+        logger.info(`✅ Daily interest accrued for ${customerName} (${termDeposit.ACCT_NO}): ${dailyInterest} at ${effectiveRate}%`);
         
       } catch (error) {
         logger.error(`Error processing term deposit ${termDeposit.ACCT_NO}: ${error.message}`);
@@ -313,7 +321,6 @@ export const createTermDeposit = async (req, res) => {
       taxRate,
       createdBy,
       interestDistributions = [],
-      // ✅ NEW FIELDS FOR CUSTOM RATE
       CUSTOM_INTEREST_RATE,
       USE_CUSTOM_RATE = false,
     } = req.body;
@@ -385,6 +392,9 @@ export const createTermDeposit = async (req, res) => {
       throw new Error(`Maturity date (${maturityDateStr}) must be after start date (${startDateStr})`);
     }
 
+    // ✅ Get customer name for descriptions
+    const customerName = CUST_NM || ACCT_NM || 'Customer';
+
     // ✅ Validate productCode and get product
     const product = await SavingsProduct.findOne({
       where: { productCode },
@@ -419,10 +429,8 @@ export const createTermDeposit = async (req, res) => {
         throw new Error('CUSTOM_INTEREST_RATE must be a positive number');
       }
       
-      // ✅ Use custom rate
       effectiveRate = customRate;
       
-      // ✅ Update rateInformation to reflect custom rate
       finalRateInfo = {
         ...rateInfo,
         fixedRate: customRate.toString(),
@@ -430,21 +438,22 @@ export const createTermDeposit = async (req, res) => {
         isCustomRate: true,
         originalProductRate: productRate.toString(),
         customRateAppliedDate: new Date().toISOString(),
-        customRateAppliedBy: createdBy || req.user?.id || 'system'
+        customRateAppliedBy: createdBy || req.user?.id || 'system',
+        customerName: customerName,
+        accountNumber: ACCT_NO,
       };
       
-      console.log(`✅ Using CUSTOM rate: ${effectiveRate}% (Product rate was: ${productRate}%)`);
+      console.log(`✅ Using CUSTOM rate: ${effectiveRate}% (Product rate was: ${productRate}%) for ${customerName}`);
     } else {
-      console.log(`✅ Using PRODUCT rate: ${effectiveRate}%`);
+      console.log(`✅ Using PRODUCT rate: ${effectiveRate}% for ${customerName}`);
     }
     
     // ✅ Calculate interest using the effective rate
     const calculatedInterest = (parseFloat(NOTICE_AMOUNT) * (effectiveRate / 100)) * (daysDiff / 365);
 
     console.log(`✅ Interest calculation: Principal=${NOTICE_AMOUNT}, EffectiveRate=${effectiveRate}%, Days=${daysDiff}, Interest=${calculatedInterest}`);
-    console.log(`✅ Using ${USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT'} rate: ${effectiveRate}%`);
 
-    // ✅ Validate customer account
+    // ✅ Validate customer account with balance tracking
     const customerAccount = await CustomerAccount.findOne({
       where: { account_number: ACCT_NO },
       transaction
@@ -546,20 +555,22 @@ export const createTermDeposit = async (req, res) => {
     const userId = req.user?.id || createdBy || 'system';
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
 
-    // ✅ Debit customer account
+    // ✅ Debit customer account with ALL balance tracking
     const oldLedgerBal = parseFloat(customerAccount.ledger_balance);
     const oldClearedBal = parseFloat(customerAccount.cleared_balance || oldLedgerBal);
     const oldAvailableBal = parseFloat(customerAccount.available_balance);
+    const oldCurrentBal = parseFloat(customerAccount.current_balance || oldLedgerBal);
     
     customerAccount.ledger_balance = (oldLedgerBal - debitAmount).toFixed(2);
     customerAccount.cleared_balance = (oldClearedBal - debitAmount).toFixed(2);
     customerAccount.available_balance = (oldAvailableBal - debitAmount).toFixed(2);
+    customerAccount.current_balance = (oldCurrentBal - debitAmount).toFixed(2);
     customerAccount.updated_at = new Date();
     
-    logger.info(`Debiting customer account ${ACCT_NO}: oldBalance=${oldLedgerBal}, newBalance=${customerAccount.ledger_balance}`);
+    logger.info(`Debiting customer account ${ACCT_NO} for ${customerName}: oldBalance=${oldLedgerBal}, newBalance=${customerAccount.ledger_balance}`);
     await customerAccount.save({ transaction });
 
-    // ✅ GL transaction for principal credit
+    // ✅ GL transaction for principal credit with customer name
     const glTransactions = [
       {
         GL_ACCT_NO: product.principalBalanceGLAccountNo || '01001101101001',
@@ -569,7 +580,7 @@ export const createTermDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: BU_ID,
         LEDGER_NO: '000',
-        description: `Term Deposit Booking for ${ACCT_NO}`,
+        description: `Term Deposit Booking for ${customerName} (${ACCT_NO})`,
         JOURNAL_ID: identifiers.glSettlementTxnId,
         DRS_ALLOWED_FG: false,
         CRS_ALLOWED_FG: true,
@@ -584,7 +595,7 @@ export const createTermDeposit = async (req, res) => {
       await processGLTransaction(null, null, glTransaction, { transaction });
     }
 
-    // ✅ Create term deposit with calculated maturity date and custom rate
+    // ✅ Create term deposit with customer name in metadata
     const termDepositData = {
       ACCT_NM,
       ACCT_NO,
@@ -622,11 +633,15 @@ export const createTermDeposit = async (req, res) => {
       GL_SETTLEMENT_TXN_ID: identifiers.glSettlementTxnId || GL_SETTLEMENT_TXN_ID,
       CUSTOMER_INTEREST_PAYMENT_TXN_ID: identifiers.customerInterestPaymentTxnId || CUSTOMER_INTEREST_PAYMENT_TXN_ID,
       CUSTOMER_SETTLEMENT_TXN_ID: identifiers.customerSettlementTxnId || CUSTOMER_SETTLEMENT_TXN_ID,
-      // ✅ Add custom rate fields
       CUSTOM_INTEREST_RATE: USE_CUSTOM_RATE ? effectiveRate : null,
       USE_CUSTOM_RATE: USE_CUSTOM_RATE,
-      // ✅ Use updated rateInformation with custom rate
-      rateInformation: finalRateInfo,
+      rateInformation: {
+        ...finalRateInfo,
+        customerName: customerName,
+        accountNumber: ACCT_NO,
+        createdBy: userId,
+        createdAt: new Date().toISOString(),
+      },
       // GL Accounts from product
       INTEREST_GL_ACCT_NO: product.interestIncomeGLAccountNo || product.interestGLAccountNo || '01001301304001',
       INTEREST_PAYABLE_GL_ACCT_NO: product.interestPayableGLAccountNo || '01001101116001',
@@ -667,7 +682,7 @@ export const createTermDeposit = async (req, res) => {
     };
 
     const termDeposit = await TermDeposit.create(termDepositData, { transaction });
-    logger.info(`✅ Term deposit created successfully: ACCT_NO=${ACCT_NO} with ${USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT'} rate: ${effectiveRate}%`);
+    logger.info(`✅ Term deposit created successfully: ${customerName} (${ACCT_NO}) with ${USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT'} rate: ${effectiveRate}%`);
 
     // ✅ CREATE INTEREST DISTRIBUTIONS
     if (validatedDistributions.length > 0) {
@@ -692,11 +707,11 @@ export const createTermDeposit = async (req, res) => {
       }
     }
 
-    // ✅ Process upfront interest payment
+    // ✅ Process upfront interest payment with customer name
     if (UPFRONT_INTEREST_PAYMENT && finalUpfrontInterestAmount > 0) {
       const taxAmount = finalUpfrontInterestAmount * taxRate;
       const netInterest = finalUpfrontInterestAmount - taxAmount;
-      logger.info(`Processing upfront interest: gross=${finalUpfrontInterestAmount}, tax=${taxAmount}, net=${netInterest}`);
+      logger.info(`Processing upfront interest for ${customerName}: gross=${finalUpfrontInterestAmount}, tax=${taxAmount}, net=${netInterest}`);
 
       const customerAccountForInterest = await CustomerAccount.findOne({
         where: { account_number: ACCT_NO },
@@ -714,6 +729,7 @@ export const createTermDeposit = async (req, res) => {
       const oldLedgerBalInterest = parseFloat(customerAccountForInterest.ledger_balance);
       const oldClearedBalInterest = parseFloat(customerAccountForInterest.cleared_balance || oldLedgerBalInterest);
       const oldAvailableBalInterest = parseFloat(customerAccountForInterest.available_balance);
+      const oldCurrentBalInterest = parseFloat(customerAccountForInterest.current_balance || oldLedgerBalInterest);
 
       const interestGLTransactions = [
         {
@@ -724,7 +740,7 @@ export const createTermDeposit = async (req, res) => {
           SUB_LEDGER_NO: '000',
           SEG_NO: BU_ID,
           LEDGER_NO: '000',
-          description: `Upfront Net Interest Payout to Customer for ${ACCT_NO}`,
+          description: `Upfront Net Interest Payout to ${customerName} (${ACCT_NO})`,
           JOURNAL_ID: identifiers.customerInterestPaymentTxnId,
           DRS_ALLOWED_FG: true,
           CRS_ALLOWED_FG: false,
@@ -739,7 +755,7 @@ export const createTermDeposit = async (req, res) => {
           SUB_LEDGER_NO: '000',
           SEG_NO: BU_ID,
           LEDGER_NO: '000',
-          description: `Upfront Interest Accrual for ${ACCT_NO}`,
+          description: `Upfront Interest Accrual for ${customerName} (${ACCT_NO})`,
           JOURNAL_ID: identifiers.glInterestPaymentTxnId,
           DRS_ALLOWED_FG: false,
           CRS_ALLOWED_FG: true,
@@ -757,7 +773,7 @@ export const createTermDeposit = async (req, res) => {
           SUB_LEDGER_NO: '000',
           SEG_NO: BU_ID,
           LEDGER_NO: '000',
-          description: `Withholding Tax on Upfront Interest for Term Deposit ${ACCT_NO}`,
+          description: `Withholding Tax on Upfront Interest for ${customerName} (${ACCT_NO})`,
           JOURNAL_ID: identifiers.JOURNAL_ID,
           DRS_ALLOWED_FG: true,
           CRS_ALLOWED_FG: false,
@@ -772,7 +788,7 @@ export const createTermDeposit = async (req, res) => {
           SUB_LEDGER_NO: '000',
           SEG_NO: BU_ID,
           LEDGER_NO: '000',
-          description: `Withholding Tax Credit for Term Deposit ${ACCT_NO}`,
+          description: `Withholding Tax Credit for ${customerName} (${ACCT_NO})`,
           JOURNAL_ID: identifiers.JOURNAL_ID,
           DRS_ALLOWED_FG: false,
           CRS_ALLOWED_FG: true,
@@ -787,13 +803,14 @@ export const createTermDeposit = async (req, res) => {
         await processGLTransaction(null, null, glTransaction, { transaction });
       }
 
-      // Credit customer account with net interest
+      // Credit customer account with net interest - ALL balances
       customerAccountForInterest.ledger_balance = (oldLedgerBalInterest + netInterest).toFixed(2);
       customerAccountForInterest.cleared_balance = (oldClearedBalInterest + netInterest).toFixed(2);
       customerAccountForInterest.available_balance = (oldAvailableBalInterest + netInterest).toFixed(2);
+      customerAccountForInterest.current_balance = (oldCurrentBalInterest + netInterest).toFixed(2);
       customerAccountForInterest.updated_at = new Date();
       
-      logger.info(`Crediting customer account ${ACCT_NO}: oldBalance=${oldLedgerBalInterest}, newBalance=${customerAccountForInterest.ledger_balance}`);
+      logger.info(`Crediting customer account ${ACCT_NO} for ${customerName}: oldBalance=${oldLedgerBalInterest}, newBalance=${customerAccountForInterest.ledger_balance}`);
       await customerAccountForInterest.save({ transaction });
     }
 
@@ -812,7 +829,7 @@ export const createTermDeposit = async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: `Term Deposit created successfully with ${USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT'} rate: ${effectiveRate}%`,
+      message: `Term Deposit created successfully for ${customerName} with ${USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT'} rate: ${effectiveRate}%`,
       termDeposit: createdTermDeposit,
     });
     
@@ -862,14 +879,17 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
       });
     }
     
-    // ✅ Calculate daily interest using the model method (which now uses effective rate)
+    // ✅ Get customer name for descriptions
+    const customerName = termDeposit.CUST_NM || termDeposit.ACCT_NM || 'Customer';
+    
+    // ✅ Calculate daily interest using the model method
     const dailyInterest = termDeposit.calculateDailyInterest();
     const previousAccrued = parseFloat(termDeposit.ACCRUED_INTEREST) || 0;
     
     // ✅ Get the effective rate for logging
     const effectiveRate = termDeposit.getEffectiveRate();
     const rateType = termDeposit.USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT';
-    console.log(`✅ Accruing daily interest for ${termDeposit.ACCT_NO}: ${rateType} Rate=${effectiveRate}%, Daily=${dailyInterest}`);
+    console.log(`✅ Accruing daily interest for ${customerName} (${termDeposit.ACCT_NO}): ${rateType} Rate=${effectiveRate}%, Daily=${dailyInterest}`);
     
     // ✅ Check if interest will exceed total interest
     const totalInterest = parseFloat(termDeposit.MATURITY_INTEREST_AMOUNT) || 0;
@@ -889,7 +909,7 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
     
     await termDeposit.save({ transaction });
     
-    // ✅ Create GL transaction for interest accrual
+    // ✅ Create GL transaction for interest accrual with customer name
     const glTransactions = [
       {
         GL_ACCT_NO: termDeposit.INTEREST_GL_ACCT_NO || termDeposit.interestExpenseGLAccountNo || '01001301304001',
@@ -899,7 +919,7 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: termDeposit.BU_ID || '100',
         LEDGER_NO: '000',
-        description: `Daily Interest Accrual for Term Deposit ${termDeposit.ACCT_NO} (Rate: ${effectiveRate}%)`,
+        description: `Daily Interest Accrual for ${customerName} (${termDeposit.ACCT_NO}) - Rate: ${effectiveRate}% (${rateType})`,
         JOURNAL_ID: `JRN${Date.now()}`,
         DRS_ALLOWED_FG: true,
         CRS_ALLOWED_FG: false,
@@ -914,7 +934,7 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: termDeposit.BU_ID || '100',
         LEDGER_NO: '000',
-        description: `Daily Interest Accrual to Interest Payable GL for Term Deposit ${termDeposit.ACCT_NO}`,
+        description: `Daily Interest Accrual to Interest Payable GL for ${customerName} (${termDeposit.ACCT_NO})`,
         JOURNAL_ID: `JRN${Date.now()}`,
         DRS_ALLOWED_FG: false,
         CRS_ALLOWED_FG: true,
@@ -931,8 +951,10 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: 'Daily interest accrued successfully',
+      message: `Daily interest accrued successfully for ${customerName}`,
       data: {
+        customerName: customerName,
+        accountNumber: termDeposit.ACCT_NO,
         termDepositId: termDeposit.id,
         dailyInterest: dailyInterest,
         totalAccrued: termDeposit.ACCRUED_INTEREST,
@@ -959,6 +981,7 @@ export const accrueDailyInterestForDeposit = async (req, res) => {
 // ============================================================
 export const settleMaturedTermDeposit = async (req, res) => {
   const transaction = await sequelize.transaction();
+  let transactionCommitted = false;
   
   try {
     const { 
@@ -1005,6 +1028,9 @@ export const settleMaturedTermDeposit = async (req, res) => {
       throw new CustomValidationError('withholdingTaxGLAccountNo is required when taxRate is greater than 0');
     }
 
+    // ✅ Get customer name for descriptions
+    const customerName = termDeposit.CUST_NM || termDeposit.ACCT_NM || 'Customer';
+
     const validatedBU_ID = validateBU_ID(termDeposit.BU_ID);
 
     // Validate GL accounts
@@ -1041,14 +1067,14 @@ export const settleMaturedTermDeposit = async (req, res) => {
 
     const principalAmount = parseFloat(termDeposit.NOTICE_AMOUNT);
     
-    // ✅ Use model's interest calculation methods (which now use effective rate)
+    // ✅ Use model's interest calculation methods
     const totalInterest = termDeposit.calculateTotalInterestActual365();
     const effectiveRate = termDeposit.getEffectiveRate();
     const rateType = termDeposit.USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT';
 
-    logger.info(`✅ Settling term deposit ${termDeposit.ACCT_NO}: ${rateType} Rate=${effectiveRate}%, Total Interest=${totalInterest}`);
+    logger.info(`✅ Settling term deposit ${termDeposit.ACCT_NO} for ${customerName}: ${rateType} Rate=${effectiveRate}%, Total Interest=${totalInterest}`);
 
-    // GL transactions for principal settlement
+    // GL transactions for principal settlement with customer name
     const glTransactions = [
       {
         GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
@@ -1058,7 +1084,7 @@ export const settleMaturedTermDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: validatedBU_ID,
         LEDGER_NO: '000',
-        description: `Term Deposit Principal Settlement for ${termDeposit.ACCT_NO}`,
+        description: `Term Deposit Principal Settlement for ${customerName} (${termDeposit.ACCT_NO})`,
         JOURNAL_ID: identifiers.glSettlementTxnId,
         DRS_ALLOWED_FG: true,
         CRS_ALLOWED_FG: false,
@@ -1073,7 +1099,7 @@ export const settleMaturedTermDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: validatedBU_ID,
         LEDGER_NO: '000',
-        description: `Term Deposit Principal Credit to Settlement GL for ${termDeposit.ACCT_NO}`,
+        description: `Term Deposit Principal Credit to Settlement GL for ${customerName} (${termDeposit.ACCT_NO})`,
         JOURNAL_ID: identifiers.glSettlementTxnId,
         DRS_ALLOWED_FG: false,
         CRS_ALLOWED_FG: true,
@@ -1082,14 +1108,19 @@ export const settleMaturedTermDeposit = async (req, res) => {
       },
     ];
 
-    // Credit customer account with principal
+    // ✅ Credit customer account with principal - ALL balances
     const oldValues = {
       LEDGER_BAL: customerAccount.ledger_balance,
       AVAILABLE_BALANCE: customerAccount.available_balance,
+      CURRENT_BALANCE: customerAccount.current_balance || customerAccount.ledger_balance,
+      CLEARED_BALANCE: customerAccount.cleared_balance || customerAccount.available_balance,
     };
     
-    customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + principalAmount).toFixed(2);
-    customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + principalAmount).toFixed(2);
+    const principalNum = parseFloat(principalAmount);
+    customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + principalNum).toFixed(2);
+    customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + principalNum).toFixed(2);
+    customerAccount.current_balance = (parseFloat(customerAccount.current_balance || customerAccount.ledger_balance) + principalNum).toFixed(2);
+    customerAccount.cleared_balance = (parseFloat(customerAccount.cleared_balance || customerAccount.available_balance) + principalNum).toFixed(2);
     customerAccount.updated_at = new Date();
     await customerAccount.save({ transaction });
     
@@ -1101,7 +1132,7 @@ export const settleMaturedTermDeposit = async (req, res) => {
       SUB_LEDGER_NO: '000',
       SEG_NO: validatedBU_ID,
       LEDGER_NO: '000',
-      description: `Term Deposit Principal Payout to Customer for ${termDeposit.ACCT_NO}`,
+      description: `Term Deposit Principal Payout to ${customerName} (${termDeposit.ACCT_NO})`,
       JOURNAL_ID: identifiers.customerSettlementTxnId,
       DRS_ALLOWED_FG: true,
       CRS_ALLOWED_FG: false,
@@ -1113,17 +1144,19 @@ export const settleMaturedTermDeposit = async (req, res) => {
       eventId: identifiers.EVENT_ID,
       userId,
       eventType: 'CUSTOMER_ACCOUNT_CREDIT',
-      action: 'Credit Principal to Customer Account for Term Deposit Maturity',
+      action: `Credit Principal to ${customerName} for Term Deposit Maturity (${termDeposit.ACCT_NO})`,
       oldValue: oldValues,
       newValue: {
         LEDGER_BAL: customerAccount.ledger_balance,
         AVAILABLE_BALANCE: customerAccount.available_balance,
+        CURRENT_BALANCE: customerAccount.current_balance,
+        CLEARED_BALANCE: customerAccount.cleared_balance,
       },
       ipAddress,
       accountNo,
     }, { transaction });
 
-    // ✅ Process interest distributions
+    // ✅ Process interest distributions with customer name
     const distributions = termDeposit.interestDistributions || [];
     
     if (distributions.length > 0) {
@@ -1133,25 +1166,29 @@ export const settleMaturedTermDeposit = async (req, res) => {
           const targetAccount = await CustomerAccount.findByPk(dist.targetAccountId, { transaction });
           if (targetAccount && targetAccount.allow_credit) {
             const oldTargetBal = parseFloat(targetAccount.ledger_balance);
+            const oldTargetAvail = parseFloat(targetAccount.available_balance);
+            
             targetAccount.ledger_balance = (oldTargetBal + amount).toFixed(2);
-            targetAccount.available_balance = (parseFloat(targetAccount.available_balance) + amount).toFixed(2);
+            targetAccount.available_balance = (oldTargetAvail + amount).toFixed(2);
+            targetAccount.current_balance = (parseFloat(targetAccount.current_balance || targetAccount.ledger_balance) + amount).toFixed(2);
+            targetAccount.cleared_balance = (parseFloat(targetAccount.cleared_balance || targetAccount.available_balance) + amount).toFixed(2);
             targetAccount.updated_at = new Date();
             await targetAccount.save({ transaction });
             
             await dist.markAsProcessed(amount, transaction);
             
-            logger.info(`Distributed ${amount} to account ${targetAccount.account_number}`);
+            logger.info(`Distributed ${amount} to account ${targetAccount.account_number} for ${customerName}`);
           }
         } catch (distError) {
           await dist.markAsFailed(distError.message, transaction);
-          logger.error(`Failed to distribute interest to account ${dist.targetAccountId}: ${distError.message}`);
+          logger.error(`Failed to distribute interest to account ${dist.targetAccountId} for ${customerName}: ${distError.message}`);
         }
       }
     }
 
     // Process all GL transactions
     for (const glTransaction of glTransactions) {
-      await createGLTransaction(null, null, glTransaction, { transaction });
+      await processGLTransaction(null, null, glTransaction, { transaction });
     }
 
     // Update term deposit status
@@ -1159,8 +1196,19 @@ export const settleMaturedTermDeposit = async (req, res) => {
     termDeposit.INTEREST_PAYMENT_STATUS = 'PAID';
     termDeposit.ACCRUED_INTEREST = 0;
     termDeposit.MATURITY_INTEREST_AMOUNT = totalInterest;
+    termDeposit.rateInformation = {
+      ...termDeposit.rateInformation,
+      maturitySettlement: {
+        settledAt: new Date().toISOString(),
+        customerName: customerName,
+        totalInterest: totalInterest,
+        effectiveRate: effectiveRate,
+        rateType: rateType,
+      }
+    };
     await termDeposit.save({ transaction });
 
+    transactionCommitted = true;
     await transaction.commit();
     
     const updatedTermDeposit = await TermDeposit.findByPk(termDeposit.id, {
@@ -1172,12 +1220,28 @@ export const settleMaturedTermDeposit = async (req, res) => {
     });
     
     res.status(200).json({
-      message: `Term Deposit ${termDeposit.ACCT_NO} matured and processed successfully`,
+      success: true,
+      message: `Term Deposit ${termDeposit.ACCT_NO} matured and processed successfully for ${customerName}`,
       termDeposit: updatedTermDeposit,
+      settlementDetails: {
+        customerName: customerName,
+        accountNumber: termDeposit.ACCT_NO,
+        principalAmount: principalAmount,
+        totalInterest: totalInterest,
+        effectiveRate: effectiveRate,
+        rateType: rateType,
+      }
     });
     
   } catch (error) {
-    await transaction.rollback();
+    // ✅ Only rollback if transaction is still active and not committed
+    if (transaction && !transactionCommitted && transaction.finished !== 'commit') {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error('Error during transaction rollback:', rollbackError);
+      }
+    }
     logger.error('Term Deposit maturity error:', error);
     
     res.status(error.name === 'ValidationError' ? 400 : 500).json({
@@ -1186,12 +1250,12 @@ export const settleMaturedTermDeposit = async (req, res) => {
     });
   }
 };
-
 // ============================================================
 // EARLY TERMINATE TERM DEPOSIT WITH DISTRIBUTIONS
 // ============================================================
 export const earlyTerminateTermDeposit = async (req, res) => {
   const transaction = await sequelize.transaction();
+  let transactionCommitted = false;
   
   try {
     const { termDepositId, customerAccountNo, taxRate } = req.body;
@@ -1220,8 +1284,9 @@ export const earlyTerminateTermDeposit = async (req, res) => {
       throw new CustomValidationError('Term Deposit has already matured. Use settleMaturedTermDeposit instead.');
     }
     
-    if (!termDeposit.UPFRONT_INTEREST_PAYMENT && taxRate == null) {
-      throw new CustomValidationError('taxRate is required for early termination interest payment');
+    // ✅ Validate tax rate for upfront interest
+    if (termDeposit.UPFRONT_INTEREST_PAYMENT && taxRate == null) {
+      throw new CustomValidationError('taxRate is required for early termination of upfront interest term deposit');
     }
     
     if (taxRate != null && (taxRate < 0 || taxRate > 1)) {
@@ -1232,8 +1297,67 @@ export const earlyTerminateTermDeposit = async (req, res) => {
       throw new CustomValidationError('withholdingTaxGLAccountNo is required when taxRate is greater than 0');
     }
 
+    // ============================================================
+    // ✅ CALCULATE EARLY TERMINATION AMOUNTS
+    // ============================================================
+    
+    // Calculate months elapsed
+    const startDate = new Date(termDeposit.START_DT);
+    const terminationDate = new Date();
+    const diffTime = Math.abs(terminationDate - startDate);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const monthsElapsed = diffDays / 30.44; // Approximate months
+    
+    // Get effective interest rate
+    const effectiveRate = termDeposit.getEffectiveRate();
+    const rateType = termDeposit.USE_CUSTOM_RATE ? 'CUSTOM' : 'PRODUCT';
+    
+    // ✅ Calculate early termination using the utility function
+    const terminationResult = calculateEarlyTermination({
+      principal: parseFloat(termDeposit.NOTICE_AMOUNT),
+      upfrontInterestAmount: parseFloat(termDeposit.UPFRONT_INTEREST_AMOUNT || 0),
+      whtRate: taxRate || 0.10,
+      whtAmount: 0, // Will be calculated by the utility
+      termMonths: parseInt(termDeposit.TERM),
+      monthsElapsed: monthsElapsed,
+      interestRate: effectiveRate,
+      startDate: termDeposit.START_DT,
+      maturityDate: termDeposit.MATURITY_DT,
+      terminationDate: new Date(),
+    });
+    
+    if (!terminationResult.success) {
+      throw new Error(terminationResult.error || 'Early termination calculation failed');
+    }
+    
+    // ✅ Extract calculated amounts
+    const netPayment = terminationResult.paymentBreakdown.netPayment;
+    const interestToKeep = terminationResult.interestBreakdown.interestToKeep;
+    const recoveryAmount = Math.abs(terminationResult.paymentBreakdown.recoveryAmount);
+    const whtRefund = terminationResult.paymentBreakdown.whtRefund || 0;
+    const totalInterestEarned = terminationResult.interestBreakdown.interestEarned;
+    const unearnedInterest = terminationResult.interestBreakdown.unearnedInterest;
+    
+    // ✅ Get customer name for descriptions
+    const customerName = termDeposit.CUST_NM || termDeposit.ACCT_NM || 'Customer';
+    
+    logger.info(`✅ Early termination calculation for ${termDeposit.ACCT_NO}:`, {
+      principal: termDeposit.NOTICE_AMOUNT,
+      upfrontInterest: termDeposit.UPFRONT_INTEREST_AMOUNT,
+      effectiveRate: effectiveRate,
+      rateType: rateType,
+      monthsElapsed: monthsElapsed,
+      interestToKeep: interestToKeep,
+      recoveryAmount: recoveryAmount,
+      whtRefund: whtRefund,
+      netPayment: netPayment,
+      customerName: customerName,
+      terminationDate: new Date().toISOString()
+    });
+
     const validatedBU_ID = validateBU_ID(termDeposit.BU_ID);
 
+    // Validate GL accounts
     await validateGLAccount(termDeposit.principalBalanceGLAccountNo, 'DR', 'LIABILITY', transaction);
     await validateGLAccount(termDeposit.interestPayableGLAccountNo, 'DR', 'LIABILITY', transaction, true);
     
@@ -1243,6 +1367,7 @@ export const earlyTerminateTermDeposit = async (req, res) => {
     
     await validateGLAccount(termDeposit.principalBalanceGLAccountNo, 'CR', 'ASSET', transaction);
 
+    // Get customer account
     let customerAccount = null;
     const accountNo = customerAccountNo || termDeposit.SETTLEMENT_ACCOUNT;
     
@@ -1265,9 +1390,13 @@ export const earlyTerminateTermDeposit = async (req, res) => {
     validateTransactionIds(identifiers);
 
     const principalAmount = parseFloat(termDeposit.NOTICE_AMOUNT);
-    const interestAmount = parseFloat(termDeposit.ACCRUED_INTEREST || 0);
-
+    
+    // ============================================================
+    // ✅ GL TRANSACTIONS FOR EARLY TERMINATION
+    // ============================================================
+    
     const glTransactions = [
+      // 1. Debit the principal balance GL (remove liability)
       {
         GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
         AMOUNT: principalAmount,
@@ -1276,13 +1405,14 @@ export const earlyTerminateTermDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: validatedBU_ID,
         LEDGER_NO: '000',
-        description: `Early Termination Principal Settlement for ${termDeposit.ACCT_NO}`,
+        description: `Early Termination - Principal Settlement for ${customerName} (${termDeposit.ACCT_NO})`,
         JOURNAL_ID: identifiers.glSettlementTxnId,
         DRS_ALLOWED_FG: true,
         CRS_ALLOWED_FG: false,
         BAL_CD: mapTransactionTypeToBalCd('DR'),
         GL_ACCT_CAT: 'LIABILITY',
       },
+      // 2. Credit the settlement GL (move funds)
       {
         GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
         AMOUNT: principalAmount,
@@ -1291,7 +1421,7 @@ export const earlyTerminateTermDeposit = async (req, res) => {
         SUB_LEDGER_NO: '000',
         SEG_NO: validatedBU_ID,
         LEDGER_NO: '000',
-        description: `Early Termination Principal Credit to Settlement GL for ${termDeposit.ACCT_NO}`,
+        description: `Early Termination - Principal Credit to Settlement GL for ${customerName} (${termDeposit.ACCT_NO})`,
         JOURNAL_ID: identifiers.glSettlementTxnId,
         DRS_ALLOWED_FG: false,
         CRS_ALLOWED_FG: true,
@@ -1300,25 +1430,37 @@ export const earlyTerminateTermDeposit = async (req, res) => {
       },
     ];
 
+    // ============================================================
+    // ✅ CREDIT CUSTOMER WITH NET PAYMENT
+    // ============================================================
+    
+    // ✅ Capture ALL balance types before update
     const oldValues = {
       LEDGER_BAL: customerAccount.ledger_balance,
       AVAILABLE_BALANCE: customerAccount.available_balance,
+      CURRENT_BALANCE: customerAccount.current_balance || customerAccount.ledger_balance,
+      CLEARED_BALANCE: customerAccount.cleared_balance || customerAccount.available_balance,
     };
     
-    customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + principalAmount).toFixed(2);
-    customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + principalAmount).toFixed(2);
+    // ✅ Update ALL balance types
+    const netPaymentNum = parseFloat(netPayment);
+    customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + netPaymentNum).toFixed(2);
+    customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + netPaymentNum).toFixed(2);
+    customerAccount.current_balance = (parseFloat(customerAccount.current_balance || customerAccount.ledger_balance) + netPaymentNum).toFixed(2);
+    customerAccount.cleared_balance = (parseFloat(customerAccount.cleared_balance || customerAccount.available_balance) + netPaymentNum).toFixed(2);
     customerAccount.updated_at = new Date();
     await customerAccount.save({ transaction });
 
+    // GL transaction for customer payout - WITH CUSTOMER NAME
     glTransactions.push({
       GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
-      AMOUNT: principalAmount,
+      AMOUNT: netPayment,
       TRANSACTION_TYPE: 'DR',
       CREATED_BY: userId,
       SUB_LEDGER_NO: '000',
       SEG_NO: validatedBU_ID,
       LEDGER_NO: '000',
-      description: `Early Termination Principal Payout to Customer for ${termDeposit.ACCT_NO}`,
+      description: `Early Termination - Net Payment to ${customerName} (${termDeposit.ACCT_NO})`,
       JOURNAL_ID: identifiers.customerSettlementTxnId,
       DRS_ALLOWED_FG: true,
       CRS_ALLOWED_FG: false,
@@ -1326,61 +1468,241 @@ export const earlyTerminateTermDeposit = async (req, res) => {
       GL_ACCT_CAT: 'ASSET',
     });
 
+    // Audit trail for principal payout with ALL balances
     await createAuditTrail({
       eventId: identifiers.EVENT_ID,
       userId,
       eventType: 'CUSTOMER_ACCOUNT_CREDIT',
-      action: 'Credit Principal to Customer Account on Early Termination',
+      action: `Credit Net Payment to ${customerName} on Early Termination (${termDeposit.ACCT_NO})`,
       oldValue: oldValues,
       newValue: {
         LEDGER_BAL: customerAccount.ledger_balance,
         AVAILABLE_BALANCE: customerAccount.available_balance,
+        CURRENT_BALANCE: customerAccount.current_balance,
+        CLEARED_BALANCE: customerAccount.cleared_balance,
       },
       ipAddress,
       accountNo,
     }, { transaction });
 
-    // ✅ Mark distributions as failed on early termination
+    // ============================================================
+    // ✅ MARK DISTRIBUTIONS AS FAILED ON EARLY TERMINATION
+    // ============================================================
+    
     if (termDeposit.interestDistributions && termDeposit.interestDistributions.length > 0) {
       for (const dist of termDeposit.interestDistributions) {
-        await dist.markAsFailed('Term deposit early terminated', transaction);
+        await dist.markAsFailed(`Term deposit early terminated on ${new Date().toISOString()}`, transaction);
+      }
+      logger.info(`✅ Marked ${termDeposit.interestDistributions.length} interest distributions as failed for early terminated term deposit ${termDeposit.ACCT_NO}`);
+    }
+
+    // ============================================================
+    // ✅ PROCESS UPFRONT INTEREST RECOVERY
+    // ============================================================
+    
+    if (termDeposit.UPFRONT_INTEREST_PAYMENT) {
+      // Recovery of unearned upfront interest
+      if (recoveryAmount > 0) {
+        // ✅ Capture balances before recovery debit
+        const recoveryOldValues = {
+          LEDGER_BAL: customerAccount.ledger_balance,
+          AVAILABLE_BALANCE: customerAccount.available_balance,
+          CURRENT_BALANCE: customerAccount.current_balance,
+          CLEARED_BALANCE: customerAccount.cleared_balance,
+        };
+        
+        // ✅ Debit the customer account for the recovery amount
+        const recoveryNum = parseFloat(recoveryAmount);
+        customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) - recoveryNum).toFixed(2);
+        customerAccount.available_balance = (parseFloat(customerAccount.available_balance) - recoveryNum).toFixed(2);
+        customerAccount.current_balance = (parseFloat(customerAccount.current_balance || customerAccount.ledger_balance) - recoveryNum).toFixed(2);
+        customerAccount.cleared_balance = (parseFloat(customerAccount.cleared_balance || customerAccount.available_balance) - recoveryNum).toFixed(2);
+        customerAccount.updated_at = new Date();
+        await customerAccount.save({ transaction });
+
+        const recoveryGLTransactions = [
+          {
+            GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
+            AMOUNT: recoveryAmount,
+            TRANSACTION_TYPE: 'DR',
+            CREATED_BY: userId,
+            SUB_LEDGER_NO: '000',
+            SEG_NO: validatedBU_ID,
+            LEDGER_NO: '000',
+            description: `Early Termination - Recovery of Unearned Upfront Interest from ${customerName} (${termDeposit.ACCT_NO})`,
+            JOURNAL_ID: identifiers.JOURNAL_ID,
+            DRS_ALLOWED_FG: true,
+            CRS_ALLOWED_FG: false,
+            BAL_CD: mapTransactionTypeToBalCd('DR'),
+            GL_ACCT_CAT: 'ASSET',
+          },
+          {
+            GL_ACCT_NO: termDeposit.interestPayableGLAccountNo || termDeposit.INTEREST_PAYABLE_GL_ACCT_NO,
+            AMOUNT: recoveryAmount,
+            TRANSACTION_TYPE: 'CR',
+            CREATED_BY: userId,
+            SUB_LEDGER_NO: '000',
+            SEG_NO: validatedBU_ID,
+            LEDGER_NO: '000',
+            description: `Early Termination - Recovery Credit to Interest GL for ${customerName} (${termDeposit.ACCT_NO})`,
+            JOURNAL_ID: identifiers.JOURNAL_ID,
+            DRS_ALLOWED_FG: false,
+            CRS_ALLOWED_FG: true,
+            BAL_CD: mapTransactionTypeToBalCd('CR'),
+            GL_ACCT_CAT: 'LIABILITY',
+          }
+        ];
+        
+        glTransactions.push(...recoveryGLTransactions);
+        
+        // Audit trail for recovery with ALL balances
+        await createAuditTrail({
+          eventId: identifiers.EVENT_ID + 1,
+          userId,
+          eventType: 'UPFRONT_INTEREST_RECOVERY',
+          action: `Recovery of Unearned Upfront Interest from ${customerName} (${termDeposit.ACCT_NO})`,
+          oldValue: { 
+            ...recoveryOldValues,
+            upfrontInterestAmount: termDeposit.UPFRONT_INTEREST_AMOUNT,
+            interestEarned: interestToKeep,
+            recoveryAmount: recoveryAmount
+          },
+          newValue: {
+            LEDGER_BAL: customerAccount.ledger_balance,
+            AVAILABLE_BALANCE: customerAccount.available_balance,
+            CURRENT_BALANCE: customerAccount.current_balance,
+            CLEARED_BALANCE: customerAccount.cleared_balance,
+            recoveredAmount: recoveryAmount,
+            netUpfrontRetained: interestToKeep,
+          },
+          ipAddress,
+          accountNo: termDeposit.ACCT_NO,
+        }, { transaction });
+      }
+      
+      // ============================================================
+      // ✅ PROCESS WHT REFUND
+      // ============================================================
+      
+      if (whtRefund > 0) {
+        // ✅ Capture balances before WHT refund credit
+        const whtOldValues = {
+          LEDGER_BAL: customerAccount.ledger_balance,
+          AVAILABLE_BALANCE: customerAccount.available_balance,
+          CURRENT_BALANCE: customerAccount.current_balance,
+          CLEARED_BALANCE: customerAccount.cleared_balance,
+        };
+        
+        // ✅ Credit the customer account for WHT refund
+        const whtRefundNum = parseFloat(whtRefund);
+        customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + whtRefundNum).toFixed(2);
+        customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + whtRefundNum).toFixed(2);
+        customerAccount.current_balance = (parseFloat(customerAccount.current_balance || customerAccount.ledger_balance) + whtRefundNum).toFixed(2);
+        customerAccount.cleared_balance = (parseFloat(customerAccount.cleared_balance || customerAccount.available_balance) + whtRefundNum).toFixed(2);
+        customerAccount.updated_at = new Date();
+        await customerAccount.save({ transaction });
+
+        const whtRefundTransactions = [
+          {
+            GL_ACCT_NO: termDeposit.withholdingTaxGLAccountNo,
+            AMOUNT: whtRefund,
+            TRANSACTION_TYPE: 'DR',
+            CREATED_BY: userId,
+            SUB_LEDGER_NO: '000',
+            SEG_NO: validatedBU_ID,
+            LEDGER_NO: '000',
+            description: `Early Termination - WHT Refund to ${customerName} (${termDeposit.ACCT_NO})`,
+            JOURNAL_ID: identifiers.JOURNAL_ID + 1,
+            DRS_ALLOWED_FG: true,
+            CRS_ALLOWED_FG: false,
+            BAL_CD: mapTransactionTypeToBalCd('DR'),
+            GL_ACCT_CAT: 'LIABILITY',
+          },
+          {
+            GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
+            AMOUNT: whtRefund,
+            TRANSACTION_TYPE: 'CR',
+            CREATED_BY: userId,
+            SUB_LEDGER_NO: '000',
+            SEG_NO: validatedBU_ID,
+            LEDGER_NO: '000',
+            description: `Early Termination - WHT Refund Credit for ${customerName} (${termDeposit.ACCT_NO})`,
+            JOURNAL_ID: identifiers.JOURNAL_ID + 1,
+            DRS_ALLOWED_FG: false,
+            CRS_ALLOWED_FG: true,
+            BAL_CD: mapTransactionTypeToBalCd('CR'),
+            GL_ACCT_CAT: 'ASSET',
+          }
+        ];
+        
+        glTransactions.push(...whtRefundTransactions);
+        
+        // Audit trail for WHT refund with ALL balances
+        await createAuditTrail({
+          eventId: identifiers.EVENT_ID + 2,
+          userId,
+          eventType: 'WHT_REFUND',
+          action: `WHT Refund on Early Termination for ${customerName} (${termDeposit.ACCT_NO})`,
+          oldValue: { 
+            ...whtOldValues,
+            whtAmount: terminationResult.whtBreakdown.whtAlreadyPaid,
+            whtShouldBePaid: terminationResult.whtBreakdown.whtShouldBePaid,
+          },
+          newValue: {
+            LEDGER_BAL: customerAccount.ledger_balance,
+            AVAILABLE_BALANCE: customerAccount.available_balance,
+            CURRENT_BALANCE: customerAccount.current_balance,
+            CLEARED_BALANCE: customerAccount.cleared_balance,
+            whtRefund: whtRefund,
+          },
+          ipAddress,
+          accountNo: termDeposit.ACCT_NO,
+        }, { transaction });
       }
     }
 
-    if (interestAmount > 0) {
-      const taxAmount = interestAmount * taxRate;
-      const netInterest = interestAmount - taxAmount;
+    // ============================================================
+    // ✅ PROCESS REGULAR INTEREST (if any)
+    // ============================================================
+    
+    // If there's any accrued interest (non-upfront), handle it
+    const accruedInterest = parseFloat(termDeposit.ACCRUED_INTEREST || 0);
+    if (accruedInterest > 0 && !termDeposit.UPFRONT_INTEREST_PAYMENT) {
+      const taxAmount = accruedInterest * (taxRate || 0);
+      const netInterest = accruedInterest - taxAmount;
+
+      // ✅ Capture balances before interest credit
+      const interestOldValues = {
+        LEDGER_BAL: customerAccount.ledger_balance,
+        AVAILABLE_BALANCE: customerAccount.available_balance,
+        CURRENT_BALANCE: customerAccount.current_balance,
+        CLEARED_BALANCE: customerAccount.cleared_balance,
+      };
+      
+      // ✅ Credit customer with net interest
+      const netInterestNum = parseFloat(netInterest);
+      customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + netInterestNum).toFixed(2);
+      customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + netInterestNum).toFixed(2);
+      customerAccount.current_balance = (parseFloat(customerAccount.current_balance || customerAccount.ledger_balance) + netInterestNum).toFixed(2);
+      customerAccount.cleared_balance = (parseFloat(customerAccount.cleared_balance || customerAccount.available_balance) + netInterestNum).toFixed(2);
+      customerAccount.updated_at = new Date();
+      await customerAccount.save({ transaction });
 
       glTransactions.push(
         {
           GL_ACCT_NO: termDeposit.interestPayableGLAccountNo,
-          AMOUNT: interestAmount,
+          AMOUNT: accruedInterest,
           TRANSACTION_TYPE: 'DR',
           CREATED_BY: userId,
           SUB_LEDGER_NO: '000',
           SEG_NO: validatedBU_ID,
           LEDGER_NO: '000',
-          description: `Early Termination Interest Payout from Interest Payable GL for ${termDeposit.ACCT_NO}`,
+          description: `Early Termination - Interest Payout for ${customerName} (${termDeposit.ACCT_NO})`,
           JOURNAL_ID: identifiers.glInterestPaymentTxnId,
           DRS_ALLOWED_FG: true,
           CRS_ALLOWED_FG: false,
           BAL_CD: mapTransactionTypeToBalCd('DR'),
           GL_ACCT_CAT: 'LIABILITY',
-        },
-        {
-          GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
-          AMOUNT: interestAmount,
-          TRANSACTION_TYPE: 'CR',
-          CREATED_BY: userId,
-          SUB_LEDGER_NO: '000',
-          SEG_NO: validatedBU_ID,
-          LEDGER_NO: '000',
-          description: `Early Termination Interest Credit to Settlement GL for ${termDeposit.ACCT_NO}`,
-          JOURNAL_ID: identifiers.glInterestPaymentTxnId,
-          DRS_ALLOWED_FG: false,
-          CRS_ALLOWED_FG: true,
-          BAL_CD: mapTransactionTypeToBalCd('CR'),
-          GL_ACCT_CAT: 'ASSET',
         },
         {
           GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
@@ -1390,7 +1712,7 @@ export const earlyTerminateTermDeposit = async (req, res) => {
           SUB_LEDGER_NO: '000',
           SEG_NO: validatedBU_ID,
           LEDGER_NO: '000',
-          description: `Early Termination Net Interest Payout to Customer for ${termDeposit.ACCT_NO}`,
+          description: `Early Termination - Net Interest Payout to ${customerName} (${termDeposit.ACCT_NO})`,
           JOURNAL_ID: identifiers.customerInterestPaymentTxnId,
           DRS_ALLOWED_FG: true,
           CRS_ALLOWED_FG: false,
@@ -1398,89 +1720,68 @@ export const earlyTerminateTermDeposit = async (req, res) => {
           GL_ACCT_CAT: 'ASSET',
         }
       );
-
-      const oldValuesInterest = {
-        LEDGER_BAL: customerAccount.ledger_balance,
-        AVAILABLE_BALANCE: customerAccount.available_balance,
-      };
       
-      customerAccount.ledger_balance = (parseFloat(customerAccount.ledger_balance) + netInterest).toFixed(2);
-      customerAccount.available_balance = (parseFloat(customerAccount.available_balance) + netInterest).toFixed(2);
-      customerAccount.updated_at = new Date();
-      await customerAccount.save({ transaction });
-
+      // Audit trail for interest
       await createAuditTrail({
-        eventId: identifiers.EVENT_ID,
+        eventId: identifiers.EVENT_ID + 3,
         userId,
-        eventType: 'CUSTOMER_ACCOUNT_CREDIT',
-        action: 'Credit Early Termination Net Interest to Customer Account',
-        oldValue: oldValuesInterest,
+        eventType: 'INTEREST_PAYOUT',
+        action: `Interest Payout on Early Termination for ${customerName} (${termDeposit.ACCT_NO})`,
+        oldValue: interestOldValues,
         newValue: {
           LEDGER_BAL: customerAccount.ledger_balance,
           AVAILABLE_BALANCE: customerAccount.available_balance,
+          CURRENT_BALANCE: customerAccount.current_balance,
+          CLEARED_BALANCE: customerAccount.cleared_balance,
+          interestPaid: netInterest,
         },
         ipAddress,
-        accountNo,
+        accountNo: termDeposit.ACCT_NO,
       }, { transaction });
-
-      if (taxAmount > 0) {
-        glTransactions.push(
-          {
-            GL_ACCT_NO: termDeposit.principalBalanceGLAccountNo,
-            AMOUNT: taxAmount,
-            TRANSACTION_TYPE: 'DR',
-            CREATED_BY: userId,
-            SUB_LEDGER_NO: '000',
-            SEG_NO: validatedBU_ID,
-            LEDGER_NO: '000',
-            description: `Withholding Tax on Early Termination Interest for ${termDeposit.ACCT_NO}`,
-            JOURNAL_ID: identifiers.JOURNAL_ID,
-            DRS_ALLOWED_FG: true,
-            CRS_ALLOWED_FG: false,
-            BAL_CD: mapTransactionTypeToBalCd('DR'),
-            GL_ACCT_CAT: 'ASSET',
-          },
-          {
-            GL_ACCT_NO: termDeposit.withholdingTaxGLAccountNo,
-            AMOUNT: taxAmount,
-            TRANSACTION_TYPE: 'CR',
-            CREATED_BY: userId,
-            SUB_LEDGER_NO: '000',
-            SEG_NO: validatedBU_ID,
-            LEDGER_NO: '000',
-            description: `Withholding Tax Credit for Term Deposit ${termDeposit.ACCT_NO}`,
-            JOURNAL_ID: identifiers.JOURNAL_ID,
-            DRS_ALLOWED_FG: false,
-            CRS_ALLOWED_FG: true,
-            BAL_CD: mapTransactionTypeToBalCd('CR'),
-            GL_ACCT_CAT: 'LIABILITY',
-          }
-        );
-
-        await createAuditTrail({
-          eventId: identifiers.EVENT_ID,
-          userId,
-          eventType: 'WITHHOLDING_TAX',
-          action: 'Withholding Tax on Early Termination Interest',
-          oldValue: { BALANCE: 'N/A' },
-          newValue: { BALANCE: `Credited ${taxAmount} to Withholding Tax GL` },
-          ipAddress,
-          accountNo: termDeposit.ACCT_NO,
-        }, { transaction });
-      }
     }
 
+    // ============================================================
+    // ✅ PROCESS ALL GL TRANSACTIONS
+    // ============================================================
+    
     for (const glTransaction of glTransactions) {
-      await createGLTransaction(null, null, glTransaction, { transaction });
+      await processGLTransaction(null, null, glTransaction, { transaction });
     }
 
+    // ============================================================
+    // ✅ UPDATE TERM DEPOSIT STATUS
+    // ============================================================
+    
     termDeposit.SETTLEMENT_STATUS = 'TERMINATED';
-    termDeposit.INTEREST_PAYMENT_STATUS = interestAmount > 0 ? 'PAID' : termDeposit.INTEREST_PAYMENT_STATUS;
-    termDeposit.MATURITY_INTEREST_AMOUNT = interestAmount;
+    termDeposit.INTEREST_PAYMENT_STATUS = 'PAID';
+    termDeposit.MATURITY_INTEREST_AMOUNT = interestToKeep;
     termDeposit.ACCRUED_INTEREST = 0;
+    termDeposit.TERMINATED_AT = new Date();
+    
+    // ✅ Store termination calculation details in JSON field
+    termDeposit.rateInformation = {
+      ...termDeposit.rateInformation,
+      earlyTermination: {
+        terminatedAt: new Date().toISOString(),
+        customerName: customerName,
+        monthsElapsed: monthsElapsed,
+        interestEarned: interestToKeep,
+        recoveryAmount: recoveryAmount,
+        whtRefund: whtRefund,
+        netPayment: netPayment,
+        calculationDetails: terminationResult
+      }
+    };
+    
     await termDeposit.save({ transaction });
 
+    // ✅ Mark transaction as committed
+    transactionCommitted = true;
     await transaction.commit();
+    
+    // ============================================================
+    // ✅ FETCH UPDATED TERM DEPOSIT
+    // ============================================================
     
     const updatedTermDeposit = await TermDeposit.findByPk(termDeposit.id, {
       include: [{
@@ -1490,18 +1791,58 @@ export const earlyTerminateTermDeposit = async (req, res) => {
       }]
     });
     
+    // ============================================================
+    // ✅ RESPONSE
+    // ============================================================
+    
     res.status(200).json({
-      message: `Term Deposit ${termDeposit.ACCT_NO} early terminated and processed successfully`,
-      termDeposit: updatedTermDeposit,
+      success: true,
+      message: `Term Deposit ${termDeposit.ACCT_NO} early terminated and processed successfully for ${customerName}`,
+      data: {
+        termDeposit: updatedTermDeposit,
+        terminationCalculation: {
+          ...terminationResult,
+          summary: {
+            ...terminationResult.summary,
+            rateType: rateType,
+            effectiveRate: effectiveRate,
+            customerName: customerName,
+          }
+        },
+        paymentBreakdown: {
+          customerName: customerName,
+          accountNumber: termDeposit.ACCT_NO,
+          principalReturned: principalAmount,
+          interestEarned: interestToKeep,
+          recoveryDeducted: recoveryAmount,
+          whtRefunded: whtRefund,
+          netPayment: netPayment,
+        },
+        balanceUpdate: {
+          ledgerBalance: customerAccount.ledger_balance,
+          availableBalance: customerAccount.available_balance,
+          currentBalance: customerAccount.current_balance,
+          clearedBalance: customerAccount.cleared_balance,
+        }
+      }
     });
     
   } catch (error) {
-    await transaction.rollback();
+    // ✅ Only rollback if transaction is still active and not committed
+    if (transaction && !transactionCommitted && transaction.finished !== 'commit') {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.error('Error during transaction rollback:', rollbackError);
+      }
+    }
+    
     logger.error('Term Deposit early termination error:', error);
     
     res.status(error.name === 'ValidationError' ? 400 : 500).json({
       success: false,
       message: error.message,
+      error: error.stack
     });
   }
 };

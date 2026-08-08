@@ -101,11 +101,17 @@ import JournalEntryRoutes from './routes/JournalEntryRoutes.js';
 import EmailStatementRoutes from './routes/EmailStatementRoutes.js';
 
 
+
+// EOY Report Routes
+import EOYRoutes from './routes/EOYRoutes.js';
+
+
 // Channel Routes
 
 import InwardFundsTransferRoutes from './routes/InwardFundsTransferRoutes.js';
 import ExternalTransferRoutes from './routes/ExternalTransferRoutes.js';
 import CardPaymentRoutes from './routes/CardPaymentRoutes.js';
+import CardApprovalRoutes from './routes/CardApprovalRoutes.js';
 
 // ✅ Import AdminUser from the correct path
 import AdminUser from '../src/models/AdminUser.js';
@@ -185,6 +191,10 @@ console.info = (...args) => logger.info(args.join(' '));
 // CORS CONFIGURATION (MUST BE FIRST)
 // ============================================
 
+// ============================================
+// CORS CONFIGURATION (MUST BE FIRST)
+// ============================================
+
 const corsOptions = {
   origin: [
     'https://evolutionbankingsolution-lexicalresource.com.ng',
@@ -219,7 +229,8 @@ const corsOptions = {
     'x-encrypted',
     'x-encryption-version',
     'x-encryption-metadata',
-    'x-skip-encryption',  // ✅ ADD THIS - required for 2FA
+    'x-skip-encryption',
+    'x-organization-id',  // ✅ ADD THIS - Required for organization header
     'accept',
     'origin',
     'user-agent',
@@ -230,7 +241,8 @@ const corsOptions = {
     'X-Total-Count',
     'X-Business-Unit',
     'X-Branch-Name',
-    'X-Branch-Code'
+    'X-Branch-Code',
+    'X-Organization-Id'  // ✅ ADD THIS - Expose organization header
   ],
 };
 
@@ -240,6 +252,7 @@ console.log('🛡️ CORS Allowed Headers:', corsOptions.allowedHeaders);
 // Apply CORS middleware
 app.use(cors(corsOptions));
 
+// Additional CORS headers middleware
 // Additional CORS headers middleware
 app.use((req, res, next) => {
   const origin = req.headers.origin;
@@ -258,7 +271,7 @@ app.use((req, res, next) => {
   // Allow methods
   res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
   
-  // Allow headers - include all custom headers including x-skip-encryption
+  // Allow headers - include all custom headers including x-organization-id
   res.header('Access-Control-Allow-Headers', [
     ...corsOptions.allowedHeaders,
     'x-business-unit',
@@ -267,7 +280,8 @@ app.use((req, res, next) => {
     'x-encrypted',
     'x-encryption-version',
     'x-encryption-metadata',
-    'x-skip-encryption'  // ✅ ADD THIS
+    'x-skip-encryption',
+    'x-organization-id'  // ✅ ADD THIS
   ].join(', '));
   
   // Expose headers to frontend
@@ -276,7 +290,8 @@ app.use((req, res, next) => {
     'X-Total-Count',
     'X-Business-Unit',
     'X-Branch-Name',
-    'X-Branch-Code'
+    'X-Branch-Code',
+    'X-Organization-Id'  // ✅ ADD THIS
   ].join(', '));
   
   // Handle preflight OPTIONS requests
@@ -287,6 +302,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// ✅ Alternative: Use a more permissive CORS for development
 // ✅ Alternative: Use a more permissive CORS for development
 if (process.env.NODE_ENV === 'development') {
   app.use((req, res, next) => {
@@ -305,7 +321,8 @@ if (process.env.NODE_ENV === 'development') {
       'x-encrypted',
       'x-encryption-version',
       'x-encryption-metadata',
-      'x-skip-encryption',  // ✅ ADD THIS
+      'x-skip-encryption',
+      'x-organization-id',  // ✅ ADD THIS
       'x-api-key',
       'app-id',
       'x-webhook-signature',
@@ -315,7 +332,14 @@ if (process.env.NODE_ENV === 'development') {
       'pragma',
       'expires'
     ].join(', '));
-    res.header('Access-Control-Expose-Headers', 'Content-Range, X-Total-Count, X-Business-Unit, X-Branch-Name, X-Branch-Code');
+    res.header('Access-Control-Expose-Headers', [
+      'Content-Range', 
+      'X-Total-Count', 
+      'X-Business-Unit', 
+      'X-Branch-Name', 
+      'X-Branch-Code',
+      'X-Organization-Id'  // ✅ ADD THIS
+    ].join(', '));
     if (req.method === 'OPTIONS') {
       return res.status(200).end();
     }
@@ -876,8 +900,15 @@ const lazyLoadRoute = (routePath) => {
 app.use('/api/inwardfunds', InwardFundsTransferRoutes);
 app.use('/api/external-transfers', ExternalTransferRoutes);
 app.use('/api/card-payments', CardPaymentRoutes);
+app.use('/api/card-approvals', CardApprovalRoutes);
 
 
+// ============================================
+// EOY REPORT ROUTES
+// ============================================
+app.use('/api/eoy', EOYRoutes);
+console.log('✅ EOY report routes registered at /api/eoy');
+// ============================================
  
 
 // Mount the consolidated transaction routes at BOTH paths

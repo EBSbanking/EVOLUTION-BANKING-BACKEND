@@ -5,6 +5,7 @@ import { Op } from 'sequelize';
 import notificationService from '../services/NotificationService.js';
 import logger from '../utils/logger.js';
 import sequelize from '../../config/db.js';
+import { emailTransporter, emailConfig } from '../utils/emailService.js';
 
 // ============================================
 // SUPERVISOR ROLE DEFINITIONS
@@ -29,10 +30,7 @@ const EXCLUDED_ROLES = [28, 29, 30]; // Customer Service Officer (CSO), Teller, 
 
 // ============================================
 // HELPER: Get BU-Specific Supervisor Recipients
-// ✅ ENHANCED: Looks at multiple fields to find users with email
 // ============================================
-// controllers/NotificationController.js - Updated getBUApprovalRecipients
-
 const getBUApprovalRecipients = async (BU_ID) => {
   if (!BU_ID) {
     console.warn('⚠️ No BU_ID provided for notification recipients');
@@ -42,9 +40,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
   try {
     console.log(`🔍 Looking for users for BU: ${BU_ID}`);
     
-    // ============================================================
     // STRATEGY 1: Find supervisors with BU_ID = BU_ID
-    // ============================================================
     let users = await User.findAll({
       where: {
         BU_ROLE_ID: { [Op.in]: SUPERVISOR_ROLES },
@@ -62,10 +58,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
       return users;
     }
     
-    // ============================================================
     // STRATEGY 2: Find supervisors with main_business_unit = BU_ID
-    // (This catches users who have main_business_unit set but BU_ID is NULL)
-    // ============================================================
     console.log(`⚠️ No users found with BU_ID = ${BU_ID}, checking main_business_unit...`);
     
     users = await User.findAll({
@@ -85,9 +78,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
       return users;
     }
     
-    // ============================================================
     // STRATEGY 3: Find supervisors with responsibility_centre = BU_ID
-    // ============================================================
     console.log(`⚠️ No users found, checking responsibility_centre...`);
     
     users = await User.findAll({
@@ -107,9 +98,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
       return users;
     }
     
-    // ============================================================
-    // STRATEGY 4: Find ANY user with main_business_unit = BU_ID (including non-supervisors)
-    // ============================================================
+    // STRATEGY 4: Find ANY user with main_business_unit = BU_ID
     console.log(`⚠️ No supervisors found, looking for any user with main_business_unit = ${BU_ID}...`);
     
     const [anyUsers] = await sequelize.query(
@@ -132,9 +121,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
       return anyUsers;
     }
     
-    // ============================================================
     // STRATEGY 5: Check for PCO03 specifically
-    // ============================================================
     console.log(`🔍 Checking for PCO03 specifically...`);
     const [pco03] = await sequelize.query(
       `SELECT id, user_name, email, BU_ROLE_ID, BU_ID, primary_business_role, is_supervisor, main_business_unit, responsibility_centre
@@ -151,9 +138,7 @@ const getBUApprovalRecipients = async (BU_ID) => {
       return [pco03];
     }
     
-    // ============================================================
     // STRATEGY 6: Ultimate fallback - Admin users
-    // ============================================================
     console.log(`⚠️ No users found, looking for Admin users...`);
     
     const [admins] = await sequelize.query(
@@ -181,18 +166,19 @@ const getBUApprovalRecipients = async (BU_ID) => {
     return [];
   }
 };
+
 // ============================================
-// HELPER: Send Email Notification
-// ✅ NEW: Sends email to recipients
+// HELPER: Send Email Notification (UPDATED)
+// Uses the shared email transporter from emailService
 // ============================================
 const sendEmailNotifications = async (recipients, data) => {
   try {
     const { itemType, itemId, itemName, description, submittedBy, BU_ID, priority } = data;
-    const appName = process.env.APP_NAME || 'Evolution Banking';
+    const appName = emailConfig.appName || process.env.APP_NAME || 'Evolution Banking';
     
-    // Use the email transporter from notificationService
-    const transporter = notificationService.emailTransporter;
-    const fromEmail = notificationService.emailConfig?.from || notificationService.emailConfig?.auth?.user || 'noreply@evolutionbanking.com';
+    // Use the shared email transporter from emailService
+    const transporter = emailTransporter;
+    const fromEmail = emailConfig.from || 'noreply@evolutionbanking.com';
     
     if (!transporter) {
       console.warn('⚠️ Email transporter not configured, skipping emails');
@@ -204,7 +190,7 @@ const sendEmailNotifications = async (recipients, data) => {
       .map(async (recipient) => {
         try {
           const subject = `🔔 ${appName} - New ${itemType} Approval Request`;
-          const approvalUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/approvals/${itemType}/${itemId}`;
+          const approvalUrl = `${emailConfig.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000'}/approvals/${itemType}/${itemId}`;
           
           const html = `
             <!DOCTYPE html>
@@ -222,10 +208,16 @@ const sendEmailNotifications = async (recipients, data) => {
                   .label { font-size: 12px; color: #888; text-transform: uppercase; }
                   .value { font-size: 16px; color: #333; font-weight: 500; }
                   .button { display: inline-block; padding: 12px 30px; background: #667eea; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600; }
+                  .button:hover { background: #5a6fd6; }
                   .footer { margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
                   .priority-high { color: #dc2626; font-weight: bold; }
                   .priority-medium { color: #d97706; font-weight: bold; }
                   .priority-low { color: #2563eb; font-weight: bold; }
+                  .approval-progress { background: #f0f0f0; border-radius: 10px; padding: 10px; margin: 10px 0; }
+                  .approval-step { display: inline-block; padding: 5px 15px; margin: 0 5px; border-radius: 15px; font-size: 12px; }
+                  .approval-step.active { background: #667eea; color: #fff; }
+                  .approval-step.completed { background: #34d399; color: #fff; }
+                  .approval-step.pending { background: #f3f4f6; color: #6b7280; }
                 </style>
               </head>
               <body>
@@ -333,7 +325,6 @@ This is an automated notification, please do not reply.
 
 // ============================================
 // HELPER: Send Approval Notification to BU Users
-// ✅ FIXED: Sends to all users in BU with email
 // ============================================
 export const sendApprovalNotificationToBUUsers = async (data) => {
   try {
@@ -345,7 +336,10 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
       description, 
       submittedBy,
       priority = 'high',
-      metadata = {}
+      metadata = {},
+      requestId,
+      approvalLevel = 0,
+      totalApprovals = 3
     } = data;
     
     if (!BU_ID) {
@@ -439,7 +433,10 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
           recipient_name: recipient.user_name,
           recipient_role: recipient.BU_ROLE_ID,
           recipient_email: recipient.email,
-          recipient_bu: recipient.BU_ID || recipient.main_business_unit || recipient.responsibility_centre
+          recipient_bu: recipient.BU_ID || recipient.main_business_unit || recipient.responsibility_centre,
+          requestId: requestId || itemId,
+          approvalLevel: approvalLevel,
+          totalApprovals: totalApprovals
         },
         recipient_name: recipient.user_name,
         recipient_id: recipient.id,
@@ -452,7 +449,7 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
     const createdNotifications = await Promise.all(notificationPromises);
     console.log(`✅ Created ${createdNotifications.length} in-app notifications for users in BU ${BU_ID}`);
     
-    // 3. ✅ SEND EMAILS to recipients with email addresses
+    // 3. SEND EMAILS to recipients with email addresses
     const emailResult = await sendEmailNotifications(recipients, {
       itemType,
       itemId,
@@ -460,11 +457,17 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
       description,
       submittedBy,
       BU_ID,
-      priority
+      priority,
+      requestId: requestId || itemId,
+      approvalLevel,
+      totalApprovals
     });
     
     if (emailResult.success) {
       console.log(`📧 Sent ${emailResult.sent} email notifications for BU ${BU_ID}`);
+      if (emailResult.failed > 0) {
+        console.warn(`⚠️ ${emailResult.failed} email(s) failed to send`);
+      }
     } else {
       console.warn(`⚠️ Email notifications failed: ${emailResult.error}`);
     }
@@ -479,6 +482,7 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
       })),
       notificationCount: createdNotifications.length,
       emailCount: emailResult.success ? emailResult.sent : 0,
+      emailFailed: emailResult.success ? emailResult.failed : recipients.length,
       BU_ID: BU_ID,
       notifications: createdNotifications,
       emails: emailResult
@@ -494,9 +498,168 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
 };
 
 // ============================================
+// HELPER: Send Status Update Notification
+// ============================================
+export const sendStatusUpdateNotification = async (data) => {
+  try {
+    const {
+      recipientId,
+      itemType,
+      itemId,
+      itemName,
+      status,
+      reason,
+      approvedBy,
+      submittedBy,
+      BU_ID,
+      requestId
+    } = data;
+
+    // Get the recipient user
+    const recipient = await User.findByPk(recipientId, {
+      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID']
+    });
+
+    if (!recipient) {
+      console.warn(`⚠️ Recipient user ${recipientId} not found`);
+      return { success: false, error: 'Recipient not found' };
+    }
+
+    // Create in-app notification
+    const notification = await Notification.create({
+      user_id: recipient.id,
+      ROLE_ID: String(recipient.BU_ROLE_ID || 'User'),
+      message: `${status === 'APPROVED' ? '✅' : '❌'} Your ${itemType} request (${itemName}) has been ${status.toLowerCase()}`,
+      WORK_ITEM_ID: String(itemId || 'N/A'),
+      EVENT_ID: `status_${Date.now()}`,
+      status: 'sent',
+      notification_type: 'approval_status',
+      priority: 'high',
+      recipient_id: recipient.id,
+      recipient_name: recipient.user_name,
+      metadata: {
+        itemType,
+        itemId,
+        itemName,
+        status,
+        reason,
+        approvedBy,
+        submittedBy,
+        BU_ID,
+        requestId,
+        updatedAt: new Date().toISOString()
+      }
+    });
+
+    // Send email if recipient has email
+    let emailResult = null;
+    if (recipient.email) {
+      try {
+        const appName = emailConfig.appName || process.env.APP_NAME || 'Evolution Banking';
+        const statusEmoji = status === 'APPROVED' ? '✅' : '❌';
+        const statusText = status === 'APPROVED' ? 'Approved' : 'Rejected';
+        const statusColor = status === 'APPROVED' ? '#34d399' : '#f87171';
+        const approvalUrl = `${emailConfig.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000'}/approvals/${itemType}/${requestId || itemId}`;
+
+        const subject = `${statusEmoji} ${appName} - ${itemType} Request ${statusText} #${itemId}`;
+        
+        const html = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="UTF-8">
+              <title>Approval Status Update</title>
+              <style>
+                body { font-family: Arial, sans-serif; background-color: #f4f7fc; margin: 0; padding: 20px; }
+                .container { max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .header { text-align: center; border-bottom: 3px solid ${statusColor}; padding-bottom: 20px; }
+                .header h1 { color: ${statusColor}; font-size: 24px; margin: 0; }
+                .greeting { font-size: 16px; color: #333; margin: 20px 0; }
+                .status-badge { display: inline-block; padding: 8px 20px; border-radius: 20px; color: #fff; font-weight: bold; background: ${statusColor}; }
+                .card { background: #f8f9fa; border-radius: 8px; padding: 15px; margin: 15px 0; border-left: 4px solid ${statusColor}; }
+                .label { font-size: 12px; color: #888; text-transform: uppercase; }
+                .value { font-size: 16px; color: #333; font-weight: 500; }
+                .button { display: inline-block; padding: 12px 30px; background: #667eea; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600; }
+                .button:hover { background: #5a6fd6; }
+                .footer { margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>${statusEmoji} ${statusText}</h1>
+                  <p style="color: #666;">${itemType} Request Status Update</p>
+                </div>
+
+                <div class="greeting">
+                  Hello <strong>${recipient.user_name}</strong>,
+                </div>
+
+                <p>Your <strong>${itemType}</strong> request has been <strong>${statusText.toLowerCase()}</strong>.</p>
+
+                <div style="text-align: center; margin: 20px 0;">
+                  <span class="status-badge">${statusText}</span>
+                </div>
+
+                <div class="card">
+                  <div>
+                    <div class="label">Reference ID</div>
+                    <div class="value">#${itemId}</div>
+                  </div>
+                  <div style="margin-top: 10px;">
+                    <div class="label">Item Name</div>
+                    <div class="value">${itemName}</div>
+                  </div>
+                  ${approvedBy ? `<div><span class="label">Reviewed By:</span> ${approvedBy}</div>` : ''}
+                  ${reason ? `<div><span class="label">Reason:</span> ${reason}</div>` : ''}
+                </div>
+
+                <div style="text-align: center; margin: 25px 0;">
+                  <a href="${approvalUrl}" class="button">📋 View Details</a>
+                </div>
+
+                <div class="footer">
+                  <p>&copy; ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
+                  <p style="font-size: 11px; color: #bbb;">This is an automated notification, please do not reply.</p>
+                </div>
+              </div>
+            </body>
+          </html>
+        `;
+
+        const mailOptions = {
+          from: `"${appName} Notifications" <${emailConfig.from || 'noreply@evolutionbanking.com'}>`,
+          to: recipient.email,
+          subject: subject,
+          html: html
+        };
+
+        const info = await emailTransporter.sendMail(mailOptions);
+        emailResult = { success: true, messageId: info.messageId };
+        console.log(`✅ Status email sent to ${recipient.email}: ${info.messageId}`);
+        
+      } catch (error) {
+        console.error(`❌ Failed to send status email to ${recipient.email}:`, error.message);
+        emailResult = { success: false, error: error.message };
+      }
+    }
+
+    return {
+      success: true,
+      notification,
+      emailSent: emailResult?.success || false,
+      emailError: emailResult?.error || null
+    };
+
+  } catch (error) {
+    console.error('❌ Error sending status update notification:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// ============================================
 // GET USER NOTIFICATIONS
 // ============================================
-
 export const getUserNotifications = async (req, res) => {
   try {
     const { userId, roleId } = req.params;
@@ -562,7 +725,6 @@ export const getUserNotifications = async (req, res) => {
 // ============================================
 // MARK NOTIFICATION AS READ
 // ============================================
-
 export const markAsRead = async (req, res) => {
   try {
     const { notificationId } = req.params;
@@ -607,7 +769,6 @@ export const markAsRead = async (req, res) => {
 // ============================================
 // MARK ALL NOTIFICATIONS AS READ
 // ============================================
-
 export const markAllAsRead = async (req, res) => {
   try {
     const { userId, roleId } = req.params;
@@ -666,7 +827,6 @@ export const markAllAsRead = async (req, res) => {
 // ============================================
 // CREATE NOTIFICATION
 // ============================================
-
 export const createNotification = async (req, res) => {
   try {
     const {
@@ -726,7 +886,6 @@ export const createNotification = async (req, res) => {
 // ============================================
 // DELETE NOTIFICATION
 // ============================================
-
 export const deleteNotification = async (req, res) => {
   try {
     const { notificationId } = req.params;
@@ -767,7 +926,6 @@ export const deleteNotification = async (req, res) => {
 // ============================================
 // SEND APPROVAL NOTIFICATION (Controller)
 // ============================================
-
 export const sendApprovalNotification = async (req, res) => {
   try {
     const {
@@ -779,6 +937,9 @@ export const sendApprovalNotification = async (req, res) => {
       BU_ID,
       metadata = {},
       priority = 'medium',
+      requestId,
+      approvalLevel = 0,
+      totalApprovals = 3
     } = req.body;
 
     if (!itemType || !itemId || !itemName || !submittedBy || !BU_ID) {
@@ -797,6 +958,9 @@ export const sendApprovalNotification = async (req, res) => {
       BU_ID,
       metadata,
       priority,
+      requestId,
+      approvalLevel,
+      totalApprovals
     });
 
     if (result.success) {
@@ -815,9 +979,61 @@ export const sendApprovalNotification = async (req, res) => {
 };
 
 // ============================================
+// SEND STATUS UPDATE NOTIFICATION (Controller)
+// ============================================
+export const sendStatusUpdate = async (req, res) => {
+  try {
+    const {
+      recipientId,
+      itemType,
+      itemId,
+      itemName,
+      status,
+      reason,
+      approvedBy,
+      submittedBy,
+      BU_ID,
+      requestId
+    } = req.body;
+
+    if (!recipientId || !itemType || !itemId || !itemName || !status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: recipientId, itemType, itemId, itemName, status'
+      });
+    }
+
+    const result = await sendStatusUpdateNotification({
+      recipientId,
+      itemType,
+      itemId,
+      itemName,
+      status,
+      reason,
+      approvedBy,
+      submittedBy,
+      BU_ID,
+      requestId
+    });
+
+    if (result.success) {
+      return res.status(200).json(result);
+    } else {
+      return res.status(404).json(result);
+    }
+
+  } catch (error) {
+    logger.error('❌ Error in sendStatusUpdate controller:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
+// ============================================
 // GET BRANCH PENDING APPROVALS
 // ============================================
-
 export const getBranchPendingApprovals = async (req, res) => {
   try {
     const { BU_ID } = req.params;
@@ -873,7 +1089,6 @@ export const getBranchPendingApprovals = async (req, res) => {
 // ============================================
 // GET USER NOTIFICATIONS WITH SERVICE
 // ============================================
-
 export const getUserNotificationsService = async (req, res) => {
   try {
     const { userId, roleId } = req.params;
@@ -932,7 +1147,6 @@ export const getUserNotificationsService = async (req, res) => {
 // ============================================
 // GET NOTIFICATION STATS
 // ============================================
-
 export const getNotificationStats = async (req, res) => {
   try {
     const { BU_ID } = req.params;
@@ -998,7 +1212,6 @@ export const getNotificationStats = async (req, res) => {
 // ============================================
 // EXPORT ALL CONTROLLERS
 // ============================================
-
 export default {
   getUserNotifications,
   markAsRead,
@@ -1006,9 +1219,11 @@ export default {
   createNotification,
   deleteNotification,
   sendApprovalNotification,
+  sendStatusUpdate,
   getBranchPendingApprovals,
   getUserNotificationsService,
   getNotificationStats,
   getBUApprovalRecipients,
-  sendApprovalNotificationToBUUsers
+  sendApprovalNotificationToBUUsers,
+  sendStatusUpdateNotification
 };

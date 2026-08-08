@@ -1,4 +1,5 @@
-import { DataTypes, Model } from 'sequelize';
+// models/Ledger.js - COMPLETE WITH BALANCE UPDATE METHOD
+import { DataTypes, Model, Sequelize } from 'sequelize';
 import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
 
@@ -52,7 +53,10 @@ const safeTrim = (value) => {
 };
 
 class Ledger extends Model {
-  // Static methods... (unchanged, they use attribute names, which now have explicit field mappings)
+  // ============================================================
+  // STATIC METHODS
+  // ============================================================
+
   static async findByAccountNumber(glAcctNo, options = {}) {
     return await this.findOne({
       where: { GL_ACCT_NO: glAcctNo },
@@ -158,6 +162,81 @@ class Ledger extends Model {
     }, {});
   }
 
+  // ============================================================
+  // ✅ UPDATE LEDGER BALANCE FOR TRANSACTION
+  // ============================================================
+  /**
+   * Update ledger balance for a transaction
+   * @param {string} glAccountNo - GL Account Number
+   * @param {number} amount - Amount to update
+   * @param {boolean} isCredit - True if credit, false if debit
+   * @param {Object} options - Sequelize options
+   * @returns {Promise<Object>} Updated ledger
+   */
+  static async updateBalanceForTransaction(glAccountNo, amount, isCredit, options = {}) {
+    try {
+      const ledger = await this.findOne({
+        where: { GL_ACCT_NO: glAccountNo },
+        ...options
+      });
+
+      if (!ledger) {
+        throw new Error(`Ledger account not found: ${glAccountNo}`);
+      }
+
+      if (!ledger.POST_ALLOW) {
+        throw new Error(`Posting not allowed for account ${glAccountNo}`);
+      }
+
+      if (ledger.REC_ST !== RECORD_STATUS.ACTIVE) {
+        throw new Error(`Account ${glAccountNo} is not active (Status: ${ledger.REC_ST})`);
+      }
+
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new Error(`Invalid amount: ${amount}`);
+      }
+
+      let newBalance = parseFloat(ledger.LEDGER_BALANCE) || 0;
+
+      // Determine balance direction based on account category
+      const isAssetExpense = ['ASSET', 'EXPENSE', 'CONTROL', 'SUSPENSE', 'TAX'].includes(ledger.GL_ACCT_CAT);
+      
+      if (!isCredit) { // Debit
+        newBalance = isAssetExpense ? newBalance + amountNum : newBalance - amountNum;
+      } else { // Credit
+        newBalance = isAssetExpense ? newBalance - amountNum : newBalance + amountNum;
+      }
+
+      // Round to 2 decimal places
+      newBalance = parseFloat(newBalance.toFixed(2));
+
+      // Check for negative balance
+      if (newBalance < 0 && !ledger.ALLOW_BAL_SWING_FG) {
+        throw new Error(`Negative balance (${newBalance}) not allowed for account ${glAccountNo}`);
+      }
+
+      // Update all balance fields
+      ledger.LEDGER_BALANCE = newBalance;
+      ledger.CURRENT_BALANCE = newBalance;
+      ledger.AVAILABLE_BALANCE = newBalance;
+      ledger.ROW_TS = new Date();
+
+      await ledger.save(options);
+      
+      logger.info(`✅ Ledger ${glAccountNo} balance updated: ${isCredit ? 'CREDIT' : 'DEBIT'} ${amountNum}, New Balance: ${newBalance}`);
+      
+      return ledger;
+    } catch (error) {
+      logger.error(`❌ Failed to update ledger ${glAccountNo}:`, error.message);
+      throw error;
+    }
+  }
+
+  // ============================================================
+  // INSTANCE METHODS
+  // ============================================================
+
   canPost(txnType) {
     const normalizedTxnType = txnType.toUpperCase();
     return (normalizedTxnType === 'DR' && this.DR_ALLOWED) || 
@@ -174,27 +253,34 @@ class Ledger extends Model {
     if (this.REC_ST !== RECORD_STATUS.ACTIVE) {
       throw new Error('Cannot post to inactive or closed account');
     }
+    
     let newBalance = this.LEDGER_BALANCE;
     const isDebit = txnType.toUpperCase() === 'DR';
+    const amountNum = parseFloat(amount);
+    
     switch (this.GL_ACCT_CAT) {
       case GL_ACCT_CATEGORIES.ASSET:
       case GL_ACCT_CATEGORIES.EXPENSE:
       case GL_ACCT_CATEGORIES.CONTROL:
       case GL_ACCT_CATEGORIES.SUSPENSE:
       case GL_ACCT_CATEGORIES.TAX:
-        newBalance = isDebit ? newBalance + amount : newBalance - amount;
+        newBalance = isDebit ? newBalance + amountNum : newBalance - amountNum;
         break;
       case GL_ACCT_CATEGORIES.LIABILITY:
       case GL_ACCT_CATEGORIES.EQUITY:
       case GL_ACCT_CATEGORIES.REVENUE:
-        newBalance = isDebit ? newBalance - amount : newBalance + amount;
+        newBalance = isDebit ? newBalance - amountNum : newBalance + amountNum;
         break;
       default:
         throw new Error('Invalid account category');
     }
+    
+    newBalance = parseFloat(newBalance.toFixed(2));
+    
     if (!this.ALLOW_BAL_SWING_FG && newBalance < 0) {
       throw new Error('Balance swing not allowed for this account');
     }
+    
     this.LEDGER_BALANCE = newBalance;
     this.CURRENT_BALANCE = newBalance;
     this.AVAILABLE_BALANCE = newBalance;
@@ -270,6 +356,10 @@ class Ledger extends Model {
     return result;
   }
 }
+
+// ============================================================
+// MODEL INITIALIZATION
+// ============================================================
 
 Ledger.init({
   id: {
@@ -629,12 +719,12 @@ Ledger.init({
 }, {
   sequelize,
   modelName: 'Ledger',
-  tableName: 'ledgers',           // Use lowercase to match actual table name (your DESCRIBE shows 'ledgers')
+  tableName: 'ledgers',
   timestamps: true,
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  underscored: false,             // Prevent conversion to snake_case
-  freezeTableName: true,          // Ensure table name is exactly as given
+  underscored: false,
+  freezeTableName: true,
   comment: 'General Ledger Accounts',
   indexes: [
     { name: 'idx_gl_acct_no', fields: ['GL_ACCT_NO'], unique: true },

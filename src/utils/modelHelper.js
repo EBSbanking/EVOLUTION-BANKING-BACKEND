@@ -1,10 +1,11 @@
 // src/utils/modelHelper.js
+
 // Re-export everything from modelLoader.js
 export * from './modelLoader.js';
 
-
 // Additional helper functions
 import logger from './logger.js';
+import sequelize from '../../config/db.js';
 
 // Backward compatibility function
 export const ensureModelsInitialized = async () => {
@@ -26,6 +27,38 @@ export const getDataTypes = () => {
   const { getDataTypes } = require('./modelLoader.js');
   return getDataTypes();
 };
+
+// ============================================
+// ✅ MODEL INITIALIZATION FUNCTIONS
+// ============================================
+
+/**
+ * Initialize a model that's exported as a factory function
+ */
+export function initModel(modelFactory) {
+  if (typeof modelFactory === 'function') {
+    try {
+      const result = modelFactory(sequelize);
+      if (result && typeof result === 'object') {
+        return result;
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize model:', error.message);
+    }
+  }
+  return modelFactory;
+}
+
+/**
+ * Initialize multiple models
+ */
+export function initModels(modelMap) {
+  const initialized = {};
+  for (const [key, modelFactory] of Object.entries(modelMap)) {
+    initialized[key] = initModel(modelFactory);
+  }
+  return initialized;
+}
 
 // Test function
 export const testModelLoading = async () => {
@@ -65,7 +98,9 @@ const modelHelper = {
   ensureModelsInitialized,
   testModelLoading,
   getOp,
-  getDataTypes
+  getDataTypes,
+  initModel,
+  initModels
 };
 
 export default modelHelper;

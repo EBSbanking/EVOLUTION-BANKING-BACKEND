@@ -1,5 +1,4 @@
 // controllers/DebitCardController.js
-
 import { processCardTransaction } from '../Services/CardTransactionService.js';
 import DebitCard from '../models/DebitCard.js';
 import CustomerAccount from '../models/CustomerAccount.js';
@@ -12,6 +11,22 @@ import Transaction from '../models/Transaction.js';
 import { getModel } from '../models/index.js';
 import { Op } from 'sequelize';
 import { roleHasPermission } from '../constants/roleMapping.js';
+import CardApprovalRequest from '../models/CardApprovalRequest.js';
+import ApprovalWorkflowConfig from '../models/ApprovalWorkflowConfig.js';
+import { sendApprovalNotificationToBUUsers } from './NotificationController.js';
+import { ROLES } from '../utils/roleConstants.js';
+import Notification from '../models/index.js';
+
+// ✅ Import the encryption functions
+import { 
+    encryptCVV, 
+    decryptCVV, 
+    checkEncryptionStatus,
+    encryptCVVForFlutterwaveV3,
+    decryptV3_3DES,
+    generateV3Nonce,
+    encryptV3_3DES
+} from '../utils/encryption.js';
 
 // ✅ Import all Flutterwave service functions
 import { 
@@ -24,14 +39,12 @@ import {
     generateNonce,
     encryptField,
     decryptField,
-    decryptStoredCVV  // ← This is imported from flutterwave.service.js
+    decryptStoredCVV
 } from '../Services/flutterwave.service.js';
 
 // ==================== HELPERS ====================
 const getUserId = (req) => {
   if (!req.user) return 'system';
-  
-  // Try multiple sources for user ID
   return req.user.username || 
          req.user.user_name || 
          req.user.id || 
@@ -44,43 +57,28 @@ const getClientIp = (req) => req.ip || req.headers['x-forwarded-for'] || req.con
 
 /**
  * Resolve a GL account pattern that may contain wildcards (***)
- * @param {string} glAccountPattern - The GL account pattern (e.g., "01***441400001")
- * @param {string|number} branchCode - The branch code (e.g., "101")
- * @returns {string} The resolved GL account
  */
 function resolveGLAccount(glAccountPattern, branchCode) {
   if (!glAccountPattern) return null;
-  
-  // If the pattern contains ***, replace it with the branch code
   if (glAccountPattern.includes('***')) {
     const branch = String(branchCode).padStart(3, '0');
     const resolved = glAccountPattern.replace(/\*\*\*/g, branch);
     console.log(`🔁 Resolved GL account: ${glAccountPattern} -> ${resolved}`);
     return resolved;
   }
-  
   return glAccountPattern;
 }
 
-/**
- * Check if a GL account is valid (accepts wildcards)
- */
 function isValidGLAccount(glAccount) {
   if (!glAccount) return false;
   if (glAccount === 'NONE') return false;
-  // Wildcard pattern with *** is valid
   if (glAccount.includes('***')) return true;
-  // Regular GL account should be at least 10 characters
   return glAccount.length >= 10;
 }
 
-/**
- * Get card issuance charge configuration
- */
 async function getCardIssuanceCharge() {
   console.log('🔍 Looking for card issuance charge...');
   
-  // Include all possible card issuance charge types
   const chargeTypes = ['CARD_ISSUANCE_CHARGE', 'CARD_ISSUANCE_FEE', 'CARD_ISSUANCE', 'CARD_FEE'];
   let charge = null;
   
@@ -102,19 +100,6 @@ async function getCardIssuanceCharge() {
     throw new Error('Card issuance fee not configured. Please set up a charge with type CARD_ISSUANCE_CHARGE, CARD_ISSUANCE_FEE, CARD_ISSUANCE, or CARD_FEE with status A.');
   }
 
-  // Log the charge for debugging
-  console.log('📋 Charge found:', {
-    CHRG_ID: charge.CHRG_ID,
-    CHRG_CD: charge.CHRG_CD,
-    CHRG_TY: charge.CHRG_TY,
-    CHRG_NM: charge.CHRG_NM,
-    CHRG_AMT: charge.CHRG_AMT,
-    INCOME_GL_ACCT_NO: charge.INCOME_GL_ACCT_NO,
-    REC_ST: charge.REC_ST,
-    TIER_TY: charge.TIER_TY
-  });
-
-  // Get the amount
   let amount = 0;
   if (charge.CHRG_AMT) {
     amount = parseFloat(charge.CHRG_AMT);
@@ -125,10 +110,7 @@ async function getCardIssuanceCharge() {
     throw new Error('Invalid card issuance fee amount in charge configuration');
   }
 
-  // Get GL account - handle wildcard (***) patterns
   let glAccount = charge.INCOME_GL_ACCT_NO;
-  
-  // Check if the GL account is a wildcard pattern (contains ***)
   if (glAccount && glAccount.includes('***')) {
     console.log(`✅ Using wildcard GL account pattern: ${glAccount}`);
   } else if (!glAccount || glAccount === 'NONE' || glAccount === '') {
@@ -150,71 +132,8 @@ async function getCardIssuanceCharge() {
   };
 }
 
-/**
- * Encrypt CVV for Flutterwave storage
- * Uses AES-256-GCM encryption from flutterwave.service
- * 
- * @param {string} cvv - The CVV to encrypt
- * @returns {string} Encrypted CVV
- */
-function encryptCVV(cvv) {
-  try {
-    const nonce = generateNonce();
-    const encrypted = encryptField(cvv, nonce);
-    console.log('🔐 CVV encrypted with AES-256-GCM successfully');
-    return encrypted;
-  } catch (error) {
-    console.error('❌ CVV encryption failed:', error.message);
-    throw new Error(`CVV encryption failed: ${error.message}`);
-  }
-}
-
-/**
- * Decrypt CVV for Flutterwave payment processing
- * Uses decryptStoredCVV from flutterwave.service (imported above)
- * 
- * @param {string} encryptedData - The encrypted CVV data
- * @returns {string} Decrypted CVV
- */
-function decryptCVV(encryptedData) {
-  try {
-    if (!encryptedData) {
-      console.warn('⚠️ No encrypted CVV data provided');
-      return null;
-    }
-    
-    console.log('🔓 Decrypting stored CVV...');
-    const decrypted = decryptStoredCVV(encryptedData); // ← Using imported function
-    
-    if (decrypted) {
-      console.log('✅ CVV decrypted successfully');
-      return decrypted;
-    } else {
-      console.warn('⚠️ Failed to decrypt CVV');
-      return null;
-    }
-  } catch (error) {
-    console.error('❌ CVV decryption error:', error.message);
-    return null;
-  }
-}
-
-/**
- * Decrypt CVV for card printing or display (with proper authorization)
- * @param {string} encryptedCvv - The encrypted CVV from the database
- * @returns {string} Decrypted CVV
- */
-function decryptCVVForPrinting(encryptedCvv) {
-  return decryptCVV(encryptedCvv);
-}
-
 // ==================== GET CARD DETAILS FOR PRINTING ====================
 
-/**
- * GET /api/debit-cards/cards/:identifier/details
- * Get full card details including decrypted CVV (for authorized users only)
- * Supports both cardId (numeric) and cardPan (full PAN)
- */
 export const getCardDetailsForPrinting = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -234,7 +153,6 @@ export const getCardDetailsForPrinting = async (req, res) => {
     const maskedIdentifier = isNumeric ? `ID: ${identifier}` : `PAN: ****${identifier.slice(-4)}`;
     
     console.log(`🔍 User ${user.user_name || user.username || user.id} requesting card details for ${maskedIdentifier}`);
-    console.log(`🔍 User roleId: ${user.roleId || user.BU_ROLE_ID}, isAdmin: ${user.isAdmin}`);
 
     const roleId = user.roleId || user.BU_ROLE_ID || user.role_id || user.id;
     const isAdmin = user.isAdmin === true || 
@@ -347,18 +265,23 @@ export const getCardDetailsForPrinting = async (req, res) => {
       });
     }
 
-    // Decrypt CVV using the decryption function
     let cvv = null;
-    if (card.encryptedCvv) {
+    if (card.encryptedCvv && card.cvvNonce) {
       try {
-        cvv = decryptCVVForPrinting(card.encryptedCvv);
-        console.log(`🔓 CVV decrypted successfully for card ${card.cardLast4}`);
+        console.log(`🔓 Decrypting CVV for card ${card.cardLast4} using V3 3DES...`);
+        const decryptedCVV = decryptV3_3DES(card.encryptedCvv, card.cvvNonce);
+        if (decryptedCVV && /^\d{3,4}$/.test(decryptedCVV)) {
+          cvv = decryptedCVV;
+          console.log(`✅ CVV decrypted successfully for card ${card.cardLast4}`);
+        } else {
+          console.warn(`⚠️ Failed to decrypt CVV for card ${card.cardLast4}`);
+        }
       } catch (error) {
         console.error('Failed to decrypt CVV for printing:', error.message);
         cvv = null;
       }
     } else {
-      console.warn(`⚠️ No encrypted CVV found for card ${card.cardLast4}`);
+      console.warn(`⚠️ No encrypted CVV or nonce found for card ${card.cardLast4}`);
     }
 
     await logAuditTrail(
@@ -393,6 +316,7 @@ export const getCardDetailsForPrinting = async (req, res) => {
         cardStatus: card.cardStatus,
         issuedAt: card.issuedAt,
         flutterwaveEnabled: card.flutterwaveEnabled,
+        hasEncryptedCVV: !!card.encryptedCvv,
         customer: card.customerAccount ? {
           id: card.customerAccount.id,
           name: card.customerAccount.account_name,
@@ -425,9 +349,479 @@ export const getCardDetailsForPrinting = async (req, res) => {
   }
 };
 
-// ==================== CARD ISSUANCE ====================
+// ==================== CARD ISSUANCE WITH APPROVAL WORKFLOW ====================
 
-// POST /api/cards/issue – with reissuance logic for lost/stolen cards
+/**
+ * POST /api/cards/request-issuance
+ * Request card issuance with approval workflow
+ * ✅ ALL REQUESTS GO THROUGH APPROVAL - NO BYPASS
+ * ✅ STRICT VALIDATION: Prevents multiple cards for the same customer
+ */
+export const requestCardIssuance = async (req, res) => {
+  const userId = getUserId(req);
+  const ipAddress = getClientIp(req);
+  const userRoleId = req.user?.roleId || req.user?.BU_ROLE_ID || req.user?.role_id;
+  const userBU = req.user?.BU_ID || req.user?.branchCode || req.user?.branch || 101;
+  const userBranch = req.user?.branchName || req.user?.branch || 'Main Branch';
+
+  let transaction = null;
+
+  try {
+    let {
+      customerId,
+      accountNumber,
+      accountId,
+      cardType,
+      enableFlutterwave,
+      cardScheme,
+      organizationName = req.body.organizationName || req.user?.organizationName || 'EVOLUTION BANK',
+      branchName = req.body.branchName || req.user?.branchName || userBranch,
+      branchCode = req.body.branchCode || req.user?.branchCode || userBU,
+      priority = 'medium',
+      forceReissue = false
+    } = req.body;
+
+    if (!accountNumber && accountId) accountNumber = accountId;
+    if (!accountNumber) throw new Error('Account number is required');
+
+    const flutterwaveEnabled = enableFlutterwave !== undefined ? enableFlutterwave : false;
+
+    // ✅ START TRANSACTION
+    transaction = await sequelize.transaction();
+
+    // 1. Validate customer account
+    const customerAccount = await CustomerAccount.findOne({
+      where: {
+        account_number: accountNumber,
+        CUST_ID: customerId,
+        status: 'ACTIVE'
+      },
+      transaction,
+      lock: true
+    });
+    if (!customerAccount) throw new Error('Customer account not found or not active');
+
+    // ============================================================
+    // ✅ STRICT CARD VALIDATION - Check ALL existing cards
+    // ============================================================
+    
+    const existingCards = await DebitCard.findAll({
+      where: { customerId: customerId },
+      transaction,
+      lock: true
+    });
+
+    console.log(`📋 Found ${existingCards.length} existing cards for customer ${customerId}`);
+
+    // ✅ Check for ANY card that is not CANCELLED or EXPIRED
+    const nonCancelledCards = existingCards.filter(card => 
+      card.cardStatus !== 'CANCELLED' && card.cardStatus !== 'EXPIRED'
+    );
+
+    if (nonCancelledCards.length > 0) {
+      console.log(`⚠️ Customer has ${nonCancelledCards.length} non-cancelled cards`);
+      
+      nonCancelledCards.forEach(card => {
+        console.log(`  - Card ID: ${card.id}, Last4: ${card.cardLast4}, Status: ${card.cardStatus}`);
+      });
+
+      // ✅ Check for ACTIVE or ISSUED cards
+      const activeOrIssuedCards = nonCancelledCards.filter(card => 
+        card.cardStatus === 'ACTIVE' || card.cardStatus === 'ISSUED'
+      );
+
+      if (activeOrIssuedCards.length > 0) {
+        const cardLast4s = activeOrIssuedCards.map(c => c.cardLast4).join(', ');
+        throw new Error(
+          `Customer already has active card(s) ending in: ${cardLast4s}. ` +
+          `Please cancel or replace the existing card first.`
+        );
+      }
+
+      // ✅ Check for BLOCKED (lost/stolen) cards
+      const lostStolenCards = nonCancelledCards.filter(card => 
+        card.cardStatus === 'BLOCKED' && 
+        (card.blockReason === 'LOST' || card.blockReason === 'STOLEN')
+      );
+
+      if (lostStolenCards.length > 0) {
+        if (forceReissue) {
+          console.log(`🔄 Force reissue: Cancelling ${lostStolenCards.length} lost/stolen cards`);
+          for (const card of lostStolenCards) {
+            await card.update({
+              blockReason: `REPLACED (was ${card.blockReason})`,
+              cardStatus: 'CANCELLED'
+            }, { transaction });
+            console.log(`  ✅ Cancelled card ${card.id} (${card.cardLast4})`);
+          }
+        } else {
+          const cardLast4s = lostStolenCards.map(c => c.cardLast4).join(', ');
+          throw new Error(
+            `Customer has lost/stolen card(s) ending in: ${cardLast4s}. ` +
+            `To issue a replacement, please set forceReissue=true in the request.`
+          );
+        }
+      }
+
+      // ✅ Check for PENDING cards
+      const pendingCards = nonCancelledCards.filter(card => 
+        card.cardStatus === 'PENDING'
+      );
+
+      if (pendingCards.length > 0) {
+        const cardLast4s = pendingCards.map(c => c.cardLast4).join(', ');
+        throw new Error(
+          `Customer already has pending card(s) ending in: ${cardLast4s}. ` +
+          `Please wait for the pending request to be processed or cancelled.`
+        );
+      }
+
+      // ✅ Check for any other non-cancelled cards
+      const otherCards = nonCancelledCards.filter(card => 
+        !['ACTIVE', 'ISSUED', 'BLOCKED', 'PENDING'].includes(card.cardStatus)
+      );
+
+      if (otherCards.length > 0) {
+        const cardLast4s = otherCards.map(c => c.cardLast4).join(', ');
+        throw new Error(
+          `Customer has card(s) in status: ${otherCards.map(c => c.cardStatus).join(', ')} ` +
+          `ending in: ${cardLast4s}. Please resolve these cards first.`
+        );
+      }
+    }
+
+    // ✅ Check for existing PENDING approval requests
+    try {
+      const existingApprovalRequest = await CardApprovalRequest.findOne({
+        where: {
+          customerId: customerId,
+          status: 'PENDING',
+          expiresAt: {
+            [Op.gt]: new Date()
+          }
+        },
+        transaction
+      });
+
+      if (existingApprovalRequest) {
+        throw new Error(
+          `Customer already has a pending approval request (ID: ${existingApprovalRequest.id}). ` +
+          `Please wait for it to be processed or cancelled.`
+        );
+      }
+    } catch (error) {
+      if (error.message && error.message.includes('pending approval request')) {
+        throw error;
+      }
+      console.warn('⚠️ Could not check pending approval requests:', error.message);
+    }
+
+    console.log(`✅ Customer ${customerId} is eligible for card issuance`);
+
+    // ============================================================
+    // 3. Get fee details
+    // ============================================================
+    let feeDetails;
+    try {
+      feeDetails = await getCardIssuanceCharge();
+    } catch (error) {
+      console.error('❌ Failed to get card issuance charge:', error.message);
+      feeDetails = {
+        amount: 1000,
+        creditGlAccount: '01***441400001',
+        chargeCode: 'CARD_ISSUANCE',
+        chargeName: 'Card Issuance Fee',
+        isVATApplicable: true,
+        vatRate: 7.5,
+        vatGLAccountNo: '01***441500001'
+      };
+    }
+
+    const feeAmount = feeDetails.amount || 1000;
+    let vatAmount = 0;
+    let totalDeduction = feeAmount;
+
+    if (feeDetails.isVATApplicable && feeDetails.vatRate > 0) {
+      vatAmount = (feeDetails.vatRate / 100) * feeAmount;
+      totalDeduction = feeAmount + vatAmount;
+      console.log(`💰 VAT calculated: ${vatAmount} (${feeDetails.vatRate}% of ${feeAmount})`);
+    }
+
+    // ============================================================
+    // ✅ GENERATE CARD DETAILS
+    // ============================================================
+    
+    const schemeBinMap = {
+      'VERVE': '506099',
+      'VISA': '4',
+      'MASTERCARD': '5',
+      'AMEX': '34',
+      'DISCOVER': '6'
+    };
+    const binPrefix = schemeBinMap[cardScheme] || '506099';
+    const pan = await generateCardNumber(binPrefix, 16, transaction);
+    const bin = pan.slice(0, 6);
+    const expiryMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
+    const expiryYear = (new Date().getFullYear() + 3).toString();
+    const cvv = Math.floor(100 + Math.random() * 900).toString();
+    const hashedCVV = crypto.createHash('sha256').update(cvv).digest('hex');
+
+    let encryptedCVV = null;
+    let cvvNonce = null;
+
+    if (flutterwaveEnabled) {
+      try {
+        // ✅ Use the unified encryptCVV function
+        const result = encryptCVV(cvv);
+        if (result) {
+          encryptedCVV = result.encrypted;
+          cvvNonce = result.nonce;
+          console.log(`🔐 CVV encrypted with ${result.method} for Flutterwave`);
+        } else {
+          console.warn('⚠️ CVV encryption returned null');
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to encrypt CVV:', error.message);
+      }
+    }
+
+    // Get BIN info
+    let binInfo = { bank_name: 'Unknown', country: 'Unknown', network: 'Unknown', card_type: 'Unknown' };
+    try {
+      const [binResults] = await sequelize.query(
+        `SELECT * FROM bin_info WHERE bin = :bin LIMIT 1`,
+        {
+          replacements: { bin },
+          transaction,
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+      if (binResults) {
+        binInfo = {
+          bank_name: binResults.bank_name || 'Unknown',
+          country: binResults.country || 'Unknown',
+          network: binResults.network || 'Unknown',
+          card_type: binResults.card_type || 'Unknown'
+        };
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not fetch BIN info:', error.message);
+    }
+
+    // ============================================================
+    // ✅ PREPARE CARD DATA
+    // ============================================================
+    
+    const cardData = {
+      customerId,
+      accountNumber,
+      accountId: customerAccount.id,
+      cardType: cardType || 'VIRTUAL',
+      cardScheme: cardScheme || 'VERVE',
+      enableFlutterwave: flutterwaveEnabled,
+      isReissuance: false,
+      existingCardId: null,
+      customerName: customerAccount.account_name || 'Customer',
+      accountName: customerAccount.account_name,
+      organizationName,
+      branchName,
+      branchCode,
+      pan,
+      bin,
+      expiryMonth,
+      expiryYear,
+      cvv: hashedCVV,
+      encryptedCVV,
+      cvvNonce,
+      binInfo,
+      cardLast4: pan.slice(-4)
+    };
+
+    // ============================================================
+    // ✅ CREATE APPROVAL REQUEST - NO FALLBACK
+    // ============================================================
+    let approvalRequest = null;
+    
+    console.log('🔍 Creating approval request...');
+    
+    if (!CardApprovalRequest) {
+      console.error('❌ CardApprovalRequest model is not imported');
+      throw new Error('CardApprovalRequest model not available');
+    }
+
+    if (typeof CardApprovalRequest.create !== 'function') {
+      console.error('❌ CardApprovalRequest.create is not a function');
+      throw new Error('CardApprovalRequest model is not properly initialized');
+    }
+
+    // ✅ Create the approval request - NO FALLBACK
+    approvalRequest = await CardApprovalRequest.create({
+      requestType: 'ISSUE',
+      customerId: customerId,
+      accountNumber: accountNumber,
+      accountId: customerAccount.id,
+      cardData: JSON.stringify(cardData),
+      feeDetails: JSON.stringify({
+        feeAmount,
+        vatRate: feeDetails.vatRate || 0,
+        vatAmount,
+        totalAmount: totalDeduction,
+        creditGlAccount: feeDetails.creditGlAccount,
+        vatGLAccountNo: feeDetails.vatGLAccountNo,
+        chargeCode: feeDetails.chargeCode || 'CARD_ISSUANCE',
+        chargeName: feeDetails.chargeName || 'Card Issuance Fee'
+      }),
+      requestedBy: userId,
+      requestedByRoleId: parseInt(userRoleId) || 29,
+      branchCode: branchCode,
+      organizationName: organizationName,
+      branchName: branchName,
+      ipAddress: ipAddress,
+      isReissuance: 0,
+      existingCardId: null,
+      approvalLevel: 0,
+      status: 'PENDING',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      requestDate: new Date(),
+      approvalHistory: JSON.stringify([]),
+      rec_st: 'A'
+    }, { transaction });
+
+    console.log(`✅ Approval request created: ID ${approvalRequest.id}, Status: ${approvalRequest.status}`);
+
+    // ✅ Reload to get fresh data
+    await approvalRequest.reload({ transaction });
+    console.log(`✅ After reload - ID: ${approvalRequest.id}, Status: ${approvalRequest.status}`);
+
+    await transaction.commit();
+    transaction = null;
+
+    // Log audit trail
+    await logAuditTrail(
+      'DEBIT_CARD_APPROVAL_REQUEST',
+      approvalRequest.id,
+      userId,
+      'REQUEST_CARD_ISSUANCE',
+      req.body,
+      {
+        customerId,
+        accountNumber,
+        cardType,
+        cardScheme,
+        totalAmount: totalDeduction,
+        isReissuance: false,
+        hasEncryptedCVV: !!encryptedCVV,
+        requestedByRole: userRoleId,
+        status: 'PENDING',
+        existingCardsCount: existingCards.length
+      },
+      ipAddress,
+      'CARD_MANAGEMENT',
+      { branch: branchCode }
+    );
+
+    // Send notification to approvers
+    try {
+      const notificationService = await import('../services/NotificationService.js').then(m => m.default);
+      
+      await notificationService.sendApprovalNotification({
+        itemType: 'Card Issuance',
+        itemId: approvalRequest.id,
+        itemName: `${cardType || 'Virtual'} Card for ${customerAccount.account_name || 'Customer'}`,
+        description: `Request to issue a ${cardType || 'Virtual'} card (${cardScheme || 'VERVE'}) for account ${accountNumber}. Fee: ₦${totalDeduction}`,
+        submittedBy: req.user?.user_name || userId,
+        BU_ID: branchCode || userBU,
+        priority: priority || 'medium',
+        metadata: {
+          requestId: approvalRequest.id,
+          customerId,
+          accountNumber,
+          feeAmount,
+          vatAmount,
+          totalDeduction,
+          cardType,
+          cardScheme,
+          flutterwaveEnabled,
+          customerName: customerAccount.account_name,
+          organizationName,
+          branchName,
+          hasEncryptedCVV: !!encryptedCVV,
+          requestedByRole: userRoleId,
+          status: 'PENDING',
+          cardLast4: pan.slice(-4),
+          existingCardsCount: existingCards.length
+        }
+      });
+
+      console.log(`📧 Notification sent successfully`);
+
+    } catch (notifError) {
+      console.warn('⚠️ Notification failed (non-blocking):', notifError.message);
+    }
+
+    // Return response
+    return res.status(202).json({
+      success: true,
+      message: 'Card issuance request submitted for approval',
+      data: {
+        requestId: approvalRequest.id,
+        status: 'PENDING',
+        totalAmount: totalDeduction,
+        feeCharged: feeAmount,
+        vatCharged: vatAmount,
+        estimatedApprovalTime: '24-48 hours',
+        expiresAt: approvalRequest.expiresAt,
+        flutterwaveEnabled: flutterwaveEnabled,
+        hasEncryptedCVV: !!encryptedCVV,
+        requestedByRole: userRoleId,
+        isReissuance: false,
+        cardType: cardType || 'VIRTUAL',
+        cardScheme: cardScheme || 'VERVE',
+        cardLast4: pan.slice(-4),
+        existingCardsCount: existingCards.length
+      }
+    });
+
+  } catch (error) {
+    // Rollback transaction if it exists and is not finished
+    if (transaction && !transaction.finished) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        console.warn('⚠️ Rollback error:', rollbackError.message);
+      }
+    }
+    
+    await logAuditTrail(
+      'DEBIT_CARD',
+      'unknown',
+      userId,
+      'REQUEST_ISSUANCE_FAILED',
+      req.body,
+      {
+        error: error.message,
+        customerId: req.body.customerId,
+        accountNumber: req.body.accountNumber
+      },
+      ipAddress,
+      'CARD_MANAGEMENT',
+      { branch: req.user?.branch || 1 }
+    );
+    
+    console.error('❌ Error in requestCardIssuance:', error);
+    return res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// ==================== ORIGINAL ISSUE CARD (DIRECT ISSUANCE) ====================
+
+/**
+ * POST /api/cards/issue
+ * Direct card issuance (kept for backward compatibility)
+ */
 export const issueCard = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -540,14 +934,18 @@ export const issueCard = async (req, res) => {
     const cvv = Math.floor(100 + Math.random() * 900).toString();
     const hashedCVV = crypto.createHash('sha256').update(cvv).digest('hex');
 
-    // ✅ Encrypt CVV using AES-256-GCM from flutterwave.service
     let encryptedCVV = null;
+    let cvvNonce = null;
     if (flutterwaveEnabled) {
       try {
-        encryptedCVV = encryptCVV(cvv);
-        console.log('🔐 CVV encrypted with AES-256-GCM for Flutterwave integration');
+        const result = encryptCVV(cvv);
+        if (result) {
+          encryptedCVV = result.encrypted;
+          cvvNonce = result.nonce;
+          console.log(`🔐 CVV encrypted with ${result.method} for Flutterwave`);
+        }
       } catch (error) {
-        console.warn('⚠️ Failed to encrypt CVV for Flutterwave:', error.message);
+        console.warn('⚠️ Failed to encrypt CVV:', error.message);
       }
     }
 
@@ -568,6 +966,7 @@ export const issueCard = async (req, res) => {
       }
     }
 
+    // Card is created with PENDING status - requires approval before issuance
     card = await DebitCard.create({
       customerId: customerId,
       accountId: customerAccount.id,
@@ -577,9 +976,10 @@ export const issueCard = async (req, res) => {
       expiryYear: expiryYear,
       cvvHash: hashedCVV,
       encryptedCvv: encryptedCVV,
+      cvvNonce: cvvNonce,
       cardType: cardType || 'VIRTUAL',
       cardScheme: cardScheme || binInfo.network || 'VERVE',
-      cardStatus: 'ISSUED',
+      cardStatus: 'PENDING',
       issuedBy: userId,
       issuedAt: new Date(),
       cardLast4: pan.slice(-4),
@@ -619,8 +1019,63 @@ export const issueCard = async (req, res) => {
       last_transaction_date: new Date()
     }, { transaction: dbTransaction });
 
-    // Create transactions (existing code continues...)
-    // ... (rest of the transaction and GL posting code remains the same)
+    // Create fee transaction
+    const getNextTransactionId = async () => {
+      const lastTx = await Transaction.findOne({
+        order: [['TRANSACTION_IDENTIFIER', 'DESC']],
+        attributes: ['TRANSACTION_IDENTIFIER'],
+        transaction: dbTransaction
+      });
+      return (lastTx?.TRANSACTION_IDENTIFIER || 0) + 1;
+    };
+    const txIdentifier = await getNextTransactionId();
+
+    await Transaction.create({
+      ACCT_NO: customerAccount.account_number,
+      ACCT_ID: String(customerAccount.id),
+      BU_ID: customerAccount.bu_id || 1,
+      CUST_ID: String(customerAccount.CUST_ID),
+      ACCT_NM: customerAccount.account_name,
+      AMOUNT: feeAmount,
+      transactionDirection: 'DEBIT',
+      TRANSACTION_TYPE: 'CARD_ISSUANCE_FEE',
+      TRANSACTION_IDENTIFIER: txIdentifier,
+      EVENT_ID: txIdentifier,
+      TRAN_JOURNAL_ID: `JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      TRANSACTION_ID: `TXN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      REFERENCE: `CARD_ISSUE_${card.id}_${Date.now()}`,
+      description: `Card issuance fee for card ${card.id}`,
+      status: 'COMPLETED',
+      currency: customerAccount.currency || 'NGN',
+      createdBy: userId,
+      debitAccount: customerAccount.account_number,
+      creditAccount: resolveGLAccount(feeDetails.creditGlAccount, branchCode)
+    }, { transaction: dbTransaction });
+
+    if (vatAmount > 0) {
+      const vatTxIdentifier = await getNextTransactionId() + 1;
+      await Transaction.create({
+        ACCT_NO: customerAccount.account_number,
+        ACCT_ID: String(customerAccount.id),
+        BU_ID: customerAccount.bu_id || 1,
+        CUST_ID: String(customerAccount.CUST_ID),
+        ACCT_NM: customerAccount.account_name,
+        AMOUNT: vatAmount,
+        transactionDirection: 'DEBIT',
+        TRANSACTION_TYPE: 'VAT_CARD_ISSUANCE',
+        TRANSACTION_IDENTIFIER: vatTxIdentifier,
+        EVENT_ID: vatTxIdentifier,
+        TRAN_JOURNAL_ID: `JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        TRANSACTION_ID: `TXN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        REFERENCE: `CARD_ISSUE_VAT_${card.id}_${Date.now()}`,
+        description: `VAT on card issuance for card ${card.id}`,
+        status: 'COMPLETED',
+        currency: customerAccount.currency || 'NGN',
+        createdBy: userId,
+        debitAccount: customerAccount.account_number,
+        creditAccount: resolveGLAccount(feeDetails.vatGLAccountNo, branchCode)
+      }, { transaction: dbTransaction });
+    }
 
     await dbTransaction.commit();
 
@@ -643,12 +1098,33 @@ export const issueCard = async (req, res) => {
         totalDeduction,
         creditGlAccount: feeDetails.creditGlAccount,
         flutterwaveEnabled: card.flutterwaveEnabled,
+        hasEncryptedCVV: !!card.encryptedCvv,
         ...(isReissuance && { replacedCardId: existingCard.id })
       },
       ipAddress,
       'CARD_MANAGEMENT',
       { branch: req.user?.branch || 1, branchCode: branchCode }
     );
+
+    // Send pending status notification
+    await sendCardPendingNotification({
+      cardId: card.id,
+      customerId: customerId,
+      customerName: customerAccount.account_name || 'Customer',
+      customerEmail: customerAccount.email,
+      maskedPan: `**** **** **** ${card.cardLast4}`,
+      cardScheme: card.cardScheme,
+      cardType: card.cardType,
+      expiry: `${expiryMonth}/${expiryYear}`,
+      feeAmount: feeAmount,
+      vatAmount: vatAmount,
+      totalDeduction: totalDeduction,
+      isReissuance: isReissuance,
+      organizationName: organizationName,
+      branchName: branchName,
+      flutterwaveEnabled: card.flutterwaveEnabled,
+      hasEncryptedCVV: !!card.encryptedCvv
+    });
 
     return res.status(201).json({
       success: true,
@@ -667,9 +1143,10 @@ export const issueCard = async (req, res) => {
         country: binInfo.country,
         network: binInfo.network,
         flutterwaveEnabled: card.flutterwaveEnabled,
+        hasEncryptedCVV: !!card.encryptedCvv,
         message: isReissuance 
-          ? `Replacement card issued. Old card (${existingCard.cardLast4}) has been cancelled. Fee of ${feeAmount}${vatAmount > 0 ? ` + VAT ${vatAmount}` : ''} deducted.${card.flutterwaveEnabled ? ' Card enabled for Flutterwave payments.' : ''}`
-          : `Card issued. A fee of ${feeAmount}${vatAmount > 0 ? ` + VAT ${vatAmount}` : ''} was deducted and GL entry created. Please set a PIN before first use.${card.flutterwaveEnabled ? ' Card enabled for Flutterwave payments.' : ''}`
+          ? `Replacement card request submitted for approval. Old card (${existingCard.cardLast4}) has been cancelled. Fee of ${feeAmount}${vatAmount > 0 ? ` + VAT ${vatAmount}` : ''} deducted.${card.flutterwaveEnabled ? ' Card enabled for Flutterwave payments.' : ''} Please wait for approval before use.`
+          : `Card request submitted for approval. A fee of ${feeAmount}${vatAmount > 0 ? ` + VAT ${vatAmount}` : ''} was deducted. ${card.flutterwaveEnabled ? ' Card enabled for Flutterwave payments.' : ''} Please wait for approval before use.`
       }
     });
 
@@ -697,12 +1174,582 @@ export const issueCard = async (req, res) => {
   }
 };
 
-// ==================== FLUTTERWAVE CARD PAYMENT ====================
+// ==================== SEND CARD PENDING NOTIFICATION ====================
 
 /**
- * Process a card payment via Flutterwave
- * POST /api/cards/pay
+ * Send card pending approval notification
  */
+export const sendCardPendingNotification = async ({
+  cardId,
+  customerId,
+  customerName,
+  customerEmail,
+  maskedPan,
+  cardScheme,
+  cardType,
+  expiry,
+  feeAmount,
+  vatAmount,
+  totalDeduction,
+  isReissuance,
+  organizationName,
+  branchName,
+  flutterwaveEnabled,
+  hasEncryptedCVV = false
+}) => {
+  try {
+    const approverEmail = process.env.DEFAULT_APPROVER_EMAIL || 'admin@banking-system.com';
+    
+    const subject = isReissuance 
+      ? `🔁 Replacement Card Request Pending Approval - ${maskedPan}`
+      : `🆕 New Card Request Pending Approval - ${maskedPan}`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+          .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+          .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 8px 8px 0 0; margin: -30px -30px 20px -30px; }
+          .header h1 { margin: 0; font-size: 24px; }
+          .status-badge { display: inline-block; background-color: #f59e0b; color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+          .card-details { background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0; }
+          .card-details table { width: 100%; }
+          .card-details td { padding: 8px 0; border-bottom: 1px solid #e2e8f0; }
+          .card-details td:last-child { text-align: right; font-weight: bold; }
+          .fee-breakdown { background-color: #f0fdf4; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #22c55e; }
+          .fee-breakdown table { width: 100%; }
+          .fee-breakdown td { padding: 6px 0; }
+          .fee-breakdown td:last-child { text-align: right; }
+          .total { font-weight: bold; font-size: 18px; color: #dc2626; }
+          .actions { margin: 20px 0; padding: 15px; background-color: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b; }
+          .btn { display: inline-block; padding: 12px 24px; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+          .btn-approve { background-color: #22c55e; }
+          .btn-reject { background-color: #ef4444; margin-left: 10px; }
+          .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #6b7280; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${isReissuance ? '🔄 Replacement Card Request' : '💳 New Card Request'}</h1>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">${organizationName || 'Bank'} - ${branchName || 'Main'}</p>
+          </div>
+
+          <p style="font-size: 16px;">Dear Approval Team,</p>
+          <p>A ${cardType || 'VIRTUAL'} card request has been submitted and is awaiting your approval.</p>
+
+          <div style="display: flex; align-items: center; gap: 10px; margin: 15px 0;">
+            <span class="status-badge">PENDING APPROVAL</span>
+            <span style="font-size: 14px; color: #6b7280;">Request ID: #${cardId}</span>
+          </div>
+
+          <div class="card-details">
+            <h3 style="margin-top: 0;">💳 Card Details</h3>
+            <table>
+              <tr><td>Card Number</td><td>${maskedPan || '**** **** **** ****'}</td></tr>
+              <tr><td>Card Scheme</td><td>${cardScheme || 'UNKNOWN'}</td></tr>
+              <tr><td>Card Type</td><td>${cardType || 'VIRTUAL'}</td></tr>
+              <tr><td>Expiry Date</td><td>${expiry || 'MM/YYYY'}</td></tr>
+              <tr><td>Card Holder</td><td>${customerName || 'Customer'}</td></tr>
+              <tr><td>Customer ID</td><td>${customerId || 'N/A'}</td></tr>
+              ${flutterwaveEnabled ? `<tr><td>Flutterwave</td><td>✅ Enabled</td></tr>` : ''}
+              ${hasEncryptedCVV ? `<tr><td>CVV Encryption</td><td>✅ Encrypted</td></tr>` : ''}
+              ${isReissuance ? `<tr><td>Replacement</td><td>✅ Yes (Lost/Stolen Card)</td></tr>` : ''}
+            </table>
+          </div>
+
+          <div class="fee-breakdown">
+            <h3 style="margin-top: 0;">💰 Fee Breakdown</h3>
+            <table>
+              <tr><td>Issuance Fee</td><td>₦${(feeAmount || 0).toFixed(2)}</td></tr>
+              ${(vatAmount || 0) > 0 ? `<tr><td>VAT (7.5%)</td><td>₦${(vatAmount || 0).toFixed(2)}</td></tr>` : ''}
+              <tr><td class="total">Total Deducted</td><td class="total">₦${(totalDeduction || 0).toFixed(2)}</td></tr>
+            </table>
+          </div>
+
+          <div class="actions">
+            <p style="margin: 0 0 10px 0;"><strong>📋 Action Required</strong></p>
+            <p style="margin: 0 0 15px 0; font-size: 14px; color: #6b7280;">
+              Please review the card request and take appropriate action.
+            </p>
+            <div>
+              <a href="${process.env.APP_URL || 'http://localhost:3000'}/admin/cards/pending/${cardId}" class="btn btn-approve">✅ Approve Card</a>
+              <a href="${process.env.APP_URL || 'http://localhost:3000'}/admin/cards/pending/${cardId}?action=reject" class="btn btn-reject">❌ Reject Request</a>
+            </div>
+            <p style="font-size: 12px; color: #6b7280; margin-top: 10px;">
+              Or go to: ${process.env.APP_URL || 'http://localhost:3000'}/admin/cards/pending
+            </p>
+          </div>
+
+          <div class="footer">
+            <p>This is an automated notification from the Banking Core System.</p>
+            <p>If you have any questions, please contact the Card Management Team.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const text = `
+${isReissuance ? 'REPLACEMENT CARD REQUEST PENDING APPROVAL' : 'NEW CARD REQUEST PENDING APPROVAL'}
+${organizationName || 'Bank'} - ${branchName || 'Main'}
+
+Request ID: #${cardId}
+Customer: ${customerName || 'Customer'} (${customerId || 'N/A'})
+Card: ${maskedPan || '**** **** **** ****'}
+Scheme: ${cardScheme || 'UNKNOWN'}
+Type: ${cardType || 'VIRTUAL'}
+Expiry: ${expiry || 'MM/YYYY'}
+${flutterwaveEnabled ? 'Flutterwave: Enabled' : ''}
+${isReissuance ? 'Replacement: Yes (Lost/Stolen Card)' : ''}
+
+Fee Breakdown:
+- Issuance Fee: ₦${(feeAmount || 0).toFixed(2)}
+${(vatAmount || 0) > 0 ? `- VAT: ₦${(vatAmount || 0).toFixed(2)}` : ''}
+- Total Deducted: ₦${(totalDeduction || 0).toFixed(2)}
+
+Please login to the admin portal to approve or reject this request.
+    `;
+
+    let transporter;
+    try {
+      const emailModule = await import('../config/email.js');
+      transporter = emailModule.transporter;
+    } catch (e) {
+      console.log('📧 Email transporter not available');
+    }
+
+    if (transporter) {
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || 'noreply@banking-system.com',
+        to: approverEmail,
+        ...(customerEmail && { cc: customerEmail }),
+        subject: subject,
+        html: html,
+        text: text
+      });
+      console.log(`📧 Notification sent for card #${cardId} to ${approverEmail}`);
+    } else {
+      console.log('📧 EMAIL (transporter not configured):', {
+        to: approverEmail,
+        subject: subject,
+        body: text
+      });
+    }
+
+    return true;
+
+  } catch (error) {
+    console.error('❌ Failed to send card pending notification:', error.message);
+    return false;
+  }
+};
+
+// ================================================================
+// ✅ EXECUTE CARD ISSUANCE FROM APPROVAL - UPDATED WITH ENCRYPTION
+// ================================================================
+
+/**
+ * Execute card issuance from an approved approval request
+ * This is called by the approval workflow when all approvals are completed
+ * 
+ * @param {Object} approvalRequest - The approved CardApprovalRequest instance
+ * @param {Object} transaction - Sequelize transaction
+ * @returns {Promise<Object>} Card issuance result with cardLast4 included
+ */
+export const executeCardIssuanceFromApproval = async (approvalRequest, transaction) => {
+  // ✅ Parse cardData if it's a string
+  let cardData = approvalRequest.cardData;
+  if (typeof cardData === 'string') {
+    try {
+      cardData = JSON.parse(cardData);
+    } catch (e) {
+      console.error('❌ Could not parse cardData:', e.message);
+      cardData = {};
+    }
+  }
+  
+  // ✅ Parse feeDetails if it's a string
+  let feeDetails = approvalRequest.feeDetails;
+  if (typeof feeDetails === 'string') {
+    try {
+      feeDetails = JSON.parse(feeDetails);
+    } catch (e) {
+      console.error('❌ Could not parse feeDetails:', e.message);
+      feeDetails = {};
+    }
+  }
+
+  // ✅ Get values from multiple sources with proper fallbacks
+  const customerId = cardData?.customerId || approvalRequest.customerId;
+  const accountNumber = cardData?.accountNumber || approvalRequest.accountNumber;
+  const accountId = cardData?.accountId || approvalRequest.accountId;
+  
+  console.log('📋 Extracted card data:', {
+    customerId,
+    accountNumber,
+    accountId,
+    cardDataCustomerId: cardData?.customerId,
+    approvalRequestCustomerId: approvalRequest.customerId,
+    cardDataAccountNumber: cardData?.accountNumber,
+    approvalRequestAccountNumber: approvalRequest.accountNumber
+  });
+
+  // ✅ Validate required fields
+  if (!customerId) {
+    console.error('❌ Missing customerId. cardData:', cardData, 'approvalRequest:', approvalRequest);
+    throw new Error('Customer ID is required for card issuance');
+  }
+  
+  if (!accountNumber) {
+    console.error('❌ Missing accountNumber. cardData:', cardData, 'approvalRequest:', approvalRequest);
+    throw new Error('Account number is required for card issuance');
+  }
+
+  // Destructure cardData with fallbacks
+  const cardType = cardData?.cardType || 'VIRTUAL';
+  const cardScheme = cardData?.cardScheme || 'VERVE';
+  const enableFlutterwave = cardData?.enableFlutterwave || false;
+  const existingCardId = cardData?.existingCardId || null;
+  const branchCode = cardData?.branchCode || approvalRequest.branchCode || '101';
+  const pan = cardData?.pan;
+  const bin = cardData?.bin;
+  const expiryMonth = cardData?.expiryMonth;
+  const expiryYear = cardData?.expiryYear;
+  const hashedCVV = cardData?.cvv;
+  const existingEncryptedCVV = cardData?.encryptedCVV;
+  const existingCvvNonce = cardData?.cvvNonce;
+  const cardBinInfo = cardData?.binInfo;
+  const cardDataLast4 = cardData?.cardLast4;
+
+  // Destructure feeDetails with fallbacks
+  const feeAmount = feeDetails?.feeAmount || 0;
+  const vatAmount = feeDetails?.vatAmount || 0;
+  const totalAmount = feeDetails?.totalAmount || 0;
+  const creditGlAccount = feeDetails?.creditGlAccount || '01***441400001';
+  const vatGLAccountNo = feeDetails?.vatGLAccountNo || '01***441500001';
+
+  console.log('🔧 Executing card issuance from approval request:', {
+    approvalRequestId: approvalRequest.id,
+    customerId,
+    accountNumber,
+    accountId,
+    cardType,
+    cardScheme,
+    enableFlutterwave,
+    totalAmount
+  });
+
+  // Resolve GL accounts
+  const resolvedCreditGlAccount = resolveGLAccount(creditGlAccount, branchCode);
+  const resolvedVatGlAccount = resolveGLAccount(vatGLAccountNo, branchCode);
+
+  console.log('💰 GL Account Resolution:', {
+    creditGlAccount,
+    resolvedCreditGlAccount,
+    vatGLAccountNo,
+    resolvedVatGlAccount,
+    branchCode
+  });
+
+  // Get customer account
+  const customerAccount = await CustomerAccount.findOne({
+    where: {
+      account_number: accountNumber,
+      CUST_ID: customerId,
+      status: 'ACTIVE'
+    },
+    transaction,
+    lock: true
+  });
+
+  if (!customerAccount) {
+    console.error('❌ Customer account not found:', { accountNumber, customerId });
+    throw new Error(`Customer account not found or not active for account: ${accountNumber}, customer: ${customerId}`);
+  }
+
+  console.log('✅ Customer account found:', {
+    id: customerAccount.id,
+    account_number: customerAccount.account_number,
+    account_name: customerAccount.account_name,
+    available_balance: customerAccount.available_balance
+  });
+
+  // Handle reissuance - cancel existing card if any
+  let existingCard = null;
+  if (existingCardId) {
+    existingCard = await DebitCard.findByPk(existingCardId, { transaction, lock: true });
+    if (existingCard) {
+      await existingCard.update({
+        blockReason: `REPLACED (was ${existingCard.blockReason})`,
+        cardStatus: 'CANCELLED'
+      }, { transaction });
+      console.log(`✅ Replaced existing card ${existingCard.id} (${existingCard.cardLast4})`);
+    }
+  }
+
+  // Generate card details if not already provided
+  const schemeBinMap = {
+    'VERVE': '506099',
+    'VISA': '4',
+    'MASTERCARD': '5',
+    'AMEX': '34',
+    'DISCOVER': '6'
+  };
+  const binPrefix = schemeBinMap[cardScheme] || '506099';
+  
+  // ✅ Generate a 16-digit card number (not PAN - PAN is a tax identifier)
+  const finalCardNumber = pan || await generateCardNumber(binPrefix, 16, transaction);
+  const finalBin = bin || finalCardNumber.slice(0, 6);
+  const finalExpiryMonth = expiryMonth || (new Date().getMonth() + 1).toString().padStart(2, '0');
+  const finalExpiryYear = expiryYear || (new Date().getFullYear() + 3).toString();
+  const finalCardLast4 = cardDataLast4 || finalCardNumber.slice(-4);
+  
+  // Generate CVV (3-4 digits)
+  const finalCvv = Math.floor(100 + Math.random() * 900).toString();
+  console.log(`🔐 Generated CVV: ${finalCvv}`);
+  
+  // ✅ Hash CVV using SHA-256
+  const finalHashedCVV = hashedCVV || crypto.createHash('sha256').update(finalCvv).digest('hex');
+  console.log(`🔐 CVV Hash: ${finalHashedCVV}`);
+  
+  // ✅ ALWAYS encrypt CVV for storage
+  let finalEncryptedCVV = existingEncryptedCVV;
+  let finalCvvNonce = existingCvvNonce;
+  
+  // ✅ Check encryption status
+  const encStatus = checkEncryptionStatus();
+  console.log('🔐 Encryption status:', encStatus);
+  
+  try {
+    // Always encrypt the CVV for secure storage
+    const result = encryptCVV(finalCvv);
+    if (result) {
+      finalEncryptedCVV = result.encrypted;
+      finalCvvNonce = result.nonce;
+      console.log(`🔐 CVV encrypted successfully with ${result.method}`);
+      console.log(`🔐 Encrypted CVV: ${finalEncryptedCVV}`);
+      console.log(`🔐 CVV Nonce: ${finalCvvNonce}`);
+      
+      // ✅ Verify we can decrypt it (self-test)
+      try {
+        const testDecrypt = decryptCVV(finalEncryptedCVV, finalCvvNonce);
+        if (testDecrypt === finalCvv) {
+          console.log(`✅ CVV encryption verification passed`);
+        } else {
+          console.warn(`⚠️ CVV encryption verification failed - decrypted value doesn't match`);
+          console.warn(`   Expected: ${finalCvv}, Got: ${testDecrypt}`);
+        }
+      } catch (decryptError) {
+        console.warn(`⚠️ Could not verify CVV decryption:`, decryptError.message);
+      }
+    } else {
+      console.error('❌ CVV encryption returned null - check encryption keys');
+      finalEncryptedCVV = null;
+      finalCvvNonce = null;
+    }
+  } catch (error) {
+    console.error('❌ CVV encryption failed:', error.message);
+    finalEncryptedCVV = null;
+    finalCvvNonce = null;
+  }
+
+  // Get BIN info
+  const BinInfo = getModel('BinInfo');
+  let binInfo = { bank_name: 'Unknown', country: 'Unknown', network: 'Unknown', card_type: 'Unknown' };
+  if (BinInfo) {
+    try {
+      const binRecord = await BinInfo.findOne({
+        where: { bin: finalBin },
+        transaction
+      });
+      if (binRecord) {
+        binInfo = {
+          bank_name: binRecord.bank_name || 'Unknown',
+          country: binRecord.country || 'Unknown',
+          network: binRecord.network || 'Unknown',
+          card_type: binRecord.card_type || 'Unknown'
+        };
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not fetch BIN info:', error.message);
+    }
+  }
+
+  // ✅ Create the card with proper encryption
+  const card = await DebitCard.create({
+    customerId: customerId,
+    accountId: customerAccount.id,
+    cardPan: finalCardNumber,  // This is the card number, not a tax PAN
+    cardHolderName: customerAccount.account_name || 'Card Holder',
+    expiryMonth: finalExpiryMonth,
+    expiryYear: finalExpiryYear,
+    cvvHash: finalHashedCVV,
+    encryptedCvv: finalEncryptedCVV,
+    cvvNonce: finalCvvNonce,
+    cardType: cardType || 'VIRTUAL',
+    cardScheme: cardScheme || binInfo.network || 'VERVE',
+    cardStatus: 'ISSUED',
+    issuedBy: approvalRequest.approvedBy || approvalRequest.requestedBy,
+    issuedAt: new Date(),
+    cardLast4: finalCardLast4,
+    cardBin: finalBin,
+    binBankName: binInfo.bank_name,
+    binCountry: binInfo.country,
+    binNetwork: binInfo.network,
+    binCardType: binInfo.card_type,
+    flutterwaveEnabled: enableFlutterwave && !!finalEncryptedCVV,
+    lastUsedAt: null,
+    approvalRequestId: approvalRequest.id
+  }, { transaction });
+
+  console.log(`✅ Card created: ID ${card.id}, Last4 ${card.cardLast4}`);
+  console.log(`✅ Flutterwave Enabled: ${card.flutterwaveEnabled}`);
+  console.log(`✅ Encrypted CVV: ${card.encryptedCvv ? 'SET (' + card.encryptedCvv.length + ' chars)' : 'MISSING'}`);
+  console.log(`✅ CVV Hash: ${card.cvvHash ? 'SET' : 'MISSING'}`);
+  console.log(`✅ CVV Nonce: ${card.cvvNonce ? 'SET' : 'MISSING'}`);
+
+  // Deduct balances
+  const currentBalAvailable = parseFloat(customerAccount.available_balance || 0);
+  const currentBalCurrent = parseFloat(customerAccount.current_balance || 0);
+  const currentBalLedger = parseFloat(customerAccount.ledger_balance || 0);
+  const currentBalCleared = parseFloat(customerAccount.cleared_balance || 0);
+
+  const newAvailable = currentBalAvailable - totalAmount;
+  const newCurrent = currentBalCurrent - totalAmount;
+  const newLedger = currentBalLedger - totalAmount;
+  const newCleared = currentBalCleared - totalAmount;
+
+  await customerAccount.update({
+    available_balance: newAvailable,
+    current_balance: newCurrent,
+    ledger_balance: newLedger,
+    cleared_balance: newCleared,
+    last_transaction_date: new Date()
+  }, { transaction });
+
+  console.log(`💰 Balance updated: Deducted ${totalAmount} from account ${accountNumber}`);
+
+  // Create fee transaction
+  const getNextTransactionId = async () => {
+    const lastTx = await Transaction.findOne({
+      order: [['TRANSACTION_IDENTIFIER', 'DESC']],
+      attributes: ['TRANSACTION_IDENTIFIER'],
+      transaction
+    });
+    return (lastTx?.TRANSACTION_IDENTIFIER || 0) + 1;
+  };
+
+  const txIdentifier = await getNextTransactionId();
+
+  // Main fee transaction
+  await Transaction.create({
+    ACCT_NO: customerAccount.account_number,
+    ACCT_ID: String(customerAccount.id),
+    BU_ID: customerAccount.bu_id || 1,
+    CUST_ID: String(customerAccount.CUST_ID),
+    ACCT_NM: customerAccount.account_name,
+    AMOUNT: feeAmount,
+    transactionDirection: 'DEBIT',
+    TRANSACTION_TYPE: 'CARD_ISSUANCE_FEE',
+    TRANSACTION_IDENTIFIER: txIdentifier,
+    EVENT_ID: txIdentifier,
+    TRAN_JOURNAL_ID: `JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    TRANSACTION_ID: `TXN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    REFERENCE: `CARD_ISSUE_${card.id}_${Date.now()}`,
+    description: `Card issuance fee for card ${card.id} (Approval: ${approvalRequest.id})`,
+    status: 'COMPLETED',
+    currency: customerAccount.currency || 'NGN',
+    createdBy: approvalRequest.approvedBy || approvalRequest.requestedBy,
+    debitAccount: customerAccount.account_number,
+    creditAccount: resolvedCreditGlAccount
+  }, { transaction });
+
+  // VAT transaction if applicable
+  if (vatAmount > 0) {
+    const vatTxIdentifier = await getNextTransactionId() + 1;
+    await Transaction.create({
+      ACCT_NO: customerAccount.account_number,
+      ACCT_ID: String(customerAccount.id),
+      BU_ID: customerAccount.bu_id || 1,
+      CUST_ID: String(customerAccount.CUST_ID),
+      ACCT_NM: customerAccount.account_name,
+      AMOUNT: vatAmount,
+      transactionDirection: 'DEBIT',
+      TRANSACTION_TYPE: 'VAT_CARD_ISSUANCE',
+      TRANSACTION_IDENTIFIER: vatTxIdentifier,
+      EVENT_ID: vatTxIdentifier,
+      TRAN_JOURNAL_ID: `JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      TRANSACTION_ID: `TXN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      REFERENCE: `CARD_ISSUE_VAT_${card.id}_${Date.now()}`,
+      description: `VAT on card issuance for card ${card.id} (Approval: ${approvalRequest.id})`,
+      status: 'COMPLETED',
+      currency: customerAccount.currency || 'NGN',
+      createdBy: approvalRequest.approvedBy || approvalRequest.requestedBy,
+      debitAccount: customerAccount.account_number,
+      creditAccount: resolvedVatGlAccount
+    }, { transaction });
+  }
+
+  // Update approval request with card details
+  await approvalRequest.update({
+    cardData: {
+      ...approvalRequest.cardData,
+      cardId: card.id,
+      cardLast4: card.cardLast4,
+      maskedPan: `**** **** **** ${card.cardLast4}`,
+      expiry: `${finalExpiryMonth}/${finalExpiryYear}`,
+      cardStatus: card.cardStatus,
+      executedAt: new Date(),
+      glEntriesPosted: true,
+      glJournalId: `GL_JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+      resolvedCreditGlAccount,
+      resolvedVatGlAccount,
+      flutterwaveEnabled: card.flutterwaveEnabled,
+      hasEncryptedCVV: !!card.encryptedCvv,
+      hasCvvHash: !!card.cvvHash,
+      encryptionMethod: finalEncryptedCVV ? 'ENCRYPTED' : 'NONE'
+    }
+  }, { transaction });
+
+  console.log(`✅ Approval request ${approvalRequest.id} updated with card details`);
+
+  // ✅ Return all card details
+  return {
+    cardId: card.id,
+    cardLast4: card.cardLast4,
+    maskedPan: `**** **** **** ${card.cardLast4}`,
+    expiry: `${finalExpiryMonth}/${finalExpiryYear}`,
+    cvv: finalCvv,
+    cardScheme: card.cardScheme,
+    cardType: card.cardType,
+    cardStatus: card.cardStatus,
+    feeCharged: feeAmount,
+    vatCharged: vatAmount,
+    totalCharged: totalAmount,
+    flutterwaveEnabled: card.flutterwaveEnabled,
+    hasEncryptedCVV: !!card.encryptedCvv,
+    hasCvvHash: !!card.cvvHash,
+    bankName: binInfo.bank_name,
+    country: binInfo.country,
+    network: binInfo.network,
+    isReissuance: !!existingCard,
+    replacedCardId: existingCard?.id || null,
+    glJournalId: `GL_JRN_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    resolvedCreditGlAccount,
+    resolvedVatGlAccount,
+    message: existingCard 
+      ? `Replacement card issued. Old card (${existingCard.cardLast4}) has been cancelled.` 
+      : `Card issued successfully. Please set a PIN before first use.`
+  };
+};
+
+// ==================== REMAINING ORIGINAL FUNCTIONS ====================
+
+// ==================== FLUTTERWAVE CARD PAYMENT ====================
+
 export const cardPayment = async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -733,7 +1780,6 @@ export const cardPayment = async (req, res) => {
     }
 
     if (cardId) {
-      // Get card details from database
       const card = await DebitCard.findByPk(cardId, {
         include: [{ model: CustomerAccount, as: 'customerAccount' }]
       });
@@ -768,12 +1814,11 @@ export const cardPayment = async (req, res) => {
         });
       }
 
-      // Decrypt CVV using decryptStoredCVV from flutterwave.service (imported)
       let cvv = null;
       if (card.encryptedCvv) {
         try {
           console.log('🔐 Decrypting CVV for card:', card.cardLast4);
-          cvv = decryptStoredCVV(card.encryptedCvv); // ← Using imported function
+          cvv = decryptStoredCVV(card.encryptedCvv);
           if (cvv) {
             console.log('✅ CVV decrypted successfully');
           } else {
@@ -803,10 +1848,9 @@ export const cardPayment = async (req, res) => {
 
       const customerEmail = card.customerAccount?.email || 'customer@example.com';
 
-      // Prepare payment data for Flutterwave chargeCard
       const paymentData = {
         cardNumber: card.cardPan,
-        cvv: cvv, // Decrypted CVV
+        cvv: cvv,
         expiryMonth: card.expiryMonth,
         expiryYear: card.expiryYear,
         email: customerEmail,
@@ -851,14 +1895,12 @@ export const cardPayment = async (req, res) => {
         { branch: req.user?.branch || 1 }
       );
 
-      // Call Flutterwave chargeCard function directly
       const result = await chargeCard(paymentData);
 
       if (!result || !result.success) {
         throw new Error(result?.message || 'Payment initiation failed');
       }
 
-      // Update card last used timestamp
       await card.update({
         lastUsedAt: new Date()
       });
@@ -896,7 +1938,6 @@ export const cardPayment = async (req, res) => {
       });
 
     } else if (customerId) {
-      // Find the customer's active Flutterwave-enabled card
       const card = await DebitCard.findOne({
         where: {
           customerId: customerId,
@@ -913,7 +1954,6 @@ export const cardPayment = async (req, res) => {
         });
       }
 
-      // Recurse with the found card
       req.body.cardId = card.id;
       return cardPayment(req, res);
     }
@@ -946,14 +1986,8 @@ export const cardPayment = async (req, res) => {
   }
 };
 
-// ================================================================
-// ADDITIONAL FLUTTERWAVE FUNCTIONS
-// ================================================================
+// ==================== VERIFY FLUTTERWAVE PAYMENT ====================
 
-/**
- * Verify a Flutterwave transaction
- * GET /api/cards/payment/verify/:reference
- */
 export const verifyFlutterwavePayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -981,10 +2015,8 @@ export const verifyFlutterwavePayment = async (req, res) => {
   }
 };
 
-/**
- * Refund a Flutterwave transaction
- * POST /api/cards/payment/refund
- */
+// ==================== REFUND FLUTTERWAVE PAYMENT ====================
+
 export const refundFlutterwavePayment = async (req, res) => {
   try {
     const { reference, amount, reason } = req.body;
@@ -1012,10 +2044,8 @@ export const refundFlutterwavePayment = async (req, res) => {
   }
 };
 
-/**
- * Get Flutterwave transaction status
- * GET /api/cards/payment/status/:reference
- */
+// ==================== GET FLUTTERWAVE TRANSACTION STATUS ====================
+
 export const getFlutterwaveTransactionStatus = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -1043,9 +2073,8 @@ export const getFlutterwaveTransactionStatus = async (req, res) => {
   }
 };
 
-/**
- * List Flutterwave transactions * GET /api/cards/payment/transactions
- */
+// ==================== LIST FLUTTERWAVE TRANSACTIONS ====================
+
 export const listFlutterwaveTransactions = async (req, res) => {
   try {
     const { page, limit, status, email } = req.query;
@@ -1071,10 +2100,8 @@ export const listFlutterwaveTransactions = async (req, res) => {
   }
 };
 
-/**
- * Health check for Flutterwave
- * GET /api/cards/payment/health
- */
+// ==================== FLUTTERWAVE HEALTH CHECK ====================
+
 export const flutterwaveHealthCheck = async (req, res) => {
   try {
     const result = await healthCheck();
@@ -1093,11 +2120,8 @@ export const flutterwaveHealthCheck = async (req, res) => {
   }
 };
 
-// ================================================================
-// CARD MANAGEMENT FUNCTIONS (continued)
-// ================================================================
+// ==================== CARD MANAGEMENT FUNCTIONS ====================
 
-// GET /api/cards/customer/:customerId
 export const getCustomerCards = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1195,7 +2219,6 @@ export const getCustomerCards = async (req, res) => {
   }
 };
 
-// PUT /api/cards/daily-limit
 export const setDailyLimit = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1271,7 +2294,6 @@ export const setDailyLimit = async (req, res) => {
   }
 };
 
-// PUT /api/cards/per-transaction-limit
 export const setPerTransactionLimit = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1355,7 +2377,6 @@ export const setPerTransactionLimit = async (req, res) => {
   }
 };
 
-// POST /api/cards/set-pin
 export const setCardPin = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1473,7 +2494,6 @@ export const setCardPin = async (req, res) => {
   }
 };
 
-// POST /api/cards/block
 export const blockCard = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1542,7 +2562,6 @@ export const blockCard = async (req, res) => {
   }
 };
 
-// POST /api/cards/unblock
 export const unblockCard = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1617,7 +2636,6 @@ export const unblockCard = async (req, res) => {
   }
 };
 
-// GET /api/cards/transactions
 export const getCardTransactionHistory = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1709,7 +2727,6 @@ export const getCardTransactionHistory = async (req, res) => {
   }
 };
 
-// POST /api/cards/transaction
 export const cardPurchase = async (req, res) => {
   const userId = getUserId(req);
   const ipAddress = getClientIp(req);
@@ -1881,13 +2898,42 @@ export const cardPurchase = async (req, res) => {
   }
 };
 
-// ================================================================
-// EXPORT ALL FUNCTIONS
-// ================================================================
+// ============================================
+// 9. ISSUE CARD DIRECTLY (Bypass Approval)
+// ============================================
+export const issueCardDirectly = async (req, res) => {
+  const userId = getUserId(req);
+  const ipAddress = getClientIp(req);
 
-// export {
+  try {
+    // ✅ Import and call issueCard from DebitCardController
+    const { issueCard } = await import('./DebitCardController.js');
+    return await issueCard(req, res);
+
+  } catch (error) {
+    console.error('❌ Error in issueCardDirectly:', error.message);
+    return res.status(400).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// ==================== EXPORT ALL FUNCTIONS ====================
+
+ export {
+   getCardIssuanceCharge,
+//   getCardDetailsForPrinting,
+//   requestCardIssuance,
 //   issueCard,
-//   cardPurchase,
+//   sendCardPendingNotification,
+//   executeCardIssuanceFromApproval,
+//   cardPayment,
+//   verifyFlutterwavePayment,
+//   refundFlutterwavePayment,
+//   getFlutterwaveTransactionStatus,
+//   listFlutterwaveTransactions,
+//   flutterwaveHealthCheck,
 //   getCustomerCards,
 //   setDailyLimit,
 //   setPerTransactionLimit,
@@ -1895,11 +2941,6 @@ export const cardPurchase = async (req, res) => {
 //   blockCard,
 //   unblockCard,
 //   getCardTransactionHistory,
-//   getCardDetailsForPrinting,
-//   cardPayment,
-//   verifyFlutterwavePayment,
-//   refundFlutterwavePayment,
-//   getFlutterwaveTransactionStatus,
-//   listFlutterwaveTransactions,
-//   flutterwaveHealthCheck
-// };
+//   cardPurchase,
+//   issueCardDirectly
+};
