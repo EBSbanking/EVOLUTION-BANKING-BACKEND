@@ -4,9 +4,9 @@ dotenv.config();
 import axios from 'axios';
 import crypto from 'crypto';
 
-const BASE_URL = 'https://api.flutterwave.com/v3';
-const SECRET_KEY = 'FLWSECK_TEST-47ced86b1040d569ee3813816a01a0da-X';
-const ENCRYPTION_KEY = 'FLWSECK_TEST2b0f7be79965';
+// const BASE_URL = 'https://api.flutterwave.com/v3';
+// const SECRET_KEY = 'FLWSECK_TEST-47ced86b1040d569ee3813816a01a0da-X';
+// const ENCRYPTION_KEY = 'FLWSECK_TEST2b0f7be79965';
 
 function generateNonce() {
     return crypto.randomBytes(6).toString('hex');
