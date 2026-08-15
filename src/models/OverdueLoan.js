@@ -1,4 +1,4 @@
-﻿// models/OverdueLoan.js
+// models/OverdueLoan.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

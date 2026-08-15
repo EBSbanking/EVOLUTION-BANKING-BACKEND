@@ -1,4 +1,4 @@
-﻿// models/Counter.js - FIXED VERSION
+// models/Counter.js - FIXED VERSION
 import { DataTypes, Model, Op } from 'sequelize';  // Make sure Op is imported
 import sequelize from '../../config/db.js';
 
@@ -10,7 +10,7 @@ class Counter extends Model {
     try {
       transaction = await sequelize.transaction();
       
-      console.log(`🔢 [Counter] Attempting to get next sequence for: ${name}`);
+      console.log(`?? [Counter] Attempting to get next sequence for: ${name}`);
       
       // First, check if the counter exists
       const [results] = await sequelize.query(
@@ -29,7 +29,7 @@ class Counter extends Model {
         const currentSeq = results.seq || 0;
         newSeq = currentSeq + 1;
         
-        console.log(`📈 [Counter] Incrementing ${name} from ${currentSeq} to ${newSeq}`);
+        console.log(`?? [Counter] Incrementing ${name} from ${currentSeq} to ${newSeq}`);
         
         await sequelize.query(
           `UPDATE counters SET seq = ?, updated_at = NOW() WHERE name = ?`,
@@ -40,7 +40,7 @@ class Counter extends Model {
         );
       } else {
         // Counter doesn't exist, create it
-        console.log(`➕ [Counter] Creating new counter for: ${name}`);
+        console.log(`? [Counter] Creating new counter for: ${name}`);
         newSeq = 1;
         
         await sequelize.query(
@@ -54,23 +54,23 @@ class Counter extends Model {
       }
       
       await transaction.commit();
-      console.log(`✅ [Counter] Successfully got sequence for ${name}: ${newSeq}`);
+      console.log(`? [Counter] Successfully got sequence for ${name}: ${newSeq}`);
       return newSeq;
 
     } catch (error) {
-      console.error(`❌ [Counter] Failed in getNextSequence for ${name}:`, error.message);
+      console.error(`? [Counter] Failed in getNextSequence for ${name}:`, error.message);
       
       if (transaction) {
         try {
           await transaction.rollback();
-          console.log(`🔄 [Counter] Transaction rolled back for ${name}`);
+          console.log(`?? [Counter] Transaction rolled back for ${name}`);
         } catch (rollbackError) {
           console.error('[Counter] Failed to rollback transaction:', rollbackError.message);
         }
       }
       
       // FALLBACK 1: Try a simpler approach without transaction
-      console.log(`🔄 [Counter] Trying fallback sequence generation for ${name}...`);
+      console.log(`?? [Counter] Trying fallback sequence generation for ${name}...`);
       
       try {
         // Check if counters table exists
@@ -79,7 +79,7 @@ class Counter extends Model {
         );
         
         if (tableExists.length === 0) {
-          console.warn(`⚠️ [Counter] Table 'counters' doesn't exist for ${name}`);
+          console.warn(`?? [Counter] Table 'counters' doesn't exist for ${name}`);
           throw new Error('Counters table not found');
         }
         
@@ -93,7 +93,7 @@ class Counter extends Model {
           const currentSeq = fallbackResults[0].seq || 0;
           const newSeq = currentSeq + 1;
           
-          console.log(`🔄 [Counter] Fallback: Updating ${name} from ${currentSeq} to ${newSeq}`);
+          console.log(`?? [Counter] Fallback: Updating ${name} from ${currentSeq} to ${newSeq}`);
           
           await sequelize.query(
             `UPDATE counters SET seq = ?, updated_at = NOW() WHERE name = ?`,
@@ -103,7 +103,7 @@ class Counter extends Model {
           return newSeq;
         } else {
           // Create new counter without transaction
-          console.log(`➕ [Counter] Fallback: Creating new counter for ${name}`);
+          console.log(`? [Counter] Fallback: Creating new counter for ${name}`);
           
           await sequelize.query(
             `INSERT INTO counters (name, seq, description, created_at, updated_at) 
@@ -114,10 +114,10 @@ class Counter extends Model {
           return 1;
         }
       } catch (fallbackError) {
-        console.error(`❌ [Counter] Fallback also failed for ${name}:`, fallbackError.message);
+        console.error(`? [Counter] Fallback also failed for ${name}:`, fallbackError.message);
         
         // FALLBACK 2: Try to create counters table if it doesn't exist
-        console.log(`🔄 [Counter] Attempting to create counters table for ${name}...`);
+        console.log(`?? [Counter] Attempting to create counters table for ${name}...`);
         
         try {
           // Create counters table
@@ -131,7 +131,7 @@ class Counter extends Model {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
           `);
           
-          console.log(`✅ [Counter] Created counters table for ${name}`);
+          console.log(`? [Counter] Created counters table for ${name}`);
           
           // Insert the counter
           await sequelize.query(
@@ -139,16 +139,16 @@ class Counter extends Model {
             { replacements: [name, `Emergency-created counter for ${name}`] }
           );
           
-          console.log(`✅ [Counter] Created counter ${name} with initial value 1`);
+          console.log(`? [Counter] Created counter ${name} with initial value 1`);
           return 1;
           
         } catch (createTableError) {
-          console.error(`❌ [Counter] Could not create table for ${name}:`, createTableError.message);
+          console.error(`? [Counter] Could not create table for ${name}:`, createTableError.message);
           
           // FALLBACK 3: Return a timestamp-based sequence
-          console.warn(`⚠️ [Counter] Using timestamp fallback for ${name}`);
+          console.warn(`?? [Counter] Using timestamp fallback for ${name}`);
           const timestampSeq = Date.now() % 1000000;
-          console.log(`🔄 [Counter] Generated timestamp-based sequence: ${timestampSeq}`);
+          console.log(`?? [Counter] Generated timestamp-based sequence: ${timestampSeq}`);
           return timestampSeq;
         }
       }
@@ -157,7 +157,7 @@ class Counter extends Model {
 
   // Static method: Initialize required counters
   static async initializeRequiredCounters() {
-    console.log('🔧 [Counter] Initializing required counters...');
+    console.log('?? [Counter] Initializing required counters...');
     
     const requiredCounters = [
       { name: 'creditApplicationId', description: 'Credit Application ID counter' },
@@ -187,17 +187,17 @@ class Counter extends Model {
               replacements: [counter.name, counter.description]
             }
           );
-          console.log(`✅ [Counter] Initialized: ${counter.name}`);
+          console.log(`? [Counter] Initialized: ${counter.name}`);
           initializedCount++;
         } else {
-          console.log(`📋 [Counter] Already exists: ${counter.name}`);
+          console.log(`?? [Counter] Already exists: ${counter.name}`);
         }
       } catch (initError) {
-        console.error(`❌ [Counter] Failed to initialize ${counter.name}:`, initError.message);
+        console.error(`? [Counter] Failed to initialize ${counter.name}:`, initError.message);
       }
     }
     
-    console.log(`✅ [Counter] Initialization complete. ${initializedCount} counters initialized.`);
+    console.log(`? [Counter] Initialization complete. ${initializedCount} counters initialized.`);
     return initializedCount;
   }
 
@@ -214,7 +214,7 @@ class Counter extends Model {
       }
       return 0;
     } catch (error) {
-      console.error(`❌ [Counter] Failed to get current sequence for ${name}:`, error.message);
+      console.error(`? [Counter] Failed to get current sequence for ${name}:`, error.message);
       return 0;
     }
   }
@@ -226,10 +226,10 @@ class Counter extends Model {
         `UPDATE counters SET seq = ?, updated_at = NOW() WHERE name = ?`,
         { replacements: [newValue, name] }
       );
-      console.log(`✅ [Counter] Reset ${name} to ${newValue}`);
+      console.log(`? [Counter] Reset ${name} to ${newValue}`);
       return true;
     } catch (error) {
-      console.error(`❌ [Counter] Failed to reset ${name}:`, error.message);
+      console.error(`? [Counter] Failed to reset ${name}:`, error.message);
       return false;
     }
   }
@@ -242,7 +242,7 @@ class Counter extends Model {
       );
       return counters;
     } catch (error) {
-      console.error('❌ [Counter] Failed to list counters:', error.message);
+      console.error('? [Counter] Failed to list counters:', error.message);
       return [];
     }
   }

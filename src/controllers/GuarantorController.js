@@ -1,4 +1,4 @@
-// src/controllers/GuarantorController.js - CORRECTED (aligned with model attributes)
+// src/controllers/GuarantorController.js - UPDATED with AI-Powered Duplicate Detection
 import Guarantor from '../models/Guarantor.js';
 import LoanAccount from '../models/LoanAccount.js';
 import GuarantorAudit from '../models/GuarantorAudit.js';
@@ -86,6 +86,75 @@ export const createGuarantor = async (req, res) => {
       });
     }
 
+    // ============================================
+    // ✅ AI-POWERED DUPLICATE DETECTION
+    // ============================================
+    console.log('🤖 Running AI-powered duplicate detection...');
+    
+    const validationResult = await Guarantor.validateGuarantor({
+      fullName,
+      phoneNumber,
+      email,
+      bvn,
+      idNumber,
+      address,
+      dateOfBirth,
+      state,
+      localGovernment
+    }, { strictMode: false, threshold: 0.7 });
+
+    console.log('📊 AI Validation Result:', {
+      isValid: validationResult.isValid,
+      duplicateCheck: validationResult.duplicateCheck ? {
+        isDuplicate: validationResult.duplicateCheck.isDuplicate,
+        confidence: validationResult.duplicateCheck.confidence,
+        suggestion: validationResult.duplicateCheck.suggestion
+      } : null,
+      errors: validationResult.errors,
+      warnings: validationResult.warnings
+    });
+
+    // If there are exact matches, prevent creation
+    if (validationResult.duplicateCheck && validationResult.duplicateCheck.exactMatches.length > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: '⚠️ This guarantor already exists in the system.',
+        code: 'DUPLICATE_GUARANTOR',
+        duplicateCheck: {
+          isDuplicate: true,
+          confidence: 1.0,
+          exactMatches: validationResult.duplicateCheck.exactMatches.map(m => ({
+            id: m.guarantor_id,
+            name: m.full_name,
+            phone: m.phone_number,
+            email: m.email,
+            bvn: m.bvn,
+            status: m.status,
+            loanId: m.loan_id
+          })),
+          suggestion: 'Please use the existing guarantor record or verify if this is a duplicate.'
+        }
+      });
+    }
+
+    // If there are high similarity matches, warn but allow creation with warning
+    if (validationResult.duplicateCheck && validationResult.duplicateCheck.isDuplicate) {
+      const highMatches = validationResult.duplicateCheck.potentialMatches
+        .filter(m => m.isHighMatch)
+        .map(m => ({
+          id: m.guarantor_id,
+          name: m.full_name,
+          phone: m.phone_number,
+          email: m.email,
+          similarityScore: m.similarityScore,
+          matchedFields: m.matchedFields
+        }));
+
+      // Still allow creation but with a warning
+      console.log('⚠️ High similarity detected but allowing creation with warning');
+    }
+
     // ✅ Generate guarantor ID
     const guarantor_id = await generateGuarantorId();
     console.log('[ID GENERATION] Generated guarantor_id:', guarantor_id);
@@ -95,14 +164,14 @@ export const createGuarantor = async (req, res) => {
       throw new Error(`Invalid ID format generated: ${guarantor_id}`);
     }
 
-    // ✅ Check for duplicate ID
+    // ✅ Check for duplicate ID (safety check)
     const exists = await Guarantor.findOne({ where: { guarantor_id }, transaction });
     if (exists) {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
         message: `Guarantor with ID ${guarantor_id} already exists`,
-        code: 'DUPLICATE_GUARANTOR',
+        code: 'DUPLICATE_GUARANTOR_ID',
         generatedId: guarantor_id,
       });
     }
@@ -131,7 +200,16 @@ export const createGuarantor = async (req, res) => {
       const bvnUsed = await Guarantor.findOne({ where: { bvn }, transaction });
       if (bvnUsed) {
         await transaction.rollback();
-        return res.status(409).json({ success: false, message: 'BVN already used', code: 'DUPLICATE_BVN' });
+        return res.status(409).json({ 
+          success: false, 
+          message: 'BVN already used by another guarantor', 
+          code: 'DUPLICATE_BVN',
+          existingGuarantor: {
+            id: bvnUsed.guarantor_id,
+            name: bvnUsed.fullName,
+            phone: bvnUsed.phoneNumber
+          }
+        });
       }
     }
 
@@ -214,7 +292,14 @@ export const createGuarantor = async (req, res) => {
         loanId: newGuarantor.loanId,
         performedBy: req.user?.id || 'system',
         relationshipOfficer: { id: null, name: relationshipOfficerName },
-        details: { notes: 'Guarantor created' },
+        details: { 
+          notes: 'Guarantor created',
+          duplicateCheck: validationResult.duplicateCheck ? {
+            hasDuplicates: validationResult.duplicateCheck.isDuplicate,
+            confidence: validationResult.duplicateCheck.confidence,
+            matchesFound: validationResult.duplicateCheck.potentialMatches?.length || 0
+          } : null
+        },
       }, { transaction });
     } catch (auditError) {
       console.warn('⚠️ Audit creation failed:', auditError.message);
@@ -223,20 +308,45 @@ export const createGuarantor = async (req, res) => {
 
     await transaction.commit();
 
+    // ✅ Build response with duplicate warning if applicable
+    const responseData = {
+      id: newGuarantor.id,
+      guarantorId: newGuarantor.guarantor_id,
+      name: newGuarantor.fullName,
+      phoneNumber: newGuarantor.phoneNumber,
+      loanId: newGuarantor.loanId,
+      status: newGuarantor.status,
+      verificationStatus: newGuarantor.verificationStatus,
+      createdAt: newGuarantor.created_at,
+    };
+
+    // Add duplicate warning if there were potential matches
+    if (validationResult.duplicateCheck && validationResult.duplicateCheck.potentialMatches?.length > 0) {
+      responseData.warning = {
+        message: validationResult.duplicateCheck.suggestion,
+        potentialMatches: validationResult.duplicateCheck.potentialMatches
+          .filter(m => m.similarityScore >= 0.4)
+          .slice(0, 5)
+          .map(m => ({
+            id: m.guarantor_id,
+            name: m.full_name,
+            phone: m.phone_number,
+            similarity: m.similarityScore,
+            matchedFields: m.matchedFields
+          }))
+      };
+    }
+
     // ✅ Return success response
     return res.status(201).json({
       success: true,
       message: 'Guarantor created successfully',
-      data: {
-        id: newGuarantor.id,
-        guarantorId: newGuarantor.guarantor_id,
-        name: newGuarantor.fullName,
-        phoneNumber: newGuarantor.phoneNumber,
-        loanId: newGuarantor.loanId,
-        status: newGuarantor.status,
-        verificationStatus: newGuarantor.verificationStatus,
-        createdAt: newGuarantor.created_at,
-      },
+      data: responseData,
+      duplicateCheck: validationResult.duplicateCheck ? {
+        isDuplicate: validationResult.duplicateCheck.isDuplicate,
+        confidence: validationResult.duplicateCheck.confidence,
+        suggestion: validationResult.duplicateCheck.suggestion
+      } : null
     });
 
   } catch (error) {
@@ -254,6 +364,9 @@ export const createGuarantor = async (req, res) => {
     });
   }
 };
+
+// ==================== REST OF THE CONTROLLER (unchanged) ====================
+// ... (keep all other functions the same: updateGuarantor, approveGuarantor, rejectGuarantor, etc.)
 
 // ==================== UPDATE ====================
 export const updateGuarantor = async (req, res) => {

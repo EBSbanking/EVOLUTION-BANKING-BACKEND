@@ -1,4 +1,4 @@
-﻿// models/WF_BusinessRoleQueue.js
+// models/WF_BusinessRoleQueue.js
 import { DataTypes } from 'sequelize';
 
 /**

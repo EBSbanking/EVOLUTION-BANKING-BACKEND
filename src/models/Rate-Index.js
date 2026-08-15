@@ -1,4 +1,4 @@
-﻿// models/RateIndex.js
+// models/RateIndex.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

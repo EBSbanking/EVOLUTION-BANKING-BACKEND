@@ -1,4 +1,4 @@
-﻿// models/CustomerAccount.js – Matches actual customer_accounts table
+// models/CustomerAccount.js � Matches actual customer_accounts table
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -81,7 +81,7 @@ CustomerAccount.init(
       unique: true,
       field: 'account_number'
     },
-    // ✅ Add ACCT_NO as a virtual alias for account_number
+    // ? Add ACCT_NO as a virtual alias for account_number
     ACCT_NO: {
       type: DataTypes.VIRTUAL,
       get() {
@@ -156,7 +156,7 @@ CustomerAccount.init(
       allowNull: true,
       field: 'prod_id'
     },
-    // ✅ Ensure TINYINT(1) is handled correctly
+    // ? Ensure TINYINT(1) is handled correctly
     allow_debit: {
       type: DataTypes.TINYINT,
       defaultValue: 1,
@@ -181,14 +181,14 @@ CustomerAccount.init(
         this.setDataValue('allow_credit', value ? 1 : 0);
       }
     },
-    // ✅ Add DR_ALLOWED as an alias for allow_debit
+    // ? Add DR_ALLOWED as an alias for allow_debit
     DR_ALLOWED: {
       type: DataTypes.VIRTUAL,
       get() {
         return this.getDataValue('allow_debit') === 1 || this.getDataValue('allow_debit') === true;
       }
     },
-    // ✅ Add CR_ALLOWED as an alias for allow_credit
+    // ? Add CR_ALLOWED as an alias for allow_credit
     CR_ALLOWED: {
       type: DataTypes.VIRTUAL,
       get() {

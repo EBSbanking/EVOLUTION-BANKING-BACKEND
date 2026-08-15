@@ -1,8 +1,11 @@
-// controllers/transactionPolicyController.js - UPDATED FOR SEQUELIZE
-import { TransactionPolicy } from '../models/TransactionPolicy.js';
+// controllers/transactionPolicyController.js - CORRECTED FOR SEQUELIZE
+import { TransactionPolicy, PolicyRange } from '../models/TransactionPolicy.js';
 import { Op } from 'sequelize';
+import sequelize from '../../config/db.js';
 
-// ✅ Create or update transaction policies
+// ================================================================
+// ✅ CREATE OR UPDATE TRANSACTION POLICIES
+// ================================================================
 export const setTransactionPolicy = async (req, res) => {
   try {
     const { POLICIES } = req.body;
@@ -67,25 +70,25 @@ export const setTransactionPolicy = async (req, res) => {
         }
 
         try {
-          // Use the createPolicy method from TransactionPolicy model directly
+          // Use the createPolicy method from TransactionPolicy model
           const createdPolicy = await TransactionPolicy.createPolicy({
             POLICY_TYPE,
             ROLE_NM: ROLE_NM.toUpperCase(),
             BU_ID: BU_ID || null,
             branch_code: branch_code || null,
             description: description || `Policy for ${ROLE_NM} - ${POLICY_TYPE}`,
-            created_by: req.user?.id || 1, // Get user ID from request
+            created_by: req.user?.id || 1,
             RANGES: RANGES
           });
 
           results.push({
             success: true,
-            policy_id: createdPolicy.POLICY_ID,
+            policy_id: createdPolicy.policy_id, // ✅ Fixed: use policy_id not POLICY_ID
             role: ROLE_NM,
             type: POLICY_TYPE
           });
 
-          console.log(`✅ Policy created: ${createdPolicy.POLICY_ID} for ${ROLE_NM}`);
+          console.log(`✅ Policy created: ${createdPolicy.policy_id} for ${ROLE_NM}`);
 
         } catch (createError) {
           console.error('❌ Error creating policy:', createError);
@@ -113,9 +116,12 @@ export const setTransactionPolicy = async (req, res) => {
   }
 };
 
+// ================================================================
+// ✅ UPDATE POLICY
+// ================================================================
 export const updatePolicy = async (req, res) => {
   try {
-    const { id } = req.params; // POLICY_ID or ID
+    const { id } = req.params;
     const { RANGES, status, description, effective_to } = req.body;
 
     if (!RANGES && !status && !description && !effective_to) {
@@ -166,7 +172,7 @@ export const updatePolicy = async (req, res) => {
       updateData.updated_by = req.user?.id || null;
     }
 
-    // Use the updatePolicy method from TransactionPolicy model directly
+    // Use the updatePolicy method from TransactionPolicy model
     const policy = await TransactionPolicy.updatePolicy(id, updateData);
 
     if (!policy) {
@@ -180,17 +186,20 @@ export const updatePolicy = async (req, res) => {
       success: true,
       message: 'Policy updated successfully.',
       policy: {
-        POLICY_ID: policy.POLICY_ID,
+        POLICY_ID: policy.policy_id, // ✅ Fixed: use policy_id
         POLICY_TYPE: policy.policy_type,
         ROLE_NM: policy.role_name,
         BU_ID: policy.bu_id,
+        branch_code: policy.branch_code,
         status: policy.status,
-        ranges: policy.ranges.map(range => ({
-          MIN_AMOUNT: range.MIN_AMOUNT,
-          MAX_AMOUNT: range.MAX_AMOUNT,
-          requiresApproval: range.requiresApproval,
-          AUTHORIZED_ROLES: range.authorized_roles?.map(role => role.ROLE_NM) || []
-        }))
+        description: policy.description,
+        ranges: policy.ranges?.map(range => ({
+          id: range.id,
+          MIN_AMOUNT: parseFloat(range.min_amount),
+          MAX_AMOUNT: parseFloat(range.max_amount),
+          requiresApproval: range.requires_approval,
+          AUTHORIZED_ROLES: range.authorized_roles || []
+        })) || []
       }
     });
 
@@ -204,7 +213,9 @@ export const updatePolicy = async (req, res) => {
   }
 };
 
-// ✅ Validate transaction based on amount and role
+// ================================================================
+// ✅ VALIDATE TRANSACTION
+// ================================================================
 export const validateTransaction = async (req, res) => {
   try {
     const { ROLE_NM, AMOUNT, POLICY_TYPE, BU_ID, branch_code } = req.body;
@@ -224,7 +235,7 @@ export const validateTransaction = async (req, res) => {
       });
     }
 
-    // Use the checkRequiresApproval method from TransactionPolicy model directly
+    // Use the checkRequiresApproval method from TransactionPolicy model
     const validation = await TransactionPolicy.checkRequiresApproval(
       POLICY_TYPE,
       ROLE_NM.toUpperCase(),
@@ -245,21 +256,25 @@ export const validateTransaction = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: `No active policy found for role ${ROLE_NM} and type ${POLICY_TYPE}`,
-        requiresApproval: true // Default to requiring approval if no policy found
+        requiresApproval: true
       });
     }
 
     // Check if amount doesn't fit any range in the policy
     if (!validation.range) {
+      const rangeDescriptions = validation.policy.ranges?.map(r => 
+        `₦${parseFloat(r.min_amount).toLocaleString()} - ₦${parseFloat(r.max_amount).toLocaleString()}`
+      ).join(', ') || 'No ranges defined';
+      
       return res.status(400).json({
         success: false,
-        message: `Amount ₦${amount.toLocaleString()} is outside the defined ranges for ${ROLE_NM}. Policy ranges: ${validation.policy.ranges?.map(r => `₦${r.MIN_AMOUNT.toLocaleString()} - ₦${r.MAX_AMOUNT.toLocaleString()}`).join(', ')}`,
+        message: `Amount ₦${amount.toLocaleString()} is outside the defined ranges for ${ROLE_NM}. Policy ranges: ${rangeDescriptions}`,
         requiresApproval: true,
         policyRanges: validation.policy.ranges?.map(range => ({
-          MIN_AMOUNT: range.MIN_AMOUNT,
-          MAX_AMOUNT: range.MAX_AMOUNT,
-          requiresApproval: range.requiresApproval
-        }))
+          MIN_AMOUNT: parseFloat(range.min_amount),
+          MAX_AMOUNT: parseFloat(range.max_amount),
+          requiresApproval: range.requires_approval
+        })) || []
       });
     }
 
@@ -271,11 +286,12 @@ export const validateTransaction = async (req, res) => {
       requiresApproval: validation.requiresApproval,
       authorizedRoles: validation.authorizedRoles,
       policy: {
-        POLICY_ID: validation.policy?.POLICY_ID,
+        POLICY_ID: validation.policy?.policy_id, // ✅ Fixed: use policy_id
         POLICY_TYPE: validation.policy?.policy_type,
         range: validation.range ? {
-          MIN_AMOUNT: validation.range.MIN_AMOUNT,
-          MAX_AMOUNT: validation.range.MAX_AMOUNT
+          MIN_AMOUNT: parseFloat(validation.range.min_amount),
+          MAX_AMOUNT: parseFloat(validation.range.max_amount),
+          requiresApproval: validation.range.requires_approval
         } : null
       }
     });
@@ -290,7 +306,9 @@ export const validateTransaction = async (req, res) => {
   }
 };
 
-
+// ================================================================
+// ✅ GET ALL TRANSACTION POLICIES
+// ================================================================
 export const getTransactionPolicies = async (req, res) => {
   try {
     const { role, policy_type, status, bu_id, branch_code } = req.query;
@@ -307,7 +325,7 @@ export const getTransactionPolicies = async (req, res) => {
 
     const formattedPolicies = policies.map(policy => ({
       id: policy.id,
-      POLICY_ID: policy.POLICY_ID,
+      POLICY_ID: policy.policy_id, // ✅ Fixed: use policy_id
       POLICY_TYPE: policy.policy_type,
       ROLE_NM: policy.role_name,
       BU_ID: policy.bu_id,
@@ -321,10 +339,10 @@ export const getTransactionPolicies = async (req, res) => {
       updated_at: policy.updated_at,
       ranges: policy.ranges?.map(range => ({
         id: range.id,
-        MIN_AMOUNT: range.MIN_AMOUNT,
-        MAX_AMOUNT: range.MAX_AMOUNT,
-        requiresApproval: range.requiresApproval,
-        AUTHORIZED_ROLES: range.authorized_roles?.map(role => role.ROLE_NM) || [],
+        MIN_AMOUNT: parseFloat(range.min_amount),
+        MAX_AMOUNT: parseFloat(range.max_amount),
+        requiresApproval: range.requires_approval,
+        AUTHORIZED_ROLES: range.authorized_roles || [],
         created_at: range.created_at
       })) || []
     }));
@@ -336,7 +354,7 @@ export const getTransactionPolicies = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching policies:', error);
+    console.error('❌ Error fetching policies:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Internal server error',
@@ -345,12 +363,15 @@ export const getTransactionPolicies = async (req, res) => {
   }
 };
 
-// ✅ Get policy by ID
+// ================================================================
+// ✅ GET POLICY BY ID
+// ================================================================
 export const getPolicyById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const policy = await req.sequelize.models.TransactionPolicy.getPolicyById(id);
+    // ✅ Fixed: Use TransactionPolicy directly, not req.sequelize.models
+    const policy = await TransactionPolicy.getPolicyById(id);
 
     if (!policy) {
       return res.status(404).json({ 
@@ -361,7 +382,7 @@ export const getPolicyById = async (req, res) => {
 
     const formattedPolicy = {
       id: policy.id,
-      POLICY_ID: policy.POLICY_ID,
+      POLICY_ID: policy.policy_id, // ✅ Fixed: use policy_id
       POLICY_TYPE: policy.policy_type,
       ROLE_NM: policy.role_name,
       BU_ID: policy.bu_id,
@@ -375,10 +396,10 @@ export const getPolicyById = async (req, res) => {
       updated_at: policy.updated_at,
       ranges: policy.ranges?.map(range => ({
         id: range.id,
-        MIN_AMOUNT: range.MIN_AMOUNT,
-        MAX_AMOUNT: range.MAX_AMOUNT,
-        requiresApproval: range.requiresApproval,
-        AUTHORIZED_ROLES: range.authorized_roles?.map(role => role.ROLE_NM) || [],
+        MIN_AMOUNT: parseFloat(range.min_amount),
+        MAX_AMOUNT: parseFloat(range.max_amount),
+        requiresApproval: range.requires_approval,
+        AUTHORIZED_ROLES: range.authorized_roles || [],
         created_at: range.created_at
       })) || []
     };
@@ -389,7 +410,7 @@ export const getPolicyById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching policy by ID:', error);
+    console.error('❌ Error fetching policy by ID:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Internal server error',
@@ -398,12 +419,15 @@ export const getPolicyById = async (req, res) => {
   }
 };
 
-// ✅ Deactivate policy
+// ================================================================
+// ✅ DEACTIVATE POLICY
+// ================================================================
 export const deactivatePolicy = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const policy = await req.sequelize.models.TransactionPolicy.deactivatePolicy(id);
+    // ✅ Fixed: Use TransactionPolicy directly
+    const policy = await TransactionPolicy.deactivatePolicy(id);
 
     if (!policy) {
       return res.status(404).json({ 
@@ -416,14 +440,14 @@ export const deactivatePolicy = async (req, res) => {
       success: true,
       message: 'Policy deactivated successfully.',
       policy: {
-        POLICY_ID: policy.POLICY_ID,
+        POLICY_ID: policy.policy_id, // ✅ Fixed: use policy_id
         status: policy.status,
         effective_to: policy.effective_to
       }
     });
 
   } catch (error) {
-    console.error('Error deactivating policy:', error);
+    console.error('❌ Error deactivating policy:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Internal server error',
@@ -432,10 +456,13 @@ export const deactivatePolicy = async (req, res) => {
   }
 };
 
-// ✅ Get policy statistics
+// ================================================================
+// ✅ GET POLICY STATISTICS
+// ================================================================
 export const getPolicyStats = async (req, res) => {
   try {
-    const stats = await req.sequelize.models.TransactionPolicy.getPolicyStats();
+    // ✅ Fixed: Use TransactionPolicy directly
+    const stats = await TransactionPolicy.getPolicyStats();
 
     return res.status(200).json({ 
       success: true,
@@ -443,7 +470,7 @@ export const getPolicyStats = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error getting policy stats:', error);
+    console.error('❌ Error getting policy stats:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Internal server error',
@@ -452,10 +479,13 @@ export const getPolicyStats = async (req, res) => {
   }
 };
 
-// ✅ Initialize/seed policy tables
+// ================================================================
+// ✅ INITIALIZE POLICY TABLES
+// ================================================================
 export const initializePolicyTables = async (req, res) => {
   try {
-    const result = await req.sequelize.models.TransactionPolicy.initializeTables();
+    // ✅ Fixed: Use TransactionPolicy directly
+    const result = await TransactionPolicy.initializeTables();
 
     if (result) {
       return res.status(200).json({ 
@@ -470,11 +500,82 @@ export const initializePolicyTables = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error initializing policy tables:', error);
+    console.error('❌ Error initializing policy tables:', error);
     return res.status(500).json({ 
       success: false,
       message: 'Internal server error',
       error: error.message 
+    });
+  }
+};
+
+// ================================================================
+// ✅ GET RANGES FOR A POLICY
+// ================================================================
+export const getPolicyRanges = async (req, res) => {
+  try {
+    const { policyId } = req.params;
+
+    const ranges = await PolicyRange.getRangesByPolicyId(policyId);
+
+    return res.status(200).json({
+      success: true,
+      count: ranges.length,
+      ranges: ranges.map(range => ({
+        id: range.id,
+        MIN_AMOUNT: parseFloat(range.min_amount),
+        MAX_AMOUNT: parseFloat(range.max_amount),
+        requiresApproval: range.requires_approval,
+        AUTHORIZED_ROLES: range.authorized_roles || [],
+        created_at: range.created_at
+      }))
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting policy ranges:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+// ================================================================
+// ✅ CHECK AMOUNT AGAINST POLICY
+// ================================================================
+export const checkAmount = async (req, res) => {
+  try {
+    const { policyId, amount } = req.body;
+
+    if (!policyId || amount == null) {
+      return res.status(400).json({
+        success: false,
+        message: 'policyId and amount are required.'
+      });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount must be a valid number.'
+      });
+    }
+
+    const result = await PolicyRange.checkAmountRequiresApproval(policyId, parsedAmount);
+
+    return res.status(200).json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    console.error('❌ Error checking amount:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };

@@ -1,4 +1,4 @@
-﻿// models/CashWithdrawalTransaction.js
+// models/CashWithdrawalTransaction.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

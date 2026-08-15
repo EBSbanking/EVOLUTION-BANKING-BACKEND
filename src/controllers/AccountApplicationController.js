@@ -2,6 +2,7 @@
 // FIXED: Product lookup with proper replacements
 // FIXED: Collation mismatch with COLLATE
 // FIXED: Product column value in accounts table
+// FIXED: Branch ID handling with proper validation
 // UPDATED: Send notifications to approving officer
 
 import AccountApplication from '../models/AccountApplication.js';
@@ -168,15 +169,24 @@ const uploadDocumentToCloudinary = async (buffer, originalName, folder) => {
 };
 
 /**
- * Send notification to approving officer
+ * Send notification to approving officer (NON-BLOCKING)
+ * ✅ Added better error handling
  */
 const sendApprovalRequestNotification = async (application, customer, productName, req) => {
   try {
     const BU_ID = application.branch_id || application.BU_ID;
-    const submittedBy = req.user?.user_name || req.user?.name || 'System User';
+    const submittedBy = req.user?.user_name || req.user?.name || req.user?.id || 'System User';
+    
+    // Check if notification service is available
+    if (!notificationService || typeof notificationService.sendApprovalNotification !== 'function') {
+      console.warn('⚠️ Notification service not available, skipping notification');
+      return null;
+    }
+    
+    console.log(`📨 Sending approval notification for application ${application.id} to BU ${BU_ID}`);
     
     // Send notification to branch managers/approving officers
-    const notificationResult = await sendApprovalNotification({
+    const notificationResult = await notificationService.sendApprovalNotification({
       itemType: 'account_opening',
       itemId: application.id,
       itemName: `Account for ${customer.FIRST_NAME || ''} ${customer.LAST_NAME || ''}`.trim() || application.account_name,
@@ -196,7 +206,8 @@ const sendApprovalRequestNotification = async (application, customer, productNam
     console.log('✅ Approval notification sent:', notificationResult);
     return notificationResult;
   } catch (error) {
-    console.error('❌ Failed to send approval notification:', error);
+    // Don't throw - just log and return null
+    console.error('❌ Failed to send approval notification:', error.message);
     return null;
   }
 };
@@ -547,11 +558,18 @@ export const createApplication = async (req, res) => {
     const accountApplication = await AccountApplication.create(applicationData, { transaction });
     console.log('✅ Application created ID:', accountApplication.id);
 
-    // ========== SEND NOTIFICATION TO APPROVING OFFICER ==========
-    try {
-      await sendApprovalRequestNotification(accountApplication, customer, productName, req);
-    } catch (notifError) {
-      console.warn('⚠️ Notification failed but application was created:', notifError.message);
+    // ========== ✅ FIXED: SEND NOTIFICATION NON-BLOCKING ==========
+    // Don't await - let it run in the background
+    if (typeof sendApprovalRequestNotification === 'function') {
+      sendApprovalRequestNotification(accountApplication, customer, productName, req)
+        .then(result => {
+          console.log('✅ Notification sent successfully:', result);
+        })
+        .catch(notifError => {
+          console.warn('⚠️ Notification failed but application was created:', notifError.message);
+        });
+    } else {
+      console.warn('⚠️ sendApprovalRequestNotification function not available');
     }
 
     // ========== GL REFERENCE ==========
@@ -591,7 +609,9 @@ export const createApplication = async (req, res) => {
           transaction
         }
       );
-    } catch (glErr) { console.warn('GL ref error:', glErr.message); }
+    } catch (glErr) { 
+      console.warn('GL ref error:', glErr.message); 
+    }
 
     await transaction.commit();
     return res.status(201).json({
@@ -611,7 +631,12 @@ export const createApplication = async (req, res) => {
   } catch (error) {
     await transaction.rollback();
     console.error('❌ createApplication error:', error.message);
-    return res.status(500).json({ success: false, message: 'Error creating application', details: error.message });
+    console.error('❌ Error stack:', error.stack);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error creating application', 
+      details: error.message 
+    });
   }
 };
 
@@ -783,48 +808,256 @@ export const updateApplicationByCustomer = async (req, res) => {
   }
 };
 
+// ==================== REJECT APPLICATION ====================
+// controllers/AccountApplicationController.js
 export const rejectApplicationByCustomer = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { customerId } = req.params;
-    const { rejection_reason } = req.body;
+    const { rejection_reason, branch_id, notes } = req.body;
+    
+    // ✅ IMPROVED: Get branch_id from multiple sources with proper fallbacks
     const userId = req.user?.id || req.headers['x-user-id'] || 'system';
-    const userBranchId = req.user?.branch_id || req.headers['x-branch-id'];
+    const userBranchId = 
+      req.user?.branch_id || 
+      req.headers['x-branch-id'] || 
+      branch_id || // From request body
+      req.body.branchId || // Alternative casing
+      req.query.branch_id || // From query params
+      req.query.branchId || // Alternative casing
+      null;
 
+    // Detailed logging for debugging
+    console.log('📝 Reject Request Details:', {
+      customerId,
+      rejection_reason,
+      branch_id: branch_id,
+      bodyBranchId: req.body.branch_id,
+      userBranchId: userBranchId,
+      user: req.user ? {
+        id: req.user.id,
+        branch_id: req.user.branch_id,
+        role: req.user.role
+      } : 'No user object',
+      headers: {
+        'x-branch-id': req.headers['x-branch-id'],
+        'x-user-id': req.headers['x-user-id'],
+        'authorization': req.headers.authorization ? 'Present' : 'Missing'
+      },
+      body: req.body,
+      params: req.params
+    });
+
+    // Validate rejection reason
     if (!rejection_reason) {
       await transaction.rollback();
-      return res.status(400).json({ success: false, message: 'Rejection reason required' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Rejection reason is required' 
+      });
     }
 
+    // Validate branch ID - if still null, try to get it from the application
+    if (!userBranchId) {
+      console.warn('⚠️ Branch ID not found in request, attempting to fetch from application...');
+      
+      // Try to get branch_id from the application itself
+      const normalizedCustomerId = String(customerId).padStart(10, '0');
+      const anyApplication = await AccountApplication.findOne({
+        where: { 
+          customer_id: normalizedCustomerId, 
+          status: 'PENDING' 
+        },
+        attributes: ['branch_id', 'id']
+      });
+
+      if (anyApplication) {
+        console.log(`✅ Found branch_id from application: ${anyApplication.branch_id}`);
+        // Use the application's branch_id
+        const applicationBranchId = anyApplication.branch_id;
+        
+        // Now find the specific application with the branch_id
+        const application = await AccountApplication.findOne({
+          where: { 
+            customer_id: normalizedCustomerId, 
+            branch_id: applicationBranchId, 
+            status: 'PENDING' 
+          },
+          order: [['created_at', 'DESC']],
+          transaction
+        });
+
+        if (application) {
+          // Proceed with rejection
+          await application.update({
+            status: 'REJECTED',
+            rejected_by: userId,
+            rejected_at: new Date(),
+            rejection_reason: rejection_reason,
+            notes: (application.notes || '') + `\n${new Date().toISOString().split('T')[0]}: Rejected by ${userId} - ${rejection_reason}`
+          }, { transaction });
+
+          await transaction.commit();
+          
+          console.log(`✅ Application rejected successfully using branch_id from application: ${applicationBranchId}`);
+          
+          return res.status(200).json({ 
+            success: true, 
+            message: 'Application rejected successfully', 
+            data: {
+              id: application.id,
+              customer_id: application.customer_id,
+              status: application.status,
+              rejected_by: application.rejected_by,
+              rejected_at: application.rejected_at,
+              rejection_reason: application.rejection_reason,
+              notes: application.notes
+            }
+          });
+        }
+      }
+
+      await transaction.rollback();
+      console.error('❌ Branch ID not found in request and could not be determined from application');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Branch ID is required. Please ensure you are logged in with a branch assigned.' 
+      });
+    }
+
+    // Normalize customer ID
     const normalizedCustomerId = String(customerId).padStart(10, '0');
+    
+    console.log(`🔍 Looking for pending application:`, {
+      customerId: normalizedCustomerId,
+      branchId: userBranchId,
+      userId: userId
+    });
+
+    // Find the pending application
     const application = await AccountApplication.findOne({
-      where: { customer_id: normalizedCustomerId, branch_id: userBranchId, status: 'PENDING' },
+      where: { 
+        customer_id: normalizedCustomerId, 
+        branch_id: userBranchId, 
+        status: 'PENDING' 
+      },
       order: [['created_at', 'DESC']],
       transaction
     });
 
+    // If no application found, check if exists in other branches
     if (!application) {
       await transaction.rollback();
-      return res.status(404).json({ success: false, message: `No pending application for customer ${customerId} in branch ${userBranchId}` });
+      
+      // Check if application exists in any branch
+      const anyApplication = await AccountApplication.findOne({
+        where: { 
+          customer_id: normalizedCustomerId, 
+          status: 'PENDING' 
+        },
+        attributes: ['branch_id', 'id', 'created_at']
+      });
+
+      if (anyApplication) {
+        return res.status(404).json({ 
+          success: false, 
+          message: `Pending application exists but in branch ${anyApplication.branch_id}. You can only reject applications in your branch (${userBranchId}).` 
+        });
+      }
+
+      return res.status(404).json({ 
+        success: false, 
+        message: `No pending application found for customer ${customerId} in branch ${userBranchId}` 
+      });
     }
 
+    // Update the application to REJECTED
+    const previousStatus = application.status;
     await application.update({
       status: 'REJECTED',
       rejected_by: userId,
       rejected_at: new Date(),
-      rejection_reason,
-      notes: (application.notes || '') + `\n${new Date().toLocaleDateString()}: Rejected - ${rejection_reason}`
+      rejection_reason: rejection_reason,
+      notes: (application.notes || '') + `\n${new Date().toISOString().split('T')[0]}: Rejected by ${userId} - ${rejection_reason}`
     }, { transaction });
 
+    // Commit transaction
     await transaction.commit();
-    return res.json({ success: true, message: 'Application rejected', data: application });
+    
+    console.log(`✅ Application rejected successfully:`, {
+      applicationId: application.id,
+      customerId: normalizedCustomerId,
+      branchId: userBranchId,
+      userId: userId,
+      previousStatus: previousStatus,
+      newStatus: 'REJECTED'
+    });
+
+    // Return success response with application data
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Application rejected successfully', 
+      data: {
+        id: application.id,
+        customer_id: application.customer_id,
+        status: application.status,
+        rejected_by: application.rejected_by,
+        rejected_at: application.rejected_at,
+        rejection_reason: application.rejection_reason,
+        notes: application.notes
+      }
+    });
+
   } catch (error) {
+    // Rollback transaction on error
     await transaction.rollback();
-    console.error('❌ rejectApplicationByCustomer error:', error.message);
-    return res.status(500).json({ success: false, message: 'Error rejecting application', details: error.message });
+    
+    // Log the full error details
+    console.error('❌ rejectApplicationByCustomer error:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      params: req.params,
+      body: req.body,
+      user: req.user ? {
+        id: req.user.id,
+        branch_id: req.user.branch_id,
+        role: req.user.role
+      } : 'No user object',
+      headers: {
+        'x-user-id': req.headers['x-user-id'],
+        'x-branch-id': req.headers['x-branch-id'],
+        'authorization': req.headers.authorization ? 'Present' : 'Missing'
+      }
+    });
+    
+    // Handle specific error types
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Validation error', 
+        details: error.errors.map(e => e.message) 
+      });
+    }
+    
+    if (error.name === 'SequelizeDatabaseError') {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Database error occurred', 
+        details: error.message 
+      });
+    }
+    
+    // Generic error response
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error rejecting application', 
+      details: error.message 
+    });
   }
 };
 
+// ==================== GET APPLICATIONS BY CUSTOMER ====================
 export const getApplicationsByCustomer = async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -850,12 +1083,19 @@ export const getApplicationsByCustomer = async (req, res) => {
   }
 };
 
+// ==================== DOCUMENT MANAGEMENT ====================
 export const addDocumentsToApplication = async (req, res) => {
   console.log('📎 Adding documents to existing application...');
   const transaction = await sequelize.transaction();
   try {
     const { customerId } = req.params;
-    const userBranchId = req.headers['x-branch-id'];
+    const userBranchId = req.user?.branch_id || req.headers['x-branch-id'];
+    
+    if (!userBranchId) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Branch ID required' });
+    }
+    
     const normalizedCustomerId = String(customerId).padStart(10, '0');
 
     const application = await AccountApplication.findOne({
@@ -906,7 +1146,12 @@ export const addDocumentsToApplication = async (req, res) => {
 export const getApplicationDocuments = async (req, res) => {
   try {
     const { customerId } = req.params;
-    const userBranchId = req.headers['x-branch-id'];
+    const userBranchId = req.user?.branch_id || req.headers['x-branch-id'];
+    
+    if (!userBranchId) {
+      return res.status(400).json({ success: false, message: 'Branch ID required' });
+    }
+    
     const normalizedCustomerId = String(customerId).padStart(10, '0');
 
     const application = await AccountApplication.findOne({
@@ -930,7 +1175,13 @@ export const deleteApplicationDocument = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
     const { customerId, documentId } = req.params;
-    const userBranchId = req.headers['x-branch-id'];
+    const userBranchId = req.user?.branch_id || req.headers['x-branch-id'];
+    
+    if (!userBranchId) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Branch ID required' });
+    }
+    
     const normalizedCustomerId = String(customerId).padStart(10, '0');
 
     const application = await AccountApplication.findOne({

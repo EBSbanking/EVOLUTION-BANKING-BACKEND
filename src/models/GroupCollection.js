@@ -1,4 +1,4 @@
-﻿// models/GroupCollection.js - Schema for Group Loan Collection Record
+// models/GroupCollection.js - Schema for Group Loan Collection Record
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 

@@ -1,3 +1,4 @@
+// controllers/DepositTransactionController.js - UPDATED with Server Date & System Time
 import DepositTransaction from '../models/DepositTransaction.js';
 import WF_WORK_ITEMController from '../controllers/WF_WORK_ITEMController.js';
 import TransactionPolicy from '../models/TransactionPolicy.js';
@@ -8,11 +9,52 @@ import WF_WORK_ITEM from '../models/WF_WORK_ITEM.js';
 import GLAccountTransaction from '../models/GLAccountTransaction.js';
 import NotificationService from '../Services/NotificationService.js';
 import { createGLAccountTransaction } from '../controllers/GLAccountTransactionController.js';
-import AuditTrail from '../models/AuditTrail.js'; // Add this import
+import AuditTrail from '../models/AuditTrail.js';
+import SystemDate from '../models/SystemDate.js'; // ✅ Add this import
 
 // Helper functions
 const generateTransactionRefNo = () => `TRX${Date.now()}${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 const generateNumber = (len) => Math.random().toString().slice(2, 2 + len).padStart(len, '0');
+
+// ================================================================
+// ✅ HELPER: Get Server Business Date from SystemDate
+// ================================================================
+const getServerBusinessDate = async () => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+    
+    if (systemDate && systemDate.current_business_date) {
+      return new Date(systemDate.current_business_date);
+    }
+    
+    console.warn('⚠️ No system date found, using current date as fallback');
+    return new Date();
+  } catch (error) {
+    console.error('❌ Error fetching system date:', error);
+    return new Date();
+  }
+};
+
+// ================================================================
+// ✅ HELPER: Get Server Time
+// ================================================================
+const getServerTime = async () => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+    
+    if (systemDate && systemDate.updated_at) {
+      return new Date(systemDate.updated_at);
+    }
+    
+    return new Date();
+  } catch (error) {
+    return new Date();
+  }
+};
 
 // Validate GL account number format: 6 groups of 1-3 digits separated by '-'
 const isValidGLAcctNo = (glAcctNo) => {
@@ -70,6 +112,9 @@ const createAuditTrailEntry = async (deposit, action, details) => {
         currency_count: deposit.CURRENCY_COUNT,
         transaction_mode: 'CASH',
         action: action,
+        server_processing_date: deposit.server_processing_date,
+        system_time: deposit.system_time,
+        system_user_id: deposit.system_user_id,
         ...details
       })
     });
@@ -192,6 +237,27 @@ export const createDepositTransaction = async (req, res) => {
   }
 
   try {
+    // ================================================================
+    // ✅ GET SERVER BUSINESS DATE (Processing Date)
+    // ================================================================
+    const serverBusinessDate = await getServerBusinessDate();
+    const serverBusinessDateStr = serverBusinessDate.toISOString();
+    console.log(`📅 Server Business Date (Processing Date): ${serverBusinessDateStr}`);
+
+    // ================================================================
+    // ✅ GET SYSTEM TIME (User's local computer time for audit)
+    // ================================================================
+    const systemTime = new Date();
+    const systemTimeStr = systemTime.toISOString();
+    console.log(`🖥️ System Time (User's Local): ${systemTimeStr}`);
+
+    // ================================================================
+    // ✅ GET SERVER TIME (for audit trail)
+    // ================================================================
+    const serverTime = await getServerTime();
+    const serverTimeStr = serverTime.toISOString();
+    console.log(`☁️ Server Time: ${serverTimeStr}`);
+
     const customer = await CustomerAccount.findOne({ ACCT_NO: String(ACCT_NO) });
     if (!customer) {
       return res.status(404).json({
@@ -260,6 +326,9 @@ export const createDepositTransaction = async (req, res) => {
       await ledger.save();
     }
 
+    // ================================================================
+    // ✅ CREATE DEPOSIT TRANSACTION WITH SERVER DATE & SYSTEM TIME
+    // ================================================================
     const deposit = new DepositTransaction({
       ACCT_ID: ACCT_ID || null,
       ACCT_NO: String(ACCT_NO),
@@ -270,7 +339,7 @@ export const createDepositTransaction = async (req, res) => {
       TRANSACTION_REF_NO: generateTransactionRefNo(),
       BALANCE_AFTER_TRANSACTION: (customer.AVAILABLE_BALANCE || 0) + finalAmount,
       VALUE_DATE: new Date(VALUE_DATE),
-      TRANSACTION_DATE: new Date(TRANSACTION_DATE),
+      TRANSACTION_DATE: serverBusinessDate, // ✅ Use Server Business Date
       BUSINESS_UNIT: String(BUSINESS_UNIT),
       DEPOSITOR_NAME,
       CURRENCY_COUNT: CURRENCY_COUNT || {
@@ -289,8 +358,17 @@ export const createDepositTransaction = async (req, res) => {
       DESCRIPTION,
       CUST_ID: String(finalCustId),
       USER_ID,
+      // ✅ NEW FIELDS - Server Date & System Time
+      server_processing_date: serverBusinessDate,
+      system_time: systemTime,
+      system_user_id: USER_ID,
     });
     await deposit.save();
+
+    console.log(`✅ Deposit transaction created with:`);
+    console.log(`   - Server Processing Date: ${serverBusinessDateStr}`);
+    console.log(`   - System Time: ${systemTimeStr}`);
+    console.log(`   - System User ID: ${USER_ID}`);
 
     // ✅ Create Audit Trail entry for the deposit
     await createAuditTrailEntry(deposit, 'CREATE', {
@@ -298,7 +376,10 @@ export const createDepositTransaction = async (req, res) => {
       userId: USER_ID,
       userRole: ROLE_NM,
       depositorName: DEPOSITOR_NAME,
-      businessUnit: BUSINESS_UNIT
+      businessUnit: BUSINESS_UNIT,
+      server_processing_date: serverBusinessDateStr,
+      system_time: systemTimeStr,
+      system_user_id: USER_ID
     });
 
     const policy = await TransactionPolicy.findOne({ ROLE_NM: new RegExp(`^${ROLE_NM}$`, 'i') });
@@ -323,6 +404,10 @@ export const createDepositTransaction = async (req, res) => {
         ORIGINATOR_USER_ROLE_ID: ROLE_NM,
         TARGET_USER_ROLE_ID: range.AUTHORIZED_ROLES?.[0] || 'Manager',
         depositPayload: { _id: deposit._id },
+        // ✅ Include new fields in workflow
+        server_processing_date: serverBusinessDateStr,
+        system_time: systemTimeStr,
+        system_user_id: USER_ID,
       };
 
       const workflowResult = await WF_WORK_ITEMController.submitTransaction({ body: workflowPayload }, res);
@@ -348,7 +433,12 @@ export const createDepositTransaction = async (req, res) => {
         message: 'Deposit transaction submitted for approval',
         transaction: deposit,
         workflow: workflowResult?.workItem || workflowPayload,
-        note: 'ACCT_ID is optional and was not required for this transaction'
+        note: 'ACCT_ID is optional and was not required for this transaction',
+        audit: {
+          server_processing_date: serverBusinessDateStr,
+          system_time: systemTimeStr,
+          system_user_id: USER_ID
+        }
       });
     }
 
@@ -360,7 +450,10 @@ export const createDepositTransaction = async (req, res) => {
     await createAuditTrailEntry(deposit, 'APPROVE', {
       description: `Deposit approved for ${DEPOSITOR_NAME}`,
       userId: USER_ID,
-      userRole: ROLE_NM
+      userRole: ROLE_NM,
+      server_processing_date: serverBusinessDateStr,
+      system_time: systemTimeStr,
+      system_user_id: USER_ID
     });
 
     let glTransaction;
@@ -390,8 +483,11 @@ export const createDepositTransaction = async (req, res) => {
             SEG_NO: String(BUSINESS_UNIT),
             DRS_ALLOWED_FG: false,
             CRS_ALLOWED_FG: true,
-            CREATE_DT: new Date(TRANSACTION_DATE),
+            CREATE_DT: serverBusinessDate, // ✅ Use Server Business Date
             JOURNAL_ID: deposit.TRANSACTION_REF_NO,
+            server_processing_date: serverBusinessDateStr,
+            system_time: systemTimeStr,
+            system_user_id: USER_ID,
           },
           headers: req.headers,
           user: req.user,
@@ -441,7 +537,12 @@ export const createDepositTransaction = async (req, res) => {
       updatedCustomerAccount: updateResult.updatedCustomerAccount,
       updatedLedger: updateResult.updatedLedger,
       glTransaction,
-      note: 'ACCT_ID is optional and was not required for this transaction'
+      note: 'ACCT_ID is optional and was not required for this transaction',
+      audit: {
+        server_processing_date: serverBusinessDateStr,
+        system_time: systemTimeStr,
+        system_user_id: USER_ID
+      }
     });
   } catch (err) {
     console.error('❌ Deposit processing error:', err);
@@ -453,7 +554,9 @@ export const createDepositTransaction = async (req, res) => {
   }
 };
 
-// Approve Deposit Transaction
+// ================================================================
+// ✅ APPROVE DEPOSIT TRANSACTION - UPDATED
+// ================================================================
 export const approveDepositTransaction = async (req, res) => {
   const { WORK_ITEM_ID, APPROVED_BY, CUST_ID, comments } = req.body;
 
@@ -464,6 +567,12 @@ export const approveDepositTransaction = async (req, res) => {
   }
 
   try {
+    // ✅ Get server date and system time for audit
+    const serverBusinessDate = await getServerBusinessDate();
+    const serverBusinessDateStr = serverBusinessDate.toISOString();
+    const systemTime = new Date();
+    const systemTimeStr = systemTime.toISOString();
+
     const workItem = await WF_WORK_ITEM.findOne({
       WORK_ITEM_ID: Number(WORK_ITEM_ID),
       CUST_ID: Number(CUST_ID),
@@ -507,13 +616,20 @@ export const approveDepositTransaction = async (req, res) => {
     deposit.APPROVED_BY = APPROVED_BY;
     deposit.APPROVED_DATE = new Date();
     deposit.BALANCE_AFTER_TRANSACTION = newBalance;
+    // ✅ Update audit fields
+    deposit.server_processing_date = serverBusinessDate;
+    deposit.system_time = systemTime;
+    deposit.system_user_id = APPROVED_BY;
     await deposit.save();
 
     // Update audit trail for approval
     await createAuditTrailEntry(deposit, 'APPROVE', {
       description: `Deposit approved by ${APPROVED_BY}`,
       userId: APPROVED_BY,
-      userRole: 'APPROVER'
+      userRole: 'APPROVER',
+      server_processing_date: serverBusinessDateStr,
+      system_time: systemTimeStr,
+      system_user_id: APPROVED_BY
     });
 
     customer.LEDGER_BAL = customer.CLEARED_BAL = customer.AVAILABLE_BALANCE = newBalance;
@@ -555,8 +671,11 @@ export const approveDepositTransaction = async (req, res) => {
             SEG_NO: deposit.BUSINESS_UNIT,
             DRS_ALLOWED_FG: false,
             CRS_ALLOWED_FG: true,
-            CREATE_DT: new Date(),
+            CREATE_DT: serverBusinessDate,
             JOURNAL_ID: deposit.TRANSACTION_REF_NO,
+            server_processing_date: serverBusinessDateStr,
+            system_time: systemTimeStr,
+            system_user_id: APPROVED_BY,
           },
           headers: req.headers,
           user: req.user,
@@ -602,6 +721,9 @@ export const approveDepositTransaction = async (req, res) => {
         date: deposit.APPROVED_DATE,
         GL_TransactionId: deposit.GL_TransactionId,
         QueueTransactionId: deposit.QueueTransactionId,
+        server_processing_date: serverBusinessDateStr,
+        system_time: systemTimeStr,
+        system_user_id: APPROVED_BY,
       },
       account: {
         ACCT_NO: deposit.ACCT_NO,
@@ -618,7 +740,9 @@ export const approveDepositTransaction = async (req, res) => {
   }
 };
 
-// Reject Deposit Transaction
+// ================================================================
+// ✅ REJECT DEPOSIT TRANSACTION - UPDATED
+// ================================================================
 export const rejectDepositTransaction = async (req, res) => {
   const { WORK_ITEM_ID, REJECTED_BY, CUST_ID, comments } = req.body;
 
@@ -629,6 +753,12 @@ export const rejectDepositTransaction = async (req, res) => {
   }
 
   try {
+    // ✅ Get server date and system time for audit
+    const serverBusinessDate = await getServerBusinessDate();
+    const serverBusinessDateStr = serverBusinessDate.toISOString();
+    const systemTime = new Date();
+    const systemTimeStr = systemTime.toISOString();
+
     const workItem = await WF_WORK_ITEM.findOne({
       WORK_ITEM_ID: Number(WORK_ITEM_ID),
       CUST_ID: Number(CUST_ID),
@@ -660,13 +790,20 @@ export const rejectDepositTransaction = async (req, res) => {
     deposit.REC_ST = 'Inactive';
     deposit.REJECTED_BY = REJECTED_BY;
     deposit.REJECTED_DATE = new Date();
+    // ✅ Update audit fields
+    deposit.server_processing_date = serverBusinessDate;
+    deposit.system_time = systemTime;
+    deposit.system_user_id = REJECTED_BY;
     await deposit.save();
 
     // Update audit trail for rejection
     await createAuditTrailEntry(deposit, 'REJECT', {
       description: `Deposit rejected by ${REJECTED_BY}: ${comments || 'No comments'}`,
       userId: REJECTED_BY,
-      userRole: 'APPROVER'
+      userRole: 'APPROVER',
+      server_processing_date: serverBusinessDateStr,
+      system_time: systemTimeStr,
+      system_user_id: REJECTED_BY
     });
 
     workItem.REC_ST = 'Rejected';
@@ -689,6 +826,10 @@ export const rejectDepositTransaction = async (req, res) => {
       transaction: {
         reference: deposit.TRANSACTION_REF_NO,
         amount: deposit.AMOUNT,
+        rejected_date: deposit.REJECTED_DATE,
+        server_processing_date: serverBusinessDateStr,
+        system_time: systemTimeStr,
+        system_user_id: REJECTED_BY,
       },
     });
   } catch (error) {
@@ -700,7 +841,9 @@ export const rejectDepositTransaction = async (req, res) => {
   }
 };
 
-// Get Pending Approvals by Customer ID
+// ================================================================
+// ✅ GET PENDING APPROVALS BY CUSTOMER ID - UPDATED
+// ================================================================
 export const getPendingApprovalsByCustId = async (req, res) => {
   try {
     const { custId } = req.params;
@@ -736,6 +879,10 @@ export const getPendingApprovalsByCustId = async (req, res) => {
                 TRANSACTION_REF_NO: transaction.TRANSACTION_REF_NO,
                 DESCRIPTION: transaction.DESCRIPTION,
                 GL_ACCT_NO: transaction.GL_ACCT_NO,
+                // ✅ Include new audit fields
+                server_processing_date: transaction.server_processing_date,
+                system_time: transaction.system_time,
+                system_user_id: transaction.system_user_id,
               }
             : null,
         };
@@ -752,12 +899,15 @@ export const getPendingApprovalsByCustId = async (req, res) => {
   }
 };
 
-// Get all transaction reference numbers by Account Number
+// ================================================================
+// ✅ GET TRANSACTION REF NOS BY ACCOUNT NUMBER - UPDATED
+// ================================================================
 export const getTransactionRefNosByAcctNo = async (req, res) => {
   try {
     const { acctNo } = req.params;
 
-    const transactions = await DepositTransaction.find({ ACCT_NO: acctNo }).select('TRANSACTION_REF_NO');
+    const transactions = await DepositTransaction.find({ ACCT_NO: acctNo })
+      .select('TRANSACTION_REF_NO server_processing_date system_time system_user_id');
 
     if (transactions.length > 0) {
       res.status(200).json(transactions);
@@ -770,12 +920,15 @@ export const getTransactionRefNosByAcctNo = async (req, res) => {
   }
 };
 
-// Get all transactions by Account Number
+// ================================================================
+// ✅ GET ALL TRANSACTIONS BY ACCOUNT NUMBER - UPDATED
+// ================================================================
 export const getTransactionsByAcctNo = async (req, res) => {
   try {
     const { acctNo } = req.params;
 
-    const transactions = await DepositTransaction.find({ ACCT_NO: acctNo });
+    const transactions = await DepositTransaction.find({ ACCT_NO: acctNo })
+      .sort({ TRANSACTION_DATE: -1 });
 
     if (transactions.length > 0) {
       res.status(200).json(transactions);
@@ -785,5 +938,73 @@ export const getTransactionsByAcctNo = async (req, res) => {
   } catch (error) {
     console.error('Error fetching transactions:', error);
     res.status(500).json({ error: error.message });
+  }
+};
+
+// ================================================================
+// ✅ GET TRANSACTIONS BY SERVER PROCESSING DATE
+// ================================================================
+export const getTransactionsByServerDate = async (req, res) => {
+  try {
+    const { date } = req.params;
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+
+    const transactions = await DepositTransaction.find({
+      server_processing_date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }).sort({ server_processing_date: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: transactions.length,
+      data: transactions
+    });
+  } catch (error) {
+    console.error('Error fetching transactions by server date:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching transactions',
+      error: error.message
+    });
+  }
+};
+
+// ================================================================
+// ✅ GET TRANSACTIONS BY SYSTEM USER
+// ================================================================
+export const getTransactionsBySystemUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 100, offset = 0 } = req.query;
+
+    const transactions = await DepositTransaction.find({
+      system_user_id: userId
+    })
+      .sort({ system_time: -1 })
+      .limit(parseInt(limit))
+      .skip(parseInt(offset));
+
+    const total = await DepositTransaction.countDocuments({
+      system_user_id: userId
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: transactions.length,
+      total: total,
+      data: transactions
+    });
+  } catch (error) {
+    console.error('Error fetching transactions by system user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching transactions',
+      error: error.message
+    });
   }
 };

@@ -1,7 +1,9 @@
+// src/routes/DepositAccountApplicationRoutes.js
 import express from "express";
 import DepositAccountApplicationController from "../controllers/DepositAccountApplicationController.js";
 import { getProductTypeByProdIdInternal, getProductTypeFallback } from '../Services/productService.js';
 import { generateAccountIdentifiersFromCounter } from "../utils/accountHelper.js";
+import { validateEOMClosure } from '../middlewares/validateEOMClosure.js';
 
 const router = express.Router();
 
@@ -24,11 +26,9 @@ const ACCOUNT_TYPE_MAP = {
   GENERAL_LOAN: "LOAN"
 };
 
-// ✅ Helper function to determine product type from PROD_ID
+// Helper function to determine product type from PROD_ID
 const determineProductTypeFromProdId = (prodId) => {
   const prodIdStr = String(prodId);
-  
-  // Map PROD_ID to product type
   const prodIdMap = {
     '100': 'SAVINGS',
     '200': 'SAVINGS',
@@ -45,13 +45,11 @@ const determineProductTypeFromProdId = (prodId) => {
     '309': 'SME_LOAN',
     '500': 'SAVINGS'
   };
-  
-  return prodIdMap[prodIdStr] || 'SAVINGS'; // Default fallback
+  return prodIdMap[prodIdStr] || 'SAVINGS';
 };
 
 // ✅ Fallback for account identifiers
 const generateFallbackAccountIdentifiers = (productType) => {
-  // Simple fallback logic (expand as needed)
   const prefix = productType === 'SAVINGS' ? 'SAV' : 'GEN';
   return {
     ACCT_NO: `${prefix}00000001`,
@@ -82,7 +80,6 @@ router.get("/generate-account-number", async (req, res) => {
     let productType;
     
     try {
-      // Try to get product from product service
       product = await getProductTypeByProdIdInternal(prodId);
       console.log('📦 Product service response:', product);
     } catch (productError) {
@@ -91,24 +88,20 @@ router.get("/generate-account-number", async (req, res) => {
     }
 
     if (product) {
-      // Use product type from service
       productType = (
         product.PRODUCT_TYPE ||
         product.PROD_CAT_TY ||
         product.PROD_DESC ||
         ""
       ).toUpperCase().trim();
-      
       console.log(`✅ Product Type from service: ${productType}`);
     }
 
-    // If no product type from service, determine from PROD_ID
     if (!productType) {
       productType = determineProductTypeFromProdId(prodId);
       console.log(`🔄 Product Type determined from PROD_ID: ${productType}`);
     }
 
-    // Extra fallback using imported service function (if static map fails)
     if (!productType || productType === 'UNDEFINED') {
       productType = getProductTypeFallback(prodId);
       console.error('❌ Invalid product type, using service fallback: SAVINGS');
@@ -116,7 +109,6 @@ router.get("/generate-account-number", async (req, res) => {
 
     console.log(`🎯 Final Product Type for generation: ${productType}`);
 
-    // Generate identifiers with fallback
     let accountIdentifiers;
     try {
       accountIdentifiers = await generateAccountIdentifiersFromCounter(productType);
@@ -157,38 +149,20 @@ router.get("/generate-account-number", async (req, res) => {
   }
 });
 
-// ✅ Application Creation
-router.post("/create", DepositAccountApplicationController.createApplication);
+// ✅ Application Creation - with EOM validation
+router.post("/create", validateEOMClosure, DepositAccountApplicationController.createApplication); // ✅ EOM validation
+
+// ✅ Application Updates - with EOM validation
+router.put("/:CUST_ID", validateEOMClosure, DepositAccountApplicationController.updateApplication); // ✅ EOM validation
 
 // ✅ Application Retrieval
-router.get(
-  "/customer/:CUST_ID",
-  DepositAccountApplicationController.getApplicationByCustId
-);
-router.get(
-  "/account/:ACCT_NO",
-  DepositAccountApplicationController.getApplicationByACCT_NO
-);
+router.get("/customer/:CUST_ID", DepositAccountApplicationController.getApplicationByCustId);
+router.get("/account/:ACCT_NO", DepositAccountApplicationController.getApplicationByACCT_NO);
 
 // ✅ Application Status Management
-router.put(
-  "/approve/customer/:CUST_ID",
-  DepositAccountApplicationController.approveApplicationByCustomerId
-);
-router.put(
-  "/reject/customer/:CUST_ID",
-  DepositAccountApplicationController.rejectApplicationByCustomerId
-);
-router.put(
-  "/status/:id",
-  DepositAccountApplicationController.updateApplicationStatus
-);
-
-// ✅ Application Updates
-router.put(
-  "/:CUST_ID",
-  DepositAccountApplicationController.updateApplication
-);
+router.put("/approve/customer/:CUST_ID", DepositAccountApplicationController.approveApplicationByCustomerId);
+router.put("/reject/customer/:CUST_ID", DepositAccountApplicationController.rejectApplicationByCustomerId);
+router.put("/status/:id", DepositAccountApplicationController.updateApplicationStatus);
 
 // ✅ Application Deletion
 router.delete("/:id", DepositAccountApplicationController.deleteApplication);
@@ -198,23 +172,22 @@ router.get("/health", (req, res) => {
   res.json({ 
     success: true, 
     message: 'Deposit Account Application API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    eom_validation: true
   });
 });
 
-
-// In your routes file, add this:
+// Reset deposit counter
 router.post('/reset-deposit-counter', async (req, res) => {
   try {
     const Counter = mongoose.models.Counter || mongoose.model('Counter');
     
-    // Find highest existing account number
     const highestAccount = await CustomerAccount.findOne({})
       .sort({ account_number: -1 })
       .select('account_number')
       .lean();
     
-    let nextSequence = 10; // Default start
+    let nextSequence = 10;
     
     if (highestAccount?.account_number) {
       const accountNum = highestAccount.account_number;
@@ -224,7 +197,6 @@ router.post('/reset-deposit-counter', async (req, res) => {
       }
     }
     
-    // Reset counter
     const result = await Counter.findOneAndUpdate(
       { _id: 'DEPOSIT_ACCOUNT_NUMBER' },
       { 

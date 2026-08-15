@@ -302,6 +302,7 @@ const WFWorkItemController = {
 
   /**
    * Submit transaction - creates a new workflow item
+   * ✅ FIXED: Handles duplicate IDs with retry logic
    */
   submitTransaction: async (req) => {
     const t = await sequelize.transaction();
@@ -355,24 +356,74 @@ const WFWorkItemController = {
       const TARGET_DUR_TM = TARGET_DUR_HOURS ? TARGET_DUR_HOURS * 3600 : 0;
       const ESCALATION_TM = ESCALATION_MINUTES ? ESCALATION_MINUTES * 60 : 0;
 
-      // Generate IDs
-      const WORK_ITEM_ID = await generateIdWithFallback(6, 'work_item');
-      const EVENT_ID = await generateIdWithFallback(7, 'work_event');
-      const BUS_PROC_ID = await generateIdWithFallback(4, 'business_process');
-      const SUB_PROC_ID = await generateIdWithFallback(4, 'sub_process');
-      const QUEUE_ID = await generateIdWithFallback(4, 'work_queue');
-      const WORK_ITEM_SESSION_ID = await generateIdWithFallback(8, 'work_session');
-      const ITEM_REF_NO = await generateIdWithFallback(4, 'item_reference');
+      // ============================================
+      // ✅ FIX: Generate IDs with retry on duplicate
+      // ============================================
+      let WORK_ITEM_ID, EVENT_ID, BUS_PROC_ID, SUB_PROC_ID, QUEUE_ID, WORK_ITEM_SESSION_ID, ITEM_REF_NO;
+      let maxRetries = 3;
+      let retryCount = 0;
+      let created = false;
 
-      // Check for existing event
-      const existingEvent = await WFWorkItem.findOne({
-        where: { EVENT_ID },
+      while (!created && retryCount < maxRetries) {
+        try {
+          WORK_ITEM_ID = await generateIdWithFallback(6, 'work_item');
+          EVENT_ID = await generateIdWithFallback(7, 'work_event');
+          BUS_PROC_ID = await generateIdWithFallback(4, 'business_process');
+          SUB_PROC_ID = await generateIdWithFallback(4, 'sub_process');
+          QUEUE_ID = await generateIdWithFallback(4, 'work_queue');
+          WORK_ITEM_SESSION_ID = await generateIdWithFallback(8, 'work_session');
+          ITEM_REF_NO = await generateIdWithFallback(4, 'item_reference');
+
+          // Check if any of the generated IDs already exist
+          const existingItem = await WFWorkItem.findOne({
+            where: {
+              [Op.or]: [
+                { WORK_ITEM_ID },
+                { EVENT_ID }
+              ]
+            },
+            transaction: t
+          });
+
+          if (!existingItem) {
+            created = true;
+          } else {
+            retryCount++;
+            console.log(`⚠️ Duplicate IDs found, retrying... (${retryCount}/${maxRetries})`);
+          }
+        } catch (genError) {
+          retryCount++;
+          console.log(`⚠️ ID generation error, retrying... (${retryCount}/${maxRetries})`);
+        }
+      }
+
+      if (!created) {
+        await t.rollback();
+        console.error('❌ Failed to generate unique IDs after multiple retries');
+        return { 
+          success: false, 
+          error: 'Failed to generate unique workflow IDs. Please try again.' 
+        };
+      }
+
+      // ✅ Check if workflow item already exists for this entity
+      const existingWorkflow = await WFWorkItem.findOne({
+        where: {
+          ITEM_ID: ITEM_ID,
+          ITEM_TYPE: normalizedItemType,
+          REC_ST: 'pending'
+        },
         transaction: t
       });
-      
-      if (existingEvent) {
-        await t.rollback();
-        return { success: false, error: 'Event ID already exists. Please retry.' };
+
+      if (existingWorkflow) {
+        await t.commit();
+        console.log(`ℹ️ Workflow already exists for ${normalizedItemType} with ID ${ITEM_ID}, returning existing`);
+        return { 
+          success: true, 
+          data: existingWorkflow,
+          message: 'Workflow item already exists'
+        };
       }
 
       const newWorkItem = await WFWorkItem.create({
@@ -409,16 +460,21 @@ const WFWorkItemController = {
 
       await t.commit();
 
-      await NotificationService.send({
-        ROLE_ID: TARGET_USER_ROLE_ID,
-        message: `New work item created: ${ITEM_DESC}`,
-        WORK_ITEM_ID,
-        EVENT_ID,
-        status: 'pending',
-        notificationType: 'system',
-      });
+      // Send notification (don't await to avoid blocking)
+      try {
+        await NotificationService.send({
+          ROLE_ID: TARGET_USER_ROLE_ID,
+          message: `New work item created: ${ITEM_DESC}`,
+          WORK_ITEM_ID,
+          EVENT_ID,
+          status: 'pending',
+          notificationType: 'system',
+        });
+      } catch (notifError) {
+        console.warn('⚠️ Notification error (non-critical):', notifError.message);
+      }
 
-      console.log('✅ Workflow item created:', newWorkItem);
+      console.log('✅ Workflow item created:', newWorkItem.WORK_ITEM_ID);
       return { success: true, data: newWorkItem };
 
     } catch (error) {

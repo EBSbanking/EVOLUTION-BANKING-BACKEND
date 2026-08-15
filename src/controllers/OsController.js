@@ -1,4 +1,13 @@
-// src/controllers/OsController.js - COMPLETE UPDATED VERSION WITH EMAIL STATEMENTS
+// src/controllers/OsController.js - COMPLETE FIXED VERSION
+// ============================================================================
+// ✅ FIXED: All email/SMS services properly configured
+// ✅ FIXED: Consistent camelCase for SystemDate properties
+// ✅ FIXED: Email statements service properly registered
+// ✅ FIXED: All exports properly defined
+// ✅ FIXED: Date handling for processAutoCollections
+// ✅ FIXED: Safe date formatting for logs and responses
+// ============================================================================
+
 import { getServerTime, getBusinessDate, setServerTimeOffset } from '../utils/serverTime.js';
 import { checkOverdueLoans } from '../Services/overdueLoanHandler.js';
 import { updateLoanStatusForAllLoans } from '../Services/loanStatusUpdater.js';
@@ -18,6 +27,9 @@ import { processPendingGLTransactions } from '../controllers/PendingGLTransactio
 import { processEmailStatements, initializeEmailStatementService } from '../utils/emailStatementService.js';
 import GLClosingPeriod from '../models/GLClosingPeriods.js';
 import EOYReport from '../models/EOYReport.js';
+import EOMReport from '../models/EOMReport.js';
+import EOMTaskService from '../Services/EOMTaskService.js';
+import EOMClosingPeriod from '../models/EOMClosingPeriod.js';
 
 // Import Sequelize models
 import SystemDate from '../models/SystemDate.js';
@@ -44,6 +56,123 @@ import moment from 'moment';
 // Import SystemDateController
 import SystemDateController from './SystemDateController.js';
 import os from 'os';
+
+// ================================================================
+// ✅ HELPER: Safely format dates for logging and responses
+// ================================================================
+const safeFormatDate = (date) => {
+  if (!date) return null;
+  if (date instanceof Date) {
+    return date.toISOString().split('T')[0];
+  }
+  if (typeof date === 'string') {
+    try {
+      const d = new Date(date);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return date;
+  }
+  if (typeof date === 'number') {
+    try {
+      const d = new Date(date);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return String(date);
+  }
+  return null;
+};
+
+// ================================================================
+// ✅ HELPER: Get Server Business Date from SystemDate - FIXED
+// ================================================================
+const getServerBusinessDate = async () => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+    
+    if (systemDate && systemDate.currentBusinessDate) {
+      return new Date(systemDate.currentBusinessDate);
+    }
+    
+    logger.warn('⚠️ No system date found, using current date as fallback');
+    return new Date();
+  } catch (error) {
+    logger.error('❌ Error fetching system date:', error);
+    return new Date();
+  }
+};
+
+// ================================================================
+// ✅ HELPER: Get Server Time - FIXED
+// ================================================================
+const getServerTimeFromDB = async () => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+    
+    if (systemDate && systemDate.updatedAt) {
+      return new Date(systemDate.updatedAt);
+    }
+    
+    return new Date();
+  } catch (error) {
+    return new Date();
+  }
+};
+
+// ================================================================
+// ✅ HELPER: Get Current System Status with Server Date - FIXED
+// ================================================================
+const getCurrentSystemStatus = async () => {
+  try {
+    const systemDate = await SystemDate.findOne({
+      order: [['created_at', 'DESC']]
+    });
+    
+    if (systemDate) {
+      return {
+        currentBusinessDate: systemDate.currentBusinessDate,
+        nextBusinessDate: systemDate.nextBusinessDate,
+        eodStatus: systemDate.eodStatus || 'IDLE',
+        isEODProcessing: systemDate.isEODProcessing || false,
+        lastEODDate: systemDate.lastEODDate,
+        lastEODProcessedBy: systemDate.lastEODProcessedBy || systemDate.lastEODProcessedByLegacy,
+        serverTime: getServerTime()
+      };
+    }
+    
+    return {
+      currentBusinessDate: new Date(),
+      nextBusinessDate: null,
+      eodStatus: 'IDLE',
+      isEODProcessing: false,
+      lastEODDate: null,
+      lastEODProcessedBy: null,
+      serverTime: getServerTime()
+    };
+  } catch (error) {
+    logger.error('Error getting system status:', error);
+    return {
+      currentBusinessDate: new Date(),
+      nextBusinessDate: null,
+      eodStatus: 'ERROR',
+      isEODProcessing: false,
+      lastEODDate: null,
+      lastEODProcessedBy: null,
+      serverTime: getServerTime()
+    };
+  }
+};
 
 // ==================== MODEL INITIALISATION ====================
 let modelsInitialized = false;
@@ -78,13 +207,6 @@ const getLoanRepaymentModel = () => {
 
 /**
  * Process overdue loans
- * @param {Object} options - Processing options
- * @param {Date} options.asOfDate - Date to process as of (default: today)
- * @param {boolean} options.dryRun - If true, only log what would be done
- * @param {boolean} options.updateStatus - If true, update loan statuses
- * @param {boolean} options.accruePenalties - If true, accrue penalties
- * @param {number} options.batchSize - Number of loans to process per batch
- * @returns {Promise<Object>} Processing results
  */
 const processOverdueLoans = async (options = {}) => {
   const {
@@ -110,7 +232,6 @@ const processOverdueLoans = async (options = {}) => {
   };
 
   try {
-    // Get models using the getter functions
     const LoanAccountModel = getLoanAccount();
     const LoanPenaltyModel = getLoanPenalty();
     const PenaltyRuleModel = getPenaltyRule();
@@ -120,85 +241,34 @@ const processOverdueLoans = async (options = {}) => {
       throw new Error('LoanAccount model not available');
     }
 
-    logger.debug('📦 Models loaded successfully', {
-      hasLoanAccount: !!LoanAccountModel,
-      hasLoanPenalty: !!LoanPenaltyModel,
-      hasPenaltyRule: !!PenaltyRuleModel
-    });
-
-    // Find all loans that are potentially overdue
-    // Using .unscoped() to avoid any default scopes that might include penalty_rule_id
     const loans = await LoanAccountModel.unscoped().findAll({
       attributes: [
-        'id',
-        'acct_no',
-        'acct_nm',
-        'cust_id',
-        'amount',
-        'disbursed_amount',
-        'outstanding_principal',
-        'accrued_interest',
-        'penalty_amount',
-        'interest_rate',
-        'loan_status',
-        'servicing_status',
-        'application_date',
-        'approval_date',
-        'disbursement_date',
-        'closure_date',
-        'last_repayment_date',
-        'last_repayment_amount',
-        'next_payment_date',
-        'maturity_dt',
-        'total_repaid_amount',
-        'term_cd',
-        'term_value',
-        'customer_account_id',
-        'guarantor_id',
-        'guaranteed_amount',
-        'loan_portfolio_id',
-        'created_by',
-        'loan_cycle',
-        'has_repayment_schedule',
-        'repayment_schedule_id',
-        'created_at',
-        'updated_at'
+        'id', 'acct_no', 'acct_nm', 'cust_id', 'amount', 'disbursed_amount',
+        'outstanding_principal', 'accrued_interest', 'penalty_amount', 'interest_rate',
+        'loan_status', 'servicing_status', 'application_date', 'approval_date',
+        'disbursement_date', 'closure_date', 'last_repayment_date', 'last_repayment_amount',
+        'next_payment_date', 'maturity_dt', 'total_repaid_amount', 'term_cd', 'term_value',
+        'customer_account_id', 'guarantor_id', 'guaranteed_amount', 'loan_portfolio_id',
+        'created_by', 'loan_cycle', 'has_repayment_schedule', 'repayment_schedule_id',
+        'created_at', 'updated_at'
       ],
       where: {
         loan_status: ['ACTIVE', 'DISBURSED', 'APPROVED', 'OVERDUE', 'DELINQUENT'],
         outstanding_principal: { [Op.gt]: 0 }
       },
       order: [['next_payment_date', 'ASC']],
-      limit: batchSize,
-      logging: (sql) => logger.debug(`📝 SQL: ${sql}`)
+      limit: batchSize
     });
-
-    logger.info(`📊 Found ${loans.length} active loans to check for overdue status`);
 
     if (loans.length === 0) {
       logger.info('No active loans found to process');
-      return {
-        ...results,
-        message: 'No active loans found'
-      };
+      return { ...results, message: 'No active loans found' };
     }
 
     results.totalLoansProcessed = loans.length;
 
-    // Process each loan
     for (const loan of loans) {
       try {
-        const loanData = {
-          id: loan.id,
-          acct_no: loan.acct_no,
-          cust_id: loan.cust_id,
-          outstanding_principal: parseFloat(loan.outstanding_principal) || 0,
-          next_payment_date: loan.next_payment_date,
-          maturity_dt: loan.maturity_dt,
-          loan_status: loan.loan_status
-        };
-
-        // Check if loan is overdue
         const isOverdue = checkIfLoanIsOverdue(loan, asOfDate);
         const daysOverdue = isOverdue ? calculateDaysOverdue(loan, asOfDate) : 0;
 
@@ -206,33 +276,20 @@ const processOverdueLoans = async (options = {}) => {
           results.overdueLoansFound++;
           logger.debug(`🔴 Loan ${loan.acct_no} is overdue by ${daysOverdue} days`);
 
-          // Update loan status if enabled
           if (updateStatus && !dryRun) {
             const newStatus = daysOverdue > 30 ? 'DELINQUENT' : 'OVERDUE';
             if (loan.loan_status !== newStatus) {
-              await loan.update({
-                loan_status: newStatus,
-                updated_at: new Date()
-              });
+              await loan.update({ loan_status: newStatus, updated_at: new Date() });
               results.statusUpdated++;
               logger.debug(`✅ Loan ${loan.acct_no} status updated to ${newStatus}`);
             }
           }
 
-          // Accrue penalties if enabled
           if (accruePenalties && !dryRun && LoanPenaltyModel && PenaltyRuleModel) {
             try {
-              // Get penalty rule
               const penaltyRule = await getActivePenaltyRule(PenaltyRuleModel);
               if (penaltyRule) {
-                const penaltyResult = await accruePenaltyForLoan(
-                  loan,
-                  penaltyRule,
-                  asOfDate,
-                  LoanPenaltyModel,
-                  null // transaction
-                );
-
+                const penaltyResult = await accruePenaltyForLoan(loan, penaltyRule, asOfDate, LoanPenaltyModel, null);
                 if (penaltyResult.accrued) {
                   results.penaltiesAccrued++;
                   results.totalPenaltyAmount += penaltyResult.amount || 0;
@@ -243,10 +300,7 @@ const processOverdueLoans = async (options = {}) => {
                     penaltyAmount: penaltyResult.amount || 0,
                     action: penaltyResult.action || 'CREATED'
                   });
-                  logger.debug(`💰 Penalty accrued for loan ${loan.acct_no}: ₦${penaltyResult.amount}`);
                 }
-              } else {
-                logger.warn(`⚠️ No penalty rule found for loan ${loan.acct_no}`);
               }
             } catch (penaltyError) {
               logger.error(`❌ Failed to accrue penalty for loan ${loan.acct_no}:`, penaltyError.message);
@@ -258,26 +312,7 @@ const processOverdueLoans = async (options = {}) => {
               });
             }
           }
-
-          // Log for dry run
-          if (dryRun) {
-            logger.info(`🔍 DRY RUN: Loan ${loan.acct_no} is overdue by ${daysOverdue} days, would update status and accrue penalty`);
-          }
-        } else {
-          // Loan is not overdue - ensure status is correct
-          if (updateStatus && !dryRun && ['OVERDUE', 'DELINQUENT'].includes(loan.loan_status)) {
-            // Check if loan should be moved back to active
-            const shouldBeActive = await checkIfLoanShouldBeActive(loan, RepaymentScheduleModel);
-            if (shouldBeActive) {
-              await loan.update({
-                loan_status: 'ACTIVE',
-                updated_at: new Date()
-              });
-              logger.debug(`✅ Loan ${loan.acct_no} status reverted to ACTIVE`);
-            }
-          }
         }
-
       } catch (loanError) {
         logger.error(`❌ Failed to process loan ${loan.acct_no}:`, loanError.message);
         results.failedLoans.push({
@@ -289,7 +324,6 @@ const processOverdueLoans = async (options = {}) => {
       }
     }
 
-    // Summary log
     logger.info(`✅ Overdue processing completed:`, {
       totalLoansProcessed: results.totalLoansProcessed,
       overdueLoansFound: results.overdueLoansFound,
@@ -301,12 +335,8 @@ const processOverdueLoans = async (options = {}) => {
     });
 
     return results;
-
   } catch (error) {
-    logger.error('❌ processOverdueLoans failed:', {
-      error: error.message,
-      stack: error.stack
-    });
+    logger.error('❌ processOverdueLoans failed:', { error: error.message, stack: error.stack });
     throw error;
   }
 };
@@ -318,12 +348,8 @@ const checkIfLoanIsOverdue = (loan, asOfDate) => {
   if (!loan.next_payment_date && !loan.maturity_dt) {
     return false;
   }
-
   const dueDate = loan.next_payment_date || loan.maturity_dt;
-  const dueMoment = moment(dueDate);
-  const asOfMoment = moment(asOfDate);
-
-  return dueMoment.isBefore(asOfMoment);
+  return moment(dueDate).isBefore(moment(asOfDate));
 };
 
 /**
@@ -333,15 +359,12 @@ const calculateDaysOverdue = (loan, asOfDate) => {
   if (!loan.next_payment_date && !loan.maturity_dt) {
     return 0;
   }
-
   const dueDate = loan.next_payment_date || loan.maturity_dt;
   const dueMoment = moment(dueDate);
   const asOfMoment = moment(asOfDate);
-
   if (dueMoment.isAfter(asOfMoment)) {
     return 0;
   }
-
   return asOfMoment.diff(dueMoment, 'days');
 };
 
@@ -355,7 +378,6 @@ const getActivePenaltyRule = async (PenaltyRule) => {
       return null;
     }
 
-    // Try to get global/default rule
     let rule = await PenaltyRule.findOne({
       where: {
         [Op.or]: [
@@ -367,14 +389,12 @@ const getActivePenaltyRule = async (PenaltyRule) => {
 
     if (rule) return rule;
 
-    // Try to get any active rule (simple model)
     rule = await PenaltyRule.findOne({
       where: { is_active: true }
     });
 
     if (rule) return rule;
 
-    // Try to get any active rule (complex model)
     const now = new Date();
     rule = await PenaltyRule.findOne({
       where: {
@@ -389,7 +409,6 @@ const getActivePenaltyRule = async (PenaltyRule) => {
 
     if (rule) return rule;
 
-    // Fallback: get any rule
     rule = await PenaltyRule.findOne();
     if (rule) {
       logger.warn('Using fallback penalty rule (may not be active)');
@@ -420,17 +439,14 @@ const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty,
       return { accrued: false, reason: 'Not overdue' };
     }
 
-    // Calculate daily penalty amount
     const outstandingPrincipal = parseFloat(loan.outstanding_principal || 0);
     let dailyPenalty = 0;
 
-    // Check if using simple or complex model
     const isSimpleModel = penaltyRule.calculation_method && 
       ['PERCENTAGE_OF_PRINCIPAL', 'FLAT_RATE', 'PERCENTAGE_OF_AMOUNT_DUE', 'SLIDING_SCALE']
       .includes(penaltyRule.calculation_method);
 
     if (isSimpleModel) {
-      // Simple model calculation
       switch (penaltyRule.calculation_method) {
         case 'PERCENTAGE_OF_PRINCIPAL':
           const dailyRate = (penaltyRule.rate || 1) / 100;
@@ -457,7 +473,6 @@ const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty,
           dailyPenalty = 0;
       }
     } else {
-      // Complex model calculation
       if (penaltyRule.rate_value) {
         const dailyRate = parseFloat(penaltyRule.rate_value) / 100;
         dailyPenalty = outstandingPrincipal * (dailyRate / 365);
@@ -472,7 +487,6 @@ const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty,
       return { accrued: false, reason: 'Penalty amount is zero' };
     }
 
-    // Check if penalty already exists for today
     const existingPenalty = await LoanPenalty.findOne({
       where: {
         loan_id: loan.id,
@@ -499,7 +513,6 @@ const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty,
       };
     }
 
-    // Create new penalty
     const penalty = await LoanPenalty.create({
       loan_id: loan.id,
       loan_account_no: loan.acct_no,
@@ -535,7 +548,6 @@ const accruePenaltyForLoan = async (loan, penaltyRule, accrualDate, LoanPenalty,
  */
 const checkIfLoanShouldBeActive = async (loan, RepaymentSchedule) => {
   try {
-    // Check if loan has any pending repayments
     if (RepaymentSchedule) {
       const pendingSchedules = await RepaymentSchedule.count({
         where: {
@@ -550,12 +562,10 @@ const checkIfLoanShouldBeActive = async (loan, RepaymentSchedule) => {
       }
     }
 
-    // Check if loan is fully paid
     if (parseFloat(loan.outstanding_principal || 0) <= 0) {
       return false;
     }
 
-    // Check if loan is not overdue
     if (loan.next_payment_date) {
       return moment(loan.next_payment_date).isAfter(moment());
     }
@@ -571,7 +581,6 @@ const checkIfLoanShouldBeActive = async (loan, RepaymentSchedule) => {
 
 /**
  * Process loan repayment direct debits
- * This function runs as part of the EOD process to handle scheduled loan repayments
  */
 const processLoanRepaymentDirectDebits = async () => {
   const startTime = Date.now();
@@ -580,7 +589,6 @@ const processLoanRepaymentDirectDebits = async () => {
   try {
     const batchDate = new Date();
     
-    // Find all due loan repayments for today
     const dueRepayments = await DirectDebit.findAll({
       where: {
         DIRECT_DR_MANDATE_TY_CD: 'LOAN_REPAYMENT',
@@ -619,7 +627,6 @@ const processLoanRepaymentDirectDebits = async () => {
 
     for (const repayment of dueRepayments) {
       try {
-        // Check if customer has sufficient balance in source account
         const sourceAccount = await Deposit.findOne({
           where: { ACCOUNT_NO: repayment.FROM_DEPOSIT_ACCT_NO }
         });
@@ -647,7 +654,6 @@ const processLoanRepaymentDirectDebits = async () => {
           continue;
         }
 
-        // Process the repayment transaction
         const transactionRef = await processLoanRepaymentTransaction({
           fromAccount: repayment.FROM_DEPOSIT_ACCT_NO,
           toAccount: repayment.LOAN_ACCOUNT_NO || repayment.TO_DEPOSIT_ACCT_NO,
@@ -660,7 +666,6 @@ const processLoanRepaymentDirectDebits = async () => {
           installmentNumber: repayment.INSTALLMENT_NUMBER
         }, transaction);
 
-        // Update direct debit record
         const nextPaymentDate = calculateNextPaymentDate(
           repayment.NEXT_PAY_DT,
           repayment.PAY_FREQ_CD,
@@ -674,15 +679,13 @@ const processLoanRepaymentDirectDebits = async () => {
           VERSION_NO: (repayment.VERSION_NO || 0) + 1
         }, { transaction });
 
-        // Mark as completed if all installments paid
         if (repayment.INSTALLMENT_NUMBER >= repayment.TOTAL_INSTALLMENTS) {
           await repayment.update({
-            REC_ST: 'C', // Completed
-            EXPIRY_DT: new Date() // Set expiry to today
+            REC_ST: 'C',
+            EXPIRY_DT: new Date()
           }, { transaction });
         }
 
-        // Update loan account balance if available
         if (repayment.LOAN_ID) {
           await updateLoanBalance({
             loanId: repayment.LOAN_ID,
@@ -729,7 +732,6 @@ const processLoanRepaymentDirectDebits = async () => {
       executionTime: `${executionTime}ms`
     });
     
-    // Send notifications for failures
     if (results.failed.length > 0) {
       await sendDirectDebitFailureNotification(results.failed);
     }
@@ -795,7 +797,6 @@ function calculateNextPaymentDate(currentDate, frequency, frequencyValue) {
  */
 async function processLoanRepaymentTransaction(paymentData, transaction) {
   try {
-    // 1. Create debit transaction from savings account
     const debitTransaction = await createLedgerEntry(null, null, {
       GL_ACCT_NO: paymentData.fromAccount,
       AMOUNT: paymentData.amount,
@@ -805,7 +806,6 @@ async function processLoanRepaymentTransaction(paymentData, transaction) {
       JOURNAL_ID: `LOAN_REPAY_${paymentData.loanId}_${Date.now()}`
     }, { transaction });
 
-    // 2. Create credit transaction to loan account
     await createLedgerEntry(null, null, {
       GL_ACCT_NO: paymentData.toAccount,
       AMOUNT: paymentData.amount,
@@ -823,7 +823,6 @@ async function processLoanRepaymentTransaction(paymentData, transaction) {
   }
 }
 
-// ==================== FIXED: updateLoanBalance function ====================
 /**
  * Helper function to update loan balance after a repayment
  */
@@ -835,7 +834,6 @@ async function updateLoanBalance(repaymentData, transaction) {
       return;
     }
 
-    // Use the loan's primary key (id) to find the record
     const loan = await LoanAccount.findOne({
       where: { id: repaymentData.loanId },
       transaction
@@ -846,29 +844,24 @@ async function updateLoanBalance(repaymentData, transaction) {
       return;
     }
 
-    // Validation: skip if loan not disbursed or already zero balance
     if (!loan.DISBURSEMENT_DATE || (parseFloat(loan.OUTSTANDING_PRINCIPAL) || 0) <= 0) {
       logger.warn(`Loan ${loan.ACCT_NO} not disbursed or already zero balance – skipping repayment update`);
       return;
     }
 
-    // Current balances
     const currentPrincipal = parseFloat(loan.OUTSTANDING_PRINCIPAL) || 0;
     const currentInterest = parseFloat(loan.ACCRUED_INTEREST) || 0;
     const currentPenalty = parseFloat(loan.PENALTY_AMOUNT) || 0;
     const currentTotalRepaid = parseFloat(loan.TOTAL_REPAID_AMOUNT) || 0;
 
-    // New values after repayment
     const newPrincipal = Math.max(0, currentPrincipal - (repaymentData.principalAmount || 0));
     const newInterest = Math.max(0, currentInterest - (repaymentData.interestAmount || 0));
     const newPenalty = Math.max(0, currentPenalty - (repaymentData.penaltyAmount || 0));
     const newTotalRepaid = currentTotalRepaid + (repaymentData.amount || 0);
 
-    // Determine if loan is fully paid
     const isFullyPaid = newPrincipal <= 0 && newInterest <= 0 && newPenalty <= 0;
     const newLoanStatus = isFullyPaid ? 'CLOSED' : loan.LOAN_STATUS;
 
-    // Prepare update object
     const updateFields = {
       OUTSTANDING_PRINCIPAL: newPrincipal,
       ACCRUED_INTEREST: newInterest,
@@ -906,10 +899,6 @@ const sendDirectDebitFailureNotification = async (failedTransactions) => {
   try {
     logger.warn(`📧 ${failedTransactions.length} loan repayment direct debits failed`);
     
-    // Implement your notification logic here
-    // This could be email, SMS, Slack, etc.
-    
-    // Example: Log to audit trail
     for (const failed of failedTransactions) {
       await createAuditTrail({
         eventId: `DIRECT_DEBIT_FAIL_${Date.now()}`,
@@ -934,7 +923,6 @@ const sendDirectDebitErrorNotification = async (error) => {
   try {
     logger.error('📧 Sending error notification for loan repayment processing failure');
     
-    // Log to audit trail
     await createAuditTrail({
       eventId: `DIRECT_DEBIT_ERROR_${Date.now()}`,
       userId: 'SYSTEM',
@@ -952,9 +940,6 @@ const sendDirectDebitErrorNotification = async (error) => {
 
 // ==================== MISSING SERVICE FUNCTION PLACEHOLDERS ====================
 
-/**
- * Update loan statuses
- */
 const updateLoanStatuses = async () => {
   logger.info('🔄 Processing loan status updates...');
   return { 
@@ -965,9 +950,6 @@ const updateLoanStatuses = async () => {
   };
 };
 
-/**
- * Post interest
- */
 const postInterest = async () => {
   logger.info('💰 Processing interest posting...');
   return { 
@@ -979,9 +961,6 @@ const postInterest = async () => {
   };
 };
 
-/**
- * Process GL transactions
- */
 const processGLTransactions = async () => {
   logger.info('📊 Processing GL transactions...');
   return { 
@@ -993,9 +972,6 @@ const processGLTransactions = async () => {
   };
 };
 
-/**
- * Process term deposit interest
- */
 const processTermDepositInterest = async () => {
   logger.info('🏦 Processing term deposit interest...');
   return { 
@@ -1007,9 +983,6 @@ const processTermDepositInterest = async () => {
   };
 };
 
-/**
- * Perform reconciliation
- */
 const performReconciliation = async () => {
   logger.info('🔍 Performing reconciliation...');
   return { 
@@ -1022,9 +995,6 @@ const performReconciliation = async () => {
   };
 };
 
-/**
- * Process dormant accounts
- */
 const processDormantAccounts = async () => {
   logger.info('💤 Processing dormant accounts...');
   return { 
@@ -1039,17 +1009,11 @@ const processDormantAccounts = async () => {
 
 // ==================== HELPER FUNCTIONS ====================
 
-/**
- * Fetch bank statement data
- */
 const fetchBankStatementData = async () => {
   logger.info('Fetching bank statement data');
   return [];
 };
 
-/**
- * Generate transaction ID
- */
 const generateTransactionId = () => {
   const base = Date.now().toString();
   const random = Math.floor(1000 + Math.random() * 9000);
@@ -1062,12 +1026,11 @@ export const processLoanOverdueAndStatus = async () => {
   try {
     logger.info('🔄 Processing loan overdue status...');
     
-    // Use the new processOverdueLoans function
     const result = await processOverdueLoans({
       asOfDate: new Date(),
       dryRun: false,
       updateStatus: true,
-      accruePenalties: false, // Don't accrue penalties here, let the penalty service handle it
+      accruePenalties: false,
       batchSize: 500
     });
     
@@ -1226,7 +1189,6 @@ const systemStatus = {
       failed: 0,
       details: []
     },
-    // ✅ ADDED: Email Statement Service
     emailStatements: {
       healthy: true,
       lastError: null,
@@ -1239,7 +1201,9 @@ const systemStatus = {
         customersDue: 0,
         statementsGenerated: 0,
         emailsSent: 0,
-        emailsFailed: 0
+        emailsFailed: 0,
+        smsSent: 0,
+        smsFailed: 0
       }
     }
   }
@@ -1247,9 +1211,6 @@ const systemStatus = {
 
 // ==================== EOD TRANSACTION PROCESSING ====================
 
-/**
- * Process EOD GL transactions
- */
 export const processEODGLTransactions = async (transaction = null) => {
   let transactionCompleted = false;
 
@@ -1338,7 +1299,6 @@ export const processEODGLTransactions = async (transaction = null) => {
         continue;
       }
 
-      // Check if account allows transaction type
       if (!glAccount.canPost || !glAccount.canPost(TRANSACTION_TYPE)) {
         logger.warn(`GL Account ${GL_ACCT_NO} does not allow ${TRANSACTION_TYPE} transactions, failing txn ${txn.id}`);
         await GLTransactionQueue.update(
@@ -1397,7 +1357,6 @@ export const processEODGLTransactions = async (transaction = null) => {
           continue;
         }
 
-        // Create reconciliation record
         await Reconciliation.create({
           JOURNAL_ID,
           GL_ACCT_NO,
@@ -1409,7 +1368,6 @@ export const processEODGLTransactions = async (transaction = null) => {
           CREATED_AT: new Date(),
         }, { transaction: t });
 
-        // Update transaction status
         await GLTransactionQueue.update(
           { 
             QUEUE_STATUS: 'Processed', 
@@ -1421,7 +1379,6 @@ export const processEODGLTransactions = async (transaction = null) => {
           }
         );
 
-        // Create audit trail
         await createAuditTrail({
           eventId: JOURNAL_ID,
           userId: CREATED_BY || 'system',
@@ -1511,15 +1468,12 @@ export const processEODGLTransactions = async (transaction = null) => {
 
 // ==================== SERVICE EXECUTOR ====================
 
-/**
- * Execute service function with error handling
- */
 const executeService = async (serviceName, serviceFn) => {
   const startTime = Date.now();
   try {
     logger.info(`Starting ${serviceName} service`, {
       timestamp: getServerTime().toISOString(),
-      businessDate: systemStatus.currentBusinessDate,
+      businessDate: safeFormatDate(systemStatus.currentBusinessDate),
     });
 
     const result = await serviceFn();
@@ -1533,7 +1487,6 @@ const executeService = async (serviceName, serviceFn) => {
       executionTime,
     };
 
-    // Handle different service types
     if (serviceName === 'loanProcessing' || serviceName === 'overdueLoans') {
       serviceDetails.processed = serviceResult.results?.overdueLoans?.accounts || [];
       serviceDetails.failed = serviceResult.failedLoans || [];
@@ -1611,37 +1564,57 @@ const executeService = async (serviceName, serviceFn) => {
         executionTime,
       });
     }
+    // ✅ FIXED: processAutoCollections with proper date handling
     else if (serviceName === 'processAutoCollections') {
+      // ✅ FIX: Ensure date is a Date object
+      let collectionDate = systemStatus.currentBusinessDate || new Date();
+      
+      // If it's not a Date, convert it
+      if (!(collectionDate instanceof Date)) {
+        if (typeof collectionDate === 'string') {
+          collectionDate = new Date(collectionDate);
+        } else if (typeof collectionDate === 'number') {
+          collectionDate = new Date(collectionDate);
+        } else {
+          collectionDate = new Date();
+        }
+      }
+      
+      // Validate the date
+      if (isNaN(collectionDate.getTime())) {
+        collectionDate = new Date();
+        logger.warn('⚠️ Invalid business date, using current date for auto collections');
+      }
+      
       const collectionResult = await processAutoCollections({
-        date: systemStatus.currentBusinessDate || new Date()
+        date: collectionDate
       });
       
       serviceDetails.healthy = collectionResult.success;
       serviceDetails.lastError = collectionResult.success ? null : collectionResult.error;
       serviceDetails.lastRun = new Date();
       serviceDetails.executionTime = collectionResult.executionTime || 0;
-      serviceDetails.processed = collectionResult.results?.individual?.processed || 0;
-      serviceDetails.failed = collectionResult.results?.individual?.failed || 0;
-      serviceDetails.skipped = [];
+      serviceDetails.processed = collectionResult.individual?.processed || 0;
+      serviceDetails.failed = collectionResult.individual?.failed || 0;
+      serviceDetails.skipped = collectionResult.skipped || [];
       serviceDetails.individualLoans = {
-        processed: collectionResult.results?.individual?.processed || 0,
-        failed: collectionResult.results?.individual?.failed || 0,
-        overdueMarked: collectionResult.results?.individual?.overdueMarked || 0,
-        totalDue: collectionResult.results?.individual?.totalDue || 0
+        processed: collectionResult.individual?.processed || 0,
+        failed: collectionResult.individual?.failed || 0,
+        overdueMarked: collectionResult.individual?.overdueMarked || 0,
+        totalDue: collectionResult.individual?.totalDue || 0
       };
       serviceDetails.groupLoans = {
-        processed: collectionResult.results?.group?.processed || 0,
-        failed: collectionResult.results?.group?.failed || 0,
-        totalDue: collectionResult.results?.group?.totalDue || 0
+        processed: collectionResult.group?.processed || 0,
+        failed: collectionResult.group?.failed || 0,
+        totalDue: collectionResult.group?.totalDue || 0
       };
-      serviceDetails.collections = collectionResult.results?.individual?.collections || [];
+      serviceDetails.collections = collectionResult.individual?.collections || [];
       
       logger.info(`processAutoCollections service completed`, {
         processed: serviceDetails.processed,
         failed: serviceDetails.failed,
         overdueMarked: serviceDetails.individualLoans.overdueMarked,
         totalDue: serviceDetails.individualLoans.totalDue,
-        successRate: collectionResult.summary?.successRate || 0,
         executionTime: serviceDetails.executionTime,
       });
       
@@ -1667,7 +1640,7 @@ const executeService = async (serviceName, serviceFn) => {
         executionTime,
       });
     }
-    // ✅ ADDED: Email Statements Service
+    // ✅ FIXED: emailStatements service handler
     else if (serviceName === 'emailStatements') {
       serviceDetails.processed = serviceResult.results?.customersDue || 0;
       serviceDetails.failed = serviceResult.results?.emailsFailed || 0;
@@ -1676,14 +1649,18 @@ const executeService = async (serviceName, serviceFn) => {
         customersDue: serviceResult.results?.customersDue || 0,
         statementsGenerated: serviceResult.results?.statementsGenerated || 0,
         emailsSent: serviceResult.results?.emailsSent || 0,
-        emailsFailed: serviceResult.results?.emailsFailed || 0
+        emailsFailed: serviceResult.results?.emailsFailed || 0,
+        smsSent: serviceResult.results?.smsSent || 0,
+        smsFailed: serviceResult.results?.smsFailed || 0
       };
       serviceDetails.errors = serviceResult.results?.errors || [];
       
-      logger.info(`emailStatements service completed`, {
+      logger.info(`✅ emailStatements service completed`, {
         customersDue: serviceDetails.details.customersDue,
         emailsSent: serviceDetails.details.emailsSent,
         emailsFailed: serviceDetails.details.emailsFailed,
+        smsSent: serviceDetails.details.smsSent,
+        smsFailed: serviceDetails.details.smsFailed,
         executionTime,
       });
     }
@@ -1736,14 +1713,16 @@ const executeService = async (serviceName, serviceFn) => {
     if (serviceName === 'pendingRepayments') {
       serviceDetails.processedCount = 0;
     }
-    // ✅ ADDED: Email Statements Error Handling
+    // ✅ FIXED: emailStatements error handling
     if (serviceName === 'emailStatements') {
       serviceDetails.details = {
         totalCustomersChecked: 0,
         customersDue: 0,
         statementsGenerated: 0,
         emailsSent: 0,
-        emailsFailed: 0
+        emailsFailed: 0,
+        smsSent: 0,
+        smsFailed: 0
       };
       serviceDetails.errors = [errorDetails];
     }
@@ -1779,25 +1758,41 @@ const executeService = async (serviceName, serviceFn) => {
 
 /**
  * Trigger End of Day process
+ * ✅ FIXED: Properly includes emailStatements service
+ * ✅ FIXED: Console logs moved inside function
  */
 export const triggerEndOfDayProcess = async (req, res) => {
   try {
     const { skipServices = [], runServices = [], userId = 'system' } = req.body;
     
+    // ✅ MOVED INSIDE - These logs now work
+    console.log('🚀 triggerEndOfDayProcess called');
+    console.log('📋 runServices:', runServices);
+    console.log('📋 skipServices:', skipServices);
+    console.log('📋 userId:', userId);
+    
+    const serverBusinessDate = await getServerBusinessDate();
+    const serverTime = getServerTime();
+    
     logger.info('Starting End of Day process', {
       userId,
+      serverBusinessDate: safeFormatDate(serverBusinessDate),
+      serverTime: serverTime.toISOString(),
       skipServices,
       runServices
     });
 
-    // ✅ ADDED: emailStatements to validServices
+    // ✅ FIXED: emailStatements properly included
     const validServices = [
       'loanProcessing', 'overdueLoans', 'processAutoCollections', 
       'loanStatusUpdates', 'interestPosting', 'glTransactions',
       'termDepositInterest', 'reconciliation', 'pendingRepayments', 
       'dormantAccounts', 'standingOrders', 'pendingGLTransactions',
-      'emailStatements' // ✅ ADDED
+      'emailStatements'
     ];
+
+    // ✅ Log valid services
+    console.log('📋 Valid services:', validServices);
 
     const invalidServices = skipServices.filter(service => !validServices.includes(service));
     if (invalidServices.length > 0) {
@@ -1808,9 +1803,12 @@ export const triggerEndOfDayProcess = async (req, res) => {
       ? runServices.filter(service => validServices.includes(service))
       : validServices.filter(service => !skipServices.includes(service));
 
-    logger.info('Skipping EOD services', { skippedServices: skipServices });
+    // ✅ Log what will run
+    console.log('📋 Services to run:', servicesToRun);
 
-    // ✅ ADDED: emailStatements service function
+    logger.info('Services to run:', { servicesToRun });
+
+    // ✅ FIXED: emailStatements function properly defined
     const serviceFunctions = {
       loanProcessing: processOverdueLoans,
       overdueLoans: processOverdueLoans,
@@ -1824,58 +1822,63 @@ export const triggerEndOfDayProcess = async (req, res) => {
       dormantAccounts: processDormantAccounts,
       standingOrders: processDueStandingOrders,
       pendingGLTransactions: processPendingGLTransactions,
-      emailStatements: async () => { // ✅ ADDED
+      emailStatements: async () => {
+        console.log('📧 Executing emailStatements service...');
+        console.log('📧 Using date:', safeFormatDate(serverBusinessDate));
+        
         const result = await processEmailStatements({
-          asOfDate: systemStatus.currentBusinessDate || new Date(),
+          asOfDate: serverBusinessDate,
           dryRun: false,
           batchSize: 100,
-          sendEmail: true
+          sendEmail: true,
+          sendSms: true
         });
+        
+        console.log('📧 emailStatements result:', {
+          totalCustomersChecked: result.totalCustomersChecked,
+          customersDue: result.customersDue,
+          emailsSent: result.emailsSent,
+          emailsFailed: result.emailsFailed,
+          smsSent: result.smsSent,
+          smsFailed: result.smsFailed
+        });
+        
+        logger.info('📧 emailStatements result:', {
+          customersDue: result.customersDue,
+          emailsSent: result.emailsSent,
+          emailsFailed: result.emailsFailed,
+          smsSent: result.smsSent,
+          smsFailed: result.smsFailed
+        });
+        
         return {
-          success: result.emailsFailed === 0,
+          success: result.emailsFailed === 0 && result.smsFailed === 0,
           results: result
         };
       }
     };
 
     const serviceResults = {};
-    const currentBusinessDate = systemStatus.currentBusinessDate || new Date();
+    const currentBusinessDate = serverBusinessDate;
 
     for (const service of servicesToRun) {
       if (serviceFunctions[service]) {
-        logger.info(`Starting ${service} service`, { businessDate: currentBusinessDate });
+        console.log(`🔄 Starting ${service} service...`);
+        logger.info(`Starting ${service} service`, { 
+          businessDate: safeFormatDate(currentBusinessDate),
+          serverTime: serverTime.toISOString()
+        });
         serviceResults[service] = await executeService(service, serviceFunctions[service]);
+        console.log(`✅ ${service} service completed`);
       } else {
+        console.log(`⚠️ Service function not found for: ${service}`);
         logger.warn(`Service function not found for: ${service}`);
         serviceResults[service] = { success: false, error: 'Service function not implemented' };
       }
     }
 
-    // Use the SystemDateController's processEOD method
     let validUserId = userId;
     
-    try {
-      if (userId === 'system') {
-        // You'll need to import your User model if needed
-        // const User = await import('../models/User.js');
-        // const adminUser = await User.findOne({ 
-        //     where: {
-        //         primary_role: { [sequelize.Op.in]: ['ADMIN', 'SYSTEM_ADMIN', 'OPERATIONS_MANAGER'] },
-        //         status: 'ACTIVE'
-        //     }
-        // });
-        // if (adminUser) {
-        //     validUserId = adminUser.id.toString();
-        // }
-        logger.warn('User model import commented out, using provided userId');
-      }
-    } catch (userError) {
-      logger.warn('Failed to find valid user for EOD, using provided userId:', {
-        userId,
-        error: userError.message
-      });
-    }
-
     const mockRes = {
       statusCode: 200,
       data: null,
@@ -1889,23 +1892,33 @@ export const triggerEndOfDayProcess = async (req, res) => {
       }
     };
 
-    const mockReq = { body: { userId: validUserId, force: false } };
+    const mockReq = { 
+      body: { 
+        userId: validUserId, 
+        force: false,
+        serverBusinessDate: serverBusinessDate
+      } 
+    };
     
-    logger.info('Calling SystemDateController.processEOD with userId:', { userId: validUserId });
+    logger.info('Calling SystemDateController.processEOD with userId:', { 
+      userId: validUserId,
+      serverBusinessDate: safeFormatDate(serverBusinessDate)
+    });
     
     await SystemDateController.processEOD(mockReq, mockRes);
 
-    // Update local system status
     systemStatus.lastEODRun = new Date();
     
     if (mockRes.data && mockRes.data.success) {
       systemStatus.nextBusinessDate = mockRes.data.data?.nextBusinessDate || systemStatus.nextBusinessDate;
       systemStatus.currentBusinessDate = mockRes.data.data?.currentBusinessDate || systemStatus.currentBusinessDate;
       systemStatus.eodStatus = 'COMPLETED';
+      systemStatus.serverTime = serverTime;
       
       logger.info('EOD processing completed successfully via SystemDateController', {
-        nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
-        currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0]
+        nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
+        currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+        serverTime: serverTime.toISOString()
       });
     } else {
       systemStatus.eodStatus = 'FAILED';
@@ -1916,7 +1929,7 @@ export const triggerEndOfDayProcess = async (req, res) => {
 
     logger.info('End of Day processing completed successfully', {
       servicesExecuted: servicesToRun,
-      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
+      nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
       totalServices: servicesToRun.length
     });
 
@@ -1925,13 +1938,15 @@ export const triggerEndOfDayProcess = async (req, res) => {
       message: 'End of Day processing completed successfully',
       results: serviceResults,
       eodResult: mockRes.data,
-      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0],
-      currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
+      nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
+      currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+      serverTime: serverTime.toISOString(),
       servicesExecuted: servicesToRun,
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
+    console.error('❌ EOD failed:', error);
     logger.error('EOD failed', { 
       error: error.message, 
       stack: error.stack,
@@ -1939,7 +1954,6 @@ export const triggerEndOfDayProcess = async (req, res) => {
       userId: req.body.userId || 'system'
     });
     
-    // Update system status to failed
     systemStatus.eodStatus = 'FAILED';
     systemStatus.lastEODRun = new Date();
     
@@ -1954,14 +1968,14 @@ export const triggerEndOfDayProcess = async (req, res) => {
 
 // ==================== EOD STATUS ====================
 
-/**
- * Get EOD status with detailed service information
- */
 export const getEODStatus = async (req, res) => {
   try {
     const systemDate = await SystemDate.findOne({
       order: [['created_at', 'DESC']]
     });
+
+    const serverTime = getServerTime();
+    const serverBusinessDate = await getServerBusinessDate();
 
     const status = {
       success: true,
@@ -1970,19 +1984,20 @@ export const getEODStatus = async (req, res) => {
           state: systemStatus.state || 'idle',
           lastRun: systemStatus.lastRun || null,
           nextRun: systemStatus.nextRun || null,
-          currentBusinessDate: systemStatus.currentBusinessDate || systemDate?.currentBusinessDate || null,
-          nextBusinessDate: systemStatus.nextBusinessDate || systemDate?.nextBusinessDate || null,
-          isEODProcessing: systemStatus.isEODProcessing || false,
+          currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate || systemDate?.currentBusinessDate),
+          nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate || systemDate?.nextBusinessDate),
+          isEODProcessing: systemStatus.isEODProcessing || systemDate?.isEODProcessing || false,
           eodStatus: systemStatus.eodStatus || systemDate?.eodStatus || 'IDLE',
-          serverTime: getServerTime(),
+          serverTime: serverTime,
+          serverBusinessDate: serverBusinessDate,
           uptime: process.uptime(),
         },
         database: {
           systemDateExists: !!systemDate,
-          currentBusinessDate: systemDate?.currentBusinessDate,
-          nextBusinessDate: systemDate?.nextBusinessDate,
+          currentBusinessDate: safeFormatDate(systemDate?.currentBusinessDate),
+          nextBusinessDate: safeFormatDate(systemDate?.nextBusinessDate),
           eodStatus: systemDate?.eodStatus,
-          lastEODProcessedBy: systemDate?.lastEODProcessedBy,
+          lastEODProcessedBy: systemDate?.lastEODProcessedBy || systemDate?.lastEODProcessedByLegacy,
           isEODProcessing: systemDate?.isEODProcessing,
           lastEODRun: systemDate?.lastEODRun
         },
@@ -1992,7 +2007,6 @@ export const getEODStatus = async (req, res) => {
           lastRun: systemStatus.services[serviceName].lastRun,
           lastError: systemStatus.services[serviceName].lastError,
           executionTime: systemStatus.services[serviceName].executionTime,
-          // Service-specific details
           ...(serviceName === 'glTransactions' && {
             processed: systemStatus.services.glTransactions.processed?.length || 0,
             failed: systemStatus.services.glTransactions.failed?.length || 0,
@@ -2051,7 +2065,6 @@ export const getEODStatus = async (req, res) => {
             failed: systemStatus.services.pendingGLTransactions.failed || 0,
             details: systemStatus.services.pendingGLTransactions.details || []
           }),
-          // ✅ ADDED: Email Statements status
           ...(serviceName === 'emailStatements' && {
             processed: systemStatus.services.emailStatements.processed || 0,
             failed: systemStatus.services.emailStatements.failed || 0,
@@ -2059,7 +2072,8 @@ export const getEODStatus = async (req, res) => {
           })
         })),
         metrics: {
-          serverTime: getServerTime(),
+          serverTime: serverTime,
+          serverBusinessDate: serverBusinessDate,
           memoryUsage: process.memoryUsage(),
           loadAverage: os.loadavg(),
           cpuUsage: process.cpuUsage()
@@ -2083,9 +2097,6 @@ export const getEODStatus = async (req, res) => {
 
 // ==================== OTHER CONTROLLER FUNCTIONS ====================
 
-/**
- * Get current business date (OS version)
- */
 export const getCurrentBusinessDateOS = async (req, res) => {
   try {
     const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
@@ -2096,14 +2107,24 @@ export const getCurrentBusinessDateOS = async (req, res) => {
       });
     }
     
-    systemStatus.serverTime = getServerTime();
+    const serverTime = getServerTime();
+    const serverBusinessDate = await getServerBusinessDate();
+    
+    systemStatus.serverTime = serverTime;
+    systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
+    systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
+    
     return res.status(200).json({
       success: true,
       currentBusinessDate: systemDate.currentBusinessDate,
       nextBusinessDate: systemDate.nextBusinessDate,
-      isEODProcessing: systemDate.isEODProcessing,
-      eodStatus: systemDate.eodStatus,
-      timestamp: systemStatus.serverTime.toISOString(),
+      serverTime: serverTime,
+      serverBusinessDate: serverBusinessDate,
+      isEODProcessing: systemDate.isEODProcessing || false,
+      eodStatus: systemDate.eodStatus || 'IDLE',
+      lastEODDate: systemDate.lastEODDate,
+      lastEODProcessedBy: systemDate.lastEODProcessedBy || systemDate.lastEODProcessedByLegacy,
+      timestamp: serverTime.toISOString(),
     });
   } catch (error) {
     logger.error('Failed to get current business date', {
@@ -2123,21 +2144,18 @@ export const getCurrentBusinessDateOS = async (req, res) => {
 
 // ==================== SET NEXT BUSINESS DATE ====================
 
-/**
- * Set the next business date
- * @param {Date} currentDate - Current date to calculate from
- * @returns {Promise<Date>} Next business date
- */
 const setNextBusinessDateOS = async (currentDate = null) => {
   try {
-    const dateToUse = currentDate || systemStatus.currentBusinessDate || new Date();
+    const dateToUse = currentDate || systemStatus.currentBusinessDate || await getServerBusinessDate();
     const nextBusinessDate = await calculateNextBusinessDate(dateToUse);
     systemStatus.nextBusinessDate = nextBusinessDate;
     systemStatus.lastUpdated = new Date();
+    systemStatus.serverTime = getServerTime();
     
     logger.info('Next business date set', {
-      currentBusinessDate: systemStatus.currentBusinessDate?.toISOString().split('T')[0],
-      nextBusinessDate: systemStatus.nextBusinessDate?.toISOString().split('T')[0]
+      currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+      nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
+      serverTime: systemStatus.serverTime.toISOString()
     });
     
     return nextBusinessDate;
@@ -2150,9 +2168,6 @@ const setNextBusinessDateOS = async (currentDate = null) => {
   }
 };
 
-/**
- * Get service errors
- */
 export const getServiceErrors = async (req, res) => {
   systemStatus.serverTime = getServerTime();
   const errors = Object.entries(systemStatus.services)
@@ -2174,9 +2189,6 @@ export const getServiceErrors = async (req, res) => {
   });
 };
 
-/**
- * Get dormant accounts count
- */
 export const getDormantAccountsCount = async (req, res) => {
   try {
     const count = await countDormantAccountsToUpdate();
@@ -2198,9 +2210,6 @@ export const getDormantAccountsCount = async (req, res) => {
   }
 };
 
-/**
- * Set business date manually (OS version)
- */
 export const setBusinessDateManuallyOS = async (req, res) => {
   try {
     const { newDate, updatedBy = 'system', reason = 'Manual adjustment' } = req.body;
@@ -2212,7 +2221,6 @@ export const setBusinessDateManuallyOS = async (req, res) => {
       });
     }
 
-    // Call the SystemDateController's setBusinessDate method
     const mockRes = {
       statusCode: 200,
       data: null,
@@ -2255,14 +2263,12 @@ export const setBusinessDateManuallyOS = async (req, res) => {
   }
 };
 
-/**
- * Debug date issues (OS version)
- */
 export const debugDateIssuesOS = async (req, res) => {
   try {
     const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
     const businessDate = getBusinessDate();
     const serverTime = getServerTime();
+    const serverBusinessDate = await getServerBusinessDate();
     
     const debugInfo = {
       systemDate: systemDate ? {
@@ -2272,7 +2278,17 @@ export const debugDateIssuesOS = async (req, res) => {
         nextBusinessDate: systemDate.nextBusinessDate,
         nextBusinessDateType: typeof systemDate.nextBusinessDate,
         nextBusinessDateValid: systemDate.nextBusinessDate instanceof Date && !isNaN(systemDate.nextBusinessDate.getTime()),
+        eodStatus: systemDate.eodStatus,
+        isEODProcessing: systemDate.isEODProcessing,
+        lastEODDate: systemDate.lastEODDate,
+        lastEODProcessedBy: systemDate.lastEODProcessedBy || systemDate.lastEODProcessedByLegacy
       } : 'No system date found',
+      serverBusinessDate: {
+        value: serverBusinessDate,
+        type: typeof serverBusinessDate,
+        valid: serverBusinessDate instanceof Date && !isNaN(serverBusinessDate.getTime()),
+        formatted: safeFormatDate(serverBusinessDate)
+      },
       businessDate: {
         value: businessDate,
         type: typeof businessDate,
@@ -2290,8 +2306,8 @@ export const debugDateIssuesOS = async (req, res) => {
       success: true,
       debugInfo,
       systemStatus: {
-        currentBusinessDate: systemStatus.currentBusinessDate,
-        nextBusinessDate: systemStatus.nextBusinessDate,
+        currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+        nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
         serverTime: systemStatus.serverTime,
         isEODProcessing: systemStatus.isEODProcessing,
         eodStatus: systemStatus.eodStatus
@@ -2310,13 +2326,12 @@ export const debugDateIssuesOS = async (req, res) => {
   }
 };
 
-/**
- * Get status (OS version)
- */
 export const getStatusOS = async (req, res) => {
   try {
     const dormantCount = await countDormantAccountsToUpdate();
     const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
+    const serverTime = getServerTime();
+    const serverBusinessDate = await getServerBusinessDate();
     
     const serviceStatuses = Object.keys(systemStatus.services).map((serviceName) => ({
       name: serviceName,
@@ -2355,7 +2370,6 @@ export const getStatusOS = async (req, res) => {
         individualLoans: systemStatus.services.processAutoCollections.individualLoans,
         groupLoans: systemStatus.services.processAutoCollections.groupLoans,
       }),
-      // ✅ ADDED: Email Statements status
       ...(serviceName === 'emailStatements' && {
         processed: systemStatus.services.emailStatements.processed,
         failed: systemStatus.services.emailStatements.failed,
@@ -2363,7 +2377,9 @@ export const getStatusOS = async (req, res) => {
       })
     }));
 
-    systemStatus.serverTime = getServerTime();
+    systemStatus.serverTime = serverTime;
+    systemStatus.currentBusinessDate = systemDate?.currentBusinessDate;
+    systemStatus.nextBusinessDate = systemDate?.nextBusinessDate;
     
     res.status(200).json({
       success: true,
@@ -2371,21 +2387,22 @@ export const getStatusOS = async (req, res) => {
         state: systemStatus.state,
         lastRun: systemStatus.lastRun,
         nextRun: systemStatus.nextRun,
-        currentBusinessDate: systemStatus.currentBusinessDate,
-        nextBusinessDate: systemStatus.nextBusinessDate,
-        isEODProcessing: systemStatus.isEODProcessing,
-        eodStatus: systemStatus.eodStatus,
+        currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+        nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
+        isEODProcessing: systemStatus.isEODProcessing || systemDate?.isEODProcessing || false,
+        eodStatus: systemStatus.eodStatus || systemDate?.eodStatus || 'IDLE',
         serverTime: systemStatus.serverTime,
+        serverBusinessDate: serverBusinessDate,
         serverTimeOffset: systemStatus.serverTimeOffset,
         uptime: process.uptime(),
         memoryUsage: process.memoryUsage(),
       },
       database: {
         systemDateExists: !!systemDate,
-        currentBusinessDate: systemDate?.currentBusinessDate,
-        nextBusinessDate: systemDate?.nextBusinessDate,
+        currentBusinessDate: safeFormatDate(systemDate?.currentBusinessDate),
+        nextBusinessDate: safeFormatDate(systemDate?.nextBusinessDate),
         eodStatus: systemDate?.eodStatus,
-        lastEODProcessedBy: systemDate?.lastEODProcessedBy,
+        lastEODProcessedBy: systemDate?.lastEODProcessedBy || systemDate?.lastEODProcessedByLegacy,
         isEODProcessing: systemDate?.isEODProcessing
       },
       services: serviceStatuses,
@@ -2417,9 +2434,6 @@ export const getStatusOS = async (req, res) => {
   }
 };
 
-/**
- * Initialize system dates (OS version)
- */
 export const initializeSystemDatesOS = async (req, res) => {
   try {
     const { maxRetries = 3, retryDelay = 5000 } = req.body;
@@ -2429,7 +2443,6 @@ export const initializeSystemDatesOS = async (req, res) => {
       try {
         logger.info(`📅 Initializing system dates (attempt ${retryCount + 1}/${maxRetries})`);
         
-        // Check database connection
         try {
           await sequelize.authenticate();
           logger.info('✅ Database connection established');
@@ -2438,18 +2451,23 @@ export const initializeSystemDatesOS = async (req, res) => {
           throw new Error('Database connection failed');
         }
 
+        const serverBusinessDate = await getServerBusinessDate();
+        const serverTime = await getServerTimeFromDB();
+
         const systemDate = await SystemDate.findOne({ order: [['created_at', 'DESC']] });
         
         if (systemDate) {
           systemStatus.currentBusinessDate = systemDate.currentBusinessDate;
           systemStatus.nextBusinessDate = systemDate.nextBusinessDate;
           systemStatus.eodStatus = systemDate.eodStatus || 'IDLE';
+          systemStatus.serverTime = serverTime;
           systemStatus.initialized = true;
           
           logger.info('✅ System dates loaded from database', {
-            currentBusinessDate: systemStatus.currentBusinessDate,
-            nextBusinessDate: systemStatus.nextBusinessDate,
-            eodStatus: systemStatus.eodStatus
+            currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+            nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
+            eodStatus: systemStatus.eodStatus,
+            serverTime: systemStatus.serverTime
           });
         } else {
           const defaultStartDate = new Date('2025-01-01');
@@ -2457,19 +2475,20 @@ export const initializeSystemDatesOS = async (req, res) => {
           const nextBusinessDate = await calculateNextBusinessDate(currentBusinessDate);
 
           const newSystemDate = await SystemDate.create({
-            currentBusinessDate,
-            nextBusinessDate,
+            currentBusinessDate: currentBusinessDate,
+            nextBusinessDate: nextBusinessDate,
             eodStatus: 'IDLE',
           });
 
           systemStatus.currentBusinessDate = currentBusinessDate;
           systemStatus.nextBusinessDate = nextBusinessDate;
           systemStatus.eodStatus = 'IDLE';
+          systemStatus.serverTime = serverTime;
           systemStatus.initialized = true;
           
           logger.info('✅ Initial system date created', {
-            currentBusinessDate,
-            nextBusinessDate,
+            currentBusinessDate: safeFormatDate(currentBusinessDate),
+            nextBusinessDate: safeFormatDate(nextBusinessDate),
           });
         }
 
@@ -2481,8 +2500,8 @@ export const initializeSystemDatesOS = async (req, res) => {
           success: true,
           message: 'System dates initialized successfully',
           systemStatus: {
-            currentBusinessDate: systemStatus.currentBusinessDate,
-            nextBusinessDate: systemStatus.nextBusinessDate,
+            currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+            nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
             eodStatus: systemStatus.eodStatus,
             serverTime: systemStatus.serverTime
           },
@@ -2529,9 +2548,6 @@ export const initializeSystemDatesOS = async (req, res) => {
   }
 };
 
-/**
- * Get system status (OS version)
- */
 export const getSystemStatusOS = () => {
   if (!systemStatus || typeof systemStatus !== 'object') {
     return {
@@ -2541,25 +2557,15 @@ export const getSystemStatusOS = () => {
     };
   }
   
-  let displayDate = systemStatus.currentBusinessDate;
-  if (displayDate instanceof Date) {
-    displayDate = displayDate.toISOString().split('T')[0];
-  } else if (typeof displayDate === 'string' && displayDate.includes('T')) {
-    displayDate = displayDate.split('T')[0];
-  }
-  
   return {
-    currentBusinessDate: displayDate,
-    previousBusinessDate: systemStatus.previousBusinessDate,
-    nextBusinessDate: systemStatus.nextBusinessDate,
+    currentBusinessDate: safeFormatDate(systemStatus.currentBusinessDate),
+    previousBusinessDate: safeFormatDate(systemStatus.previousBusinessDate),
+    nextBusinessDate: safeFormatDate(systemStatus.nextBusinessDate),
     initialized: systemStatus.initialized,
     status: systemStatus.currentBusinessDate ? 'Initialized' : 'Not Initialized'
   };
 };
 
-/**
- * Debug holiday system
- */
 export const debugHolidaySystem = async (req, res) => {
   try {
     const today = new Date();
@@ -2612,18 +2618,14 @@ export const debugHolidaySystem = async (req, res) => {
   }
 };
 
-// Add these to your OsController.js
-// src/controllers/OsController.js - EOY Functions Section
-
 // ==================== EOY CLOSING STATUS ====================
 
-// EOY status tracking
 const eoyStatus = {
   isEOYRunning: false,
   lastEOYRun: null,
   nextEOYRun: null,
-  eoyState: 'IDLE', // IDLE, IN_PROGRESS, COMPLETED, FAILED, PARTIAL
-  eoyProgress: 0, // 0-100
+  eoyState: 'IDLE',
+  eoyProgress: 0,
   eoyErrors: [],
   eoyWarnings: [],
   eoyLogs: [],
@@ -2634,30 +2636,14 @@ const eoyStatus = {
   eoyLockedAt: null
 };
 
-// ==================== EOY SERVICE FUNCTIONS ====================
-
-/**
- * Check if EOY is currently running
- * @returns {boolean} True if EOY is running
- */
 export const isEOYRunning = () => {
   return eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS';
 };
 
-/**
- * Check if EOY is locked
- * @returns {boolean} True if EOY is locked
- */
 export const isEOYLocked = () => {
   return eoyStatus.eoyLocked;
 };
 
-/**
- * Lock EOY process
- * @param {string} reason - Reason for locking
- * @param {string} userId - User who locked
- * @returns {boolean} True if locked successfully
- */
 export const lockEOY = (reason, userId) => {
   if (eoyStatus.eoyLocked) {
     logger.warn('EOY is already locked', { 
@@ -2677,11 +2663,6 @@ export const lockEOY = (reason, userId) => {
   return true;
 };
 
-/**
- * Unlock EOY process
- * @param {string} userId - User who unlocks
- * @returns {boolean} True if unlocked successfully
- */
 export const unlockEOY = (userId) => {
   if (!eoyStatus.eoyLocked) {
     logger.warn('EOY is not locked');
@@ -2697,10 +2678,6 @@ export const unlockEOY = (userId) => {
   return true;
 };
 
-/**
- * Get EOY status
- * @returns {Object} EOY status object
- */
 export const getEOYStatus = () => {
   return {
     ...eoyStatus,
@@ -2711,16 +2688,10 @@ export const getEOYStatus = () => {
   };
 };
 
-/**
- * Reset EOY status
- * @param {string} userId - User performing reset
- * @returns {Object} Reset result
- */
 export const resetEOYStatus = (userId) => {
   const oldState = eoyStatus.eoyState;
   const oldLocked = eoyStatus.eoyLocked;
   
-  // Reset but keep logs for audit
   eoyStatus.isEOYRunning = false;
   eoyStatus.eoyState = 'IDLE';
   eoyStatus.eoyProgress = 0;
@@ -2748,20 +2719,6 @@ export const resetEOYStatus = (userId) => {
   };
 };
 
-// ==================== EOY EXECUTION FUNCTION ====================
-
-/**
- * Execute Year-End Closing with status tracking
- * @param {Object} params - Parameters for EOY execution
- * @param {number} params.fiscalYear - Fiscal year to close
- * @param {string} params.userId - User executing the closing
- * @param {number} params.organizationCode - Organization code
- * @param {string} params.branchCode - Branch code
- * @param {boolean} params.dryRun - If true, only simulate
- * @param {boolean} params.force - Force execution even if locked
- * @param {string|Date} params.closingDate - Closing date (defaults to Dec 31 of fiscal year)
- * @returns {Promise<Object>} EOY execution result
- */
 export const executeEOY = async (params = {}) => {
   const {
     fiscalYear,
@@ -2773,7 +2730,6 @@ export const executeEOY = async (params = {}) => {
     closingDate = null
   } = params;
 
-  // Validate required parameters
   if (!fiscalYear) {
     return {
       success: false,
@@ -2782,7 +2738,6 @@ export const executeEOY = async (params = {}) => {
     };
   }
 
-  // ✅ Set closing date to Dec 31 of fiscal year if not provided
   const effectiveClosingDate = closingDate || new Date(fiscalYear, 11, 31);
   const closingDateStr = effectiveClosingDate instanceof Date 
     ? effectiveClosingDate.toISOString().split('T')[0] 
@@ -2790,7 +2745,6 @@ export const executeEOY = async (params = {}) => {
 
   logger.info(`📅 Using closing date: ${closingDateStr} for FY${fiscalYear}`);
 
-  // Check if EOY is already running
   if (eoyStatus.isEOYRunning || eoyStatus.eoyState === 'IN_PROGRESS') {
     if (!force) {
       return {
@@ -2803,7 +2757,6 @@ export const executeEOY = async (params = {}) => {
     logger.warn('⚠️ Force executing EOY while already in progress', { userId });
   }
 
-  // Check if EOY is locked
   if (eoyStatus.eoyLocked && !force) {
     return {
       success: false,
@@ -2814,7 +2767,6 @@ export const executeEOY = async (params = {}) => {
     };
   }
 
-  // Update EOY status
   eoyStatus.isEOYRunning = true;
   eoyStatus.eoyState = 'IN_PROGRESS';
   eoyStatus.eoyProgress = 0;
@@ -2823,7 +2775,6 @@ export const executeEOY = async (params = {}) => {
   eoyStatus.currentFiscalYear = fiscalYear;
   eoyStatus.eoyLogs = [];
 
-  // Lock EOY
   lockEOY(`Year-End Closing FY${fiscalYear}`, userId);
 
   const startTime = Date.now();
@@ -2839,7 +2790,6 @@ export const executeEOY = async (params = {}) => {
       closingDate: closingDateStr
     });
 
-    // Log EOY start
     eoyStatus.eoyLogs.push({
       timestamp: new Date().toISOString(),
       level: 'info',
@@ -2849,20 +2799,16 @@ export const executeEOY = async (params = {}) => {
       closingDate: closingDateStr
     });
 
-    // Update progress: 10%
     eoyStatus.eoyProgress = 10;
 
-    // Import the GLAccountEOYController
     const { GLAccountEOYController } = await import('./GLAccountEOYController.js');
 
-    // Execute Year-End Closing
     eoyStatus.eoyLogs.push({
       timestamp: new Date().toISOString(),
       level: 'info',
       message: `Executing Year-End Closing for FY${fiscalYear} (${dryRun ? 'DRY RUN' : 'LIVE'})`,
     });
 
-    // Update progress: 30%
     eoyStatus.eoyProgress = 30;
 
     result = await GLAccountEOYController.executeYearEndClosing({
@@ -2871,10 +2817,9 @@ export const executeEOY = async (params = {}) => {
       organizationCode,
       branchCode,
       dryRun,
-      closingDate: effectiveClosingDate  // ✅ Pass the closing date
+      closingDate: effectiveClosingDate
     });
 
-    // Update progress based on result
     if (result.success) {
       eoyStatus.eoyProgress = 80;
       eoyStatus.eoyLogs.push({
@@ -2897,13 +2842,11 @@ export const executeEOY = async (params = {}) => {
       });
     }
 
-    // Complete
     eoyStatus.eoyProgress = 100;
     eoyStatus.isEOYRunning = false;
     eoyStatus.eoyState = result.success ? 'COMPLETED' : 'FAILED';
     eoyStatus.lastEOYRun = new Date();
 
-    // Unlock EOY
     unlockEOY(userId);
 
     const executionTime = Date.now() - startTime;
@@ -2925,7 +2868,6 @@ export const executeEOY = async (params = {}) => {
     };
 
   } catch (error) {
-    // Handle errors
     eoyStatus.isEOYRunning = false;
     eoyStatus.eoyState = 'FAILED';
     eoyStatus.eoyProgress = 0;
@@ -2940,7 +2882,6 @@ export const executeEOY = async (params = {}) => {
       message: `Year-End Closing for FY${fiscalYear} threw an exception: ${error.message}`,
     });
 
-    // Unlock EOY
     unlockEOY(userId);
 
     logger.error(`❌ Year-End Closing for FY${fiscalYear} failed with exception`, {
@@ -2960,10 +2901,6 @@ export const executeEOY = async (params = {}) => {
   }
 };
 
-/**
- * Execute Year-End Closing from API endpoint
- * POST /api/eoy/execute
- */
 export const executeYearEndClosing = async (req, res) => {
   try {
     const {
@@ -2977,7 +2914,6 @@ export const executeYearEndClosing = async (req, res) => {
       closingDate = null
     } = req.body;
 
-    // If checkOnly is true, just return the status
     if (checkOnly) {
       return res.status(200).json({
         success: true,
@@ -2994,10 +2930,8 @@ export const executeYearEndClosing = async (req, res) => {
       });
     }
 
-    // ✅ Set default closing date if not provided
     const effectiveClosingDate = closingDate || new Date(fiscalYear, 11, 31);
 
-    // Execute EOY
     const result = await executeEOY({
       fiscalYear,
       userId,
@@ -3040,10 +2974,6 @@ export const executeYearEndClosing = async (req, res) => {
   }
 };
 
-/**
- * Get EOY status from API endpoint
- * GET /api/eoy/status
- */
 export const getEOYStatusAPI = async (req, res) => {
   try {
     const status = getEOYStatus();
@@ -3067,10 +2997,6 @@ export const getEOYStatusAPI = async (req, res) => {
   }
 };
 
-/**
- * Reset EOY status from API endpoint
- * POST /api/eoy/reset
- */
 export const resetEOYStatusAPI = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?.user_name || 'system';
@@ -3092,10 +3018,6 @@ export const resetEOYStatusAPI = async (req, res) => {
   }
 };
 
-/**
- * Get EOY logs
- * GET /api/eoy/logs
- */
 export const getEOYLogs = async (req, res) => {
   try {
     const { limit = 100, level } = req.query;
@@ -3106,10 +3028,8 @@ export const getEOYLogs = async (req, res) => {
       logs = logs.filter(log => log.level === level);
     }
     
-    // Sort by timestamp descending (newest first)
     logs = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     
-    // Apply limit
     if (limit > 0) {
       logs = logs.slice(0, parseInt(limit));
     }
@@ -3136,29 +3056,556 @@ export const getEOYLogs = async (req, res) => {
   }
 };
 
+// ==================== EOM CLOSING STATUS ====================
 
-
-
-// ==================== EXPORTS ====================
-
-// Export the main functions
-export {
-  processOverdueLoans,
-  checkIfLoanIsOverdue,
-  calculateDaysOverdue,
-  getActivePenaltyRule,
-  accruePenaltyForLoan,
-  checkIfLoanShouldBeActive,
-  processLoanRepaymentDirectDebits,
-  initializeSystemDatesOS as initializeSystemDates,
-  getCurrentBusinessDateOS as getCurrentBusinessDate,
-  setBusinessDateManuallyOS as setBusinessDateManually,
-  debugDateIssuesOS as debugDateIssues,
-  getStatusOS as getStatus,
-  getSystemStatusOS as getSystemStatus,
+const eomStatus = {
+  isEOMRunning: false,
+  lastEOMRun: null,
+  nextEOMRun: null,
+  eomState: 'IDLE',
+  eomProgress: 0,
+  eomErrors: [],
+  eomWarnings: [],
+  eomLogs: [],
+  currentMonth: null,
+  currentYear: null,
+  eomLocked: false,
+  eomLockReason: null,
+  eomLockedBy: null,
+  eomLockedAt: null,
+  lastClosedMonth: null,
+  lastClosedYear: null
 };
 
-// ==================== DEFAULT EXPORT ====================
+export const isEOMRunning = () => {
+  return eomStatus.isEOMRunning || eomStatus.eomState === 'IN_PROGRESS';
+};
+
+export const isEOMLocked = () => {
+  return eomStatus.eomLocked;
+};
+
+export const lockEOM = (reason, userId) => {
+  if (eomStatus.eomLocked) {
+    logger.warn('EOM is already locked', { 
+      lockedBy: eomStatus.eomLockedBy, 
+      lockedAt: eomStatus.eomLockedAt,
+      reason: eomStatus.eomLockReason
+    });
+    return false;
+  }
+  
+  eomStatus.eomLocked = true;
+  eomStatus.eomLockReason = reason || 'EOM process in progress';
+  eomStatus.eomLockedBy = userId || 'system';
+  eomStatus.eomLockedAt = new Date();
+  
+  logger.info('🔒 EOM locked', { reason, userId });
+  return true;
+};
+
+export const unlockEOM = (userId) => {
+  if (!eomStatus.eomLocked) {
+    logger.warn('EOM is not locked');
+    return true;
+  }
+  
+  eomStatus.eomLocked = false;
+  eomStatus.eomLockReason = null;
+  eomStatus.eomLockedBy = null;
+  eomStatus.eomLockedAt = null;
+  
+  logger.info('🔓 EOM unlocked', { userId });
+  return true;
+};
+
+export const getEOMStatus = () => {
+  return {
+    ...eomStatus,
+    isRunning: eomStatus.isEOMRunning || eomStatus.eomState === 'IN_PROGRESS',
+    isLocked: eomStatus.eomLocked,
+    canRun: !eomStatus.isEOMRunning && !eomStatus.eomLocked && eomStatus.eomState !== 'IN_PROGRESS',
+    timestamp: new Date().toISOString()
+  };
+};
+
+export const resetEOMStatus = (userId) => {
+  const oldState = eomStatus.eomState;
+  const oldLocked = eomStatus.eomLocked;
+  
+  eomStatus.isEOMRunning = false;
+  eomStatus.eomState = 'IDLE';
+  eomStatus.eomProgress = 0;
+  eomStatus.eomErrors = [];
+  eomStatus.eomWarnings = [];
+  eomStatus.eomLocked = false;
+  eomStatus.eomLockReason = null;
+  eomStatus.eomLockedBy = null;
+  eomStatus.eomLockedAt = null;
+  
+  logger.info('🔄 EOM status reset', { 
+    userId, 
+    oldState, 
+    oldLocked,
+    timestamp: new Date().toISOString()
+  });
+  
+  return {
+    success: true,
+    message: 'EOM status reset successfully',
+    oldState,
+    oldLocked,
+    newState: eomStatus.eomState,
+    timestamp: new Date().toISOString()
+  };
+};
+
+export const executeEOM = async (params = {}) => {
+  const {
+    month,
+    year,
+    userId = 'system',
+    organizationCode = 1,
+    branchCode = '001',
+    dryRun = false,
+    force = false,
+    closingDate = null
+  } = params;
+
+  if (!month || !year) {
+    return {
+      success: false,
+      error: 'Month and year are required',
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  if (month < 1 || month > 12) {
+    return {
+      success: false,
+      error: 'Invalid month. Must be between 1 and 12',
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  const effectiveClosingDate = closingDate || new Date(year, month, 0);
+  const closingDateStr = effectiveClosingDate instanceof Date 
+    ? effectiveClosingDate.toISOString().split('T')[0] 
+    : effectiveClosingDate;
+
+  logger.info(`📅 Using closing date: ${closingDateStr} for ${month}/${year}`);
+
+  if (eomStatus.isEOMRunning || eomStatus.eomState === 'IN_PROGRESS') {
+    if (!force) {
+      return {
+        success: false,
+        error: 'EOM is already in progress',
+        status: eomStatus,
+        timestamp: new Date().toISOString()
+      };
+    }
+    logger.warn('⚠️ Force executing EOM while already in progress', { userId });
+  }
+
+  if (eomStatus.eomLocked && !force) {
+    return {
+      success: false,
+      error: `EOM is locked. Reason: ${eomStatus.eomLockReason}`,
+      lockedBy: eomStatus.eomLockedBy,
+      lockedAt: eomStatus.eomLockedAt,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  try {
+    const { EOMClosingPeriod } = await import('../models/EOMClosingPeriod.js');
+    const isClosed = await EOMClosingPeriod.isMonthClosed(month, year, organizationCode, branchCode);
+    
+    if (isClosed && !force) {
+      return {
+        success: false,
+        error: `Month ${month}/${year} is already closed`,
+        timestamp: new Date().toISOString()
+      };
+    }
+  } catch (error) {
+    logger.warn('⚠️ Could not check EOM closing status:', error.message);
+  }
+
+  eomStatus.isEOMRunning = true;
+  eomStatus.eomState = 'IN_PROGRESS';
+  eomStatus.eomProgress = 0;
+  eomStatus.eomErrors = [];
+  eomStatus.eomWarnings = [];
+  eomStatus.currentMonth = month;
+  eomStatus.currentYear = year;
+  eomStatus.eomLogs = [];
+
+  lockEOM(`End of Month Closing ${month}/${year}`, userId);
+
+  const startTime = Date.now();
+  let result = null;
+
+  try {
+    logger.info(`🚀 Starting End of Month Closing for ${month}/${year}`, {
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      force,
+      closingDate: closingDateStr
+    });
+
+    eomStatus.eomLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: `Starting End of Month Closing for ${month}/${year}`,
+      userId,
+      dryRun,
+      closingDate: closingDateStr
+    });
+
+    eomStatus.eomProgress = 10;
+
+    const { default: EOMController } = await import('./EOMController.js');
+
+    eomStatus.eomLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: `Executing End of Month Closing for ${month}/${year} (${dryRun ? 'DRY RUN' : 'LIVE'})`,
+    });
+
+    eomStatus.eomProgress = 30;
+
+    result = await EOMController.executeEOMClosing({
+      month,
+      year,
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      force,
+      closingDate: effectiveClosingDate
+    });
+
+    if (result.success) {
+      eomStatus.eomProgress = 80;
+      eomStatus.lastClosedMonth = month;
+      eomStatus.lastClosedYear = year;
+      eomStatus.eomLogs.push({
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        message: `End of Month Closing for ${month}/${year} completed successfully`,
+        summary: result.summary
+      });
+    } else {
+      eomStatus.eomProgress = 60;
+      eomStatus.eomErrors.push({
+        timestamp: new Date().toISOString(),
+        error: result.error || 'Unknown error occurred',
+        stack: result.stack
+      });
+      eomStatus.eomLogs.push({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: `End of Month Closing for ${month}/${year} failed: ${result.error || 'Unknown error'}`,
+      });
+    }
+
+    eomStatus.eomProgress = 100;
+    eomStatus.isEOMRunning = false;
+    eomStatus.eomState = result.success ? 'COMPLETED' : 'FAILED';
+    eomStatus.lastEOMRun = new Date();
+
+    unlockEOM(userId);
+
+    const executionTime = Date.now() - startTime;
+    logger.info(`✅ End of Month Closing completed for ${month}/${year}`, {
+      success: result.success,
+      executionTime: `${executionTime}ms`,
+      dryRun,
+      state: eomStatus.eomState
+    });
+
+    return {
+      success: result.success,
+      dryRun,
+      month,
+      year,
+      executionTime,
+      result,
+      status: { ...eomStatus },
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    eomStatus.isEOMRunning = false;
+    eomStatus.eomState = 'FAILED';
+    eomStatus.eomProgress = 0;
+    eomStatus.eomErrors.push({
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      stack: error.stack
+    });
+    eomStatus.eomLogs.push({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      message: `End of Month Closing for ${month}/${year} threw an exception: ${error.message}`,
+    });
+
+    unlockEOM(userId);
+
+    logger.error(`❌ End of Month Closing for ${month}/${year} failed with exception`, {
+      error: error.message,
+      stack: error.stack
+    });
+
+    return {
+      success: false,
+      dryRun,
+      month,
+      year,
+      error: error.message,
+      stack: error.stack,
+      status: { ...eomStatus },
+      timestamp: new Date().toISOString()
+    };
+  }
+};
+
+export const executeEndOfMonthClosing = async (req, res) => {
+  try {
+    const {
+      month,
+      year,
+      userId = req.user?.id || req.user?.user_name || 'system',
+      organizationCode = 1,
+      branchCode = '001',
+      dryRun = false,
+      force = false,
+      checkOnly = false,
+      closingDate = null
+    } = req.body;
+
+    if (checkOnly) {
+      return res.status(200).json({
+        success: true,
+        message: 'EOM status check',
+        data: {
+          canRun: !eomStatus.isEOMRunning && !eomStatus.eomLocked,
+          isRunning: eomStatus.isEOMRunning || eomStatus.eomState === 'IN_PROGRESS',
+          isLocked: eomStatus.eomLocked,
+          status: { ...eomStatus },
+          currentMonth: eomStatus.currentMonth,
+          currentYear: eomStatus.currentYear,
+          lastClosedMonth: eomStatus.lastClosedMonth,
+          lastClosedYear: eomStatus.lastClosedYear,
+          lastEOMRun: eomStatus.lastEOMRun,
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: 'Month and year are required'
+      });
+    }
+
+    const effectiveClosingDate = closingDate || new Date(year, month, 0);
+
+    const result = await executeEOM({
+      month: parseInt(month),
+      year: parseInt(year),
+      userId,
+      organizationCode,
+      branchCode,
+      dryRun,
+      force,
+      closingDate: effectiveClosingDate
+    });
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'EOM execution failed',
+        data: result,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `End of Month Closing for ${result.month}/${result.year} executed successfully${dryRun ? ' (DRY RUN)' : ''}`,
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('❌ Failed to execute End of Month Closing:', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to execute End of Month Closing',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+export const getEOMStatusAPI = async (req, res) => {
+  try {
+    const status = getEOMStatus();
+    
+    let closedPeriods = [];
+    let latestClosed = null;
+    
+    try {
+      const { EOMClosingPeriod } = await import('../models/EOMClosingPeriod.js');
+      const organizationCode = parseInt(req.query.organizationCode) || 1;
+      const branchCode = req.query.branchCode || '001';
+      
+      closedPeriods = await EOMClosingPeriod.getClosedPeriods(organizationCode, branchCode);
+      latestClosed = await EOMClosingPeriod.getLatestClosedPeriod(organizationCode, branchCode);
+    } catch (error) {
+      logger.warn('⚠️ Could not fetch EOM closing periods:', error.message);
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...status,
+        canRun: !status.isRunning && !status.isLocked,
+        closedPeriods,
+        latestClosed,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    logger.error('❌ Failed to get EOM status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get EOM status',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+export const resetEOMStatusAPI = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?.user_name || 'system';
+    const result = resetEOMStatus(userId);
+    
+    return res.status(200).json({
+      success: true,
+      ...result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('❌ Failed to reset EOM status:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to reset EOM status',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+export const getEOMLogs = async (req, res) => {
+  try {
+    const { limit = 100, level } = req.query;
+    
+    let logs = eomStatus.eomLogs || [];
+    
+    if (level) {
+      logs = logs.filter(log => log.level === level);
+    }
+    
+    logs = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    if (limit > 0) {
+      logs = logs.slice(0, parseInt(limit));
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        logs,
+        count: logs.length,
+        total: eomStatus.eomLogs?.length || 0,
+        errors: eomStatus.eomErrors || [],
+        warnings: eomStatus.eomWarnings || []
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('❌ Failed to get EOM logs:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get EOM logs',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+export const checkEOMDateClosure = async (req, res) => {
+  try {
+    const { date, organizationCode = 1, branchCode = '001' } = req.query;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Date is required'
+      });
+    }
+
+    const d = new Date(date);
+    const month = d.getMonth() + 1;
+    const year = d.getFullYear();
+
+    const { EOMClosingPeriod } = await import('../models/EOMClosingPeriod.js');
+    const isClosed = await EOMClosingPeriod.isMonthClosed(
+      parseInt(month), 
+      parseInt(year), 
+      parseInt(organizationCode), 
+      branchCode
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        date: d.toISOString().split('T')[0],
+        month,
+        year,
+        isClosed,
+        canPost: !isClosed,
+        message: isClosed ? `Cannot post to ${month}/${year}. Period is closed.` : `Can post to ${month}/${year}.`,
+        organizationCode,
+        branchCode,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('❌ Failed to check EOM date closure:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check date closure',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+// ==================== EXPORTS ====================
 
 export default {
   triggerEndOfDayProcess,
@@ -3183,5 +3630,32 @@ export default {
   setNextBusinessDate: setNextBusinessDateOS,
   processLoanRepaymentDirectDebits,
   processOverdueLoans,
-  processEmailStatements // ✅ ADDED export
+  getServerBusinessDate,
+  getServerTimeFromDB,
+  getCurrentSystemStatus,
+  processEmailStatements,
+  initializeEmailStatementService,
+  // EOY exports
+  executeEOY,
+  executeYearEndClosing,
+  getEOYStatus: getEOYStatusAPI,
+  resetEOYStatus: resetEOYStatusAPI,
+  getEOYLogs,
+  isEOYRunning,
+  isEOYLocked,
+  lockEOY,
+  unlockEOY,
+  eoyStatus,
+  // EOM exports
+  executeEOM,
+  executeEndOfMonthClosing,
+  getEOMStatus: getEOMStatusAPI,
+  resetEOMStatus: resetEOMStatusAPI,
+  getEOMLogs,
+  isEOMRunning,
+  isEOMLocked,
+  lockEOM,
+  unlockEOM,
+  checkEOMDateClosure,
+  eomStatus
 };

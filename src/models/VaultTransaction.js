@@ -1,4 +1,4 @@
-﻿// src/models/VaultTransaction.js - Class-based
+// src/models/VaultTransaction.js - Class-based
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 

@@ -1,4 +1,4 @@
-﻿// models/Banks.js
+// models/Banks.js
 import { DataTypes, Model, Op } from 'sequelize';
 import { sequelize } from '../../config/db.js';
 

@@ -1,4 +1,4 @@
-﻿// src/models/Customer.js
+// src/models/Customer.js
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -83,7 +83,22 @@ Customer.init(
       field: 'CUST_CAT'
     },
     customerType: {
-      type: DataTypes.ENUM('NORMAL', 'RESTRICTED', 'VIP', 'INDIVIDUAL', 'STUDENT', 'MINOR', 'SME', 'CORPORATE', 'PREMIUM'),
+      type: DataTypes.ENUM(
+        'NORMAL', 
+        'RESTRICTED', 
+        'VIP', 
+        'INDIVIDUAL', 
+        'STUDENT', 
+        'MINOR', 
+        'SME', 
+        'CORPORATE', 
+        'PREMIUM',
+        'NON-RESIDENT',
+        'FOREIGN',
+        'GOVERNMENT',
+        'NGO',
+        'FOREIGN_DIPLOMAT'
+      ),
       allowNull: false,
       defaultValue: 'NORMAL',
       field: 'customer_type'
@@ -170,6 +185,16 @@ Customer.init(
       allowNull: true,
       field: 'CREATED_BY'
     },
+    CREATED_BY_FULLNAME: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'CREATED_BY_FULLNAME'
+    },
+    CREATED_BY_ID: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: 'CREATED_BY_ID'
+    },
     USER_ID: {
       type: DataTypes.STRING(255),
       allowNull: true,
@@ -210,10 +235,50 @@ Customer.init(
       allowNull: true,
       field: 'OPERATIONS_CRNCY_ID'
     },
+    // ============================================
+    // ? EMPLOYMENT FIELDS
+    // ============================================
     EMP_ST: {
       type: DataTypes.STRING(50),
       allowNull: true,
-      field: 'EMP_ST'
+      field: 'EMP_ST',
+      comment: 'Employment status'
+    },
+    EMPLOYER_NAME: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'EMPLOYER_NAME',
+      comment: 'Name of employer or business'
+    },
+    EMPLOYER_ADDRESS: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'EMPLOYER_ADDRESS',
+      comment: 'Address of employer or business'
+    },
+    EMPLOYER_PHONE: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      field: 'EMPLOYER_PHONE',
+      comment: 'Phone number of employer or business'
+    },
+    EMPLOYER_EMAIL: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      field: 'EMPLOYER_EMAIL',
+      comment: 'Email address of employer or business'
+    },
+    JOB_TITLE: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      field: 'JOB_TITLE',
+      comment: 'Job title or position'
+    },
+    YEARS_WORKED: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+      field: 'YEARS_WORKED',
+      comment: 'Number of years at current employer'
     },
     ORGANISATION_NM: {
       type: DataTypes.STRING(255),
@@ -327,7 +392,6 @@ Customer.init(
       allowNull: true,
       field: 'REJECTED_DT'
     },
-    // ✅ REJECTION_REASON field for storing rejection reason
     REJECTION_REASON: {
       type: DataTypes.TEXT,
       allowNull: true,
@@ -347,7 +411,7 @@ Customer.init(
       comment: 'Timestamp when customer joined the group'
     },
     // =============================================
-    // ✅ EXTERNAL BANK TRANSFER FIELDS
+    // ? EXTERNAL BANK TRANSFER FIELDS
     // =============================================
     customer_code: {
       type: DataTypes.STRING(20),
@@ -511,7 +575,7 @@ Customer.prototype.getGroupDetails = async function() {
   }
 };
 
-// ✅ Updated getSummary to include external transfer fields
+// ? Updated getSummary to include employment and external transfer fields
 Customer.prototype.getSummary = function() {
   return {
     customerId: this.CUST_ID,
@@ -529,11 +593,20 @@ Customer.prototype.getSummary = function() {
     businessUnit: this.BU_ID,
     kycLevel: this.KYC_LEVEL,
     isPep: this.IS_PEP,
+    customerType: this.customerType,
     groupId: this.groupId,
     groupJoinedAt: this.groupJoinedAt,
     createdDate: this.CREATE_DT,
     rejectionReason: this.REJECTION_REASON || null,
-    // ✅ External transfer fields
+    // ? Employment fields
+    employmentStatus: this.EMP_ST,
+    employerName: this.EMPLOYER_NAME,
+    employerAddress: this.EMPLOYER_ADDRESS,
+    employerPhone: this.EMPLOYER_PHONE,
+    employerEmail: this.EMPLOYER_EMAIL,
+    jobTitle: this.JOB_TITLE,
+    yearsWorked: this.YEARS_WORKED,
+    // ? External transfer fields
     customerCode: this.customer_code,
     paymentReference: this.payment_reference,
     externalAccountNumber: this.external_account_number,
@@ -564,7 +637,20 @@ Customer.prototype.isBVNVerified = function() {
   return this.BVN_VERIFIED === true;
 };
 
-// ✅ New method to get external transfer info
+// ? New method to get employment info
+Customer.prototype.getEmploymentInfo = function() {
+  return {
+    employmentStatus: this.EMP_ST,
+    employerName: this.EMPLOYER_NAME,
+    employerAddress: this.EMPLOYER_ADDRESS,
+    employerPhone: this.EMPLOYER_PHONE,
+    employerEmail: this.EMPLOYER_EMAIL,
+    jobTitle: this.JOB_TITLE,
+    yearsWorked: this.YEARS_WORKED
+  };
+};
+
+// ? New method to get external transfer info
 Customer.prototype.getExternalTransferInfo = function() {
   return {
     customerCode: this.customer_code,
@@ -663,7 +749,15 @@ Customer.getByGroupCode = async function(groupCode, options = {}) {
   if (status) where.REC_ST = status;
   const { count, rows } = await Customer.findAndCountAll({
     where,
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'NIN', 'status', 'REC_ST', 'REJECTION_REASON', 'groupJoinedAt', 'customer_code', 'evolution_account_number', 'external_account_number', 'external_bank_name'],
+    attributes: [
+      'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 
+      'EMAIL_ADDRESS', 'PHONE_NO', 'BVN', 'NIN', 'status', 'REC_ST', 
+      'REJECTION_REASON', 'groupJoinedAt', 'customer_code', 'evolution_account_number',
+      'external_account_number', 'external_bank_name', 'customerType',
+      // ? Employment fields
+      'EMP_ST', 'EMPLOYER_NAME', 'EMPLOYER_ADDRESS', 'EMPLOYER_PHONE', 
+      'EMPLOYER_EMAIL', 'JOB_TITLE', 'YEARS_WORKED'
+    ],
     offset,
     limit: parseInt(limit),
     order: [['groupJoinedAt', 'DESC']]
@@ -716,7 +810,15 @@ Customer.bulkCreateWithGroups = async function(customersData, options = {}) {
 
 Customer.getWithBVN = async function(customerId) {
   return this.findByPk(customerId, {
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT', 'PHONE_NO', 'EMAIL_ADDRESS', 'status', 'REC_ST', 'REJECTION_REASON', 'groupId', 'groupJoinedAt', 'customer_code', 'evolution_account_number']
+    attributes: [
+      'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+      'BVN', 'BVN_VERIFIED', 'BVN_VERIFIED_AT', 'PHONE_NO', 
+      'EMAIL_ADDRESS', 'status', 'REC_ST', 'REJECTION_REASON', 
+      'groupId', 'groupJoinedAt', 'customer_code', 'evolution_account_number',
+      'customerType',
+      // ? Employment fields
+      'EMP_ST', 'EMPLOYER_NAME', 'EMPLOYER_ADDRESS', 'JOB_TITLE'
+    ]
   });
 };
 
@@ -724,7 +826,14 @@ Customer.getLoanDetails = async function(customerId) {
   try {
     const LoanAccount = (await import('./LoanAccount.js')).default;
     return await this.findByPk(customerId, {
-      attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'REJECTION_REASON', 'groupId', 'groupJoinedAt', 'customer_code', 'evolution_account_number'],
+      attributes: [
+        'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+        'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 
+        'REJECTION_REASON', 'groupId', 'groupJoinedAt', 
+        'customer_code', 'evolution_account_number', 'customerType',
+        // ? Employment fields
+        'EMP_ST', 'EMPLOYER_NAME', 'EMPLOYER_ADDRESS', 'JOB_TITLE'
+      ],
       include: [{ model: LoanAccount, as: 'loanAccounts', required: false, separate: true, limit: 10, order: [['created_at', 'DESC']] }]
     });
   } catch (error) {
@@ -736,21 +845,41 @@ Customer.getLoanDetails = async function(customerId) {
 Customer.findByBVN = async function(bvn) {
   return this.findOne({ 
     where: { BVN: bvn }, 
-    attributes: ['id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 'REJECTION_REASON', 'groupId', 'customer_code', 'evolution_account_number'] 
+    attributes: [
+      'id', 'CUST_ID', 'FIRST_NAME', 'LAST_NAME', 'BVN', 
+      'BVN_VERIFIED', 'PHONE_NO', 'EMAIL_ADDRESS', 
+      'REJECTION_REASON', 'groupId', 'customer_code', 
+      'evolution_account_number', 'customerType',
+      // ? Employment fields
+      'EMP_ST', 'EMPLOYER_NAME', 'JOB_TITLE'
+    ] 
   });
 };
 
 Customer.findByCustomerCode = async function(customerCode) {
   return this.findOne({ 
     where: { customer_code: customerCode },
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 'evolution_account_number', 'external_account_number', 'external_bank_name']
+    attributes: [
+      'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+      'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 
+      'evolution_account_number', 'external_account_number', 
+      'external_bank_name', 'customerType',
+      // ? Employment fields
+      'EMP_ST', 'EMPLOYER_NAME', 'JOB_TITLE'
+    ]
   });
 };
 
 Customer.findByEvolutionAccount = async function(accountNumber) {
   return this.findOne({ 
     where: { evolution_account_number: accountNumber },
-    attributes: ['id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 'evolution_account_number']
+    attributes: [
+      'id', 'CUST_ID', 'CUST_NO', 'FIRST_NAME', 'LAST_NAME', 
+      'CUST_NM', 'PHONE_NO', 'EMAIL_ADDRESS', 'customer_code', 
+      'evolution_account_number', 'customerType',
+      // ? Employment fields
+      'EMP_ST', 'EMPLOYER_NAME'
+    ]
   });
 };
 

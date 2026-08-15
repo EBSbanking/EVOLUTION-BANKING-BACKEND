@@ -1,6 +1,6 @@
+// src/routes/GLAccountTransactionRoutes.js
 import express from 'express';
 import {
-
   getGLAccountByAcctNo,
   createGLAccountTransaction,
   createDoubleEntryTransaction,
@@ -13,8 +13,8 @@ import {
   rejectGLTransaction,
   getPendingTransactions,
   processEODGLTransactionsService,
-} from '../controllers/GLAccountTransactionController.js'; // Consolidated imports from controller
-
+} from '../controllers/GLAccountTransactionController.js';
+import { validateEOMClosure } from '../middlewares/validateEOMClosure.js';
 
 const router = express.Router();
 
@@ -31,21 +31,27 @@ router.get('/gl-accounts/:glAcctNo', getGLAccountByAcctNo);
  * GL Transactions Routes
  * ===========================
  */
-router.post('/gl-accounts/transactions', createGLAccountTransaction);
-router.post('/transactions/double-entry', createDoubleEntryTransaction);
+
+// ✅ Create GL Transaction - with EOM validation
+router.post('/gl-accounts/transactions', validateEOMClosure, createGLAccountTransaction);
+
+// ✅ Create Double Entry Transaction - with EOM validation
+router.post('/transactions/double-entry', validateEOMClosure, createDoubleEntryTransaction);
+
+// Get GL Transactions
 router.get('/gl-accounts/transactions', getGLAccountTransactions);
 
 // Get pending transactions
 router.get('/gl-accounts/transactions/pending', getPendingTransactions);
 
-// Get transaction by ID (handles ObjectId)
+// Get transaction by ID
 router.get('/gl-accounts/transactions/:id', getGLAccountTransactionById);
 
 // Transactions by account number
 router.get('/gl-accounts/:glAcctNo/transactions', getGLAccountTransactionByAcctNo);
 
-// Update transaction
-router.put('/gl-accounts/transactions/:id', updateGLAccountTransaction);
+// ✅ Update transaction - with EOM validation
+router.put('/gl-accounts/transactions/:id', validateEOMClosure, updateGLAccountTransaction);
 
 // Delete transaction
 router.delete('/gl-accounts/transactions/:id', deleteGLAccountTransaction);
@@ -85,6 +91,16 @@ router.post('/gl-accounts/transactions/eod-process', async (req, res) => {
       error: error.message,
     });
   }
+});
+
+// Health check
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'GL Account Transaction API is running',
+    eom_validation: true,
+    timestamp: new Date().toISOString()
+  });
 });
 
 export default router;

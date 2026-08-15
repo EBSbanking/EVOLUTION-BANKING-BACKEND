@@ -1,4 +1,4 @@
-﻿// src/models/Deposit.js
+// src/models/Deposit.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

@@ -1,4 +1,4 @@
-﻿// models/GroupSavings.js - UPDATED with automatic column creation
+// models/GroupSavings.js - UPDATED with automatic column creation
 
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
@@ -28,7 +28,7 @@ const safeString = (value, defaultValue = '') => {
 
 class GroupSavings extends Model {
   // ============================================
-  // 🔧 AUTO‑FIX MISSING COLUMNS
+  // ?? AUTO-FIX MISSING COLUMNS
   // ============================================
   static async ensureColumns() {
     const columns = ['LEDGER_BAL', 'CLEARED_BAL', 'AVAILABLE_BALANCE'];
@@ -43,15 +43,15 @@ class GroupSavings extends Model {
           { replacements: [tableName, col] }
         );
         if (results.length === 0) {
-          // Column missing – add it
-          console.log(`🔧 Adding missing column ${col} to ${tableName}...`);
+          // Column missing � add it
+          console.log(`?? Adding missing column ${col} to ${tableName}...`);
           await sequelize.query(
             `ALTER TABLE \`${tableName}\` ADD COLUMN \`${col}\` DECIMAL(15,2) DEFAULT 0`
           );
-          console.log(`✅ Column ${col} added successfully.`);
+          console.log(`? Column ${col} added successfully.`);
         }
       } catch (error) {
-        console.error(`❌ Failed to ensure column ${col}:`, error.message);
+        console.error(`? Failed to ensure column ${col}:`, error.message);
       }
     }
   }
@@ -501,6 +501,6 @@ GroupSavings.hasMany(Group, {
   as: 'savingsAccounts'
 });
 
-console.log('✅ GroupSavings model loaded with associations');
+console.log('? GroupSavings model loaded with associations');
 
 export default GroupSavings;

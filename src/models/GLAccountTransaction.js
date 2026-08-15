@@ -1,4 +1,4 @@
-﻿// models/GLAccountTransaction.js - COMPLETE FIXED VERSION
+// models/GLAccountTransaction.js - COMPLETE FIXED VERSION
 import { DataTypes, Op, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 import Ledger from './Ledger.js';
@@ -71,7 +71,7 @@ class GLAccountTransaction extends Model {
   static async updateLedgerBalanceDirect(glAccountNo, amount, isCredit, options = {}) {
     try {
       if (!glAccountNo) {
-        logger.warn('⚠️ No GL account provided for balance update');
+        logger.warn('?? No GL account provided for balance update');
         return null;
       }
 
@@ -82,18 +82,18 @@ class GLAccountTransaction extends Model {
       });
 
       if (!ledger) {
-        logger.warn(`⚠️ Ledger account not found: ${glAccountNo}`);
+        logger.warn(`?? Ledger account not found: ${glAccountNo}`);
         return null;
       }
 
       // Check if posting is allowed
       if (!ledger.POST_ALLOW) {
-        logger.warn(`⚠️ Posting not allowed for account ${glAccountNo}`);
+        logger.warn(`?? Posting not allowed for account ${glAccountNo}`);
         return null;
       }
 
       if (ledger.REC_ST !== 'Active') {
-        logger.warn(`⚠️ Account ${glAccountNo} is not active (Status: ${ledger.REC_ST})`);
+        logger.warn(`?? Account ${glAccountNo} is not active (Status: ${ledger.REC_ST})`);
         return null;
       }
 
@@ -102,7 +102,7 @@ class GLAccountTransaction extends Model {
       const amountNum = parseFloat(amount) || 0;
 
       if (amountNum <= 0) {
-        logger.warn(`⚠️ Invalid amount: ${amount}`);
+        logger.warn(`?? Invalid amount: ${amount}`);
         return null;
       }
 
@@ -124,7 +124,7 @@ class GLAccountTransaction extends Model {
 
       // Check for negative balance
       if (newBalance < 0 && !ledger.ALLOW_BAL_SWING_FG) {
-        logger.warn(`⚠️ Negative balance (${newBalance}) not allowed for account ${glAccountNo}`);
+        logger.warn(`?? Negative balance (${newBalance}) not allowed for account ${glAccountNo}`);
         return null;
       }
 
@@ -136,11 +136,11 @@ class GLAccountTransaction extends Model {
 
       await ledger.save(options);
       
-      logger.info(`✅ Updated ledger ${glAccountNo}: ${isDebit ? 'DEBIT' : 'CREDIT'} ${amountNum}, New Balance: ${newBalance}`);
+      logger.info(`? Updated ledger ${glAccountNo}: ${isDebit ? 'DEBIT' : 'CREDIT'} ${amountNum}, New Balance: ${newBalance}`);
       
       return ledger;
     } catch (error) {
-      logger.error(`❌ Failed to update ledger ${glAccountNo}:`, error.message);
+      logger.error(`? Failed to update ledger ${glAccountNo}:`, error.message);
       // Don't throw - just log the error and return null
       return null;
     }
@@ -204,7 +204,7 @@ class GLAccountTransaction extends Model {
         branchCode: branchCode || '001',
       }, { transaction });
 
-      // ✅ Update ledger balances directly
+      // ? Update ledger balances directly
       if (status === 'POSTED') {
         // Debit the debit account (decrease if liability, increase if asset)
         await this.updateLedgerBalanceDirect(
@@ -228,14 +228,14 @@ class GLAccountTransaction extends Model {
         await transaction.commit();
       }
 
-      logger.info(`✅ GL Transaction processed: ${transactionId} - ${debitAccount} DR ${amountNum}, ${creditAccount} CR ${amountNum}`);
+      logger.info(`? GL Transaction processed: ${transactionId} - ${debitAccount} DR ${amountNum}, ${creditAccount} CR ${amountNum}`);
       
       return glTransaction;
     } catch (error) {
       if (!options.transaction && !transactionCommitted) {
         await transaction.rollback();
       }
-      logger.error('❌ GL Transaction failed:', error.message);
+      logger.error('? GL Transaction failed:', error.message);
       throw error;
     }
   }
@@ -295,7 +295,7 @@ class GLAccountTransaction extends Model {
         branchCode: branchCode || '001',
       }, { transaction });
 
-      // ✅ Update ledger balance directly
+      // ? Update ledger balance directly
       if (status === 'POSTED') {
         await this.updateLedgerBalanceDirect(
           glAccountNo,
@@ -310,14 +310,14 @@ class GLAccountTransaction extends Model {
         await transaction.commit();
       }
 
-      logger.info(`✅ Single GL Transaction processed: ${transactionId} - ${glAccountNo} ${transactionType} ${amountNum}`);
+      logger.info(`? Single GL Transaction processed: ${transactionId} - ${glAccountNo} ${transactionType} ${amountNum}`);
       
       return glTransaction;
     } catch (error) {
       if (!options.transaction && !transactionCommitted) {
         await transaction.rollback();
       }
-      logger.error('❌ Single GL Transaction failed:', error.message);
+      logger.error('? Single GL Transaction failed:', error.message);
       throw error;
     }
   }
@@ -358,7 +358,7 @@ class GLAccountTransaction extends Model {
       
       await existing.save({ transaction });
 
-      // ✅ Reverse ledger balances
+      // ? Reverse ledger balances
       const amountNum = parseFloat(existing.AMOUNT);
       
       // Reverse DR (credit it back)
@@ -386,14 +386,14 @@ class GLAccountTransaction extends Model {
         await transaction.commit();
       }
 
-      logger.info(`✅ Transaction ${existing.TRANSACTION_ID} reversed successfully`);
+      logger.info(`? Transaction ${existing.TRANSACTION_ID} reversed successfully`);
       
       return existing;
     } catch (error) {
       if (!options.transaction && !transactionCommitted) {
         await transaction.rollback();
       }
-      logger.error('❌ Transaction reversal failed:', error.message);
+      logger.error('? Transaction reversal failed:', error.message);
       throw error;
     }
   }
@@ -760,9 +760,9 @@ GLAccountTransaction.init(
             );
           }
           
-          logger.info(`✅ Ledger balances updated for transaction ${transaction.TRANSACTION_ID}`);
+          logger.info(`? Ledger balances updated for transaction ${transaction.TRANSACTION_ID}`);
         } catch (error) {
-          logger.error('❌ afterCreate ledger update failed:', error.message);
+          logger.error('? afterCreate ledger update failed:', error.message);
           // Don't throw - allow transaction to complete even if balance update fails
         }
       },
@@ -793,7 +793,7 @@ GLAccountTransaction.init(
                 { transaction: options.transaction }
               );
             }
-            logger.info(`✅ Ledger balances posted for transaction ${transaction.TRANSACTION_ID}`);
+            logger.info(`? Ledger balances posted for transaction ${transaction.TRANSACTION_ID}`);
           }
           
           // If status changed to REVERSED (reverse the transaction)
@@ -819,10 +819,10 @@ GLAccountTransaction.init(
                 { transaction: options.transaction }
               );
             }
-            logger.info(`✅ Ledger balances reversed for transaction ${transaction.TRANSACTION_ID}`);
+            logger.info(`? Ledger balances reversed for transaction ${transaction.TRANSACTION_ID}`);
           }
         } catch (error) {
-          logger.error('❌ afterUpdate ledger update failed:', error.message);
+          logger.error('? afterUpdate ledger update failed:', error.message);
         }
       },
       beforeUpdate: (transaction, options) => {

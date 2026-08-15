@@ -8,175 +8,268 @@ import sequelize from '../../config/db.js';
 import { emailTransporter, emailConfig } from '../utils/emailService.js';
 
 // ============================================
-// SUPERVISOR ROLE DEFINITIONS
+// AI-POWERED: Get Supervisors by BU ONLY
+// Uses intelligent matching to find the right people
 // ============================================
-const SUPERVISOR_ROLES = [
-  2,  // Head Banking Services
-  6,  // Internal Control Manager
-  7,  // Head of Credit
-  8,  // Internal Audit Manager
-  13, // Financial Accountant Manager
-  14, // Chief Financial Officer
-  15, // Chief Executive Officer
-  17, // Loan Processing Supervisor
-  19, // Branch Manager
-  20, // Branch Operation Supervisor
-  21, // Chief Operation Officer
-  31, // Customer Relationship Supervisor
-  32  // Recovery Team Lead
-];
 
-const EXCLUDED_ROLES = [28, 29, 30]; // Customer Service Officer (CSO), Teller, Head Teller
+/**
+ * AI-Powered: Find the best supervisor for a given BU
+ * Uses multiple strategies with intelligent fallback
+ */
+const findBestSupervisorForBU = async (BU_ID, options = {}) => {
+  const { 
+    excludeRoles = [28, 29, 30], // CSO, Teller, Head Teller
+    fallbackToAdmin = true,
+    includeAllSupervisors = false
+  } = options;
+
+  if (!BU_ID) {
+    console.warn('⚠️ No BU_ID provided');
+    return { success: false, recipients: [], strategy: 'no_bu_id' };
+  }
+
+  console.log(`🤖 AI: Finding best supervisor for BU: ${BU_ID}`);
+
+  try {
+    // ============================================
+    // STRATEGY 1: Find users directly in this BU
+    // ============================================
+    let users = await User.findAll({
+      where: {
+        is_active: 'Active',
+        [Op.or]: [
+          { BU_ID: BU_ID },
+          { main_business_unit: BU_ID },
+          { responsibility_centre: BU_ID }
+        ]
+      },
+      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre', 'role', 'is_supervisor']
+    });
+
+    console.log(`📊 Found ${users.length} users in BU ${BU_ID}`);
+
+    if (users.length === 0) {
+      console.log(`⚠️ No users found in BU ${BU_ID}`);
+      
+      // STRATEGY: Find users with matching main_business_unit or responsibility_centre
+      const fallbackUsers = await User.findAll({
+        where: {
+          is_active: 'Active',
+          [Op.or]: [
+            { main_business_unit: BU_ID },
+            { responsibility_centre: BU_ID }
+          ]
+        },
+        attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre', 'role', 'is_supervisor']
+      });
+
+      if (fallbackUsers.length > 0) {
+        users = fallbackUsers;
+        console.log(`📊 Found ${users.length} users via fallback search`);
+      } else {
+        return { success: false, recipients: [], strategy: 'no_users' };
+      }
+    }
+
+    // ============================================
+    // STRATEGY 2: Filter out excluded roles
+    // ============================================
+    let filteredUsers = users.filter(u => {
+      const roleId = Number(u.BU_ROLE_ID);
+      return !excludeRoles.includes(roleId);
+    });
+
+    console.log(`📊 After filtering excluded roles: ${filteredUsers.length} users`);
+
+    if (filteredUsers.length === 0) {
+      return { success: false, recipients: [], strategy: 'all_excluded' };
+    }
+
+    // ============================================
+    // STRATEGY 3: Find users marked as supervisors
+    // ============================================
+    let supervisors = filteredUsers.filter(u => {
+      return u.is_supervisor === true || 
+             u.is_supervisor === 'true' || 
+             u.is_supervisor === 1 ||
+             u.is_supervisor === '1';
+    });
+
+    console.log(`📊 Found ${supervisors.length} users marked as supervisors`);
+
+    // ============================================
+    // STRATEGY 4: Find users with supervisor-like role names
+    // ============================================
+    if (supervisors.length === 0) {
+      console.log(`🔍 No explicit supervisors found, checking role names...`);
+      
+      const supervisorPatterns = [
+        'Manager', 'Supervisor', 'Head', 'Chief', 'Director', 
+        'Lead', 'Officer', 'Controller', 'Executive', 'Administrator',
+        'Team Lead', 'Team Leader', 'Senior'
+      ];
+      
+      supervisors = filteredUsers.filter(u => {
+        const roleName = (u.role || '').toLowerCase();
+        const userName = (u.user_name || '').toLowerCase();
+        
+        // Check role name patterns
+        const hasPattern = supervisorPatterns.some(pattern => 
+          roleName.includes(pattern.toLowerCase())
+        );
+        
+        // Check if username suggests supervisor (e.g., "manager", "supervisor")
+        const userHasPattern = supervisorPatterns.some(pattern => 
+          userName.includes(pattern.toLowerCase())
+        );
+        
+        return hasPattern || userHasPattern;
+      });
+      
+      console.log(`📊 Found ${supervisors.length} users with supervisor-like roles`);
+    }
+
+    // ============================================
+    // STRATEGY 5: Find users with high role IDs (seniority)
+    // ============================================
+    if (supervisors.length === 0 && filteredUsers.length > 0) {
+      console.log(`🔍 No supervisors found, finding most senior users...`);
+      
+      // Sort by BU_ROLE_ID (higher = more senior)
+      supervisors = filteredUsers
+        .sort((a, b) => {
+          const roleA = Number(a.BU_ROLE_ID) || 0;
+          const roleB = Number(b.BU_ROLE_ID) || 0;
+          return roleB - roleA;
+        })
+        .slice(0, 3); // Take top 3 most senior
+      
+      console.log(`📊 Selected ${supervisors.length} most senior users`);
+    }
+
+    // ============================================
+    // STRATEGY 6: If includeAll, return all filtered users
+    // ============================================
+    if (supervisors.length === 0 && includeAllSupervisors) {
+      supervisors = filteredUsers;
+      console.log(`📊 Returning all ${supervisors.length} filtered users`);
+    }
+
+    // ============================================
+    // STRATEGY 7: Fallback to Admin
+    // ============================================
+    if (supervisors.length === 0 && fallbackToAdmin) {
+      console.log(`🔍 No supervisors found, falling back to Admin users...`);
+      
+      const adminUsers = await User.findAll({
+        where: {
+          is_active: 'Active',
+          [Op.or]: [
+            { BU_ROLE_ID: '1' },
+            { role: { [Op.like]: '%Admin%' } },
+            { user_name: { [Op.in]: ['admin', 'superadmin', 'system'] } }
+          ]
+        },
+        attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre', 'role', 'is_supervisor']
+      });
+      
+      supervisors = adminUsers;
+      console.log(`📊 Falling back to ${supervisors.length} Admin users`);
+    }
+
+    // ============================================
+    // FINAL: Return results
+    // ============================================
+    if (supervisors.length > 0) {
+      console.log(`✅ AI: Found ${supervisors.length} supervisor(s) for BU ${BU_ID}:`);
+      supervisors.forEach(u => {
+        console.log(`  - ${u.user_name} (Role: ${u.BU_ROLE_ID || u.role || 'N/A'}, ID: ${u.id})`);
+      });
+      return { success: true, recipients: supervisors, strategy: 'ai_detected' };
+    }
+
+    console.log(`❌ AI: No supervisors found for BU ${BU_ID}`);
+    return { success: false, recipients: [], strategy: 'none' };
+
+  } catch (error) {
+    console.error('❌ AI: Error finding supervisors:', error);
+    return { success: false, recipients: [], strategy: 'error', error: error.message };
+  }
+};
 
 // ============================================
 // HELPER: Get BU-Specific Supervisor Recipients
 // ============================================
 const getBUApprovalRecipients = async (BU_ID) => {
   if (!BU_ID) {
-    console.warn('⚠️ No BU_ID provided for notification recipients');
+    console.warn('⚠️ No BU_ID provided');
     return [];
   }
 
   try {
-    console.log(`🔍 Looking for users for BU: ${BU_ID}`);
+    console.log(`🔍 AI: Getting supervisors for BU: ${BU_ID}`);
     
-    // STRATEGY 1: Find supervisors with BU_ID = BU_ID
-    let users = await User.findAll({
+    // Use AI-powered function to find supervisors
+    const result = await findBestSupervisorForBU(BU_ID, {
+      excludeRoles: [28, 29, 30],
+      fallbackToAdmin: true,
+      includeAllSupervisors: false
+    });
+
+    if (result.success && result.recipients.length > 0) {
+      console.log(`✅ AI: Found ${result.recipients.length} supervisor(s) for BU ${BU_ID} (Strategy: ${result.strategy})`);
+      return result.recipients;
+    }
+
+    // ============================================
+    // ULTIMATE FALLBACK: Get any user in the BU
+    // ============================================
+    console.log(`⚠️ AI: No supervisors found, getting any user in BU ${BU_ID}`);
+    
+    const anyUser = await User.findOne({
       where: {
-        BU_ROLE_ID: { [Op.in]: SUPERVISOR_ROLES },
-        BU_ID: BU_ID,
-        is_active: 'Active'
+        is_active: 'Active',
+        [Op.or]: [
+          { BU_ID: BU_ID },
+          { main_business_unit: BU_ID },
+          { responsibility_centre: BU_ID }
+        ]
       },
-      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre']
+      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID']
     });
     
-    if (users.length > 0) {
-      console.log(`✅ Found ${users.length} supervisor(s) with BU_ID = ${BU_ID}`);
-      users.forEach(u => {
-        console.log(`  - ${u.user_name} (BU_ROLE_ID: ${u.BU_ROLE_ID}) - BU: ${u.BU_ID}`);
-      });
-      return users;
+    if (anyUser) {
+      console.log(`✅ Found any user in BU ${BU_ID}: ${anyUser.user_name}`);
+      return [anyUser];
     }
     
-    // STRATEGY 2: Find supervisors with main_business_unit = BU_ID
-    console.log(`⚠️ No users found with BU_ID = ${BU_ID}, checking main_business_unit...`);
-    
-    users = await User.findAll({
+    // ============================================
+    // FINAL FALLBACK: Get Admin
+    // ============================================
+    console.log(`❌ No users found in BU ${BU_ID}, falling back to Admin`);
+    const admin = await User.findOne({
       where: {
-        BU_ROLE_ID: { [Op.in]: SUPERVISOR_ROLES },
-        main_business_unit: BU_ID,
-        is_active: 'Active'
-      },
-      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre']
+        is_active: 'Active',
+        BU_ROLE_ID: '1'
+      }
     });
     
-    if (users.length > 0) {
-      console.log(`✅ Found ${users.length} supervisor(s) with main_business_unit = ${BU_ID}`);
-      users.forEach(u => {
-        console.log(`  - ${u.user_name} (BU_ROLE_ID: ${u.BU_ROLE_ID}) - main_business_unit: ${u.main_business_unit}`);
-      });
-      return users;
-    }
-    
-    // STRATEGY 3: Find supervisors with responsibility_centre = BU_ID
-    console.log(`⚠️ No users found, checking responsibility_centre...`);
-    
-    users = await User.findAll({
-      where: {
-        BU_ROLE_ID: { [Op.in]: SUPERVISOR_ROLES },
-        responsibility_centre: BU_ID,
-        is_active: 'Active'
-      },
-      attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID', 'main_business_unit', 'responsibility_centre']
-    });
-    
-    if (users.length > 0) {
-      console.log(`✅ Found ${users.length} supervisor(s) with responsibility_centre = ${BU_ID}`);
-      users.forEach(u => {
-        console.log(`  - ${u.user_name} (BU_ROLE_ID: ${u.BU_ROLE_ID}) - responsibility_centre: ${u.responsibility_centre}`);
-      });
-      return users;
-    }
-    
-    // STRATEGY 4: Find ANY user with main_business_unit = BU_ID
-    console.log(`⚠️ No supervisors found, looking for any user with main_business_unit = ${BU_ID}...`);
-    
-    const [anyUsers] = await sequelize.query(
-      `SELECT id, user_name, email, BU_ROLE_ID, BU_ID, primary_business_role, is_supervisor, main_business_unit, responsibility_centre
-       FROM users 
-       WHERE is_active = 'Active'
-       AND main_business_unit = :BU_ID
-       LIMIT 10`,
-      {
-        replacements: { BU_ID: BU_ID },
-        type: sequelize.QueryTypes.SELECT
-      }
-    );
-    
-    if (anyUsers && anyUsers.length > 0) {
-      console.log(`✅ Found ${anyUsers.length} user(s) with main_business_unit = ${BU_ID}`);
-      anyUsers.forEach(u => {
-        console.log(`  - ${u.user_name} (${u.BU_ROLE_ID || u.primary_business_role || 'N/A'}) - main_business_unit: ${u.main_business_unit}`);
-      });
-      return anyUsers;
-    }
-    
-    // STRATEGY 5: Check for PCO03 specifically
-    console.log(`🔍 Checking for PCO03 specifically...`);
-    const [pco03] = await sequelize.query(
-      `SELECT id, user_name, email, BU_ROLE_ID, BU_ID, primary_business_role, is_supervisor, main_business_unit, responsibility_centre
-       FROM users 
-       WHERE user_name = 'PCO03' AND is_active = 'Active'`,
-      {
-        type: sequelize.QueryTypes.SELECT
-      }
-    );
-    
-    if (pco03) {
-      console.log(`✅ Found PCO03:`, pco03);
-      console.log(`📋 PCO03 BU_ID: ${pco03.BU_ID}, Role: ${pco03.BU_ROLE_ID}, main_business_unit: ${pco03.main_business_unit}`);
-      return [pco03];
-    }
-    
-    // STRATEGY 6: Ultimate fallback - Admin users
-    console.log(`⚠️ No users found, looking for Admin users...`);
-    
-    const [admins] = await sequelize.query(
-      `SELECT id, user_name, email, BU_ROLE_ID, BU_ID, primary_business_role
-       FROM users 
-       WHERE is_active = 'Active'
-       AND (BU_ROLE_ID = '1' OR primary_business_role = 'Admin' OR user_name = 'admin')
-       LIMIT 3`,
-      {
-        type: sequelize.QueryTypes.SELECT
-      }
-    );
-    
-    if (admins && admins.length > 0) {
-      console.log(`✅ Found ${admins.length} Admin users as ultimate fallback`);
-      return admins;
-    }
-    
-    console.log(`❌ No users found at all for BU: ${BU_ID}`);
-    return [];
+    return admin ? [admin] : [];
 
   } catch (error) {
     console.error('❌ Error getting BU recipients:', error);
-    console.error('❌ Error details:', error.stack);
     return [];
   }
 };
 
 // ============================================
-// HELPER: Send Email Notification (UPDATED)
-// Uses the shared email transporter from emailService
+// HELPER: Send Email Notification
 // ============================================
 const sendEmailNotifications = async (recipients, data) => {
   try {
     const { itemType, itemId, itemName, description, submittedBy, BU_ID, priority } = data;
     const appName = emailConfig.appName || process.env.APP_NAME || 'Evolution Banking';
     
-    // Use the shared email transporter from emailService
     const transporter = emailTransporter;
     const fromEmail = emailConfig.from || 'noreply@evolutionbanking.com';
     
@@ -186,7 +279,7 @@ const sendEmailNotifications = async (recipients, data) => {
     }
     
     const emailPromises = recipients
-      .filter(r => r.email) // Only send to users with email
+      .filter(r => r.email)
       .map(async (recipient) => {
         try {
           const subject = `🔔 ${appName} - New ${itemType} Approval Request`;
@@ -213,11 +306,6 @@ const sendEmailNotifications = async (recipients, data) => {
                   .priority-high { color: #dc2626; font-weight: bold; }
                   .priority-medium { color: #d97706; font-weight: bold; }
                   .priority-low { color: #2563eb; font-weight: bold; }
-                  .approval-progress { background: #f0f0f0; border-radius: 10px; padding: 10px; margin: 10px 0; }
-                  .approval-step { display: inline-block; padding: 5px 15px; margin: 0 5px; border-radius: 15px; font-size: 12px; }
-                  .approval-step.active { background: #667eea; color: #fff; }
-                  .approval-step.completed { background: #34d399; color: #fff; }
-                  .approval-step.pending { background: #f3f4f6; color: #6b7280; }
                 </style>
               </head>
               <body>
@@ -250,7 +338,7 @@ const sendEmailNotifications = async (recipients, data) => {
                   <div style="margin: 15px 0;">
                     <div><span class="label">Item Name:</span> <strong>${itemName}</strong></div>
                     <div><span class="label">Submitted By:</span> ${submittedBy}</div>
-                    <div><span class="label">Branch:</span> ${BU_ID}</div>
+                    <div><span class="label">Business Unit:</span> ${BU_ID}</div>
                     <div><span class="label">Submitted At:</span> ${new Date().toLocaleString()}</div>
                     ${description ? `<div><span class="label">Description:</span> ${description}</div>` : ''}
                   </div>
@@ -279,7 +367,7 @@ Item Type: ${itemType}
 Reference ID: #${itemId}
 Item Name: ${itemName}
 Submitted By: ${submittedBy}
-Branch: ${BU_ID}
+Business Unit: ${BU_ID}
 Submitted At: ${new Date().toLocaleString()}
 Priority: ${priority || 'Medium'}
 ${description ? `Description: ${description}` : ''}
@@ -347,17 +435,20 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
       return { success: false, error: 'BU_ID is required' };
     }
     
-    // 1. Get all users in this specific BU
+    console.log(`📨 AI: Sending approval notification for BU: ${BU_ID}`);
+    console.log(`📨 AI: Item: ${itemType} - ${itemName} by ${submittedBy}`);
+    
+    // 1. Get supervisors using AI-powered BU detection
     const recipients = await getBUApprovalRecipients(BU_ID);
     
     if (recipients.length === 0) {
-      console.log(`⚠️ No recipients found in BU ${BU_ID}`);
+      console.log(`⚠️ AI: No recipients found in BU ${BU_ID}`);
       
-      // Create a notification for Admin as fallback
+      // Create notification for Admin as fallback
       const adminNotification = await Notification.create({
         user_id: 1,
         ROLE_ID: 'Admin',
-        message: `⚠️ No users found for BU ${BU_ID}. ${itemType} #${itemName} needs attention. Please assign users to this BU.`,
+        message: `⚠️ AI: No users found for BU ${BU_ID}. ${itemType} #${itemName} needs attention.`,
         WORK_ITEM_ID: String(itemId || 'N/A'),
         EVENT_ID: `system_${Date.now()}`,
         status: 'sent',
@@ -374,8 +465,9 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
           BU_ID,
           submittedAt: new Date().toISOString(),
           ...metadata,
-          note: '⚠️ No users found for this BU - sent to Admin as fallback',
-          error: 'NO_USERS_FOUND'
+          note: '⚠️ AI: No users found for this BU - sent to Admin as fallback',
+          error: 'NO_USERS_FOUND',
+          aiDetected: false
         },
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
@@ -397,7 +489,7 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
           itemId,
           itemName,
           BU_ID,
-          note: 'No users found for this BU'
+          note: 'AI: No users found for this BU'
         },
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       });
@@ -407,7 +499,8 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
         message: 'No users found in this business unit',
         BU_ID,
         adminNotification,
-        submitterNotification
+        submitterNotification,
+        aiDetected: false
       };
     }
     
@@ -436,7 +529,9 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
           recipient_bu: recipient.BU_ID || recipient.main_business_unit || recipient.responsibility_centre,
           requestId: requestId || itemId,
           approvalLevel: approvalLevel,
-          totalApprovals: totalApprovals
+          totalApprovals: totalApprovals,
+          aiDetected: true,
+          aiStrategy: 'BU_ID_based'
         },
         recipient_name: recipient.user_name,
         recipient_id: recipient.id,
@@ -447,9 +542,9 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
     });
     
     const createdNotifications = await Promise.all(notificationPromises);
-    console.log(`✅ Created ${createdNotifications.length} in-app notifications for users in BU ${BU_ID}`);
+    console.log(`✅ AI: Created ${createdNotifications.length} in-app notifications for BU ${BU_ID}`);
     
-    // 3. SEND EMAILS to recipients with email addresses
+    // 3. Send emails
     const emailResult = await sendEmailNotifications(recipients, {
       itemType,
       itemId,
@@ -474,7 +569,7 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
     
     return {
       success: true,
-      message: `Approval notification sent to ${recipients.length} user(s) in BU ${BU_ID}`,
+      message: `AI: Approval notification sent to ${recipients.length} user(s) in BU ${BU_ID}`,
       recipients: recipients.map(r => ({ 
         name: r.user_name, 
         email: r.email || 'No email',
@@ -485,7 +580,8 @@ export const sendApprovalNotificationToBUUsers = async (data) => {
       emailFailed: emailResult.success ? emailResult.failed : recipients.length,
       BU_ID: BU_ID,
       notifications: createdNotifications,
-      emails: emailResult
+      emails: emailResult,
+      aiDetected: true
     };
     
   } catch (error) {
@@ -515,7 +611,6 @@ export const sendStatusUpdateNotification = async (data) => {
       requestId
     } = data;
 
-    // Get the recipient user
     const recipient = await User.findByPk(recipientId, {
       attributes: ['id', 'user_name', 'email', 'BU_ROLE_ID', 'BU_ID']
     });
@@ -525,7 +620,6 @@ export const sendStatusUpdateNotification = async (data) => {
       return { success: false, error: 'Recipient not found' };
     }
 
-    // Create in-app notification
     const notification = await Notification.create({
       user_id: recipient.id,
       ROLE_ID: String(recipient.BU_ROLE_ID || 'User'),
@@ -551,7 +645,6 @@ export const sendStatusUpdateNotification = async (data) => {
       }
     });
 
-    // Send email if recipient has email
     let emailResult = null;
     if (recipient.email) {
       try {

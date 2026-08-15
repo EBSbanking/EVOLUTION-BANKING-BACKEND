@@ -1,9 +1,9 @@
-ï»¿// models/ProductMapping.js â€“ Extended with TERM_DEPOSIT (Fixed Deposit) support
+// models/ProductMapping.js – Extended with TERM_DEPOSIT (Fixed Deposit) support
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class ProductMapping extends Model {
-  // ===== Existing static methods (unchanged â€“ only shown as placeholder) =====
+  // ===== Existing static methods (unchanged – only shown as placeholder) =====
   static async findByProductCode(productCode, options = {}) { /* ... */ }
   static async findByProdId(prodId, options = {}) { /* ... */ }
   static async findActiveMappings(options = {}) { /* ... */ }
@@ -210,7 +210,7 @@ ProductMapping.init(
     timestamps: true,
     hooks: {
       beforeValidate: async (product) => {
-        // Existing validation (trim, arrays, etc.) â€“ keep as is
+        // Existing validation (trim, arrays, etc.) – keep as is
         if (product.name) product.name = product.name.trim();
         if (product.allowedCurrencies && !Array.isArray(product.allowedCurrencies)) {
           try {

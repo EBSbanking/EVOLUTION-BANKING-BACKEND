@@ -1,4 +1,4 @@
-﻿// models/SystemDate.js - Fully normalized camelCase model with snake_case DB mapping
+// models/SystemDate.js - Fully normalized camelCase model with snake_case DB mapping
 import sequelize from '../../config/db.js';
 import { calculateNextBusinessDate } from '../utils/dateUtils.js';
 import logger from '../utils/logger.js';
@@ -117,7 +117,7 @@ const SystemDate = sequelize.define('SystemDate', {
       });
     }
   },
-  // ✅ FIX: Use field names that match the actual column names
+  // ? FIX: Use field names that match the actual column names
   indexes: [
     { fields: ['current_business_date'] },  // Use the actual column name
     { fields: ['is_e_o_d_processing'] },     // Use the actual column name
@@ -152,7 +152,7 @@ SystemDate.prototype.getLastEODRun = function() {
 SystemDate.cleanupInvalidData = async function() {
   const transaction = await sequelize.transaction();
   try {
-    console.log('🧹 Cleaning up invalid SystemDate data...');
+    console.log('?? Cleaning up invalid SystemDate data...');
     const systemDates = await this.findAll({
       where: { eodHistory: { [Op.ne]: null } },
       transaction
@@ -182,11 +182,11 @@ SystemDate.cleanupInvalidData = async function() {
       }
     }
     await transaction.commit();
-    console.log(`✅ Cleaned up ${modifiedCount} SystemDate records`);
+    console.log(`? Cleaned up ${modifiedCount} SystemDate records`);
     return modifiedCount;
   } catch (error) {
     await transaction.rollback();
-    console.log('⚠️ Error cleaning up SystemDate data:', error.message);
+    console.log('?? Error cleaning up SystemDate data:', error.message);
     return 0;
   }
 };
@@ -195,7 +195,7 @@ SystemDate.getCurrentSystemDate = async function() {
   try {
     let systemDate = await this.findOne({ order: [['createdAt', 'DESC']] });
     if (!systemDate) {
-      console.log('ℹ️ No system date found, creating default...');
+      console.log('?? No system date found, creating default...');
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayStr = today.toISOString().split('T')[0];
@@ -256,7 +256,7 @@ SystemDate.ensureTableExists = async function() {
     `);
     
     if (tables.length === 0) {
-      console.log('📝 Creating system_dates table...');
+      console.log('?? Creating system_dates table...');
       await sequelize.query(`
         CREATE TABLE system_dates (
           id INT PRIMARY KEY AUTO_INCREMENT,
@@ -278,7 +278,7 @@ SystemDate.ensureTableExists = async function() {
           INDEX idx_last_eod_run (lastEODRun)
         )
       `);
-      console.log('✅ system_dates table created');
+      console.log('? system_dates table created');
       
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
@@ -291,15 +291,15 @@ SystemDate.ensureTableExists = async function() {
         (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
         VALUES (?, ?, 'IDLE', 0, '[]')
       `, { replacements: [todayStr, tomorrowStr] });
-      console.log('✅ Default system date record created');
+      console.log('? Default system date record created');
       
     } else {
-      console.log('✅ system_dates table already exists');
+      console.log('? system_dates table already exists');
       
       // Check if records exist
       const [records] = await sequelize.query(`SELECT COUNT(*) as count FROM system_dates`);
       if (records[0].count === 0) {
-        console.log('📝 No records found, inserting default...');
+        console.log('?? No records found, inserting default...');
         const today = new Date();
         const todayStr = today.toISOString().split('T')[0];
         const tomorrow = new Date(today);
@@ -310,7 +310,7 @@ SystemDate.ensureTableExists = async function() {
           (current_business_date, next_business_date, eod_status, is_e_o_d_processing, eod_history)
           VALUES (?, ?, 'IDLE', 0, '[]')
         `, { replacements: [todayStr, tomorrowStr] });
-        console.log('✅ Default system date record inserted');
+        console.log('? Default system date record inserted');
       }
       
       // Ensure all columns exist (idempotent)
@@ -329,7 +329,7 @@ SystemDate.ensureTableExists = async function() {
         if (!columnNames.includes(col.name)) {
           try {
             await sequelize.query(`ALTER TABLE system_dates ADD COLUMN ${col.name} ${col.type}`);
-            console.log(`✅ Added ${col.name} column`);
+            console.log(`? Added ${col.name} column`);
           } catch (err) {
             if (!err.message.includes('Duplicate column')) {
               console.warn(`Could not add ${col.name}:`, err.message);
@@ -351,10 +351,10 @@ SystemDate.ensureTableExists = async function() {
       `);
     }
     
-    console.log('✅ system_dates table is ready');
+    console.log('? system_dates table is ready');
     
   } catch (error) {
-    console.error('❌ Error ensuring system_dates table exists:', error);
+    console.error('? Error ensuring system_dates table exists:', error);
     throw error;
   }
 };

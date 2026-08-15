@@ -1,4 +1,4 @@
-// server.js - COMPLETE FIXED VERSION WITH GUARANTOR SYNC FIX & PIDUSAGE SUPPRESSION
+// server.js - UPDATED with SKIP options for faster startup
 // ============================================
 
 // ============================================
@@ -8,9 +8,6 @@
 // Force environment variables
 process.env.PIDUSAGE_DISABLE = '1';
 process.env.PIDUSAGE_NO_WMIC = '1';
-
-// ✅ Use import instead of require for pidusage suppression
-// Since this is an ES module, we need to use dynamic import
 
 // Override console.error to filter pidusage messages
 const originalConsoleError = console.error;
@@ -39,13 +36,16 @@ import { dirname } from 'path';
 import events from 'events';
 import util from 'util';
 
-// ✅ Increase max listeners to avoid warning
 events.EventEmitter.defaultMaxListeners = 20;
 
-// ✅ CRITICAL: Load .env BEFORE importing any local modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// ============================================
+// ✅ HEALTH MONITOR - IMPORT EARLY
+// ============================================
+import healthMonitor from './src/services/HealthMonitorService.js';
 
 // ============================================
 // ✅ Map PAYSTACK_TEST_SECRET_KEY to PAYSTACK_SECRET_KEY if the latter is missing
@@ -65,7 +65,7 @@ if (!process.env.PAYSTACK_SECRET_KEY) {
 }
 
 // ============================================
-// ✅ CUSTOM ERROR LOGGER - Converts [object Object] to readable format
+// ✅ CUSTOM ERROR LOGGER
 // ============================================
 const formatError = (error) => {
   if (!error) return 'No error details';
@@ -127,18 +127,47 @@ const logError = (prefix, error, additional = {}) => {
 };
 
 // ============================================
-// Unhandled exception / rejection handlers
+// Unhandled exception / rejection handlers - WITH HEALTH MONITOR
 // ============================================
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', async (error) => {
   logError('UNCAUGHT EXCEPTION', error);
+  
+  try {
+    await healthMonitor.sendAlertEmail(
+      '🚨 CRITICAL: Uncaught Exception',
+      {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      },
+      true
+    );
+  } catch (emailError) {
+    console.error('Failed to send alert email:', emailError.message);
+  }
+  
   setTimeout(() => {
     console.error('⚠️ Process exiting due to uncaught exception');
     process.exit(1);
   }, 2000);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', async (reason, promise) => {
   logError('UNHANDLED REJECTION', reason);
+  
+  try {
+    await healthMonitor.sendAlertEmail(
+      '🚨 CRITICAL: Unhandled Rejection',
+      {
+        reason: reason?.message || reason,
+        stack: reason?.stack || 'No stack trace',
+        timestamp: new Date().toISOString()
+      },
+      true
+    );
+  } catch (emailError) {
+    console.error('Failed to send alert email:', emailError.message);
+  }
 });
 
 // ============================================
@@ -163,6 +192,45 @@ import SystemDate from './src/models/SystemDate.js';
 import RolesVw from './src/models/RolesVw.js';
 
 // ============================================
+// ✅ DEBUG: Check Transaction model
+// ============================================
+import Transaction from './src/models/Transaction.js';
+
+console.log('\n🔍 DEBUG: Transaction Model Check');
+console.log('================================');
+console.log('📋 Transaction.tableName:', Transaction.tableName);
+console.log('📋 Transaction.rawAttributes keys:', Object.keys(Transaction.rawAttributes));
+console.log('📋 Transaction options:', {
+  timestamps: Transaction.options.timestamps,
+  createdAt: Transaction.options.createdAt,
+  updatedAt: Transaction.options.updatedAt,
+  tableName: Transaction.options.tableName,
+  underscored: Transaction.options.underscored
+});
+
+const hasCreatedAt = Transaction.rawAttributes && Transaction.rawAttributes.created_at;
+const hasUpdatedAt = Transaction.rawAttributes && Transaction.rawAttributes.updated_at;
+console.log('📋 Has created_at attribute:', !!hasCreatedAt);
+console.log('📋 Has updated_at attribute:', !!hasUpdatedAt);
+
+if (hasCreatedAt) {
+  console.log('📋 created_at field:', Transaction.rawAttributes.created_at.field);
+}
+if (hasUpdatedAt) {
+  console.log('📋 updated_at field:', Transaction.rawAttributes.updated_at.field);
+}
+console.log('================================\n');
+
+import TransactionPolicy from './src/models/TransactionPolicy.js';
+console.log('🔍 TransactionPolicy.tableName:', TransactionPolicy.tableName);
+console.log('🔍 TransactionPolicy timestamps:', {
+  timestamps: TransactionPolicy.options.timestamps,
+  createdAt: TransactionPolicy.options.createdAt,
+  updatedAt: TransactionPolicy.options.updatedAt
+});
+console.log('================================\n');
+
+// ============================================
 // Import cron jobs
 // ============================================
 import './src/cronJobs/dailyInterestAccrual.js';
@@ -176,7 +244,6 @@ try {
   logError('Webhooks startup error', error);
 }
 
-// On shutdown, stop them
 process.on('SIGTERM', async () => {
   try {
     await stopAllWebhooks();
@@ -241,9 +308,82 @@ console.log(`   NODE_ENV: ${NODE_ENV}`);
 let server;
 
 // ============================================
+// ✅ Helper: Drop duplicate indexes from tables
+// ============================================
+async function dropDuplicateIndexes() {
+  const skipCleanup = process.env.SKIP_DUPLICATE_INDEX_CLEANUP === 'true';
+  
+  if (skipCleanup) {
+    console.log('⏭️ Skipping duplicate index cleanup (SKIP_DUPLICATE_INDEX_CLEANUP=true)');
+    return true;
+  }
+  
+  console.log('🧹 Checking for duplicate indexes...');
+  
+  try {
+    // Get all tables with their indexes
+    const [tables] = await sequelize.query(`
+      SELECT 
+        TABLE_NAME,
+        INDEX_NAME,
+        COUNT(*) as cnt
+      FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND INDEX_NAME != 'PRIMARY'
+      GROUP BY TABLE_NAME, INDEX_NAME
+      HAVING cnt > 1
+    `);
+    
+    if (tables && tables.length > 0) {
+      console.log(`📊 Found ${tables.length} tables with duplicate indexes`);
+      
+      for (const table of tables) {
+        console.log(`🔍 Checking ${table.TABLE_NAME} - ${table.INDEX_NAME} (${table.cnt} copies)`);
+        
+        // Get all duplicate index names for this table
+        const [duplicates] = await sequelize.query(`
+          SELECT INDEX_NAME
+          FROM information_schema.STATISTICS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = '${table.TABLE_NAME}'
+            AND INDEX_NAME LIKE '${table.INDEX_NAME}%'
+          ORDER BY INDEX_NAME
+        `);
+        
+        // Keep only the first one, drop the rest
+        if (duplicates && duplicates.length > 1) {
+          for (let i = 1; i < duplicates.length; i++) {
+            try {
+              await sequelize.query(`DROP INDEX ${duplicates[i].INDEX_NAME} ON ${table.TABLE_NAME}`);
+              console.log(`✅ Dropped duplicate index: ${duplicates[i].INDEX_NAME} from ${table.TABLE_NAME}`);
+            } catch (dropError) {
+              console.warn(`⚠️ Could not drop index ${duplicates[i].INDEX_NAME}: ${dropError.message}`);
+            }
+          }
+        }
+      }
+    } else {
+      console.log('✅ No duplicate indexes found');
+    }
+    
+    return true;
+  } catch (error) {
+    console.warn('⚠️ Duplicate index cleanup failed:', error.message);
+    return false;
+  }
+}
+
+// ============================================
 // Helper: Create ALL tables using raw SQL
 // ============================================
 async function createAllTables() {
+  const skipCreation = process.env.SKIP_TABLE_CREATION === 'true';
+  
+  if (skipCreation) {
+    console.log('⏭️ Skipping table creation (SKIP_TABLE_CREATION=true)');
+    return true;
+  }
+  
   console.log('📦 Creating all tables if they don\'t exist...');
   
   try {
@@ -528,7 +668,7 @@ async function createAllTables() {
     console.log('✅ emtl_policies table ready');
 
     // ============================================================
-    // GUARANTORS TABLE - Using the model's initializeTable method
+    // GUARANTORS TABLE
     // ============================================================
     console.log('📦 Creating Guarantors table...');
     await Guarantor.initializeTable();
@@ -553,7 +693,6 @@ async function createAllTables() {
     `);
     console.log('✅ Roles table ready');
 
-    // Insert default roles if they don't exist
     await sequelize.query(`
       INSERT IGNORE INTO roles (role_id, role_name, description, active, permissions) VALUES
       (1, 'Super Admin', 'Full system access', 1, JSON_OBJECT('view_restricted_customers', true, 'manage_users', true, 'manage_roles', true)),
@@ -563,11 +702,33 @@ async function createAllTables() {
     `);
     console.log('✅ Default roles inserted');
 
+    // ============================================================
+    // ✅ SYSTEM DATES TABLE - ENSURE IT EXISTS WITH DEFAULT RECORD
+    // ============================================================
+    console.log('📦 Ensuring SystemDate table exists...');
+    await SystemDate.ensureTableExists();
+    console.log('✅ SystemDate table verified with default record');
+
     console.log('✅ All tables created successfully');
     return true;
     
   } catch (error) {
     logError('Error creating tables', error);
+    
+    try {
+      await healthMonitor.sendAlertEmail(
+        '🚨 CRITICAL: Database Table Creation Failed',
+        {
+          error: error.message,
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        },
+        true
+      );
+    } catch (emailError) {
+      console.error('Failed to send alert email:', emailError.message);
+    }
+    
     return false;
   }
 }
@@ -576,16 +737,23 @@ async function createAllTables() {
 // Helper: Sync all models with Guarantor fix
 // ============================================
 async function syncAllModels() {
+  const skipSync = process.env.SKIP_MODEL_SYNC === 'true';
+  
+  if (skipSync) {
+    console.log('⏭️ Skipping model sync (SKIP_MODEL_SYNC=true)');
+    return true;
+  }
+  
   console.log('🔄 Syncing all models...');
   
   try {
     // 1. Sync SystemDate first (depends on nothing)
     console.log('📦 Syncing SystemDate model...');
     try {
-      await SystemDate.sync({ alter: true });
+      await SystemDate.sync({ alter: false });
       console.log('✅ SystemDate model synced');
     } catch (error) {
-      console.warn('⚠️ SystemDate alter sync failed, trying without alter...');
+      console.warn('⚠️ SystemDate sync failed, trying without alter...');
       await SystemDate.sync();
       console.log('✅ SystemDate model synced (without alter)');
     }
@@ -595,14 +763,35 @@ async function syncAllModels() {
     await Drawer.sync({ alter: false });
     console.log('✅ Drawer model synced');
     
-    // 3. ✅ FIXED: Sync Guarantor model with proper error handling
+    // ============================================================
+    // ✅ TRANSACTION SYNC - FIXED VERSION
+    // ============================================================
+    console.log('📦 Syncing Transaction model...');
+    try {
+      console.log('🔄 Checking Transaction table...');
+      
+      const [tables] = await sequelize.query("SHOW TABLES LIKE 'transactions'");
+      
+      if (tables && tables.length > 0) {
+        console.log('✅ Transactions table already exists, skipping sync to avoid validation errors');
+        await sequelize.query('SELECT 1 FROM transactions LIMIT 1');
+        console.log('✅ Transactions table is accessible');
+      } else {
+        console.log('📝 Creating transactions table...');
+        await Transaction.sync({ force: true });
+        console.log('✅ Transactions table created');
+      }
+    } catch (error) {
+      console.warn('⚠️ Transaction sync error:', error.message);
+      console.warn('⚠️ Continuing without Transaction sync...');
+    }
+    
+    // 3. Sync Guarantor model with proper error handling
     console.log('📦 Syncing Guarantor model...');
     try {
-      // First try with alter: true
-      await Guarantor.sync({ alter: true });
-      console.log('✅ Guarantor model synced with alter');
+      await Guarantor.sync({ alter: false });
+      console.log('✅ Guarantor model synced');
     } catch (syncError) {
-      // If alter fails due to too many keys, try without alter
       if (syncError.message && syncError.message.includes('Too many keys')) {
         console.warn('⚠️ Guarantor has too many keys, syncing without alter...');
         try {
@@ -610,7 +799,6 @@ async function syncAllModels() {
           console.log('✅ Guarantor model synced without alter');
         } catch (innerError) {
           console.error('❌ Failed to sync Guarantor:', innerError.message);
-          // Try to sync with force: false
           try {
             await Guarantor.sync({ force: false });
             console.log('✅ Guarantor model synced with force: false');
@@ -625,14 +813,14 @@ async function syncAllModels() {
     
     // 4. Sync LoanInterestRate model
     console.log('📦 Syncing LoanInterestRate model...');
-    await LoanInterestRate.sync({ alter: true });
+    await LoanInterestRate.sync({ alter: false });
     console.log('✅ LoanInterestRate model synced');
     
     // 5. Sync AuditTrail (development only)
     if (process.env.NODE_ENV === 'development') {
       console.log('📦 Syncing AuditTrail table (development only)...');
       try {
-        await AuditTrail.sync({ alter: true });
+        await AuditTrail.sync({ alter: false });
         console.log('✅ AuditTrail table synced');
       } catch (auditError) {
         console.warn('⚠️ AuditTrail sync issue:', auditError.message);
@@ -644,6 +832,21 @@ async function syncAllModels() {
     
   } catch (error) {
     logError('Error syncing models', error);
+    
+    try {
+      await healthMonitor.sendAlertEmail(
+        '🚨 CRITICAL: Model Sync Failed',
+        {
+          error: error.message,
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        },
+        true
+      );
+    } catch (emailError) {
+      console.error('Failed to send alert email:', emailError.message);
+    }
+    
     return false;
   }
 }
@@ -659,7 +862,6 @@ async function ensureRolesView() {
     return true;
   } catch (error) {
     logError('Could not ensure roles_vw view', error);
-    // Try to create it directly
     try {
       await sequelize.query(`DROP VIEW IF EXISTS roles_vw`);
       await sequelize.query(`
@@ -685,6 +887,13 @@ async function ensureRolesView() {
 }
 
 // ============================================
+// ✅ START HEALTH MONITORING
+// ============================================
+const HEALTH_CHECK_INTERVAL = parseInt(process.env.HEALTH_CHECK_INTERVAL) || 300000;
+healthMonitor.startMonitoring(HEALTH_CHECK_INTERVAL);
+console.log(`✅ Health monitor started with ${HEALTH_CHECK_INTERVAL / 1000 / 60} minute intervals`);
+
+// ============================================
 // Start server
 // ============================================
 async function startServer() {
@@ -696,10 +905,13 @@ async function startServer() {
     const models = await initializeModels();
     console.log('✅ Models initialized');
 
-    // 2. CREATE ALL TABLES FIRST
+    // ✅ Drop duplicate indexes before creating tables (skip if SKIP_DUPLICATE_INDEX_CLEANUP=true)
+    await dropDuplicateIndexes();
+
+    // 2. CREATE ALL TABLES FIRST (skip if SKIP_TABLE_CREATION=true)
     await createAllTables();
 
-    // 3. SYNC ALL MODELS (with Guarantor fix)
+    // 3. SYNC ALL MODELS (skip if SKIP_MODEL_SYNC=true)
     await syncAllModels();
 
     // 4. Ensure roles_vw view exists
@@ -711,7 +923,6 @@ async function startServer() {
     // 6. Load admin configuration & dynamic plugins
     console.log('\n🔧 Initializing Admin Console components...');
 
-    // Load environment variables from DB
     try {
       await envManager.loadAll();
       console.log('✅ Environment variables loaded from DB');
@@ -719,7 +930,6 @@ async function startServer() {
       console.warn('⚠️ Could not load env vars:', envError.message);
     }
 
-    // Load data sources (connection pools)
     try {
       await dataSourceManager.loadFromDB();
       console.log('✅ Data sources loaded');
@@ -727,7 +937,6 @@ async function startServer() {
       console.warn('⚠️ Could not load data sources:', dsError.message);
     }
 
-    // Load and start plugins
     try {
       await pluginManager.loadPluginsFromDB(app);
       console.log('✅ Plugins loaded and started');
@@ -746,7 +955,46 @@ async function startServer() {
         pid: process.pid,
         uptime: process.uptime(),
         memory: process.memoryUsage(),
+        healthMonitor: {
+          running: true,
+          lastCheck: healthMonitor.lastCheckTime || null,
+          alertRecipients: healthMonitor.alertRecipients
+        }
       });
+    });
+
+    app.get('/health/status', async (req, res) => {
+      try {
+        const dbStatus = await sequelize.authenticate()
+          .then(() => 'connected')
+          .catch(() => 'disconnected');
+        
+        res.json({
+          status: 'OK',
+          timestamp: new Date().toISOString(),
+          services: {
+            database: dbStatus,
+            server: 'running',
+            healthMonitor: {
+              running: true,
+              checkInterval: HEALTH_CHECK_INTERVAL,
+              alertRecipients: healthMonitor.alertRecipients
+            }
+          },
+          system: {
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            cpu: process.cpuUsage(),
+            pid: process.pid
+          }
+        });
+      } catch (error) {
+        res.status(500).json({
+          status: 'ERROR',
+          timestamp: new Date().toISOString(),
+          error: error.message
+        });
+      }
     });
 
     // 7. Start HTTP server
@@ -760,10 +1008,12 @@ ${'🟢'.repeat(30)}
 🟢                    Node Env: ${NODE_ENV}                  
 🟢                    PID: ${process.pid}                    
 🟢                    Started: ${new Date().toISOString()}
+🟢                    Health Monitor: RUNNING (${HEALTH_CHECK_INTERVAL / 1000 / 60} min interval)
 ${'🟢'.repeat(30)}
 
 📢 Available API Endpoints:
    • Health:        http://${HOST}:${PORT}/health
+   • Health Status: http://${HOST}:${PORT}/health/status
    • Login:         POST http://${HOST}:${PORT}/api/login/login
    • Admin Console: http://${HOST}:${PORT}/admin
    • API Root:      http://${HOST}:${PORT}/api
@@ -773,8 +1023,13 @@ ${'🟢'.repeat(30)}
 🔧 Service Status:
    • Database: ${process.env.DB_NAME || 'core_banking'} on ${process.env.DB_HOST || '127.0.0.1'}:${process.env.DB_PORT || 3306}
    • Redis: ${(process.env.REDIS_HOST && process.env.REDIS_HOST !== 'disabled') ? `${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}` : 'Disabled'}
+   • System Date: ✅ Initialized
    • Models Synced: ✅ All models synchronized
    • roles_vw: ✅ View ready
+   • Transaction Model: ✅ Synced
+   • Health Monitor: ✅ Running
+
+📧 Alert Recipients: ${healthMonitor.alertRecipients.join(', ')}
 
 💡 Press Ctrl+C to stop the server
 
@@ -797,6 +1052,22 @@ ${'='.repeat(50)}
 
     server.on('error', (err) => {
       logError('Server error', err);
+      
+      try {
+        healthMonitor.sendAlertEmail(
+          '🚨 Server Error',
+          {
+            error: err.message,
+            code: err.code,
+            stack: err.stack,
+            timestamp: new Date().toISOString()
+          },
+          true
+        );
+      } catch (emailError) {
+        console.error('Failed to send alert email:', emailError.message);
+      }
+      
       if (err.code === 'EADDRINUSE') {
         console.error(`   Port ${PORT} is already in use`);
         console.log(`💡 Try killing the process using port ${PORT}:`);
@@ -808,15 +1079,36 @@ ${'='.repeat(50)}
 
   } catch (err) {
     logError('FATAL: Failed to start server', err);
+    
+    try {
+      await healthMonitor.sendAlertEmail(
+        '🚨 CRITICAL: Server Startup Failed',
+        {
+          error: err.message,
+          stack: err.stack,
+          timestamp: new Date().toISOString()
+        },
+        true
+      );
+    } catch (emailError) {
+      console.error('Failed to send alert email:', emailError.message);
+    }
+    
     process.exit(1);
   }
 }
 
 // ============================================
-// Graceful shutdown
+// ✅ GRACEFUL SHUTDOWN WITH HEALTH MONITOR
 // ============================================
 const gracefulShutdown = async () => {
   console.log(`\n👋 Shutdown signal received`);
+  
+  try {
+    await healthMonitor.notifyShutdown('Graceful shutdown initiated');
+  } catch (error) {
+    console.error('Failed to send shutdown notification:', error.message);
+  }
   
   if (server) {
     server.close(async () => {
@@ -843,11 +1135,28 @@ const gracefulShutdown = async () => {
         logError('DB close error', err);
       }
       
+      healthMonitor.stopMonitoring();
+      console.log('✅ Health monitor stopped');
+      
       process.exit(0);
     });
     
     setTimeout(() => {
       console.error(`❌ Forced shutdown after timeout`);
+      
+      try {
+        healthMonitor.sendAlertEmail(
+          '🚨 Forced Shutdown',
+          {
+            reason: 'Timeout during graceful shutdown',
+            timestamp: new Date().toISOString()
+          },
+          true
+        );
+      } catch (emailError) {
+        console.error('Failed to send alert email:', emailError.message);
+      }
+      
       process.exit(1);
     }, 10000);
   } else {
@@ -855,6 +1164,7 @@ const gracefulShutdown = async () => {
   }
 };
 
+// Register shutdown handlers
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 

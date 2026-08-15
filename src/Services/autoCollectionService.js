@@ -1,4 +1,5 @@
-// src/services/autoCollectionService.js - FIXED VERSION
+// Services/autoCollectionService.js - COMPLETE FIXED VERSION
+import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
 import { 
   getLoanAccount, 
@@ -8,9 +9,63 @@ import {
   getPenaltyRule,
   getLoanPenalty
 } from '../models/index.js';
-import sequelize from '../../config/db.js';
 import logger from '../utils/logger.js';
 import { handleLoanRepayment } from '../controllers/LoanRepaymentController.js';
+
+// ================================================================
+// ✅ HELPER: Safely format dates
+// ================================================================
+const safeFormatDate = (date) => {
+  if (!date) return null;
+  if (date instanceof Date) {
+    return date.toISOString().split('T')[0];
+  }
+  if (typeof date === 'string') {
+    try {
+      const d = new Date(date);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return date;
+  }
+  if (typeof date === 'number') {
+    try {
+      const d = new Date(date);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return String(date);
+  }
+  return null;
+};
+
+// ================================================================
+// ✅ HELPER: Ensure date is a valid Date object
+// ================================================================
+const ensureDate = (date) => {
+  if (!date) return new Date();
+  if (date instanceof Date) {
+    if (isNaN(date.getTime())) return new Date();
+    return date;
+  }
+  if (typeof date === 'string') {
+    const d = new Date(date);
+    if (!isNaN(d.getTime())) return d;
+    return new Date();
+  }
+  if (typeof date === 'number') {
+    const d = new Date(date);
+    if (!isNaN(d.getTime())) return d;
+    return new Date();
+  }
+  return new Date();
+};
 
 // ----------------------------------------------------------------------
 // Helper: Find customer account by customer ID (supports multiple field names)
@@ -23,15 +78,15 @@ async function findCustomerAccount(customerId, transaction) {
       return null;
     }
 
-    // ✅ Fix: Try multiple field names for customer ID
+    // Try multiple field names for customer ID
     const account = await CustomerAccount.findOne({
       where: {
         [Op.or]: [
-          { CUST_ID: customerId },           // ✅ Primary field
-          { customer_id: customerId },       // Fallback
-          { cust_id: customerId },           // Another fallback
-          { ACCT_NO: customerId },           // Also try account number
-          { account_number: customerId }     // Also try account number
+          { CUST_ID: customerId },
+          { customer_id: customerId },
+          { cust_id: customerId },
+          { ACCT_NO: customerId },
+          { account_number: customerId }
         ],
         status: 'ACTIVE'
       },
@@ -65,7 +120,6 @@ async function processLoanViaAutoDebit(loan, currentDate, batchId, transaction, 
       return { success: true, skipped: true };
     }
 
-    // ✅ Fix: Use the helper function to find customer account
     const customerId = loan.CUST_ID || loan.customer_id || loan.cust_id;
     if (!customerId) {
       const reason = `No customer ID found for loan ${loan.id}`;
@@ -107,12 +161,12 @@ async function processLoanViaAutoDebit(loan, currentDate, batchId, transaction, 
 
     // Execute repayment via handleLoanRepayment
     const repaymentResult = await handleLoanRepayment({
-      ACCT_NO: loan.ACCT_NO,
+      ACCT_NO: loan.ACCT_NO || loan.acct_no,
       amount: dueAmount,
       date: currentDate.toISOString(),
       customerAccountNo: accountNumber,
       paymentMethod: 'AUTO_DEBIT',
-      reference: `AUTO-${batchId}-${loan.ACCT_NO}`,
+      reference: `AUTO-${batchId}-${loan.ACCT_NO || loan.acct_no}`,
       description: `Auto-collection from customer account (Batch: ${batchId})`,
       createdBy: 'AUTO_COLLECTION_SYSTEM'
     });
@@ -207,9 +261,9 @@ async function markLoanAsOverdue(loan, currentDate, reason, transaction) {
   logger.info(`📝 Loan marked OVERDUE: ${loan.id}`, { overdueDays, reason });
 }
 
-// ----------------------------------------------------------------------
-// Main auto-collection processing function
-// ----------------------------------------------------------------------
+// ================================================================
+// ✅ MAIN AUTO-COLLECTION PROCESSING FUNCTION - FIXED
+// ================================================================
 export const processAutoCollections = async (options = {}) => {
   await initializeModels();
   
@@ -217,10 +271,17 @@ export const processAutoCollections = async (options = {}) => {
   const CustomerAccount = getCustomerAccount();
   
   const startTime = Date.now();
-  const collectionDate = options.date || new Date();
-  const batchId = `AUTO_COLLECT_${collectionDate.toISOString().split('T')[0]}_${Date.now()}`;
   
-  logger.info('💰 Starting auto-collection processing...', { batchId, collectionDate: collectionDate.toISOString() });
+  // ✅ FIX: Ensure date is a valid Date object
+  let collectionDate = ensureDate(options.date);
+  const dateStr = safeFormatDate(collectionDate);
+  
+  const batchId = `AUTO_COLLECT_${dateStr}_${Date.now()}`;
+  
+  logger.info('💰 Starting auto-collection processing...', { 
+    batchId, 
+    collectionDate: dateStr 
+  });
 
   let transaction;
 
@@ -247,7 +308,6 @@ export const processAutoCollections = async (options = {}) => {
         'INTEREST_RATE',
         'TERM_VALUE',
         'LAST_REPAYMENT_DATE'
-        // ✅ DO NOT include penalty_rule_id - it doesn't exist in loan_accounts
       ],
       where: {
         LOAN_STATUS: { [Op.in]: ['ACTIVE', 'DISBURSED', 'APPROVED'] },

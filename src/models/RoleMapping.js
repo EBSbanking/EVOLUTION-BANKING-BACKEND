@@ -246,7 +246,7 @@ RoleMapping.initializeTable = async () => {
 // Sync the model (creates table if it doesn't exist)
 RoleMapping.syncTable = async () => {
   try {
-    await RoleMapping.sync({ alter: true });
+    await RoleMapping.sync({ alter: false });
     console.log('✅ RoleMapping table synced');
     return true;
   } catch (error) {

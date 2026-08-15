@@ -1,4 +1,4 @@
-﻿// models/LoanRepaymentTransaction.js - COMPLETELY CLEAN (normal names, no ugly fields)
+// models/LoanRepaymentTransaction.js - COMPLETELY CLEAN (normal names, no ugly fields)
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';

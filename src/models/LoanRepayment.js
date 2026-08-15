@@ -1,4 +1,4 @@
-﻿// models/LoanRepayment.js - FIXED (removed afterCreate hook)
+// models/LoanRepayment.js - FIXED (removed afterCreate hook)
 import { DataTypes, Op, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -165,7 +165,7 @@ class LoanRepayment extends Model {
         foreignKey: 'loanAccountId',
         as: 'repayments'
       });
-      console.log('✅ LoanRepayment ↔ LoanAccount association set up');
+      console.log('? LoanRepayment ? LoanAccount association set up');
     }
     
     if (models.Customer) {
@@ -174,7 +174,7 @@ class LoanRepayment extends Model {
         as: 'customer',
         targetKey: 'CUST_ID'
       });
-      console.log('✅ LoanRepayment ↔ Customer association set up');
+      console.log('? LoanRepayment ? Customer association set up');
     }
     
     if (models.Collection) {
@@ -187,9 +187,9 @@ class LoanRepayment extends Model {
         foreignKey: 'collectionId',
         as: 'loanRepayments'
       });
-      console.log('✅ LoanRepayment ↔ Collection association set up');
+      console.log('? LoanRepayment ? Collection association set up');
     } else {
-      console.log('⚠️ Collection model not found – skipping association for loan_repayments.collectionId');
+      console.log('?? Collection model not found � skipping association for loan_repayments.collectionId');
     }
   }
 
@@ -367,7 +367,7 @@ LoanRepayment.init(
                                   (parseFloat(repayment.penaltyAmount) || 0);
         }
       }
-      // ✅ REMOVED afterCreate hook - causes lock timeout
+      // ? REMOVED afterCreate hook - causes lock timeout
     }
   }
 );

@@ -1,4 +1,5 @@
-// models/CreditApplication.js - ADD GUARANTOR_ID FIELD
+// models/CreditApplication.js - REMOVE guarantorId field
+
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -310,14 +311,8 @@ const CreditApplication = sequelize.define('CreditApplication', {
     type: DataTypes.STRING(100),
     allowNull: true,
     field: 'approved_by'
-  },
-  // ✅ ADDED: Guarantor ID field
-  guarantorId: {
-    type: DataTypes.STRING(20),
-    allowNull: true,
-    field: 'guarantor_id',
-    comment: 'Business ID of the guarantor (e.g., 1000000)'
   }
+  // ✅ REMOVED: guarantorId field - table doesn't have this column
 }, {
   sequelize,
   modelName: 'CreditApplication',
@@ -327,7 +322,6 @@ const CreditApplication = sequelize.define('CreditApplication', {
   freezeTableName: true,
   hooks: {
     beforeCreate: (application) => {
-      // Set defaults if not provided
       if (!application.termCode) {
         application.termCode = 'M';
       }

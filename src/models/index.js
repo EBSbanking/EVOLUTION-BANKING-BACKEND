@@ -1,4 +1,6 @@
 // src/models/index.js – COMPLETE WITH ALL VAULT MODELS, PENALTY RULE, EMTL, JOURNAL ENTRIES & PENDING TRANSFER
+// ✅ UPDATED WITH EOM (End of Month) MODELS - SIMPLIFIED ASSOCIATIONS
+
 import sequelize from '../../config/db.js';
 import { DataTypes, Op, QueryTypes } from 'sequelize';
 
@@ -111,11 +113,19 @@ import LoanProvision from './LoanProvision.js';
 // ===== INTEREST DISTRIBUTION (for Term Deposits) =====
 import InterestDistribution from './InterestDistribution.js';
 import AdminPlugin from './AdminPlugin.js';
+import BINMapping from './BINMapping.js';
 
 // ================================================================
 // ✅ EOY REPORT MODELS
+// ================================================================
 import EOYReport from './EOYReport.js';
 import GLClosingPeriod from './GLClosingPeriods.js';
+
+// ================================================================
+// ✅ EOM (END OF MONTH) MODELS
+// ================================================================
+import EOMClosingPeriod from './EOMClosingPeriod.js';
+import EOMReport from './EOMReport.js';
 
 // ================================================================
 // ✅ USER SESSION & ACTIVITY LOG MODELS
@@ -160,6 +170,7 @@ import JournalEntryLine from './JournalEntryLine.js';
 // ================================================================
 import InwardFundsTransfer from './InwardFundsTransfer.js';
 import PendingInwardTransaction from './PendingInwardTransaction.js';
+import InterbranchParameter from './InterbranchParameter.js';
 import PendingTransfer from './PendingTransfer.js';
 import PaystackTransaction from './PaystackPayment.js';
 import PaymentReference from './PaymentReference.js';
@@ -200,6 +211,8 @@ const modelDefinitions = [
   { key: 'AutoReclassifyInformation', def: AutoReclassifyInformation },
   { key: 'Bank', def: Bank },
   { key: 'BinInfo', def: BinInfo },
+  { key: 'BINMapping', def: BINMapping },
+
   { key: 'Branch', def: Branch },
   { key: 'BusinessRole', def: BusinessRole },
   { key: 'BusinessUnit', def: BusinessUnit },
@@ -320,11 +333,12 @@ const modelDefinitions = [
   { key: 'EMTLTransaction', def: EMTLTransaction },
   { key: 'RemittanceBatch', def: RemittanceBatch },
   // ================================================================
-  // EOY Report Models
+  // ✅ EOY & EOM Report Models
   // ================================================================
   { key: 'EOYReport', def: EOYReport },
   { key: 'GLClosingPeriod', def: GLClosingPeriod },
-
+  { key: 'EOMClosingPeriod', def: EOMClosingPeriod },  // ✅ EOM Closing Period
+  { key: 'EOMReport', def: EOMReport },                // ✅ EOM Report
   // ================================================================
   // ✅ JOURNAL ENTRY MODELS
   // ================================================================
@@ -334,6 +348,7 @@ const modelDefinitions = [
   // ✅ INWARD TRANSFER MODELS
   // ================================================================
   { key: 'InwardFundsTransfer', def: InwardFundsTransfer },
+  { key: 'InterbranchParameter', def: InterbranchParameter },
   { key: 'PendingInwardTransaction', def: PendingInwardTransaction },
   { key: 'PendingTransfer', def: PendingTransfer },
   { key: 'PaystackTransaction', def: PaystackTransaction },
@@ -343,7 +358,6 @@ const modelDefinitions = [
   // ================================================================
   { key: 'CardApprovalRequest', def: CardApprovalRequest },
   { key: 'ApprovalWorkflowConfig', def: ApprovalWorkflowConfig },
-  // ================================================================
 ];
 
 for (const { key, def } of modelDefinitions) {
@@ -369,6 +383,7 @@ function setupAssociations() {
     CustomerAccount, 
     DebitCard, 
     Account, 
+    BINMapping,
     CardSettlementConfig, 
     LoanEvent, 
     Charge, 
@@ -387,6 +402,11 @@ function setupAssociations() {
     PenaltyRule,
     EOYReport,
     GLClosingPeriod,
+    // ================================================================
+    // ✅ EOM MODELS
+    // ================================================================
+    EOMClosingPeriod,
+    EOMReport,
     // ================================================================
     // ✅ USER SESSION & ACTIVITY LOG MODELS
     // ================================================================
@@ -437,7 +457,106 @@ function setupAssociations() {
     PaymentReference,
     CardApprovalRequest,
     ApprovalWorkflowConfig,
+    InterbranchParameter,
   } = models;
+
+  // ================================================================
+  // ✅ EOM ASSOCIATIONS - SIMPLIFIED (NO FOREIGN KEY CONSTRAINTS)
+  // ================================================================
+
+  // EOMClosingPeriod ↔ Organization (logical only - no FK)
+  if (EOMClosingPeriod && Organization) {
+    console.log('✅ EOMClosingPeriod ↔ Organization (logical reference)');
+  }
+
+  // EOMClosingPeriod ↔ Branch (logical only - no FK)
+  if (EOMClosingPeriod && Branch) {
+    console.log('✅ EOMClosingPeriod ↔ Branch (logical reference)');
+  }
+
+  // EOMClosingPeriod ↔ User (closed_by) - logical only
+  if (EOMClosingPeriod && User) {
+    console.log('✅ EOMClosingPeriod ↔ User (closed_by) - logical reference');
+  }
+
+  // EOMClosingPeriod ↔ User (reopened_by) - logical only
+  if (EOMClosingPeriod && User) {
+    console.log('✅ EOMClosingPeriod ↔ User (reopened_by) - logical reference');
+  }
+
+  // EOMClosingPeriod ↔ EOMReport
+  if (EOMClosingPeriod && EOMReport) {
+    EOMClosingPeriod.belongsTo(EOMReport, {
+      foreignKey: 'report_id',
+      targetKey: 'report_id',
+      as: 'report'
+    });
+    EOMReport.hasOne(EOMClosingPeriod, {
+      foreignKey: 'report_id',
+      sourceKey: 'report_id',
+      as: 'closingPeriod'
+    });
+    console.log('✅ EOMClosingPeriod ↔ EOMReport');
+  }
+
+  // EOMReport ↔ Organization (logical only - no FK)
+  if (EOMReport && Organization) {
+    console.log('✅ EOMReport ↔ Organization (logical reference)');
+  }
+
+  // EOMReport ↔ Branch (logical only - no FK)
+  if (EOMReport && Branch) {
+    console.log('✅ EOMReport ↔ Branch (logical reference)');
+  }
+
+  // EOMReport ↔ User (generated_by) - logical only
+  if (EOMReport && User) {
+    console.log('✅ EOMReport ↔ User (generated_by) - logical reference');
+  }
+
+  // ================================================================
+  // ✅ EOY ASSOCIATIONS - SIMPLIFIED (NO FOREIGN KEY CONSTRAINTS)
+  // ================================================================
+
+  // EOYReport ↔ Organization (logical only - no FK)
+  if (EOYReport && Organization) {
+    console.log('✅ EOYReport ↔ Organization (logical reference)');
+  }
+
+  // EOYReport ↔ Branch (logical only - no FK)
+  if (EOYReport && Branch) {
+    console.log('✅ EOYReport ↔ Branch (logical reference)');
+  }
+
+  // EOYReport ↔ User (logical only - no FK)
+  if (EOYReport && User) {
+    console.log('✅ EOYReport ↔ User (logical reference)');
+  }
+
+  // GLClosingPeriod ↔ Organization (logical only - no FK)
+  if (GLClosingPeriod && Organization) {
+    console.log('✅ GLClosingPeriod ↔ Organization (logical reference)');
+  }
+
+  // GLClosingPeriod ↔ Branch (logical only - no FK)
+  if (GLClosingPeriod && Branch) {
+    console.log('✅ GLClosingPeriod ↔ Branch (logical reference)');
+  }
+
+  // GLClosingPeriod ↔ EOYReport
+  if (GLClosingPeriod && EOYReport) {
+    GLClosingPeriod.belongsTo(EOYReport, {
+      foreignKey: 'report_id',
+      targetKey: 'report_id',
+      as: 'report'
+    });
+    EOYReport.hasOne(GLClosingPeriod, {
+      foreignKey: 'report_id',
+      sourceKey: 'report_id',
+      as: 'closingPeriod'
+    });
+    console.log('✅ GLClosingPeriod ↔ EOYReport');
+  }
 
   // ================================================================
   // ✅ USER SESSION & ACTIVITY LOG ASSOCIATIONS
@@ -499,6 +618,10 @@ function setupAssociations() {
     });
     console.log('✅ UserSession ↔ UserActivityLog');
   }
+
+  // ================================================================
+  // ✅ EXISTING ASSOCIATIONS (Keep all your existing ones)
+  // ================================================================
 
   // StandingOrder ↔ CustomerAccount
   if (StandingOrder && CustomerAccount) {
@@ -633,11 +756,7 @@ function setupAssociations() {
     console.log('✅ InterestDistribution ↔ CustomerAccount');
   }
 
-  // ================================================================
-  // ✅ LOAN PENALTY & PENALTY RULE ASSOCIATIONS
-  // ================================================================
-  
-  // LoanPenalty ↔ LoanAccount
+  // ===== LOAN PENALTY & PENALTY RULE ASSOCIATIONS =====
   if (LoanPenalty && LoanAccount) {
     LoanPenalty.belongsTo(LoanAccount, { 
       foreignKey: 'loan_id', 
@@ -650,7 +769,6 @@ function setupAssociations() {
     console.log('✅ LoanPenalty ↔ LoanAccount');
   }
 
-  // LoanPenalty ↔ PenaltyRule
   if (LoanPenalty && PenaltyRule) {
     LoanPenalty.belongsTo(PenaltyRule, { 
       foreignKey: 'penalty_rule_id', 
@@ -663,7 +781,6 @@ function setupAssociations() {
     console.log('✅ LoanPenalty ↔ PenaltyRule');
   }
 
-  // LoanAccount ↔ PenaltyRule
   if (LoanAccount && PenaltyRule) {
     LoanAccount.belongsTo(PenaltyRule, { 
       foreignKey: 'penalty_rule_id', 
@@ -676,7 +793,6 @@ function setupAssociations() {
     console.log('✅ LoanAccount ↔ PenaltyRule');
   }
 
-  // LoanAccount ↔ RepaymentSchedule
   if (LoanAccount && RepaymentSchedule) {
     LoanAccount.hasMany(RepaymentSchedule, { 
       foreignKey: 'loan_id', 
@@ -693,7 +809,6 @@ function setupAssociations() {
   // ✅ JOURNAL ENTRY ASSOCIATIONS
   // ================================================================
 
-  // JournalEntry ↔ JournalEntryLine (one-to-many)
   if (JournalEntry && JournalEntryLine) {
     JournalEntry.hasMany(JournalEntryLine, {
       foreignKey: 'journalEntryId',
@@ -707,7 +822,6 @@ function setupAssociations() {
     console.log('✅ JournalEntry ↔ JournalEntryLine');
   }
 
-  // JournalEntryLine ↔ GLAccount
   if (JournalEntryLine && GLAccount) {
     JournalEntryLine.belongsTo(GLAccount, {
       foreignKey: 'glAccountId',
@@ -720,7 +834,6 @@ function setupAssociations() {
     console.log('✅ JournalEntryLine ↔ GLAccount');
   }
 
-  // JournalEntry ↔ Transaction (optional link)
   if (JournalEntry && TransactionModel) {
     JournalEntry.belongsTo(TransactionModel, {
       foreignKey: 'transactionId',
@@ -737,7 +850,6 @@ function setupAssociations() {
   // ✅ VAULT ASSOCIATIONS
   // ================================================================
   
-  // Vault ↔ Drawer
   if (Vault && Drawer) {
     Vault.belongsTo(Drawer, { 
       foreignKey: 'drawer_id', 
@@ -752,7 +864,6 @@ function setupAssociations() {
     console.log('✅ Vault ↔ Drawer');
   }
 
-  // Vault ↔ Branch
   if (Vault && Branch) {
     Vault.belongsTo(Branch, { 
       foreignKey: 'branch_code', 
@@ -767,7 +878,6 @@ function setupAssociations() {
     console.log('✅ Vault ↔ Branch');
   }
 
-  // Vault ↔ User (created_by)
   if (Vault && User) {
     Vault.belongsTo(User, { 
       foreignKey: 'created_by', 
@@ -1127,120 +1237,111 @@ function setupAssociations() {
     console.log('✅ VaultRoleAccessMatrix ↔ Vault');
   }
 
-  
-// ================================================================
-// ✅ CARD APPROVAL ASSOCIATIONS
-// ================================================================
+  // ================================================================
+  // ✅ CARD APPROVAL ASSOCIATIONS
+  // ================================================================
 
-// CardApprovalRequest ↔ Customer
-if (CardApprovalRequest && Customer) {
-  CardApprovalRequest.belongsTo(Customer, {
-    foreignKey: 'customerId',
-    targetKey: 'CUST_ID',
-    as: 'customer'
-  });
-  Customer.hasMany(CardApprovalRequest, {
-    foreignKey: 'customerId',
-    sourceKey: 'CUST_ID',
-    as: 'cardApprovalRequests'
-  });
-  console.log('✅ CardApprovalRequest ↔ Customer');
-}
+  if (CardApprovalRequest && Customer) {
+    CardApprovalRequest.belongsTo(Customer, {
+      foreignKey: 'customerId',
+      targetKey: 'CUST_ID',
+      as: 'customer'
+    });
+    Customer.hasMany(CardApprovalRequest, {
+      foreignKey: 'customerId',
+      sourceKey: 'CUST_ID',
+      as: 'cardApprovalRequests'
+    });
+    console.log('✅ CardApprovalRequest ↔ Customer');
+  }
 
-// CardApprovalRequest ↔ CustomerAccount
-if (CardApprovalRequest && CustomerAccount) {
-  CardApprovalRequest.belongsTo(CustomerAccount, {
-    foreignKey: 'accountId',
-    targetKey: 'id',
-    as: 'account'
-  });
-  CustomerAccount.hasMany(CardApprovalRequest, {
-    foreignKey: 'accountId',
-    sourceKey: 'id',
-    as: 'cardApprovalRequests'
-  });
-  console.log('✅ CardApprovalRequest ↔ CustomerAccount');
-}
+  if (CardApprovalRequest && CustomerAccount) {
+    CardApprovalRequest.belongsTo(CustomerAccount, {
+      foreignKey: 'accountId',
+      targetKey: 'id',
+      as: 'account'
+    });
+    CustomerAccount.hasMany(CardApprovalRequest, {
+      foreignKey: 'accountId',
+      sourceKey: 'id',
+      as: 'cardApprovalRequests'
+    });
+    console.log('✅ CardApprovalRequest ↔ CustomerAccount');
+  }
 
-// CardApprovalRequest ↔ User (requester)
-if (CardApprovalRequest && User) {
-  CardApprovalRequest.belongsTo(User, {
-    foreignKey: 'requestedBy',
-    targetKey: 'id',
-    as: 'requester'
-  });
-  User.hasMany(CardApprovalRequest, {
-    foreignKey: 'requestedBy',
-    sourceKey: 'id',
-    as: 'requestedCardApprovals'
-  });
-  console.log('✅ CardApprovalRequest ↔ User (requester)');
-}
+  if (CardApprovalRequest && User) {
+    CardApprovalRequest.belongsTo(User, {
+      foreignKey: 'requestedBy',
+      targetKey: 'id',
+      as: 'requester'
+    });
+    User.hasMany(CardApprovalRequest, {
+      foreignKey: 'requestedBy',
+      sourceKey: 'id',
+      as: 'requestedCardApprovals'
+    });
+    console.log('✅ CardApprovalRequest ↔ User (requester)');
+  }
 
-// CardApprovalRequest ↔ User (approver)
-if (CardApprovalRequest && User) {
-  CardApprovalRequest.belongsTo(User, {
-    foreignKey: 'approvedBy',
-    targetKey: 'id',
-    as: 'approver'
-  });
-  User.hasMany(CardApprovalRequest, {
-    foreignKey: 'approvedBy',
-    sourceKey: 'id',
-    as: 'approvedCardApprovals'
-  });
-  console.log('✅ CardApprovalRequest ↔ User (approver)');
-}
+  if (CardApprovalRequest && User) {
+    CardApprovalRequest.belongsTo(User, {
+      foreignKey: 'approvedBy',
+      targetKey: 'id',
+      as: 'approver'
+    });
+    User.hasMany(CardApprovalRequest, {
+      foreignKey: 'approvedBy',
+      sourceKey: 'id',
+      as: 'approvedCardApprovals'
+    });
+    console.log('✅ CardApprovalRequest ↔ User (approver)');
+  }
 
-// CardApprovalRequest ↔ Role (requestedByRole) - ✅ Using role_id
-if (CardApprovalRequest && Role) {
-  CardApprovalRequest.belongsTo(Role, {
-    foreignKey: 'requestedByRoleId',
-    targetKey: 'role_id',
-    as: 'requesterRole'
-  });
-  console.log('✅ CardApprovalRequest ↔ Role (requesterRole)');
-}
+  if (CardApprovalRequest && Role) {
+    CardApprovalRequest.belongsTo(Role, {
+      foreignKey: 'requestedByRoleId',
+      targetKey: 'role_id',
+      as: 'requesterRole'
+    });
+    console.log('✅ CardApprovalRequest ↔ Role (requesterRole)');
+  }
 
-// CardApprovalRequest ↔ Role (approvedByRole) - ✅ Using role_id
-if (CardApprovalRequest && Role) {
-  CardApprovalRequest.belongsTo(Role, {
-    foreignKey: 'approvedByRoleId',
-    targetKey: 'role_id',
-    as: 'approverRole'
-  });
-  console.log('✅ CardApprovalRequest ↔ Role (approverRole)');
-}
+  if (CardApprovalRequest && Role) {
+    CardApprovalRequest.belongsTo(Role, {
+      foreignKey: 'approvedByRoleId',
+      targetKey: 'role_id',
+      as: 'approverRole'
+    });
+    console.log('✅ CardApprovalRequest ↔ Role (approverRole)');
+  }
 
-// CardApprovalRequest ↔ DebitCard (existingCard)
-if (CardApprovalRequest && DebitCard) {
-  CardApprovalRequest.belongsTo(DebitCard, {
-    foreignKey: 'existingCardId',
-    targetKey: 'id',
-    as: 'existingCard'
-  });
-  console.log('✅ CardApprovalRequest ↔ DebitCard (existingCard)');
-}
+  if (CardApprovalRequest && DebitCard) {
+    CardApprovalRequest.belongsTo(DebitCard, {
+      foreignKey: 'existingCardId',
+      targetKey: 'id',
+      as: 'existingCard'
+    });
+    console.log('✅ CardApprovalRequest ↔ DebitCard (existingCard)');
+  }
 
-// CardApprovalRequest ↔ ApprovalWorkflowConfig
-if (CardApprovalRequest && ApprovalWorkflowConfig) {
-  CardApprovalRequest.belongsTo(ApprovalWorkflowConfig, {
-    foreignKey: 'workflowConfigId',
-    targetKey: 'id',
-    as: 'workflowConfig'
-  });
-  ApprovalWorkflowConfig.hasMany(CardApprovalRequest, {
-    foreignKey: 'workflowConfigId',
-    sourceKey: 'id',
-    as: 'approvalRequests'
-  });
-  console.log('✅ CardApprovalRequest ↔ ApprovalWorkflowConfig');
-}
+  if (CardApprovalRequest && ApprovalWorkflowConfig) {
+    CardApprovalRequest.belongsTo(ApprovalWorkflowConfig, {
+      foreignKey: 'workflowConfigId',
+      targetKey: 'id',
+      as: 'workflowConfig'
+    });
+    ApprovalWorkflowConfig.hasMany(CardApprovalRequest, {
+      foreignKey: 'workflowConfigId',
+      sourceKey: 'id',
+      as: 'approvalRequests'
+    });
+    console.log('✅ CardApprovalRequest ↔ ApprovalWorkflowConfig');
+  }
+
   // ================================================================
   // ✅ EMTL ASSOCIATIONS
   // ================================================================
 
-  // EMTLAuditLog ↔ EMTLPolicy
   if (EMTLAuditLog && EMTLPolicy) {
     EMTLAuditLog.belongsTo(EMTLPolicy, {
       foreignKey: 'POLICY_ID',
@@ -1255,12 +1356,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ EMTLAuditLog ↔ EMTLPolicy');
   }
 
-  // EMTLTransaction ↔ EMTLPolicy (via GL_ACCOUNT reference - loose coupling)
-  if (EMTLTransaction && EMTLPolicy) {
-    console.log('✅ EMTLTransaction ↔ EMTLPolicy (logical reference via GL_ACCOUNT)');
-  }
-
-  // EMTLTransaction ↔ RemittanceBatch
   if (EMTLTransaction && RemittanceBatch) {
     EMTLTransaction.belongsTo(RemittanceBatch, {
       foreignKey: 'REMITTANCE_BATCH_ID',
@@ -1275,21 +1370,10 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ EMTLTransaction ↔ RemittanceBatch');
   }
 
-  // EMTLTransaction ↔ Customer (logical reference)
-  if (EMTLTransaction && Customer) {
-    console.log('✅ EMTLTransaction ↔ Customer (logical reference via CUSTOMER_NO)');
-  }
-
-  // EMTLTransaction ↔ Account (logical reference)
-  if (EMTLTransaction && Account) {
-    console.log('✅ EMTLTransaction ↔ Account (logical reference via ACCOUNT_NO)');
-  }
-
   // ================================================================
-  // ✅ INWARD TRANSFER ASSOCIATIONS - CORRECTED
+  // ✅ INWARD TRANSFER ASSOCIATIONS
   // ================================================================
 
-  // PendingTransfer ↔ Customer (when matched)
   if (PendingTransfer && Customer) {
     PendingTransfer.belongsTo(Customer, {
       foreignKey: 'matched_to_customer_id',
@@ -1304,7 +1388,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PendingTransfer ↔ Customer');
   }
 
-  // PendingTransfer ↔ InwardFundsTransfer
   if (PendingTransfer && InwardFundsTransfer) {
     PendingTransfer.belongsTo(InwardFundsTransfer, {
       foreignKey: 'inward_transfer_id',
@@ -1319,7 +1402,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PendingTransfer ↔ InwardFundsTransfer');
   }
 
-  // PendingTransfer ↔ PendingInwardTransaction
   if (PendingTransfer && PendingInwardTransaction) {
     PendingTransfer.belongsTo(PendingInwardTransaction, {
       foreignKey: 'pending_inward_id',
@@ -1334,7 +1416,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PendingTransfer ↔ PendingInwardTransaction');
   }
 
-  // PaystackTransaction ↔ CustomerAccount
   if (PaystackTransaction && CustomerAccount) {
     PaystackTransaction.belongsTo(CustomerAccount, {
       foreignKey: 'customer_account',
@@ -1349,7 +1430,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PaystackTransaction ↔ CustomerAccount');
   }
 
-  // PaystackTransaction ↔ InwardFundsTransfer
   if (PaystackTransaction && InwardFundsTransfer) {
     PaystackTransaction.belongsTo(InwardFundsTransfer, {
       foreignKey: 'inward_transfer_id',
@@ -1364,7 +1444,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PaystackTransaction ↔ InwardFundsTransfer');
   }
 
-  // PaymentReference ↔ Customer
   if (PaymentReference && Customer) {
     PaymentReference.belongsTo(Customer, {
       foreignKey: 'customer_id',
@@ -1379,7 +1458,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PaymentReference ↔ Customer');
   }
 
-  // PaymentReference ↔ CustomerAccount
   if (PaymentReference && CustomerAccount) {
     PaymentReference.belongsTo(CustomerAccount, {
       foreignKey: 'customer_account',
@@ -1394,7 +1472,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ PaymentReference ↔ CustomerAccount');
   }
 
-  // InwardFundsTransfer ↔ CustomerAccount
   if (InwardFundsTransfer && CustomerAccount) {
     InwardFundsTransfer.belongsTo(CustomerAccount, {
       foreignKey: 'BENEFICIARY_ACCT',
@@ -1409,7 +1486,6 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
     console.log('✅ InwardFundsTransfer ↔ CustomerAccount');
   }
 
-  // InwardFundsTransfer ↔ PendingInwardTransaction
   if (InwardFundsTransfer && PendingInwardTransaction) {
     InwardFundsTransfer.hasMany(PendingInwardTransaction, {
       foreignKey: 'INWD_FUNDS_XFER_ID',
@@ -1428,22 +1504,53 @@ if (CardApprovalRequest && ApprovalWorkflowConfig) {
 }
 setupAssociations();
 
-// Add to your sync function
-const syncModels = async () => {
+// ========== SYNC FUNCTIONS ==========
+
+// Sync EOM tables
+const syncEOMTables = async () => {
   try {
-    // Sync models in order
-    await EOYReport.sync({ alter: true });
-    console.log('✅ EOYReport table synced');
+    await EOMClosingPeriod.sync({ alter: false });
+    console.log('✅ EOMClosingPeriod table synced');
     
-    await GLClosingPeriod.sync({ alter: true });
-    console.log('✅ GLClosingPeriod table synced');
+    await EOMReport.sync({ alter: false });
+    console.log('✅ EOMReport table synced');
+    
+    return true;
   } catch (error) {
-    console.error('❌ Error syncing EOY models:', error);
+    console.error('❌ Error syncing EOM models:', error.message);
+    return false;
   }
 };
 
-// Call the sync function when your app starts
-syncModels();
+// Sync EOY tables
+const syncEOYTables = async () => {
+  try {
+    await EOYReport.sync({ alter: false });
+    console.log('✅ EOYReport table synced');
+    
+    await GLClosingPeriod.sync({ alter: false });
+    console.log('✅ GLClosingPeriod table synced');
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error syncing EOY models:', error.message);
+    return false;
+  }
+};
+
+// Sync all EOY and EOM tables
+const syncEOYEOMTables = async () => {
+  try {
+    await syncEOMTables();
+    await syncEOYTables();
+    console.log('✅ All EOY and EOM tables synced successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Error syncing EOY/EOM tables:', error.message);
+    return false;
+  }
+};
+
 
 // ========== GETTERS ==========
 export const getModel = (modelName) => models[modelName];
@@ -1451,6 +1558,8 @@ export const getModel = (modelName) => models[modelName];
 // Admin
 export const getAdminUser = () => models.AdminUser;
 export const getAdminService = () => models.AdminService;
+
+export const getBINMapping =  () => models.BINMapping
 
 // Module Management
 export const getModule = () => models.Module;
@@ -1471,6 +1580,18 @@ export const getDepositAccountInterestTier = () => models.DepositAccountInterest
 // Penalty
 export const getPenaltyRule = () => models.PenaltyRule;
 export const getLoanPenalty = () => models.LoanPenalty;
+
+// ================================================================
+// ✅ EOM GETTERS
+// ================================================================
+export const getEOMClosingPeriod = () => models.EOMClosingPeriod;
+export const getEOMReport = () => models.EOMReport;
+
+// ================================================================
+// ✅ EOY GETTERS
+// ================================================================
+export const getEOYReport = () => models.EOYReport;
+export const getGLClosingPeriod = () => models.GLClosingPeriod;
 
 // ================================================================
 // ✅ USER SESSION & ACTIVITY LOG GETTERS
@@ -1503,14 +1624,6 @@ export const getEMTLPolicy = () => models.EMTLPolicy;
 export const getEMTLAuditLog = () => models.EMTLAuditLog;
 export const getEMTLTransaction = () => models.EMTLTransaction;
 export const getRemittanceBatch = () => models.RemittanceBatch;
-
-// ================================================================
-// EOY REPORT GETTERS
-// ================================================================
-export const getEOYReport = () => models.EOYReport;
-export const getGLClosingPeriod = () => models.GLClosingPeriod;  
-
-
 
 // ================================================================
 // ✅ JOURNAL ENTRY GETTERS
@@ -1616,6 +1729,7 @@ export const getWF_WORK_ITEM = () => models.WF_WORK_ITEM;
 export const getLoanEvent = () => models.LoanEvent;
 export const getCharge = () => models.Charge;
 export const getAdminPlugin = () => models.AdminPlugin;
+export const getInterbranchParameter = () => models.InterbranchParameter;
 
 // ========== INITIALISE ==========
 let initialized = false;
@@ -1626,6 +1740,10 @@ export const initializeModels = async () => {
     return models;
   }
   initialized = true;
+  
+  // Sync EOY and EOM tables
+  await syncEOYEOMTables();
+  
   console.log('🎉 All models initialized successfully!');
   const availableModels = Object.keys(models).filter(
     k => !['sequelize', 'Op', 'DataTypes', 'QueryTypes'].includes(k) && models[k] !== null
@@ -1869,16 +1987,26 @@ export {
   // ✅ INWARD TRANSFER EXPORTS
   // ================================================================
   InwardFundsTransfer,
+  InterbranchParameter,
   PendingInwardTransaction,
   PendingTransfer,
   PaystackTransaction,
   PaymentReference,
   // ================================================================
-    // ✅ CARD APPROVAL MODELS
-    // ================================================================
-    CardApprovalRequest,
-    ApprovalWorkflowConfig,
-
+  // ✅ CARD APPROVAL MODELS
+  // ================================================================
+  CardApprovalRequest,
+  ApprovalWorkflowConfig,
+  // ================================================================
+  // ✅ EOM MODELS
+  // ================================================================
+  EOMClosingPeriod,
+  EOMReport,
+  // ================================================================
+  // ✅ EOY MODELS
+  // ================================================================
+  EOYReport,
+  GLClosingPeriod,
 };
 
 export default models;

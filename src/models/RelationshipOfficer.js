@@ -1,4 +1,4 @@
-﻿// models/RelationshipOfficer.js - MySQL/Sequelize Version
+// models/RelationshipOfficer.js - MySQL/Sequelize Version
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -522,7 +522,7 @@ RelationshipOfficer.initializeTable = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Relationship officers table initialized');
+    console.log('✅ Relationship officers table initialized');
     return true;
   } catch (error) {
     console.error('Error initializing relationship officers table:', error.message);
@@ -533,8 +533,8 @@ RelationshipOfficer.initializeTable = async () => {
 // Sync the model (creates table if it doesn't exist)
 RelationshipOfficer.syncTable = async () => {
   try {
-    await RelationshipOfficer.sync({ alter: true });
-    console.log('âœ… RelationshipOfficer table synced');
+    await RelationshipOfficer.sync({ alter: false });
+    console.log('✅ RelationshipOfficer table synced');
     return true;
   } catch (error) {
     console.error('Error syncing RelationshipOfficer table:', error.message);

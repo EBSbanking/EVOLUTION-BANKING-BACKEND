@@ -1,4 +1,4 @@
-﻿// models/DirectDebitScheduler.js
+// models/DirectDebitScheduler.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

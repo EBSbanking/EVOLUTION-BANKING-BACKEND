@@ -1,4 +1,4 @@
-﻿// models/SecurityPolicy.js - MySQL/Sequelize Version
+// models/SecurityPolicy.js - MySQL/Sequelize Version
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -540,7 +540,7 @@ SecurityPolicy.initializeTable = async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
     
-    console.log('âœ… Security policies table initialized');
+    console.log('✅ Security policies table initialized');
     
     // Create a default policy if none exists
     const existingCount = await SecurityPolicy.count();
@@ -564,7 +564,7 @@ SecurityPolicy.initializeTable = async () => {
         CREATED_BY: 'system',
         created_by_user: 1 // Assuming system user has ID 1
       });
-      console.log('âœ… Default security policy created');
+      console.log('✅ Default security policy created');
     }
     
     return true;
@@ -577,8 +577,8 @@ SecurityPolicy.initializeTable = async () => {
 // Sync the model (creates table if it doesn't exist)
 SecurityPolicy.syncTable = async () => {
   try {
-    await SecurityPolicy.sync({ alter: true });
-    console.log('âœ… SecurityPolicy table synced');
+    await SecurityPolicy.sync({ alter: false });
+    console.log('✅ SecurityPolicy table synced');
     return true;
   } catch (error) {
     console.error('Error syncing SecurityPolicy table:', error.message);

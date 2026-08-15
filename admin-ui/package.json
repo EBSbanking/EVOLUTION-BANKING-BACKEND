@@ -1,6 +1,6 @@
 {
   "name": "admin-ui",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.11.1",
@@ -36,5 +36,9 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  }
+  },
+  "author": "Warelogtech Limited",
+  "license": "Proprietary",
+  "description": "Evolution Banking Backend Weblogic Console - Product of Warelogtech Limited",
+  "copyright": "© 2026 Warelogtech Limited. All rights reserved."
 }

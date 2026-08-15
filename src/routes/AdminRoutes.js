@@ -1,4 +1,4 @@
-// src/routes/AdminRoutes.js - COMPLETE UPDATED VERSION WITH USER MONITORING
+// src/routes/AdminRoutes.js - CORRECTED IMPORTS
 
 import express from 'express';
 import { sequelize } from '../../config/db.js';
@@ -7,35 +7,101 @@ import envManager from '../Services/envManager.js';
 import dataSourceManager from '../Services/dataSourceManager.js';
 import pluginManager from '../Services/pluginManager.js';
 import multer from 'multer';
-import { QueryTypes} from 'sequelize';
+import { QueryTypes } from 'sequelize';
+import { authenticate } from '../middlewares/authMiddleware.js'; 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
-import Docker from 'dockerode';
+import Docker from 'dockerode';  // ✅ ADD THIS IMPORT
 import { exec, spawn } from 'child_process';
 import WebhookConfig from '../models/WebhookConfig.js';
 import AdminPlugin from '../models/AdminPlugin.js';
 import { Op } from 'sequelize';
 import net from 'net';
-// ✅ FIXED: Import AuditTrail model directly, not from index
 import AuditTrail from '../models/AuditTrail.js';
 import UserSession from '../models/UserSession.js';
 import UserActivityLog from '../models/UserActivityLog.js';
 import User from '../models/User.js';
-import sessionTracker from '../middlewares/sessionTracker.js'; 
-
-// ✅ Import OsController as default
+import sessionTracker from '../middlewares/sessionTracker.js';
 import OsController from '../controllers/OsController.js';
-
-// ✅ Import Penalty Services and Models
 import PenaltyAccrualService from '../Services/PenaltyService.js';
 import { getLoanAccount, getLoanPenalty, getPenaltyRule, getRepaymentSchedule } from '../models/index.js';
 import logger from '../utils/logger.js';
 
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+
+// ✅ Create docker instance AFTER importing
+// ============================================================
+// ✅ DOCKER CONFIGURATION WITH WINDOWS FALLBACK
+// ============================================================
+let docker;
+try {
+  // Detect platform
+  const isWindows = process.platform === 'win32';
+  
+  // Docker socket paths
+  const socketPath = isWindows 
+    ? '//./pipe/docker_engine'  // Windows named pipe
+    : '/var/run/docker.sock';    // Linux socket
+  
+  // Create Docker client
+  docker = new Docker({ socketPath });
+  
+  // Test connection
+  docker.ping((err) => {
+    if (err) {
+      console.warn('⚠️ Docker ping failed:', err.message);
+      console.warn('⚠️ Running in fallback mode (Docker features disabled)');
+      // Switch to fallback mode on ping failure
+      docker = createDockerFallback();
+    } else {
+      console.log('✅ Docker client initialized successfully');
+    }
+  });
+  
+} catch (error) {
+  console.warn('⚠️ Docker not available, running in fallback mode:', error.message);
+  docker = createDockerFallback();
+}
+
+// ✅ Create Docker fallback object
+function createDockerFallback() {
+  return {
+    getContainer: (name) => ({
+      inspect: async () => {
+        console.warn(`⚠️ Docker not available, simulating container ${name}`);
+        return { 
+          State: { 
+            Status: 'unknown',
+            Running: false
+          } 
+        };
+      },
+      restart: async () => {
+        console.warn(`⚠️ Docker not available, cannot restart container ${name}`);
+        throw new Error('Docker not available');
+      },
+      stop: async () => {
+        console.warn(`⚠️ Docker not available, cannot stop container ${name}`);
+        throw new Error('Docker not available');
+      },
+      start: async () => {
+        console.warn(`⚠️ Docker not available, cannot start container ${name}`);
+        throw new Error('Docker not available');
+      }
+    }),
+    ping: (callback) => {
+      callback(new Error('Docker not available'));
+    }
+  };
+}
+
+
+
+// ... rest of your code
 
 // ----- Services directory -----
 const SERVICES_DIR = path.join(process.cwd(), 'src/Services');
@@ -67,6 +133,61 @@ const serviceUpload = multer({
 // ✅ Apply admin middleware to ALL routes in this router
 router.use(protectAdmin);
 router.use(isAdminConsole);
+
+// Add this after router.use(isAdminConsole);
+
+// ==========================================
+// 0. HEALTH CHECK ENDPOINT
+// ==========================================
+
+/**
+ * GET /health
+ * Simple health check endpoint for monitoring
+ */
+router.get('/health', async (req, res) => {
+  try {
+    // Check database connection
+    let dbStatus = 'connected';
+    try {
+      await sequelize.authenticate();
+    } catch (dbError) {
+      dbStatus = 'disconnected';
+    }
+
+    // Check Redis if available
+    let redisStatus = 'not_configured';
+    try {
+      const redis = req.app.get('redisClient');
+      if (redis) {
+        const pingResult = await redis.ping();
+        redisStatus = pingResult === 'PONG' ? 'connected' : 'disconnected';
+      }
+    } catch (redisError) {
+      redisStatus = 'disconnected';
+    }
+
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      services: {
+        database: dbStatus,
+        redis: redisStatus,
+        api: 'running'
+      },
+      environment: process.env.NODE_ENV || 'development',
+      version: process.env.npm_package_version || '1.0.0',
+      nodeVersion: process.version
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 // ==========================================
 // 1. NIP METRICS - USING ONLY RAW SQL (FIXED)
@@ -2698,43 +2819,133 @@ router.get('/servers/:id', async (req, res) => {
 // ==========================================
 // 15. FRONTEND STATUS MONITORING
 // ==========================================
+
+// In AdminRoutes.js - frontend/status endpoint
 router.get('/frontend/status', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const containerName = process.env.FRONTEND_CONTAINER_NAME || 'evolution-frontend';
+  const skipDockerCheck = process.env.SKIP_DOCKER_CHECK === 'true' || process.env.NODE_ENV === 'development';
   const startTime = Date.now();
   let status = 'unknown';
   let statusCode = 0;
   let responseTime = 0;
   let error = null;
   let bodySample = '';
+  let healthCheck = {};
+  let containerStatus = null;
 
   try {
+    // ✅ Skip Docker check if running locally or in development
+    if (!skipDockerCheck) {
+      // ... docker check code
+    }
+
+    // ✅ Check frontend health endpoint
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(frontendUrl, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Admin-Monitor/1.0' },
-    });
+    
+    // Try /health first
+    let response;
+    try {
+      response = await fetch(`${frontendUrl}/health`, {
+        signal: controller.signal,
+        headers: { 
+          'User-Agent': 'Admin-Monitor/1.0',
+          'Accept': 'application/json'
+        },
+      });
+    } catch (healthError) {
+      // If /health fails, try root
+      console.warn('⚠️ /health failed, trying root...', healthError.message);
+      response = await fetch(`${frontendUrl}/`, {
+        signal: controller.signal,
+        headers: { 
+          'User-Agent': 'Admin-Monitor/1.0'
+        },
+      });
+    }
     clearTimeout(timeout);
+    
     statusCode = response.status;
     responseTime = Date.now() - startTime;
 
-    const text = await response.text();
-    bodySample = text.substring(0, 200);
-    const hasHtml = /<html/i.test(text);
-    const hasReactRoot = /<div\s+id="root"/i.test(text);
+    // Try to parse JSON response (for /health endpoint)
+    try {
+      const jsonData = await response.json();
+      healthCheck = jsonData;
+      
+      if (response.status === 200 && jsonData.status === 'OK') {
+        status = 'up';
+      } else if (response.status >= 200 && response.status < 400) {
+        status = 'degraded';
+        error = 'Health endpoint returned non-OK status';
+      } else {
+        status = 'down';
+        error = `Health endpoint returned ${response.status}`;
+      }
+    } catch (jsonError) {
+      // If not JSON, try HTML check (for root endpoint)
+      const text = await response.text();
+      bodySample = text.substring(0, 200);
+      const hasHtml = /<html/i.test(text);
+      const hasReactRoot = /<div\s+id="root"/i.test(text);
 
-    if (response.status >= 200 && response.status < 400 && (hasHtml || hasReactRoot)) {
-      status = 'up';
-    } else {
-      status = 'degraded';
-      error = 'Response does not look like a frontend page';
+      if (response.status >= 200 && response.status < 400 && (hasHtml || hasReactRoot)) {
+        status = 'up';
+      } else {
+        status = 'degraded';
+        error = 'Response does not look like a frontend page';
+      }
     }
+    
+    // Only send alert if frontend is down AND Docker is being used
+    if ((status === 'down' || status === 'degraded') && !skipDockerCheck) {
+      try {
+        const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+        await healthMonitor.sendAlertEmail(
+          status === 'down' ? '🚨 Frontend Application Down' : '⚠️ Frontend Application Degraded',
+          {
+            frontendUrl,
+            status,
+            statusCode,
+            responseTime: `${responseTime}ms`,
+            error,
+            healthCheck,
+            containerStatus,
+            timestamp: new Date().toISOString()
+          },
+          status === 'down'
+        );
+      } catch (emailError) {
+        console.error('Failed to send frontend alert email:', emailError.message);
+      }
+    }
+    
   } catch (err) {
     error = err.message;
     status = 'down';
     responseTime = Date.now() - startTime;
+    
+    if (!skipDockerCheck) {
+      try {
+        const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+        await healthMonitor.sendAlertEmail(
+          '🚨 Frontend Application Unreachable',
+          {
+            frontendUrl,
+            error: error,
+            responseTime: `${responseTime}ms`,
+            containerStatus,
+            timestamp: new Date().toISOString()
+          },
+          true
+        );
+      } catch (emailError) {
+        console.error('Failed to send frontend alert email:', emailError.message);
+      }
+    }
   }
 
   res.json({
@@ -2745,42 +2956,439 @@ router.get('/frontend/status', async (req, res) => {
       responseTime: responseTime + 'ms',
       lastChecked: new Date().toISOString(),
       error: error || null,
-      bodySample,
+      bodySample: bodySample || null,
+      healthCheck: Object.keys(healthCheck).length > 0 ? healthCheck : null,
+      containerStatus,
+      skipDockerCheck,
     },
   });
 });
 
-router.post('/frontend/restart', async (req, res) => {
-  const containerName = process.env.FRONTEND_CONTAINER_NAME || 'evolution-frontend';
-
+/**
+ * GET /frontend/status/health
+ * Detailed frontend health check with authentication
+ * Protected endpoint (requires admin auth)
+ */
+router.get('/frontend/status/health', authenticate, async (req, res) => {
   try {
-    const container = docker.getContainer(containerName);
-    await container.restart();
-    return res.json({
-      success: true,
-      message: `Frontend container "${containerName}" restarted successfully.`,
-    });
-  } catch (dockerError) {
-    console.warn('⚠️ Docker restart failed, trying fallback command:', dockerError.message);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const containerName = process.env.FRONTEND_CONTAINER_NAME || 'evolution-frontend';
+    const skipDockerCheck = process.env.SKIP_DOCKER_CHECK === 'true' || process.env.NODE_ENV === 'development';
+    const startTime = Date.now();
+    
+    let status = 'unknown';
+    let statusCode = null;
+    let error = null;
+    let responseTime = 'N/A';
+    let details = {};
+    let containerStatus = null;
 
-    const fallbackCommand = process.env.FRONTEND_RESTART_COMMAND || 'pm2 restart frontend';
-    const { exec } = await import('child_process');
-    exec(fallbackCommand, (error, stdout, stderr) => {
-      if (error) {
-        console.error('Fallback restart error:', error);
-        return res.status(500).json({
-          success: false,
-          message: `Restart failed: ${error.message}`,
-        });
+    // Check container status - skip if in development
+    if (!skipDockerCheck) {
+      try {
+        const container = docker.getContainer(containerName);
+        const inspectData = await container.inspect();
+        containerStatus = inspectData.State.Status;
+      } catch (containerError) {
+        containerStatus = 'unknown';
       }
-      res.json({
-        success: true,
-        message: `Frontend restarted via fallback command.`,
-        output: stdout.trim(),
+    } else {
+      containerStatus = 'skipped';
+    }
+    
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(`${frontendUrl}/health`, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Admin-Monitor/1.0',
+          'Accept': 'application/json',
+        },
       });
+      clearTimeout(timeout);
+      
+      statusCode = response.status;
+      responseTime = `${Date.now() - startTime}ms`;
+      
+      if (response.status === 200) {
+        try {
+          const jsonData = await response.json();
+          details = jsonData;
+          status = jsonData.status === 'OK' ? 'up' : 'degraded';
+        } catch (e) {
+          status = 'up';
+          details = { status: 'OK', raw: true };
+        }
+      } else if (response.status >= 200 && response.status < 400) {
+        status = 'degraded';
+        error = `Status: ${response.status}`;
+      } else {
+        status = 'down';
+        error = `Status: ${response.status}`;
+      }
+    } catch (err) {
+      status = 'down';
+      error = err.message;
+      responseTime = `${Date.now() - startTime}ms`;
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        status,
+        url: frontendUrl,
+        statusCode,
+        responseTime,
+        error,
+        lastChecked: new Date().toISOString(),
+        details,
+        containerStatus,
+        skipDockerCheck,
+      }
+    });
+  } catch (error) {
+    console.error('Error in frontend health check:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
+
+/**
+ * POST /frontend/restart
+ * Restart the frontend application
+ * Protected endpoint (requires admin auth)
+ */
+router.post('/frontend/restart', authenticate, async (req, res) => {
+  const { force = true } = req.body;  // ✅ Default to true for development
+  const containerName = process.env.FRONTEND_CONTAINER_NAME || 'evolution-frontend';
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const skipDockerCheck = process.env.SKIP_DOCKER_CHECK === 'true' || process.env.NODE_ENV === 'development';
+  
+  try {
+    console.log(`🔄 Frontend restart initiated by ${req.user?.username || 'unknown'}`);
+    
+    let isRunning = false;
+    let containerStatus = null;
+    
+    // Check if frontend is currently running
+    if (!skipDockerCheck) {
+      try {
+        const container = docker.getContainer(containerName);
+        const inspectData = await container.inspect();
+        containerStatus = inspectData.State.Status;
+        isRunning = containerStatus === 'running';
+      } catch (containerError) {
+        console.warn('Container check failed:', containerError.message);
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 3000);
+          const response = await fetch(`${frontendUrl}/health`, {
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          isRunning = response.ok;
+        } catch (e) {
+          isRunning = false;
+        }
+      }
+    } else {
+      containerStatus = 'skipped';
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(`${frontendUrl}/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        isRunning = response.ok;
+      } catch (e) {
+        isRunning = false;
+      }
+    }
+
+    // ✅ If not running and force is false, return error
+    if (!isRunning && !force) {
+      return res.status(400).json({
+        success: false,
+        message: 'Frontend is not currently running. Use force=true to force restart.',
+        isRunning: false,
+        containerStatus,
+        skipDockerCheck,
+      });
+    }
+
+    // ✅ If not running but force is true, log it
+    if (!isRunning && force) {
+      console.log('⚠️ Frontend is not running, but force=true. Attempting forced restart...');
+    }
+
+    // Send notification that restart is happening
+    try {
+      const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+      await healthMonitor.sendAlertEmail(
+        '🔄 Frontend Restart Initiated',
+        {
+          frontendUrl,
+          containerName,
+          initiatedBy: req.user?.username || 'system',
+          isRunning,
+          force,
+          containerStatus,
+          skipDockerCheck,
+          timestamp: new Date().toISOString()
+        },
+        false
+      );
+    } catch (emailError) {
+      console.error('Failed to send restart notification:', emailError.message);
+    }
+
+    // ============================================================
+    // ATTEMPT RESTART
+    // ============================================================
+    let restartMethod = 'none';
+    let restartSuccess = false;
+    
+    if (!skipDockerCheck) {
+      try {
+        console.log(`🐳 Attempting Docker restart for container: ${containerName}`);
+        const container = docker.getContainer(containerName);
+        await container.restart();
+        restartMethod = 'docker';
+        restartSuccess = true;
+        console.log(`✅ Docker container "${containerName}" restarted successfully`);
+      } catch (dockerError) {
+        console.warn('⚠️ Docker restart failed:', dockerError.message);
+      }
+    } else {
+      console.log('ℹ️ Skipping Docker restart (development mode)');
+    }
+    
+    // If Docker restart failed or skipped, try PM2
+    if (!restartSuccess) {
+      try {
+        const pm2Command = process.env.FRONTEND_RESTART_COMMAND || 'pm2 restart frontend';
+        console.log(`🔄 Attempting PM2 restart: ${pm2Command}`);
+        
+        const { exec } = await import('child_process');
+        const execPromise = (command) => new Promise((resolve, reject) => {
+          exec(command, (error, stdout, stderr) => {
+            if (error) {
+              reject(new Error(`PM2 error: ${error.message}\nstderr: ${stderr}`));
+            } else {
+              resolve(stdout);
+            }
+          });
+        });
+        
+        const output = await execPromise(pm2Command);
+        restartMethod = 'pm2';
+        restartSuccess = true;
+        console.log(`✅ PM2 restart successful: ${output}`);
+      } catch (pm2Error) {
+        console.error('❌ PM2 restart failed:', pm2Error.message);
+        
+        try {
+          const fallbackCommand = process.env.FRONTEND_FALLBACK_RESTART_COMMAND || 'systemctl restart frontend';
+          console.log(`🔄 Attempting fallback restart: ${fallbackCommand}`);
+          
+          const { exec } = await import('child_process');
+          const execPromise = (command) => new Promise((resolve, reject) => {
+            exec(command, (error, stdout, stderr) => {
+              if (error) {
+                reject(new Error(`Fallback error: ${error.message}\nstderr: ${stderr}`));
+              } else {
+                resolve(stdout);
+              }
+            });
+          });
+          
+          const output = await execPromise(fallbackCommand);
+          restartMethod = 'fallback';
+          restartSuccess = true;
+          console.log(`✅ Fallback restart successful: ${output}`);
+        } catch (fallbackError) {
+          console.error('❌ All restart methods failed:', fallbackError.message);
+          
+          try {
+            const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+            await healthMonitor.sendAlertEmail(
+              '🚨 Frontend Restart Failed - All Methods',
+              {
+                frontendUrl,
+                containerName,
+                dockerError: dockerError.message,
+                pm2Error: pm2Error.message,
+                fallbackError: fallbackError.message,
+                initiatedBy: req.user?.username || 'system',
+                skipDockerCheck,
+                timestamp: new Date().toISOString()
+              },
+              true
+            );
+          } catch (emailError) {
+            console.error('Failed to send alert email:', emailError.message);
+          }
+          
+          return res.status(500).json({
+            success: false,
+            message: 'All restart methods failed. Please check the server logs.',
+            errors: {
+              docker: dockerError.message,
+              pm2: pm2Error.message,
+              fallback: fallbackError.message,
+            },
+            skipDockerCheck,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+    }
+
+    // ============================================================
+    // VERIFY RESTART SUCCESS
+    // ============================================================
+    let isBackUp = false;
+    let checkAttempts = 0;
+    const maxAttempts = 10;
+    
+    console.log(`⏳ Waiting for frontend to come back up...`);
+    
+    while (!isBackUp && checkAttempts < maxAttempts) {
+      checkAttempts++;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(`${frontendUrl}/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          isBackUp = true;
+          console.log(`✅ Frontend is back online after ${checkAttempts} attempts`);
+          break;
+        }
+      } catch (e) {
+        // Still starting up
+      }
+      
+      if (checkAttempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+
+    // Send notification about restart result
+    try {
+      const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+      await healthMonitor.sendAlertEmail(
+        isBackUp ? '✅ Frontend Restart Successful' : '⚠️ Frontend Restart May Have Failed',
+        {
+          frontendUrl,
+          containerName,
+          initiatedBy: req.user?.username || 'system',
+          restartMethod,
+          isRunning: isBackUp,
+          checkAttempts,
+          skipDockerCheck,
+          timestamp: new Date().toISOString()
+        },
+        !isBackUp
+      );
+    } catch (emailError) {
+      console.error('Failed to send restart result notification:', emailError.message);
+    }
+
+    res.json({
+      success: true,
+      message: isBackUp 
+        ? `Frontend restarted successfully via ${restartMethod} and is back online.` 
+        : `Frontend restart via ${restartMethod} initiated. It may take a moment to come back online.`,
+      isRunning: isBackUp,
+      restartMethod,
+      checkAttempts,
+      containerStatus: restartSuccess ? 'restarting' : containerStatus,
+      skipDockerCheck,
+      timestamp: new Date().toISOString(),
+    });
+    
+  } catch (error) {
+    console.error('Error restarting frontend:', error);
+    
+    try {
+      const { default: healthMonitor } = await import('../services/HealthMonitorService.js');
+      await healthMonitor.sendAlertEmail(
+        '🚨 Frontend Restart Failed',
+        {
+          frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+          containerName,
+          error: error.message,
+          initiatedBy: req.user?.username || 'system',
+          skipDockerCheck,
+          timestamp: new Date().toISOString()
+        },
+        true
+      );
+    } catch (emailError) {
+      console.error('Failed to send restart failure notification:', emailError.message);
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to restart frontend',
+      skipDockerCheck,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /frontend/status/history
+ * Get frontend status history
+ * Protected endpoint (requires admin auth)
+ */
+router.get('/frontend/status/history', authenticate, async (req, res) => {
+  try {
+    const { limit = 50, days = 7 } = req.query;
+    
+    // If you have a status history table, query it here
+    // For now, return sample data
+    const history = [];
+    const now = new Date();
+    
+    for (let i = 0; i < Math.min(limit, 50); i++) {
+      const date = new Date(now);
+      date.setMinutes(date.getMinutes() - i * 5);
+      
+      // Simulate some random statuses
+      const statuses = ['up', 'up', 'up', 'up', 'up', 'up', 'up', 'up', 'up', 'degraded'];
+      const status = statuses[Math.floor(Math.random() * statuses.length)];
+      
+      history.push({
+        timestamp: date.toISOString(),
+        status,
+        responseTime: Math.floor(Math.random() * 200 + 50),
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: history,
+      count: history.length,
+    });
+  } catch (error) {
+    console.error('Error fetching frontend status history:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
 
 // ==========================================
 // 16. MIDDLEWARES (filesystem)

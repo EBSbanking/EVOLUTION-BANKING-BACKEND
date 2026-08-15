@@ -1,4 +1,4 @@
-﻿// models/LoanPortfolio.js – Updated with proper interest accrual handling
+// models/LoanPortfolio.js � Updated with proper interest accrual handling
 import { DataTypes, Op, Model } from 'sequelize';
 import sequelize from '../../config/db.js';
 

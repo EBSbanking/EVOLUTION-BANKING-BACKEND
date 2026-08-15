@@ -1,4 +1,4 @@
-﻿// src/models/Holiday.js
+// src/models/Holiday.js
 import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -171,7 +171,7 @@ async function checkTableExists() {
     tableExistsCacheTime = now;
     return tableExistsCache;
   } catch (error) {
-    console.warn('⚠️ Could not check if holidays table exists:', error.message);
+    console.warn('?? Could not check if holidays table exists:', error.message);
     return false;
   }
 }
@@ -292,7 +292,7 @@ Holiday.isHoliday = async function(date, options = {}) {
   } catch (error) {
     // Don't log full error for missing table to reduce noise
     if (error.message && (error.message.includes('doesn\'t exist') || error.message.includes('does not exist'))) {
-      console.warn('⚠️ Holidays table not available:', error.message);
+      console.warn('?? Holidays table not available:', error.message);
     } else {
       console.error('Error checking holiday:', error.message);
     }
@@ -797,22 +797,22 @@ Holiday.initializeTable = async function(force = false) {
     const tableExists = await checkTableExists();
     
     if (!tableExists) {
-      console.log('📋 Creating holidays table...');
+      console.log('?? Creating holidays table...');
       await this.sync({ force: false });
-      console.log('✅ Holidays table created successfully');
+      console.log('? Holidays table created successfully');
       tableExistsCache = true;
       tableExistsCacheTime = Date.now();
     } else if (force) {
-      console.log('📋 Recreating holidays table...');
+      console.log('?? Recreating holidays table...');
       await this.sync({ force: true });
-      console.log('✅ Holidays table recreated successfully');
+      console.log('? Holidays table recreated successfully');
     } else {
-      console.log('✅ Holidays table already exists');
+      console.log('? Holidays table already exists');
     }
     
     return true;
   } catch (error) {
-    console.error('❌ Error initializing holidays table:', error.message);
+    console.error('? Error initializing holidays table:', error.message);
     return false;
   }
 };

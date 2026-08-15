@@ -1776,10 +1776,164 @@ export const createCustomer = async (req, res) => {
   console.log('📥 Request body keys:', Object.keys(req.body || {}));
   
   const body = req.body || {};
-  if (!body.HOME_ADDRESS || !body.BU_ID) {
+  
+  // ============================================
+  // ✅ GET IP ADDRESS
+  // ============================================
+  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress || 'unknown';
+  
+  // ============================================
+  // ✅ DETAILED VALIDATION WITH SPECIFIC ERROR MESSAGES
+  // ============================================
+  const validationErrors = [];
+  
+  // Required fields validation
+  if (!body.HOME_ADDRESS) {
+    validationErrors.push({ field: 'HOME_ADDRESS', message: 'Home address is required' });
+  }
+  
+  if (!body.BU_ID) {
+    validationErrors.push({ field: 'BU_ID', message: 'Business Unit ID is required' });
+  }
+  
+  if (!body.FIRST_NAME) {
+    validationErrors.push({ field: 'FIRST_NAME', message: 'First name is required' });
+  }
+  
+  if (!body.LAST_NAME) {
+    validationErrors.push({ field: 'LAST_NAME', message: 'Last name is required' });
+  }
+  
+  if (!body.GENDER_TY) {
+    validationErrors.push({ field: 'GENDER_TY', message: 'Gender is required' });
+  }
+  
+  if (!body.PHONE_NO) {
+    validationErrors.push({ field: 'PHONE_NO', message: 'Phone number is required' });
+  }
+  
+  // Email validation
+  if (body.EMAIL_ADDRESS && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.EMAIL_ADDRESS)) {
+    validationErrors.push({ field: 'EMAIL_ADDRESS', message: 'Invalid email format. Please enter a valid email address.' });
+  }
+  
+  // Phone number validation
+  if (body.PHONE_NO) {
+    const phoneStr = String(body.PHONE_NO).replace(/\D/g, '');
+    if (phoneStr.length !== 11) {
+      validationErrors.push({ field: 'PHONE_NO', message: 'Phone number must be exactly 11 digits (e.g., 08012345678)' });
+    }
+  }
+  
+  // BVN validation
+  if (body.BVN) {
+    const bvnStr = String(body.BVN).replace(/\D/g, '');
+    if (bvnStr.length !== 11) {
+      validationErrors.push({ field: 'BVN', message: 'BVN must be exactly 11 digits' });
+    }
+  }
+  
+  // NIN validation
+  if (body.NIN) {
+    const ninStr = String(body.NIN).replace(/\D/g, '');
+    if (ninStr.length !== 11) {
+      validationErrors.push({ field: 'NIN', message: 'NIN must be exactly 11 digits' });
+    }
+  }
+  
+  // KYC Level validation
+  if (body.KYC_LEVEL === 'Tier-2' || body.KYC_LEVEL === 'Tier-3') {
+    if (!body.BVN && !body.NIN) {
+      validationErrors.push({ 
+        field: 'KYC_LEVEL', 
+        message: `For ${body.KYC_LEVEL}, either BVN or NIN is required. Please provide at least one identification number.` 
+      });
+    }
+  }
+  
+  // Employment validation - Employer details required for employed statuses
+  const employmentStatusesRequiringEmployer = [
+    'Employed Full-Time', 'Employed Part-Time', 'Self-Employed', 
+    'Business Owner', 'Contractor', 'Civil Servant', 'Freelancer'
+  ];
+  
+  if (body.EMP_ST && employmentStatusesRequiringEmployer.includes(body.EMP_ST)) {
+    if (!body.EMPLOYER_NAME || body.EMPLOYER_NAME.trim() === '') {
+      validationErrors.push({ 
+        field: 'EMPLOYER_NAME', 
+        message: `Employer/Business name is required for "${body.EMP_ST}" status` 
+      });
+    }
+    if (!body.EMPLOYER_ADDRESS || body.EMPLOYER_ADDRESS.trim() === '') {
+      validationErrors.push({ 
+        field: 'EMPLOYER_ADDRESS', 
+        message: `Employer/Business address is required for "${body.EMP_ST}" status` 
+      });
+    }
+  }
+  
+  // Tax ID validation for Corporate/SME customers
+  if (body.customerType === 'CORPORATE' || body.customerType === 'SME') {
+    if (!body.TAX_GRP_ID || body.TAX_GRP_ID.trim() === '') {
+      validationErrors.push({ 
+        field: 'TAX_GRP_ID', 
+        message: 'Tax ID is mandatory for Corporate/SME customers. Please enter your Tax Identification Number.' 
+      });
+    }
+  }
+  
+  // Next of Kin validation
+  const nextOfKinData = body.nextOfKin || [];
+  if (nextOfKinData.length === 0) {
+    validationErrors.push({ 
+      field: 'nextOfKin', 
+      message: 'At least one Next of Kin is required.' 
+    });
+  } else {
+    nextOfKinData.forEach((kin, index) => {
+      if (!kin.NEXTOF_KIN_NM || kin.NEXTOF_KIN_NM.trim() === '') {
+        validationErrors.push({ 
+          field: `nextOfKin[${index}].NEXTOF_KIN_NM`, 
+          message: `Next of Kin ${index + 1}: Full name is required.` 
+        });
+      }
+      if (!kin.RELATIONSHIP) {
+        validationErrors.push({ 
+          field: `nextOfKin[${index}].RELATIONSHIP`, 
+          message: `Next of Kin ${index + 1}: Relationship is required.` 
+        });
+      }
+      if (!kin.PHONE_NO) {
+        validationErrors.push({ 
+          field: `nextOfKin[${index}].PHONE_NO`, 
+          message: `Next of Kin ${index + 1}: Phone number is required.` 
+        });
+      } else {
+        const phoneStr = String(kin.PHONE_NO).replace(/\D/g, '');
+        if (phoneStr.length !== 11) {
+          validationErrors.push({ 
+            field: `nextOfKin[${index}].PHONE_NO`, 
+            message: `Next of Kin ${index + 1}: Phone number must be exactly 11 digits.` 
+          });
+        }
+      }
+      if (!kin.ADDRESS || kin.ADDRESS.trim() === '') {
+        validationErrors.push({ 
+          field: `nextOfKin[${index}].ADDRESS`, 
+          message: `Next of Kin ${index + 1}: Address is required.` 
+        });
+      }
+    });
+  }
+  
+  // Return validation errors if any
+  if (validationErrors.length > 0) {
+    console.log('❌ Validation errors:', validationErrors);
     return res.status(400).json({
       success: false,
-      message: "HOME_ADDRESS and BU_ID are required."
+      message: 'Validation failed. Please check the following fields:',
+      errors: validationErrors,
+      errorCount: validationErrors.length
     });
   }
   
@@ -1816,7 +1970,9 @@ export const createCustomer = async (req, res) => {
           await transaction.rollback();
           return res.status(400).json({
             success: false,
-            message: `Group with ID ${groupId} not found`
+            message: `Group with ID ${groupId} not found`,
+            error: 'GROUP_NOT_FOUND',
+            field: 'groupId'
           });
         }
         
@@ -1824,7 +1980,9 @@ export const createCustomer = async (req, res) => {
           await transaction.rollback();
           return res.status(400).json({
             success: false,
-            message: `Group is not active (current status: ${validatedGroup.status})`
+            message: `Group is not active (current status: ${validatedGroup.status})`,
+            error: 'GROUP_INACTIVE',
+            field: 'groupId'
           });
         }
         
@@ -1832,7 +1990,9 @@ export const createCustomer = async (req, res) => {
           await transaction.rollback();
           return res.status(400).json({
             success: false,
-            message: `Group has reached maximum member limit (${validatedGroup.maxMembers})`
+            message: `Group has reached maximum member limit (${validatedGroup.maxMembers})`,
+            error: 'GROUP_FULL',
+            field: 'groupId'
           });
         }
         
@@ -1866,6 +2026,8 @@ export const createCustomer = async (req, res) => {
         STMNT_FREQ_CD = '',
         STMNT_FREQ_VALUE = '',
         CREATED_BY = 'system',
+        CREATED_BY_FULLNAME = '',
+        CREATED_BY_ID = '',
         CREATE_DT,
         INDUSTRY_ID = '',
         INDUSTRY_CD = '',
@@ -1873,11 +2035,18 @@ export const createCustomer = async (req, res) => {
         MARITAL_ST = '',
         TAX_GRP_ID = '',
         OPERATIONS_CRNCY_ID = 'NGN',
+        // ✅ Employment Fields
         EMP_ST = '',
+        EMPLOYER_NAME = '',
+        EMPLOYER_ADDRESS = '',
+        EMPLOYER_PHONE = '',
+        EMPLOYER_EMAIL = '',
+        JOB_TITLE = '',
+        YEARS_WORKED = '',
         ORGANISATION_NM = '',
         REGISTRATION_ADDRESS = '',
         REGISTRATION_DT,
-        REGISTRATION_NO = null, // ✅ ADDED: Corporate Customer RC Number (CAC Reg. No.)
+        REGISTRATION_NO = null,
         ALERT_DELIVERY_METHOD = '',
         KYC_LEVEL = '',
         PHONE_NO = '',
@@ -1886,68 +2055,14 @@ export const createCustomer = async (req, res) => {
         SANCTION_SCORE = 10,
         DOCUMENT_VERIFICATION_STATUS = 'Pending',
         REC_ST = "PENDING",
+        // ✅ Customer Type
+        customerType = 'NORMAL',
       } = body;
-
-      const nextOfKinData = body.nextOfKin || [];
-      console.log(`📋 Next of Kin data received: ${nextOfKinData.length} entries`);
-      
-      let processedNextOfKin = [];
-      if (nextOfKinData.length > 0) {
-        processedNextOfKin = nextOfKinData.map(nok => ({
-          ...nok,
-          IS_PRIMARY: nok.IS_PRIMARY === "Y" || nok.IS_PRIMARY === true || nok.IS_PRIMARY === "true"
-        }));
-        
-        const nokValidationError = validateNextOfKin(processedNextOfKin);
-        if (nokValidationError) {
-          await transaction.rollback();
-          return res.status(400).json({ 
-            success: false,
-            message: nokValidationError 
-          });
-        }
-        
-        const primaryCount = processedNextOfKin.filter(nok => nok.IS_PRIMARY).length;
-        if (primaryCount > 1) {
-          await transaction.rollback();
-          return res.status(400).json({ 
-            success: false,
-            message: "Only one Next of Kin can be set as primary." 
-          });
-        }
-      }
-      
-      console.log("✅ Validations passed");
-
-      const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-
-      console.log('📝 Processing customer creation request:');
-      console.log('  - Name:', FIRST_NAME, LAST_NAME);
-      console.log('  - Email:', EMAIL_ADDRESS || "Not provided");
-      console.log('  - BU_ID:', BU_ID);
-      console.log('  - Next of Kin count:', processedNextOfKin.length);
-      if (groupId) console.log('  - Group ID:', groupId, 'Group Name:', validatedGroup?.groupName);
-      if (REGISTRATION_NO) console.log('  - Registration No:', REGISTRATION_NO);
-
-      if (NIN && !/^\d{11}$/.test(NIN)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          success: false,
-          message: "NIN must be exactly 11 digits." 
-        });
-      }
-      
-      if (BVN && !/^\d{11}$/.test(BVN)) {
-        await transaction.rollback();
-        return res.status(400).json({ 
-          success: false,
-          message: "BVN must be exactly 11 digits." 
-        });
-      }
 
       console.log('🔍 Checking for existing customer...');
       let existingCustomer = null;
       
+      // Check by email
       if (EMAIL_ADDRESS) {
         console.log(`🔍 Checking for EMAIL_ADDRESS: ${EMAIL_ADDRESS}`);
         try {
@@ -1964,9 +2079,11 @@ export const createCustomer = async (req, res) => {
 
       if (existingCustomer) {
         await transaction.rollback();
-        return res.status(400).json({
+        return res.status(409).json({
           success: false,
-          message: `Customer with email ${EMAIL_ADDRESS} already exists (${existingCustomer.FIRST_NAME} ${existingCustomer.LAST_NAME})`,
+          message: `A customer with email "${EMAIL_ADDRESS}" already exists.`,
+          error: 'DUPLICATE_EMAIL',
+          field: 'EMAIL_ADDRESS',
           existingCustomer: {
             CUST_ID: existingCustomer.CUST_ID,
             CUST_NO: existingCustomer.CUST_NO,
@@ -1974,6 +2091,56 @@ export const createCustomer = async (req, res) => {
             EMAIL_ADDRESS: existingCustomer.EMAIL_ADDRESS
           }
         });
+      }
+      
+      // Check by BVN if provided
+      if (BVN) {
+        const existingByBVN = await custModel.findOne({
+          where: { BVN: BVN },
+          attributes: ['id', 'CUST_ID', 'CUST_NO', 'BVN', 'FIRST_NAME', 'LAST_NAME'],
+          transaction
+        });
+        
+        if (existingByBVN) {
+          await transaction.rollback();
+          return res.status(409).json({
+            success: false,
+            message: `A customer with BVN "${BVN}" already exists.`,
+            error: 'DUPLICATE_BVN',
+            field: 'BVN',
+            existingCustomer: {
+              CUST_ID: existingByBVN.CUST_ID,
+              CUST_NO: existingByBVN.CUST_NO,
+              name: `${existingByBVN.FIRST_NAME} ${existingByBVN.LAST_NAME}`,
+              BVN: existingByBVN.BVN
+            }
+          });
+        }
+      }
+      
+      // Check by NIN if provided
+      if (NIN) {
+        const existingByNIN = await custModel.findOne({
+          where: { NIN: NIN },
+          attributes: ['id', 'CUST_ID', 'CUST_NO', 'NIN', 'FIRST_NAME', 'LAST_NAME'],
+          transaction
+        });
+        
+        if (existingByNIN) {
+          await transaction.rollback();
+          return res.status(409).json({
+            success: false,
+            message: `A customer with NIN "${NIN}" already exists.`,
+            error: 'DUPLICATE_NIN',
+            field: 'NIN',
+            existingCustomer: {
+              CUST_ID: existingByNIN.CUST_ID,
+              CUST_NO: existingByNIN.CUST_NO,
+              name: `${existingByNIN.FIRST_NAME} ${existingByNIN.LAST_NAME}`,
+              NIN: existingByNIN.NIN
+            }
+          });
+        }
       }
       
       console.log('✅ No existing customer found, proceeding...');
@@ -2001,6 +2168,7 @@ export const createCustomer = async (req, res) => {
         BIRTH_DT: BIRTH_DT ? parseDate(BIRTH_DT, "YYYY-MM-DD") : null,
         CNTRY_OF_BIRTH_ID,
         CUST_CAT,
+        customerType: customerType || 'NORMAL',
         CAMPAIGN_ID,
         GENDER_TY,
         COUNTRY_NM,
@@ -2015,6 +2183,8 @@ export const createCustomer = async (req, res) => {
         STMNT_FREQ_CD,
         STMNT_FREQ_VALUE,
         CREATED_BY,
+        CREATED_BY_FULLNAME,
+        CREATED_BY_ID,
         USER_ID: userId,
         CREATE_DT: CREATE_DT ? new Date(CREATE_DT) : now,
         INDUSTRY_ID,
@@ -2023,11 +2193,18 @@ export const createCustomer = async (req, res) => {
         MARITAL_ST,
         TAX_GRP_ID,
         OPERATIONS_CRNCY_ID,
+        // ✅ Employment Fields
         EMP_ST,
+        EMPLOYER_NAME,
+        EMPLOYER_ADDRESS,
+        EMPLOYER_PHONE,
+        EMPLOYER_EMAIL,
+        JOB_TITLE,
+        YEARS_WORKED,
         ORGANISATION_NM,
         REGISTRATION_ADDRESS,
         REGISTRATION_DT: REGISTRATION_DT ? parseDate(REGISTRATION_DT, "YYYY-MM-DD") : null,
-        REGISTRATION_NO: REGISTRATION_NO || null, // ✅ ADDED: Optional field
+        REGISTRATION_NO: REGISTRATION_NO || null,
         ALERT_DELIVERY_METHOD,
         KYC_LEVEL,
         PHONE_NO,
@@ -2048,6 +2225,9 @@ export const createCustomer = async (req, res) => {
       console.log('  - CUST_ID:', finalCUST_ID);
       console.log('  - CUST_NO:', finalCUST_NO);
       console.log('  - Name:', fullName);
+      console.log('  - Customer Type:', customerType);
+      console.log('  - Employment Status:', EMP_ST || 'Not provided');
+      console.log('  - Employer Name:', EMPLOYER_NAME || 'Not provided');
       console.log('  - BVN:', BVN || 'Not provided');
       if (groupId) console.log('  - Group:', groupId, validatedGroup?.groupName);
       if (REGISTRATION_NO) console.log('  - Registration No:', REGISTRATION_NO);
@@ -2063,14 +2243,105 @@ export const createCustomer = async (req, res) => {
       } catch (sequelizeError) {
         console.warn('⚠️ Sequelize create failed, falling back to raw query:', sequelizeError.message);
         
-        const columnNames = Object.keys(customerData);
-        const placeholders = columnNames.map(() => '?').join(', ');
-        const values = columnNames.map(col => customerData[col]);
+        // Check for specific Sequelize errors
+        if (sequelizeError.name === 'SequelizeValidationError') {
+          const validationErrors = sequelizeError.errors.map(e => ({
+            field: e.path,
+            message: e.message,
+            type: e.type
+          }));
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Database validation failed',
+            errors: validationErrors
+          });
+        }
+        
+        // ✅ Map JavaScript field names to database column names for raw SQL
+        const dbColumnMap = {
+          'CUST_ID': 'CUST_ID',
+          'CUST_NO': 'CUST_NO',
+          'TITLE_ID': 'TITLE_ID',
+          'FIRST_NAME': 'FIRST_NAME',
+          'MIDDLE_NAME': 'MIDDLE_NAME',
+          'LAST_NAME': 'LAST_NAME',
+          'CUST_NM': 'CUST_NM',
+          'HOME_ADDRESS': 'HOME_ADDRESS',
+          'EMAIL_ADDRESS': 'EMAIL_ADDRESS',
+          'BU_ID': 'BU_ID',
+          'MAIDEN_NM': 'MAIDEN_NM',
+          'BIRTH_DT': 'BIRTH_DT',
+          'CNTRY_OF_BIRTH_ID': 'CNTRY_OF_BIRTH_ID',
+          'CUST_CAT': 'CUST_CAT',
+          'customerType': 'customer_type',
+          'CAMPAIGN_ID': 'CAMPAIGN_ID',
+          'GENDER_TY': 'GENDER_TY',
+          'COUNTRY_NM': 'COUNTRY_NM',
+          'STATE': 'STATE',
+          'NIN': 'NIN',
+          'BVN': 'BVN',
+          'LOCAL_GOV': 'LOCAL_GOV',
+          'OPENING_RSN_ID': 'OPENING_RSN_ID',
+          'OPENED_DT': 'OPENED_DT',
+          'RESIDENT_CNTRY_ID': 'RESIDENT_CNTRY_ID',
+          'RISK_CLASS': 'RISK_CLASS',
+          'STMNT_FREQ_CD': 'STMNT_FREQ_CD',
+          'STMNT_FREQ_VALUE': 'STMNT_FREQ_VALUE',
+          'CREATED_BY': 'CREATED_BY',
+          'CREATED_BY_FULLNAME': 'CREATED_BY_FULLNAME',
+          'CREATED_BY_ID': 'CREATED_BY_ID',
+          'USER_ID': 'USER_ID',
+          'CREATE_DT': 'CREATE_DT',
+          'INDUSTRY_ID': 'INDUSTRY_ID',
+          'INDUSTRY_CD': 'INDUSTRY_CD',
+          'TAX_STATUS': 'TAX_STATUS',
+          'MARITAL_ST': 'MARITAL_ST',
+          'TAX_GRP_ID': 'TAX_GRP_ID',
+          'OPERATIONS_CRNCY_ID': 'OPERATIONS_CRNCY_ID',
+          'EMP_ST': 'EMP_ST',
+          'EMPLOYER_NAME': 'EMPLOYER_NAME',
+          'EMPLOYER_ADDRESS': 'EMPLOYER_ADDRESS',
+          'EMPLOYER_PHONE': 'EMPLOYER_PHONE',
+          'EMPLOYER_EMAIL': 'EMPLOYER_EMAIL',
+          'JOB_TITLE': 'JOB_TITLE',
+          'YEARS_WORKED': 'YEARS_WORKED',
+          'ORGANISATION_NM': 'ORGANISATION_NM',
+          'REGISTRATION_ADDRESS': 'REGISTRATION_ADDRESS',
+          'REGISTRATION_DT': 'REGISTRATION_DT',
+          'REGISTRATION_NO': 'REGISTRATION_NO',
+          'ALERT_DELIVERY_METHOD': 'ALERT_DELIVERY_METHOD',
+          'KYC_LEVEL': 'KYC_LEVEL',
+          'PHONE_NO': 'PHONE_NO',
+          'SMS': 'SMS',
+          'IS_PEP': 'IS_PEP',
+          'SANCTION_SCORE': 'SANCTION_SCORE',
+          'DOCUMENT_VERIFICATION_STATUS': 'DOCUMENT_VERIFICATION_STATUS',
+          'REC_ST': 'REC_ST',
+          'status': 'status',
+          'BVN_VERIFIED': 'BVN_VERIFIED',
+          'groupId': 'group_id',
+          'groupJoinedAt': 'group_joined_at',
+          'createdAt': 'created_at',
+          'updatedAt': 'updated_at'
+        };
+
+        // ✅ Build column names and values using the mapping
+        const dbColumns = [];
+        const dbValues = [];
+        
+        Object.keys(customerData).forEach(key => {
+          const dbColumn = dbColumnMap[key] || key;
+          dbColumns.push(dbColumn);
+          dbValues.push(customerData[key]);
+        });
+        
+        const placeholders = dbColumns.map(() => '?').join(', ');
         
         const [result] = await db.query(
-          `INSERT INTO customers (${columnNames.join(', ')}) VALUES (${placeholders})`,
+          `INSERT INTO customers (${dbColumns.join(', ')}) VALUES (${placeholders})`,
           {
-            replacements: values,
+            replacements: dbValues,
             transaction
           }
         );
@@ -2114,8 +2385,9 @@ export const createCustomer = async (req, res) => {
         }
       }
       
-      if (processedNextOfKin.length > 0) {
-        console.log(`📝 Processing ${processedNextOfKin.length} Next of Kin records...`);
+      // ========== ✅ NEXT OF KIN PROCESSING ==========
+      if (nextOfKinData.length > 0) {
+        console.log(`📝 Processing ${nextOfKinData.length} Next of Kin records...`);
         
         try {
           await db.query(`
@@ -2135,7 +2407,7 @@ export const createCustomer = async (req, res) => {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
           `, { transaction });
           
-          for (const kin of processedNextOfKin) {
+          for (const kin of nextOfKinData) {
             await db.query(
               `INSERT INTO next_of_kins 
                (customerId, NEXTOF_KIN_NM, RELATIONSHIP, PHONE_NO, EMAIL, ADDRESS, IS_PRIMARY, CREATED_DT, createdAt, updatedAt)
@@ -2158,13 +2430,19 @@ export const createCustomer = async (req, res) => {
             );
           }
           
-          console.log(`✅ Created ${processedNextOfKin.length} Next of Kin records`);
+          console.log(`✅ Created ${nextOfKinData.length} Next of Kin records`);
         } catch (kinError) {
           console.error('❌ Error creating Next of Kin records:', kinError.message);
-          throw new Error(`Failed to create Next of Kin records: ${kinError.message}`);
+          await transaction.rollback();
+          return res.status(500).json({
+            success: false,
+            message: `Failed to create Next of Kin records: ${kinError.message}`,
+            error: 'NEXT_OF_KIN_ERROR'
+          });
         }
       }
       
+      // ========== ✅ AML PROCESSING ==========
       let amlWorkItemId = null;
       let amlRecord = null;
       let customerRiskRating = "Low";
@@ -2183,7 +2461,11 @@ export const createCustomer = async (req, res) => {
         
         if (validationError) {
           await transaction.rollback();
-          throw new Error(validationError);
+          return res.status(400).json({
+            success: false,
+            message: validationError,
+            error: 'AML_VALIDATION_ERROR'
+          });
         }
 
         const { isSanctioned, sanctionDetails } = await checkSanctionList(BVN, NIN);
@@ -2263,6 +2545,7 @@ export const createCustomer = async (req, res) => {
       transactionCompleted = true;
       console.log("✅ Transaction committed successfully");
 
+      // ========== ✅ WORKFLOW CREATION ==========
       let customerWorkItemId = null;
       if (wfModel) {
         try {
@@ -2321,9 +2604,13 @@ export const createCustomer = async (req, res) => {
           CUST_ID: finalCUST_ID,
           CUST_NO: finalCUST_NO,
           CUST_NM: fullName,
+          customerType: customerType || 'NORMAL',
+          employmentStatus: EMP_ST || null,
+          employerName: EMPLOYER_NAME || null,
+          jobTitle: JOB_TITLE || null,
           BVN: BVN || null,
           BVN_VERIFIED: false,
-          REGISTRATION_NO: REGISTRATION_NO || null, // ✅ ADDED
+          REGISTRATION_NO: REGISTRATION_NO || null,
           WORK_ITEM_ID: customerWorkItemId,
           AML_WORK_ITEM_ID: amlWorkItemId,
           isPEP: IS_PEP,
@@ -2355,6 +2642,29 @@ export const createCustomer = async (req, res) => {
       console.error("❌ Create Customer Error:", error.message);
       console.error("❌ Error stack:", error.stack);
       
+      // ✅ Determine if it's a known error type
+      let statusCode = 500;
+      let errorResponse = {
+        success: false,
+        message: "Failed to create customer",
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+      
+      if (error.message.includes('Duplicate entry') || error.message.includes('unique')) {
+        statusCode = 409;
+        errorResponse.message = 'A customer with this information already exists.';
+        errorResponse.error = 'DUPLICATE_ENTRY';
+      } else if (error.message.includes('foreign key constraint')) {
+        statusCode = 400;
+        errorResponse.message = 'Invalid reference. Please check the related data.';
+        errorResponse.error = 'FOREIGN_KEY_ERROR';
+      } else if (error.message.includes('validation')) {
+        statusCode = 400;
+        errorResponse.message = 'Data validation failed. Please check your input.';
+        errorResponse.error = 'VALIDATION_ERROR';
+      }
+      
       try {
         await auditLogger.error("Audit Event", {
           entity_type: "CUSTOMER_CREATE",
@@ -2372,12 +2682,7 @@ export const createCustomer = async (req, res) => {
         console.error('❌ Audit logging failed:', auditError.message);
       }
 
-      return res.status(500).json({
-        success: false,
-        message: "Failed to create customer",
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
+      return res.status(statusCode).json(errorResponse);
     }
   } catch (error) {
     console.error("❌ Error in createCustomer (model initialization):", error.message);
@@ -3057,11 +3362,16 @@ export const updateCustomer = async (req, res) => {
       'CNTRY_OF_BIRTH_ID', 'CUST_CAT', 'CAMPAIGN_ID', 'GENDER_TY',
       'NATIONALITY_NO', 'COUNTRY_NM', 'STATE', 'LOCAL_GOV', 'OPENING_RSN_ID',
       'OPENED_DT', 'RESIDENT_CNTRY_ID', 'RISK_CLASS', 'STMNT_FREQ_CD',
-      'STMNT_FREQ_VALUE', 'CREATED_BY', 'USER_ID', 'INDUSTRY_ID', 'INDUSTRY_CD',
-      'TAX_STATUS', 'TAX_GRP_ID', 'MARITAL_ST', 'OPERATIONS_CRNCY_ID', 'EMP_ST',
+      'STMNT_FREQ_VALUE', 'CREATED_BY', 'CREATED_BY_FULLNAME', 'CREATED_BY_ID',
+      'USER_ID', 'INDUSTRY_ID', 'INDUSTRY_CD', 'TAX_STATUS', 'TAX_GRP_ID',
+      'MARITAL_ST', 'OPERATIONS_CRNCY_ID', 
+      // ✅ Employment Fields
+      'EMP_ST', 'EMPLOYER_NAME', 'EMPLOYER_ADDRESS', 'EMPLOYER_PHONE',
+      'EMPLOYER_EMAIL', 'JOB_TITLE', 'YEARS_WORKED',
       'ORGANISATION_NM', 'REGISTRATION_ADDRESS', 'REGISTRATION_DT',
-      'ALERT_DELIVERY_METHOD', 'KYC_LEVEL', 'PHONE_NO', 'SMS', 'IS_PEP',
-      'BVN', 'NIN', 'SANCTION_SCORE', 'DOCUMENT_VERIFICATION_STATUS',
+      'REGISTRATION_NO', 'ALERT_DELIVERY_METHOD', 'KYC_LEVEL', 'PHONE_NO',
+      'SMS', 'IS_PEP', 'BVN', 'NIN', 'SANCTION_SCORE',
+      'DOCUMENT_VERIFICATION_STATUS', 'customerType',
       'groupId', 'group_joined_at', 'status', 'REC_ST'
     ];
     
@@ -3111,10 +3421,20 @@ export const updateCustomer = async (req, res) => {
       }
     }
     
+    // ✅ Fetch updated customer with all fields
+    const updatedCustomer = await custModel.findOne({
+      where: {
+        [Op.or]: [
+          { CUST_ID: CUST_ID },
+          { id: parseInt(CUST_ID) || 0 }
+        ]
+      }
+    });
+    
     res.json({
       success: true,
       message: 'Customer updated successfully',
-      customer: customer.toJSON ? customer.toJSON() : customer
+      customer: updatedCustomer.toJSON ? updatedCustomer.toJSON() : updatedCustomer
     });
     
   } catch (error) {
@@ -3197,7 +3517,10 @@ export const batchUploadCustomers = async (req, res) => {
               
               const updateData = {};
               
+              // Personal Information
+              if (row.TITLE_ID) updateData.TITLE_ID = row.TITLE_ID;
               if (row.FIRST_NAME) updateData.FIRST_NAME = row.FIRST_NAME;
+              if (row.MIDDLE_NAME) updateData.MIDDLE_NAME = row.MIDDLE_NAME;
               if (row.LAST_NAME) updateData.LAST_NAME = row.LAST_NAME;
               if (row.HOME_ADDRESS) updateData.HOME_ADDRESS = row.HOME_ADDRESS;
               if (row.EMAIL_ADDRESS) updateData.EMAIL_ADDRESS = row.EMAIL_ADDRESS;
@@ -3206,19 +3529,59 @@ export const batchUploadCustomers = async (req, res) => {
               if (row.REC_ST) updateData.REC_ST = row.REC_ST;
               if (row.GENDER_TY) updateData.GENDER_TY = row.GENDER_TY;
               if (row.BU_ID) updateData.BU_ID = row.BU_ID.toString();
+              if (row.MARITAL_ST) updateData.MARITAL_ST = row.MARITAL_ST;
+              if (row.customerType) updateData.customerType = row.customerType;
               
+              // Employment Fields
+              if (row.EMP_ST) updateData.EMP_ST = row.EMP_ST;
+              if (row.EMPLOYER_NAME) updateData.EMPLOYER_NAME = row.EMPLOYER_NAME;
+              if (row.EMPLOYER_ADDRESS) updateData.EMPLOYER_ADDRESS = row.EMPLOYER_ADDRESS;
+              if (row.EMPLOYER_PHONE) updateData.EMPLOYER_PHONE = row.EMPLOYER_PHONE.toString();
+              if (row.EMPLOYER_EMAIL) updateData.EMPLOYER_EMAIL = row.EMPLOYER_EMAIL;
+              if (row.JOB_TITLE) updateData.JOB_TITLE = row.JOB_TITLE;
+              if (row.YEARS_WORKED) updateData.YEARS_WORKED = row.YEARS_WORKED.toString();
+              
+              // Tax & Industry
+              if (row.TAX_STATUS) updateData.TAX_STATUS = row.TAX_STATUS;
+              if (row.TAX_GRP_ID) updateData.TAX_GRP_ID = row.TAX_GRP_ID;
+              if (row.INDUSTRY_ID) updateData.INDUSTRY_ID = row.INDUSTRY_ID;
+              if (row.INDUSTRY_CD) updateData.INDUSTRY_CD = row.INDUSTRY_CD;
+              
+              // KYC & Risk
+              if (row.KYC_LEVEL) updateData.KYC_LEVEL = row.KYC_LEVEL;
+              if (row.RISK_CLASS) updateData.RISK_CLASS = row.RISK_CLASS;
+              if (row.IS_PEP !== undefined) updateData.IS_PEP = row.IS_PEP;
+              if (row.SANCTION_SCORE) updateData.SANCTION_SCORE = row.SANCTION_SCORE;
+              
+              // Banking Details
+              if (row.OPENING_RSN_ID) updateData.OPENING_RSN_ID = row.OPENING_RSN_ID;
+              if (row.STMNT_FREQ_CD) updateData.STMNT_FREQ_CD = row.STMNT_FREQ_CD;
+              if (row.STMNT_FREQ_VALUE) updateData.STMNT_FREQ_VALUE = row.STMNT_FREQ_VALUE;
+              if (row.ALERT_DELIVERY_METHOD) updateData.ALERT_DELIVERY_METHOD = row.ALERT_DELIVERY_METHOD;
+              
+              // Organization Details
+              if (row.ORGANISATION_NM) updateData.ORGANISATION_NM = row.ORGANISATION_NM;
+              if (row.REGISTRATION_ADDRESS) updateData.REGISTRATION_ADDRESS = row.REGISTRATION_ADDRESS;
+              if (row.REGISTRATION_NO) updateData.REGISTRATION_NO = row.REGISTRATION_NO;
+              if (row.REGISTRATION_DT) {
+                const regDate = convertExcelDate(row.REGISTRATION_DT);
+                if (regDate) updateData.REGISTRATION_DT = regDate;
+              }
+              
+              // Next of Kin fields
+              if (row.NEXTOF_KIN_NM_1) updateData.NEXTOF_KIN_NM_1 = row.NEXTOF_KIN_NM_1;
+              if (row.RELATIONSHIP_1) updateData.RELATIONSHIP_1 = row.RELATIONSHIP_1;
+              if (row.KIN_PHONE_NO_1) updateData.KIN_PHONE_NO_1 = row.KIN_PHONE_NO_1.toString();
+              if (row.KIN_ADDRESS_1) updateData.KIN_ADDRESS_1 = row.KIN_ADDRESS_1;
+              
+              // BVN & NIN
               if (row.BVN) {
                 const bvnStr = row.BVN.toString();
                 if (bvnStr.length === 11 || bvnStr.length === 12) {
                   updateData.BVN = bvnStr;
                 }
               }
-              
               if (row.NIN) updateData.NIN = row.NIN.toString();
-              if (row.NEXTOF_KIN_NM_1) updateData.NEXTOF_KIN_NM_1 = row.NEXTOF_KIN_NM_1;
-              if (row.RELATIONSHIP_1) updateData.RELATIONSHIP_1 = row.RELATIONSHIP_1;
-              if (row.KIN_PHONE_NO_1) updateData.KIN_PHONE_NO_1 = row.KIN_PHONE_NO_1.toString();
-              if (row.KIN_ADDRESS_1) updateData.KIN_ADDRESS_1 = row.KIN_ADDRESS_1;
               
               if (groupCode) {
                 updateData.group_id = groupCode;
@@ -3271,6 +3634,11 @@ export const batchUploadCustomers = async (req, res) => {
             birthDate = convertExcelDate(row.BIRTH_DT);
           }
           
+          let regDate = null;
+          if (row.REGISTRATION_DT) {
+            regDate = convertExcelDate(row.REGISTRATION_DT);
+          }
+          
           let bvnValue = null;
           if (row.BVN) {
             bvnValue = row.BVN.toString();
@@ -3281,33 +3649,77 @@ export const batchUploadCustomers = async (req, res) => {
           }
           
           const customerData = {
+            // Personal Information
             CUST_ID: custId,
             CUST_NO: row.CUST_NO || custId,
+            TITLE_ID: row.TITLE_ID || '',
             FIRST_NAME: row.FIRST_NAME || '',
+            MIDDLE_NAME: row.MIDDLE_NAME || '',
             LAST_NAME: row.LAST_NAME || '',
-            CUST_NM: `${row.FIRST_NAME || ''} ${row.LAST_NAME || ''}`.trim(),
+            CUST_NM: `${row.TITLE_ID || ''} ${row.FIRST_NAME || ''} ${row.LAST_NAME || ''}`.trim(),
             HOME_ADDRESS: row.HOME_ADDRESS || '',
             EMAIL_ADDRESS: row.EMAIL_ADDRESS || null,
             BU_ID: row.BU_ID ? row.BU_ID.toString() : null,
             PHONE_NO: row.PHONE_NO ? row.PHONE_NO.toString() : '',
             BIRTH_DT: birthDate,
             GENDER_TY: row.GENDER_TY || '',
+            MARITAL_ST: row.MARITAL_ST || '',
             STATE: row.STATE || '',
             REC_ST: row.REC_ST || 'PENDING',
+            customerType: row.customerType || 'NORMAL',
+            
+            // Employment Fields
+            EMP_ST: row.EMP_ST || '',
+            EMPLOYER_NAME: row.EMPLOYER_NAME || '',
+            EMPLOYER_ADDRESS: row.EMPLOYER_ADDRESS || '',
+            EMPLOYER_PHONE: row.EMPLOYER_PHONE ? row.EMPLOYER_PHONE.toString() : '',
+            EMPLOYER_EMAIL: row.EMPLOYER_EMAIL || '',
+            JOB_TITLE: row.JOB_TITLE || '',
+            YEARS_WORKED: row.YEARS_WORKED ? row.YEARS_WORKED.toString() : '',
+            
+            // Tax & Industry
+            TAX_STATUS: row.TAX_STATUS || '',
+            TAX_GRP_ID: row.TAX_GRP_ID || '',
+            INDUSTRY_ID: row.INDUSTRY_ID || '',
+            INDUSTRY_CD: row.INDUSTRY_CD || '',
+            
+            // KYC & Risk
+            KYC_LEVEL: row.KYC_LEVEL || '',
+            RISK_CLASS: row.RISK_CLASS || '',
+            IS_PEP: row.IS_PEP || false,
+            SANCTION_SCORE: row.SANCTION_SCORE || 10,
+            
+            // Banking Details
+            OPENING_RSN_ID: row.OPENING_RSN_ID || '',
+            STMNT_FREQ_CD: row.STMNT_FREQ_CD || '',
+            STMNT_FREQ_VALUE: row.STMNT_FREQ_VALUE || '',
+            ALERT_DELIVERY_METHOD: row.ALERT_DELIVERY_METHOD || '',
+            
+            // Organization Details
+            ORGANISATION_NM: row.ORGANISATION_NM || '',
+            REGISTRATION_ADDRESS: row.REGISTRATION_ADDRESS || '',
+            REGISTRATION_NO: row.REGISTRATION_NO || null,
+            REGISTRATION_DT: regDate,
+            
+            // Next of Kin fields (stored in customer record for batch upload)
             NEXTOF_KIN_NM_1: row.NEXTOF_KIN_NM_1 || '',
             RELATIONSHIP_1: row.RELATIONSHIP_1 || '',
             KIN_PHONE_NO_1: row.KIN_PHONE_NO_1 ? row.KIN_PHONE_NO_1.toString() : '',
             KIN_ADDRESS_1: row.KIN_ADDRESS_1 || '',
+            
+            // Group
             group_id: groupCode || null,
+            
+            // System fields
             created_at: now,
             updated_at: now,
             CREATE_DT: now,
             CREATED_BY: 'batch_upload',
+            CREATED_BY_FULLNAME: 'Batch Upload',
+            CREATED_BY_ID: 'system',
             USER_ID: 'system',
             status: 'Pending',
             BVN_VERIFIED: false,
-            IS_PEP: false,
-            SANCTION_SCORE: 10,
             DOCUMENT_VERIFICATION_STATUS: 'Pending'
           };
           

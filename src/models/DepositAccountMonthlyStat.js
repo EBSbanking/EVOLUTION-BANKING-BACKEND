@@ -1,4 +1,4 @@
-﻿// models/DepositAccountMonthlyStat.js
+// models/DepositAccountMonthlyStat.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

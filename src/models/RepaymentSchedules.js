@@ -1,4 +1,4 @@
-﻿// src/models/RepaymentSchedules.js – FINAL VERSION (with auto‑create table)
+// src/models/RepaymentSchedules.js � FINAL VERSION (with auto-create table)
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -14,15 +14,15 @@ class RepaymentSchedule extends Model {
         { type: sequelize.QueryTypes.SELECT }
       );
       if (result.tableExists === 0) {
-        console.log('📝 Creating repayment_schedules table...');
+        console.log('?? Creating repayment_schedules table...');
         await this.sync({ force: false });
-        console.log('✅ repayment_schedules table created');
+        console.log('? repayment_schedules table created');
       } else {
-        console.log('✅ repayment_schedules table already exists');
+        console.log('? repayment_schedules table already exists');
       }
       return true;
     } catch (error) {
-      console.error('❌ Error ensuring repayment_schedules table:', error.message);
+      console.error('? Error ensuring repayment_schedules table:', error.message);
       return false;
     }
   }
@@ -77,10 +77,10 @@ class RepaymentSchedule extends Model {
       };
 
       const schedule = await RepaymentSchedule.create(scheduleData);
-      console.log('✅ Repayment schedule created with ID:', schedule.id);
+      console.log('? Repayment schedule created with ID:', schedule.id);
       return schedule;
     } catch (error) {
-      console.error('❌ Error creating repayment schedule:', error);
+      console.error('? Error creating repayment schedule:', error);
       throw error;
     }
   }
@@ -102,7 +102,7 @@ class RepaymentSchedule extends Model {
 
   /**
    * Mark an installment as paid.
-   * @param {number} installmentNo - Installment number (1‑based)
+   * @param {number} installmentNo - Installment number (1-based)
    * @param {string} transactionReference - Reference of the payment transaction
    * @param {Object} transaction - Sequelize transaction (optional)
    * @returns {Promise<boolean>}

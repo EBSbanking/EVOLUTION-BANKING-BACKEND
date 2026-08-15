@@ -99,11 +99,15 @@ import pendingGLTransactionRoutes from './routes/PendingGLTransactionRoutes.js';
 import EMTLRoutes from './routes/EMTLRoutes.js';
 import JournalEntryRoutes from './routes/JournalEntryRoutes.js';
 import EmailStatementRoutes from './routes/EmailStatementRoutes.js';
+import SystemDateRoutes from './routes/systemDateRoutes.js';
+import BinRoutes from './routes/BinRoutes.js';
 
 
 
 // EOY Report Routes
 import EOYRoutes from './routes/EOYRoutes.js';
+// EOM Report Routes
+import EOMRoutes from './routes/EOMRoutes.js';
 
 
 // Channel Routes
@@ -115,6 +119,7 @@ import CardApprovalRoutes from './routes/CardApprovalRoutes.js';
 
 // ✅ Import AdminUser from the correct path
 import AdminUser from '../src/models/AdminUser.js';
+import LogRoutes from './routes/LogRoutes.js';
 
 // ✅ IMPORT BANK ROUTES
 import BankRoutes from './routes/BankRoutes.js';
@@ -191,10 +196,6 @@ console.info = (...args) => logger.info(args.join(' '));
 // CORS CONFIGURATION (MUST BE FIRST)
 // ============================================
 
-// ============================================
-// CORS CONFIGURATION (MUST BE FIRST)
-// ============================================
-
 const corsOptions = {
   origin: [
     'https://evolutionbankingsolution-lexicalresource.com.ng',
@@ -202,67 +203,134 @@ const corsOptions = {
     'http://evolutionbankingsolution-lexicalresource.com.ng',
     'http://evolutionbankingsolution-LARSDAN.com.ng',
     'http://localhost:3000',
-    'http://localhost:3002',
-    'http://127.0.0.1:3000',
     'http://localhost:3001',
-    'http://localhost:4000'
+    'http://localhost:3002',
+    'http://localhost:3003',
+    'http://localhost:4000',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    'http://127.0.0.1:3002',
+    'http://192.168.1.*',  // For local network access
+    'http://10.*.*.*',     // For local network access
   ],
   credentials: true,
   optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'x-api-key', 
-    'app-id', 
-    'x-webhook-signature', 
-    'x-nip-signature', 
-    'x-encryption-metadata', 
-    'range',
-    'cache-control',
-    'pragma',
-    'expires',
-    // ✅ ADD THESE CUSTOM HEADERS
+    // Standard headers
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'Origin',
+    'User-Agent',
+    'Referer',
+    'Range',
+    'Cache-Control',
+    'Pragma',
+    'Expires',
+    'If-Modified-Since',
+    'If-None-Match',
+    
+    // Custom headers - Backend specific
+    'x-api-key',
+    'app-id',
+    'x-webhook-signature',
+    'x-nip-signature',
+    'x-encryption-metadata',
+    'x-encrypted',
+    'x-encryption-version',
+    'x-skip-encryption',
+    
+    // ✅ BUSINESS UNIT / BRANCH HEADERS - REQUIRED FOR APPROVAL/REJECTION
     'x-business-unit',
     'x-branch-name',
     'x-branch-code',
-    'x-encrypted',
-    'x-encryption-version',
-    'x-encryption-metadata',
-    'x-skip-encryption',
-    'x-organization-id',  // ✅ ADD THIS - Required for organization header
-    'accept',
-    'origin',
-    'user-agent',
-    'referer'
+    'x-branch-id',           // ✅ CRITICAL - Used for branch identification
+    'x-user-id',              // ✅ CRITICAL - Used for user identification
+    'x-is-admin',             // ✅ For admin role verification
+    'x-role',                 // ✅ For role verification
+    
+    // Organization headers
+    'x-organization-id',
+    'x-organization-name',
+    
+    // Additional headers
+    'x-requested-with',
+    'x-forwarded-for',
+    'x-real-ip',
+    'x-trace-id',
+    'x-correlation-id',
+    'x-session-id',
+    'x-device-id',
+    'x-platform',
+    'x-version',
+    'x-build-number',
   ],
   exposedHeaders: [
-    'Content-Range', 
+    // Standard exposed headers
+    'Content-Range',
     'X-Total-Count',
+    'X-Content-Range',
+    
+    // Business unit headers
     'X-Business-Unit',
     'X-Branch-Name',
     'X-Branch-Code',
-    'X-Organization-Id'  // ✅ ADD THIS - Expose organization header
+    'X-Branch-Id',            // ✅ Expose branch ID to frontend
+    'X-User-Id',              // ✅ Expose user ID to frontend
+    
+    // Organization headers
+    'X-Organization-Id',
+    'X-Organization-Name',
+    
+    // Additional headers
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset',
+    'X-Request-Id',
+    'X-Correlation-Id',
+    'X-Session-Id',
+    'X-Trace-Id',
+    'X-Debug-Info',
+    'X-Response-Time',
   ],
+  maxAge: 86400, // 24 hours - Cache preflight requests
 };
 
 console.log('🛡️ CORS Allowed Origins:', corsOptions.origin);
 console.log('🛡️ CORS Allowed Headers:', corsOptions.allowedHeaders);
+console.log('🛡️ CORS Exposed Headers:', corsOptions.exposedHeaders);
 
 // Apply CORS middleware
 app.use(cors(corsOptions));
 
-// Additional CORS headers middleware
-// Additional CORS headers middleware
+// ============================================
+// COMPREHENSIVE CORS HEADERS MIDDLEWARE
+// ============================================
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
   // Check if origin is allowed
-  if (origin && corsOptions.origin.includes(origin)) {
+  const isAllowedOrigin = corsOptions.origin.some(allowed => {
+    if (typeof allowed === 'string') {
+      // Handle wildcard patterns like http://192.168.1.*
+      if (allowed.includes('*')) {
+        const pattern = allowed.replace(/\*/g, '.*');
+        const regex = new RegExp(`^${pattern}$`);
+        return regex.test(origin);
+      }
+      return allowed === origin;
+    }
+    return false;
+  });
+
+  if (origin && isAllowedOrigin) {
     res.header('Access-Control-Allow-Origin', origin);
   } else if (process.env.NODE_ENV === 'development') {
     // Allow any origin in development
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Origin', origin || '*');
+  } else if (origin && !isAllowedOrigin) {
+    console.warn(`⚠️ CORS: Origin ${origin} not allowed`);
   }
   
   // Allow credentials
@@ -271,81 +339,243 @@ app.use((req, res, next) => {
   // Allow methods
   res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
   
-  // Allow headers - include all custom headers including x-organization-id
-  res.header('Access-Control-Allow-Headers', [
-    ...corsOptions.allowedHeaders,
+  // ✅ ALLOW ALL HEADERS - Comprehensive list including x-branch-id
+  const allowedHeaders = [
+    // Standard headers
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'User-Agent',
+    'Referer',
+    'Range',
+    'Cache-Control',
+    'Pragma',
+    'Expires',
+    'If-Modified-Since',
+    'If-None-Match',
+    
+    // Custom headers
+    'x-api-key',
+    'app-id',
+    'x-webhook-signature',
+    'x-nip-signature',
+    'x-encryption-metadata',
+    'x-encrypted',
+    'x-encryption-version',
+    'x-skip-encryption',
+    
+    // ✅ BUSINESS UNIT / BRANCH HEADERS
     'x-business-unit',
     'x-branch-name',
     'x-branch-code',
-    'x-encrypted',
-    'x-encryption-version',
-    'x-encryption-metadata',
-    'x-skip-encryption',
-    'x-organization-id'  // ✅ ADD THIS
-  ].join(', '));
+    'x-branch-id',           // ✅ CRITICAL
+    'x-user-id',              // ✅ CRITICAL
+    'x-is-admin',
+    'x-role',
+    
+    // Organization headers
+    'x-organization-id',
+    'x-organization-name',
+    
+    // Additional headers
+    'x-forwarded-for',
+    'x-real-ip',
+    'x-trace-id',
+    'x-correlation-id',
+    'x-session-id',
+    'x-device-id',
+    'x-platform',
+    'x-version',
+    'x-build-number',
+    
+    // CORS required headers
+    'access-control-allow-origin',
+    'access-control-allow-methods',
+    'access-control-allow-headers',
+    'access-control-allow-credentials',
+    'access-control-expose-headers',
+  ].join(', ');
   
-  // Expose headers to frontend
-  res.header('Access-Control-Expose-Headers', [
+  res.header('Access-Control-Allow-Headers', allowedHeaders);
+  
+  // ✅ EXPOSE HEADERS to frontend
+  const exposedHeaders = [
     'Content-Range',
     'X-Total-Count',
+    'X-Content-Range',
     'X-Business-Unit',
     'X-Branch-Name',
     'X-Branch-Code',
-    'X-Organization-Id'  // ✅ ADD THIS
-  ].join(', '));
+    'X-Branch-Id',            // ✅ Expose branch ID
+    'X-User-Id',              // ✅ Expose user ID
+    'X-Organization-Id',
+    'X-Organization-Name',
+    'X-RateLimit-Limit',
+    'X-RateLimit-Remaining',
+    'X-RateLimit-Reset',
+    'X-Request-Id',
+    'X-Correlation-Id',
+    'X-Session-Id',
+    'X-Trace-Id',
+    'X-Debug-Info',
+    'X-Response-Time',
+  ].join(', ');
+  
+  res.header('Access-Control-Expose-Headers', exposedHeaders);
   
   // Handle preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
+    console.log(`🔄 OPTIONS request for: ${req.path} from ${origin}`);
+    res.header('Access-Control-Max-Age', '86400'); // 24 hours
     return res.status(200).end();
   }
   
   next();
 });
 
-// ✅ Alternative: Use a more permissive CORS for development
-// ✅ Alternative: Use a more permissive CORS for development
+// ============================================
+// DEVELOPMENT MODE - PERMISSIVE CORS
+// ============================================
 if (process.env.NODE_ENV === 'development') {
+  console.log('🔧 Development mode: Using permissive CORS');
+  
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    const origin = req.headers.origin || '*';
+    res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', [
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+    
+    // ✅ ALLOW ALL HEADERS in development
+    const allHeaders = [
       'Origin',
       'X-Requested-With',
       'Content-Type',
       'Accept',
       'Authorization',
-      'x-business-unit',
-      'x-branch-name',
-      'x-branch-code',
-      'x-encrypted',
-      'x-encryption-version',
-      'x-encryption-metadata',
-      'x-skip-encryption',
-      'x-organization-id',  // ✅ ADD THIS
+      'User-Agent',
+      'Referer',
+      'Range',
+      'Cache-Control',
+      'Pragma',
+      'Expires',
+      'If-Modified-Since',
+      'If-None-Match',
       'x-api-key',
       'app-id',
       'x-webhook-signature',
       'x-nip-signature',
-      'range',
-      'cache-control',
-      'pragma',
-      'expires'
-    ].join(', '));
-    res.header('Access-Control-Expose-Headers', [
-      'Content-Range', 
-      'X-Total-Count', 
-      'X-Business-Unit', 
-      'X-Branch-Name', 
+      'x-encryption-metadata',
+      'x-encrypted',
+      'x-encryption-version',
+      'x-skip-encryption',
+      'x-business-unit',
+      'x-branch-name',
+      'x-branch-code',
+      'x-branch-id',           // ✅ ALLOWED
+      'x-user-id',              // ✅ ALLOWED
+      'x-is-admin',
+      'x-role',
+      'x-organization-id',
+      'x-organization-name',
+      'x-forwarded-for',
+      'x-real-ip',
+      'x-trace-id',
+      'x-correlation-id',
+      'x-session-id',
+      'x-device-id',
+      'x-platform',
+      'x-version',
+      'x-build-number',
+      'access-control-allow-origin',
+      'access-control-allow-methods',
+      'access-control-allow-headers',
+      'access-control-allow-credentials',
+      'access-control-expose-headers',
+    ].join(', ');
+    
+    res.header('Access-Control-Allow-Headers', allHeaders);
+    
+    // ✅ EXPOSE ALL HEADERS in development
+    const exposeHeaders = [
+      'Content-Range',
+      'X-Total-Count',
+      'X-Content-Range',
+      'X-Business-Unit',
+      'X-Branch-Name',
       'X-Branch-Code',
-      'X-Organization-Id'  // ✅ ADD THIS
-    ].join(', '));
+      'X-Branch-Id',
+      'X-User-Id',
+      'X-Organization-Id',
+      'X-Organization-Name',
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset',
+      'X-Request-Id',
+      'X-Correlation-Id',
+      'X-Session-Id',
+      'X-Trace-Id',
+      'X-Debug-Info',
+      'X-Response-Time',
+    ].join(', ');
+    
+    res.header('Access-Control-Expose-Headers', exposeHeaders);
+    
     if (req.method === 'OPTIONS') {
+      res.header('Access-Control-Max-Age', '86400');
       return res.status(200).end();
     }
     next();
   });
 }
+
+// ============================================
+// CORS ERROR HANDLING MIDDLEWARE
+// ============================================
+app.use((err, req, res, next) => {
+  if (err.name === 'CORSError') {
+    console.error('❌ CORS Error:', err.message);
+    return res.status(403).json({
+      success: false,
+      message: 'CORS policy violation',
+      details: err.message,
+      origin: req.headers.origin,
+      method: req.method,
+    });
+  }
+  next(err);
+});
+
+// ============================================
+// DEBUG ENDPOINT FOR CORS TESTING
+// ============================================
+app.options('/cors-test', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-branch-id, x-user-id');
+  res.sendStatus(200);
+});
+
+app.get('/cors-test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS test successful',
+    headers: req.headers,
+    timestamp: new Date().toISOString(),
+    cors: {
+      origin: req.headers.origin,
+      allowedHeaders: corsOptions.allowedHeaders,
+      exposedHeaders: corsOptions.exposedHeaders,
+    }
+  });
+});
+
+console.log('✅ CORS configuration complete');
+console.log(`📋 Allowed Origins: ${corsOptions.origin.length} origins`);
+console.log(`📋 Allowed Headers: ${corsOptions.allowedHeaders.length} headers`);
+console.log(`📋 Exposed Headers: ${corsOptions.exposedHeaders.length} headers`);
 
 // ============================================
 // MULTER ROUTES (MUST BE BEFORE BODY PARSERS)
@@ -901,6 +1131,7 @@ app.use('/api/inwardfunds', InwardFundsTransferRoutes);
 app.use('/api/external-transfers', ExternalTransferRoutes);
 app.use('/api/card-payments', CardPaymentRoutes);
 app.use('/api/card-approvals', CardApprovalRoutes);
+app.use('/api/bin', BinRoutes);
 
 
 // ============================================
@@ -908,6 +1139,13 @@ app.use('/api/card-approvals', CardApprovalRoutes);
 // ============================================
 app.use('/api/eoy', EOYRoutes);
 console.log('✅ EOY report routes registered at /api/eoy');
+// ============================================
+
+// ============================================
+// EOM REPORT ROUTES
+// ============================================
+app.use('/api/eom', EOMRoutes);
+console.log('✅ EOM report routes registered at /api/eom');
 // ============================================
  
 
@@ -966,7 +1204,30 @@ app.use('/api/gl-accounts', lazyLoadRoute('./routes/GLAccountRoutes.js'));
 app.use('/api/gl-transactions', lazyLoadRoute('./routes/GLAccountTransactionRoutes.js'));
 app.use('/api/ledgers', lazyLoadRoute('./routes/LedgerRoutes.js'));
 app.use('/api/interest-rates', lazyLoadRoute('./routes/InterestCalculationServiceRoutes.js'));
+
+// ============================================
+// Admin-ui LogRoutes
+// ============================================
+app.use('/api/logs', lazyLoadRoute('./routes/LogRoutes.js'));
+
+
 app.use('/api/drawer', lazyLoadRoute('./routes/DrawerRoutes.js'));
+// Log all routes for debugging
+console.log('\n=== ALL REGISTERED ROUTES ===');
+app._router.stack.forEach((middleware) => {
+  if (middleware.route) {
+    const methods = Object.keys(middleware.route.methods).join(', ').toUpperCase();
+    console.log(`${methods} ${middleware.route.path}`);
+  }
+  if (middleware.name === 'router') {
+    middleware.handle.stack.forEach((layer) => {
+      if (layer.route) {
+        const methods = Object.keys(layer.route.methods).join(', ').toUpperCase();
+        console.log(`${methods} /api/drawer${layer.route.path}`);
+      }
+    });
+  }
+});
 app.use('/api/drawer-currency-denomination', lazyLoadRoute('./routes/DrawerCurrencyDenominationRoutes.js'));
 app.use('/api/drawer-reassignments', lazyLoadRoute('./routes/DrawerReassignmentRoutes.js'));
 app.use('/api/drawer-user-role', lazyLoadRoute('./routes/DrawerUserRoleRoutes.js'));

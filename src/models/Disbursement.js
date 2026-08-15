@@ -1,4 +1,4 @@
-ï»¿// src/models/LoanDisbursement.js â€“ Corrected for camelCase columns
+// src/models/LoanDisbursement.js – Corrected for camelCase columns
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -143,7 +143,7 @@ class LoanDisbursement extends Model {
 
 LoanDisbursement.init(
   {
-    // No `field` mappings â€“ Sequelize will use attribute names as column names (camelCase)
+    // No `field` mappings – Sequelize will use attribute names as column names (camelCase)
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     accountNumber: { type: DataTypes.STRING(20), allowNull: false },
     interestRate: { type: DataTypes.DECIMAL(6,4), allowNull: false },

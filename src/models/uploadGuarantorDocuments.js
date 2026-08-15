@@ -342,7 +342,7 @@ UploadGuarantorDocuments.initializeTable = async () => {
 // Sync the model (creates table if it doesn't exist)
 UploadGuarantorDocuments.syncTable = async () => {
   try {
-    await UploadGuarantorDocuments.sync({ alter: true });
+    await UploadGuarantorDocuments.sync({ alter: false });
     console.log('✅ GuarantorDocuments table synced');
     return true;
   } catch (error) {

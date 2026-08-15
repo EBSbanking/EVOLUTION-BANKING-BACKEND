@@ -68,213 +68,226 @@ class NotificationService {
 
   /**
    * Get users for a specific BU_ID
-   * ✅ Checks users table AND user_roles table
+   * ✅ Dynamically checks available columns
    * ✅ Always returns an array
    */
   async getUsersForBU(BU_ID) {
     try {
       console.log(`🔍 Fetching users for BU: ${BU_ID}`);
       
-      // First, try to find the business unit name from the business_units table
-      let buName = null;
+      // ============================================================
+      // STEP 1: Check what columns actually exist in the users table
+      // ============================================================
+      let columns = [];
       try {
-        const [buResult] = await sequelize.query(
-          `SELECT BU_ID, BUSINESS_UNIT FROM business_units 
-           WHERE BU_ID = :BU_ID OR BUSINESS_UNIT = :BU_ID`,
-          {
-            replacements: { BU_ID: BU_ID },
-            type: sequelize.QueryTypes.SELECT
-          }
+        const [columnResults] = await sequelize.query(
+          `SHOW COLUMNS FROM users`
         );
-        if (buResult) {
-          buName = buResult.BUSINESS_UNIT;
-          console.log(`📋 Found BU name: "${buName}" for BU_ID: ${BU_ID}`);
-        }
-      } catch (err) {
-        console.log('⚠️ Could not fetch BU name:', err.message);
+        columns = columnResults.map(col => col.Field);
+        console.log('📋 Available columns in users table:', columns);
+      } catch (colError) {
+        console.warn('⚠️ Could not fetch columns:', colError.message);
+        // Fallback columns
+        columns = ['id', 'user_name', 'username', 'email', 'BU_ID', 'branch_id', 'role'];
       }
       
-      // Build search values from multiple sources
+      // ============================================================
+      // STEP 2: Build safe column list for SELECT
+      // ============================================================
+      const safeColumns = ['id', 'user_name', 'username', 'email', 'BU_ID', 'role', 'user_role', 'is_active', 'status']
+        .filter(col => columns.includes(col));
+      
+      const selectClause = safeColumns.length > 0 ? safeColumns.join(', ') : '*';
+      console.log(`📋 Safe columns for query: ${selectClause}`);
+      
+      // ============================================================
+      // STEP 3: Build search values
+      // ============================================================
       const searchValues = [
         BU_ID,
         String(BU_ID),
         parseInt(BU_ID),
         BU_ID.toString().padStart(3, '0'),
-      ];
+      ].filter(v => v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined');
       
-      // Add business unit name if found
-      if (buName) {
-        searchValues.push(buName);
-        searchValues.push(buName.toUpperCase());
-        searchValues.push(buName.toLowerCase());
-        if (buName.includes(' ')) {
-          searchValues.push(buName.replace(/ /g, ''));
-          searchValues.push(buName.replace(/ /g, '_'));
-        }
-      }
-      
-      // Remove duplicates and invalid values
-      const uniqueSearchValues = [...new Set(searchValues.filter(v => 
-        v !== undefined && v !== null && v !== 'undefined' && v !== '' && v !== 'null'
-      ))];
-      
+      const uniqueSearchValues = [...new Set(searchValues)];
       console.log(`📋 Searching for users with values:`, uniqueSearchValues);
       
-      // ✅ FIX: Use the correct column names - try both uppercase and lowercase
-      const userResults = await sequelize.query(
-        `SELECT id, user_name, username, email, BU_ID, BU_ROLE_ID, primary_business_role, 
-                preferred_name, is_supervisor, main_business_unit, responsibility_centre, businessUnit,
-                bu_id AS bu_id_lower, business_unit AS business_unit
-         FROM users 
-         WHERE is_active = 'Active'
-         AND (
-           BU_ID IN (:searchValues)
-           OR bu_id IN (:searchValues)
-           OR main_business_unit IN (:searchValues)
-           OR responsibility_centre IN (:searchValues)
-           OR businessUnit IN (:searchValues)
-           OR business_unit IN (:searchValues)
-         )
-         LIMIT 50`,
-        {
-          replacements: { searchValues: uniqueSearchValues },
-          type: sequelize.QueryTypes.SELECT
+      // ============================================================
+      // STEP 4: Build WHERE clause with only columns that exist
+      // ============================================================
+      const whereConditions = [];
+      const replacements = {};
+      let paramIndex = 0;
+      
+      // Check each potential BU column and add to WHERE if it exists
+      const buColumns = ['BU_ID', 'bu_id', 'branch_id', 'main_business_unit', 
+                         'responsibility_centre', 'businessUnit', 'business_unit'];
+      
+      for (const col of buColumns) {
+        if (columns.includes(col)) {
+          const idx = paramIndex++;
+          whereConditions.push(`${col} = :val${idx}`);
+          replacements[`val${idx}`] = String(BU_ID);
+          
+          // Also try LIKE for partial matches
+          const idx2 = paramIndex++;
+          whereConditions.push(`${col} LIKE :val${idx2}`);
+          replacements[`val${idx2}`] = `%${BU_ID}%`;
         }
-      );
+      }
       
-      // Ensure userResults is an array
-      const userArray = Array.isArray(userResults) ? userResults : [];
+      // Add status/active check
+      if (columns.includes('is_active')) {
+        whereConditions.push(`is_active = 'Active'`);
+      } else if (columns.includes('status')) {
+        whereConditions.push(`status = 'Active'`);
+      }
       
-      if (userArray.length > 0) {
-        console.log(`✅ Found ${userArray.length} users for BU: ${BU_ID}`);
-        userArray.forEach(u => {
-          console.log(`  - ${u.user_name} (${u.primary_business_role || u.BU_ROLE_ID || 'N/A'}) - BU: ${u.BU_ID || u.bu_id_lower || u.main_business_unit || u.responsibility_centre || 'N/A'}`);
+      // If no BU columns exist, don't filter by BU
+      let whereClause = '';
+      if (whereConditions.length > 0) {
+        whereClause = `WHERE ${whereConditions.join(' OR ')}`;
+      }
+      
+      console.log(`📋 WHERE clause: ${whereClause}`);
+      
+      // ============================================================
+      // STEP 5: Execute query
+      // ============================================================
+      const query = `
+        SELECT ${selectClause}
+        FROM users 
+        ${whereClause}
+        LIMIT 50
+      `;
+      
+      console.log(`🔍 Executing query: ${query}`);
+      console.log(`🔍 With replacements:`, replacements);
+      
+      let users = await sequelize.query(query, {
+        replacements: replacements,
+        type: sequelize.QueryTypes.SELECT
+      });
+      
+      // Ensure users is an array
+      if (!Array.isArray(users)) {
+        users = [];
+      }
+      
+      if (users.length > 0) {
+        console.log(`✅ Found ${users.length} users for BU: ${BU_ID}`);
+        users.forEach(u => {
+          console.log(`  - ${u.user_name || u.username || 'Unknown'} (${u.role || u.user_role || 'N/A'})`);
         });
-        return userArray;
+        return users;
       }
       
       // ============================================================
-      // STRATEGY 2: If no users found, try to find by role (managers)
+      // STEP 6: FALLBACK - Get managers/admins
       // ============================================================
-      console.log(`⚠️ No users found with matching fields, looking for managers with similar roles...`);
+      console.log(`⚠️ No users found with matching fields, looking for managers...`);
       
-      const managers = await sequelize.query(
-        `SELECT DISTINCT u.id, u.user_name, u.username, u.email, u.BU_ID, u.BU_ROLE_ID, u.primary_business_role, 
-                u.preferred_name, u.is_supervisor, u.main_business_unit, u.responsibility_centre, u.businessUnit,
-                u.bu_id AS bu_id_lower
-         FROM users u
-         LEFT JOIN user_roles ur ON ur.user_id = u.id
-         WHERE u.is_active = 'Active'
-         AND (u.BU_ROLE_ID IN ('19', '20', '17', '30', '31', '32', '6', '13', '21', '14')
-              OR u.primary_business_role IN ('Branch Manager', 'Supervisor', 'Manager', 'Head Teller', 'Team Lead')
-              OR u.is_supervisor = 1
-              OR ur.ROLE_NM IN ('Branch Manager', 'Supervisor', 'Manager', 'Team Lead'))
-         LIMIT 10`,
-        {
-          type: sequelize.QueryTypes.SELECT
+      const managerConditions = [];
+      const managerReplacements = {};
+      let managerParamIndex = 0;
+      
+      // Check role columns
+      const roleColumns = ['role', 'user_role', 'BU_ROLE_ID', 'primary_business_role'];
+      const managerRoles = ['Manager', 'Branch Manager', 'Supervisor', 'Admin', 'Administrator', 
+                            '19', '20', '17', '30', '31', '32', '6', '13', '21', '14'];
+      
+      let roleColFound = false;
+      for (const col of roleColumns) {
+        if (columns.includes(col)) {
+          roleColFound = true;
+          const idx = managerParamIndex++;
+          managerConditions.push(`${col} IN (:roleValues${idx})`);
+          managerReplacements[`roleValues${idx}`] = managerRoles;
         }
-      );
+      }
       
-      const managersArray = Array.isArray(managers) ? managers : [];
+      // If no role column found, try supervisor column
+      if (!roleColFound && columns.includes('is_supervisor')) {
+        managerConditions.push(`is_supervisor = 1`);
+      }
       
-      if (managersArray.length > 0) {
-        console.log(`✅ Found ${managersArray.length} managers system-wide as fallback`);
-        managersArray.forEach(u => {
-          console.log(`  - ${u.user_name} (${u.primary_business_role || u.BU_ROLE_ID || 'N/A'}) - BU: ${u.BU_ID || u.bu_id_lower || u.main_business_unit || u.responsibility_centre || 'N/A'}`);
+      const managerWhere = managerConditions.length > 0 ? 
+        `WHERE ${managerConditions.join(' OR ')}` : '';
+      
+      if (managerWhere) {
+        const managerQuery = `
+          SELECT ${selectClause}
+          FROM users 
+          ${managerWhere}
+          LIMIT 10
+        `;
+        
+        const managers = await sequelize.query(managerQuery, {
+          replacements: managerReplacements,
+          type: sequelize.QueryTypes.SELECT
         });
-        return managersArray;
+        
+        if (Array.isArray(managers) && managers.length > 0) {
+          console.log(`✅ Found ${managers.length} managers as fallback`);
+          managers.forEach(u => {
+            console.log(`  - ${u.user_name || u.username || 'Unknown'} (${u.role || u.user_role || 'N/A'})`);
+          });
+          return managers;
+        }
       }
       
       // ============================================================
-      // STRATEGY 3: Check if there are ANY users with BU_ID match
+      // STEP 7: ULTIMATE FALLBACK - Get any active user
       // ============================================================
-      console.log(`🔍 Looking for ANY users with BU_ID = ${BU_ID} in users table...`);
+      console.log(`⚠️ No managers found, getting any active user...`);
       
-      const directUsers = await sequelize.query(
-        `SELECT id, user_name, username, email, BU_ID, BU_ROLE_ID, primary_business_role, 
-                preferred_name, is_supervisor, main_business_unit, responsibility_centre, businessUnit
-         FROM users 
-         WHERE is_active = 'Active'
-         AND (BU_ID = :BU_ID OR bu_id = :BU_ID OR businessUnit = :BU_ID OR main_business_unit = :BU_ID)
-         LIMIT 20`,
-        {
-          replacements: { BU_ID: String(BU_ID) },
-          type: sequelize.QueryTypes.SELECT
-        }
-      );
+      const anyUserQuery = `
+        SELECT ${selectClause}
+        FROM users 
+        ${whereConditions.length > 0 ? whereClause : ''}
+        LIMIT 5
+      `;
       
-      const directUsersArray = Array.isArray(directUsers) ? directUsers : [];
+      const anyUsers = await sequelize.query(anyUserQuery, {
+        replacements: replacements,
+        type: sequelize.QueryTypes.SELECT
+      });
       
-      if (directUsersArray.length > 0) {
-        console.log(`✅ Found ${directUsersArray.length} users with direct BU_ID match`);
-        directUsersArray.forEach(u => {
-          console.log(`  - ${u.user_name} (${u.primary_business_role || u.BU_ROLE_ID || 'N/A'}) - BU: ${u.BU_ID || 'N/A'}`);
-        });
-        return directUsersArray;
-      }
-      
-      // ============================================================
-      // STRATEGY 4: Ultimate fallback - Check user_roles table
-      // ============================================================
-      console.log(`🔍 Looking for users in user_roles table with BU_ID = ${BU_ID}...`);
-      
-      const roleUsers = await sequelize.query(
-        `SELECT DISTINCT u.id, u.user_name, u.username, u.email, u.BU_ID, u.BU_ROLE_ID, 
-                u.primary_business_role, u.preferred_name, u.is_supervisor, 
-                u.main_business_unit, u.responsibility_centre, u.businessUnit
-         FROM users u
-         INNER JOIN user_roles ur ON ur.user_id = u.id
-         WHERE u.is_active = 'Active'
-         AND (ur.BU_ID = :BU_ID OR ur.BU_ID = :BU_ID)
-         LIMIT 20`,
-        {
-          replacements: { BU_ID: String(BU_ID) },
-          type: sequelize.QueryTypes.SELECT
-        }
-      );
-      
-      const roleUsersArray = Array.isArray(roleUsers) ? roleUsers : [];
-      
-      if (roleUsersArray.length > 0) {
-        console.log(`✅ Found ${roleUsersArray.length} users in user_roles table with BU_ID match`);
-        roleUsersArray.forEach(u => {
-          console.log(`  - ${u.user_name} (${u.primary_business_role || u.BU_ROLE_ID || 'N/A'})`);
-        });
-        return roleUsersArray;
-      }
-      
-      // ============================================================
-      // STRATEGY 5: Last resort - Check if there are ANY users at all
-      // ============================================================
-      console.log(`⚠️ No users found for BU ${BU_ID}, checking if any users exist in system...`);
-      
-      const anyUsers = await sequelize.query(
-        `SELECT id, user_name, username, email, BU_ID, BU_ROLE_ID, primary_business_role, 
-                preferred_name, is_supervisor, main_business_unit, responsibility_centre, businessUnit
-         FROM users 
-         WHERE is_active = 'Active'
-         LIMIT 5`,
-        {
-          type: sequelize.QueryTypes.SELECT
-        }
-      );
-      
-      const anyUsersArray = Array.isArray(anyUsers) ? anyUsers : [];
-      
-      if (anyUsersArray.length > 0) {
-        console.log(`✅ Found ${anyUsersArray.length} active users in system. Returning first ${anyUsersArray.length} as fallback.`);
-        anyUsersArray.forEach(u => {
-          console.log(`  - ${u.user_name} (${u.primary_business_role || u.BU_ROLE_ID || 'N/A'}) - BU: ${u.BU_ID || 'N/A'}`);
-        });
-        return anyUsersArray;
+      if (Array.isArray(anyUsers) && anyUsers.length > 0) {
+        console.log(`✅ Found ${anyUsers.length} active users as ultimate fallback`);
+        return anyUsers;
       }
       
       console.log(`❌ No users found at all for BU: ${BU_ID}`);
       return [];
 
     } catch (error) {
-      console.error('❌ Error fetching users for BU:', error);
-      console.error('❌ Error details:', error.stack);
+      console.error('❌ Error fetching users for BU:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      
+      // ============================================================
+      // FINAL FALLBACK - Try a simple query without any filtering
+      // ============================================================
+      try {
+        console.log('🔄 Trying ultimate fallback - getting any users...');
+        const fallbackUsers = await sequelize.query(
+          `SELECT id, user_name, username, email, role, user_role, BU_ID, branch_id 
+           FROM users 
+           LIMIT 5`,
+          {
+            type: sequelize.QueryTypes.SELECT
+          }
+        );
+        
+        if (Array.isArray(fallbackUsers) && fallbackUsers.length > 0) {
+          console.log(`✅ Fallback: Found ${fallbackUsers.length} users`);
+          return fallbackUsers;
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback also failed:', fallbackError.message);
+      }
+      
       return [];
     }
   }
@@ -575,154 +588,152 @@ class NotificationService {
     }
   }
 
-  // services/NotificationService.js - Add this method to the NotificationService class
-
-/**
- * 🔥 FIXED: Notify approvers for a card request
- * This is the function that your controller is trying to import
- */
-async notifyApprovers(approvalRequest, workflowConfig) {
-  try {
-    console.log(`📨 Notifying approvers for request ${approvalRequest.id}`);
-    
-    const itemType = approvalRequest.requestType === 'REISSUE' ? 'Card Reissuance' : 'Card Issuance';
-    const itemName = `Card ${approvalRequest.requestType}`;
-    const description = `${itemType} request for customer ${approvalRequest.customerId}`;
-    const submittedBy = approvalRequest.requestedBy || 'System';
-    const BU_ID = approvalRequest.branchCode || approvalRequest.organizationName || 'MAIN';
-    
-    // Get the next approvers based on workflow config
-    const approvalLevels = workflowConfig?.approvalLevels || [];
-    const currentLevel = approvalRequest.approvalLevel || 0;
-    
-    // Get the next level approvers
-    const nextLevel = currentLevel;
-    let nextApprovers = [];
-    
-    if (approvalLevels.length > 0 && nextLevel < approvalLevels.length) {
-      const levelConfig = approvalLevels[nextLevel];
-      const roleId = levelConfig.roleId;
-      const roleName = levelConfig.role || levelConfig.name || 'Approver';
-      
-      // Find users with this role
-      const approverUsers = await this.getUsersForBU(BU_ID);
-      
-      // Filter users by role
-      nextApprovers = approverUsers.filter(user => 
-        parseInt(user.BU_ROLE_ID) === parseInt(roleId) ||
-        user.primary_business_role === roleName ||
-        user.primary_business_role?.toLowerCase() === roleName?.toLowerCase()
-      );
-      
-      // If no users found with specific role, get all users in BU
-      if (nextApprovers.length === 0) {
-        console.log(`⚠️ No users found with role ${roleName}, notifying all users in BU`);
-        nextApprovers = approverUsers;
-      }
-    }
-    
-    // If no approvers found, use admin fallback
-    if (nextApprovers.length === 0) {
-      console.log(`⚠️ No approvers found, using admin fallback`);
-      const adminUsers = await this.getUsersForBU('1');
-      if (adminUsers.length > 0) {
-        nextApprovers = adminUsers;
-      } else {
-        // Ultimate fallback - get any active user
-        const anyUsers = await this.getUsersForBU('MAIN');
-        nextApprovers = anyUsers.length > 0 ? anyUsers : [];
-      }
-    }
-    
-    console.log(`👥 Found ${nextApprovers.length} approver(s) for request ${approvalRequest.id}`);
-    
-    // Send notifications to each approver
-    const results = [];
-    for (const approver of nextApprovers) {
-      try {
-        const result = await this.sendNotificationToUser(approver, {
-          itemType,
-          itemId: approvalRequest.id,
-          itemName,
-          description,
-          submittedBy,
-          BU_ID,
-          priority: 'high',
-          metadata: {
-            requestId: approvalRequest.id,
-            customerId: approvalRequest.customerId,
-            accountNumber: approvalRequest.accountNumber,
-            cardType: approvalRequest.cardData?.cardType,
-            cardScheme: approvalRequest.cardData?.cardScheme,
-            amount: approvalRequest.feeDetails?.totalAmount || 0,
-            currentLevel: approvalRequest.approvalLevel,
-            totalLevels: approvalLevels.length,
-            workflowConfig: workflowConfig?.id
-          }
-        });
-        results.push(result);
-        console.log(`✅ Notification sent to approver: ${approver.user_name || approver.username}`);
-      } catch (error) {
-        console.error(`❌ Failed to send notification to approver ${approver.id}:`, error.message);
-        results.push({ userId: approver.id, error: error.message });
-      }
-    }
-    
-    // Also send a notification to the requester confirming submission
+  /**
+   * 🔥 FIXED: Notify approvers for a card request
+   * This is the function that your controller is trying to import
+   */
+  async notifyApprovers(approvalRequest, workflowConfig) {
     try {
-      const requester = await User.findOne({
-        where: {
-          [Op.or]: [
-            { id: approvalRequest.requestedBy },
-            { username: approvalRequest.requestedBy }
-          ]
-        }
-      });
+      console.log(`📨 Notifying approvers for request ${approvalRequest.id}`);
       
-      if (requester) {
-        await this.sendNotificationToUser(requester, {
-          itemType,
-          itemId: approvalRequest.id,
-          itemName,
-          description: `Your ${itemType} request has been submitted and is awaiting approval`,
-          submittedBy: 'System',
-          BU_ID,
-          priority: 'low',
-          metadata: {
-            requestId: approvalRequest.id,
-            status: 'PENDING',
-            approversNotified: nextApprovers.length
+      const itemType = approvalRequest.requestType === 'REISSUE' ? 'Card Reissuance' : 'Card Issuance';
+      const itemName = `Card ${approvalRequest.requestType}`;
+      const description = `${itemType} request for customer ${approvalRequest.customerId}`;
+      const submittedBy = approvalRequest.requestedBy || 'System';
+      const BU_ID = approvalRequest.branchCode || approvalRequest.organizationName || 'MAIN';
+      
+      // Get the next approvers based on workflow config
+      const approvalLevels = workflowConfig?.approvalLevels || [];
+      const currentLevel = approvalRequest.approvalLevel || 0;
+      
+      // Get the next level approvers
+      const nextLevel = currentLevel;
+      let nextApprovers = [];
+      
+      if (approvalLevels.length > 0 && nextLevel < approvalLevels.length) {
+        const levelConfig = approvalLevels[nextLevel];
+        const roleId = levelConfig.roleId;
+        const roleName = levelConfig.role || levelConfig.name || 'Approver';
+        
+        // Find users with this role
+        const approverUsers = await this.getUsersForBU(BU_ID);
+        
+        // Filter users by role
+        nextApprovers = approverUsers.filter(user => 
+          parseInt(user.BU_ROLE_ID) === parseInt(roleId) ||
+          user.primary_business_role === roleName ||
+          user.primary_business_role?.toLowerCase() === roleName?.toLowerCase()
+        );
+        
+        // If no users found with specific role, get all users in BU
+        if (nextApprovers.length === 0) {
+          console.log(`⚠️ No users found with role ${roleName}, notifying all users in BU`);
+          nextApprovers = approverUsers;
+        }
+      }
+      
+      // If no approvers found, use admin fallback
+      if (nextApprovers.length === 0) {
+        console.log(`⚠️ No approvers found, using admin fallback`);
+        const adminUsers = await this.getUsersForBU('1');
+        if (adminUsers.length > 0) {
+          nextApprovers = adminUsers;
+        } else {
+          // Ultimate fallback - get any active user
+          const anyUsers = await this.getUsersForBU('MAIN');
+          nextApprovers = anyUsers.length > 0 ? anyUsers : [];
+        }
+      }
+      
+      console.log(`👥 Found ${nextApprovers.length} approver(s) for request ${approvalRequest.id}`);
+      
+      // Send notifications to each approver
+      const results = [];
+      for (const approver of nextApprovers) {
+        try {
+          const result = await this.sendNotificationToUser(approver, {
+            itemType,
+            itemId: approvalRequest.id,
+            itemName,
+            description,
+            submittedBy,
+            BU_ID,
+            priority: 'high',
+            metadata: {
+              requestId: approvalRequest.id,
+              customerId: approvalRequest.customerId,
+              accountNumber: approvalRequest.accountNumber,
+              cardType: approvalRequest.cardData?.cardType,
+              cardScheme: approvalRequest.cardData?.cardScheme,
+              amount: approvalRequest.feeDetails?.totalAmount || 0,
+              currentLevel: approvalRequest.approvalLevel,
+              totalLevels: approvalLevels.length,
+              workflowConfig: workflowConfig?.id
+            }
+          });
+          results.push(result);
+          console.log(`✅ Notification sent to approver: ${approver.user_name || approver.username}`);
+        } catch (error) {
+          console.error(`❌ Failed to send notification to approver ${approver.id}:`, error.message);
+          results.push({ userId: approver.id, error: error.message });
+        }
+      }
+      
+      // Also send a notification to the requester confirming submission
+      try {
+        const requester = await User.findOne({
+          where: {
+            [Op.or]: [
+              { id: approvalRequest.requestedBy },
+              { username: approvalRequest.requestedBy }
+            ]
           }
         });
-        console.log(`✅ Confirmation notification sent to requester: ${requester.user_name || requester.username}`);
+        
+        if (requester) {
+          await this.sendNotificationToUser(requester, {
+            itemType,
+            itemId: approvalRequest.id,
+            itemName,
+            description: `Your ${itemType} request has been submitted and is awaiting approval`,
+            submittedBy: 'System',
+            BU_ID,
+            priority: 'low',
+            metadata: {
+              requestId: approvalRequest.id,
+              status: 'PENDING',
+              approversNotified: nextApprovers.length
+            }
+          });
+          console.log(`✅ Confirmation notification sent to requester: ${requester.user_name || requester.username}`);
+        }
+      } catch (error) {
+        console.error('❌ Failed to send requester notification:', error.message);
       }
+      
+      return {
+        success: true,
+        message: `Notified ${results.length} approvers for request ${approvalRequest.id}`,
+        approversNotified: results.length,
+        results
+      };
+      
     } catch (error) {
-      console.error('❌ Failed to send requester notification:', error.message);
+      console.error('❌ Error in notifyApprovers:', error.message);
+      return {
+        success: false,
+        error: error.message,
+        requestId: approvalRequest?.id
+      };
     }
-    
-    return {
-      success: true,
-      message: `Notified ${results.length} approvers for request ${approvalRequest.id}`,
-      approversNotified: results.length,
-      results
-    };
-    
-  } catch (error) {
-    console.error('❌ Error in notifyApprovers:', error.message);
-    return {
-      success: false,
-      error: error.message,
-      requestId: approvalRequest?.id
-    };
   }
-}
 
-/**
- * Alias for notifyApprovers for backward compatibility
- */
-async notifyApproversForRequest(approvalRequest, workflowConfig) {
-  return this.notifyApprovers(approvalRequest, workflowConfig);
-}
+  /**
+   * Alias for notifyApprovers for backward compatibility
+   */
+  async notifyApproversForRequest(approvalRequest, workflowConfig) {
+    return this.notifyApprovers(approvalRequest, workflowConfig);
+  }
 
   /**
    * Send notification to submitter confirming
@@ -1430,10 +1441,7 @@ export const createInAppNotification = (data) => notificationService.createInApp
 export const getUserPendingNotifications = (userId, roleId) => notificationService.getUserPendingNotifications(userId, roleId);
 export const markNotificationAsRead = (notificationId) => notificationService.markNotificationAsRead(notificationId);
 export const getBranchPendingApprovalsSummary = (BU_ID) => notificationService.getBranchPendingApprovalsSummary(BU_ID);
-// At the bottom of NotificationService.js - Add to named exports
-
 export const notifyApprovers = (approvalRequest, workflowConfig) => 
   notificationService.notifyApprovers(approvalRequest, workflowConfig);
-
 export const notifyApproversForRequest = (approvalRequest, workflowConfig) => 
   notificationService.notifyApproversForRequest(approvalRequest, workflowConfig);

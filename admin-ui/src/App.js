@@ -1,4 +1,4 @@
-// admin-ui/src/App.js - COMPLETE FIXED VERSION WITH USER MONITORING
+// admin-ui/src/App.js - COMPLETE FIXED VERSION WITH TOKEN REFRESH AND HEALTH CHECK
 
 import { Admin, Resource, fetchUtils, Layout } from 'react-admin';
 import simpleRestProvider from 'ra-data-simple-rest';
@@ -25,7 +25,7 @@ import TrafficStats from './pages/TrafficStats/TrafficStats';
 import UserMonitoring from './pages/UserMonitoring/UserMonitoring';
 
 import { Box, Typography } from '@mui/material';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
+import { createTheme } from '@mui/material/styles';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import SpeedIcon from '@mui/icons-material/Speed';
 import PublicIcon from '@mui/icons-material/Public';
@@ -38,10 +38,12 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import BarChartIcon from '@mui/icons-material/BarChart';
-import MemoryIcon from '@mui/icons-material/Memory';
 import PeopleAltIcon from '@mui/icons-material/PeopleAlt';
 
 import { API_BASE_URL } from './config';
+
+// ✅ IMPORT for HealthRoute
+import HealthRoute from './routes/HealthRoute';
 
 // Create theme
 const theme = createTheme({
@@ -56,17 +58,142 @@ const theme = createTheme({
   },
 });
 
-export const httpClient = (url, options = {}) => {
-  const token = localStorage.getItem('token');
-  const headers = new Headers(options.headers || {});
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+// =============================================
+// ✅ TOKEN REFRESH HELPER
+// =============================================
+let refreshPromise = null;
+let isRefreshing = false;
+
+const refreshAuthToken = async () => {
+  // If there's already a refresh in progress, return that promise
+  if (refreshPromise) {
+    return refreshPromise;
   }
-  return fetchUtils.fetchJson(url, { ...options, headers });
+
+  // Prevent multiple refresh attempts
+  if (isRefreshing) {
+    return new Promise((resolve, reject) => {
+      const checkToken = setInterval(() => {
+        const token = localStorage.getItem('token');
+        if (token) {
+          clearInterval(checkToken);
+          resolve(token);
+        }
+        if (!isRefreshing) {
+          clearInterval(checkToken);
+          reject(new Error('Refresh cancelled'));
+        }
+      }, 100);
+    });
+  }
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (!refreshToken) {
+        console.warn('⚠️ No refresh token available');
+        throw new Error('No refresh token available');
+      }
+
+      console.log('🔄 Refreshing auth token...');
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Refresh failed');
+      }
+
+      const data = await response.json();
+      const newToken = data.token || data.accessToken || data.data?.token;
+      
+      if (newToken) {
+        localStorage.setItem('token', newToken);
+        if (data.refreshToken) {
+          localStorage.setItem('refreshToken', data.refreshToken);
+        }
+        if (data.user) {
+          localStorage.setItem('user', JSON.stringify(data.user));
+        }
+        console.log('✅ Token refreshed successfully');
+        return newToken;
+      }
+      throw new Error('No token in refresh response');
+    } catch (error) {
+      console.error('❌ Token refresh failed:', error.message);
+      // Clear tokens and redirect to login
+      localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      // Redirect to login page
+      window.location.href = '/login';
+      throw error;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 };
 
+// =============================================
+// ✅ UPDATED HTTP CLIENT WITH AUTO-REFRESH
+// =============================================
+export const httpClient = async (url, options = {}) => {
+  const getToken = () => localStorage.getItem('token');
+  
+  const makeRequest = async (retry = false) => {
+    const token = getToken();
+    const headers = new Headers(options.headers || {});
+    
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    
+    if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
+    try {
+      const response = await fetchUtils.fetchJson(url, { 
+        ...options, 
+        headers 
+      });
+      return response;
+    } catch (error) {
+      // Check if it's a 401 Unauthorized error
+      if (error.status === 401 && !retry) {
+        console.log('🔄 Token expired, attempting refresh...');
+        try {
+          const newToken = await refreshAuthToken();
+          if (newToken) {
+            // Retry the request with new token
+            console.log('🔄 Retrying request with new token...');
+            return makeRequest(true);
+          }
+        } catch (refreshError) {
+          console.error('❌ Refresh failed, redirecting to login');
+          // If refresh fails, throw the original error
+          throw error;
+        }
+      }
+      throw error;
+    }
+  };
+
+  return makeRequest();
+};
+
+// =============================================
 // ✅ API_BASE_URL already includes /admin
+// =============================================
 const baseDataProvider = simpleRestProvider(API_BASE_URL, httpClient);
 
 // =============================================
@@ -187,7 +314,7 @@ const dataProvider = {
         
         const total = data.length;
         
-        return { data, total };
+        return { data, total, summary };
       }
 
       // =============================================
@@ -402,7 +529,7 @@ const dataProvider = {
           const listResponse = await httpClient(`${API_BASE_URL}/services`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
-            const found = listData.find(item => item.id == params.id);
+            const found = listData.find(item => item.id === params.id);
             if (found) {
               return { data: ensureId(found, params.id) };
             }
@@ -428,7 +555,7 @@ const dataProvider = {
           const listResponse = await httpClient(`${API_BASE_URL}/middlewares`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
-            const found = listData.find(item => item.id == params.id);
+            const found = listData.find(item => item.id === params.id);
             if (found) {
               return { data: ensureId(found, params.id) };
             }
@@ -454,7 +581,7 @@ const dataProvider = {
           const listResponse = await httpClient(`${API_BASE_URL}/env`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
-            const found = listData.find(item => item.id == params.id);
+            const found = listData.find(item => item.id === params.id);
             if (found) {
               return { data: ensureId(found, params.id) };
             }
@@ -516,7 +643,7 @@ const dataProvider = {
           const listResponse = await httpClient(`${API_BASE_URL}/plugins`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
-            const found = listData.find(item => item.id == params.id);
+            const found = listData.find(item => item.id === params.id);
             if (found) {
               return { data: ensureId(found, params.id) };
             }
@@ -542,7 +669,7 @@ const dataProvider = {
           const listResponse = await httpClient(`${API_BASE_URL}/servers`);
           const listData = listResponse.json || listResponse;
           if (Array.isArray(listData)) {
-            const found = listData.find(item => item.id == params.id);
+            const found = listData.find(item => item.id === params.id);
             if (found) {
               return { data: ensureId(found, params.id) };
             }
@@ -993,6 +1120,14 @@ function App() {
       title="Evolution Backend Console"
       theme={theme}
     >
+      {/* ✅ Health Check Route - Added as a custom route */}
+      <Resource 
+        name="health" 
+        list={HealthRoute} 
+        options={{ label: 'Health Check' }} 
+        icon={MonitorHeartIcon}
+      />
+
       {/* Server & System Status */}
       <Resource 
         name="server-status" 

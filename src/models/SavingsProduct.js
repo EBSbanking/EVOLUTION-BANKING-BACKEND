@@ -140,11 +140,78 @@ const SavingsProduct = sequelize.define('SavingsProduct', {
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: 'updated_at',
-  underscored: false,           // ✅ leave column names exactly as attribute names
-  
+  underscored: false,
 });
 
-// You can keep the manual table creation if needed, but with `underscored: false` it's not required.
-// Remove the `createTableIfNotExists` method or adapt it to the new column names.
+/**
+ * Create the savings_products table if it doesn't exist
+ * This method handles table creation with proper error handling
+ * @returns {Promise<Object>} Result of the operation
+ */
+SavingsProduct.createTableIfNotExists = async function() {
+  try {
+    const queryInterface = this.sequelize.queryInterface;
+    const tableName = 'savings_products';
+    
+    // Check if table exists
+    const tableExists = await queryInterface.tableExists(tableName);
+    
+    if (!tableExists) {
+      console.log('📦 Creating savings_products table...');
+      await this.sync({ force: false });
+      console.log('✅ savings_products table created successfully');
+      return { created: true, message: 'Table created successfully' };
+    } else {
+      console.log('✅ savings_products table already exists');
+      
+      // Verify critical columns exist
+      const columns = await queryInterface.describeTable(tableName);
+      const criticalColumns = ['PROD_ID', 'PROD_CD', 'PROD_DESC', 'productCode', 'productName'];
+      const missingColumns = criticalColumns.filter(col => !columns[col]);
+      
+      if (missingColumns.length > 0) {
+        console.warn(`⚠️ Missing critical columns: ${missingColumns.join(', ')}`);
+        console.log('🔄 Attempting to update table schema...');
+        await this.sync({ alter: false });
+        console.log('✅ Table schema updated successfully');
+        return { created: false, updated: true, message: 'Table schema updated' };
+      }
+      
+      return { created: false, updated: false, message: 'Table already exists with correct schema' };
+    }
+  } catch (error) {
+    console.error('❌ Error in SavingsProduct.createTableIfNotExists:', error);
+    throw new Error(`Failed to create/update savings_products table: ${error.message}`);
+  }
+};
+
+/**
+ * Check if the table exists and has the correct schema
+ * @returns {Promise<Object>} Table status information
+ */
+SavingsProduct.checkTableStatus = async function() {
+  try {
+    const queryInterface = this.sequelize.queryInterface;
+    const tableName = 'savings_products';
+    
+    const tableExists = await queryInterface.tableExists(tableName);
+    if (!tableExists) {
+      return { exists: false, message: 'Table does not exist' };
+    }
+    
+    const columns = await queryInterface.describeTable(tableName);
+    const columnNames = Object.keys(columns);
+    
+    return {
+      exists: true,
+      columns: columnNames,
+      columnCount: columnNames.length,
+      message: 'Table exists'
+    };
+  } catch (error) {
+    console.error('❌ Error checking table status:', error);
+    throw new Error(`Failed to check table status: ${error.message}`);
+  }
+};
 
 export default SavingsProduct;

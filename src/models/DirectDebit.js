@@ -1,4 +1,4 @@
-﻿// src/models/DirectDebit.js - SIMPLIFIED FOR AUTO-COLLECTION
+// src/models/DirectDebit.js - SIMPLIFIED FOR AUTO-COLLECTION
 import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

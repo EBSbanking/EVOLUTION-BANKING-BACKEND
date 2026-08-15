@@ -1,4 +1,4 @@
-﻿// models/DepositAccountInterest_Tier.js
+// models/DepositAccountInterest_Tier.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -138,7 +138,7 @@ class DepositAccountInterest_Tier extends Model {
   // Virtual getter: Tier range description
   get tierRange() {
     const min = this.min_balance ? parseFloat(this.min_balance).toLocaleString() : '0';
-    const max = this.max_balance ? parseFloat(this.max_balance).toLocaleString() : '∞';
+    const max = this.max_balance ? parseFloat(this.max_balance).toLocaleString() : '8';
     return `${min} - ${max}`;
   }
 

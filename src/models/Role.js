@@ -216,7 +216,7 @@ Role.getRolesFromView = async function() {
 Role.syncTable = async function() {
   try {
     // Sync the table
-    await this.sync({ alter: true });
+    await this.sync({ alter: false });
     console.log('✅ Role table synced');
     
     // Create or update the view

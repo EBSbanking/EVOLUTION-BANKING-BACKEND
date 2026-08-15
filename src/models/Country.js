@@ -1,4 +1,4 @@
-﻿// models/Country.js - FIXED VERSION
+// models/Country.js - FIXED VERSION
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -186,7 +186,7 @@ Country.init({
   flag_emoji: {
     type: DataTypes.STRING(10),
     allowNull: true,
-    comment: 'Flag emoji (e.g., 🇳🇬)'
+    comment: 'Flag emoji (e.g., ????)'
   },
   is_active: {
     type: DataTypes.BOOLEAN,
@@ -217,7 +217,7 @@ Country.init({
   underscored: false,
   hooks: {
     beforeCreate: (country) => {
-      // ✅ FIX: Only process if the value exists and is a string
+      // ? FIX: Only process if the value exists and is a string
       if (country.code && typeof country.code === 'string') {
         country.code = country.code.toUpperCase().trim();
       }
@@ -230,11 +230,11 @@ Country.init({
       if (country.currency_code && typeof country.currency_code === 'string') {
         country.currency_code = country.currency_code.toUpperCase().trim();
       }
-      // ✅ Skip flag_emoji processing entirely - it can contain emojis
-      // ✅ Skip region, sub_region, capital, timezone, languages - they can contain special chars
+      // ? Skip flag_emoji processing entirely - it can contain emojis
+      // ? Skip region, sub_region, capital, timezone, languages - they can contain special chars
     },
     beforeUpdate: (country) => {
-      // ✅ FIX: Only process if the value exists and is a string
+      // ? FIX: Only process if the value exists and is a string
       if (country.changed('code') && country.code && typeof country.code === 'string') {
         country.code = country.code.toUpperCase().trim();
       }
@@ -247,7 +247,7 @@ Country.init({
       if (country.changed('currency_code') && country.currency_code && typeof country.currency_code === 'string') {
         country.currency_code = country.currency_code.toUpperCase().trim();
       }
-      // ✅ Skip flag_emoji processing entirely
+      // ? Skip flag_emoji processing entirely
     }
   },
   scopes: {

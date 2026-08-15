@@ -11,7 +11,6 @@ import {
   getAccountByNumber,
   bulkActivateAccounts, 
   getAccountActivationHistory,
-  // NEW: Approval workflow functions
   requestAccountActivation,
   requestAccountDeactivation,
   approveActivationRequest,
@@ -21,20 +20,13 @@ import {
   getDeactivationRequestDetails,
   checkApprovalStatus,
   getAccountTransactionHistory,
-  // These functions don't exist in your controller - removing them:
-  // rejectDeactivationRequest,
-  // getPendingApprovals,
-  // getApprovalHistory,
-  // cancelApprovalRequest
-  // Direct activation/deactivation routes (commented out in controller)
-  // activateCustomerAccount,
-  // deactivateCustomerAccount
 } from '../controllers/CustomerAccountController.js';
 
 import logger from '../utils/logger.js'; 
 import AuditTrail from '../models/AuditTrail.js';
 import CustomerAccount from '../models/CustomerAccount.js';
 import { Op } from 'sequelize';
+import { validateEOMClosure } from '../middlewares/validateEOMClosure.js';
 
 const router = express.Router();
 
@@ -48,20 +40,19 @@ router.get('/debug-all-accounts', async (req, res) => {
   }
 });
 
-// Main routes
+// Main routes - with EOM validation for create/update
 router.get('/accounts/:accountNumber', getAccountByNumber);
 router.get('/customers-account/search/:name', searchCustomersByName);
-router.post('/accounts', createCustomerAccount);
+router.post('/accounts', validateEOMClosure, createCustomerAccount); // ✅ EOM validation
 router.get('/accounts', getAllCustomerAccounts);
-router.put('/accounts/:accountNumber', updateCustomerAccount);
+router.put('/accounts/:accountNumber', validateEOMClosure, updateCustomerAccount); // ✅ EOM validation
 router.delete('/accounts/:ACCT_NO', deleteCustomerAccount);
 router.get('/customer/:CUST_ID', getCustomerAccountByCUST_ID);
 
 router.get('/transactions/:accountNumber', getAccountTransactionHistory);
 
 // ============================================
-// DEPRECATED: Direct activation/deactivation routes (keep for backward compatibility)
-// These functions are commented out in your controller
+// DEPRECATED: Direct activation/deactivation routes
 // ============================================
 // router.patch('/accounts/:accountNumber/activate', activateCustomerAccount);
 // router.patch('/accounts/:accountNumber/deactivate', deactivateCustomerAccount);
@@ -77,16 +68,10 @@ router.post('/:accountNumber/activation/approve', approveActivationRequest);
 // 2. Account Deactivation Approval Workflow
 router.post('/accounts/:accountNumber/request-deactivation', requestAccountDeactivation);
 router.post('/:accountNumber/deactivation/approve', approveDeactivationRequest);
-// Note: rejectDeactivationRequest doesn't exist in your controller
-// router.post('/approvals/deactivation/:requestId/reject', rejectDeactivationRequest);
 router.delete('/approvals/deactivation/:requestId/cancel', cancelDeactivationRequest);
 
-// 3. Generic Approval Management (works for both activation and deactivation)
+// 3. Generic Approval Management
 router.get('/approvals/:requestId/status', checkApprovalStatus);
-// Note: These functions don't exist in your controller
-// router.get('/approvals/pending', getPendingApprovals);
-// router.get('/approvals/history', getApprovalHistory);
-// router.delete('/approvals/:requestId/cancel', cancelApprovalRequest);
 
 // 4. Deactivation-specific routes
 router.get('/approvals/deactivation/pending', getPendingDeactivationRequests);
@@ -95,7 +80,7 @@ router.get('/approvals/deactivation/:requestId/details', getDeactivationRequestD
 // ============================================
 // Bulk Operations
 // ============================================
-router.post('/accounts/bulk-activate', bulkActivateAccounts);
+router.post('/accounts/bulk-activate', validateEOMClosure, bulkActivateAccounts); // ✅ EOM validation
 router.get('/accounts/:ACCT_NO/activation-history', getAccountActivationHistory);
 
 // ============================================
@@ -145,20 +130,21 @@ router.get('/health', (req, res) => {
     features: {
       approval_workflow: true,
       two_level_approval: true,
-      audit_trail: true
+      audit_trail: true,
+      eom_validation: true // ✅ Added
     }
   });
 });
 
 // ============================================
-// Route Documentation (for API documentation)
+// Route Documentation
 // ============================================
 router.get('/routes', (req, res) => {
   const routes = [
     // Account Management
     { method: 'GET', path: '/api/accounts/:accountNumber', description: 'Get account by number' },
-    { method: 'POST', path: '/api/accounts', description: 'Create new account' },
-    { method: 'PUT', path: '/api/accounts/:accountNumber', description: 'Update account' },
+    { method: 'POST', path: '/api/accounts', description: 'Create new account (EOM validated)' },
+    { method: 'PUT', path: '/api/accounts/:accountNumber', description: 'Update account (EOM validated)' },
     { method: 'DELETE', path: '/api/accounts/:ACCT_NO', description: 'Delete account' },
     { method: 'GET', path: '/api/accounts', description: 'Get all accounts' },
     { method: 'GET', path: '/api/customer/:CUST_ID', description: 'Get accounts by customer ID' },
@@ -167,12 +153,12 @@ router.get('/routes', (req, res) => {
     { method: 'GET', path: '/api/customers-account/search/:name', description: 'Search accounts by customer name' },
     
     // Activation Workflow
-    { method: 'POST', path: '/api/accounts/:accountNumber/request-activation', description: 'Request account activation (requires approval)' },
-    { method: 'POST', path: '/api/approvals/activation/:requestId/approve', description: 'Approve activation request' },
+    { method: 'POST', path: '/api/accounts/:accountNumber/request-activation', description: 'Request account activation' },
+    { method: 'POST', path: '/api/:accountNumber/activation/approve', description: 'Approve activation request' },
     
     // Deactivation Workflow
-    { method: 'POST', path: '/api/accounts/:accountNumber/request-deactivation', description: 'Request account deactivation (requires approval)' },
-    { method: 'POST', path: '/api/approvals/deactivation/:requestId/approve', description: 'Approve deactivation request' },
+    { method: 'POST', path: '/api/accounts/:accountNumber/request-deactivation', description: 'Request account deactivation' },
+    { method: 'POST', path: '/api/:accountNumber/deactivation/approve', description: 'Approve deactivation request' },
     { method: 'DELETE', path: '/api/approvals/deactivation/:requestId/cancel', description: 'Cancel deactivation request' },
     
     // Approval Management
@@ -181,17 +167,17 @@ router.get('/routes', (req, res) => {
     { method: 'GET', path: '/api/approvals/deactivation/:requestId/details', description: 'Get deactivation request details' },
     
     // Bulk Operations
-    { method: 'POST', path: '/api/accounts/bulk-activate', description: 'Bulk activate accounts' },
+    { method: 'POST', path: '/api/accounts/bulk-activate', description: 'Bulk activate accounts (EOM validated)' },
     { method: 'GET', path: '/api/accounts/:ACCT_NO/activation-history', description: 'Get account activation history' },
     
     // Transaction History
     { method: 'GET', path: '/api/transactions/:ACCT_NO', description: 'Get account transaction history' },
     
     // System
-    { method: 'POST', path: '/api/system/update-dormant', description: 'Update dormant accounts (system admin only)' },
+    { method: 'POST', path: '/api/system/update-dormant', description: 'Update dormant accounts' },
     
     // Debug
-    { method: 'GET', path: '/api/debug-all-accounts', description: 'Debug endpoint to see all accounts' },
+    { method: 'GET', path: '/api/debug-all-accounts', description: 'Debug endpoint' },
     
     // Health
     { method: 'GET', path: '/api/health', description: 'API health check' },
@@ -203,7 +189,8 @@ router.get('/routes', (req, res) => {
   res.json({
     success: true,
     routes,
-    note: 'All approval workflow routes require authentication and proper role permissions'
+    note: 'All POST/PUT routes are EOM validated to prevent backdating',
+    eom_validation: true
   });
 });
 

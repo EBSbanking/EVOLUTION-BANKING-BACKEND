@@ -1,9 +1,9 @@
-﻿// models/Collection.js
+// models/Collection.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 import Group from './Group.js';
 import GroupLoan from './GroupLoan.js';
-import LoanAccount from './LoanAccount.js';   // ✅ added – needed to update loan balances
+import LoanAccount from './LoanAccount.js';   // ? added � needed to update loan balances
 
 class Collection extends Model {
   // Static method: Find by group loan
@@ -121,7 +121,7 @@ class Collection extends Model {
           if (this.groupLoanId) {
             const groupLoan = await GroupLoan.findByPk(this.groupLoanId);
             if (groupLoan) {
-              // Example: update totals – adjust to your actual model methods
+              // Example: update totals � adjust to your actual model methods
               await groupLoan.updateCollectionTotals(repayment.totalAmount || 0);
               await groupLoan.markMemberAsRepaid(repayment.loanAccountId);
               
@@ -575,7 +575,7 @@ ProcessingSummary.belongsTo(Collection, { foreignKey: 'collectionId', as: 'colle
 // Collection.belongsTo(Group, { foreignKey: 'groupId', as: 'group' });
 // Collection.belongsTo(GroupLoan, { foreignKey: 'groupLoanId', as: 'groupLoan' });
 
-// ✅ Correct – use already attached models
+// ? Correct � use already attached models
 if (sequelize.models.Group) {
   Collection.belongsTo(sequelize.models.Group, { foreignKey: 'groupId', as: 'group' });
 }

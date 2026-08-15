@@ -1,4 +1,4 @@
-﻿// models/IdentificationInformation.js
+// models/IdentificationInformation.js
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -11,7 +11,7 @@ const IdentificationInformation = sequelize.define('IdentificationInformation', 
   },
 
   cust_id: {
-    type: DataTypes.STRING(50),           // ← Must match customers.CUST_ID type (likely VARCHAR)
+    type: DataTypes.STRING(50),           // ? Must match customers.CUST_ID type (likely VARCHAR)
     allowNull: false,
     field: 'cust_id',
    
@@ -171,9 +171,9 @@ const IdentificationInformation = sequelize.define('IdentificationInformation', 
   }
 });
 
-// ────────────────────────────────────────────────
+// ------------------------------------------------
 // STATIC METHODS
-// ────────────────────────────────────────────────
+// ------------------------------------------------
 
 IdentificationInformation.findByCustomerId = async function (customerId, options = {}) {
   return this.findAll({
@@ -209,9 +209,9 @@ IdentificationInformation.findExpiringSoon = async function (days = 30) {
   });
 };
 
-// ────────────────────────────────────────────────
+// ------------------------------------------------
 // INSTANCE METHODS
-// ────────────────────────────────────────────────
+// ------------------------------------------------
 
 IdentificationInformation.prototype.verify = async function (verifiedById, notes = '') {
   return this.update({

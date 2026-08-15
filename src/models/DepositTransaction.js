@@ -1,4 +1,4 @@
-﻿// models/DepositTransaction.js – FULLY UPDATED with all columns
+// models/DepositTransaction.js � FULLY UPDATED with all columns including Server Date & System Time
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
@@ -420,6 +420,9 @@ class DepositTransaction extends Model {
       emtlGlAccount: this.emtl_gl_account,
       emtlBeneficiary: this.emtl_beneficiary,
       emtlRemittanceStatus: this.emtl_remittance_status,
+      emtlRemittanceBatchId: this.emtl_remittance_batch_id,
+      emtlRemittedDate: this.emtl_remitted_date,
+      emtlRemittanceReference: this.emtl_remittance_reference,
       currency: this.currency,
       status: this.status,
       createdBy: this.created_by,
@@ -436,7 +439,11 @@ class DepositTransaction extends Model {
       approvalStatus: this.approval_status,
       amlRiskLevel: this.aml_risk_level,
       amlRiskScore: this.aml_risk_score,
-      amlIndicators: this.aml_indicators ? JSON.parse(this.aml_indicators) : []
+      amlIndicators: this.aml_indicators ? JSON.parse(this.aml_indicators) : [],
+      // ? NEW FIELDS
+      serverProcessingDate: this.server_processing_date,
+      systemTime: this.system_time,
+      systemUserId: this.system_user_id
     };
   }
 
@@ -612,7 +619,7 @@ DepositTransaction.init({
     defaultValue: false
   },
   emtl_reason: {
-    type: DataTypes.STRING(255),
+    type: DataTypes.TEXT,
     allowNull: true
   },
   emtl_gl_account: {
@@ -623,7 +630,6 @@ DepositTransaction.init({
     type: DataTypes.STRING(100),
     allowNull: true
   },
-  // ✅ Updated: emtl_remittance_status with proper options
   emtl_remittance_status: {
     type: DataTypes.STRING(50),
     defaultValue: 'PENDING',
@@ -751,6 +757,24 @@ DepositTransaction.init({
     type: DataTypes.STRING(255),
     allowNull: true
   },
+  
+  // ==================== ? NEW FIELDS - Server Date & System Time ====================
+  server_processing_date: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Server business date when transaction was processed'
+  },
+  system_time: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'User local computer time when transaction was posted'
+  },
+  system_user_id: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: 'User ID who posted the transaction'
+  },
+  
   // ==================== TIMESTAMPS ====================
   created_at: {
     type: DataTypes.DATE,
@@ -809,13 +833,17 @@ DepositTransaction.init({
       if (transaction.emtl_applicable === undefined || transaction.emtl_applicable === null) {
         transaction.emtl_applicable = false;
       }
-      // ✅ Updated: Set default emtl_remittance_status
       if (!transaction.emtl_remittance_status) {
         transaction.emtl_remittance_status = 'PENDING';
       }
       // Set timestamps
       if (!transaction.created_at) transaction.created_at = new Date();
       if (!transaction.updated_at) transaction.updated_at = new Date();
+      
+      // ? If server_processing_date is not set, use transaction_date
+      if (!transaction.server_processing_date) {
+        transaction.server_processing_date = transaction.transaction_date || new Date();
+      }
     },
     beforeUpdate: (transaction) => {
       const now = new Date();
@@ -838,7 +866,7 @@ DepositTransaction.init({
         }
       }
       
-      // ✅ Updated: Handle EMTL remittance status changes
+      // Handle EMTL remittance status changes
       if (transaction.changed('emtl_remittance_status')) {
         if (transaction.emtl_remittance_status === 'REMITTED') {
           transaction.emtl_remitted_date = now;
@@ -870,7 +898,13 @@ DepositTransaction.init({
     { fields: ['emtl_remittance_status'], name: 'idx_deposit_emtl_remittance_status' },
     { fields: ['emtl_gl_account'], name: 'idx_deposit_emtl_gl_account' },
     { fields: ['emtl_applicable', 'emtl_remittance_status'], name: 'idx_deposit_emtl_applicable_status' },
-    { fields: ['emtl_remittance_status', 'transaction_date'], name: 'idx_deposit_emtl_status_date' }
+    { fields: ['emtl_remittance_status', 'transaction_date'], name: 'idx_deposit_emtl_status_date' },
+    { fields: ['emtl_remittance_batch_id'], name: 'idx_deposit_emtl_batch_id' },
+    { fields: ['emtl_remitted_date'], name: 'idx_deposit_emtl_remitted_date' },
+    // ==================== ? NEW INDEXES ====================
+    { fields: ['server_processing_date'], name: 'idx_deposit_server_processing_date' },
+    { fields: ['system_time'], name: 'idx_deposit_system_time' },
+    { fields: ['system_user_id'], name: 'idx_deposit_system_user_id' }
   ],
   scopes: {
     pending: { where: { status: 'PENDING' } },
@@ -905,7 +939,19 @@ DepositTransaction.init({
         transaction_date: { [Op.gte]: new Date().setHours(0, 0, 0, 0) }
       }
     },
-    sortedByDateDesc: { order: [['transaction_date', 'DESC']] }
+    sortedByDateDesc: { order: [['transaction_date', 'DESC']] },
+    // ==================== ? NEW SCOPES ====================
+    byServerProcessingDate: (date) => ({ 
+      where: { 
+        server_processing_date: { 
+          [Op.between]: [
+            new Date(date).setHours(0, 0, 0, 0),
+            new Date(date).setHours(23, 59, 59, 999)
+          ]
+        } 
+      } 
+    }),
+    bySystemUser: (userId) => ({ where: { system_user_id: userId } })
   }
 });
 
@@ -919,95 +965,84 @@ DepositTransaction.ensureTable = async function() {
     );
     
     if (result[0].count === 0) {
-      console.log('📝 Creating deposit_transactions table...');
+      console.log('?? Creating deposit_transactions table...');
       await this.sync({ force: false });
-      console.log('✅ deposit_transactions table created');
+      console.log('? deposit_transactions table created');
     } else {
-      // Check for missing columns and add them
+      // Get existing columns
       const [columns] = await sequelize.query(`SHOW COLUMNS FROM deposit_transactions`);
       const columnNames = columns.map(col => col.Field);
       
+      // Define all required columns with their types - ? INCLUDING NEW FIELDS
+      const requiredColumns = {
+        // EMTL columns
+        'emtl_amount': 'DECIMAL(20,2) DEFAULT 0.00',
+        'total_debit': 'DECIMAL(20,2) DEFAULT 0.00',
+        'emtl_applicable': 'BOOLEAN DEFAULT FALSE',
+        'emtl_reason': 'TEXT NULL',
+        'emtl_gl_account': 'VARCHAR(50) NULL',
+        'emtl_beneficiary': 'VARCHAR(100) NULL',
+        'emtl_remittance_status': "VARCHAR(50) DEFAULT 'PENDING'",
+        'emtl_remittance_batch_id': 'VARCHAR(100) NULL',
+        'emtl_remitted_date': 'DATETIME NULL',
+        'emtl_remittance_reference': 'VARCHAR(100) NULL',
+        
+        // Approval columns
+        'requires_approval': 'BOOLEAN DEFAULT FALSE',
+        'approval_status': "VARCHAR(50) DEFAULT 'PENDING'",
+        'approved_by_role': 'VARCHAR(100) NULL',
+        'approved_by': 'VARCHAR(100) NULL',
+        'approved_at': 'DATETIME NULL',
+        'rejected_by': 'VARCHAR(100) NULL',
+        'rejected_at': 'DATETIME NULL',
+        'rejection_reason': 'TEXT NULL',
+        
+        // AML columns
+        'aml_risk_level': "VARCHAR(20) DEFAULT 'LOW'",
+        'aml_risk_score': 'INT DEFAULT 10',
+        'aml_indicators': 'TEXT NULL',
+        
+        // Other columns
+        'total_debit': 'DECIMAL(20,2) DEFAULT 0.00',
+        'transaction_ref_no': 'VARCHAR(100) NULL',
+        'description': 'TEXT NULL',
+        'depositor_name': 'VARCHAR(255) NULL',
+        
+        // ? NEW FIELDS - Server Date & System Time
+        'server_processing_date': 'DATETIME NULL',
+        'system_time': 'DATETIME NULL',
+        'system_user_id': 'VARCHAR(100) NULL'
+      };
+      
+      // Find missing columns
       const missingColumns = [];
-      
-      // Check for EMTL columns
-      const emtlColumns = ['emtl_amount', 'emtl_applicable', 'emtl_reason', 'emtl_gl_account', 
-                          'emtl_beneficiary', 'emtl_remittance_status', 'emtl_remittance_batch_id',
-                          'emtl_remitted_date', 'emtl_remittance_reference'];
-      
-      for (const col of emtlColumns) {
+      for (const [col, type] of Object.entries(requiredColumns)) {
         if (!columnNames.includes(col)) {
-          missingColumns.push(col);
+          missingColumns.push({ col, type });
         }
       }
       
-      // Check for approval columns
-      const approvalColumns = ['requires_approval', 'approval_status', 'approved_by_role', 
-                              'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason'];
-      
-      for (const col of approvalColumns) {
-        if (!columnNames.includes(col)) {
-          missingColumns.push(col);
-        }
-      }
-      
-      // Check for AML columns
-      const amlColumns = ['aml_risk_level', 'aml_risk_score', 'aml_indicators'];
-      
-      for (const col of amlColumns) {
-        if (!columnNames.includes(col)) {
-          missingColumns.push(col);
-        }
-      }
-      
-      // Check for other columns
-      const otherColumns = ['total_debit', 'transaction_ref_no', 'description', 'depositor_name'];
-      
-      for (const col of otherColumns) {
-        if (!columnNames.includes(col)) {
-          missingColumns.push(col);
-        }
-      }
-      
+      // Add missing columns
       if (missingColumns.length > 0) {
-        console.log(`📝 Adding missing columns to deposit_transactions: ${missingColumns.join(', ')}`);
-        for (const col of missingColumns) {
-          let columnType = 'VARCHAR(255)';
-          let defaultValue = 'NULL';
-          
-          // Determine column type based on name
-          if (col.includes('amount') || col.includes('debit')) {
-            columnType = 'DECIMAL(20,2) DEFAULT 0.00';
-          } else if (col.includes('applicable') || col.includes('approval') || col.includes('requires')) {
-            columnType = 'BOOLEAN DEFAULT FALSE';
-          } else if (col.includes('status') || col.includes('level')) {
-            columnType = 'VARCHAR(50) DEFAULT "PENDING"';
-          } else if (col.includes('score')) {
-            columnType = 'INT DEFAULT 10';
-          } else if (col.includes('date') || col.includes('at')) {
-            columnType = 'DATETIME DEFAULT NULL';
-          } else if (col.includes('indicators')) {
-            columnType = 'TEXT DEFAULT NULL';
-          } else if (col.includes('reason') || col.includes('description')) {
-            columnType = 'TEXT DEFAULT NULL';
-          } else {
-            columnType = 'VARCHAR(255) DEFAULT NULL';
-          }
-          
+        console.log(`?? Adding ${missingColumns.length} missing columns to deposit_transactions...`);
+        
+        for (const { col, type } of missingColumns) {
           try {
-            await sequelize.query(`ALTER TABLE deposit_transactions ADD COLUMN ${col} ${columnType}`);
-            console.log(`✅ Added column: ${col}`);
+            await sequelize.query(`ALTER TABLE deposit_transactions ADD COLUMN ${col} ${type}`);
+            console.log(`? Added column: ${col}`);
           } catch (err) {
-            console.warn(`⚠️ Could not add column ${col}:`, err.message);
+            console.warn(`?? Could not add column ${col}:`, err.message);
           }
         }
+        console.log('? All missing columns added successfully');
+      } else {
+        console.log('? All columns already exist');
       }
-      
-      console.log('✅ deposit_transactions table verified');
     }
     
     return true;
   } catch (error) {
-    console.error('❌ Error ensuring deposit_transactions table:', error.message);
+    console.error('? Error ensuring deposit_transactions table:', error.message);
     return false;
   }
 };

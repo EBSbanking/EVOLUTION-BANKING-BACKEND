@@ -1,6 +1,5 @@
 // admin-ui/src/pages/ChangeCenter/AuditLog.jsx
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -52,6 +51,9 @@ import {
   Cancel as CancelIcon,
   Warning as WarningIcon,
   Info as InfoIcon,
+  Code as CodeIcon,
+  Devices as DevicesIcon,
+  Error as ErrorIcon,  // ✅ ADDED: Missing ErrorIcon import
 } from '@mui/icons-material';
 import { API_BASE_URL } from '../../config';
 import { httpClient } from '../../App';
@@ -118,7 +120,7 @@ const StatusChip = ({ status }) => {
 };
 
 // =============================================
-// EVENT TYPE CHIP
+// EVENT TYPE CHIP - UPDATED WITH FRONTEND TYPES
 // =============================================
 const EventTypeChip = ({ eventType }) => {
   const colors = {
@@ -132,6 +134,13 @@ const EventTypeChip = ({ eventType }) => {
     IMPORT: 'warning',
     APPROVE: 'success',
     REJECT: 'error',
+    FRONTEND_LOG: 'info',
+    FRONTEND_ERROR: 'error',
+    FRONTEND_API: 'default',
+    FRONTEND_PAGE_VIEW: 'secondary',
+    FRONTEND_USER_ACTION: 'info',
+    SYSTEM_START: 'success',
+    SYSTEM_STOP: 'error',
     GENERAL: 'default'
   };
   
@@ -178,7 +187,7 @@ const JsonDisplay = ({ value, maxHeight = 200 }) => {
 };
 
 // =============================================
-// STATS CARDS
+// STATS CARDS - UPDATED WITH FRONTEND STATS
 // =============================================
 const StatsCard = ({ title, value, icon, color, subtitle }) => (
   <Card sx={{ height: '100%' }}>
@@ -206,7 +215,7 @@ const StatsCard = ({ title, value, icon, color, subtitle }) => (
 );
 
 // =============================================
-// AUDIT LOG DETAILS DIALOG
+// AUDIT LOG DETAILS DIALOG - UPDATED WITH FRONTEND SUPPORT
 // =============================================
 const AuditLogDetailsDialog = ({ open, onClose, logData }) => {
   if (!open || !logData) return null;
@@ -226,13 +235,23 @@ const AuditLogDetailsDialog = ({ open, onClose, logData }) => {
     return getValue(value, fallback);
   };
 
+  // Check if this is a frontend log
+  const isFrontendLog = logData.event_type === 'FRONTEND_LOG' || 
+                        logData.event_type === 'FRONTEND_ERROR' || 
+                        logData.event_type === 'FRONTEND_API' ||
+                        logData.event_type === 'FRONTEND_PAGE_VIEW' ||
+                        logData.event_type === 'FRONTEND_USER_ACTION' ||
+                        logData.entity_type === 'FRONTEND';
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Box display="flex" alignItems="center" justifyContent="space-between">
           <Box display="flex" alignItems="center" gap={1}>
-            <EventNoteIcon />
-            <Typography variant="h6">Audit Log Details</Typography>
+            {isFrontendLog ? <ComputerIcon /> : <EventNoteIcon />}
+            <Typography variant="h6">
+              {isFrontendLog ? 'Frontend Log Details' : 'Audit Log Details'}
+            </Typography>
             {logData.status && (
               <Box display="flex" alignItems="center" gap={0.5}>
                 {getStatusIcon(logData.status)}
@@ -289,18 +308,44 @@ const AuditLogDetailsDialog = ({ open, onClose, logData }) => {
           <Typography variant="body1">{getLogField('description')}</Typography>
         </Paper>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="textSecondary">Endpoint</Typography>
-            <Typography variant="body1" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-              {getLogField('endpoint')}
-            </Typography>
-          </Paper>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="textSecondary">Method</Typography>
-            <Chip label={getLogField('method')} size="small" />
-          </Paper>
-        </Box>
+        {!isFrontendLog && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" color="textSecondary">Endpoint</Typography>
+              <Typography variant="body1" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                {getLogField('endpoint')}
+              </Typography>
+            </Paper>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" color="textSecondary">Method</Typography>
+              <Chip label={getLogField('method')} size="small" />
+            </Paper>
+          </Box>
+        )}
+
+        {/* ✅ Frontend-specific details */}
+        {isFrontendLog && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" color="textSecondary">Page URL</Typography>
+              <Typography variant="body1" sx={{ fontSize: 12, wordBreak: 'break-all' }}>
+                {getLogField('url')}
+              </Typography>
+            </Paper>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle2" color="textSecondary">User Agent</Typography>
+              <Typography variant="body1" sx={{ fontSize: 12 }}>
+                {getLogField('user_agent')}
+              </Typography>
+            </Paper>
+            {logData.additional_info && (
+              <Paper sx={{ p: 2, gridColumn: '1 / -1' }}>
+                <Typography variant="subtitle2" color="textSecondary" gutterBottom>Additional Info</Typography>
+                <JsonDisplay value={logData.additional_info} maxHeight={150} />
+              </Paper>
+            )}
+          </Box>
+        )}
 
         {logData.old_value || logData.OLD_VALUE && (
           <Accordion>
@@ -324,13 +369,13 @@ const AuditLogDetailsDialog = ({ open, onClose, logData }) => {
           </Accordion>
         )}
 
-        {logData.additional_info || logData.ADDITIONAL_INFO && (
+        {logData.additional_info && !isFrontendLog && (
           <Accordion>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Typography><strong>Additional Info</strong></Typography>
             </AccordionSummary>
             <AccordionDetails>
-              <JsonDisplay value={logData.additional_info || logData.ADDITIONAL_INFO} maxHeight={200} />
+              <JsonDisplay value={logData.additional_info} maxHeight={200} />
             </AccordionDetails>
           </Accordion>
         )}
@@ -368,6 +413,7 @@ export const AuditLog = () => {
     failed: 0,
     pending: 0,
   });
+  const [frontendLogCount, setFrontendLogCount] = useState(0);
 
   // Helper to get field from log with fallback
   const getLogField = (log, fieldName, fallback = '—') => {
@@ -375,7 +421,7 @@ export const AuditLog = () => {
     return getValue(value, fallback);
   };
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -432,12 +478,23 @@ export const AuditLog = () => {
       const failedCount = logsData.filter(l => l.status === 'FAILED').length;
       const pendingCount = logsData.filter(l => l.status === 'PENDING' || l.status === 'PROCESSING').length;
       
+      // ✅ Count frontend logs
+      const frontendCount = logsData.filter(l => 
+        l.event_type === 'FRONTEND_LOG' || 
+        l.event_type === 'FRONTEND_ERROR' || 
+        l.event_type === 'FRONTEND_API' ||
+        l.event_type === 'FRONTEND_PAGE_VIEW' ||
+        l.event_type === 'FRONTEND_USER_ACTION' ||
+        l.entity_type === 'FRONTEND'
+      ).length;
+      
       setStats({
         total: total,
         success: successCount,
         failed: failedCount,
         pending: pendingCount,
       });
+      setFrontendLogCount(frontendCount);
       
     } catch (error) {
       console.error('Error fetching audit logs:', error);
@@ -448,11 +505,11 @@ export const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, rowsPerPage, searchTerm, eventTypeFilter, statusFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     fetchLogs();
-  }, [page, rowsPerPage, eventTypeFilter, statusFilter, dateFrom, dateTo]);
+  }, [fetchLogs]);
 
   useEffect(() => {
     if (searchTerm) {
@@ -549,6 +606,46 @@ export const AuditLog = () => {
         </Grid>
       </Grid>
 
+      {/* ✅ Frontend Stats Row */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatsCard
+            title="Frontend Logs"
+            value={frontendLogCount}
+            icon={<ComputerIcon />}
+            color="#6c2ed2"
+            subtitle="Client-side events"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatsCard
+            title="Frontend Errors"
+            value={logs.filter(l => l.event_type === 'FRONTEND_ERROR').length}
+            icon={<ErrorIcon />}
+            color="#d32f2f"
+            subtitle="Client-side errors"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatsCard
+            title="Frontend API Calls"
+            value={logs.filter(l => l.event_type === 'FRONTEND_API').length}
+            icon={<HttpIcon />}
+            color="#1976d2"
+            subtitle="API calls from frontend"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <StatsCard
+            title="Page Views"
+            value={logs.filter(l => l.event_type === 'FRONTEND_PAGE_VIEW').length}
+            icon={<VisibilityIcon />}
+            color="#2e7d32"
+            subtitle="Pages visited"
+          />
+        </Grid>
+      </Grid>
+
       <Paper sx={{ p: 2, mb: 2 }}>
         <Box display="flex" flexWrap="wrap" alignItems="center" gap={2}>
           <TextField
@@ -613,6 +710,11 @@ export const AuditLog = () => {
               <MenuItem value="IMPORT">Import</MenuItem>
               <MenuItem value="APPROVE">Approve</MenuItem>
               <MenuItem value="REJECT">Reject</MenuItem>
+              <MenuItem value="FRONTEND_LOG">Frontend Log</MenuItem>
+              <MenuItem value="FRONTEND_ERROR">Frontend Error</MenuItem>
+              <MenuItem value="FRONTEND_API">Frontend API</MenuItem>
+              <MenuItem value="FRONTEND_PAGE_VIEW">Frontend Page View</MenuItem>
+              <MenuItem value="FRONTEND_USER_ACTION">Frontend User Action</MenuItem>
             </TextField>
             
             <TextField
@@ -697,55 +799,72 @@ export const AuditLog = () => {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredLogs.map((log, index) => (
-                <TableRow key={log.event_id || log.id || index} hover>
-                  <TableCell>
-                    <Typography variant="caption">
-                      {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <EventTypeChip eventType={getLogField(log, 'event_type', 'GENERAL')} />
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{getLogField(log, 'action', 'Unknown Action')}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Box>
-                      <Typography variant="body2">{getLogField(log, 'user_id', 'SYSTEM')}</Typography>
-                      {log.user_role && (
-                        <Typography variant="caption" color="textSecondary">
-                          {log.user_role}
-                        </Typography>
+              filteredLogs.map((log, index) => {
+                const isFrontend = log.event_type === 'FRONTEND_LOG' || 
+                                   log.event_type === 'FRONTEND_ERROR' || 
+                                   log.event_type === 'FRONTEND_API' ||
+                                   log.event_type === 'FRONTEND_PAGE_VIEW' ||
+                                   log.event_type === 'FRONTEND_USER_ACTION' ||
+                                   log.entity_type === 'FRONTEND';
+                return (
+                  <TableRow key={log.event_id || log.id || index} hover>
+                    <TableCell>
+                      <Typography variant="caption">
+                        {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <EventTypeChip eventType={getLogField(log, 'event_type', 'GENERAL')} />
+                      {isFrontend && (
+                        <Chip 
+                          label="Frontend" 
+                          size="small" 
+                          color="secondary" 
+                          variant="outlined"
+                          sx={{ ml: 0.5, fontSize: '0.6rem' }}
+                        />
                       )}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box>
-                      <Typography variant="body2">{getLogField(log, 'entity_type', 'SYSTEM')}</Typography>
-                      {log.entity_id && (
-                        <Typography variant="caption" color="textSecondary">
-                          ID: {log.entity_id}
-                        </Typography>
-                      )}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <StatusChip status={log.status} />
-                  </TableCell>
-                  <TableCell align="center">
-                    <Tooltip title="View Details">
-                      <IconButton 
-                        size="small" 
-                        color="primary"
-                        onClick={() => handleViewDetails(log)}
-                      >
-                        <VisibilityIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">{getLogField(log, 'action', 'Unknown Action')}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Box>
+                        <Typography variant="body2">{getLogField(log, 'user_id', 'SYSTEM')}</Typography>
+                        {log.user_role && (
+                          <Typography variant="caption" color="textSecondary">
+                            {log.user_role}
+                          </Typography>
+                        )}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box>
+                        <Typography variant="body2">{getLogField(log, 'entity_type', 'SYSTEM')}</Typography>
+                        {log.entity_id && (
+                          <Typography variant="caption" color="textSecondary">
+                            ID: {log.entity_id}
+                          </Typography>
+                        )}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <StatusChip status={log.status} />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Tooltip title={isFrontend ? "View Frontend Log Details" : "View Details"}>
+                        <IconButton 
+                          size="small" 
+                          color="primary"
+                          onClick={() => handleViewDetails(log)}
+                        >
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>

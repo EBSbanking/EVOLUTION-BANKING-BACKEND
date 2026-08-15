@@ -1,4 +1,4 @@
-﻿// models/LoanProduct.js - CLEAN VERSION with GL account wildcard resolution
+// models/LoanProduct.js - CLEAN VERSION with GL account wildcard resolution
 import { DataTypes } from 'sequelize';
 import sequelize from '../../config/db.js';
 import { Op } from 'sequelize';
@@ -18,10 +18,10 @@ const convertTermToMonths = (value, termType) => {
 /**
  * Resolve a GL account pattern containing wildcards into a concrete account number for a specific branch.
  * Supported wildcards:
- *   - ***  (three asterisks) → replaced by branch code padded to 3 digits
- *   - ###  (three hashes)    → replaced by branch code padded to 3 digits
- *   - XXX  (three Xs)        → replaced by branch code padded to 3 digits
- * Example: pattern "01***010000001" with branchCode "100" → "01100010000001"
+ *   - ***  (three asterisks) ? replaced by branch code padded to 3 digits
+ *   - ###  (three hashes)    ? replaced by branch code padded to 3 digits
+ *   - XXX  (three Xs)        ? replaced by branch code padded to 3 digits
+ * Example: pattern "01***010000001" with branchCode "100" ? "01100010000001"
  */
 const resolveGLAccountForBranch = (pattern, branchCode) => {
   if (!pattern) return '';
@@ -33,13 +33,13 @@ const resolveGLAccountForBranch = (pattern, branchCode) => {
 
 // ==================== INTEREST CALCULATION CLASS ====================
 class LoanProductInterestCalculator {
-  // ⚠️ IMPORTANT: Paste all your existing interest calculation methods here:
+  // ?? IMPORTANT: Paste all your existing interest calculation methods here:
   // - calculateFlatRate()
   // - generateAmortizationSchedule()
   // - validateLoanParameters()
   // - calculateInterestForPeriod()
   // etc.
-  // They are omitted for brevity – copy them from your current file.
+  // They are omitted for brevity � copy them from your current file.
 }
 
 // ==================== LOAN PRODUCT MODEL ====================
@@ -191,7 +191,7 @@ const LoanProduct = sequelize.define('LoanProduct', {
     termRange() { 
       return `${this.min_loan_term_value} - ${this.max_loan_term_value} ${this.loan_term_type}`; 
     },
-    // ✅ FIXED: accessibleBUs handles both array and string
+    // ? FIXED: accessibleBUs handles both array and string
     accessibleBUs() { 
       if (this.is_global_product) return ['*'];
       if (!this.bu_id) return [];
@@ -543,7 +543,7 @@ LoanProduct.findByCategory = async function(category, options = {}) {
 
 // ==================== ASSOCIATIONS (DISABLED FOR INITIAL SYNC) ====================
 export function setupLoanProductAssociations() {
-  // ❌ Temporarily disabled – uncomment after tables exist
+  // ? Temporarily disabled � uncomment after tables exist
   /*
   const { LoanInterestRate } = sequelize.models;
   LoanProduct.belongsTo(LoanInterestRate, { 

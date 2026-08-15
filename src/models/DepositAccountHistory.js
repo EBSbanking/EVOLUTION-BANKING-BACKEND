@@ -1,4 +1,4 @@
-﻿// models/DepositAccountHistory.js
+// models/DepositAccountHistory.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

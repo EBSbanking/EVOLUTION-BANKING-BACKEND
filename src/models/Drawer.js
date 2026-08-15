@@ -13,7 +13,7 @@ class Drawer extends Model {
   // Static method to ensure table exists
   static async ensureTableExists() {
     try {
-      await this.sync({ alter: true });
+      await this.sync({ alter: false });
       console.log('✅ Drawer table synced successfully');
       return true;
     } catch (error) {
@@ -66,7 +66,7 @@ Drawer.init(
     },
     DRAWER_TY_CD: { 
       type: DataTypes.STRING(30), 
-      allowNull: false,
+      allowNull: true,
       defaultValue: 'TELLER'
     },
     VAULT_TYPE: { 
@@ -200,29 +200,28 @@ Drawer.init(
       allowNull: true
     },
     CREATED_BY: { 
-      type: DataTypes.STRING(24), 
-      allowNull: false 
+      type: DataTypes.STRING(50), 
+      allowNull: true,
+      defaultValue: 'SYSTEM'
     },
     CREATE_DT: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
     },
-    createdAt: {
+    created_at: {
       type: DataTypes.DATE,
-      field: 'created_at',
       defaultValue: DataTypes.NOW
     },
-    updatedAt: {
+    updated_at: {
       type: DataTypes.DATE,
-      field: 'updated_at',
       defaultValue: DataTypes.NOW
     }
   },
   {
     sequelize,
     modelName: 'Drawer',
-    tableName: 'drawers',
-    timestamps: true,
+    tableName: 'drawer',  // Changed from 'drawers' to 'drawer' to match your table name
+    timestamps: false,    // Disable timestamps since we have our own columns
     underscored: false,
     hooks: {
       beforeCreate: (drawer) => {
@@ -247,11 +246,11 @@ Drawer.init(
         if (!drawer.DRAWER_TY_CD) {
           drawer.DRAWER_TY_CD = 'TELLER';
         }
-        if (!drawer.createdAt) {
-          drawer.createdAt = new Date();
+        if (!drawer.created_at) {
+          drawer.created_at = new Date();
         }
-        if (!drawer.updatedAt) {
-          drawer.updatedAt = new Date();
+        if (!drawer.updated_at) {
+          drawer.updated_at = new Date();
         }
         // Set default CURRENT_BALANCE to 0
         if (drawer.CURRENT_BALANCE === undefined || drawer.CURRENT_BALANCE === null) {
@@ -260,7 +259,7 @@ Drawer.init(
       },
       beforeUpdate: (drawer) => {
         drawer.VERSION_NO = (drawer.VERSION_NO || 0) + 1;
-        drawer.updatedAt = new Date();
+        drawer.updated_at = new Date();
       }
     }
   }

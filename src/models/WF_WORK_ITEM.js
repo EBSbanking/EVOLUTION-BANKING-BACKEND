@@ -1,4 +1,4 @@
-﻿// models/WFWorkItem.js
+// models/WFWorkItem.js
 import { DataTypes, Op } from 'sequelize';
 import sequelize from '../../config/sequelize.js';
 
@@ -17,10 +17,13 @@ export const PRIORITY = {
 };
 
 const WFWorkItem = sequelize.define('WFWorkItem', {
+  // ✅ FIX: Add primaryKey: true and autoIncrement: true
   WORK_ITEM_ID: {
     type: DataTypes.INTEGER,
-    primaryKey: true,
-    autoIncrement: true,
+    allowNull: false,
+    primaryKey: true,      // ✅ THIS IS THE FIX
+    autoIncrement: true,   // ✅ Add this too (if auto-increment)
+    unique: true,
     field: 'WORK_ITEM_ID'
   },
   BUS_PROC_ID: {
@@ -157,10 +160,10 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     comment: 'Item Business Unit ID'
   },
   EVENT_ID: {
-    type: DataTypes.STRING(100),
-    allowNull: false,
-    field: 'EVENT_ID',
-    comment: 'Event ID'
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    unique: true,
+    field: 'EVENT_ID'
   },
   JOURNAL_ID: {
     type: DataTypes.STRING(100),
@@ -267,9 +270,10 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
 }, {
   tableName: 'wf_work_items',
   timestamps: true,
-  // ✅ FIXED: Use correct field names - NO typos!
-  createdAt: 'CREATE_DT',      // ✅ Use CREATE_DT which exists in your model
-  updatedAt: 'SYS_CREATE_TS',  // ✅ Use SYS_CREATE_TS which exists in your model
+  createdAt: 'CREATE_DT',
+  updatedAt: 'SYS_CREATE_TS',
+  // ✅ Add this to ensure Sequelize doesn't look for 'id'
+  id: false,
   hooks: {
     beforeCreate: (workItem) => {
       // Sync status and WAIT_ST
@@ -299,12 +303,6 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
       // Update lastUpdatedBy if user is available
       if (workItem._context?.user?.id) {
         workItem.lastUpdatedBy = workItem._context.user.id;
-      }
-    },
-    afterCreate: (workItem) => {
-      // Calculate SLA times if needed
-      if (workItem.slaResponseTime) {
-        // You could set up a timer or job here
       }
     }
   },
@@ -353,7 +351,6 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
       name: 'idx_record_status',
       fields: ['REC_ST']
     },
-    // Composite indexes for common queries
     {
       name: 'idx_status_priority',
       fields: ['STATUS', 'PRIORITY']
@@ -372,6 +369,7 @@ const WFWorkItem = sequelize.define('WFWorkItem', {
     }
   ]
 });
+
 
 // Static Methods
 WFWorkItem.findByStatus = async function(status, options = {}) {

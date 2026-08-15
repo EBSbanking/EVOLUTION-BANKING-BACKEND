@@ -1,4 +1,4 @@
-﻿// models/InsurancePolicy.js
+// models/InsurancePolicy.js
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

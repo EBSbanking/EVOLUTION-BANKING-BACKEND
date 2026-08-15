@@ -1,9 +1,9 @@
-﻿// models/DirectDebitRequest.js - Normalised version
+// models/DirectDebitRequest.js - Normalised version
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class DirectDebitRequest extends Model {
-  // Static methods – using camelCase attribute names
+  // Static methods � using camelCase attribute names
   static async findById(requestId, options = {}) {
     return this.findOne({ where: { directDrReqId: requestId }, ...options });
   }

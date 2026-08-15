@@ -1,446 +1,319 @@
-// ============================================
-// MANUAL TRANSACTION ROUTES - WITH EMTL INTEGRATION
-// ============================================
-console.log('\n🔧 ========================================');
-console.log('🔧 SETTING UP MANUAL TRANSACTION ROUTES');
-console.log('🔧 ==========================================\n');
-
+// src/routes/TransactionRoutes.js
 import express from 'express';
-import decryptPayload from '../middleware/decryptPayload.js';
-import { protect, authorize, isAdmin } from '../middlewares/authMiddleware.js';
-import {
-  EMTLPolicyService,
-  EMTLCollectionService,
-  EMTLRemittanceService,
-  EMTLReceiptService,
-  EMTLReportService
-} from '../Services/index.js';
-
-// ✅ USE STATIC IMPORT (no try/catch fallback)
 import transactionController from '../Services/postTransaction.js';
-
-// Verify that the controller and method exist
-console.log('✅ Transaction controller loaded:', typeof transactionController);
-console.log('✅ Available methods:', Object.keys(transactionController).join(', '));
-
-// Ensure getTransactionHistory exists
-if (typeof transactionController.getTransactionHistory !== 'function') {
-  console.error('❌ getTransactionHistory method is missing!');
-}
-
-// ============================================================
-// ✅ SAFE CALL HELPER WITH DEBUG LOGGING
-// ============================================================
-const safeCall = (method) => {
-  return async (req, res) => {
-    try {
-      if (transactionController && typeof transactionController[method] === 'function') {
-        await transactionController[method](req, res);
-      } else {
-        console.error(`❌ Method "${method}" not found. Available:`, Object.keys(transactionController));
-        res.status(501).json({
-          success: false,
-          error: `Method "${method}" not available`,
-          available: Object.keys(transactionController)
-        });
-      }
-    } catch (err) {
-      console.error(`❌ Error in ${method}:`, err);
-      if (!res.headersSent) {
-        res.status(500).json({
-          success: false,
-          message: 'Operation failed',
-          error: err.message
-        });
-      }
-    }
-  };
-};
+import { validateEOMClosure } from '../middlewares/validateEOMClosure.js';
 
 const router = express.Router();
 
-// ============================================================
-// ✅ TRANSACTION POST ROUTES (with decryption)
-// ============================================================
-router.post('/transactions', decryptPayload, safeCall('postTransaction'));
-router.post('/transfer', decryptPayload, safeCall('postTransaction'));
-router.post('/payment', decryptPayload, safeCall('postTransaction'));
+console.log('🔧 Transaction routes loading...');
 
-// ============================================================
-// ✅ ACCOUNT BALANCE & TRANSACTION QUERY ROUTES
-// ============================================================
-router.get('/account/:accountNo/balance', safeCall('getAccountBalance'));
-router.get('/account/:accountNo', safeCall('getTransactionsByAccount'));
-router.get('/history', safeCall('getTransactionHistory'));        // <-- FIXED: removed extra 'transactions/'
-router.get('/debug/accounts', safeCall('debugAccounts'));
-
-// ============================================================
-// ✅ TELLER TRANSACTION ROUTES (protected)
-// ============================================================
-router.get('/teller/daily/:userId', protect, safeCall('getTellerDailyTransactions'));
-router.get('/teller/summary', protect, safeCall('getTellerTransactionSummary'));
-
-// ============================================================
-// ✅ CUSTOMER TRANSACTION ROUTES
-// ============================================================
-router.get('/customer/:customerId', safeCall('getTransactionsByCustomer'));
-router.get('/customer/name/:customerName', safeCall('getTransactionsByCustomerName'));
-
-// ============================================================
-// ✅ EXPORT ROUTES (protected - admin only)
-// ============================================================
-router.get('/export', protect, isAdmin, safeCall('exportTransactions'));
-
-// ============================================================
-// ✅ EMTL ROUTES - USING SERVICES
-// ============================================================
-console.log('\n📊 Setting up EMTL routes...');
-
-/**
- * Get EMTL Report
- * GET /emtl/report?startDate=...&endDate=...&reportType=daily
- */
-router.get('/emtl/report', protect, async (req, res) => {
+// Helper to load decryptPayload dynamically
+const loadDecryptPayload = async () => {
   try {
-    console.log('📊 EMTL Report requested');
-    await transactionController.getEMTLReport(req, res);
+    const module = await import('../middleware/decryptPayload.js');
+    return module.default;
   } catch (error) {
-    console.error('❌ EMTL Report error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to generate EMTL report', 
-        error: error.message 
-      });
-    }
+    console.log('⚠️ DecryptPayload not available:', error.message);
+    return null;
   }
-});
+};
 
-/**
- * Get Remittance Report
- * GET /emtl/report/remittance?startDate=...&endDate=...
- */
-router.get('/emtl/report/remittance', protect, async (req, res) => {
-  try {
-    console.log('📊 Remittance Report requested');
-    await transactionController.getRemittanceReport(req, res);
-  } catch (error) {
-    console.error('❌ Remittance Report error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to generate remittance report', 
-        error: error.message 
-      });
-    }
+// Dynamic middleware wrapper
+const withDecryption = async (req, res, next) => {
+  const decryptPayload = await loadDecryptPayload();
+  if (decryptPayload && typeof decryptPayload === 'function') {
+    return decryptPayload(req, res, next);
   }
-});
+  req.decrypted = false;
+  next();
+};
 
-/**
- * Generate Receipt
- * GET /emtl/receipt/:transactionId?format=json|html
- */
-router.get('/emtl/receipt/:transactionId', protect, async (req, res) => {
+// ================================================================
+// MAIN TRANSACTION ENDPOINTS - WITH EOM VALIDATION
+// ================================================================
+
+// ✅ Create transaction - with EOM validation and decryption
+router.post('/transactions', withDecryption, validateEOMClosure, async (req, res) => {
+  console.log('📥 Transaction request received');
+  console.log('🔐 Decrypted:', req.decrypted);
+  
   try {
-    console.log(`📄 Receipt requested for transaction: ${req.params.transactionId}`);
-    await transactionController.generateReceipt(req, res);
+    return await transactionController.postTransaction(req, res);
   } catch (error) {
-    console.error('❌ Receipt generation error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to generate receipt', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Generate Remittance File (CSV)
- * GET /emtl/remittance/file?startDate=...&endDate=...
- */
-router.get('/emtl/remittance/file', protect, isAdmin, async (req, res) => {
-  try {
-    console.log('📄 Remittance file requested');
-    await transactionController.generateRemittanceFile(req, res);
-  } catch (error) {
-    console.error('❌ Remittance file generation error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to generate remittance file', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Mark Collections as Remitted
- * POST /emtl/remittance/mark
- * Body: { batchId, remittanceReference }
- */
-router.post('/emtl/remittance/mark', protect, isAdmin, async (req, res) => {
-  try {
-    console.log('📤 Marking collections as remitted');
-    await transactionController.markCollectionsRemitted(req, res);
-  } catch (error) {
-    console.error('❌ Mark remitted error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to mark collections as remitted', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get Pending Collections
- * GET /emtl/collections/pending?limit=1000&offset=0
- */
-router.get('/emtl/collections/pending', protect, async (req, res) => {
-  try {
-    console.log('📋 Fetching pending collections');
-    await transactionController.getPendingCollections(req, res);
-  } catch (error) {
-    console.error('❌ Fetch pending collections error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to fetch pending collections', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get Collections by Date Range
- * GET /emtl/collections?startDate=...&endDate=...&status=PENDING_REMITTANCE
- */
-router.get('/emtl/collections', protect, async (req, res) => {
-  try {
-    console.log('📋 Fetching collections by date range');
-    await transactionController.getCollectionsByDateRange(req, res);
-  } catch (error) {
-    console.error('❌ Fetch collections error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to fetch collections', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get Collections by Account
- * GET /emtl/collections/account/:accountNo?limit=100&offset=0
- */
-router.get('/emtl/collections/account/:accountNo', protect, async (req, res) => {
-  try {
-    console.log(`📋 Fetching collections for account: ${req.params.accountNo}`);
-    await transactionController.getCollectionsByAccount(req, res);
-  } catch (error) {
-    console.error('❌ Fetch collections by account error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to fetch collections', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get Collections by Customer
- * GET /emtl/collections/customer/:customerNo?limit=100&offset=0
- */
-router.get('/emtl/collections/customer/:customerNo', protect, async (req, res) => {
-  try {
-    console.log(`📋 Fetching collections for customer: ${req.params.customerNo}`);
-    await transactionController.getCollectionsByCustomer(req, res);
-  } catch (error) {
-    console.error('❌ Fetch collections by customer error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to fetch collections', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get EMTL Statistics
- * GET /emtl/statistics?startDate=...&endDate=...
- */
-router.get('/emtl/statistics', protect, async (req, res) => {
-  try {
-    console.log('📊 EMTL Statistics requested');
-    const { startDate, endDate } = req.query;
-    
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'startDate and endDate are required'
-      });
-    }
-
-    const stats = await EMTLPolicyService.getStatistics(
-      new Date(startDate),
-      new Date(endDate)
-    );
-
-    return res.status(200).json({
-      success: true,
-      data: stats
-    });
-  } catch (error) {
-    console.error('❌ EMTL Statistics error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to get EMTL statistics', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Generate Weekly Remittance Report
- * GET /emtl/remittance/weekly
- */
-router.get('/emtl/remittance/weekly', protect, isAdmin, async (req, res) => {
-  try {
-    console.log('📊 Weekly remittance report requested');
-    const report = await EMTLRemittanceService.generateWeeklyReport();
-    
-    return res.status(200).json({
-      success: true,
-      data: report
-    });
-  } catch (error) {
-    console.error('❌ Weekly remittance report error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to generate weekly remittance report', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-/**
- * Get Remittance History
- * GET /emtl/remittance/history?startDate=...&endDate=...
- */
-router.get('/emtl/remittance/history', protect, isAdmin, async (req, res) => {
-  try {
-    console.log('📊 Remittance history requested');
-    const { startDate, endDate } = req.query;
-    
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'startDate and endDate are required'
-      });
-    }
-
-    const history = await EMTLRemittanceService.getRemittanceHistory(
-      new Date(startDate),
-      new Date(endDate)
-    );
-
-    return res.status(200).json({
-      success: true,
-      data: history
-    });
-  } catch (error) {
-    console.error('❌ Remittance history error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Failed to get remittance history', 
-        error: error.message 
-      });
-    }
-  }
-});
-
-// ============================================================
-// ✅ HEALTH CHECK FOR EMTL SERVICES (public - no auth)
-// ============================================================
-router.get('/emtl/health', async (req, res) => {
-  try {
-    const policy = await EMTLPolicyService.getActivePolicy();
-    return res.status(200).json({
-      success: true,
-      service: 'EMTL Services',
-      status: 'healthy',
-      policy: policy ? {
-        id: policy.id,
-        policy_code: policy.policy_code,
-        enabled: policy.enabled,
-        is_active: policy.is_active,
-        levy_type: policy.levy_type,
-        levy_amount: policy.levy_amount,
-        threshold: policy.threshold
-      } : null,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ EMTL Health check error:', error);
+    console.error('❌ Transaction error:', error);
     return res.status(500).json({
       success: false,
-      service: 'EMTL Services',
-      status: 'unhealthy',
-      error: error.message,
-      timestamp: new Date().toISOString()
+      message: 'Transaction failed',
+      error: error.message
     });
   }
 });
 
-// ============================================================
-// ✅ ROUTE SUMMARY
-// ============================================================
-console.log('✅ EMTL routes setup complete');
-console.log('   📊 GET  /emtl/report');
-console.log('   📊 GET  /emtl/report/remittance');
-console.log('   📄 GET  /emtl/receipt/:transactionId');
-console.log('   📄 GET  /emtl/remittance/file');
-console.log('   📤 POST /emtl/remittance/mark');
-console.log('   📋 GET  /emtl/collections/pending');
-console.log('   📋 GET  /emtl/collections');
-console.log('   📋 GET  /emtl/collections/account/:accountNo');
-console.log('   📋 GET  /emtl/collections/customer/:customerNo');
-console.log('   📊 GET  /emtl/statistics');
-console.log('   📊 GET  /emtl/remittance/weekly');
-console.log('   📊 GET  /emtl/remittance/history');
-console.log('   🏥 GET  /emtl/health');
+// ✅ Approve a pending transaction
+router.put('/transactions/approve', validateEOMClosure, async (req, res) => {
+  console.log('✅ Approve transaction request received');
+  try {
+    return await transactionController.approveTransaction(req, res);
+  } catch (error) {
+    console.error('❌ Approve transaction error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to approve transaction',
+      error: error.message
+    });
+  }
+});
 
-console.log('\n✅ Transaction routes setup complete');
-console.log('   📝 POST /transactions');
-console.log('   📝 POST /transfer');
-console.log('   📝 POST /payment');
-console.log('   📊 GET  /account/:accountNo/balance');
-console.log('   📊 GET  /account/:accountNo');
-console.log('   📊 GET  /history');                       // <-- UPDATED
-console.log('   📊 GET  /debug/accounts');
-console.log('   📊 GET  /teller/daily/:userId');
-console.log('   📊 GET  /teller/summary');
-console.log('   📊 GET  /customer/:customerId');
-console.log('   📊 GET  /customer/name/:customerName');
-console.log('   📊 GET  /export');
-console.log('   📊 GET  /emtl/* (all EMTL routes)');
-console.log('🔧 ==========================================\n');
+// ✅ Reject a pending transaction
+router.put('/transactions/reject', validateEOMClosure, async (req, res) => {
+  console.log('❌ Reject transaction request received');
+  try {
+    return await transactionController.rejectTransaction(req, res);
+  } catch (error) {
+    console.error('❌ Reject transaction error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to reject transaction',
+      error: error.message
+    });
+  }
+});
+
+// Get pending transactions
+router.get('/transactions/pending', async (req, res) => {
+  console.log('📋 Fetching pending transactions');
+  try {
+    return await transactionController.getPendingTransactions(req, res);
+  } catch (error) {
+    console.error('❌ Error fetching pending transactions:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch pending transactions',
+      error: error.message
+    });
+  }
+});
+
+// ================================================================
+// TELLER TRANSACTIONS
+// ================================================================
+
+router.get(
+  '/transactions/teller/daily/:userId',
+  transactionController.getTellerDailyTransactions
+);
+
+router.get(
+  '/transactions/teller/daily',
+  transactionController.getTellerDailyTransactions
+);
+
+router.get(
+  '/transactions/teller/summary',
+  transactionController.getTellerTransactionSummary
+);
+
+// ================================================================
+// ACCOUNT ENDPOINTS
+// ================================================================
+
+router.get('/transactions/account/:accountNo/balance', transactionController.getAccountBalance);
+router.get('/transactions/account/:accountNo', transactionController.getTransactionsByAccount);
+router.get('/transactions/customer/:customerId/accounts', transactionController.getCustomerAccounts);
+
+// ================================================================
+// TRANSACTION HISTORY & FILTERS
+// ================================================================
+
+router.get('/transactions/history', transactionController.getTransactionHistory);
+router.get('/transactions/customer/id/:customerId', transactionController.getTransactionsByCustomer);
+router.get('/transactions/customer/name/:customerName', transactionController.getTransactionsByCustomerName);
+
+// ================================================================
+// EXPORT ENDPOINTS
+// ================================================================
+
+router.get('/transactions/export', transactionController.exportTransactions);
+
+router.get('/transactions/export/customer/id/:customerId', async (req, res) => {
+  try {
+    req.query.customerId = req.params.customerId;
+    return await transactionController.exportTransactions(req, res);
+  } catch (error) {
+    console.error('❌ Export error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to export transactions',
+      error: error.message
+    });
+  }
+});
+
+router.get('/transactions/export/customer/name/:customerName', async (req, res) => {
+  try {
+    req.query.customerName = req.params.customerName;
+    return await transactionController.exportTransactions(req, res);
+  } catch (error) {
+    console.error('❌ Export error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to export transactions',
+      error: error.message
+    });
+  }
+});
+
+router.post('/transactions/export/batch', async (req, res) => {
+  try {
+    const { startDate, endDate, accountNumbers, format = 'csv' } = req.body;
+    
+    if (!accountNumbers || !Array.isArray(accountNumbers) || accountNumbers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Account numbers are required for batch export'
+      });
+    }
+    
+    return await transactionController.exportBatchTransactions(req, res);
+  } catch (error) {
+    console.error('❌ Batch export error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to export batch transactions',
+      error: error.message
+    });
+  }
+});
+
+// ================================================================
+// DEBUG ENDPOINTS
+// ================================================================
+
+router.get('/transactions/debug/accounts', async (req, res) => {
+  console.log('🔍 Debug accounts endpoint called');
+  try {
+    return res.json({
+      success: true,
+      message: 'Debug accounts endpoint',
+      data: {
+        timestamp: new Date().toISOString(),
+        note: 'This is a debug endpoint'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Debug error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to debug accounts',
+      error: error.message
+    });
+  }
+});
+
+// ================================================================
+// TELLER SUMMARY ENDPOINT
+// ================================================================
+
+router.get('/teller-summary', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+
+    const sequelize = (await import('../../config/db.js')).default;
+    const { Op } = await import('sequelize');
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const [transactions] = await sequelize.query(
+      `
+      SELECT 
+        COUNT(*) as totalTransactions,
+        SUM(amount) as totalAmount,
+        SUM(CASE WHEN transaction_type IN ('DEPOSIT', 'CR', 'C') THEN amount ELSE 0 END) as totalDeposits,
+        SUM(CASE WHEN transaction_type IN ('WITHDRAWAL', 'DR', 'D') THEN amount ELSE 0 END) as totalWithdrawals,
+        SUM(emtl_amount) as totalEMTL,
+        COUNT(CASE WHEN status = 'PENDING_APPROVAL' OR approval_status = 'PENDING' THEN 1 END) as pendingApprovals
+      FROM deposit_transactions
+      WHERE created_by = :userId
+        AND transaction_date BETWEEN :startDate AND :endDate
+        AND status = 'COMPLETED'
+      `,
+      {
+        replacements: {
+          userId,
+          startDate: today,
+          endDate: tomorrow
+        },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
+
+    const summary = transactions || {
+      totalTransactions: 0,
+      totalAmount: 0,
+      totalDeposits: 0,
+      totalWithdrawals: 0,
+      totalEMTL: 0,
+      pendingApprovals: 0
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        summary: {
+          totalTransactions: parseInt(summary.totalTransactions || 0),
+          totalAmount: parseFloat(summary.totalAmount || 0),
+          totalDeposits: parseFloat(summary.totalDeposits || 0),
+          totalWithdrawals: parseFloat(summary.totalWithdrawals || 0),
+          totalEMTL: parseFloat(summary.totalEMTL || 0),
+          pendingApprovals: parseInt(summary.pendingApprovals || 0)
+        },
+        userId: userId,
+        date: today.toISOString().split('T')[0]
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching teller summary:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch teller summary',
+      error: error.message
+    });
+  }
+});
+
+// ================================================================
+// HEALTH CHECK
+// ================================================================
+
+router.get('/transactions/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    service: 'transaction-api', 
+    timestamp: new Date().toISOString(),
+    eom_validation: true,
+    endpoints: {
+      post: '/api/transactions (EOM validated)',
+      approve: '/api/transactions/approve (EOM validated)',
+      reject: '/api/transactions/reject (EOM validated)',
+      pending: '/api/transactions/pending',
+      tellerDaily: '/api/transactions/teller/daily/:userId',
+      tellerSummary: '/api/transactions/teller/summary',
+      accountBalance: '/api/transactions/account/:accountNo/balance',
+      accountTransactions: '/api/transactions/account/:accountNo',
+      history: '/api/transactions/history'
+    }
+  });
+});
 
 export default router;

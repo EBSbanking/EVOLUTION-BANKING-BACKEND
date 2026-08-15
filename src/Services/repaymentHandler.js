@@ -202,37 +202,70 @@ async function processSingleRepayment(repayment, transaction) {
       return { success: false, error: 'Loan account not found' };
     }
 
-    // Find customer account
+    // ✅ FIX: Use CUST_ID instead of customer_id
+    const customerId = repayment.customerId || loanAccount.CUST_ID || loanAccount.cust_id;
+    
+    if (!customerId) {
+      logger.error(`❌ Customer ID not found for repayment ${repayment.id}`);
+      await repayment.update({ status: 'FAILED' }, { transaction });
+      return { success: false, error: 'Customer ID not found' };
+    }
+
+    // Find customer account using CUST_ID
     const customerAccount = await CustomerAccount.findOne({
       where: { 
-        customer_id: repayment.customerId || loanAccount.CUST_ID 
+        CUST_ID: customerId  // ✅ Fixed: Use CUST_ID
       },
       transaction
     });
 
     if (!customerAccount) {
-      logger.error(`❌ Customer account not found for repayment ${repayment.id}`);
+      logger.error(`❌ Customer account not found for CUST_ID: ${customerId}`);
       await repayment.update({ status: 'FAILED' }, { transaction });
-      return { success: false, error: 'Customer account not found' };
+      return { success: false, error: `Customer account not found for CUST_ID: ${customerId}` };
     }
 
     const repaymentAmount = parseFloat(repayment.totalAmount || 0);
 
-    // Check customer balance
-    const currentBalance = parseFloat(customerAccount.AVAILABLE_BALANCE || customerAccount.available_balance || 0);
+    // Check customer balance - handle different field names
+    const currentBalance = parseFloat(
+      customerAccount.AVAILABLE_BALANCE || 
+      customerAccount.available_balance || 
+      customerAccount.current_balance ||
+      customerAccount.CURRENT_BALANCE ||
+      0
+    );
+    
     if (currentBalance < repaymentAmount) {
       logger.warn(`⚠️ Insufficient balance: ${currentBalance} < ${repaymentAmount}`);
       await repayment.update({ status: 'FAILED' }, { transaction });
       return { success: false, error: 'Insufficient balance' };
     }
 
-    // Deduct from customer account
+    // Deduct from customer account - handle different field names
     const newCustomerBalance = currentBalance - repaymentAmount;
-    await customerAccount.update({
+    
+    // Build update object with available fields
+    const customerUpdateData = {
       AVAILABLE_BALANCE: newCustomerBalance,
-      ledger_balance: newCustomerBalance,
-      lastActivityDate: new Date()
-    }, { transaction });
+      updated_at: new Date()
+    };
+    
+    // Add other balance fields if they exist
+    if (customerAccount.ledger_balance !== undefined) {
+      customerUpdateData.ledger_balance = newCustomerBalance;
+    }
+    if (customerAccount.LEDGER_BAL !== undefined) {
+      customerUpdateData.LEDGER_BAL = newCustomerBalance;
+    }
+    if (customerAccount.current_balance !== undefined) {
+      customerUpdateData.current_balance = newCustomerBalance;
+    }
+    if (customerAccount.CURRENT_BALANCE !== undefined) {
+      customerUpdateData.CURRENT_BALANCE = newCustomerBalance;
+    }
+
+    await customerAccount.update(customerUpdateData, { transaction });
     logger.info(`✅ Customer account debited: ${repaymentAmount}`);
 
     // Update loan account

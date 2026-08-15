@@ -1,4 +1,4 @@
-﻿import { DataTypes, Model, Op } from 'sequelize';
+import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 
 class DepositAccountApplication extends Model {

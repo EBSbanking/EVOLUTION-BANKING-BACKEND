@@ -1,4 +1,4 @@
-﻿// models/ProductTypeMapping.js - CLEAN COMPLETE VERSION (normal column names, all methods)
+// models/ProductTypeMapping.js - CLEAN COMPLETE VERSION (normal column names, all methods)
 import { DataTypes, Model, Op } from 'sequelize';
 import sequelize from '../../config/db.js';
 

@@ -429,7 +429,7 @@ const generateUniqueLoanAccountId = async () => {
   while (exists && attempts < maxAttempts) {
     id = generateNumber(10);
     const [existing] = await sequelize.query(
-      `SELECT id FROM loan_accounts WHERE a_c_c_t__n_o = ? LIMIT 1`,
+      `SELECT id FROM loan_accounts WHERE ACCT_NO = ? LIMIT 1`,
       { replacements: [id] }
     );
     exists = !!existing;
@@ -640,58 +640,44 @@ applyForLoan: async function(req, res) {
     const termCodeRaw = req.body.TERM_CD;
     const termValueRaw = req.body.TERM_VALUE;
 
-    // ✅ Ensure termCode is a string and trim it
     let termCode = String(termCodeRaw || 'M').trim().toUpperCase();
     const termValue = parseInt(termValueRaw, 10);
 
-    // ✅ Log what was received for debugging
     console.log('📥 Received term data:', {
       TERM_CD_raw: termCodeRaw,
       TERM_CD_processed: termCode,
       TERM_VALUE_raw: termValueRaw,
       TERM_VALUE_processed: termValue,
-      TERM_CD_type: typeof termCodeRaw
     });
 
-    // ✅ Validate term value
     if (isNaN(termValue) || termValue <= 0) {
       throw new Error('Invalid TERM_VALUE – must be a positive number');
     }
 
-    // ✅ Map any term code to valid format
+    // Map term codes
     const validTermCodes = ['D', 'W', 'BW', 'M', 'Q', 'Y'];
     const termCodeMap = {
-      'DAYS': 'D',
-      'DAY': 'D',
-      'WEEKS': 'W', 
-      'WEEK': 'W',
-      'BIWEEKLY': 'BW',
-      'BI_WEEKLY': 'BW',
-      'MONTHS': 'M',
-      'MONTH': 'M',
-      'QUARTERS': 'Q',
-      'QUARTER': 'Q',
-      'YEARS': 'Y',
-      'YEAR': 'Y'
+      'DAYS': 'D', 'DAY': 'D',
+      'WEEKS': 'W', 'WEEK': 'W',
+      'BIWEEKLY': 'BW', 'BI_WEEKLY': 'BW',
+      'MONTHS': 'M', 'MONTH': 'M',
+      'QUARTERS': 'Q', 'QUARTER': 'Q',
+      'YEARS': 'Y', 'YEAR': 'Y'
     };
 
-    // Try to map the term code
     let finalTermCode = termCodeMap[termCode] || termCode;
 
-    // If still not valid, try first character
     if (!validTermCodes.includes(finalTermCode)) {
       const firstChar = termCode.charAt(0);
       if (validTermCodes.includes(firstChar)) {
         console.log(`🔄 Using first character as term code: ${termCode} → ${firstChar}`);
         finalTermCode = firstChar;
       } else {
-        // Default to 'M' (Months) as fallback
         console.log(`⚠️ Invalid term code '${termCode}', defaulting to 'M' (Months)`);
         finalTermCode = 'M';
       }
     }
 
-    // Ensure finalTermCode is valid
     if (!validTermCodes.includes(finalTermCode)) {
       throw new Error(`Invalid TERM_CD – must be one of: ${validTermCodes.join(', ')}. Received: ${termCode}, Mapped to: ${finalTermCode}`);
     }
@@ -714,16 +700,14 @@ applyForLoan: async function(req, res) {
       }
     }
 
-    // ✅ FIXED: Find guarantor by guarantor_id (business ID), not internal id
+    // Find guarantor
     const guarantor = await findGuarantor(req.body.GUARANTOR_ID, transaction);
     if (!guarantor) throw new Error(`Guarantor with ID ${req.body.GUARANTOR_ID} not found`);
 
-    // ✅ FIXED: Store the business guarantor_id (1000000) instead of internal id (1)
-    const guarantorBusinessId = guarantor.guarantor_id; // This should be "1000000"
-    const guarantorInternalId = guarantor.id; // This is "1"
+    const guarantorBusinessId = guarantor.guarantor_id;
+    const guarantorInternalId = guarantor.id;
 
     console.log(`✅ Found guarantor: Business ID = ${guarantorBusinessId}, Internal ID = ${guarantorInternalId}`);
-    console.log(`✅ Will store guarantor_id: ${guarantorBusinessId}`);
 
     const guarantorLoanCheck = await checkGuarantorExistingLoans(guarantor.id, transaction);
     if (guarantorLoanCheck.hasExistingLoans) {
@@ -783,7 +767,6 @@ applyForLoan: async function(req, res) {
     }
     if (!loanAccountNumber) throw new Error('Failed to generate unique loan account number');
 
-    // ✅ FIXED: Store guarantor_id as the business ID (1000000), not internal id (1)
     const loanAccount = await LoanAccount.create({
       ACCT_NO: loanAccountNumber,
       ACCT_NM: req.body.ACCT_NM,
@@ -797,8 +780,7 @@ applyForLoan: async function(req, res) {
       MATURITY_DT: maturityDate,
       TERM_CD: finalTermCode,
       TERM_VALUE: termValue,
-      // ✅ FIXED: Store guarantor business ID, not internal ID
-      GUARANTOR_ID: guarantorBusinessId,  // This will be "1000000"
+      GUARANTOR_ID: guarantorBusinessId,
       GUARANTEED_AMOUNT: req.body.GUARANTEED_AMT || principal,
       CREATED_BY: req.body.CREATED_BY || req.body.USER_ID,
       created_at: new Date(),
@@ -827,7 +809,6 @@ applyForLoan: async function(req, res) {
     };
     const repaymentSchedule = await RepaymentSchedule.createSchedule(repaymentScheduleData, installments);
 
-    // Generate unique transaction IDs for disbursement record
     const disbursementTxId = `DISB-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const disbursementEventId = `EVT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const now = new Date();
@@ -846,7 +827,6 @@ applyForLoan: async function(req, res) {
       amount: principal,
       loanAccountId: loanAccount.id,
       repaymentScheduleId: repaymentSchedule.id,
-      // ✅ FIXED: Store guarantor business ID in disbursement too
       guarantorId: guarantorBusinessId,
       productId: Number(req.body.PROD_ID),
       productType: req.body.PRODUCT_TYPE || 'INDIVIDUAL_LOAN',
@@ -877,7 +857,9 @@ applyForLoan: async function(req, res) {
       }
     }, { transaction });
 
-    // ✅ CREATE CREDIT APPLICATION USING SEQUELIZE MODEL (FIXED)
+    // ============================================================
+    // ✅ FIXED: CREATE CREDIT APPLICATION WITHOUT guarantorId
+    // ============================================================
     const creditApplicationId = await getNextCreditApplicationId(transaction);
 
     console.log('🔍 Inserting CreditApplication with:', {
@@ -891,11 +873,10 @@ applyForLoan: async function(req, res) {
       accountNumber: loanAccountNumber,
       repaymentSourceAccountNo: repaySrcAcctNo,
       businessUnitId: buId,
-      userId: req.user?.id || req.body.USER_ID || 'SYSTEM',
-      guarantorId: guarantorBusinessId  // Log the business guarantor ID
+      userId: req.user?.id || req.body.USER_ID || 'SYSTEM'
     });
 
-    // ✅ FIXED: CreditApplication with camelCase field names
+    // ✅ FIXED: CreditApplication WITHOUT guarantorId
     const creditApplication = await CreditApplication.create({
       creditApplicationId: creditApplicationId,
       applId: req.body.APPL_ID,
@@ -913,8 +894,7 @@ applyForLoan: async function(req, res) {
       userId: req.user?.id || req.body.USER_ID || 'SYSTEM',
       transactionType: 'LOAN_APPLICATION',
       refNo: req.body.APPL_ID || `REF-${Date.now()}`,
-      // ✅ FIXED: Store guarantor business ID in credit application too
-      guarantorId: guarantorBusinessId,
+      // ✅ REMOVED: guarantorId - table doesn't have this column
       // Optional fields with defaults
       loanCycle: 1,
       purposeOfCredit: 'GENERAL LOAN',
@@ -940,7 +920,6 @@ applyForLoan: async function(req, res) {
         emi: emiResult.emi,
         totalInterest: emiResult.totalInterest,
         totalRepayable: emiResult.totalRepayable,
-        // ✅ Added for debugging
         guarantorInfo: {
           businessId: guarantorBusinessId,
           internalId: guarantorInternalId,
@@ -952,7 +931,6 @@ applyForLoan: async function(req, res) {
   } catch (error) {
     if (transaction) await transaction.rollback();
     
-    // ✅ Detailed logging
     console.error('\n❌ Loan application error:');
     console.error('📌 Error Name:', error.name);
     console.error('📌 Error Message:', error.message);

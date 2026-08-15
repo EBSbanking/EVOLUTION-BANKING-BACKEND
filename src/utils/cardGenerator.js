@@ -1,5 +1,7 @@
 // utils/cardGenerator.js
+import { sequelize } from '../../config/db.js';
 import { getModel, initializeModels } from '../models/index.js';
+import binService from '../services/binService.js';
 
 /**
  * Calculate Luhn checksum digit for a partial card number
@@ -45,19 +47,18 @@ function calculateLuhnCheckDigit(number) {
 }
 
 /**
- * Generate a sequential, Luhn-valid card number (PAN) using a database counter.
- * Falls back to random generation if the database fails.
- * @param {string} bin - Bank Identification Number (first 6 digits, e.g., '506099')
+ * Generate a sequential, Luhn-valid card number (PAN) using BIN mapping
+ * @param {string} binInput - BIN prefix or scheme name (VERVE, VISA, etc.)
  * @param {number} length - Total card number length (default 16)
  * @param {object} transaction - Optional Sequelize transaction
  * @returns {Promise<string>} - Valid card number
  */
-export async function generateCardNumber(bin = '506099', length = 16, transaction = null) {
+export async function generateCardNumber(binInput = 'VERVE', length = 16, transaction = null) {
   try {
-    // ✅ Validate BIN - it can be a scheme name or a numeric BIN
-    let binPrefix = bin;
-    
-    // If BIN is a scheme name (VERVE, VISA, etc.), map it to a BIN
+    let bin = binInput;
+    let binMapping = null;
+
+    // Check if input is a scheme name
     const schemeBinMap = {
       'VERVE': '506099',
       'VISA': '4',
@@ -65,33 +66,44 @@ export async function generateCardNumber(bin = '506099', length = 16, transactio
       'AMEX': '34',
       'DISCOVER': '6'
     };
-    
-    // Check if the input is a scheme name (uppercase)
-    if (schemeBinMap[binPrefix.toUpperCase()]) {
-      binPrefix = schemeBinMap[binPrefix.toUpperCase()];
-      console.log(`🔁 Mapped scheme ${bin} to BIN prefix: ${binPrefix}`);
+
+    // If it's a scheme name, use scheme mapping
+    if (schemeBinMap[binInput.toUpperCase()]) {
+      bin = schemeBinMap[binInput.toUpperCase()];
+      console.log(`🔁 Mapped scheme ${binInput} to BIN prefix: ${bin}`);
     }
-    
-    // Ensure BIN prefix is valid
-    if (!binPrefix || binPrefix.length === 0) {
-      throw new Error('BIN prefix is required');
+
+    // Try to get BIN from database mapping
+    try {
+      const mapping = await binService.getBINMappingWithFallback(bin, transaction);
+      if (mapping) {
+        binMapping = mapping;
+        // Use prepaid_bin if available and is_prepaid
+        if (mapping.is_prepaid && mapping.prepaid_bin) {
+          bin = mapping.prepaid_bin;
+        } else if (mapping.bank_bin) {
+          bin = mapping.bank_bin;
+        } else {
+          bin = mapping.bin;
+        }
+        console.log(`✅ Using BIN from mapping: ${bin} (${mapping.bank_name})`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not get BIN from mapping, using fallback:', error.message);
     }
-    
-    // Handle short BINs (VISA: '4', Mastercard: '5', AMEX: '34', Discover: '6')
-    // Pad to 6 digits with random digits
-    let paddedBin = binPrefix;
+
+    // Ensure BIN is at least 6 digits
+    let paddedBin = bin;
     if (paddedBin.length < 6) {
       const randomDigits = Math.floor(Math.random() * Math.pow(10, 6 - paddedBin.length))
         .toString()
         .padStart(6 - paddedBin.length, '0');
       paddedBin = paddedBin + randomDigits;
     }
-    
-    // Ensure BIN is exactly 6 digits
     paddedBin = paddedBin.slice(0, 6);
-    
-    console.log(`🔢 Using BIN: ${paddedBin} (original: ${bin})`);
-    
+
+    console.log(`🔢 Using BIN: ${paddedBin} (original: ${binInput})`);
+
     let CardCounter = getModel('CardCounter');
     if (!CardCounter) {
       await initializeModels();
@@ -118,18 +130,14 @@ export async function generateCardNumber(bin = '506099', length = 16, transactio
     return pan;
   } catch (error) {
     console.error('Sequential PAN generation failed, using fallback:', error);
-    return generateRandomCardNumber(bin, length);
+    return generateRandomCardNumber(binInput, length);
   }
 }
 
 /**
- * Generate a random card number (fallback)
- * @param {string} binPrefix - The BIN prefix or scheme name
- * @param {number} length - Total card length (default 16)
- * @returns {string} - Valid card number
+ * Generate a random card number (fallback) with BIN mapping
  */
-export function generateRandomCardNumber(binPrefix = '506099', length = 16) {
-  // Map scheme names to BIN prefixes
+export function generateRandomCardNumber(binInput = 'VERVE', length = 16) {
   const schemeBinMap = {
     'VERVE': '506099',
     'VISA': '4',
@@ -138,9 +146,9 @@ export function generateRandomCardNumber(binPrefix = '506099', length = 16) {
     'DISCOVER': '6'
   };
   
-  let bin = binPrefix;
-  if (schemeBinMap[binPrefix.toUpperCase()]) {
-    bin = schemeBinMap[binPrefix.toUpperCase()];
+  let bin = binInput;
+  if (schemeBinMap[binInput.toUpperCase()]) {
+    bin = schemeBinMap[binInput.toUpperCase()];
   }
   
   // Ensure BIN has at least 1 digit
@@ -410,13 +418,164 @@ export function validateCardForFlutterwave(cardData) {
 }
 
 // ================================================================
+// ✅ BIN MAPPING UTILITIES
+// ================================================================
+
+/**
+ * Extract BIN from card number (first 6 digits)
+ * @param {string} cardNumber - Full card number
+ * @returns {string} - First 6 digits (BIN)
+ */
+export function extractBINFromCardNumber(cardNumber) {
+  if (!cardNumber) return null;
+  const clean = cardNumber.replace(/\s/g, '');
+  return clean.substring(0, 6);
+}
+
+/**
+ * Get card scheme from BIN
+ * @param {string} bin - BIN (first 6 digits)
+ * @returns {string} - Card scheme (VERVE, VISA, MASTERCARD, AMEX, DISCOVER, UNKNOWN)
+ */
+export function getCardSchemeFromBIN(bin) {
+  if (!bin) return 'UNKNOWN';
+  const binStr = bin.toString().replace(/\s/g, '');
+  
+  // Check VERVE
+  const vervePrefixes = ['506099', '506103', '507878', '650000'];
+  if (vervePrefixes.some(prefix => binStr.startsWith(prefix))) {
+    return 'VERVE';
+  }
+  
+  // Check VISA
+  if (binStr.startsWith('4')) {
+    return 'VISA';
+  }
+  
+  // Check MASTERCARD
+  if (binStr.startsWith('5') && !binStr.startsWith('50')) {
+    return 'MASTERCARD';
+  }
+  
+  // Check AMEX
+  if (binStr.startsWith('34') || binStr.startsWith('37')) {
+    return 'AMEX';
+  }
+  
+  // Check DISCOVER
+  if (binStr.startsWith('6')) {
+    return 'DISCOVER';
+  }
+  
+  return 'UNKNOWN';
+}
+
+/**
+ * Get bank name from BIN (using mapping)
+ * @param {string} bin - BIN
+ * @param {object} transaction - Sequelize transaction
+ * @returns {Promise<string>} - Bank name
+ */
+export async function getBankNameFromBIN(bin, transaction = null) {
+  try {
+    const mapping = await binService.getBINMapping(bin, transaction);
+    return mapping ? mapping.bank_name : null;
+  } catch (error) {
+    console.error('Error getting bank name from BIN:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if BIN is prepaid
+ * @param {string} bin - BIN
+ * @param {object} transaction - Sequelize transaction
+ * @returns {Promise<boolean>} - True if prepaid
+ */
+export async function isPrepaidBIN(bin, transaction = null) {
+  try {
+    return await binService.isPrepaidBIN(bin, transaction);
+  } catch (error) {
+    console.error('Error checking prepaid BIN:', error);
+    return false;
+  }
+}
+
+/**
+ * Validate card with BIN
+ * @param {string} cardNumber - Full card number
+ * @param {number} amount - Transaction amount
+ * @param {object} transaction - Sequelize transaction
+ * @returns {Promise<Object>} - Validation result
+ */
+export async function validateCardWithBIN(cardNumber, amount = 0, transaction = null) {
+  try {
+    return await binService.validateCardWithBIN(cardNumber, amount, transaction);
+  } catch (error) {
+    console.error('Error validating card with BIN:', error);
+    return { valid: false, error: error.message };
+  }
+}
+
+/**
+ * Generate card with specific BIN mapping
+ * @param {string} bankName - Bank name
+ * @param {string} cardType - Card type (DEBIT, PREPAID, CREDIT, CHARGE)
+ * @param {number} length - Card length
+ * @param {object} transaction - Sequelize transaction
+ * @returns {Promise<Object>} - Generated card details
+ */
+export async function generateCardWithBINMapping(bankName, cardType = 'DEBIT', length = 16, transaction = null) {
+  try {
+    // Find BIN mapping by bank name and card type
+    const BINMapping = getModel('BINMapping');
+    if (!BINMapping) throw new Error('BINMapping model not loaded');
+
+    const mapping = await BINMapping.findOne({
+      where: {
+        bank_name: {
+          [sequelize.Op.iLike]: `%${bankName}%`
+        },
+        card_type: cardType,
+        is_active: true
+      },
+      transaction
+    });
+
+    if (!mapping) {
+      throw new Error(`No BIN mapping found for bank: ${bankName} and card type: ${cardType}`);
+    }
+
+    // Generate card number using the BIN
+    let binToUse = mapping.bank_bin || mapping.prepaid_bin || mapping.bin;
+    const pan = await generateCardNumber(binToUse, length, transaction);
+
+    return {
+      pan,
+      bin: mapping.bin,
+      bank_name: mapping.bank_name,
+      card_scheme: mapping.card_scheme,
+      card_type: mapping.card_type,
+      is_prepaid: mapping.is_prepaid,
+      bank_bin: mapping.bank_bin,
+      prepaid_bin: mapping.prepaid_bin,
+      metadata: mapping.metadata
+    };
+  } catch (error) {
+    console.error('Error generating card with BIN mapping:', error);
+    throw error;
+  }
+}
+
+// ================================================================
 // EXPORTS
 // ================================================================
 
 export default {
+  calculateLuhnChecksum,
+  calculateLuhnCheckDigit,
   generateCardNumber,
   generateRandomCardNumber,
-  calculateLuhnChecksum,
   isValidCardNumber,
   maskCardNumber,
   generateCVV,
@@ -428,5 +587,12 @@ export default {
   generateFlutterwaveCardNumber,
   generateFlutterwaveCardDetails,
   formatCardNumberForFlutterwave,
-  validateCardForFlutterwave
+  validateCardForFlutterwave,
+  // BIN Mapping utilities
+  extractBINFromCardNumber,
+  getCardSchemeFromBIN,
+  getBankNameFromBIN,
+  isPrepaidBIN,
+  validateCardWithBIN,
+  generateCardWithBINMapping
 };

@@ -1,4 +1,4 @@
-﻿// models/WF_BUSINESS_PROCESS.js
+// models/WF_BUSINESS_PROCESS.js
 import { DataTypes } from 'sequelize';
 
 /**

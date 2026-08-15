@@ -523,7 +523,7 @@ UserRole.checkAndFixSchema = async function() {
     if (results.length === 0) {
       console.log('❌ user_id column does not exist in user_roles table');
       console.log('💡 Running sync to create missing column...');
-      await this.sync({ alter: true });
+      await this.sync({ alter: false });
       return { success: true, action: 'created_column' };
     }
     

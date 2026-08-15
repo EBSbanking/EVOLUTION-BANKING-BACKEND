@@ -1,4 +1,4 @@
-﻿// models/Notification.js
+// models/Notification.js
 import { DataTypes, Model } from 'sequelize';
 import { sequelize } from '../../config/db.js';
 
@@ -19,7 +19,7 @@ Notification.init({
     type: DataTypes.STRING(50),
     allowNull: false,
     defaultValue: 'User',
-    // ✅ Add field mapping to match database exactly
+    // ? Add field mapping to match database exactly
     field: 'ROLE_ID',
   },
   message: {
@@ -30,13 +30,13 @@ Notification.init({
     type: DataTypes.STRING(50),
     allowNull: false,
     defaultValue: 'N/A',
-    // ✅ Add field mapping to match database exactly
+    // ? Add field mapping to match database exactly
     field: 'WORK_ITEM_ID',
   },
   EVENT_ID: {
     type: DataTypes.STRING(50),
     allowNull: true,
-    // ✅ Add field mapping to match database exactly
+    // ? Add field mapping to match database exactly
     field: 'EVENT_ID',
   },
   status: {
@@ -89,7 +89,7 @@ Notification.init({
   modelName: 'Notification',
   tableName: 'notifications',
   timestamps: false,
-  // ✅ Add these to prevent automatic field transformation
+  // ? Add these to prevent automatic field transformation
   underscored: false,
   freezeTableName: true,
   hooks: {

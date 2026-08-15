@@ -171,6 +171,6 @@ WF_QUEUE.init({
 });
 
 // Sync the model (use carefully in production)
-// WF_QUEUE.sync({ alter: true }).catch(console.error);
+// WF_QUEUE.sync({ alter: false }).catch(console.error);
 
 export default WF_QUEUE;

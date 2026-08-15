@@ -288,7 +288,7 @@ EMTLPolicy.calculate = async (transactionData) => {
 
 EMTLPolicy.syncTable = async () => {
   try {
-    await EMTLPolicy.sync({ alter: true });
+    await EMTLPolicy.sync({ alter: false });
     console.log('✅ EMTLPolicy table synced successfully');
     return true;
   } catch (error) {
